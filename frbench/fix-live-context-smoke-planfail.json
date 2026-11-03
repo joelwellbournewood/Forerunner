@@ -1,0 +1,231 @@
+{
+  "bench": "fix-live-context",
+  "live": false,
+  "startedAt": "2026-11-01T23:21:47.712Z",
+  "checks": [
+    {
+      "name": "the setup assistant opens first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the Claude step offers a way past it without a key",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Home shows an empty project list with New project",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "while planning failed, the chat says so and points to Try again",
+      "ok": true,
+      "detail": "[stand-in model] I was given 0 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked active, a task list, no project doc excerpts, no lessons, the facts now, active_project, unread_messages, open_requests, running_sessions, and 30 command tool(s). The plan: Plannin…"
+    },
+    {
+      "name": "the plan from the brief reaches the Inbox",
+      "ok": false,
+      "detail": "Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again"
+    },
+    {
+      "name": "the Inbox shows the plan card",
+      "ok": false,
+      "detail": ""
+    },
+    {
+      "name": "every planned task is done",
+      "ok": false,
+      "detail": "0/0 done after 0 session(s): "
+    },
+    {
+      "name": "every task the agents can do is done (the rest wait on you)",
+      "ok": false,
+      "detail": "0/0 done"
+    },
+    {
+      "name": "the project's folder exists",
+      "ok": false,
+      "detail": "/tmp/frbench/fix-live-context/home/data/projects/01a1996b-6758-714d-be45-f201e106f5f8/workspace"
+    },
+    {
+      "name": "the work wrote files to the project's folder",
+      "ok": false,
+      "detail": ""
+    },
+    {
+      "name": "the brief's page is there: an .html page, a stylesheet and a script",
+      "ok": false,
+      "detail": "0 .html, 0 .css, 0 .js"
+    },
+    {
+      "name": "the page links a stylesheet and a script that were written",
+      "ok": false,
+      "detail": ""
+    },
+    {
+      "name": "the project Chat answers",
+      "ok": true,
+      "detail": "[stand-in model] I was given 1 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked active, a task list, no project doc excerpts, no lessons, the facts now, active_project, unread_messages, open_requests, running_sessions, and 30 command tool(s). The plan: Plannin…"
+    },
+    {
+      "name": "the chat reply shows no markdown asterisks",
+      "ok": true,
+      "detail": "[stand-in model] I was given 1 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked …"
+    }
+  ],
+  "findings": [
+    {
+      "title": "planning failed (try 1 of 3)",
+      "detail": "the project page said: \"Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again\"",
+      "evidence": [
+        "/tmp/frbench/fix-live-context/steps/08-project-plan-waiting.png"
+      ]
+    },
+    {
+      "title": "planning failed (try 2 of 3)",
+      "detail": "the project page said: \"Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again\"",
+      "evidence": [
+        "/tmp/frbench/fix-live-context/steps/11-project-plan-waiting-try-2.png"
+      ]
+    },
+    {
+      "title": "planning failed on every try (3)",
+      "detail": "the project page said last: \"Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again\"",
+      "evidence": [
+        "/tmp/frbench/fix-live-context/steps/13-project-plan-waiting-try-3.png"
+      ]
+    },
+    {
+      "title": "plan card missing from the Inbox",
+      "detail": "the project page said: \"Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again\"; the Inbox reads: \"Forerunner Quote page ▾ Home Inbox Memory Extensions Changes Performance Updates Settings connected Talk Ctrl+K Stop all Inbox Refresh Needs you Nothing needs you. Updates No updates.\"",
+      "evidence": [
+        "/tmp/frbench/fix-live-context/steps/14-inbox-with-the-plan.png"
+      ]
+    }
+  ],
+  "sessions": [],
+  "planTries": [
+    {
+      "state": "failed",
+      "said": "Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again"
+    },
+    {
+      "state": "failed",
+      "said": "Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again"
+    },
+    {
+      "state": "failed",
+      "said": "Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again"
+    }
+  ],
+  "notes": [
+    "the Done step says \"Until Claude is connected your agent cannot start work\" (true here: --provider bench serves a stand-in model and no key is saved)",
+    "the project's folder is /tmp/frbench/fix-live-context/home/data/projects/01a1996b-6758-714d-be45-f201e106f5f8/workspace (a project without a repository works there, U-037)"
+  ],
+  "projectId": "01a1996b-6758-714d-be45-f201e106f5f8",
+  "chatWhilePlanningFailed": "[stand-in model] I was given 0 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked active, a task list, no project doc excerpts, no lessons, the facts now, active_project, unread_messages, open_requests, running_sessions, and 30 command tool(s). The plan: Planning failed: Claude's answer was not the JSON plan Forerunner asks for. The person can press Try again on the project page.",
+  "projectPageSaid": "Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again",
+  "tasksAfterApproval": [],
+  "taskButtonsAfterApproval": [
+    "Quote page\n▾",
+    "Talk",
+    "Ctrl+K",
+    "Stop all",
+    "Create a repository",
+    "Start session",
+    "Try again",
+    "Refresh",
+    "New task"
+  ],
+  "tasksFinal": [],
+  "taskButtonsFinal": [
+    "Quote page\n▾",
+    "Talk",
+    "Ctrl+K",
+    "Stop all",
+    "Create a repository",
+    "Start session",
+    "Try again",
+    "Refresh",
+    "New task"
+  ],
+  "lastSessionTextFinal": "No session yet.",
+  "workspace": "/tmp/frbench/fix-live-context/home/data/projects/01a1996b-6758-714d-be45-f201e106f5f8/workspace",
+  "workspaceFiles": [],
+  "chatContext": {
+    "model": "fake-haiku",
+    "effort": "low",
+    "thinking": "off",
+    "maxTokens": 1024,
+    "messages": 3,
+    "tools": [
+      "autonomy_set",
+      "budget_set",
+      "capability_grant",
+      "device_revoke",
+      "email_mode_set",
+      "files_list",
+      "memory_record",
+      "model_settings_set",
+      "note_add",
+      "project_create",
+      "project_switch",
+      "repo_create",
+      "request_answer",
+      "session_last",
+      "session_pause",
+      "session_resume",
+      "session_start",
+      "session_stop",
+      "settings_set",
+      "specialist_propose",
+      "summary_speak",
+      "task_create",
+      "task_dependencies",
+      "task_get",
+      "task_pause",
+      "task_reopen",
+      "task_resume",
+      "task_transition",
+      "task_update",
+      "tasks_list"
+    ],
+    "systemChars": 5494,
+    "userMessage": "# Now\n- now: 2026-11-01T23:22:25.422Z\n- active_project: Quote page\n- unread_messages: 0\n- open_requests: 0\n- running_sessions: 0\n\n# Plan from the brief\nPlanning failed: Claude's answer was not the JSON plan Forerunner asks for. The person can press Try again on the project page.\n\n# Tasks of Quote page\n(no tasks yet)\n\nWhat is the state of my project and what is left to do?",
+    "reply": "[stand-in model] I was given 1 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked active, a task list, no project doc excerpts, no lessons, the facts now, active_project, unread_messages, open_requests, running_sessions, and 30 command tool(s). The plan: Planning failed: Claude's answer was not the JSON plan Forerunner asks for. The person can press Try again on the project page.",
+    "usd": null
+  },
+  "modelCalls": {
+    "intake": 3,
+    "chat": 2
+  },
+  "cost": {
+    "calls": 5,
+    "usd": 0,
+    "priced": 0,
+    "unpriced": {
+      "fake-sonnet": 3,
+      "fake-haiku": 2
+    },
+    "byKind": {
+      "intake": {
+        "calls": 3,
+        "usd": 0,
+        "models": [
+          "fake-sonnet"
+        ]
+      },
+      "chat": {
+        "calls": 2,
+        "usd": 0,
+        "models": [
+          "fake-haiku"
+        ]
+      }
+    }
+  },
+  "problems": [],
+  "daemonErrors": [],
+  "finishedAt": "2026-11-01T23:22:26.660Z"
+}

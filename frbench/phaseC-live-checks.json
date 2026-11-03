@@ -1,0 +1,160 @@
+{
+ "verification": [
+  {
+   "from": "fix",
+   "problem": "[major] A planner's tier 0 meant no critic at all: the runner's closeTier0 path closed a coding task on the specialist's clean finish (live2 #5: \"Build the three pages\" Done on a report saying nothing was tested; walk before: 'Checks only \u00b7 Done \u00b7 \u2014'). Owner decision (2): the critic always reviews c",
+   "live_check": "LIVE CHECK (helper, --provider bench-live): New project from a one-line brief ('A page that shows a random quote'), Approve and start; in <home>/bench/model-calls.jsonl every specialist run of a task is followed by a role=critic call for that task; no task row says 'Checks only'."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] A missing deliverable was accepted and the task was Done (live2 part 3 B1 'Members chart': no chart made, report ended 'Questions for the person: Please add data/members.csv', critic accepted 82, Inbox 'Nothing needs you').",
+   "live_check": "LIVE CHECK: same task with Who does it = data-analyst in a project without data/members.csv on --provider bench-live; answer the first card Go ahead without; expected: task not Done, a card asking for data/members.csv, Inbox Needs you (1)."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] The critic judged from the diff alone and could not read the files a claim depends on (live2 D2: 4 of 5 reviews 'those files were not in the request'; live B+D: 'I could not see data/sales.csv', 'app.js was not in the request'). Owner decision (2): read access to the project.",
+   "live_check": "LIVE CHECK: a page task with two pages (index.html linking about.html); the critic's calls in the model-call log include read_file of about.html and its review no longer says a file 'was not in the request'."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] The critic never saw a command's output, and tier 1 ran no checks at all (live B+D: 'node test.js printed ok but the critic said no test ran'; 4 of 6 accepts on the worker's word). Owner decision (1): the project's build, lint and tests always run for a code task and are never shown as a lev",
+   "live_check": "LIVE CHECK: a project whose folder has package.json with \"test\": \"node --test\" and node_modules (or no dependencies); a coder task 'Add clamp(x, lo, hi) in src/clamp.js'; after the session the task drawer's Review > 'See what was checked' lists 'test: passed' with the end of the npm output; plant a failing test and the task is sent back ('Check failed: test'), not Done."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] Owner decision (3): work a person will use is also tried in its own environment, with screenshots as evidence the critic judges; nothing ever opened a page (live: the critic 'could not check the claims about the pages').",
+   "live_check": "LIVE CHECK: the one-line brief 'A page that shows a random quote', Approve and start; when done, the build task's drawer shows the screenshots of the real page and the model-call log's critic request has the section 'Tried as a person would use it (by the runtime: verified)'."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] A deploy was Done with a criterion 'not verified' after it was edited to a light review, and the drawer suggested 'edit to a light review' for a deploy (live D, owner decision 4: deploys and migrations keep the full review and the owner's sign-off).",
+   "live_check": "LIVE CHECK: same with --provider bench-live."
+  },
+  {
+   "from": "fix",
+   "problem": "[minor] critic.ts:717 turned an accept into a revise on doc_drift 'none (docs/testing.md still says \u2026)'; critic.ts:699 defaulted a finding's action to 'Fix: <finding>' so the retry brief read 'X -> Fix: X' (live B3); the critic counted from memory ('I count 29 entries\u2026 leaves 30', live1 #6).",
+   "live_check": "LIVE CHECK: in the model-call log a critic reply with doc_drift 'none (...)' and an accept leaves the task Done; Reviews (under More) shows no 'Doc drift: none' finding; a retry brief never contains '-> Fix: '."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 1] A retry that changed no file got no project checks and no try, and its accept closed the earlier 'Check failed' and 'Tried' findings. Result: a task was 'Done \u00b7 Reviewed' while its test still failed (bench walk C) or its page still threw (walk D). Root cause 1: packages/runtime/src/loop",
+   "live_check": "LIVE CHECK (helper, --provider bench-live): run the same two projects. Expected for walk C: the task is not Done; every critic request for it carries the failing test output; if the specialist says the test failed before its change, the Inbox has one question card. Expected for walk D: the styling task is not sent back for the page error, and the drawer says the error was not caused by this task."
+  }
+ ],
+ "continuity": [
+  {
+   "from": "fix",
+   "problem": "[major] live2 #3: answers to a person task never reached the dependent task's brief; the coder asked the same 7 questions again. Root cause: task-context.ts used the dependency's planned outcome (a promise) for a person-done dependency. (Earlier fixer's finished commit 887a244, reviewed and re-valid",
+   "live_check": "LIVE CHECK (helper with the key): new project from a brief that needs the owner's content (e.g. 'A one-page website for a small bakery in Bern; I will give you the real menu, hours and address'); Approve and start; answer the person task's card with Send answers; when the dependent coder task runs, open the bench model-call log: its first user message contains '## Answers from the person to' with your answers; the coder does not ask the same questions (no new questions card) and the files use your answers."
+  },
+  {
+   "from": "fix",
+   "problem": "[minor] live2 part 3 B3: the Start dialog said a task 'needs about CHF 1.20, more than this session's work budget of CHF 2.40' (cumulative overflow worded as single-task), and estimates ignored the task's own budget. (Earlier fixer's finished commit 38e6ee6, re-validated.)",
+   "live_check": "LIVE CHECK: a project with 3 ready tasks, one with a budget of CHF 0.80; Start session, type a budget so not all fit: every number in the left-out sentence is true (Z <= Y), and the task with CHF 0.80 is never estimated above CHF 0.80."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] live2 part 3 B2: a task over its own budget became needs_human with no card; summary '\"Contact page\" needs your decision (Inbox).' over 'Nothing needs you'; Tasks tab 'Paused'; drawer in USD with 'Press Resume'; recovery only via Edit budget, Resume, Start.",
+   "live_check": "LIVE CHECK: New task 'Contact page' with Budget CHF 0.01; Start session; when it ends: Inbox Needs you shows '\"Contact page\" stopped at its budget of CHF 0.01' with Raise the budget (names a CHF amount) and Cancel task; Overview 'Last result' says needs your decision (Inbox) and Home counts it; Tasks tab row 'Needs your decision: its budget is used' with Answer and Cancel; no '$' or 'USD' anywhere; press Raise the budget: Done line 'Raised the budget ... a session started' and the task runs to Done."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] live D (live walk 4): a task refused at once (the researcher on an API key) never reached the Inbox (Inbox 'Nothing needs you', Home 'Waiting on you 0', summary 'needs your decision (Inbox)'); badge 'Paused', 'Press Resume' only repeated the refusal; reason cut at 200 chars mid-sentence with",
+   "live_check": "LIVE CHECK (API key only, before research-web gives the researcher web tools): New task, Who does it: researcher; Start session; Inbox shows '\"<title>\" could not run' with the reason and no 'cc:' names, Try again and Cancel task; Home 'Waiting on you' counts 1; Tasks tab row has Answer and Cancel, no Resume; press Try again without changing anything: one new card (never two); Cancel task cancels it. After research-web merges, the same card must appear for any refusal that remains."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] live2 part 3 C1: cancelling a running task (chat 'Skip the About page task' -> Yes) kept its files (about.html, link in index.html), the critic reviewed and 'accepted' the cancelled task, and the next task's README described the cancelled page.",
+   "live_check": "LIVE CHECK: plan with two pages; Start; when the first page's file appears in Files while its row says Running, press Cancel on the row: dialog and line as above; Files tab no longer lists the file and index.html has no link to it; the next task's work does not mention the page; the Critic column of the cancelled task stays '\u2014'. Repeat from chat ('Skip the About page task', Yes) while it runs, and once while it reads 'Being reviewed' (line says 'its review stopped'). Quit and restart Forerunner, then press Undo in Changes: the files come back."
+  },
+  {
+   "from": "fix",
+   "problem": "[sibling of B2, found by the search for needs_human without a card] When the session's own budget stopped a run mid-task, the task went to needs_human ('budget exhausted mid-task') with no card while the result said '\"X\" needs your decision (Inbox).' over an empty Inbox.",
+   "live_check": "LIVE CHECK: a project whose first task needs more than CHF 0.10; Start session with budget CHF 0.10: the session ends with 'The session's budget is used. \"...\" ... ready to continue.'; the Inbox has no card for it, the Tasks tab row reads Ready, and the next Start continues it."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 1] Stop now, Stop all or Quit while the critic reviewed a task left it \"Being reviewed\" for good: no review, no card, and the Start dialog said 'Nothing can run'. The base branch put it back to Ready. Root cause: the critic throws `killed` for any aborted review, and runner.ts:1659-1664 re",
+   "live_check": "LIVE CHECK: add a New task (coder) 'Contact page in contact.html' and Start session. When the row reads 'Being reviewed' (the real critic takes tens of seconds), open the session page and press Stop now, then confirm. Expect: the session reads 'Stopped by you'; the log reads 'Stopped by you during \"Contact page\u2026\". It is ready again.'; the Tasks row reads Ready; the Inbox has no card for it; contact.html is in Files; the drawer shows no verdict (a critic run marked 'Stopped' may show). Start again: the task runs, the critic reviews it, and the task is Done. Repeat once, but Quit Forerunner during 'Being reviewed' and reopen it: the task reads Ready and the Update says it is ready again."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 2] Cancelling a running task also removed the person's Inbox answers from the decision record. Root cause: writeAnswersToDecisionDoc (person-questions.ts) wrote the answers, uncommitted, into the workspace the run was changing, and GitOps.setAside takes everything since HEAD (the run's 'Wo",
+   "live_check": "LIVE CHECK: start a project from a brief that needs the owner's content and press Approve and start. While the first coder task reads Running and its file shows in Files, answer the person card with Send answers, then press Cancel on the running row. Expect: the files leave Files; docs/decisions/0001-\u2026 still has 'Answers for \"\u2026\"' with your answers; Undo brings the files back and the answers appear once."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 3] The Cancel line and dialog promised 'what it changed is removed; Undo brings it back' for a task in review that no session was reviewing (its review failed or a finding was open and its card waited, or Forerunner had closed during the review). Nothing was removed. Root cause: commands/t",
+   "live_check": "LIVE CHECK: if a review fails ('\"X\" could not be reviewed' card), the Tasks row reads 'Needs your decision' with Answer and Cancel, Cancel's dialog says only 'Drops it.', the line reads 'Cancelled \"X\". Its card in the Inbox was withdrawn.', and its files stay. Cancel while 'Being reviewed' live gives '\u2026its review stopped and what it changed is removed; Undo brings it back.' and the file leaves Files."
+  }
+ ],
+ "github-result": [
+  {
+   "from": "fix",
+   "problem": "[blocker] A task in an EMPTY linked repository always failed with git's \"fatal: 'origin/main' is not a commit\"; the doc scaffold failed silently at creation and the intake's docs fell back to a folder nobody reads. Reproduced on the bench before the fix (walk-before.json: task failed with that raw t",
+   "live_check": "LIVE CHECK (helper, after merge; forerunner-sandbox already has a commit, so the empty path can only be checked on a new empty repository the token may write to): create an empty repo the token can push to (or skip if the token is scoped to forerunner-sandbox only), link it in New project, approve; main gets Forerunner's first commit with the docs and the tasks open PRs; no \"is not a commit\" text anywhere."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] The session's docs/status.md commit was pushed onto the last task PR's branch after the critic accepted it, so a reviewed PR held a file the critic never saw (bench before: fr/...-write-the-readme branch carried \"docs: status after session\"). A session without a task PR opened one status PR ",
+   "live_check": "LIVE CHECK on joelwellbournewood/forerunner-sandbox: after a session, open each task PR's Files tab on GitHub: no docs/status.md; the PR \"docs: project status\" (branch fr/status) holds it; a second session adds a commit and a comment to that same PR."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] Git failed in run_command (exit 128 \"missing config key GIT_CONFIG_KEY_0\") on a machine whose environment sets GIT_CONFIG_*; the coder wrote \"Git doesn't work in this sandbox, so I can't commit, push or open a PR\" into its report, marked the criterion unmet, and the text became the commit me",
+   "live_check": "LIVE CHECK (helper machine, which sets GIT_CONFIG_* in its environment): run a coder task on forerunner-sandbox with the real model; in the model-call log any run_command \"git status\" exits 0; the PR body and commit message contain no \"git doesn't work\" / \"can't commit\" text."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] In a project's folder the last task's work and docs/status.md stayed uncommitted after the project was done (live B all 4 runs, live2 #15); __pycache__/*.pyc was staged into the project (live B4).",
+   "live_check": "LIVE CHECK: the photo-rename brief from live3 (Python): the folder has a .gitignore with __pycache__/ and no .pyc in git ls-files."
+  },
+  {
+   "from": "fix",
+   "problem": "[major] \"N reviewed pull requests wait for you to merge\" led nowhere: no link on the Overview/session page, the repository was named nowhere on the project page, and Your files named this install's docs clone (which held none of the unmerged work).",
+   "live_check": "LIVE CHECK on forerunner-sandbox: after a session the Overview lists each task's PR with its number; clicking Open in the desktop window opens it in the system browser; merging one on GitHub and reloading the Overview removes it from the list."
+  },
+  {
+   "from": "fix",
+   "problem": "[minor] The Docs tab listed the docs as \"missing \u00b7 not written yet\" while they waited in the scaffold's (or the intake's) PR #1.",
+   "live_check": "LIVE CHECK: same on forerunner-sandbox after the plan is approved."
+  },
+  {
+   "from": "fix",
+   "problem": "[minor] No PR or branch on the session page; the log said \"Changed 1 file: index.html\"; the PR lines carried raw URLs and \"PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)\"; a refused push failed the task with git's output.",
+   "live_check": "LIVE CHECK: same on forerunner-sandbox."
+  },
+  {
+   "from": "fix",
+   "problem": "[minor] The chat had no idea where a repository project's files are (live2 #7 remainder: it said \"the files are in the project folder you already set up\").",
+   "live_check": "LIVE CHECK: ask \"where are my files?\" on a forerunner-sandbox project: the reply names the repository and the PRs."
+  },
+  {
+   "from": "fix",
+   "problem": "[minor] The intake asked \"Where should the site files live on your computer, and do you want them under version control (git)?\" (live2 #14).",
+   "live_check": "LIVE CHECK: New project with the live2 brief (a small website) on the real model: the plan card has no person question about where files live or git."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 1, review] The git config scrub let a credential through when it sat inside a GIT_CONFIG key. url.https://<token>@github.com/.insteadOf and url.https://user:pass@host/.insteadOf reached the process sandbox (run_command) and the Claude Code path, where the model can read them with `env` or ",
+   "live_check": "LIVE CHECK (helper machine, which sets GIT_CONFIG_* in its environment): before starting the daemon, add `GIT_CONFIG_COUNT=<n+1>`, `GIT_CONFIG_KEY_<n>=url.https://x-access-token:dummy-not-a-secret-123@github.com/.insteadOf` and `GIT_CONFIG_VALUE_<n>=https://github.com/` to the existing set. Run a coder task on forerunner-sandbox with the real model and ask it in the task's note to run `git config -l` and `env | grep GIT_CONFIG`. In <home>/bench/model-calls.jsonl the tool results do not contain \"dummy-not-a-secret-123\", and `git status` exits 0."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 3, review] When the host refused the first commit on an empty repository, git's raw multi-line output went into the person's message. The text read \"... could not make its first commit: git push main failed: fatal: expected 'acknowledgments' ... remote: Permission ... ! [remote rejected] m",
+   "live_check": "LIVE CHECK (helper): only possible with an empty repository the token can read but not write (e.g. a fine-grained token with read-only contents on a new empty repo). Link it and run a task: the task's reason is that sentence. Skip this if no such repository and token exist."
+  },
+  {
+   "from": "fixup",
+   "problem": "[blocking 2, review] The Overview's \"Waiting for you to merge\" put \"Reviewed by the critic.\" over every PR, including Forerunner's status PR and the plan's docs PR, which no critic reviewed. A task marked done without review would have been listed the same way. The list also disagreed with the Last ",
+   "live_check": "LIVE CHECK on forerunner-sandbox: after a session, the Overview lists each task PR under \"Reviewed by the critic\", the status PR only under \"Forerunner's docs, merge them when you like\", and the Last result's \"Left N reviewed pull requests for you to merge.\" equals the number of this session's PRs in the critic group."
+  }
+ ],
+ "research-web": [
+  {
+   "from": "fix",
+   "problem": "[major, owner decision] On an API key the researcher and the science-evaluator got no web tool. Their tasks were refused at once: the task showed \"Paused\", the session said \"needs your decision (Inbox)\", the Inbox said \"Nothing needs you\", and nothing ran. Root cause: registry/tools.ts mapped cc:Web",
+   "live_check": "LIVE CHECK for the helper (USD ~0.2): start with ANTHROPIC_API_KEY=\"$FORERUNNER_ANTHROPIC_API_KEY\" node scripts/bench/start.mjs --name live-research --daemon-port <p> --ui-port <u> --fresh --provider bench-live (this container reaches the web directly; curl --noproxy '*' https://example.com returns 200). Do steps 1-3 in the UI, then also: New project with brief 'Research which static site generator fits a 50-page docs site and recommend one'. The plan card may now include a researcher task with no 'Cannot read the web' chip; Approve and start; the research task finishes Done. node scripts/bench/calls.mjs --name live-research should show specialist calls whose tools include web_fetch, and critic calls whose messages include '### web page https://...'. Stop the bench afterwards."
+  }
+ ]
+}

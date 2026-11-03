@@ -1,0 +1,1038 @@
+{
+  "items": [
+    {
+      "id": "C-1",
+      "problem": "A CLI or an API a task builds is never tried, and nothing is tried in the task's own environment: only pages are tried, by a headless Chromium on the host with the network off, also for full-review work and on a PC where Docker is ready (where the task itself ran in the container, ADR 0101). The owner's decision (3) says work a person will use (a page, an app, a CLI, an API) is started in its own environment (the Docker sandbox on the owner's PC) and used as a person would.",
+      "evidence": "packages/capabilities/src/browser/try-page.ts:124-140 (pages only, chromium.launch on the host); packages/runtime/src/loop/try-it.ts; docs/decisions/0104-proportional-verification-of-code-tasks.md:66-79 ('The try runs on the host for every level in this version ...; trying inside the Docker sandbox and trying a CLI or an API are later work'); docs/status/handoff/NEXT-SESSION.md:130-141 (owner decisions of 2026-11-01) point (3); merge.problems_left[1] 'verification: no CLI or API try it'.",
+      "expected": "Per the owner's decision (3): a CLI a task builds is run with sample input from its brief or criteria and an API it builds is started and called, and pages are opened, inside the task's sandbox lease (the container when Docker is ready, always for a full review), with outputs and screenshots as the critic's evidence; 'Reviewed and tried' only when something was tried; what could not be tried says why in 'See what was checked'. Tested in a composed runtime test (a CLI task, an API task, a page task with the fake engine) and a real-daemon case; F2's Linux Docker run walks it for real.",
+      "severity": "major",
+      "disposition": "area",
+      "area": "verification",
+      "sources": [
+        0
+      ],
+      "reason": "Not the owner's choice: decision (3) already says what and where (a CLI, an API, in the Docker sandbox on the owner's PC); ADR 0104 called it 'later work', which is the phase C fixer's scope, not an owner decision, and 'accept page-only for this round' would re-open decision (3). No phaseE.json area owns the review path (try-it.ts, capabilities/browser, the sandbox lease), so it goes to a sixth phase E area, 'verification' (handoffs.json 'verification'), with C-3 and C-17."
+    },
+    {
+      "id": "C-2",
+      "problem": "A deploy or data-migration task created by the plan, New task or chat is stored at the light review: its row and drawer read 'Light review' although Done needs the full review and the person's sign-off, and its run uses the process sandbox on the host instead of Docker. Only Edit raises it (on save).",
+      "evidence": "packages/commands/src/commands/task.ts:585 (risk_tier: params.risk_tier ?? defaultRiskTier(project), no specialist floor); packages/runtime/src/session/project-plan.ts:262 (riskTier: t.riskTier ?? tier); apps/ui/src/pages/project/NewTaskDialog.tsx:184,236-250 (Light review offered for every specialist; FULL_REVIEW_SPECIALISTS not used); apps/ui/src/pages/project/TasksTab.tsx:434 and TaskDrawer.tsx:137 (reviewLevelName(t.riskTier) without the specialist); only the review applies the floor (packages/runtime/src/loop/critic.ts:330) while the sandbox gate reads the stored tier (packages/runtime/src/session/sandbox-gate.ts:32-35). Edit already raises and says so (TaskDrawer.tsx:425-430, :558).",
+      "expected": "Every creation path (plan approval, New task / POST /tasks, chat and commands task.create, a task.update that hands the task to ops-deploy or migration-specialist) stores at least the registry floor (risk_tier_floor 2) for these specialists; New task offers them no light review, as Edit does; the row and drawer read the level the task really gets (reviewLevelValue with the specialist). Tested at the boundary: POST /tasks and a plan with ops-deploy store tier 2 and the row reads 'Full review'; the fake daemon in the same commit.",
+      "severity": "major",
+      "disposition": "area",
+      "area": "answers",
+      "sources": [
+        1,
+        19,
+        33
+      ],
+      "reason": "Still true at 193e579. The verification fixer left it because intake, chat, New task and commands belonged to other phase C areas. 'answers' owns task creation from chat and commands (intent.ts, the chat's task_create); one shared floor applied where a task is created (task.create and project-plan) covers all paths. runner.ts/critic.ts review path is open to it if needed."
+    },
+    {
+      "id": "C-3",
+      "problem": "The project's own tests run only when they are package.json scripts: a Python, Rust or Go project's tests (pytest, cargo test, go test) are never run by the review, and the review does not even say so ('See what was checked' lists nothing as not run), although the owner's decision (1) says the project's build, lint and tests always run for a code task.",
+      "evidence": "packages/runtime/src/loop/project-checks.ts:46-50 (no package.json: checks [] and skipped null); packages/runtime/src/loop/critic.ts:356, :368 (notChecked only from skipped, so nothing is said); packages/runtime/src/loop/verification.ts:78 ('its package.json scripts'); the runner image has python3 (services/cloud-runner/Dockerfile:8); docs/status/handoff/NEXT-SESSION.md:130-141 (owner decisions of 2026-11-01) point (1).",
+      "expected": "Per the owner's decision (1): a code task's project tests run whatever the language: the usual command when its marker is in the task's folder (pytest or python -m unittest for pyproject.toml/pytest.ini/setup.cfg/tests/test_*.py, cargo test for Cargo.toml, go test ./... for go.mod), in the task's sandbox lease; a tool missing where the checks run is a 'not run, because ...' line, never a failure; a project with test files no check ran says so in 'See what was checked'. Unit tests for the detection and a composed test with a Python project.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "verification",
+      "sources": [
+        2
+      ],
+      "reason": "Not the owner's choice: decision (1) says the tests always run; how to find the command without false failures is engineering (marker files, 'not run' when the tool is missing). No phaseE.json area owns project-checks.ts, so it goes to the 'verification' area with C-1."
+    },
+    {
+      "id": "C-4",
+      "problem": "'A task that adds behaviour adds tests' is enforced by the specialist's brief and the critic's prompt (a change adding behaviour without a test is a major finding), not by code.",
+      "evidence": "packages/runtime/src/loop/verification.ts exports TESTS_FOR_BEHAVIOUR (the brief's line); the critic's prompt rule; a major finding blocks an accept.",
+      "expected": "As is.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        3
+      ],
+      "reason": "Design choice: deciding what is 'behaviour' needs the model. No person meets a problem; phase F's live walks (C-6) show whether the real critic applies it."
+    },
+    {
+      "id": "C-5",
+      "problem": "live1 #6: an accepted review's findings show as '0 open' and are not followed up.",
+      "evidence": "The critic stores an accept's findings as notes (wontfix); anything medium or above blocks an accept (packages/critic/src/critic.ts applyVerdictRules, :793-806); a failed check or try is closed only by a passing re-run (packages/critic/src/measured.ts resolvedByRerun, fixup d2922ce).",
+      "expected": "As is.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        4
+      ],
+      "reason": "By the critic package's design; the prompt now says a part left undone is major, never a note. No code change; the real critic's behaviour is in the live checks (C-6)."
+    },
+    {
+      "id": "C-6",
+      "problem": "Phase C's fixes were confirmed with the stand-in only: no Claude key and no GitHub token reached the fixers, so nothing was confirmed with the real model or on forerunner-sandbox (the empty-repository and refused-first-commit paths included).",
+      "evidence": "Each fixed item's check_in_the_app LIVE CHECK steps in /tmp/frbench/phaseC-result.json (areas[].fix/fixup.fixed); merge.problems_left[0]: continuity's live check of the '\"X\" could not run' card must now use another refusal (e.g. a plan task naming a specialist the install does not have), since ADR 0107 lets the researcher run on an API key.",
+      "expected": "Phase F walks every LIVE CHECK step with the real model and forerunner-sandbox and reports each as passed or failed.",
+      "severity": "minor",
+      "disposition": "phase-F-check",
+      "area": "",
+      "sources": [
+        5,
+        22,
+        85,
+        100
+      ],
+      "reason": "Needs the real model and real GitHub."
+    },
+    {
+      "id": "C-7",
+      "problem": "Settings showed tier words: Settings -> Sandbox (Docker) said 'Full-review tasks (risk tier 2 and above) ...'; Advanced's calibration and handover seed offered a raw 'Review tier' 0-3.",
+      "evidence": "packages/runtime/src/sandbox/readiness-types.ts:100-101 (SANDBOX_WHY: 'Full-review tasks run their tests and builds in this sandbox ...', no tier); apps/ui/src/pages/SettingsFields.tsx:8-14, :356-359, :400-403 (REVIEW_LEVEL_OPTIONS in words: Light review / Full review / Full review and your sign-off).",
+      "expected": "No tier word on Settings.",
+      "severity": "minor",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        6,
+        7
+      ],
+      "reason": "Fixed by verification's fix-up 05fdaa3 (review blocking 2), merged at 2025069."
+    },
+    {
+      "id": "C-8",
+      "problem": "Tests that wait on real time flake under load: monthly-jobs-wiring settles the calibration run with a 30 s real-time loop that says nothing of what it saw (failed once at load 11-12); the e2e 02-email-task failed once (['ack'] vs ['ack','completion']); repo-create.test.ts 'Create the repository ...' (U-037) failed once in pnpm check. Windows CI is slower.",
+      "evidence": "packages/runtime/test/monthly-jobs-wiring.test.ts:150-153 (600 x 50 ms settle loop, no message) and :71-72 (90 s loop); tests/e2e/scenarios/02-email-task.scenario.test.ts:296; packages/runtime/test/repo-create.test.ts.",
+      "expected": "Each waits on the event or state it needs (as 5b1fb2b / 9140369 did), with a failure message that says what it saw; each passes 5 runs in a row under load.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "bench",
+      "sources": [
+        8,
+        39,
+        81,
+        138
+      ],
+      "reason": "Bench owns load-sensitive tests (fix scope 8). Raw index 39 confirms the 30 s wait; its second half (the 'Members chart ran as coder' note) is a walk-script bug, item C-9."
+    },
+    {
+      "id": "C-9",
+      "problem": "Bench walk: a task made in New task with Who does it = data-analyst ran as coder.",
+      "evidence": "apps/ui/src/pages/project/TasksTab.tsx:314-315: the Tasks tab filter is also labelled 'Who does it', so the walk's page.getByLabel('Who does it') matched the filter, not the New task select (NewTaskDialog.tsx:252). The verification reviewer (raw index 39) found the same.",
+      "expected": "Nothing to change in the app.",
+      "severity": "polish",
+      "disposition": "wrong",
+      "area": "",
+      "sources": [
+        9
+      ],
+      "reason": "A walk-script selector bug, not an app bug."
+    },
+    {
+      "id": "C-10",
+      "problem": "The stand-in critic marks every acceptance criterion met (e.g. 'The page links styles.css: met') whether or not the work does it, so a bench walk's drawer can show a criterion as met that the try's evidence contradicts.",
+      "evidence": "testenv/src/bench/role-player.ts:828-835 (criteria.map(c => ({ ..., met: true, ... })) on every accept).",
+      "expected": "The stand-in marks a criterion that names a file met only when a changed or read file shows it (otherwise 'not met' or 'not checked by the stand-in'), deterministically, documented in scripts/bench/README.md, with a testenv test.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "bench",
+      "sources": [
+        10
+      ],
+      "reason": "Bench headline: the stand-ins tell the truth so phase F can walk with them."
+    },
+    {
+      "id": "C-11",
+      "problem": "verification's notes on its new APIs and test helpers: TaskView.check and TaskDetailView.review.check/evidence, GET /tasks/:id/evidence, ComposeOptions.tryIt and CriticLoopDeps, AcceptingCriticProvider for composed tests, verification.ts exports, measured.ts/tier0.ts exports and the 'Check failed:' / 'Tried ...:' finding prefixes (closed only by a passing re-run), TriedEvidence.pageFiles/causedByTask, the review reading task.files of every session, hasCommand/'npm --version', FULL_REVIEW_SPECIALISTS as a map, composeWithRolePlayer needing PATH.",
+      "evidence": "Present at 193e579, e.g. packages/runtime/src/loop/verification.ts:38-57, packages/critic/src/measured.ts:17, apps/ui/src/lib/task-actions.ts:168-186.",
+      "expected": "Phase E fixers that touch the review path, the drawer's review section or the critic's findings read them first.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        11,
+        12,
+        13,
+        14,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "reason": "API notes for other areas; no person meets a problem."
+    },
+    {
+      "id": "C-12",
+      "problem": "needs-me note: @forerunner/critic quotedWords() no longer starts a quote at a file name's dot, and a critic-sourced questions card now quotes the specialist's report.",
+      "evidence": "packages/critic/src/followup.ts:100-104 (a dot inside a word does not end a sentence).",
+      "expected": "As is.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        15
+      ],
+      "reason": "A note about a change that helps other areas (it also fixed the failed-task line reported in raw index 88; the sibling in couldNotWords is C-50)."
+    },
+    {
+      "id": "C-13",
+      "problem": "A cancelled running task's files were kept and the critic reviewed it (live2 C1); the verification area left the runner reviewing any task in_progress after its run.",
+      "evidence": "packages/runtime/src/session/runner.ts:1663-1669 (a task cancelled between its run and its review is never reviewed; its move is recorded); continuity 60f1510 and fixup f9e4d39; ADR 0105.",
+      "expected": "A cancelled task is never reviewed and its run's work is set aside.",
+      "severity": "major",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        16
+      ],
+      "reason": "Continuity fixed it; merged at 15bcebd."
+    },
+    {
+      "id": "C-14",
+      "problem": "research-web note: a science-evaluator task is reviewed at its registry floor 2 (the full review), a researcher at 1.",
+      "evidence": "packages/runtime/src/loop/critic.ts:330 (reviewTierOf(task.risk_tier, reviewFloorOf(specialist, ...))).",
+      "expected": "As is.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        17
+      ],
+      "reason": "A note on the review level; no person meets a problem."
+    },
+    {
+      "id": "C-15",
+      "problem": "Three phase C areas took ADR number 0104 (and research-web 0107 to avoid it); the merge had to renumber.",
+      "evidence": "docs/decisions/0104-proportional-verification-of-code-tasks.md, 0105-cancel-takes-a-running-tasks-work-out.md, 0106-an-empty-repository-and-where-the-status-update-goes.md, 0107-research-reads-public-web-pages-on-an-api-key.md; merge.conflicts_resolved[0].",
+      "expected": "One ADR number per decision.",
+      "severity": "polish",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        18,
+        56,
+        70,
+        125,
+        139
+      ],
+      "reason": "The merge kept 0104 for verification, renumbered continuity to 0105 and github-result to 0106, and their references."
+    },
+    {
+      "id": "C-16",
+      "problem": "A failing project test or page error that an earlier task left behind blocks every later code task's accept; the person hears of it only when the specialist writes it under 'Questions for the person:' (a page error the task did not cause is a low finding and a line in 'See what was checked').",
+      "evidence": "packages/critic/src/tier0.ts:100-123 (NOT_YOUR_FAILURE asks the specialist to say so); packages/critic/src/critic.ts:752-759 (a try problem not caused by the task is low); packages/runtime/src/loop/critic.ts:957 (causedByTask).",
+      "expected": "With the real model, a task blocked by another task's broken test ends in one questions card that names the failing check, not a ladder of reruns.",
+      "severity": "minor",
+      "disposition": "phase-F-check",
+      "area": "",
+      "sources": [
+        20,
+        38
+      ],
+      "reason": "Depends on the real model writing the question; the stand-in never does. Phase F's walker breaks a test in one task and runs a second code task."
+    },
+    {
+      "id": "C-17",
+      "problem": "The page try launches Chromium on the host with Playwright's default chromiumSandbox: false (--no-sandbox) and opens model-written pages with it at every level, full-review tasks' pages too, while ADR 0101 runs full-review work only in the container.",
+      "evidence": "packages/capabilities/src/browser/try-page.ts:133-137 (chromium.launch({ headless, timeout, executablePath }), no chromiumSandbox, so Playwright adds --no-sandbox; on Windows the probe may pick the person's own Edge or Chrome); ADR 0104 point 4; ADR 0101 ('better to force to use Docker, so that reviews can be comprehensive'); docs/status/handoff/NEXT-SESSION.md:130-141 (owner decisions of 2026-11-01) point (3).",
+      "expected": "Chromium's own sandbox is on wherever it starts (chromiumSandbox: true, falling back to off only where it cannot start, and the evidence says so); full-review work is tried inside the container (with C-1). Unit test of the launch options; the fallback in a test with a launcher that refuses the sandbox.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "verification",
+      "sources": [
+        21,
+        32
+      ],
+      "reason": "Not the owner's choice: where full-review work is tried is answered by decision (3) (its own environment, the Docker sandbox on the owner's PC) and ADR 0101; turning Chromium's sandbox on is hardening with no trade-off for the owner to weigh. Goes with C-1 to the 'verification' area."
+    },
+    {
+      "id": "C-18",
+      "problem": "The phone's Reviews screen shows a 'tier N' badge (a tier word on a person's screen).",
+      "evidence": "apps/ui/src/mobile/screens/ReviewsScreen.tsx:160 (<Badge>tier {review.tier}</Badge>).",
+      "expected": "The review level in words, as the desktop says it.",
+      "severity": "polish",
+      "disposition": "phone",
+      "area": "",
+      "sources": [
+        23
+      ],
+      "reason": "Phone screens are phase H."
+    },
+    {
+      "id": "C-19",
+      "problem": "When a code rule changes the critic's verdict, the summary stays the model's: the drawer read 'The critic sent it back for changes.' and then 'Accepted: 1 changed file match the brief.' A real model that accepted while a check failed would show the same contradiction.",
+      "evidence": "packages/critic/src/critic.ts:709-712 (summary = submitted.summary) and :793-833 (applyVerdictRules may change the verdict; the model's summary is returned unchanged); /tmp/frbench/fixup-verification/steps/27-after-c-04-drawer-clamp.png.",
+      "expected": "When a rule changes the verdict, the shown summary says why first ('Sent back: the check \"test\" failed.'), then what the critic said, so the drawer never reads 'Accepted' under a sent-back review. Tested at GET /tasks/:id and in the drawer.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        24
+      ],
+      "reason": "Still true at 193e579. Words on the drawer; the critic package (verification's core) is open to the area. No phase E area owns critic.ts, so polish (words) takes it."
+    },
+    {
+      "id": "C-20",
+      "problem": "Try-it screenshots under <data>/evidence/<task>/<review>/ are never removed: not on project delete, Redo, Cancel or uninstall (about 30-60 KB each, two per review).",
+      "evidence": "packages/runtime/src/loop/try-it.ts:62-76 (evidenceRootOf, per task) and packages/runtime/src/daemon/compose.ts:2026 (outDir); no code removes the folder.",
+      "expected": "A project's evidence goes when the project is deleted, a task keeps only its latest review's screenshots (Redo and Try again replace them), and docs/user-guide.md says where try-it screenshots are kept. Tested at the boundary: a real-daemon case deletes a project and its evidence folder is gone; GET /tasks/:id/evidence still serves the latest review's files.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "noise",
+      "sources": [
+        25,
+        36
+      ],
+      "reason": "Clutter left by the app; noise's 'folder clutter' fits best."
+    },
+    {
+      "id": "C-21",
+      "problem": "A task waiting on its sign-off (an accepted deploy, migration or tier-3 task) reads 'Needs your decision' on the Tasks tab with the detail 'Its card is in the Inbox: try again, mark it done anyway, or cancel it.' and the buttons Answer / Try again / Cancel, while its card is titled '\"X\" needs your sign-off' and offers Accept the work / Send it back / Cancel task. The row's Try again withdraws the sign-off card and sends accepted work back to run again.",
+      "evidence": "packages/runtime/src/daemon/task-words.ts:159-161 (critic:signoff is the 'retry' kind) and :288-300 ('Needs your decision', detail 'try again, mark it done anyway, or cancel it'); apps/ui/src/lib/task-actions.ts:65-66 (Answer, Try again, Cancel for every retry-kind card); packages/runtime/src/daemon/request-words.ts:206-240 (the card itself: 'Send it back' / 'Accept the work' for reason 'verdict'); packages/critic/src/followup.ts:28, :189; POST /tasks/:id/action try_again withdraws the task's open cards (api-types.ts:2663); docs/design/core-experience.md:40.",
+      "expected": "A task waiting on its sign-off reads 'Needs your sign-off' on the row and in the drawer, its detail names the card's own choices (accept the work, send it back, or cancel it), and the row offers Answer and Cancel only (no Try again that would rerun accepted work). The card is unchanged. Tested at GET /projects/:id/tasks (display) in a real-daemon case and in the Tasks UI test, the fake daemon in the same commit.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        34
+      ],
+      "reason": "Words and buttons on the Tasks tab; pre-existing for tier-3 sign-offs, now met by every deploy and migration (owner decision 4). Minor, not polish: the row's Try again throws away accepted work. task-words.ts display and task-actions.ts are words polish already touches."
+    },
+    {
+      "id": "C-22",
+      "problem": "The retry ladder handed a coding task ('Add clamp in src/clamp.js') to migration-specialist; the row and drawer then name the migration specialist, and no sign-off follows because the plan item's specialist is used.",
+      "evidence": "packages/runtime/src/registry/alternates.ts:15-25 (ranked by the registry descriptions, not the task's words: coder and migration-specialist stand in for each other).",
+      "expected": "See phaseE.json triage #75.",
+      "severity": "minor",
+      "disposition": "duplicate",
+      "area": "",
+      "sources": [
+        35
+      ],
+      "reason": "Same problem as phaseE.json triage #75 (area screens, 'U-044: retry alternates not chosen by task kind'; screens owns registry/alternates.ts ranking by the task's words). It stays there; the screens fixer should check the sign-off follows the specialist that actually ran."
+    },
+    {
+      "id": "C-23",
+      "problem": "The light review's choice still says 'the critic reads the work, nothing runs in isolation', while the project's checks and the page try now run for light reviews too.",
+      "evidence": "apps/ui/src/lib/task-actions.ts:196 (reviewLevelChoices, used by NewTaskDialog.tsx and TaskDrawer.tsx Edit).",
+      "expected": "A one-line meaning that is true now and has no tier or checks words (e.g. 'Light review: the critic reads the work and tries it here; nothing runs in Docker').",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        37
+      ],
+      "reason": "Words on New task and Edit."
+    },
+    {
+      "id": "C-24",
+      "problem": "The stand-in critic's summary 'Accepted: 1 changed file(s) match the brief' shows on the sign-off card ('(s)' on bench screenshots).",
+      "evidence": "testenv/src/bench/role-player.ts:827.",
+      "expected": "See phaseE.json triage #85.",
+      "severity": "polish",
+      "disposition": "duplicate",
+      "area": "",
+      "sources": [
+        40
+      ],
+      "reason": "Same as phaseE.json triage #85 (area bench: the stand-in critic's '(s)' wording). It stays there."
+    },
+    {
+      "id": "C-25",
+      "problem": "Cancel from chat was never walked through the Chat UI (the stand-in chat only runs command tools from a 'tool: <name> {json}' line).",
+      "evidence": "The Yes path (POST /commands/execute task.transition -> personMove -> stopTask) is covered by packages/runtime/test/continuity-cancel.test.ts ('cancelling a task while the critic reviews it').",
+      "expected": "With the real model, 'cancel <title>' in chat while it runs: the read-back, Yes, the run stops and its work is set aside, Undo brings it back.",
+      "severity": "minor",
+      "disposition": "phase-F-check",
+      "area": "",
+      "sources": [
+        41
+      ],
+      "reason": "Needs the real model's chat."
+    },
+    {
+      "id": "C-26",
+      "problem": "live2 #4 and #10 (chat behaviour) not judged with the real model: does the chat find the task from the earlier turn ('make it wait for <other>'), give the project folder when asked, and never name an id?",
+      "evidence": "/tmp/frbench/fix-continuity/steps/chat-recheck-result.json (the chat call now carries the earlier turn, the tasks by title, the project folder and the open card).",
+      "expected": "The LIVE CHECK in raw index 42 passes with the real model.",
+      "severity": "minor",
+      "disposition": "phase-F-check",
+      "area": "",
+      "sources": [
+        42
+      ],
+      "reason": "Needs the real model. The ids still in the model's context are phaseE.json triage #76 (C-31)."
+    },
+    {
+      "id": "C-27",
+      "problem": "A researcher or science-evaluator task on an API key was refused at once (the refusal text named tools and said 'set the task back to ready'), New task offered them with no warning, and a data-only science task was refused because the registry lists cc:WebFetch.",
+      "evidence": "packages/runtime/src/session/executor.ts:698-719 (no web: the task runs with NO_WEB_ACCESS_LINE, no refusal); ADR 0107 (web_fetch on an API key, 68e3ed2); d499b97: GET /settings/models specialists[].limitation shown on the plan card (apps/ui/src/pages/InboxPage.tsx:270-285) and in New task; packages/runtime/src/session/cannot-run-card.ts:44-66 (plainStopReason drops '(cc:...)' and 'set the task back to ready').",
+      "expected": "Research runs on an API key; an install without web says so before.",
+      "severity": "minor",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        43,
+        50
+      ],
+      "reason": "Fixed by research-web (ADR 0107) and continuity's card wording, merged at a6aa87d."
+    },
+    {
+      "id": "C-28",
+      "problem": "Cancelling a task whose pull request is open leaves the PR open on GitHub; the cancel says so ('its pull request stays open').",
+      "evidence": "packages/commands/src/commands/task.ts:263-268 and :342-347; apps/ui/src/lib/task-actions.ts:112-114; ADR 0105 point 4.",
+      "expected": "As decided in ADR 0105 point 4: the PR stays open and the cancel says so.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        44,
+        53
+      ],
+      "reason": "Already decided and true now: docs/decisions/0105-cancel-takes-a-running-tasks-work-out.md:37-38 ('A pull request already opened stays open; the cancel says so. Closing it is the person's call on the host.'), and the command and dialog say so. No fixer or reviewer asked for the owner's word; nothing a person reads is untrue."
+    },
+    {
+      "id": "C-29",
+      "problem": "Every answered Settings confirmation card reads just 'Answered.' in the Inbox's Answered list, whether the change was confirmed or the preview was closed with No, so the person cannot tell which caps changed.",
+      "evidence": "packages/runtime/src/daemon/request-words.ts:760-765 (generic card: answerWords() returns null for a yes/no answer, so the outcome is 'Answered.'), :173-183; bench /tmp/frbench/fix-continuity/steps/f-recheck-result.json capCardsAfterRestart: three cards, one confirmed (cap now CHF 200) and one closed with No, all 'Answered.'.",
+      "expected": "The Answered entry says what happened: 'Changed: the monthly cap is CHF 200.' or 'Not changed: you said no.' Tested at GET /inbox (real daemon) and on the Inbox, the fake daemon in the same commit.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "answers",
+      "sources": [
+        45
+      ],
+      "reason": "Inbox answers are the answers area's; request-words.ts is in its files."
+    },
+    {
+      "id": "C-30",
+      "problem": "Undo of a cancel says 'Undone: reopened the task \"X\"; it is ready again and a session picks it up.' but the undo starts no session (bench b2: 0 running).",
+      "evidence": "packages/commands/src/commands/task.ts:478-480 (undoMoveSentence); the fake daemon's performUndo does not say it (apps/ui/test/fake-daemon.ts:5268-5270), so the two differ.",
+      "expected": "'Undone: reopened the task \"X\"; it is ready again.' (plus what came back), the same in the fake daemon; tested at the command and in the Changes/Tasks UI.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        46,
+        57,
+        71
+      ],
+      "reason": "A promise the code does not keep (design §5 rule 9); predates phase C. Words in commands/task.ts."
+    },
+    {
+      "id": "C-31",
+      "problem": "The chat model's context still carries raw ids for tool use (projects '[id ...]', open requests '01a19b5e:').",
+      "evidence": "packages/runtime/src/conversation/agent.ts:1214 ('[id ${p.id}]') and :451 (row.id.slice(0, 8)).",
+      "expected": "See phaseE.json triage #76.",
+      "severity": "polish",
+      "disposition": "duplicate",
+      "area": "",
+      "sources": [
+        47
+      ],
+      "reason": "Same as phaseE.json triage #76 (area answers: model-facing chat context still carries ids). It stays there."
+    },
+    {
+      "id": "C-32",
+      "problem": "After a session whose only task now waits on a card, the Inbox Update reads 'the session ended without finishing a task.' right under the card it does not name.",
+      "evidence": "packages/runtime/src/session/result.ts:228-234 (sessionUpdateLine's card-only line).",
+      "expected": "One place per fact (design §5.10): either no Update when the card says it all, or an Update that names it ('X waits for your answer above').",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "noise",
+      "sources": [
+        48
+      ],
+      "reason": "Hearing once: the noise area decides whether the card or the session end speaks (its fix scope 2) and does the Inbox Update the same way."
+    },
+    {
+      "id": "C-33",
+      "problem": "Changes a person makes by hand in the project's workspace while a task runs are set aside with that run when it is cancelled (they come back with Undo).",
+      "evidence": "docs/decisions/0105-cancel-takes-a-running-tasks-work-out.md, Consequences; a project linked to the person's own folder sets nothing aside (point 2).",
+      "expected": "As recorded.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        49
+      ],
+      "reason": "A documented design choice of ADR 0105, in the app-managed workspace only."
+    },
+    {
+      "id": "C-34",
+      "problem": "The runner's review-path hunks from continuity (re-read the task before its review; the review's own controller registered with the kill switch) had to survive the merge with verification's review path.",
+      "evidence": "merge.conflicts_resolved[1] (runner.ts review block: continuity's code taken, verification's ADR 0104 comment kept); packages/runtime/src/session/runner.ts:1663-1669; packages/critic/src/critic.ts (an aborted review throws killed).",
+      "expected": "Both kept.",
+      "severity": "polish",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        51,
+        76
+      ],
+      "reason": "The merge kept both; every suite was green at 193e579."
+    },
+    {
+      "id": "C-35",
+      "problem": "continuity's notes on its new APIs: the task:cannot_run and task:budget_stop cards and readers, TaskExecutor.setAside, PrTaskExecutor.setAside/bringBack, GitOps.setAside/bringBack/commitFile/fileAt, CommandPorts.bringBackWork and stopTask returning whether a run stopped, recordMove's 'stopped', reviewBackToReady, taskDisplay's in_review answer key, BenchOptions.criticDelayMs.",
+      "evidence": "Present at 193e579, e.g. packages/runtime/src/session/cannot-run-card.ts:31-33, packages/commands/src/commands/task.ts:337-347, packages/capabilities/src/githost/git.ts:636.",
+      "expected": "Phase E fixers that add a port, a card kind or an app write into a workspace read them first.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        52,
+        54,
+        65,
+        66,
+        67,
+        68,
+        69
+      ],
+      "reason": "API notes; no person meets a problem."
+    },
+    {
+      "id": "C-36",
+      "problem": "A task stopped by the session's own budget goes back to Ready, so a task that alone always exceeds the session budget is run again by every session until the person acts (each run bounded by the session budget and the monthly cap).",
+      "evidence": "packages/runtime/src/session/runner.ts:1945-1959 (budget_exceeded: released to ready, attempt unchanged, no card).",
+      "expected": "The owner's choice, recorded in ADR 0105 or the session-engine doc.",
+      "severity": "minor",
+      "disposition": "owner-decision",
+      "area": "",
+      "sources": [
+        55,
+        75
+      ],
+      "reason": "Behaviour change from continuity the reviewer flagged for the owner. Owner's choice: after the second session-budget stop of the same task, file a card (raise the session budget or the task's, or cancel), or keep re-running it each session as now.",
+      "owner_question": "When one task uses up a session's whole budget, should the second such stop file a card (raise the session's or the task's budget, or cancel it), or should every session keep re-running it as now?"
+    },
+    {
+      "id": "C-37",
+      "problem": "For a project linked to the person's own folder, Cancel of a running task says 'what it changed is removed; Undo brings it back', but nothing is set aside there: the files stay.",
+      "evidence": "packages/commands/src/commands/task.ts:342-347 (work is 'removed' whenever a live run stopped and the task has no PR; the folder kind is not read) and :263-267; apps/ui/src/lib/task-actions.ts:106-115 (cancelWorkLine, the dialog); ADR 0105 point 2.",
+      "expected": "A third wording for a linked folder ('Its run stops now; what it wrote stays in your folder.'), in the command, the Cancel dialog and the fake daemon; tested with a linked-folder project.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        58,
+        79
+      ],
+      "reason": "Untrue sentence (design §5 rule 9); words in commands/task.ts and task-actions.ts."
+    },
+    {
+      "id": "C-38",
+      "problem": "Chat: 'Skip the <title> task' becomes Pause; 'Skip the task \"<title>\"' fails with 'no task matches \"task \"...\"\"'; when the task finished before Yes the reply is the raw 'Not done: task: illegal transition done -> cancelled.'; the read-back 'Cancel \"X\"? It is dropped.' does not say a running task's run stops and its work is removed.",
+      "evidence": "packages/commands/src/intent.ts:806-813 (skip -> task.pause) and :123-131 (taskName strips a trailing 'task' but not a leading 'task \"...\"'); packages/commands/src/commands/task.ts:680-688 (raw 'illegal transition' text) and :230 (read-back); packages/runtime/src/conversation/agent.ts:1122 ('Not done: ...').",
+      "expected": "'skip the task \"X\"' finds X; the read-back says what Yes will do for a running task ('Cancel \"X\"? Its run stops now and what it changed is removed.'); a move the task can no longer make is said in words ('\"X\" is already done; nothing changed.'). Whether 'skip' means pause or cancel follows design §3.9 (say which in the commit). Tested at the chat boundary.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "answers",
+      "sources": [
+        59,
+        72
+      ],
+      "reason": "Chat area work; answers owns intent.ts and the chat's command replies."
+    },
+    {
+      "id": "C-39",
+      "problem": "A session whose only task the person cancelled ends with the result 'CHF 0.00.' and nothing else.",
+      "evidence": "packages/runtime/src/session/result.ts:96-176 (sessionResultLines has no line for a task cancelled during the session); bench session 01a19bdd, /tmp/frbench/fix-continuity/steps/c-after-result.json.",
+      "expected": "The result says what happened: 'You cancelled \"X\"; nothing else ran. CHF 0.00.'",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        60,
+        74
+      ],
+      "reason": "Words of the session result."
+    },
+    {
+      "id": "C-40",
+      "problem": "A task in review with an open card that is not a retry card would still read 'Being reviewed' and its Cancel dialog would promise removal.",
+      "evidence": "packages/runtime/src/daemon/task-words.ts:233-252 (only a retry-kind card changes the in_review display); no such card is filed for a task in review today (review_failed, findings:blocked and signoff are all retry kind).",
+      "expected": "If a new card kind is filed for a task in review, taskDisplay's in_review case takes it.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        61
+      ],
+      "reason": "Hypothetical: no person meets it at 193e579."
+    },
+    {
+      "id": "C-41",
+      "problem": "A review stopped by the session or by a cancel leaves the critic's run in the drawer as 'Review by the critic · Stopped' with no verdict and no word of what that means.",
+      "evidence": "apps/ui/src/pages/project/TaskDrawer.tsx:234 and packages/runtime/src/daemon/task-display.ts:168.",
+      "expected": "The row says it plainly, e.g. 'Review stopped before a verdict (you stopped the session)', with what it spent.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "screens",
+      "sources": [
+        62
+      ],
+      "reason": "The drawer's runs section is the screens area's."
+    },
+    {
+      "id": "C-42",
+      "problem": "After the person's Stop, the session log has two stop lines in a row: 'Stopped by you during \"X\". It is ready again.' then 'Stopped by you: nothing done. CHF 0.00.'",
+      "evidence": "packages/runtime/src/daemon/event-lines.ts:257-262 (session.ended: '<status>: <counts or nothing done>. <CHF>.' after the stop's own line).",
+      "expected": "One line for the person's own stop: the session end after it says only what it adds (the money), or nothing.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "noise",
+      "sources": [
+        63
+      ],
+      "reason": "An echo of the person's own stop (noise: 'none for your own stop')."
+    },
+    {
+      "id": "C-43",
+      "problem": "The answers commit in a workspace is authored 'Forerunner <forerunner@localhost>', while the executor's baselines use the person's git identity.",
+      "evidence": "packages/runtime/src/session/person-questions.ts:579 (WORKSPACE_GIT_IDENTITY).",
+      "expected": "As is.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        64
+      ],
+      "reason": "Cosmetic, inside the app-managed workspace's own git; no screen shows it."
+    },
+    {
+      "id": "C-44",
+      "problem": "The fake daemon's undo did not append 'What it changed is back in the folder.' as the real executor does.",
+      "evidence": "apps/ui/test/fake-daemon.ts:5272-5273 (if (after.set_aside) sentence += ' What it changed is back in the folder.').",
+      "expected": "The fake says what the daemon says.",
+      "severity": "polish",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        73
+      ],
+      "reason": "Fixed in continuity's fix-up. The remaining undo wording difference ('a session picks it up') is C-30."
+    },
+    {
+      "id": "C-45",
+      "problem": "Start dialog: with nothing fitting the budget, each left-out task gets its own 'needs about ..., more than this session's work budget ...' line saying the same thing; and 'the tasks that run first take about Z' adds up every runnable estimate, including tasks that run after the one left out.",
+      "evidence": "apps/ui/src/pages/project/StartSessionDialog.tsx:131-153 (one line per check.overBudget; first = sum of all check.runnable).",
+      "expected": "One line for all tasks larger than the work budget ('X and Y each need more than this session's work budget of CHF 0.16'); 'run first' sums only the tasks ordered before the one left out. Tested in the Start dialog UI test.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        77
+      ],
+      "reason": "The same dialog as phaseE.json triage #48 and #69 (polish), but a different defect (repetition and the sum), so its own item; fix together."
+    },
+    {
+      "id": "C-46",
+      "problem": "A cancelled task's stored reason contains '(request <id>)'.",
+      "evidence": "packages/runtime/src/session/budget-card.ts:205 and cannot-run-card.ts:201; no screen shows a cancelled task's reason (task-words.ts), the chat context reads reasons only for failed and needs_human tasks (conversation/project-facts.ts:53), and withoutIds/plainReason strip '(request ...)' (packages/runtime/src/daemon/task-words.ts:95-105).",
+      "expected": "As is.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        78
+      ],
+      "reason": "Internal text; every reader strips the id."
+    },
+    {
+      "id": "C-47",
+      "problem": "On the bench, New task with Budget CHF 0.01 does not stop the stand-in (its run costs about CHF 0.01).",
+      "evidence": "Stand-in cost model; continuity's budget stop (db4e7be) is tested with scripted costs.",
+      "expected": "With the real model a task with a tiny budget stops at it with the budget card.",
+      "severity": "polish",
+      "disposition": "phase-F-check",
+      "area": "",
+      "sources": [
+        80
+      ],
+      "reason": "Needs the real model's costs."
+    },
+    {
+      "id": "C-48",
+      "problem": "github-result design choices: no Merge action in the app (merging stays level 3 Trusted, ADR 0062), no Inbox card or Update per waiting PR (the Overview is the one place), no PR/branch on the Changes page (it lists the person's own changes), no desktop shell change needed.",
+      "evidence": "Design §3.4, §3.8, §3.10, §5.10, §5.11; the Overview's 'Waiting for you to merge' (apps/ui/src/pages/project/SummaryTab.tsx).",
+      "expected": "As designed.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        82,
+        83,
+        84,
+        86
+      ],
+      "reason": "Not-done items with design reasons; no person meets a problem."
+    },
+    {
+      "id": "C-49",
+      "problem": "Repository projects: every task branches from origin/<default>, so a task that depends on a done task whose PR is not merged yet does not see that work (five sibling branches off main on the bench); with the real model the coder recreates files and a checker checks nothing.",
+      "evidence": "packages/capabilities/src/githost/pr-executor.ts:213-215 (createBranch from origin/<base>) and :238, :253 (rebase and changed files against origin/<base>); the critic's diff is origin/HEAD...HEAD (packages/runtime/src/loop/critic.ts).",
+      "expected": "The owner's choice, then an area builds it with the critic's diff on the same base.",
+      "severity": "major",
+      "disposition": "owner-decision",
+      "area": "",
+      "sources": [
+        87,
+        116
+      ],
+      "reason": "Owner's choice: stacked PRs (a dependent task's branch and PR base on its dependency's branch), or merge the dependencies' unmerged branches into the task's branch (the critic's diff then needs the same base), or hold a dependent task until its dependency's PR is merged.",
+      "owner_question": "In a repository project, a task whose dependency's pull request is not merged yet: base its branch and PR on the dependency's branch (stacked PRs), merge the dependencies' unmerged branches into its branch, or hold it until the dependency's PR is merged?"
+    },
+    {
+      "id": "C-50",
+      "problem": "A run's reason is still cut at a dot inside a file name in one place: the 'could not do' line ('I could not complete this task. The file index.html cannot be created ...' becomes 'html cannot be created from it').",
+      "evidence": "packages/runtime/src/daemon/event-lines.ts:100 (couldNotWords splits sentences with /[^.!?]+[.!?]+(?=\\s|$)|[^.!?]+$/, so 'index.' starts a new match); probe at 193e579: couldNotWords('I could not complete this task. The file index.html cannot be created from it.') -> 'html cannot be created from it'. The failed-task line itself is fixed: quotedWords (packages/critic/src/followup.ts:100-104) keeps 'index.html' whole.",
+      "expected": "couldNotWords uses the same sentence rule as quotedWords (a dot before a non-space does not end a sentence); a unit test with 'index.html' and 'data/members.csv'.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        88
+      ],
+      "reason": "The reported failed-task line was fixed by verification's quotedWords change; the sibling in couldNotWords is still true. Words in the session log."
+    },
+    {
+      "id": "C-51",
+      "problem": "merge.ts writes the internal 'PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)' as the merge's reason; a screen that showed a done task's reason would show it raw.",
+      "evidence": "packages/runtime/src/loop/merge.ts:437-440; no screen renders a done task's reason (packages/runtime/src/daemon/task-words.ts:212-215; TaskDrawer.tsx and TasksTab.tsx never render task.reason); event-lines.ts:393 strips the prefix; daemon/pull-requests.ts:62-72 reads who reviewed from the review row and ACCEPTED_AT_SIGNOFF / ACCEPTED_WITHOUT_REVIEW, not the merge's words.",
+      "expected": "As is; any new screen reads ProjectPullRequestView.review.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        89,
+        103
+      ],
+      "reason": "Internal text no person reads at 193e579; raw index 103 is the matching API note."
+    },
+    {
+      "id": "C-52",
+      "problem": "github-result's notes on its APIs: ProjectCard.repository, GET /projects/:id/pull-requests, DocView.pullRequest, STATUS_BRANCH and ProjectDocs.docsInPullRequests, the folder session's work committed at session end, gitConstraints in the brief, ensureBaseBranch/remoteBranches/changedFiles/pushFailedWords/firstPushFailedWords, scrubGitConfigEnv, task.files carrying prUrl and branch, the intake paragraph on where files live, the bench's --githost, ACCEPTED_AT_SIGNOFF, the result's PR sentence.",
+      "evidence": "Present at 193e579, e.g. packages/runtime/src/daemon/pull-requests.ts, packages/capabilities/src/githost/push-words.ts. The folder-commit note (raw 92) is met: the review reads the task.files events of every session it ran in (raw 28), not only git diff HEAD.",
+      "expected": "Phase E fixers that touch git flows, the Overview or the brief read them first.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        104,
+        105,
+        106,
+        107
+      ],
+      "reason": "API notes; no person meets a problem."
+    },
+    {
+      "id": "C-53",
+      "problem": "The Files tab of a repository project says 'This computer's copy of <repo> as merged.', but the copy is stale between a merge on GitHub and the next session (a merged file was missing until a session refreshed the clone).",
+      "evidence": "apps/ui/src/pages/project/FilesTab.tsx:51-60.",
+      "expected": "Either the clone is fetched and reset when Files opens, or the line says 'as of the last session' and offers a refresh. Tested in the Files UI test and the fake daemon.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        99,
+        108
+      ],
+      "reason": "Raw index 99 is github-result's fix-up list of the reviewer's seven non-blocking items; each has its own item here (C-53 Files tab, C-56 'GitHub did not answer', C-57 status PR, C-58 status sentence, C-59 branch id, C-60 repository offer card, C-61 git in the runner image). Listed with the first."
+    },
+    {
+      "id": "C-54",
+      "problem": "The Overview's Last result keeps the session-time sentence after the person acts: after Mark done anyway it still read '\"Write the README ...\" needs your decision (Inbox).' while the header said 'Done: all 5 tasks.', and the Inbox has no such card.",
+      "evidence": "apps/ui/src/pages/project/SummaryTab.tsx:143-146 (renders data.lastSession.summary as stored); /tmp/frbench/fixup-github-result/steps/10-a2-after-mark-done-overview.png.",
+      "expected": "Last result is true now (design §5.4): a 'needs your decision (Inbox)' sentence whose card is closed is dropped or says what happened, or the block reads as the record ('When the session ended: ...'). Real-daemon case and UI test.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "screens",
+      "sources": [
+        101
+      ],
+      "reason": "A pointer that leads to an Inbox with no card; screens is the area for screens that lead nowhere."
+    },
+    {
+      "id": "C-55",
+      "problem": "A data import into an empty repository fails with git's own text: the migration branch is made from origin/<default> without ensureBaseBranch.",
+      "evidence": "packages/runtime/src/data/import.ts:601 (git.createBranch(branch, `origin/${defaultBranch}`), no ensureBaseBranch).",
+      "expected": "import.ts uses ensureBaseBranch and firstPushFailedWords as the PR executor does; a test with an empty bare repository.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        102,
+        115
+      ],
+      "reason": "Sibling of github-result's fix outside its journeys. No phase E area owns import.ts; the person meets it as raw words, so polish."
+    },
+    {
+      "id": "C-56",
+      "problem": "The Overview's pull-request block says 'GitHub did not answer, so the pull requests are not listed (<error text>). Try again later.' with the error text in parentheses, and says the same when no GitHub token is saved, where GitHub was never asked.",
+      "evidence": "packages/runtime/src/daemon/pull-requests.ts:91-96 (one catch for every error).",
+      "expected": "No error text on the screen; a missing or refused token says so with Connect GitHub; only a host that did not answer says 'did not answer'. Real-daemon or runtime test for both.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        109
+      ],
+      "reason": "Design §5.8; words on the Overview."
+    },
+    {
+      "id": "C-57",
+      "problem": "Every session on a repository project leaves a status PR for the person to merge, even for a one-task project.",
+      "evidence": "ADR 0106 (docs/decisions/0106-an-empty-repository-and-where-the-status-update-goes.md); STATUS_BRANCH 'fr/status'.",
+      "expected": "The owner's choice, in ADR 0106.",
+      "severity": "polish",
+      "disposition": "owner-decision",
+      "area": "",
+      "sources": [
+        110
+      ],
+      "reason": "Owner's choice: keep one status PR per repository session, or keep docs/status.md off GitHub (shown in the app) until the person asks.",
+      "owner_question": "On a repository project, should each session's status update go to GitHub as a status pull request as now, or stay in the app until you ask for it on GitHub?"
+    },
+    {
+      "id": "C-58",
+      "problem": "A repository project's status sentence is just 'Done: all N tasks.' with no pointer to where the work is (design §2 rule 6 has 'Your files: <path>').",
+      "evidence": "packages/runtime/src/daemon/project-status.ts:236 (the folder part only when input.folder is set; a repository project's card has folder null).",
+      "expected": "The done line points to the work for a repository too, e.g. 'Done: all 6 tasks. 6 pull requests wait for you to merge.' with the Overview link; decided with phaseE.json triage #53 (the folder path out of the sentence).",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        111
+      ],
+      "reason": "polish owns the done line of project-status.ts; fix with triage #53/#54."
+    },
+    {
+      "id": "C-59",
+      "problem": "The session page names a task's branch with its 8-character task-id prefix ('branch fr/01a19c00-create-...').",
+      "evidence": "packages/runtime/src/daemon/event-lines.ts:433 and :481 ('on the branch ${branch}').",
+      "expected": "No id on a person's screen (design §5.3): the PR number and title only, or the branch without the id prefix.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        112
+      ],
+      "reason": "Words of the session log."
+    },
+    {
+      "id": "C-60",
+      "problem": "A finished folder project reads 'Waiting for you: 1 question' on Home because of the 'Create a repository?' offer card; the card also says '... with no branch, pull request or review on GitHub', and design §3.8 does not list this card type.",
+      "evidence": "packages/runtime/src/daemon/project-status.ts:153-162 (every open card but Docker counts, via holdsTask in task-words.ts:171-176); packages/runtime/src/loop/repo-create.ts:340-351 (an approval card, blocking: false).",
+      "expected": "A non-blocking offer never makes a project read 'Waiting for you'; its words say only what is true. Real-daemon case for the status line.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        113
+      ],
+      "reason": "polish owns the waiting line of project-status.ts."
+    },
+    {
+      "id": "C-61",
+      "problem": "The brief promises git's read commands work in the folder; whether the Docker runner image (forerunner-runner) has git was never checked.",
+      "evidence": "services/cloud-runner/Dockerfile:7-11 (apt-get install ... git ...; git config --system safe.directory '*'); .github/workflows/ci.yml builds the sandbox image forerunner-runner:local and :ci from that file; release.yml publishes it as ghcr.io/<owner>/forerunner-runner; the PR executor's task folders are full clones (pr-executor.ts:182), so .git is inside the /work mount.",
+      "expected": "Nothing to change; F2's Linux Docker run (a full-review task in the real sandbox) exercises it.",
+      "severity": "minor",
+      "disposition": "wrong",
+      "area": "",
+      "sources": [
+        114
+      ],
+      "reason": "The doubt is answered by the code: the image is built in this repository, not elsewhere, and it installs git and trusts every directory."
+    },
+    {
+      "id": "C-62",
+      "problem": "The real-daemon case for the Overview's waiting pull requests inserts the done task into the store instead of running a session.",
+      "evidence": "apps/ui/test/real-daemon.test.ts (github-result's repository describe block).",
+      "expected": "A real-daemon case that runs a session on the fake git host (start.mjs --githost) and then reads GET /projects/:id/pull-requests.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "bench",
+      "sources": [
+        117
+      ],
+      "reason": "Bench owns the missing real-daemon cases."
+    },
+    {
+      "id": "C-63",
+      "problem": "There is no web search on an API key: the researcher reads only pages the brief or the plan names.",
+      "evidence": "packages/capabilities has no search capability; ADR 0107 records it; packages/runtime/src/session/executor.ts:720-728 (NO_WEB_SEARCH_LINE); the owner's decision: 'web access on the API-key path through Forerunner's own fetch/search capability, within the network rules' (docs/status/handoff/NEXT-SESSION.md:142-143).",
+      "expected": "The owner's answer recorded in ADR 0107; if a search service is chosen, a 'web_search' capability behind the same network rules as web_fetch.",
+      "severity": "minor",
+      "disposition": "owner-decision",
+      "area": "",
+      "sources": [
+        118
+      ],
+      "reason": "Partly answered: the owner asked for Forerunner's own search within the network rules, so Anthropic's server-side search (outside the runtime's hooks) is not an option to offer. What remains is the owner's: a search service needs its own account, key and cost.",
+      "owner_question": "Web search on an API key (you asked for Forerunner's own, within its network rules) needs a search service with its own key and cost: add one now (you pick the service and create its key), or keep page reading only (pages the brief or plan names) for this round?"
+    },
+    {
+      "id": "C-64",
+      "problem": "On a Claude subscription, research reads no page: the hooks deny every WebFetch because the researcher's and science-evaluator's allowed_domains are empty (only WebSearch works). Until the person chooses an order, tasks use the subscription first, so an install with both a subscription and an API key sends research to this path.",
+      "evidence": "packages/runtime/src/agent/cc-tools.ts:77-82 (WebFetch domainFields ['url']); evals/registry/specialists/researcher/specialist.md:15 and science-evaluator/specialist.md:15 (allowed_domains: []); packages/runtime/test/security-sdk.test.ts asserts the denial; packages/runtime/src/daemon/billing-order-types.ts:48-52 and docs/user-guide.md:486-487 ('Until you choose an order, tasks use the subscription first').",
+      "expected": "The owner's choice; the user guide then says what is true (C-71).",
+      "severity": "minor",
+      "disposition": "owner-decision",
+      "area": "",
+      "sources": [
+        119,
+        121
+      ],
+      "reason": "The owner's research decision names the API-key path only, and opening the SDK path's WebFetch is a security change, so it is the owner's. The earlier reason ('API key billing first makes the API-key path the one used') does not hold by default: with both credentials saved and no order chosen, tasks go to the subscription first.",
+      "owner_question": "On a Claude subscription the researcher reads no web page (search only), and tasks use the subscription first until you choose an order: let the subscription's WebFetch read public pages under the same rules as on the API key, send research tasks to the API key whenever one is saved, or keep the subscription search-only and say so?"
+    },
+    {
+      "id": "C-65",
+      "problem": "The page reader ignores proxy variables and does not restrict ports on public hosts.",
+      "evidence": "ADR 0107 records both as known gaps.",
+      "expected": "As recorded.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        120
+      ],
+      "reason": "Recorded design limits; the owner's PC has no mandatory proxy known."
+    },
+    {
+      "id": "C-66",
+      "problem": "No screen sets a project's site list or block list for the page reader and browser (settings.browser), and no view carries a project's version, so PUT /projects/:id/settings can only be called after a 409 conflict reveals it.",
+      "evidence": "packages/runtime/src/daemon/server.ts:928 (GET /projects/:id: the project card, no version) and :1723-1747 (PUT needs body.version); apps/ui/src/api/client.ts:661, :1101 (updateProjectSettings exists; no screen calls it).",
+      "expected": "The owner's choice; if yes, a project setting with a version-carrying view and a UI test.",
+      "severity": "polish",
+      "disposition": "owner-decision",
+      "area": "",
+      "sources": [
+        122,
+        136
+      ],
+      "reason": "A new control, not a fix. Owner's choice: add the site list and block list to the project page this round (with the version in the project view), or leave them API-only.",
+      "owner_question": "Should the project page get a site list and a block list for web reading this round (with the project's version in its view), or stay API-only?"
+    },
+    {
+      "id": "C-67",
+      "problem": "Other executor refusals (task budget spent, unknown specialist, retry ladder with no stand-in) ended as needs_human with no Inbox card.",
+      "evidence": "packages/runtime/src/session/runner.ts:1854-1895 (every needs_human without a card of its own gets a task:cannot_run card, or the budget card); merge integration fix 22b5a85 tests exactly the unknown-specialist refusal (one card, Try again / Cancel task, survives a restart).",
+      "expected": "One card per waiting task.",
+      "severity": "major",
+      "disposition": "fixed",
+      "area": "",
+      "sources": [
+        123
+      ],
+      "reason": "research-web reported it against a base without continuity's card; continuity's could-not-run card covers it at 193e579."
+    },
+    {
+      "id": "C-68",
+      "problem": "The plan card does not flag a task naming a specialist this install does not have (an invented name); the run then waits with 'No specialist is named X' and a could-not-run card.",
+      "evidence": "apps/ui/src/pages/InboxPage.tsx:269-285 (cannotRunHere: a name the list does not have says nothing); the intake canonicalises aliases only when it writes the plan (packages/runtime/src/registry/specialist-names.ts); packages/runtime/src/session/executor.ts:520.",
+      "expected": "The plan card marks such a task in words that are true ('No specialist here is named \"illustrator\": this task will wait for you; change who does it after you approve'), with the daemon giving each plan task its canonical specialist or unknown (no guessing in the UI); or the intake replaces an unknown name before the plan reaches the person. Nothing promises an alternate: executor.ts:514-522 sends an unknown name straight to the person. Tested on the Inbox plan card and a real-daemon case.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "answers",
+      "sources": [
+        124
+      ],
+      "reason": "The plan card is the start of the answers area's journeys (Inbox, start)."
+    },
+    {
+      "id": "C-69",
+      "problem": "research-web's notes on its APIs: webSourceEvidence in the critic's evidence, TaskExecutionResult.webSources and the web_fetch step line, the executor's web routing and NO_WEB_ACCESS_LINE/NO_WEB_SEARCH_LINE, the intake's NO_WEB_RULE and webSpecialists, specialists[].limitation and RuntimeApp.webAccess(), the bench's stand-in researcher and site list.",
+      "evidence": "Present at 193e579, e.g. packages/runtime/src/session/executor.ts:137, :698-719; packages/runtime/src/loop/critic.ts imports webSourceEvidence.",
+      "expected": "Phase E fixers that rebuild the critic's evidence or the executor's routing keep them.",
+      "severity": "polish",
+      "disposition": "info",
+      "area": "",
+      "sources": [
+        126,
+        127,
+        128,
+        129,
+        130,
+        131
+      ],
+      "reason": "API notes; no person meets a problem."
+    },
+    {
+      "id": "C-70",
+      "problem": "Block list bypass with a trailing dot: http://example.com./ is read although example.com is on the project's block list (the site list has the mirror-image quirk).",
+      "evidence": "packages/capabilities/src/web/policy.ts:112-115 (hostOfUrl lowercases and strips IPv6 brackets only; no trailing-dot normalisation before domainCovered). Private and loopback addresses are still refused by the resolved-address check (packages/capabilities/src/web/fetch.ts:28-30, :129-140).",
+      "expected": "hostOfUrl strips one trailing '.'; unit tests for the block list and the site list with 'example.com.'.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        132
+      ],
+      "reason": "Low impact today (no screen sets a block list) but a one-line fix with a test; no phase E area owns web_fetch, so the batched small fixes (polish) take it."
+    },
+    {
+      "id": "C-71",
+      "problem": "docs/user-guide.md says that on a Claude subscription 'the researcher uses Claude Code's own web tools instead', but on a subscription every WebFetch is refused and only search works.",
+      "evidence": "docs/user-guide.md:516-518; C-64 (cc-tools.ts:77-82, empty allowed_domains).",
+      "expected": "The guide states the gap as it is (writing rule 9) until the owner decides C-64.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "polish",
+      "sources": [
+        133
+      ],
+      "reason": "polish owns docs/user-guide.md."
+    },
+    {
+      "id": "C-72",
+      "problem": "The task drawer does not show which web pages a run read or which were refused (the run's webSources are not rendered), and a run's report is cut after 6 lines, so its 'Sources read' section never shows.",
+      "evidence": "packages/runtime/src/daemon/task-display.ts:234-245 (reportText keeps 6 lines); apps/ui/src/pages/project/TaskDrawer.tsx:226-241 (no webSources); design §3.5 lists 'what it read' for runs.",
+      "expected": "Each research run in the drawer lists the pages it read (address) and those refused, in words. Tested in the drawer UI test and a real-daemon case.",
+      "severity": "minor",
+      "disposition": "area",
+      "area": "screens",
+      "sources": [
+        134
+      ],
+      "reason": "The drawer's runs section is the screens area's (with triage #46)."
+    },
+    {
+      "id": "C-73",
+      "problem": "The plan card's 'Cannot read the web on this computer' chip cannot be walked on the bench: the stand-in intake never plans a research task.",
+      "evidence": "testenv/src/bench/role-player.ts:136 and testenv/src/bench/plans.ts:28 (FORERUNNER_BENCH_PLAN is only 'chain' or the default).",
+      "expected": "A FORERUNNER_BENCH_PLAN option that adds a research task, documented in scripts/bench/README.md, so phase F can walk the chip and the research path.",
+      "severity": "polish",
+      "disposition": "area",
+      "area": "bench",
+      "sources": [
+        135
+      ],
+      "reason": "Bench owns the stand-in plans."
+    },
+    {
+      "id": "C-74",
+      "problem": "With the stand-in critic, a research task whose only page was refused ends Done and accepted; the real critic is shown 'web page not read: ... (Refused ...)' and should send such work back or say so.",
+      "evidence": "packages/runtime/src/loop/critic.ts (webSourceEvidence adds 'web page not read' to the evidence); the stand-in accepts everything (role-player.ts:822-835).",
+      "expected": "With the real model, a research task with no page read is sent back or says plainly what could not be checked.",
+      "severity": "minor",
+      "disposition": "phase-F-check",
+      "area": "",
+      "sources": [
+        137
+      ],
+      "reason": "Needs the real critic."
+    }
+  ]
+}

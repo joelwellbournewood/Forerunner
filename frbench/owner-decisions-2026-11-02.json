@@ -1,0 +1,17 @@
+{
+ "_about": "Owner's answers of 2026-11-02 (chat), to build in wave 7. Research behind them: /tmp/frbench/owner-answers.md and the run wf_d713a294-de2.",
+ "merging": "GitHub projects: default 'you press Merge' with a one-click Merge in the app (dependency order, merge commits only, the safe merge step); per-project option 'merge automatically after review'; 'Take this work out' (revert PR naming later tasks that built on it). Each task's agent keeps committing on its own branch.",
+ "autopilot_repo": "Autopilot asks before creating a repository (no silent creation).",
+ "local_copy": "The PC's copy of a repository project refreshes after every merge (in the app or on GitHub), so Files/Open folder show the merged work.",
+ "local_only_folder": "A 'Local only' folder inside a repository project: never uploaded, agents can use it.",
+ "pr_preview": "'Open this version' on a waiting PR: its files on the PC to try before merging.",
+ "own_folder": "No (do not link the person's own working folder).",
+ "credentials": "Q2 yes: the person's order decides; another credential only when the first cannot do the task properly (plan card says why); refused-key detection and one card; wait at a limit with the reset time and start by itself; honest words.",
+ "budgets": "Q3 yes: 80/20 wrap-up per run, paused outcome (no review, no failed try), code-side save with 'where I stopped / left to do', resume from it, card naming the real limit with 'Continue (CHF N more)' starting the next session at once, cancel sets work aside and names stuck dependents, subscription stop really stops Claude Code, better estimates and caching.",
+ "web_search": "Q5 yes: Anthropic web search on the API key (capped per task), Forerunner's page reader on both credentials, sourced only after the page was opened, information wrapper on the subscription path too.",
+ "sites": "Q6 fix it: any public website by default; per-project 'only these' or 'never these' lists, same on both credentials; never this PC or the home network; fix the inverted list, subdomains, silent drops, localhost hole; a settings row and a project-page line.",
+ "ctrl_click": "Q7 yes: Ctrl/Shift-click on the app's own links acts like a normal click.",
+ "status": "GitHub issue page only: one pinned issue per project ('Forerunner status: <project>', hidden marker), summary rewritten after each session, 'Working on now' updated when a task starts and ends, each person/agent/install its own comment edited in place, read when a repository is connected (new or familiar), before planning and before every task, untrusted text never instructions, author marked, no costs; stays in the app with one sentence when issues are off / no permission / offline. No docs/status.md in repositories (remove the untrue template).",
+ "repo_guide": "Every repository gets a standard guide for agents and people by default (with the docs scaffold), kept current by Forerunner: design from the collab audit (wf_841cec48-831, /tmp/frbench/collab/).",
+ "collab": "The collaboration module (two people, two agents, shared state service; requirements F, S.10) gets audited, fixed and tested (audit wf_841cec48-831), and works with the status issue across stores."
+}

@@ -1,0 +1,2107 @@
+{
+ "_about": "Phase E waves 5 (answers, screens, noise, bench) and 6 (stops, asking, decisions, verification) merged at c8c16fb (reports /tmp/frbench/wave5-result.json and /tmp/frbench/wave6-result.json). Items with ids W5-n / W6-n are their leftovers, triaged in /tmp/frbench/wave56-leftovers-triage.json (all 140 items; sources are indexes into /tmp/frbench/wave56-leftovers-raw.json, evidence is at c8c16fb). The ones copied here are the 'area' items: wave 7 keys polish, credential-chooser, budget-resume, merged-copy, dependent-branches and sites; wave 8 keys collab-bench, collab-claims, collab-privacy-service and repo-guide (areas of /tmp/frbench/collab/collab-areas.json); and 'ci-precondition' (W6-1, CI red on c8c16fb), which is no area: the session lead fixes it now, before any group-1 branch (merge-record, budget-stop, polish-desktop) merges. Group 1 got no item. Each item is the area's to fix with a test at the boundary the person uses, or to report in not_done with a reason; check first that it is still true (an area merged before it may have changed the code). Live checks are in /tmp/frbench/phaseE7-live-extra.md, owner questions in /tmp/frbench/owner-questions-wave56.md; fixed, info, duplicate and phone items are in the triage file only.\n\nPhase C's live check with the real model (2026-11-02, USD 3.01, report /tmp/frbench/phaseC-live-result.json and /tmp/frbench/live-reports/phaseC-*.md) added items with ids L-n: new areas stops, asking and cost; and items in verification, decisions and polish. Each was seen with the real model; reproduce it on the bench (stand-in, failure knobs) or in a composed test before fixing. Phase C (verification, continuity, github-result, research-web) merged at 193e579 (report /tmp/frbench/phaseC-result.json, triage of its 140 leftovers /tmp/frbench/phaseC-leftovers-triage.json). The keys answers, screens, noise, bench and polish hold phase C leftovers for phase E: each item (id C-n, with problem, evidence at 193e579, expected, severity, sources) is the area's to fix with a test at the boundary the person uses, or to report in not_done with a reason; check first that it is still true. Owner decisions, phase F checks, phone items, duplicates of phaseE.json triage and fixed items are in the triage file only. Corrections of the triage's review (2026-11-02): C-1, C-3 and C-17 are not owner questions (the owner's verification decisions (1) and (3) already answer them) and no phaseE.json area owns the review path, so they are under a new key 'verification': phaseE.json has no such area yet, so the session lead adds a sixth phase E area for it (it owns packages/runtime/src/loop/try-it.ts, loop/project-checks.ts, packages/capabilities/src/browser/ and the review's sandbox lease; it shares no file with noise or bench, so it can run in their group) or these three stay undone. The owner questions that remain carry an 'owner_question' line in the triage file. Phase C's core files named in an item's evidence (runner.ts review path, the critic loop and package, pr-executor, web_fetch) are open to the area the item is assigned to.\n\nItems wave 1 (session-engine, tasks-screen; merged into the branch at f36511e) left for later areas, plus problems the wave-1 reviewers and merge agent saw. Full wave-1 report: /tmp/frbench/wave1.json (areas[].fix/review/fixup: fixed, not_done, new_problems, notes_for_other_areas, review non_blocking; merge.problems_left). session-engine and tasks-screen are finished, so the files they owned (runner.ts, compose.ts, server.ts sessions/commands sections, api-types.ts, task.ts commands, client.ts, fake-daemon.ts, real-daemon.test.ts) are open to the area an item is assigned to here: make the smallest change that does the item, keep their tests green. Each item is yours to fix, or to report in not_done with a reason.\n\nWave 2 (needs-me, chat; merged and pushed at 3455a24) added the items marked 'wave 2' below. Full wave-2 report: /tmp/frbench/wave2.json (areas[].fix/review/fixup and merge.problems_left; notes_for_other_areas there describe the new APIs: HumanRequestView title/body/choices/outcome from packages/runtime/src/daemon/request-words.ts, InboxView.needsYouCount, session/resume-work.ts resumeWork(), task-words.ts holdsTask(card), @forerunner/critic triedTimes(), conversation/card-fate.ts cardFate(), daemon/start-blocked.ts startBlocked(), the shared Conversation.tsx used by the Chat tab and Talk, GET /projects/:id/conversation). needs-me and chat are finished too, so their files (request-words.ts, InboxPage, intake.ts, conversation/*, commands executor) may be edited for an item below, with a test, keeping their behaviour.\n\nPhase C (plan in docs/status/handoff/NEXT-SESSION.md) items are under 'phase-C'; phase E (sweep) items under 'later'. Live reports: /tmp/frbench/live1-report.md, /tmp/frbench/live2-report.md (part 3 is on current code).",
+ "needs-me": [
+  "Echoes: every person's command sentence is still posted as an Inbox message by packages/commands/src/executor.ts ('Stopped \"X\": its run ended\u2026', 'Added \"X\" to P.', 'Switched the active project to Quote page. Undo.', the chat's 'Stopped your agent's running sessions (1 run, 0 processes).'). Design \u00a75.11: Updates never echo the person's own clicks or commands. Stop posting them to the Inbox (the Changes page and the chat reply still show them); coordinate with chat (same wave) by owning executor.ts's Inbox posting yourself.",
+  "The critic's retry card (kind 'approval', change_card reason 'retry_ladder_exhausted', packages/runtime/src/loop/critic.ts ~418) makes its task read 'Needs your answer' and offers 'Go ahead without' (explained as 'the specialist decides'), which queues a 'without answering the questions' note. Redesign it per design (Try again / Mark done anyway / Cancel task), give TaskDisplay.blocker the card kind so the Tasks tab offers Try again for it, and word its text without 'Retry ladder exhausted \u2026 attempt(s)'. The card for a task made ready and done must close (reviewer saw 'Retry ladder exhausted' for Quote page stay open after the task was done).",
+  "'Mark done anyway' (Inbox card only, ADR 0102 decision 2) writes a reason containing 'accepted without review' so the task display reads 'Done: accepted without review'.",
+  "A person task ('Me: ask me in the Inbox', specialist 'person') must offer only Answer and Cancel, never 'Go ahead without' (no specialist exists).",
+  "Withdrawn cards: a person's task move withdraws its open cards (status withdrawn). An Inbox Answered/history list can show them as 'withdrawn: you moved the task', and after Undo the card comes back open (HumanRequestRepo.reopenWithdrawn).",
+  "POST /changes/:id/undo (server.ts) emits no 'inbox' event after an undo, so the header's Inbox count stays stale after an Undo on the Changes page. Add rt.events.emit('inbox', {}) after rt.commands.undo, with a test.",
+  "Failed-task card: after a failed task's retries the runner leaves it needs_human (critic sign-off card) or failed; the result's first line names it. File the failed-task card from runner.ts after the failed transition (the synthesis allows needs-me to add only this call there).",
+  "'The person chose to go ahead without answering': tasks-screen queues WITHOUT_ANSWERS_NOTE on Go ahead without; make sure it reaches the task's next brief next to answersBlockFor (executor.ts / session/task-context.ts) and test it on the brief.",
+  "Before the plan is approved, the Start dialog's unblock button is 'Open Tasks', but the real unblocker is the plan card in the Inbox. Make start-check's blocked reason intake-aware (kind e.g. 'plan_waiting', action a link to the plan card: 'Review the plan'), with a real-daemon case and the fake daemon change.",
+  "Approving the plan gives no confirmation (smoke finding): after Approve, say what happens next ('Approved. Start runs the 5 tasks.' / Approve and start) per design.",
+  "Spec O.9 'You said during the session:' report is appended under the session's one-line Update and quotes the person's words back; remove that echo (or move it where the design puts it) consistently with \u00a75.11."
+ ],
+ "chat": [
+  "Wire CommandPorts.stopTask in packages/runtime/src/daemon/compose.ts (CommandLoop ports: stopTask: (id, r) => kill.stopTask(id, r, { by: 'you' })) so a chat or voice 'pause'/'cancel' of a RUNNING task stops its run at once. Test it at the chat boundary.",
+  "Typing 'stop' in Chat freezes the agent (session.stop with the agent scope: Stop all, the stopped bar until 'Allow sessions again'). Design \u00a73.9: chat 'stop' / 'stop after this task' means the running session: send a session-scoped stop (Stop now) or POST /sessions/:id/pause (Stop after this task); only an explicit 'stop everything' / kill switch freezes. Whose-stop classification follows (one session is 'you').",
+  "The chat's command replies are also posted to the Inbox (executor.ts). needs-me owns removing that Inbox echo; your reply in the chat itself must read plainly (no '(1 run, 0 processes)', no 'Undo.' suffix).",
+  "New registry commands from tasks-screen: task.pause, task.resume {without_answers}, task.reopen, task.update, task.dependencies, and task.create (ready by default, depends_on, budget, specialist). Make sure the chat model gets them as tools and that the intent synonyms reach them ('pause the CSS task', 'make it wait for X', 'reopen \u2026').",
+  "A 'task' item added to the Next session queue (the queue route / queue.add command) should become a ready task when queued, not stay a note.",
+  "Chat's context: read summary_cache.last_session.outcome (LastSessionOutcome, packages/runtime/src/session/result.ts) and next_steps (task titles) rather than parsing last_session.summary; tasks come with display labels (TaskView.display).",
+  "POST /projects with a name that already exists answers 500 {code: internal, 'UNIQUE constraint failed: project.name'}. If chat or the new-project flow can hit it, return a sentence ('There is already a project called X.') with a stable ForerunnerError code; test it at the route and in the UI."
+ ],
+ "progress-navigation": [
+  "Running chip in the header ('Alice is working on \"X\"') and the Overview's 'Working now' after Start: use SessionView.statusText/stopReason/currentTask, the live 'session.changed' frames and 'project.changed {id}' events from /events.",
+  "BUG: the /events SSE 'session.changed' frame carries {type, payload} (server.ts onSession) but apps/ui/src/api/sse.ts parseDaemonEvent parses it as a SessionView and drops it, so in SSE mode the UI never receives session.changed (only polling does). Fix the parse with a test that feeds the real frame shape.",
+  "The session page: statusText reads 'Done' for sessions that ended with a task needing the person or a failed task; read last_session.outcome / the session's result so the badge says e.g. 'Ended: 1 task needs you'. An ended session keeps a faded disabled 'Stop now' button: remove it. The session page title is still a UUID: use the project and when it ran.",
+  "The project header still reads 'planning'/'good'/'active'/'blocked' badges during and after work; ProjectPage keeps its own fetch and goes stale. Use summary_cache.stage (build/done) and the design \u00a72 project status sentence; follow project.changed events.",
+  "The Start dialog (StartSessionDialog.tsx + GET /projects/:id/start-check, from session-engine): dependency blockers worded from raw statuses ('(ready)', '(draft)') -> use TaskView.display labels; without a key it shows 'This session runs \"X\" (about CHF 1.20).' above 'Claude is not connected\u2026' with Start disabled (contradiction: show only the blocker); after Start it shows both 'Started: \u2026 Open the session' and 'Starts after the current session; \u2026' (re-reads busy start-check); the line 'needs about CHF 1.20, more than this session's work budget of CHF 4.00' is wrong/odd; 'continues with up to N more as they become ready' when those tasks are already ready. Start session leaves the Tasks tab for /sessions/:id in one place: per design \u00a73.6 the person stays where they were with 'Open the session'.",
+  "Home's Continue and the Overview's Start/Continue: reuse start-check 'blocked' {kind, sentence, action} for the one-sentence stuck reason with the button that unblocks it.",
+  "Task drawer runs: show the live step lines (task.step events: read/wrote/ran) and make changed files openable (your Files view / Open folder).",
+  "The Reviews tab ignores ?review=: the drawer's 'The whole review' link lands on the unfiltered list. Honour it.",
+  "Task filters in the address do not survive switching project tabs, although docs/user-guide.md:100 and apps/ui/test/tasks.test.tsx:502's name claim they do: make the tab links keep the query (and keep the claim true).",
+  "The user guide's 'Stopping and crashes' paragraph says '**Stop** on a session's page stops it now'; the page has 'Stop after this task' (default) and 'Stop now'. Fix the guide (you own its structure).",
+  "apps/ui/src/mobile/screens/ReviewsScreen.tsx:166 still uses target=_blank (Android webview): use the same ExternalLink route as desktop or verify and document why it is safe.",
+  "A start that waits behind a running session (Start dialog: 'Starts after the current session') only begins on the scheduler's next tick, up to 30 s after the session before it ends (packages/runtime/src/session/triggers.ts: the drain is in tick(); requestStart's .finally only frees the agent). U-043's line says it 'runs when the session before it ends'. Drain the agent's waiting line when its active start ends (keep quiet-hours deferral and order), with a composed-runtime test and the Start dialog/session page showing it start. Also: apps/ui/test/real-daemon.test.ts 'Start while a session runs' now cancels its waiting starts itself (commit 5b1fb2b, a Windows CI timing failure); keep that cleanup.",
+  "wave 2: The header shows a red 'Stop all' while nothing runs. Design \u00a73.1: Stop all appears only while something runs (and asks once). Every after-screenshot shows it, e.g. /tmp/frbench/fix-chat/steps/23-after-g-talk-panel.png.",
+  "wave 2: Home and project headers still show stage, health, autonomy and critic-grade badges ('planning', 'blocked', 'autonomy: Standard (level 2)') beside 'needs you: X'. Design \u00a72: one status sentence replaces them. Health read 'attention' while the only open card was the Docker card, then 'blocked'. Use ProjectCard.needsYou (names the task of the oldest open card) and task-words.ts holdsTask(card) so the Docker card does not count as a decision.",
+  "wave 2: The header's project switcher keeps showing the last selected project ('Packing list') while another project's page ('Change me') is open (/tmp/frbench/fixup-needs-me/steps/51-c5-lost-draft-banner.png). Talk now follows the project on screen; on Home, commands typed in Talk act on the hidden 'active project'. Retire or align the header's active project.",
+  "wave 2: Shell.tsx's badge aria-label says 'N blocking' while the badge now counts every open card (needsYouCount). Words: 'N need you'.",
+  "wave 2: The stopped bar says 'Kill switch active: no session runs until you press Resume.' and the button reads 'Resume', while the chat says 'Allow sessions again'. One wording in header, chat and user guide (design \u00a73.1). Conversation.tsx re-reads GET /health after a chat stop/resume, so store.killActive follows chat stops.",
+  "wave 2: 'Set up Docker' on the Docker card and the Start dialog's Settings link open /settings#sandbox but the page stays at the top; scroll to the hash (SettingsPage/Shell, in-app navigation).",
+  "wave 2: Start dialog while the plan waits still shows the old StartSessionDialog lines (StartSessionDialog.tsx:303-312: 'Give your agent work first: add a task\u2026' and 'The plan from your brief waits for your approval in the Inbox\u2026') under the new startBlocked sentence: three statements of one blocker, one pointing to the wrong place. Show only the startBlocked sentence with its one link.",
+  "wave 2: The Next-session queue's 'task' item (POST /projects/:id/queue kind task) does not become a ready task. Design \u00a73.4 replaces the queue form (types, priorities) with one 'Note for the next session' box on the Overview; do that, keeping what the queue's existing items mean.",
+  "wave 2 (repeats wave 1's 'drain queued starts on session end'): a queued start waits up to one scheduler tick (30 s, triggers.ts tickMs) after the session ends. Answers say 'it runs after the current session' and then nothing happens for up to 30 s. Drain the agent's pending starts when its session ends; test with a real-daemon case (no real-time waits over a few seconds; leave nothing queued for the next test)."
+ ],
+ "system-text": [
+  "Session log lines (views.ts describeEvent, event-lines.ts): 'Session ended: killed (stop all), spent CHF 0.00: 0 done, 0 failed, 0 need you, 0 sent back, 0 in review, 0 not started' (zero counts, 'killed'); 'Finished task: killed (CHF 0.00). run stopped by its caller'; task.finished lines embed the report's markdown ('**Summary** \u2026 **Criteria**'); task.step / session.replanned / session.stopped / task.retrying fall back to 'Task step: \u2026' / 'Session replanned: \u2026' (each now carries a 'text' field). Word them per \u00a75: whose stop (stopReason you/stop_all/quit/interrupted), no zero counts, no markdown.",
+  "Notification titles: \"Alice's session killed: 0 done\", \"Alice's session stopped: 0 done, 1 sent back, 1 not started\". counts.ts countsOf counts a sent-back-and-requeued task twice (retried and skipped; session-counts.test.ts was changed to accept '1 sent back, 1 not started' for one task: fix the double count and restore a correct expectation) and counts a task the person paused/stopped under 'needs you' (use isPausedByPerson).",
+  "result.ts lowerFirst lowercases a proper noun: '\"Create index.html\" failed: claude did not answer (model call failed).' Keep 'Claude' and other proper nouns capitalised; word the failure plainly ('Claude did not answer').",
+  "When the person stops or cancels the only task a session was running and nothing else finishes, the session posts an Inbox Update that reads just '<Project>: CHF 0.00.' (runner.ts onlyTheirStop covers only session-level stops). No Update for a person's own stop with nothing done (\u00a75.11).",
+  "A stopped or empty-handed session is still graded 100 by the session review: grade nothing for a session that did nothing, or say so plainly.",
+  "Raw texts reaching the task drawer and Inbox from the runner/critic: 'Retry ladder exhausted \u2026 attempt(s)', '2 question(s) from coder', 'Accepted: 1 changed file(s) match the brief.', 'run stopped by its caller'; the drawer's review findings listed the same finding four times. Use plainPlurals (daemon/task-words.ts), dedupe findings, word them per \u00a75 (coordinate the retry card text with needs-me, wave 2, already merged when you start).",
+  "The Changes page shows the raw action key as what the person said: 'Said: \"go_ahead\"', \"pause\", \"stop\" (server.ts ~1047 passes body.note ?? body.action as wordsUsed): use the button's words (ACTION_WORDS).",
+  "The Plan tab still shows 'light review (tier 1)' (plain-words.ts reviewLevel used by PlanTab.tsx); lib/task-actions.ts reviewLevelName gives the words without 'tier'. Same for any other 'tier N' a person sees.",
+  "restoreStatus can refuse an undo with 'task <uuid> has N open finding(s)', which reaches the Tasks tab's 'Not undone: \u2026' line: word it without the id and '(s)'.",
+  "Minor: the drawer's Docker detail line is 116 characters (rule \u2264100); 'Who does it' shows 'Agent's choice' while the cap line says '(coder limit)'.",
+  "U-044 (engine, deferred twice): task.started is emitted before the executor swaps specialist, so the log says 'designer' while writer-marketing / migration-specialist does a CSS/JS task; the retry ladder's alternate is not chosen by task kind (registry/alternates.ts). Emit task.started (or a correction line) after the specialist is chosen and pick alternates by kind, with tests.",
+  "wave 2: Session Updates repeat what a card already says ('\"X\" needs your decision (Inbox).' beside the card, sometimes twice) and go stale (still 'needs your decision' after it was answered). Design \u00a75.10 one place per fact, \u00a71 true now. sessionUpdateLine / runner: drop the line when a card exists, or word it so it stays true.",
+  "wave 2: runner.ts ~1901-1915 `carded` counts every open card with a task_id, the Docker card included, so a task the person paused while it had a Docker card is summarised as needing a decision instead of 'Paused by you'. Use task-words.ts holdsTask(card).",
+  "wave 2: A chat Yes/No card in the Inbox has a proper title now (change_card.ask) but its buttons are the stored lowercase 'yes'/'no' with no explain lines (request-words.ts genericCard). Show labels and explain lines from the card's words while sending the same answer values.",
+  "wave 2: Budget and autonomy read-backs in chat render the whole change card ('Change: \u2026 Scope: \u2026 How long \u2026 Risk: medium. Spend impact: +CHF 15. Undo: Undo it from Changes.'). Design \u00a75: one line, no 'Risk' wording.",
+  "wave 2: The chat's start card shows 'Estimated CHF 5.00' under '(up to CHF 5)?': one figure, once, two decimals.",
+  "wave 2: 'try the style task again' is refused with 'Not done: several tasks match \"style\".' without naming the matches or what to type (\u00a75 rule 8).",
+  "wave 2: Model-facing chat context still carries ids and raw words: open_requests id prefix ('01a198be:'), '[id \u2026]' in the system prompt, task_get 'Waits for: \"X\" (needs_human)', 'Review: revise \u2026', 'Ended because: completed', 'by the writer-marketing'. Use the person's words (project-facts.ts, conversation tools).",
+  "wave 2: NO_MODEL_CHAT_REPLY (packages/runtime/src/setup/no-model.ts) lists 'start a session' among what works without a model, but session.start now refuses when Claude is not connected.",
+  "wave 2: The IntakeBanner's failed state is 'Planning failed. Nothing was written.' with the reason on its own line; design \u00a73.3: one line 'Planning failed: <reason in words>.'",
+  "wave 2: After the retries the task row's reason is only 'tried 4 times' (plainReason of 'retry ladder exhausted \u2026'); the specialist's own words are only in the run report. Give the task row the specialist's last words (short) so the Tasks tab and chat say why.",
+  "wave 2: Docker card cancel outcome fallback renders '\"The task\" was cancelled.' with quotes (request-words.ts dockerCard) when no task title."
+ ],
+ "later": [
+  "One-line brief \u2192 small plan of 1-3 tasks (planning prompt; needs a real model to check).",
+  "Chat 'yes' on a medium-risk card may still file the executor's pending yes/no card beside the original (needs_yes path) \u2014 check after the merge.",
+  "Mobile Inbox (apps/ui/src/mobile) still uses why/options, blocking count, reply box; phone Reviews 'Approve' maps to Mark done anyway without the ADR 0102 confirmation.",
+  "A free-text 'go ahead' on a planned person card closes the task although the card offers no Go ahead without.",
+  "Closing a high-risk Settings preview with x leaves an approval card (SettingsPage).",
+  "Approving an extension from a URL answers 503 and the panel and Inbox disagree (extensions).",
+  "Bench stand-in ignores 'Change the plan' words (testenv/src/bench/plans.ts).",
+  "session.start does not wait for the run to begin.",
+  "Talk shows 'Reply: Voice' and the Talk button before voice is known to be unavailable (U-075 second half).",
+  "Doc search returns template text ('- first task', 'To be written.') (packages/memory).",
+  "Runner's legacy heard-line path unused by chat.",
+  "Voice bridge passes the project without projectTab.",
+  "The agent finds its waiting card only within the last 12 turns while GET /conversation shows 100: after a restart an older card shows Yes/No the agent cannot answer.",
+  "Chat 'resume' not tested across a daemon restart.",
+  "live-chat.test.ts: two assertions loosened to toHaveLength(1); restore the precise { sessionId } scope and the completed status.",
+  "'stop everything' acts at once without a read-back (design \u00a73.1 says ask once; acting at once is the safe direction).",
+  "Load-sensitive tests: real-daemon 'Stop on the running task' and capabilities browser.integration (120 s).",
+  "live1 (real model): the critic contradicts itself ('I count 29 entries\u2026 which leaves 30') and only reads the diff, runs nothing; its 3 findings show as '0 open' and are not followed up (critic prompt / findings). Needs a live check.",
+  "live1: a person task (the plan's 'Human decisions\u2026' questions card) is not counted as needing the person: session summary and session.ended event say '0 need you', the Summary tab says '0 open questions' while 5 questions wait in the Inbox.",
+  "live1: Tasks tab shows 'CHF 0.00 of CHF 0.32 budget' on a task, where 0.32 is the project's spend (wrong field).",
+  "live1: setup Done step says 'Until Claude is connected your agent cannot start work' although a key is present (check whether this is bench-only).",
+  "live2 MAJOR (real model): answers to a person task never reach the dependent task's brief; the coder asked the same 7 questions again. task-context.ts:156-168 'Done before this task' uses dep.outcome (the planning-time promise). Put the question\u2192answer pairs (or a pointer to them) in the dependent task's brief. See /tmp/frbench/live2-report.md #3.",
+  "live2 MAJOR (real model): the intake put every coding task at tier 0 ('Checks only'); no checks ran (no test command), so tasks became Done on a self-report 'nothing here has been tested' and the session review said 'accepted (grade 100)'. The coder's prompt says 'the critic checks each' \u2014 false at tier 0. Intake guidance or default tier 1 for coder tasks with criteria, or run criteria as checks at tier 0; never tell the specialist a critic checks when none will. #5.",
+  "live2 MAJOR: no screen says where the project folder is and chat can't say (it said 'the folder you already set up', false). Path + 'Open folder' on the Summary; give chat the workspace path. #7.",
+  "live2 MINOR: the intake asks the person where files should live and whether to use git; the app decides both. Intake prompt should say so. #14.",
+  "live2 MINOR: chat 'Please add a task: \u2026' via the intent parser makes a title of the raw sentence cut at 80 chars and a generic criterion the critic marks met. #8.",
+  "live2 MINOR: the critic gets only the diff and cannot confirm claims about other files; give it read access around the diff. #9.",
+  "live2 MINOR: Reviews tab mostly mechanical 'Session review' rows with jargon; a session that stopped to ask shows '85 / 100 sent back' with an open finding. #11.",
+  "live2 MINOR: setup: 'Until Claude is connected\u2026' under '\u2713 Claude is connected.'; CHF 150 vs 150.40; reopening mid-setup restarts at Welcome. #13.",
+  "live2 MINOR: workspace git: only 'Workspace before <task>' snapshots; the last task's files and docs/status.md stay uncommitted after done. #15.",
+  "live2 POLISH: 'Spend vs budget CHF 0.44 of no cap' with a monthly cap set; raw JSON in messages ('Set the monthly critic calibration from unset to {\"enabled\":false,\u2026}'); plan card mixes keys and titles ('after owner-content, site-skeleton'); intake 42 s with only 'Drafting\u2026'. #16-17.",
+  "live2 RE-CHECK on current code (walked pre-wave-2 code): chat without history/tasks (#4), ids in chat (#10), answer\u2192continue inconsistent (#6), duplicate monthly-cap cards contradicting after a restart + Settings table stale until reload (#12), calibration defaulting on for day 1 (check SE2).",
+  "live2 part3 P-a1 MINOR: Settings \u2192 Accounts and keys never says a key is saved or working.",
+  "live2 part3 B3 MINOR: Start dialog budget sentence compares an item's estimate with the work budget although it means the running total; estimates ignore the task's own budget.",
+  "live2 part3 C2/C3 MINOR: chat-added task title keeps 'to \u2026', no criteria, 'Agent's choice'; chat start card 'Estimated CHF 5.00' is the budget.",
+  "live2 part3 D1 MINOR: session page: raw-id title, [Stop now] on a finished session, raw markdown and event names in the timeline, critic line cut mid-word, jargon 'inbox.message\u2026', 'session.end_inbox\u2026' (check what wave 3 already fixed).",
+  "live2 part3 D3 MINOR: Changes page: every row tagged 'undoable' incl. 'Cannot be undone now' rows; Undo on a start whose session ended; invented 'Said:' for UI actions.",
+  "gh1 bench: finishing setup restarts the daemon (exit 86) and the bench has no supervisor; restart-daemon.mjs; README line (also live2 #13).",
+  "Nothing is broken on the merged branch. These are leftovers carried from the areas' reports for the leftovers sweep: '0 means no cap' needs budget.set to accept 0; the 'Done: \u2026 Your files: <path with UUID>' sentence is long; Settings Advanced model rows still say 'review tier 1' and calibration says 'USD 10, tier 1'; the task drawer still repeats findings and has no live step lines; chat model context still carries ids; U-044 (task.started names the planned specialist, and retry alternates are not chosen by task kind); POST /sessions starts a session when nothing can run; the person hears thre",
+  "The fake daemon calls eventAudience(type) without the payload, so the system-text fixup's payload marks (again, handedFrom, review, couldNot) are not exercised by the stand-in. Its scripted events carry no such marks, so nothing differs today. Making it fully faithful is a one-line change for the leftovers sweep.",
+  "docs/maintainers/apps.md: the `summary` tab row (system-text's version, unchanged by progress-navigation) still describes the old typed and prioritised 'Next session' queue form. The project-page row above it correctly describes the one 'Note for the next session' box. This is a small stale sentence for the docs sweep.",
+  "Windows CI has not run on this merge yet. The new tests were written by the areas; the two session tests I changed wait on events and counts, not on real time.",
+  "wave3 progress-navigation not done: Settings Basics view with a collapsed Advanced (design \u00a76, fix_scope 8): names, Claude, GitHub, budget per session, monthly cap, default autonomy by name, quiet hours, Docker status first; one named autonomy control; dead rows hidden. (Scope: the restructure of the 947-line SettingsPage (and its ~10 test files) could not be finished well in this run after the blockers and majors; the money inputs and the preview fix (the walk's conc)",
+  "wave3 progress-navigation not done: '0 means no cap' for money fields (design \u00a76). (budget.set (packages/commands/src/commands/budget.ts, owned by system-text this wave) requires amountChf > 0 for every scope; accepting 0 for the project budget needs that schema change. The UI refuse)",
+  "wave3 progress-navigation not done: Session page person-level lines vs Details (design \u00a73.7, \u00a75). (Partially done: event type names, #seq, level chips and raw payloads are behind Details. The per-event level (person or detail) and rewording of the lines themselves are system-text's (views.ts descri)",
+  "wave3 progress-navigation not done: Reviews tab honours ?review= (handoff item). (In system-text's fix_scope item 4 (Reviews) this wave; ReviewsTab.tsx is their file.)",
+  "wave3 progress-navigation not done: Task drawer live step lines and openable changed files (handoff item). (TaskDrawer.tsx is the tasks screen's; not reached in time. The Files tab accepts ?path=<file>, so the drawer can link each changed file to /projects/:id/files?path=<file>.)",
+  "wave3 progress-navigation not done: apps/ui/src/mobile/screens/ReviewsScreen.tsx:166 target=_blank (handoff item). (The mobile screens do not run inside the desktop store that ExternalLink reads, and how the Android shell handles a new-window request was not verifiable here (no Android build or device); needs a che)",
+  "wave3 progress-navigation not done: Start dialog wording leftovers from the wave 1 handoff: 'needs about CHF 1.20, more than this session's work budget of CHF 4.00' and 'continues with up to N more as they become ready' when they are already ready. (Not reached; the dialog's blocker lines and plan sentence are otherwise as session-engine left them.)",
+  "wave3 progress-navigation not done: Home's Continue reusing start-check 'blocked' for the stuck reason (handoff item). (Partly covered differently: the status sentence names the stuck reason with its button (Open Tasks / Set up Docker), and Continue opens the Start dialog which shows start-check's blocked sentence. Not)",
+  "wave3 progress-navigation not done: Before screenshots of my own walk. (`start.mjs --fresh` wiped /tmp/frbench/fix-progress-navigation/steps (including my before shots) when I restarted the bench with the new code. The before texts survive in /tmp/frbench/fix-progress-nav)",
+  "wave3 progress-navigation not done: '0 means no cap' for money fields (design \u00a76). (Unchanged from the fixer's report: budget.set (packages/commands/src/commands/budget.ts, owned by system-text) refuses amountChf <= 0 for every scope. The UI refuses 0 in words instead. This needs tha)",
+  "wave3 progress-navigation not done: Reviewer's non-blocking items (the long 'Done: \u2026 Your files: <path with UUID>' sentence, 'Open Files' versus 'Open folder', the status Answer linking to /inbox rather than the card, two buttons opening the Start dialog, tab links keeping the whole query, hidden level filters on the session page, the palette's Stop all not asking, Continue where it stopped starting every project with runnable work, Changes noise from opening a project, 'Ready to continue' without a key, the no-key bar on /setup, missing real-daemon cases for working/changedFiles/statusText, n",
+  "wave3 progress-navigation review note: The 'Done: all N tasks. Your files: <path>' sentence carries the full workspace path, including the project UUID. It runs to about 130 characters on Home and in the header and pushes Start session onto a second line (17-f-home-end.png, 18-e-overview-end.png). The design asks for the path, but \u00a75.1 (\u2264 80 characters) and \u00a75.3 (no UUIDs) suggest showing the path once, under Your files, and shortening it in the sentence.",
+  "wave3 progress-navigation review note: The done state's button is 'Open Files'; the design says '[Open folder]'. In the desktop shell Open folder appears only under Your files. In a browser 'Open Files' is reasonable.",
+  "wave3 progress-navigation review note: The status-sentence 'Answer' links to /inbox; Home's Needs you lines link to /inbox#card-<id>. The status action could link to the oldest card too.",
+  "wave3 progress-navigation review note: When tasks are ready the project header has two buttons that open the same Start dialog ('Continue' in the status and 'Start session').",
+  "wave3 progress-navigation review note: Project tab links keep the whole query: /files?path=script.js \u2192 Tasks gives /tasks?path=script.js. Harmless, but the intent was only to keep the Tasks filters.",
+  "wave3 progress-navigation review note: Session page: once Details is unticked, a level filter switched off under Details keeps hiding rows with no visible control (SessionPage.tsx filters vs the `raw ? LEVELS : []` buttons).",
+  "wave3 progress-navigation review note: The command palette's 'Stop all sessions' still stops without asking once (Shell.tsx toggleKill); only the header button confirms.",
+  "wave3 progress-navigation review note: Continue where it stopped starts a session on every project with runnable work, not only the ones that were stopped.",
+  "wave3 progress-navigation review note: Opening a project from Home now switches the active project, which writes a Changes entry. This is documented in the user guide, but it adds noise to Changes.",
+  "wave3 progress-navigation review note: Without a key, a project with ready tasks reads 'Ready to continue: 1 task ready [Continue]', yet Continue leads to a disabled Start. The no-key bar explains why, but the sentence is not 'true now' for a key-less install.",
+  "wave3 progress-navigation review note: The no-key bar also shows on /setup itself, where its Connect points to the same page.",
+  "wave3 progress-navigation review note: There is no real-daemon case for ProjectCard.working while a session runs, for ProjectSummary.lastSession.changedFiles, or for the new GET /sessions/:id statusText 'Ended: N tasks need you'. They are covered by runtime tests with a real store and by the bench walk.",
+  "wave3 progress-navigation review note: There is no unit test of fileUnder/listProjectFiles with spaces, non-ASCII names or links (validation rule 5). I checked by hand that they work on Linux; Windows-specific forms such as drive-relative paths and ADS colons are untested.",
+  "wave3 progress-navigation review note: The session title uses the browser's locale time ('12:01 AM'); the design example is 24-hour ('14:05').",
+  "wave3 progress-navigation review note: The session log default view still shows '**Summary**', '(s)' plurals, 'Critic: accepted (grade 86\u2026)' and 'Notified you: \u2026 telegram skipped \u2026' (16-d-session-ended.png). system-text owns the line wording and levels this wave; once its level field lands, this page should filter on it.",
+  "wave3 progress-navigation review note: '0 means no cap' is not done: budget.set (system-text's file) refuses 0. The UI refuses 0 in words instead.",
+  "wave3 progress-navigation review note: Wave 1 handoff item 5's sub-points are only partly accounted for. 'needs about CHF 1.20\u2026' and 'continues with up to N more\u2026' are in not_done. The raw '(ready)'/'(draft)' wording in Start dialog blockers is in neither fixed nor not_done. Start no longer leaves the Tasks tab: no navigate() in StartSessionDialog.",
+  "wave3 progress-navigation review note: Other not_done items have reasons: the task drawer step lines and openable files, Reviews ?review= (system-text), mobile ReviewsScreen target=_blank (needs an Android check), and Home's Continue reusing start-check 'blocked'.",
+  "wave3 progress-navigation review note: Performance: GET /projects now reads tasks, cards, the intake status and up to 10 000 events of a running session per project, and the UI re-reads it on every inbox.changed in SSE mode. Fine for a few projects (as the fixer noted).",
+  "wave3 progress-navigation review note: I did not re-run cargo clippy or cargo test: only 7.9 GB of disk is free and a fresh Tauri build needs about that. cargo fmt --check passes, and folder.rs, build.rs, lib.rs and the capability files read correctly.",
+  "wave3 system-text not done: Task drawer lists the same review finding several times (wave 1 handoff, part of 'Raw texts reaching the task drawer') (The drawer (TaskDrawer.tsx, taskView details) is the tasks-screen area's; the Reviews tab and counts now dedupe per task, but I did not change the drawer list in this wave for lack of time.)",
+  "wave3 system-text not done: Drawer Docker detail line is 116 characters; 'Who does it' shows \"Agent's choice\" while the cap line says '(coder limit)' (wave 1 minor) (Tasks-screen UI words; lower priority than the majors; not reached.)",
+  "wave3 system-text not done: U-044: task.started is emitted before the executor swaps the specialist; retry alternates not chosen by task kind (registry/alternates.ts) (Engine behaviour (session-engine/registry), not text; needs its own design and tests. The person line now names the specialist the run reports in task.finished, but task.started still names the planne)",
+  "wave3 system-text not done: Model-facing chat context still carries ids and raw words (open_requests id prefix, '[id \u2026]', 'Waits for: \u2026 (needs_human)', 'Review: revise \u2026', 'Ended because: completed') (Chat area context builders (project-facts.ts, conversation tools) and the conversation tests; not reached in this wave.)",
+  "wave3 system-text not done: After the retries the task row's reason is only 'tried 4 times'; the specialist's own last words are only in the run report (Needs the task display (tasks-screen task-display.ts) to read the last run's report; not reached.)",
+  "wave3 system-text not done: Session page header still 'Session <uuid>', 'Alice \u00b7 message \u00b7 pc', a bare 'project' link (SessionPage header is owned by progress-navigation (wave 3, parallel); I only changed the log (audience filter and Details).)",
+  "wave3 system-text not done: Decision questions are kept as the card asked them ('Where should the page be published: GitHub Pages, Netlify, or only as a local file?'), not reworded as in the design's example ('Where is the page published?') (Rewording a question needs a model or the intake to write a short question; the stored question is the person's card text, true and plain.)",
+  "wave3 system-text not done: The injection_flagged notification body (rule names, can exceed 140 characters) and session-review internal strings with '(s)' (under Details / Session checks only) (The injection body is ADR 0047's contract asserted by release scenario 6; the session-review strings are the critic's self-check, folded away; left to avoid churn in those suites.)",
+  "wave3 system-text not done: Change sentences still end with 'Undo.' as text (e.g. 'Set quiet hours from off to 12:00\u201318:00. Undo.') (The UI strips it (withoutUndoWord) and several release scenarios assert it; changing it is the commands/changes area's call.)",
+  "wave3 system-text not done: Reviewer's non-blocking notes: real-daemon coverage for the decisions route's 'plan' and 'record' entries; '1 changed file match the brief' (the stand-in critic's wording); 'Waiting for the first event\u2026' on a session that has only detail events; three notifications for one failing task; the notification after the person's own stop; a session notification body that repeats its title; the Changes page 'Undo.' and 'Said:' lines; Costs specialist names; the weaker reviews.spec filter assertion; DecisionLog.ask keyed by the whole why; withoutIds removing '(run \u2026)' parent",
+  "wave3 system-text not done: The person line 'The writer takes over \u2026' comes from the plan item's specialist, but the executor can swap specialists inside a run (U-044), so the line can appear one attempt after the real swap (This is U-044 (engine behaviour, already in the fixer's not_done). The log is consistent with task.started and task.finished, which both name the plan item's specialist.)",
+  "wave3 system-text review note: Rule 3 is only partly covered for GET /projects/:id/decisions. real-daemon.test.ts asserts only kind 'answer'. The new 'plan' and 'record' entries are tested only against the fake daemon (client.test, decisions.test). The bench shows the real daemon serves them, but a real-daemon assertion is missing.",
+  "wave3 system-text review note: The Reviews tab shows 'Accepted: 1 changed file match the brief.': plainPlurals turns 'file(s)' into 'file' but leaves the verb 'match'. The source is the stand-in critic's own wording (testenv/src/bench/role-player.ts:634).",
+  "wave3 system-text review note: SessionPage shows 'Waiting for the first event\u2026' for an ended session that has only detail events, e.g. the planning session whose only event is the plan notification.",
+  "wave3 system-text review note: The person hears three notifications about one failing task: the critic sent it back (attempt 3), failed 4 times, and needs your decision. This was already so before; design \u00a74.3 says the person hears once.",
+  "wave3 system-text review note: The person's own stop still sends the notification 'Quote page: stopped by you' (\u00a75.11, no echo). This was already so before.",
+  "wave3 system-text review note: The notification body after a session (e.g. 'Stopped after the task, as asked. \u2026') can repeat the title's sentence when the result has one line; see the session-counts.test expectation.",
+  "wave3 system-text review note: The Changes page still shows 'Set quiet hours from off to 12:00\u201318:00. Undo.' next to the Undo button. Its 'Said:' line reads 'Settings: Quiet hours to from 12:00 to 18:00'. The Settings refusal is prefixed 'Refused (validation):'. All of these are on screens other areas own.",
+  "wave3 system-text review note: The specialist names Costs shows ('writer-marketing', 'designer') differ from the log's 'the writer'. By model mixes the critic's runs into 'Accepted 3 / 16'.",
+  "wave3 system-text review note: In the reviews.spec filter step, the assertion changed from 'toHaveCount(2)' to 'the sent-back review is gone'. It no longer checks that the accepted review is shown. This is slightly weaker, though the reason (session checks folded) is sound.",
+  "wave3 system-text review note: DecisionLog.ask still looks a decision up by the card's whole `why`, while recordAnswer now stores the first sentence or the step text. Ask is only used in tests (decisions.test.ts passes), but 'never asked again' would not hold for a card whose question has several sentences.",
+  "wave3 system-text review note: withoutIds is now applied to every log line. Its IDS pattern also strips any parenthesis that starts with 'run ', 'task ', 'session ' or 'request ' (e.g. '(run node --check)'). No such line was seen on the bench.",
+  "live D MINOR: 'Lesson:' lines leak into deliverables (report.md, evaluation.md); a scratch notes.md lands at the project root.",
+  "live D MINOR: the reviewer has no write_file but writes files through run_command (the tool limit means nothing).",
+  "live D MINOR: the Start dialog says 'Docker is installed but not running' where Docker is not installed at all.",
+  "live D MINOR: a closed Settings 'Preview and apply' left an open monthly-cap approval card for minutes, later gone without an answer.",
+  "live D POLISH (Settings): monthly cap risk 'high' in the table vs 'medium risk' on its card; calibration card shows raw JSON 'unset \u2192 {\"enabled\":false,\u2026}'; default cap CHF 150.40; 'No Claude credential is saved yet' while the bench key works (check the bench path); review level list still shows 'Checks only: automatic checks, no critic' (verification area will remove it); a finished session still shows 'Stop now'.",
+  "live B MINOR: the tester left docs/testing.md as a stub (B2).",
+  "live B bench: intake.cjs:38 names every project 'Quote page HH:MM:SS' whatever the brief."
+ ],
+ "phase-C": [
+  "OWNER DECISION (docs/status/handoff/NEXT-SESSION.md, 'Owner decisions of 2026-11-01'): proportional verification of code tasks: build/lint/tests always (never shown as a level; add tests when adding behaviour); critic always reviews with read access to the project, not only the diff; work a person will use is also tried in its own environment (Docker sandbox) like a person, with screenshots/outputs as evidence; deploys/migrations/money/security keep the full review + owner sign-off; the person sees Done only after the right check passed ('Reviewed' / 'Reviewed and tried', evidence one click away); no 'checks only'/tier words. Write it as an ADR. Replaces the earlier 'tier-0 no critic' item.",
+  "OWNER DECISION: give the researcher and science-evaluator web access on the API-key (loop driver) path through Forerunner's own fetch/search capability within the network rules; test live.",
+  "GitHub BLOCKER (live gh1): a task in an empty linked repository always fails: 'git checkout -B fr/\u2026 failed: fatal: 'origin/main' is not a commit\u2026' (pr-executor.ts:161-163 branches from origin/<base> without checking; same pattern loop/docs.ts:307 and the session status writer). Project creation silently fails to scaffold docs there. The failure text is raw git output; the Summary says 'completed' for a session whose only task failed. Expected: make the first commit (or ask), then branch and PR; words saying the repository is empty and what happens.",
+  "GitHub MINOR (gh1): the linked repository is not shown anywhere on the project page.",
+  "live2 #3 MAJOR: answers to a person task never reach the dependent task's brief (task-context.ts:156-168 uses the dependency's planned outcome); the coder asked the same 7 questions again.",
+  "live2 part3 B1 MAJOR: a missing deliverable is accepted by the critic (criterion about absent output marked met) and the task is Done; the specialist's 'Questions for the person:' make no card.",
+  "live2 part3 C1 MAJOR: cancelling a running task keeps its files, the critic reviews and accepts the cancelled task, and the next task builds on its work.",
+  "live2 part3 B2 MAJOR: a task over its budget becomes needs_human with no card; the summary points at an empty Inbox; USD on a CHF screen; recovery only via Edit budget \u2192 Resume \u2192 Start.",
+  "live2 part3 D2 (review quality): the critic gets only the diff and cannot check claims about other files (4 of 5 reviews).",
+  "live2 #7 MAJOR: no screen says where the project folder is; chat cannot say; add the path and Open folder on the Summary; give chat the workspace path.",
+  "live2 #15 MINOR: the last task's files and docs/status.md stay uncommitted after the project is done.",
+  "live2 #14 MINOR: the intake asks where files should live and whether to use git; the app decides both (prompt).",
+  "what the GitHub live walk finds (helper session_01RnhAjgzQMD8iUXVC2BSavE; report pending).",
+  "re-check on current code: live2 part1 #4/#6/#10/#12 (walked pre-wave-2 code).",
+  "GitHub MAJOR (gh1 rerun, PR forerunner-sandbox#2): 'N reviewed pull request(s) wait for you to merge' on the session page and Summary leads nowhere: no link to the PR, no merge action, the Inbox says 'Nothing needs you'; the only links are the small 'PR' on the Tasks row and 'Its pull request' in the drawer (which offers only Redo). Expected: a card or a clear place with the PR link and what merging does (and a Merge action if the design allows at this autonomy).",
+  "GitHub MAJOR: the session status commit (docs/status.md) is pushed onto the task's PR branch AFTER the critic accepted it (log 'status update written \u2026 branch: fr/\u2026, committed: true'), so the PR contains a file the critic never saw. packages/runtime/src/loop/docs.ts ~300. Status updates must not land on a reviewed task's PR branch.",
+  "GitHub MAJOR: the coder is told it cannot use git: in the process sandbox 'git status' and 'git branch --show-current' fail, the coder writes 'Git doesn't work in this sandbox, so I can't commit, push or open a PR' into its summary, marks its criterion not met, and that text goes into the commit and the PR body; the critic has to guess. The brief must say the runtime commits, pushes and opens the PR (and git read commands should work or be explained); the PR body must not contradict itself.",
+  "GitHub MINOR: the docs-scaffold PR (#1, branch fr/docs-scaffold) opened silently at project creation is never shown; the Docs tab lists the docs as 'missing \u00b7 not written yet' while they wait in that PR.",
+  "GitHub MINOR: no PR or branch on the session page and the Changes page (only 'Changed 1 file: index.html').",
+  "GitHub MINOR: a task 'Add a README.md\u2026' left the lead's README.md unchanged and the critic accepted with a 'wontfix' finding (part of the task not done).",
+  "GitHub NOTE: in Chromium (bench, config.source shell) the PR link navigates the same tab; the desktop window should open it in the system browser (windows.rs on_navigation, commit 010c5de): verify in F2 (the real window on Windows CI)."
+ ],
+ "answers": [
+  {
+   "id": "C-2",
+   "problem": "A deploy or data-migration task created by the plan, New task or chat is stored at the light review: its row and drawer read 'Light review' although Done needs the full review and the person's sign-off, and its run uses the process sandbox on the host instead of Docker. Only Edit raises it (on save).",
+   "evidence": "packages/commands/src/commands/task.ts:585 (risk_tier: params.risk_tier ?? defaultRiskTier(project), no specialist floor); packages/runtime/src/session/project-plan.ts:262 (riskTier: t.riskTier ?? tier); apps/ui/src/pages/project/NewTaskDialog.tsx:184,236-250 (Light review offered for every specialist; FULL_REVIEW_SPECIALISTS not used); apps/ui/src/pages/project/TasksTab.tsx:434 and TaskDrawer.tsx:137 (reviewLevelName(t.riskTier) without the specialist); only the review applies the floor (packages/runtime/src/loop/critic.ts:330) while the sandbox gate reads the stored tier (packages/runtime/src/session/sandbox-gate.ts:32-35). Edit already raises and says so (TaskDrawer.tsx:425-430, :558).",
+   "expected": "Every creation path (plan approval, New task / POST /tasks, chat and commands task.create, a task.update that hands the task to ops-deploy or migration-specialist) stores at least the registry floor (risk_tier_floor 2) for these specialists; New task offers them no light review, as Edit does; the row and drawer read the level the task really gets (reviewLevelValue with the specialist). Tested at the boundary: POST /tasks and a plan with ops-deploy store tier 2 and the row reads 'Full review'; the fake daemon in the same commit.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "answers",
+   "sources": [
+    1,
+    19,
+    33
+   ],
+   "reason": "Still true at 193e579. The verification fixer left it because intake, chat, New task and commands belonged to other phase C areas. 'answers' owns task creation from chat and commands (intent.ts, the chat's task_create); one shared floor applied where a task is created (task.create and project-plan) covers all paths. runner.ts/critic.ts review path is open to it if needed."
+  },
+  {
+   "id": "C-29",
+   "problem": "Every answered Settings confirmation card reads just 'Answered.' in the Inbox's Answered list, whether the change was confirmed or the preview was closed with No, so the person cannot tell which caps changed.",
+   "evidence": "packages/runtime/src/daemon/request-words.ts:760-765 (generic card: answerWords() returns null for a yes/no answer, so the outcome is 'Answered.'), :173-183; bench /tmp/frbench/fix-continuity/steps/f-recheck-result.json capCardsAfterRestart: three cards, one confirmed (cap now CHF 200) and one closed with No, all 'Answered.'.",
+   "expected": "The Answered entry says what happened: 'Changed: the monthly cap is CHF 200.' or 'Not changed: you said no.' Tested at GET /inbox (real daemon) and on the Inbox, the fake daemon in the same commit.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "answers",
+   "sources": [
+    45
+   ],
+   "reason": "Inbox answers are the answers area's; request-words.ts is in its files."
+  },
+  {
+   "id": "C-38",
+   "problem": "Chat: 'Skip the <title> task' becomes Pause; 'Skip the task \"<title>\"' fails with 'no task matches \"task \"...\"\"'; when the task finished before Yes the reply is the raw 'Not done: task: illegal transition done -> cancelled.'; the read-back 'Cancel \"X\"? It is dropped.' does not say a running task's run stops and its work is removed.",
+   "evidence": "packages/commands/src/intent.ts:806-813 (skip -> task.pause) and :123-131 (taskName strips a trailing 'task' but not a leading 'task \"...\"'); packages/commands/src/commands/task.ts:680-688 (raw 'illegal transition' text) and :230 (read-back); packages/runtime/src/conversation/agent.ts:1122 ('Not done: ...').",
+   "expected": "'skip the task \"X\"' finds X; the read-back says what Yes will do for a running task ('Cancel \"X\"? Its run stops now and what it changed is removed.'); a move the task can no longer make is said in words ('\"X\" is already done; nothing changed.'). Whether 'skip' means pause or cancel follows design \u00a73.9 (say which in the commit). Tested at the chat boundary.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "answers",
+   "sources": [
+    59,
+    72
+   ],
+   "reason": "Chat area work; answers owns intent.ts and the chat's command replies."
+  },
+  {
+   "id": "C-68",
+   "problem": "The plan card does not flag a task naming a specialist this install does not have (an invented name); the run then waits with 'No specialist is named X' and a could-not-run card.",
+   "evidence": "apps/ui/src/pages/InboxPage.tsx:269-285 (cannotRunHere: a name the list does not have says nothing); the intake canonicalises aliases only when it writes the plan (packages/runtime/src/registry/specialist-names.ts); packages/runtime/src/session/executor.ts:520.",
+   "expected": "The plan card marks such a task in words that are true ('No specialist here is named \"illustrator\": this task will wait for you; change who does it after you approve'), with the daemon giving each plan task its canonical specialist or unknown (no guessing in the UI); or the intake replaces an unknown name before the plan reaches the person. Nothing promises an alternate: executor.ts:514-522 sends an unknown name straight to the person. Tested on the Inbox plan card and a real-daemon case.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "answers",
+   "sources": [
+    124
+   ],
+   "reason": "The plan card is the start of the answers area's journeys (Inbox, start)."
+  }
+ ],
+ "screens": [
+  {
+   "id": "C-41",
+   "problem": "A review stopped by the session or by a cancel leaves the critic's run in the drawer as 'Review by the critic \u00b7 Stopped' with no verdict and no word of what that means.",
+   "evidence": "apps/ui/src/pages/project/TaskDrawer.tsx:234 and packages/runtime/src/daemon/task-display.ts:168.",
+   "expected": "The row says it plainly, e.g. 'Review stopped before a verdict (you stopped the session)', with what it spent.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "screens",
+   "sources": [
+    62
+   ],
+   "reason": "The drawer's runs section is the screens area's."
+  },
+  {
+   "id": "C-54",
+   "problem": "The Overview's Last result keeps the session-time sentence after the person acts: after Mark done anyway it still read '\"Write the README ...\" needs your decision (Inbox).' while the header said 'Done: all 5 tasks.', and the Inbox has no such card.",
+   "evidence": "apps/ui/src/pages/project/SummaryTab.tsx:143-146 (renders data.lastSession.summary as stored); /tmp/frbench/fixup-github-result/steps/10-a2-after-mark-done-overview.png.",
+   "expected": "Last result is true now (design \u00a75.4): a 'needs your decision (Inbox)' sentence whose card is closed is dropped or says what happened, or the block reads as the record ('When the session ended: ...'). Real-daemon case and UI test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "screens",
+   "sources": [
+    101
+   ],
+   "reason": "A pointer that leads to an Inbox with no card; screens is the area for screens that lead nowhere."
+  },
+  {
+   "id": "C-72",
+   "problem": "The task drawer does not show which web pages a run read or which were refused (the run's webSources are not rendered), and a run's report is cut after 6 lines, so its 'Sources read' section never shows.",
+   "evidence": "packages/runtime/src/daemon/task-display.ts:234-245 (reportText keeps 6 lines); apps/ui/src/pages/project/TaskDrawer.tsx:226-241 (no webSources); design \u00a73.5 lists 'what it read' for runs.",
+   "expected": "Each research run in the drawer lists the pages it read (address) and those refused, in words. Tested in the drawer UI test and a real-daemon case.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "screens",
+   "sources": [
+    134
+   ],
+   "reason": "The drawer's runs section is the screens area's (with triage #46)."
+  }
+ ],
+ "noise": [
+  {
+   "id": "C-20",
+   "problem": "Try-it screenshots under <data>/evidence/<task>/<review>/ are never removed: not on project delete, Redo, Cancel or uninstall (about 30-60 KB each, two per review).",
+   "evidence": "packages/runtime/src/loop/try-it.ts:62-76 (evidenceRootOf, per task) and packages/runtime/src/daemon/compose.ts:2026 (outDir); no code removes the folder.",
+   "expected": "A project's evidence goes when the project is deleted, a task keeps only its latest review's screenshots (Redo and Try again replace them), and docs/user-guide.md says where try-it screenshots are kept. Tested at the boundary: a real-daemon case deletes a project and its evidence folder is gone; GET /tasks/:id/evidence still serves the latest review's files.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "noise",
+   "sources": [
+    25,
+    36
+   ],
+   "reason": "Clutter left by the app; noise's 'folder clutter' fits best."
+  },
+  {
+   "id": "C-32",
+   "problem": "After a session whose only task now waits on a card, the Inbox Update reads 'the session ended without finishing a task.' right under the card it does not name.",
+   "evidence": "packages/runtime/src/session/result.ts:228-234 (sessionUpdateLine's card-only line).",
+   "expected": "One place per fact (design \u00a75.10): either no Update when the card says it all, or an Update that names it ('X waits for your answer above').",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "noise",
+   "sources": [
+    48
+   ],
+   "reason": "Hearing once: the noise area decides whether the card or the session end speaks (its fix scope 2) and does the Inbox Update the same way."
+  },
+  {
+   "id": "C-42",
+   "problem": "After the person's Stop, the session log has two stop lines in a row: 'Stopped by you during \"X\". It is ready again.' then 'Stopped by you: nothing done. CHF 0.00.'",
+   "evidence": "packages/runtime/src/daemon/event-lines.ts:257-262 (session.ended: '<status>: <counts or nothing done>. <CHF>.' after the stop's own line).",
+   "expected": "One line for the person's own stop: the session end after it says only what it adds (the money), or nothing.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "noise",
+   "sources": [
+    63
+   ],
+   "reason": "An echo of the person's own stop (noise: 'none for your own stop')."
+  }
+ ],
+ "bench": [
+  {
+   "id": "C-8",
+   "problem": "Tests that wait on real time flake under load: monthly-jobs-wiring settles the calibration run with a 30 s real-time loop that says nothing of what it saw (failed once at load 11-12); the e2e 02-email-task failed once (['ack'] vs ['ack','completion']); repo-create.test.ts 'Create the repository ...' (U-037) failed once in pnpm check. Windows CI is slower.",
+   "evidence": "packages/runtime/test/monthly-jobs-wiring.test.ts:150-153 (600 x 50 ms settle loop, no message) and :71-72 (90 s loop); tests/e2e/scenarios/02-email-task.scenario.test.ts:296; packages/runtime/test/repo-create.test.ts.",
+   "expected": "Each waits on the event or state it needs (as 5b1fb2b / 9140369 did), with a failure message that says what it saw; each passes 5 runs in a row under load.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "bench",
+   "sources": [
+    8,
+    39,
+    81,
+    138
+   ],
+   "reason": "Bench owns load-sensitive tests (fix scope 8). Raw index 39 confirms the 30 s wait; its second half (the 'Members chart ran as coder' note) is a walk-script bug, item C-9."
+  },
+  {
+   "id": "C-10",
+   "problem": "The stand-in critic marks every acceptance criterion met (e.g. 'The page links styles.css: met') whether or not the work does it, so a bench walk's drawer can show a criterion as met that the try's evidence contradicts.",
+   "evidence": "testenv/src/bench/role-player.ts:828-835 (criteria.map(c => ({ ..., met: true, ... })) on every accept).",
+   "expected": "The stand-in marks a criterion that names a file met only when a changed or read file shows it (otherwise 'not met' or 'not checked by the stand-in'), deterministically, documented in scripts/bench/README.md, with a testenv test.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "bench",
+   "sources": [
+    10
+   ],
+   "reason": "Bench headline: the stand-ins tell the truth so phase F can walk with them."
+  },
+  {
+   "id": "C-62",
+   "problem": "The real-daemon case for the Overview's waiting pull requests inserts the done task into the store instead of running a session.",
+   "evidence": "apps/ui/test/real-daemon.test.ts (github-result's repository describe block).",
+   "expected": "A real-daemon case that runs a session on the fake git host (start.mjs --githost) and then reads GET /projects/:id/pull-requests.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "bench",
+   "sources": [
+    117
+   ],
+   "reason": "Bench owns the missing real-daemon cases."
+  },
+  {
+   "id": "C-73",
+   "problem": "The plan card's 'Cannot read the web on this computer' chip cannot be walked on the bench: the stand-in intake never plans a research task.",
+   "evidence": "testenv/src/bench/role-player.ts:136 and testenv/src/bench/plans.ts:28 (FORERUNNER_BENCH_PLAN is only 'chain' or the default).",
+   "expected": "A FORERUNNER_BENCH_PLAN option that adds a research task, documented in scripts/bench/README.md, so phase F can walk the chip and the research path.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "bench",
+   "sources": [
+    135
+   ],
+   "reason": "Bench owns the stand-in plans."
+  }
+ ],
+ "polish": [
+  {
+   "id": "C-19",
+   "problem": "When a code rule changes the critic's verdict, the summary stays the model's: the drawer read 'The critic sent it back for changes.' and then 'Accepted: 1 changed file match the brief.' A real model that accepted while a check failed would show the same contradiction.",
+   "evidence": "packages/critic/src/critic.ts:709-712 (summary = submitted.summary) and :793-833 (applyVerdictRules may change the verdict; the model's summary is returned unchanged); /tmp/frbench/fixup-verification/steps/27-after-c-04-drawer-clamp.png.",
+   "expected": "When a rule changes the verdict, the shown summary says why first ('Sent back: the check \"test\" failed.'), then what the critic said, so the drawer never reads 'Accepted' under a sent-back review. Tested at GET /tasks/:id and in the drawer.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    24
+   ],
+   "reason": "Still true at 193e579. Words on the drawer; the critic package (verification's core) is open to the area. No phase E area owns critic.ts, so polish (words) takes it."
+  },
+  {
+   "id": "C-21",
+   "problem": "A task waiting on its sign-off (an accepted deploy, migration or tier-3 task) reads 'Needs your decision' on the Tasks tab with the detail 'Its card is in the Inbox: try again, mark it done anyway, or cancel it.' and the buttons Answer / Try again / Cancel, while its card is titled '\"X\" needs your sign-off' and offers Accept the work / Send it back / Cancel task. The row's Try again withdraws the sign-off card and sends accepted work back to run again.",
+   "evidence": "packages/runtime/src/daemon/task-words.ts:159-161 (critic:signoff is the 'retry' kind) and :288-300 ('Needs your decision', detail 'try again, mark it done anyway, or cancel it'); apps/ui/src/lib/task-actions.ts:65-66 (Answer, Try again, Cancel for every retry-kind card); packages/runtime/src/daemon/request-words.ts:206-240 (the card itself: 'Send it back' / 'Accept the work' for reason 'verdict'); packages/critic/src/followup.ts:28, :189; POST /tasks/:id/action try_again withdraws the task's open cards (api-types.ts:2663); docs/design/core-experience.md:40.",
+   "expected": "A task waiting on its sign-off reads 'Needs your sign-off' on the row and in the drawer, its detail names the card's own choices (accept the work, send it back, or cancel it), and the row offers Answer and Cancel only (no Try again that would rerun accepted work). The card is unchanged. Tested at GET /projects/:id/tasks (display) in a real-daemon case and in the Tasks UI test, the fake daemon in the same commit.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    34
+   ],
+   "reason": "Words and buttons on the Tasks tab; pre-existing for tier-3 sign-offs, now met by every deploy and migration (owner decision 4). Minor, not polish: the row's Try again throws away accepted work. task-words.ts display and task-actions.ts are words polish already touches."
+  },
+  {
+   "id": "C-23",
+   "problem": "The light review's choice still says 'the critic reads the work, nothing runs in isolation', while the project's checks and the page try now run for light reviews too.",
+   "evidence": "apps/ui/src/lib/task-actions.ts:196 (reviewLevelChoices, used by NewTaskDialog.tsx and TaskDrawer.tsx Edit).",
+   "expected": "A one-line meaning that is true now and has no tier or checks words (e.g. 'Light review: the critic reads the work and tries it here; nothing runs in Docker').",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    37
+   ],
+   "reason": "Words on New task and Edit."
+  },
+  {
+   "id": "C-30",
+   "problem": "Undo of a cancel says 'Undone: reopened the task \"X\"; it is ready again and a session picks it up.' but the undo starts no session (bench b2: 0 running).",
+   "evidence": "packages/commands/src/commands/task.ts:478-480 (undoMoveSentence); the fake daemon's performUndo does not say it (apps/ui/test/fake-daemon.ts:5268-5270), so the two differ.",
+   "expected": "'Undone: reopened the task \"X\"; it is ready again.' (plus what came back), the same in the fake daemon; tested at the command and in the Changes/Tasks UI.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    46,
+    57,
+    71
+   ],
+   "reason": "A promise the code does not keep (design \u00a75 rule 9); predates phase C. Words in commands/task.ts."
+  },
+  {
+   "id": "C-37",
+   "problem": "For a project linked to the person's own folder, Cancel of a running task says 'what it changed is removed; Undo brings it back', but nothing is set aside there: the files stay.",
+   "evidence": "packages/commands/src/commands/task.ts:342-347 (work is 'removed' whenever a live run stopped and the task has no PR; the folder kind is not read) and :263-267; apps/ui/src/lib/task-actions.ts:106-115 (cancelWorkLine, the dialog); ADR 0105 point 2.",
+   "expected": "A third wording for a linked folder ('Its run stops now; what it wrote stays in your folder.'), in the command, the Cancel dialog and the fake daemon; tested with a linked-folder project.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    58,
+    79
+   ],
+   "reason": "Untrue sentence (design \u00a75 rule 9); words in commands/task.ts and task-actions.ts."
+  },
+  {
+   "id": "C-39",
+   "problem": "A session whose only task the person cancelled ends with the result 'CHF 0.00.' and nothing else.",
+   "evidence": "packages/runtime/src/session/result.ts:96-176 (sessionResultLines has no line for a task cancelled during the session); bench session 01a19bdd, /tmp/frbench/fix-continuity/steps/c-after-result.json.",
+   "expected": "The result says what happened: 'You cancelled \"X\"; nothing else ran. CHF 0.00.'",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    60,
+    74
+   ],
+   "reason": "Words of the session result."
+  },
+  {
+   "id": "C-45",
+   "problem": "Start dialog: with nothing fitting the budget, each left-out task gets its own 'needs about ..., more than this session's work budget ...' line saying the same thing; and 'the tasks that run first take about Z' adds up every runnable estimate, including tasks that run after the one left out.",
+   "evidence": "apps/ui/src/pages/project/StartSessionDialog.tsx:131-153 (one line per check.overBudget; first = sum of all check.runnable).",
+   "expected": "One line for all tasks larger than the work budget ('X and Y each need more than this session's work budget of CHF 0.16'); 'run first' sums only the tasks ordered before the one left out. Tested in the Start dialog UI test.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    77
+   ],
+   "reason": "The same dialog as phaseE.json triage #48 and #69 (polish), but a different defect (repetition and the sum), so its own item; fix together."
+  },
+  {
+   "id": "C-50",
+   "problem": "A run's reason is still cut at a dot inside a file name in one place: the 'could not do' line ('I could not complete this task. The file index.html cannot be created ...' becomes 'html cannot be created from it').",
+   "evidence": "packages/runtime/src/daemon/event-lines.ts:100 (couldNotWords splits sentences with /[^.!?]+[.!?]+(?=\\s|$)|[^.!?]+$/, so 'index.' starts a new match); probe at 193e579: couldNotWords('I could not complete this task. The file index.html cannot be created from it.') -> 'html cannot be created from it'. The failed-task line itself is fixed: quotedWords (packages/critic/src/followup.ts:100-104) keeps 'index.html' whole.",
+   "expected": "couldNotWords uses the same sentence rule as quotedWords (a dot before a non-space does not end a sentence); a unit test with 'index.html' and 'data/members.csv'.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    88
+   ],
+   "reason": "The reported failed-task line was fixed by verification's quotedWords change; the sibling in couldNotWords is still true. Words in the session log."
+  },
+  {
+   "id": "C-53",
+   "problem": "The Files tab of a repository project says 'This computer's copy of <repo> as merged.', but the copy is stale between a merge on GitHub and the next session (a merged file was missing until a session refreshed the clone).",
+   "evidence": "apps/ui/src/pages/project/FilesTab.tsx:51-60.",
+   "expected": "Either the clone is fetched and reset when Files opens, or the line says 'as of the last session' and offers a refresh. Tested in the Files UI test and the fake daemon.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    99,
+    108
+   ],
+   "reason": "Raw index 99 is github-result's fix-up list of the reviewer's seven non-blocking items; each has its own item here (C-53 Files tab, C-56 'GitHub did not answer', C-57 status PR, C-58 status sentence, C-59 branch id, C-60 repository offer card, C-61 git in the runner image). Listed with the first."
+  },
+  {
+   "id": "C-55",
+   "problem": "A data import into an empty repository fails with git's own text: the migration branch is made from origin/<default> without ensureBaseBranch.",
+   "evidence": "packages/runtime/src/data/import.ts:601 (git.createBranch(branch, `origin/${defaultBranch}`), no ensureBaseBranch).",
+   "expected": "import.ts uses ensureBaseBranch and firstPushFailedWords as the PR executor does; a test with an empty bare repository.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    102,
+    115
+   ],
+   "reason": "Sibling of github-result's fix outside its journeys. No phase E area owns import.ts; the person meets it as raw words, so polish."
+  },
+  {
+   "id": "C-56",
+   "problem": "The Overview's pull-request block says 'GitHub did not answer, so the pull requests are not listed (<error text>). Try again later.' with the error text in parentheses, and says the same when no GitHub token is saved, where GitHub was never asked.",
+   "evidence": "packages/runtime/src/daemon/pull-requests.ts:91-96 (one catch for every error).",
+   "expected": "No error text on the screen; a missing or refused token says so with Connect GitHub; only a host that did not answer says 'did not answer'. Real-daemon or runtime test for both.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    109
+   ],
+   "reason": "Design \u00a75.8; words on the Overview."
+  },
+  {
+   "id": "C-58",
+   "problem": "A repository project's status sentence is just 'Done: all N tasks.' with no pointer to where the work is (design \u00a72 rule 6 has 'Your files: <path>').",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:236 (the folder part only when input.folder is set; a repository project's card has folder null).",
+   "expected": "The done line points to the work for a repository too, e.g. 'Done: all 6 tasks. 6 pull requests wait for you to merge.' with the Overview link; decided with phaseE.json triage #53 (the folder path out of the sentence).",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    111
+   ],
+   "reason": "polish owns the done line of project-status.ts; fix with triage #53/#54."
+  },
+  {
+   "id": "C-59",
+   "problem": "The session page names a task's branch with its 8-character task-id prefix ('branch fr/01a19c00-create-...').",
+   "evidence": "packages/runtime/src/daemon/event-lines.ts:433 and :481 ('on the branch ${branch}').",
+   "expected": "No id on a person's screen (design \u00a75.3): the PR number and title only, or the branch without the id prefix.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    112
+   ],
+   "reason": "Words of the session log."
+  },
+  {
+   "id": "C-60",
+   "problem": "A finished folder project reads 'Waiting for you: 1 question' on Home because of the 'Create a repository?' offer card; the card also says '... with no branch, pull request or review on GitHub', and design \u00a73.8 does not list this card type.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:153-162 (every open card but Docker counts, via holdsTask in task-words.ts:171-176); packages/runtime/src/loop/repo-create.ts:340-351 (an approval card, blocking: false).",
+   "expected": "A non-blocking offer never makes a project read 'Waiting for you'; its words say only what is true. Real-daemon case for the status line.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    113
+   ],
+   "reason": "polish owns the waiting line of project-status.ts."
+  },
+  {
+   "id": "C-70",
+   "problem": "Block list bypass with a trailing dot: http://example.com./ is read although example.com is on the project's block list (the site list has the mirror-image quirk).",
+   "evidence": "packages/capabilities/src/web/policy.ts:112-115 (hostOfUrl lowercases and strips IPv6 brackets only; no trailing-dot normalisation before domainCovered). Private and loopback addresses are still refused by the resolved-address check (packages/capabilities/src/web/fetch.ts:28-30, :129-140).",
+   "expected": "hostOfUrl strips one trailing '.'; unit tests for the block list and the site list with 'example.com.'.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    132
+   ],
+   "reason": "Low impact today (no screen sets a block list) but a one-line fix with a test; no phase E area owns web_fetch, so the batched small fixes (polish) take it."
+  },
+  {
+   "id": "C-71",
+   "problem": "docs/user-guide.md says that on a Claude subscription 'the researcher uses Claude Code's own web tools instead', but on a subscription every WebFetch is refused and only search works.",
+   "evidence": "docs/user-guide.md:516-518; C-64 (cc-tools.ts:77-82, empty allowed_domains).",
+   "expected": "The guide states the gap as it is (writing rule 9) until the owner decides C-64.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    133
+   ],
+   "reason": "polish owns docs/user-guide.md."
+  },
+  {
+   "id": "L-9",
+   "problem": "The Tasks row and drawer describe a retry card while the card in the Inbox is a sign-off.",
+   "evidence": "83-gchome-drawer-1: 'Needs your decision \u00b7 Its card is in the Inbox: try again, mark it done anyway, or cancel it.' with a Try again button. The card is '\"Home page in index.html\" needs your sign-off' with Accept the work, Send it back, Cancel task. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Row and drawer words match the card's choices. Same as C-21.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-13",
+   "problem": "Smaller wording issues on the screens.",
+   "evidence": "Home project card 'Waiting for you: 2 questions' for one sign-off and one budget card (42). Deploy row 'Light review \u00b7 Low priority' while it is reviewed at the full review with sign-off (94). New task offers Light review for ops-deploy with no note (87). Start dialog 'continues with up to 1 more as they become ready' (30). Reviews shows 'To fix: Resolve it and show the evidence' under an accepted info note (93). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Counts name the card kinds; the deploy row shows the level it actually gets; the wording is grammatical; accepted notes have no 'To fix'. The deploy row level is C-2 (answers, wave 5): check it after the merge.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-18",
+   "problem": "Person-facing failure text shows raw markdown and is cut mid-word.",
+   "evidence": "Overview Last result, Inbox card, Updates line and session summary (steps 13, 16, 17): 'failed: **Result: the check fails. \u2026 `README.md`.** \u2026 but this branch doesn't h.' (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Markdown stripped, and the text cut at a word or sentence boundary.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-20",
+   "problem": "Plan card wording and a silent wait after Approve and start.",
+   "evidence": "A 1-task plan card says 'Writes this task and starts working on them now.' (step 30). On the repository project the card stayed unchanged for about 7 s after Approve and start while the docs PR was pushed: the buttons were disabled and no words were shown (step 12). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "'starts working on it now'; a short 'Writing the plan and its docs pull request\u2026' while it works.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-21",
+   "problem": "An old session's page reads as if it were current after the person acted (already known).",
+   "evidence": "After the retry and the merge, session 1's page still says 'Ended: 1 task needs you' and lists the merged PR #4 with Open (step 41). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Text that is still true, or clearly framed as what the session left at its end.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "R-2",
+   "problem": "On github.com over HTTPS, a push refused for lack of write access or because the repository is archived prints 'remote: Permission to o/r.git denied ...' or 'remote: This repository was archived so it is read-only.' and then 'fatal: unable to access ...: The requested URL returned error: 403'; pushFailure tests UNREACHABLE (/unable to access/) before REFUSED, so the person is told 'GitHub could not be reached. Try again later.' instead of the host's reason.",
+   "evidence": "packages/capabilities/src/githost/push-words.ts pushFailure (UNREACHABLE before REFUSED); reviewer of fix/ci-193e579 called pushFailure on those strings at 6c8f4cf; CHANGELOG's new line gives 'an archived repository' as an example, which does not hold over HTTPS on github.com.",
+   "expected": "A 403 with a host 'remote:' reason is a refusal that quotes the host's line (and says what to do: check the token's access, or the repository is archived); only a real network failure says it could not be reached; tests with git's HTTPS 403 shapes; the CHANGELOG example made true.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "source": "review of fix/ci-193e579"
+  },
+  {
+   "id": "R-3",
+   "problem": "push-words.ts REMOTE_PROGRESS skips a host's real reason that starts with a progress word (e.g. 'remote: Writing to this repository is disabled'), so the bracketed git reason is shown instead.",
+   "evidence": "packages/capabilities/src/githost/push-words.ts REMOTE_PROGRESS /^(enumerating|counting|compressing|writing|receiving|resolving|processing|total \\d)/i; reviewer of fix/ci-193e579.",
+   "expected": "Progress lines are recognised by their shape (counts, percentages, 'done'), not their first word; test with 'Writing to this repository is disabled'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "review of fix/ci-193e579"
+  },
+  {
+   "id": "W5-1",
+   "problem": "A task added in chat gets no acceptance criteria, and its 'What done looks like' is the raw words with the leading 'to' ('to write a README...'). With a model available, a line longer than a title is still parsed, not given to the model's task_create (later #34 part). The bench stand-in plays no task_create from free text either.",
+   "evidence": "packages/commands/src/intent.ts:645-662 (matchAddTask: params title, outcome: text, status ready; no criteria). intent.ts:314-323 (taskTitleOf strips 'to' from the title only; the outcome keeps it). The chat model is offered task.create as the tool task_create (packages/commands/src/registry.ts:124 toolName; acceptance_criteria at commands/task.ts:573), but the pattern parser answers 'add a task: ...' first. The stand-in plays a tool only from a 'tool: <name> {json}' line (testenv/src/bench/role-player.ts:1197-1216), never from free text.",
+   "expected": "With a model, a chat line longer than a title goes to the model's task_create (title, outcome without 'to', criteria). The parser stays for installs without a model (U-047). The stand-in plays task_create from free text, so the bench path still adds the task.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    0,
+    15,
+    38
+   ],
+   "reason": "A small leftover of 'answers' (its fix_scope item 3) that touches the chat parser, the conversation agent and role-player.ts. No wave 7 area owns chat, and 'polish' takes small leftovers of any area. The first half of entry 15 (the pending tool result's echo) is a note and holds."
+  },
+  {
+   "id": "W5-3",
+   "problem": "later #10: the runner's dead heard-line path is still there (recheckInbox reads inbox lines that nothing has written since wave 2).",
+   "evidence": "packages/runtime/src/session/live-chat.ts:46-52 (heardMessageBody, used only by tests; heardLineOf). packages/runtime/src/session/runner.ts:1334, :2132, :3137-3151.",
+   "expected": "The path is removed (no behaviour change), or it is kept with one sentence saying why. live-chat.test.ts is adjusted to match.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    2
+   ],
+   "reason": "'answers' left it to avoid merge churn in runner.ts. Polish runs last in wave 7, after the areas that touch runner.ts."
+  },
+  {
+   "id": "W5-5",
+   "problem": "KillFileWatcher checks kill.json only at its first 500 ms tick, so a session started in the daemon's first half second runs despite a persisted Stop all.",
+   "evidence": "packages/runtime/src/enforcement/killfile.ts:94-101 (start() arms the first check after intervalMs, which is 500). packages/runtime/src/daemon/compose.ts:3682-3683. Nothing else reads kill.json at start: readKillRequest runs only at killfile.ts:107 and at server.ts:1676 for resume.",
+   "expected": "start() checks kill.json once, synchronously, before anything can start, then polls. A test shows it without advancing the clock.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    4
+   ],
+   "reason": "A small safety leftover, owned by 'screens', which has merged. budget-stop (running) may touch killswitch.ts, but only for the registration. Polish takes small leftovers of any area."
+  },
+  {
+   "id": "W5-9",
+   "problem": "Read-backs of other chat commands (session.start, task.pause, cancel with no card) are still filed as counted Inbox approval cards. While 'Start a session on X (up to CHF 5)?' waits, the header reads 'Waiting for you: 1 question', and the Pause read-back shows under Needs you.",
+   "evidence": "packages/commands/src/executor.ts:418-419 (chat_only only when card.command === 'request.answer' from chat or voice), :420-440 (every other read-back becomes an approval row in the Inbox). task.pause is low risk (docs/maintainers/commands.md:72) and session.start is low or medium (:79), yet both count as 'Waiting for you'. docs/design/core-experience.md \u00a73.8 ('What becomes a card (and nothing else counts as \"needs you\"): ... risky changes waiting for approval') and \u00a73.9 (a change is read back once in the chat with [Yes] [No], and survives reloads). d34f331 is the wave 2 merge's fix to the card's title (request-words.ts genericCard by change_card.ask), not an owner decision.",
+   "expected": "A change read back in chat or voice that needs only a yes is chat_only: Yes and No are in the chat, its row is kept across a restart, and it stays out of the Inbox and its counts, as an answer's read-back already does. Only a change that needs this computer's OK (high risk) waits as an Inbox card. Tested at GET /inbox and the header count with 'pause X' and 'start a session' said in chat, the fake daemon changed in the same commit.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    17,
+    24,
+    31
+   ],
+   "reason": "The design already answers it (\u00a73.8, \u00a73.9), so it is not an owner question. d34f331 was the session lead's title fix at a merge. No wave 7 area owns the commands executor, polish takes small leftovers, and L-13's 'counts name the card kinds' is polish's already."
+  },
+  {
+   "id": "W5-10",
+   "problem": "After the plan is approved from Chat on the same page, the plan banner keeps 'Waiting for you: approve the plan [Open]' beside the header's next card.",
+   "evidence": "apps/ui/src/pages/project/IntakeBanner.tsx:44-49 (the status is re-read only while the state is 'drafting'), :95-100 ('Waiting for you: approve the plan.'). Bench step /tmp/frbench/fixup-answers/steps/04-b-chat-after-yes.png.",
+   "expected": "The banner re-reads after an answer (inbox.changed, or the chat reporting done) and disappears once the plan is approved.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    18,
+    23,
+    32
+   ],
+   "reason": "IntakeBanner.tsx is one of polish's files (polish already changes the drafting words there)."
+  },
+  {
+   "id": "W5-11",
+   "problem": "A command the chat model calls runs as the agent, so its sentence is posted as an Update: 'Plan approved: 3 tasks written; working on them.' appears under Updates, echoing the person's own answer.",
+   "evidence": "packages/runtime/src/loop/commands.ts:275 (chat tool calls run with actor kind 'agent'). packages/commands/src/executor.ts:687-698 (theirOwn only when the actor is the human; otherwise message.send to the Inbox).",
+   "expected": "A change the person asked for in chat (the agent acting on the person's turn) is not echoed as an Update (design \u00a73.8, \u00a75.11). It stays in Changes and in the chat.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    33
+   ],
+   "reason": "Older than wave 5; Inbox noise left over. No wave 7 area owns the executor's post(), and polish takes small leftovers."
+  },
+  {
+   "id": "W5-12",
+   "problem": "The executor's run warnings ('the coder tries again: the only specialist that could take it over ... keeps the full review and your sign-off', 'the retry ladder hands this task to ...') never become session events. The person and the session log never see why a specialist stayed or changed.",
+   "evidence": "packages/runtime/src/daemon/compose.ts:2142-2143 (onEvent only does events.emit('run')), :2752-2759 (the only 'run' subscriber reads run_end and injection_flagged). packages/runtime/src/session/executor.ts:524-528, :674-685 (the warnings). A bench session had 4 task.started events and no warning events.",
+   "expected": "The ladder's warnings reach the session log as person lines. The hand-over is already told by task.started's takes-over line; the reason for 'tries again' (kept across the sign-off line) is told nowhere.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    20,
+    22
+   ],
+   "reason": "Older than wave 5; a small session-log leftover of the ladder (screens and answers). No wave 7 area owns the run-event wiring."
+  },
+  {
+   "id": "W5-14",
+   "problem": "The chat's start wait has no test of what the person reads when the run fails before its session begins, or when the wait times out.",
+   "evidence": "packages/runtime/src/loop/commands.ts:758-767 (the runOutcome failure is rethrown; the timeout branch). No test passes wait.timeoutMs or a failing runOutcome (packages/runtime/test/loop-commands.test.ts has none).",
+   "expected": "Two tests at the chat boundary: a run that fails before session.started gives the run's error in words, and a timeout says the start is on its way instead of a false 'started'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    34,
+    19
+   ],
+   "reason": "Test coverage left by 'answers' (rule 9). Entry 19 also lists the items in W5-15, W5-16 and W5-1 (the leading 'to')."
+  },
+  {
+   "id": "W5-15",
+   "problem": "The person-questions card stores its option as 'Cancel the task' (what a refusal's details.options names) while its button reads 'Cancel task'.",
+   "evidence": "packages/runtime/src/wiring/request-answers.ts:227 (CANCEL_TASK_OPTION 'Cancel the task'), packages/runtime/src/session/person-questions.ts:66, request-answers.ts:577-583 (details.options). packages/runtime/src/daemon/request-words.ts:346-347 (label 'Cancel task'). The doubled quotes and the mid-word cut are fixed (packages/commands/src/executor.ts:359-367, cardTitleOf, 766dba0). The '(s)' plurals part does not hold: cardLine runs plainReason, which applies plainPlurals (conversation/project-facts.ts:261, daemon/task-words.ts:143), so 'Intake for 'X': 1 milestone(s), 3 task(s)' reads '1 milestone, 3 tasks'.",
+   "expected": "One word for the action, on the card and in the options a refusal names ('Cancel task'); old cards are still accepted.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    35
+   ],
+   "reason": "Words. One part was fixed in 766dba0 and one part does not hold at c8c16fb; the rest is polish."
+  },
+  {
+   "id": "W5-16",
+   "problem": "New task for ops-deploy or migration-specialist preselects 'Full review' (tier 2) and offers 'Full review and your sign-off' (tier 3) beside it, with the note 'keeps the full review and your sign-off'. For these specialists the two choices do the same thing, since sign-off is decided by the specialist.",
+   "evidence": "apps/ui/src/pages/project/NewTaskDialog.tsx:192-196 (tier = max(chosen, 2)), :259-260 (the tier 2 and 3 choices kept), :312-315 (the note). apps/ui/src/lib/task-actions.ts:197-206 (reviewLevelChoices). packages/runtime/src/loop/verification.ts:38-41.",
+   "expected": "For a sign-off specialist the dialog shows one full-review choice that says it includes the sign-off.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    36
+   ],
+   "reason": "Polish already changes the words of reviewLevelChoices (C-23), and L-13's New task part about ops-deploy is polish's."
+  },
+  {
+   "id": "W5-22",
+   "problem": "The planning session's page shows its raw summary 'intake: Alpha after (completed: 2 docs)' under the title.",
+   "evidence": "packages/runtime/src/session/intake.ts:1396, :1547 (summary 'intake: <name> (<outcome>: <note>)'). apps/ui/src/pages/SessionPage.tsx:406-412 (shown as it is). /tmp/frbench/fix-screens-after-steps/06-after-e-planning-session.txt.",
+   "expected": "A plain sentence ('Planned Alpha: 3 tasks and 2 docs.'), per design \u00a75 rules 3 and 6.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    44,
+    84
+   ],
+   "reason": "Words on a screen."
+  },
+  {
+   "id": "W5-24",
+   "problem": "A review stopped before the critic's model call began (during the project checks or the try) writes no critic Run row, so the drawer shows no trace that a review started.",
+   "evidence": "packages/critic/src/critic.ts:561-563 (the Run row is inserted only after the model call). packages/runtime/src/daemon/task-display.ts:376-390 ('Review stopped' only from a stopped critic Run row).",
+   "expected": "A review stopped at any point shows 'Review stopped' with its reason in the drawer.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    46
+   ],
+   "reason": "A small drawer leftover of 'screens' (a sibling of C-41). Polish already owns critic.ts for C-19."
+  },
+  {
+   "id": "W5-25",
+   "problem": "Without a key and under Stop all, the ready line names the missing key first, while the Start dialog names Stop all first.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:216-223 (hasModel before stopped). packages/runtime/src/daemon/start-blocked.ts:71-80 (stopped before no_model).",
+   "expected": "One order in both places.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    47
+   ],
+   "reason": "Words; polish owns the lines of project-status.ts next to the ready line."
+  },
+  {
+   "id": "W5-30",
+   "problem": "Changes shows raw source and scope badges ('ui', 'chat', 'global', 'session', 'project').",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:216-219.",
+   "expected": "Words a person reads ('In the app', 'In chat'; 'This project', 'Everywhere'), with the e2e and unit assertions on data-source kept.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    61,
+    75
+   ],
+   "reason": "Words on a screen."
+  },
+  {
+   "id": "W5-31",
+   "problem": "Connect Claude goes to /setup from the ready and plan-failed lines, but to /settings from the Start dialog.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:66 (CONNECT_CLAUDE to /setup). packages/runtime/src/daemon/start-blocked.ts:81 (/settings). A U-047 real-daemon assertion pins /settings.",
+   "expected": "One target for Connect Claude everywhere, with the pinned assertion changed to match.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    62,
+    78
+   ],
+   "reason": "Words and links, polish's kind of work."
+  },
+  {
+   "id": "W5-32",
+   "problem": "The drawer links every changed file, even one deleted since; the Files tab then says '<file> is not a file of this project'.",
+   "evidence": "apps/ui/src/pages/project/TaskDrawer.tsx:346-376 (every file is a Link). packages/runtime/src/daemon/docs-routes.ts:324.",
+   "expected": "A file deleted since is shown as plain text (or the Files tab says it was removed), from a stat in GET /tasks/:id.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    63,
+    79
+   ],
+   "reason": "A small drawer leftover."
+  },
+  {
+   "id": "W5-33",
+   "problem": "After a restart while still stopped, a second Stop all rewrites kill.json with only the sessions stopped in memory, so Continue where it stopped forgets the sessions stopped before the restart.",
+   "evidence": "packages/runtime/src/daemon/server.ts:1644-1654 (sessions = rt.kill.stoppedSessions(), held in memory only), :1673-1677 (resume reads kill.json). compose.ts:3006-3014 does the same for a chat Stop all.",
+   "expected": "A Stop all keeps the sessions kill.json already names.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    64,
+    81
+   ],
+   "reason": "An edge case 'screens' left; a small leftover."
+  },
+  {
+   "id": "W5-34",
+   "problem": "reviewSentence's default branch still writes 'The critic's verdict: <words>.' for an unknown verdict value, using the banned word.",
+   "evidence": "packages/runtime/src/daemon/task-display.ts:155.",
+   "expected": "The default branch uses the drawer's review words, without 'verdict'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    66
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W5-43",
+   "problem": "scripts/bench/README.md does not mention the stand-in's briefAsRead behaviour (a lesson line in a report deliverable, a writer's notes.md).",
+   "evidence": "scripts/bench/README.md has no briefAsRead; docs/maintainers/testing.md:2537 describes it.",
+   "expected": "The bench README says it in one sentence.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    89,
+    99
+   ],
+   "reason": "Docs."
+  },
+  {
+   "id": "W5-44",
+   "problem": "The brief's 'Questions for the person' line says 'end the report with ...'. A specialist whose deliverable is a report may put its questions in report.md, where askPersonInstead and the critic (which read the run's final message) never see them, so no card is filed.",
+   "evidence": "packages/runtime/src/session/executor.ts:796. packages/runtime/src/loop/critic.ts:635-648 (reportedQuestions reads result.finalReport or the summary).",
+   "expected": "The line says 'end your final message' (as LESSONS_CONSTRAINT does, executor.ts:148-149), with a test like lessons-out-of-deliverables.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    90,
+    109
+   ],
+   "reason": "One brief line, and no wave 7 area owns it (budget-stop's headings are a different line)."
+  },
+  {
+   "id": "W5-45",
+   "problem": "Session-end notification titles with several task names shorten each name and then cut: 'Quote page: did 3 tasks: \"Create the...\", \"Show a...\" and...'.",
+   "evidence": "packages/runtime/src/notifications/producers.ts:51-66 (fit), :29-36 (cut).",
+   "expected": "The first task is named, followed by 'and 2 more'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    91,
+    105
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W5-46",
+   "problem": "The injection notification says 'Instructions found in web_page content were ignored', and its body lists raw rule ids and the tool name ('Ignored 4 passages from email_read (approval_bypass, exfiltrate, ...)').",
+   "evidence": "packages/runtime/src/notifications/producers.ts:335, :361. ADR 0047. Scenario 6 and capabilities-wiring assert the exact title.",
+   "expected": "Plain words ('A web page you had read held instructions; they were ignored.'), with ADR 0047 and the two tests amended.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    92,
+    107
+   ],
+   "reason": "Words (design \u00a75.3, \u00a75.6). Noise's later #80 shortened the body only."
+  },
+  {
+   "id": "W5-48",
+   "problem": "For a task waiting for Docker, the session-end result calls it ready to continue: '\"Style the page in styles.css\" is ready to continue.' When its card was filed, the news drops 'Waiting for Docker' and keeps only that sentence. Without the card, both sentences show.",
+   "evidence": "packages/runtime/src/session/result.ts:130 (told.docker empties waitingForDocker), :183-186 (leftOver from readyNow). session/runner.ts:2271-2276 (leftOver is readyNow less the budget's left-outs; waitingForDocker is a subset of readyNow and is not taken out).",
+   "expected": "A task waiting for Docker is never called ready to continue.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    104
+   ],
+   "reason": "An untrue sentence in result.ts; polish appends to result.ts after merge-in-app."
+  },
+  {
+   "id": "W5-49",
+   "problem": "A session that ends 'failed' with an internal error, with nothing in its result but money, now sends no notification.",
+   "evidence": "packages/runtime/src/notifications/producers.ts:211-215 (sessionEndIsNews reads only the lines, never SessionEndFacts.status, :128). stopWords('internal') is empty.",
+   "expected": "A failed session is news, with words for the error.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    106
+   ],
+   "reason": "A small notification leftover of 'noise'."
+  },
+  {
+   "id": "W5-50",
+   "problem": "The notification body is cut mid-sentence when the rest is long ('... 2 tasks wait on... Open the session for the details.').",
+   "evidence": "packages/runtime/src/notifications/producers.ts:80-91 (bodyOf), :29-36 (cut).",
+   "expected": "The body keeps whole sentences and drops the ones that do not fit.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    108
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W5-51",
+   "problem": "On a session page, the header's project selector shows the active project, not the session's project ('Quote page' on another project's session).",
+   "evidence": "apps/ui/src/shell/Shell.tsx:44-46 (viewed only for /projects/:id/*; /sessions/:id falls back to activeProject). The entry's other half, the stand-in critic's 'Accepted: 1 changed file match the brief.', is fixed (testenv/src/bench/role-player.ts:1109-1115).",
+   "expected": "The header names the project of the session on screen (design \u00a73.1).",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    112
+   ],
+   "reason": "Shell.tsx is one of polish's files."
+  },
+  {
+   "id": "W5-53",
+   "problem": "After the supervised restart at the end of setup, the page goes Home as soon as the token-free /health answers, before a token-bearing call works, so GET /inbox and GET /events answer 401 a few times.",
+   "evidence": "apps/ui/src/pages/SetupPage.tsx:338-345 (navigate after client.health()). problems.jsonl of /tmp/frbench/fix-bench-after (2 refused /health calls, 3 transient 401s).",
+   "expected": "The page waits for a token-bearing call (or the shell's reload) before going Home; no 401 in problems.jsonl.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    114,
+    117,
+    128
+   ],
+   "reason": "SetupPage.tsx is one of polish's files; nothing stays stuck."
+  },
+  {
+   "id": "W5-55",
+   "problem": "POST /setup/finish runs runSetup({}) again, so daemon.log shows a second 'setup written' line, with stored [] and skipped [github, anthropic, subscription], right after a token was stored.",
+   "evidence": "packages/runtime/src/setup/routes.ts:288-291.",
+   "expected": "Finish writes config.json only when none exists and logs nothing misleading.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    116
+   ],
+   "reason": "A small leftover in the setup route."
+  },
+  {
+   "id": "W5-58",
+   "problem": "C-10 is only partly closed. The stand-in critic marks a criterion met as soon as it has read the file the criterion names, whatever the claim ('[met] README.md has a How to run section - read README.md' for a README without that section). A capitalised single-segment *.js name (App.js) is not judged at all.",
+   "evidence": "testenv/src/bench/role-player.ts:997-1008 (a read file gives met with 'read X'). testenv/src/bench/plans.ts:643 (/^[A-Z][A-Za-z0-9]*\\.js$/ skipped). docs/maintainers/testing.md:2537 says a criterion is met only when a file shows it.",
+   "expected": "Unchecked claims read 'not checked by the stand-in', or the stand-in looks for the quoted words. App.js is judged.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    123,
+    130
+   ],
+   "reason": "A bench stand-in leftover of 'bench'; no wave 7 area owns the critic in role-player.ts."
+  },
+  {
+   "id": "W5-59",
+   "problem": "Only the helper fakeEventAudience is tested. Nothing tests that the fake's pushEvent and GET /sessions/:id/events use it, and no screen test pushes a marked event.",
+   "evidence": "apps/ui/test/fake-daemon.ts:600-606, :6458-6459. apps/ui/test/fake-daemon-audience.test.ts (the helper only).",
+   "expected": "A UI test pushes a person event and a detail event and, by default, sees only the person line.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    124
+   ],
+   "reason": "A test gap."
+  },
+  {
+   "id": "W5-60",
+   "problem": "After restart-daemon.mjs, both recorder.cjs's followDaemon and an explicit reconnect(page, name) reload the page (session-engine.cjs, session-engine-failures.cjs). reconnect's reload has no guard, so the two may race.",
+   "evidence": "scripts/bench/recorder.cjs:100, :173-192, :203-206. scripts/bench/journeys/session-engine.cjs:143, session-engine-failures.cjs:66, :84, :112.",
+   "expected": "One reload per restart (reconnect tells followDaemon the token it saw, or the journeys drop the explicit reconnect).",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    125
+   ],
+   "reason": "A bench script leftover."
+  },
+  {
+   "id": "W5-61",
+   "problem": "supervise.mjs treats only exit 86 as a restart and ignores the request's exitCode, while the shell's is_restart_exit honours request.exitCode and also 75.",
+   "evidence": "scripts/bench/supervise.mjs:19. apps/desktop/src-tauri/src/restart.rs:86-91.",
+   "expected": "The supervisor reads restart.json's exitCode, as the shell does.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    129
+   ],
+   "reason": "Harmless today (restart.ts writes 86); a bench script leftover."
+  },
+  {
+   "id": "W5-62",
+   "problem": "In scripts/bench-scripts.test.ts, the supervisor describe was inserted between the smoke checks' doc comment and their describe.",
+   "evidence": "scripts/bench-scripts.test.ts:214-226 (the smoke-checks comment sits above the supervisor block; the smoke describe is at :368).",
+   "expected": "Each comment sits above its own describe.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    131
+   ],
+   "reason": "Cosmetic."
+  },
+  {
+   "id": "W5-65",
+   "problem": "No UI test asserts that the fake daemon's chat 'stop everything' stops running sessions and records their projects, as its POST /kill does (676ec3a).",
+   "evidence": "apps/ui/test/chat.test.tsx:296-313 asserts only the stopped bar.",
+   "expected": "A UI test: a running session, 'stop everything' in chat, then the stopped bar's Continue names that project.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    134
+   ],
+   "reason": "A test gap."
+  },
+  {
+   "id": "W6-2",
+   "problem": "Quit (POST /shutdown) does not wait for running sessions to write their own end. It stops the runs, waits 100 ms and closes the store. A Quit during a review therefore ends as 'Interrupted: Forerunner closed while this session ran.' (recovered at the next start) instead of 'Stopped: Forerunner was closed' (\u00a74.9).",
+   "evidence": "packages/runtime/src/daemon/server.ts:212-213 (SHUTDOWN_DELAY_MS = 100), :1662-1668 (kill.stop, then setTimeout(onShutdown, 100)); packages/runtime/src/cli/main.ts:385-391 (daemon.stop, then keep.close, with no wait for the runner). Seen in the fixup's walk (a): both Quit and a crash gave the 'interrupted' Update.",
+   "expected": "/shutdown waits, bounded at a few seconds, for each stopped session to record its own end before the store closes, so a Quit reads 'Stopped: Forerunner was closed'. Cover it with a real-daemon case using a slow try.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    138,
+    157,
+    164,
+    293
+   ],
+   "reason": "No wave 7 area owns server.ts /shutdown or main.ts shutdown. It is a small leftover of 'stops', and both outcomes already leave the task Ready with a true sentence. Entry 293 is the merge's list of examples: its other examples are W6-8, W6-11, W6-27 and W6-31."
+  },
+  {
+   "id": "W6-3",
+   "problem": "A project whose only task is cancelled reads 'No tasks yet' in its header and on the Overview.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:133-139 (progressOf leaves cancelled tasks out of total), :257-262 (total === 0 gives 'No tasks yet'); /tmp/frbench/fix-stops/steps/23-after-e-03-tasks.png.",
+   "expected": "A status line that is true, for example 'Cancelled: \"Credits page in credits.html\"' or 'Nothing to do: 1 task cancelled', with Open Tasks. Assert it in a UI and a real-daemon case.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    140
+   ],
+   "reason": "polish owns project-status.ts's done and waiting lines."
+  },
+  {
+   "id": "W6-4",
+   "problem": "Try-it checks the abort signal only between pages. A Cancel while a page is open waits for that page's two widths (about 1.7 s) before the review ends and the files leave the folder. The Cancel dialog shows 'Saving\u2026' for more than 0.5 s in the meantime.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts:181-191: `if (opts.signal?.aborted) break` before each page only, and tryOne gets no signal. fix-stops steps/13-after-b-03-after-cancel.png. No model call is made after the Cancel.",
+   "expected": "An abort closes the page (and the browser it owns) at once: check the signal between widths and abort the navigation. A unit test with a slow page shows the try ending within about 100 ms of the abort.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    141,
+    144
+   ],
+   "reason": "A small leftover of 'stops' and 'verification' in try-page.ts. No wave 7 area owns the page try."
+  },
+  {
+   "id": "W6-5",
+   "problem": "UI tests that depend on how long real work takes fail under machine load and pass alone: session.test.tsx 'while it runs\u2026', setup-assistant.test.tsx 'Skip for now', and e2e session.spec.ts 'Stop now asks once\u2026'.",
+   "evidence": "apps/ui/test/session.test.tsx:157-176 (waitFor with the default 1 s, eventDelayMs 60); apps/ui/test/setup-assistant.test.tsx:56-70 (default waitFor); apps/ui/e2e/session.spec.ts:63-87 (stop.count() then click, which races the session's end). 32ec40b (C-8) changed the runtime and e2e scenario tests and added one real-daemon.test.ts case; it did not touch these three.",
+   "expected": "Each waits on the state it needs, with a longer timeout and a failure message that says what it saw, and passes 5 runs in a row under load, as C-8 did for the runtime tests.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    142,
+    176
+   ],
+   "reason": "Load-sensitive UI tests are a small leftover. 142's other half (monthly-jobs-wiring) is fixed: see W6-44. The Windows runtime and testenv timeouts seen on CI are part of W6-1."
+  },
+  {
+   "id": "W6-8",
+   "problem": "After a quit or crash recovery, the Overview's 'Last result' reads 'No session yet.', although the session ended 'Interrupted: Forerunner closed\u2026'. This predates the branch.",
+   "evidence": "packages/runtime/src/session/recovery.ts has no summary_cache or last_session write (grep). The runner writes last_session only on its own end path (packages/runtime/src/session/runner.ts:2537). apps/ui/src/pages/project/SummaryTab.tsx:168 falls back to 'No session yet.'. Review steps-1/07, 12.",
+   "expected": "endDeadSession writes the project's last_session with the recovered outcome, so the Overview shows the interrupted session's sentence (\u00a75.10, true now). Add a real-daemon case after a restart.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    156,
+    163
+   ],
+   "reason": "A small leftover of 'stops' in recovery.ts and the Overview. No wave 7 area owns it. collab-feed (wave 8) later keys last_session per agent and keeps this write."
+  },
+  {
+   "id": "W6-9",
+   "problem": "After a Cancel, the session result says 'N tasks wait on other tasks.' while the rows read 'Stuck: \"X\" was cancelled'. This predates the branch.",
+   "evidence": "packages/runtime/src/session/result.ts:196-200: 'on it' only when a task failed or needs the person, else 'on other tasks'. There is no case for a cancelled holder. Seen as '4 tasks wait on other tasks. CHF 0.00.' and '1 task waits on other tasks. CHF 0.01.'.",
+   "expected": "The result names it, for example '1 task waits on \"X\", which you cancelled.', in C-39's own line builder in result.ts.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    158,
+    165
+   ],
+   "reason": "A sibling of C-39 (polish's handoff: the result after a cancel) in result.ts. 158's other two points are W6-60 (a deliberate pending promise) and W6-10 (the Changes page)."
+  },
+  {
+   "id": "W6-10",
+   "problem": "The Changes page shows a raw command name under each change's sentence ('task.transition \u00b7 before / after'). This predates the branch.",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:43-51 (commandNames returns the command's name) and :258-261 (the details summary).",
+   "expected": "The disclosure is worded for a person (for example 'Details: before and after'), with no internal command names.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    168
+   ],
+   "reason": "Words on a screen. Not the same as system-text #6 or later #36 (the 'Said:' and 'undoable' lines)."
+  },
+  {
+   "id": "W6-11",
+   "problem": "A note queued while a session runs never reaches a task that the same session runs next. This covers Try again or Redo with a note, a task action's note, and findings' notes about a task. The note stays queued until a later session.",
+   "evidence": "packages/runtime/src/session/runner.ts:918 (the brief is built once by runStartupChecklist) and :1483 (notesForTask(brief.queue.items, \u2026) for every task). Queue writers: commands/task.ts:407-408 queueNote, findings.ts:205 and :652 noteAboutTask. person-questions.ts:990-995 says the same in a comment ('a session already running reads the queue only at its start'). L-3 was this bug for Go ahead without, and asking avoided it by reading the card at run start.",
+   "expected": "Before each task the runner reads the queue's unread notes for that task (or re-reads the queue), so a note given during the session reaches that task's next run in the same session. Add a real-daemon case: Try again with a note while the session runs, and the task's brief carries it.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    170,
+    172
+   ],
+   "reason": "No wave 7 area owns the runner's note read. It is a contained change in runner.ts, and polish runs last, after every area that edits runner.ts."
+  },
+  {
+   "id": "W6-12",
+   "problem": "After the second questions card (go_ahead: false, filed after Go ahead without), the card offers no second Go ahead without on screen. But a 'go ahead' typed in chat or on the phone, or POST /tasks/:id/action go_ahead, is still accepted on it.",
+   "evidence": "packages/runtime/src/wiring/request-answers.ts:250-256 (offersGoAheadWithout reads only card.source), :327, :485; packages/runtime/src/daemon/server.ts:1135-1136 (go_ahead maps to task.resume without_answers with no card check); request-words.ts:318 (planned = !offersGoAheadWithout(card)).",
+   "expected": "A separate predicate refuses 'without' on a go_ahead:false card, in the answer reader and in the task action, with the NEEDS_YOUR_ANSWERS words. It must not reuse offersGoAheadWithout, which would flip questionsCard's 'planned' body. Add a real-daemon test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    171,
+    290
+   ],
+   "reason": "A small gap between 'asking' and 'answers', left by the merge. It affects chat and the daemon route too, so it is not phone-only."
+  },
+  {
+   "id": "W6-13",
+   "problem": "The plan card's Done line can promise work that does not happen. When every first task waits for Docker, resumeWork counts them as ready, the start is 'started', and the line reads 'Plan approved: N tasks written; working on them.' while the session runs nothing until Docker is ready. When the start is nothing_to_run for a reason other than a person task (every task waits on one that is not done and will not run by itself), or no start was recorded, the line says '; press Start on the project to work on them', and Start then runs nothing (design \u00a75.9).",
+   "evidence": "packages/runtime/src/daemon/request-words.ts:490-505 (intakeOutcome: only plansPersonTask gets its own words; 'started' gives 'working on them'; everything else gives 'press Start\u2026'); packages/runtime/src/session/resume-work.ts:37-52 (nothing_to_run only when no ready non-person task has its dependencies done, otherwise 'started'); packages/state/src/repos/task.ts:377-386 (readyTasks does not check Docker); packages/runtime/src/session/intake.ts:1903-1911.",
+   "expected": "The Done line says why nothing runs now (for example 'the work waits for Docker: set it up in Settings', or what it waits on), true now. Add a real-daemon case for the Docker case and for nothing_to_run.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    174
+   ],
+   "reason": "Card words in request-words.ts. The raw entry's Docker example takes the 'started' branch, not 'press Start'. Both branches can be untrue."
+  },
+  {
+   "id": "W6-14",
+   "problem": "When the work waits on the person's content step, the Start dialog says '\"Build the page\u2026\" waits on \"Give the opening hours and the photos\" (needs you): that will not be done by itself. Change what it waits for on the Tasks tab, or try the failed task again.' Nothing failed, and the step is done once the person answers.",
+   "evidence": "apps/ui/src/pages/project/StartSessionDialog.tsx:59-68 (stuck() counts needs_human with failed and cancelled) and :107-116 (one sentence for all of them); review-asking steps/52-d2-start-dialog.txt.",
+   "expected": "A dependency that waits for the person reads, for example, '\"Build the page\" waits for your answers to \"Give the opening hours and the photos\" (Inbox).' 'Try the failed task again' appears only for a failed dependency. Test it in the Start dialog UI test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    191,
+    193,
+    201
+   ],
+   "reason": "polish owns StartSessionDialog.tsx's waitsOnText and these lines. 191's other points are W6-15, W6-16, W6-17, W6-18 and W6-45."
+  },
+  {
+   "id": "W6-15",
+   "problem": "After Go ahead without was pressed while the session ran, the Done line read '\"Members chart\" goes on without your answers: it runs after the current session.' The same session actually ran it ('did 3 tasks').",
+   "evidence": "packages/runtime/src/daemon/request-words.ts:209-213 (startWords 'queued' gives 'it runs after the current session'). The running session re-plans and takes ready tasks (runner.ts:1197-1200).",
+   "expected": "Words that are true whether the running session or the next one takes it, for example 'the running session picks it up'. Add a real-daemon case.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    202
+   ],
+   "reason": "Card words in request-words.ts."
+  },
+  {
+   "id": "W6-16",
+   "problem": "The session result says '\"Home page in index.html\" needs your decision (Inbox).' for a task whose card is a set of questions.",
+   "evidence": "packages/runtime/src/session/result.ts:212-214 (needsYouSentence, one wording) used for every needs_human task (runner.ts:2254-2270).",
+   "expected": "A questions card reads, for example, '\"Home page\" waits for your answers (Inbox).', and the Update still removes that sentence (sessionUpdateLine).",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    209
+   ],
+   "reason": "Words in result.ts."
+  },
+  {
+   "id": "W6-17",
+   "problem": "A person-task row shows 'Light review \u00b7 High priority'. After the Tasks tab's Go ahead without, a Ready row keeps 'needs you' in the Critic column.",
+   "evidence": "apps/ui/src/pages/project/TasksTab.tsx:434-437 (reviewLevelName for every task, the person's too); apps/ui/src/lib/plain-words.ts:54-66 (verdictLabel 'human' gives 'needs you', from the last verdict whatever the status).",
+   "expected": "A person task shows no review level. A ready task does not read 'needs you' in the Critic column.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    208
+   ],
+   "reason": "Words on the Tasks tab."
+  },
+  {
+   "id": "W6-18",
+   "problem": "The bench stand-in's FORERUNNER_BENCH_MISSING still reports data/members.csv missing after the file is added to the folder, so the missing-input path cannot be walked to Done.",
+   "evidence": "testenv/src/bench/role-player.ts:591-621 (missingHit is matched by title only, and the folder is never checked).",
+   "expected": "The stand-in plays 'missing' only while the data/... file is absent, so the walk can reach Done. Document it in scripts/bench/README.md.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    210
+   ],
+   "reason": "A small bench leftover ('bench' was wave 5). No wave 7 area owns role-player.ts."
+  },
+  {
+   "id": "W6-19",
+   "problem": "After the person answers a go_ahead:false card, the next brief says both 'The person answered the questions\u2026' and WITHOUT_ANSWERS_NOTE ('chose to go ahead without answering'), with the old questions listed as left open.",
+   "evidence": "packages/runtime/src/session/person-questions.ts:648-684 (answersBlockFor appends the without block whenever withoutAnswersOn is set); packages/runtime/src/session/executor.ts:1050 (drops the queued duplicate by exact text). Log call 41 in the review.",
+   "expected": "When answers came after the without choice, the block says the later answers replace it, and drops 'left open' for answered questions. Keep executor.ts's dedupe and the bench stand-in's reading in step.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    188,
+    203
+   ],
+   "reason": "Model-facing words in a contained function. The fixup left it only because of the dedupe coupling."
+  },
+  {
+   "id": "W6-20",
+   "problem": "resumeWork filters person tasks by specialist only, while isPersonTask also counts legacy person titles, so a legacy person task can still count as runnable work.",
+   "evidence": "packages/runtime/src/session/resume-work.ts:34-38 (specialist 'person' only); packages/runtime/src/session/person-questions.ts:114-123 (isPersonTask: the specialist or LEGACY_TITLE/ASK_TITLE/PERSONS_ANSWER).",
+   "expected": "resumeWork uses isPersonTask, with a unit test for a legacy-titled person task.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    206
+   ],
+   "reason": "A one-line consistency fix. budget-resume also edits resume-work.ts, and polish runs after it."
+  },
+  {
+   "id": "W6-28",
+   "problem": "The open pull requests are read from the first page of 100 only. With more open PRs, the chat (L-17) calls a done task's open PR beyond them merged, and the Overview's list is cut.",
+   "evidence": "packages/capabilities/src/githost/github.ts:399-415 (listPullRequests, per_page 100, one request; the class has an every-page helper, paged(), at :298); packages/runtime/src/daemon/compose.ts:3389-3398; packages/runtime/src/daemon/pull-requests.ts:96.",
+   "expected": "listPullRequests follows GitHub's next pages, as the repository list does. Add a unit test on the fake host with more than 100 open PRs.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    233,
+    245
+   ],
+   "reason": "A small fix in github.ts. merge-record (group 1, running) also edits github.ts and cannot be given this, and polish runs after it."
+  },
+  {
+   "id": "W6-31",
+   "problem": "The process sandbox kills only the direct child of a command. A command try, an npm check or a worker's command that starts children leaves them running on Linux and macOS when it is stopped or times out.",
+   "evidence": "packages/platform/src/shell.ts:123-147 (spawnProcess never sets detached) and :232-255 (killTree's process.kill(-pid) fails with ESRCH and falls back to child.kill). Windows uses taskkill /T. Only the server driver detaches (try-run.ts:666). The fixup's try-run.test.ts 'out of time' case on the fixer's head showed 'still running 10 s after the try ran out of time'. docs/user-guide.md:159-160 promises 'Nothing a try started keeps running after it', which this breaks for a command try's children.",
+   "expected": "Sandboxed runs on POSIX start in their own process group (detached), so a stop or timeout kills the whole tree. Add tests for a command that spawns a child, for git and for npm.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    264,
+    266
+   ],
+   "reason": "A platform-wide leftover of 'verification'. No wave 7 area owns shell.ts, and the server try already has its own guard. It is larger than most polish items: size it in the area."
+  },
+  {
+   "id": "W6-32",
+   "problem": "`npx wc <file>` is not recognised as a usage line. The drawer then says the tool was not tried because neither the brief nor a README says how to run it, which is untrue.",
+   "evidence": "packages/runtime/src/loop/try-plan.ts:117-118 (SCRIPT now accepts './wc.js', so `node ./wc.js` is recognised; PROGRAMS is only node, python3 and python, with no npx).",
+   "expected": "An `npx <bin>` usage line whose bin the task's package.json names is tried, or the drawer says why it was not.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    265,
+    274
+   ],
+   "reason": "A small leftover of 'verification'. 274's `node ./wc.js` half is fixed. 265's other points are W6-33, W6-34, W6-26, W6-43, W6-35, W6-54 and W6-51."
+  },
+  {
+   "id": "W6-33",
+   "problem": "A try that changes an existing file of the task (`node todo.js add milk` writes todos.json) leaves the change in the folder and only names it. The next 'Workspace before' commit, or a retry's PR commit, picks it up.",
+   "evidence": "packages/runtime/src/loop/try-run.ts:79-94 (created files are removed; changed files are only named in the note).",
+   "expected": "Files the try changed are put back after it (git restore of tracked files changed by the try, or a content snapshot of those files), so the task's work is what the critic reviewed.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    279
+   ],
+   "reason": "A small leftover of 'verification'. The worktree is under git, so the changed tracked files can be restored without snapshotting the whole folder."
+  },
+  {
+   "id": "W6-34",
+   "problem": "A Python project that mixes unittest files and plain pytest-style files runs no tests on a machine without pytest ('pytest is not installed'), although unittest could run the TestCase files.",
+   "evidence": "packages/runtime/src/loop/project-checks.ts:317-358 (unittestStyle requires every test file to import unittest, else only pytest is tried).",
+   "expected": "Without pytest, the unittest files run and 'See what was checked' names the pytest-style files as not run.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    281
+   ],
+   "reason": "A small leftover of 'verification' in project-checks.ts."
+  },
+  {
+   "id": "W6-35",
+   "problem": "Person-facing evidence under 'See what was checked' quotes the browser's raw refusal, for example '(Chromium sandboxing failed!)'.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts:184-190 (the browser's own words appended to NO_BROWSER_SANDBOX) and :232-240 (sandboxRefusal). The 'process sandbox' wording is gone (packages/runtime/src/loop/try-run.ts:52-58).",
+   "expected": "One plain sentence ('the browser ran without its own sandbox: this computer does not allow it'), with the raw line kept in the log.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    284
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W6-52",
+   "problem": "The process sandbox's 'network off' is only HTTP(S)_PROXY pointing at a deny-all proxy, which Node's fetch ignores. The person-facing words are fixed, but the critic is still told before every try that the work was tried 'in the task's sandbox, network off'. That is untrue for the process sandbox.",
+   "evidence": "Fixed for the person: packages/runtime/src/loop/try-run.ts:46-58 (whereWords: 'on this computer, not in a container (a program that ignores proxy settings can still reach the network)'); docs/user-guide.md:153-156. Still open: packages/critic/src/evidence.ts:56-62 (TRIED_TRUST_LINE: '\u2026; in the task's sandbox, network off)'), sent above every try in the critic's request. Raw 267 asked for exactly this search.",
+   "expected": "TRIED_TRUST_LINE says where the tries ran as whereWords does (or names no network state), with the critic test asserting it through the constant.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    267,
+    276
+   ],
+   "reason": "Model-facing words, so polish severity. No wave 7 area owns packages/critic/src/evidence.ts's trust line."
+  },
+  {
+   "id": "W6-72",
+   "problem": "Two parts of the code read 'Lesson:' lines differently. A line written as '-Lesson: \u2026' or 'Lesson : \u2026' is recorded as a lesson but stays in the pull request body and the commit message. A bold '**Lesson:** \u2026' or a 'Lessons:' line is taken out of the PR but never recorded as a lesson.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:179-185 (withoutLessons: /^\\s*(?:[-*]\\s+)?(?:\\*\\*)?lessons?:/i) versus packages/runtime/src/session/runner.ts:642 (LESSON_LINE: /^\\s*(?:[-*]\\s*)?lesson\\s*:\\s*(.+?)\\s*$/i). Probe: '-Lesson: x' and 'Lesson : x' give removed=false, recorded=true; '**Lesson:** x' and 'Lessons: x' give removed=true, recorded=false.",
+   "expected": "One shared lesson-line pattern, exported once and used by both. Every line recorded as a lesson is then left out of the PR body and commit (L-19), and a bold or plural lesson line is recorded too. Add a unit test with the variants.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    228
+   ],
+   "reason": "228's last point, which W6-27's reason called harmless on the claim that pr-executor removes a superset. It does not. A small consistency fix; polish runs after the wave 7 areas that edit pr-executor.ts."
+  },
+  {
+   "id": "R-5",
+   "problem": "testenv/src/ci-env.ts never removes its per-worker temp git config file (forerunner-test-gitconfig-<pid>): vitest fork workers never fire process.on('exit'), so /tmp or %TEMP% gains about one empty file per test file on every run.",
+   "evidence": "testenv/src/ci-env.ts (review of fix/ci-c8c16fb, merged at 77497b4)",
+   "expected": "One file per run (e.g. under a run-scoped folder removed in a global teardown) or a fixed per-worker name that is reused; a test that counts the files left after a run.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "review of fix/ci-c8c16fb"
+  },
+  {
+   "id": "R-6",
+   "problem": "ci-env.ts does not set user.useConfigOnly=true, so on a machine where git can guess an identity from the host name, a plain git commit or merge in a test still passes locally and fails on CI.",
+   "evidence": "testenv/src/ci-env.ts (review of fix/ci-c8c16fb)",
+   "expected": "The empty per-worker global config sets user.useConfigOnly=true, so a test that commits without an identity fails everywhere.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "source": "review of fix/ci-c8c16fb"
+  },
+  {
+   "id": "R-7",
+   "problem": "notifications-hear-once's waits can add up to more than the case's 120 s timeout, so the generic vitest timeout fires instead of the waits' own message.",
+   "evidence": "packages/runtime/test/notifications-hear-once.test.ts (review of fix/ci-c8c16fb)",
+   "expected": "The waits' total stays under the case timeout (or the case timeout is derived from them), so a failure always says what it saw.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "review of fix/ci-c8c16fb"
+  },
+  {
+   "id": "R-8",
+   "problem": "The test suites leave their temporary folders behind: about 100,000 'fr-*' folders under the system temp folder after this round's runs (17,704 fr-email-*, 7,756 fr-update-*, 5,232 fr-voice-install-*, 4,908 fr-bench-*, ...), about 15 GB on this machine; a developer's or CI's disk fills up run by run.",
+   "evidence": "ls /tmp on the session machine 2026-11-03 01:35 UTC: 101,616 entries; du -xh /tmp 19 G with /tmp/frbench 1.8 G and caches 1 G, the rest small fr-* folders.",
+   "expected": "Every test that makes a temp folder removes it (afterEach/afterAll, or a shared helper that registers cleanup), and a global teardown in the vitest setup (testenv/src/ci-env.ts or a teardown file) removes what a crashed worker left under a run-scoped parent folder; a check that a full unit run leaves no fr-* folder behind.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "source": "session lead, disk check 2026-11-03"
+  },
+  {
+   "id": "R-10",
+   "problem": "The tightest voice test layout (the install folder's espeak-ng path in packages/runtime/test/dependencies.test.ts) fails on any machine whose temp folder is longer than 44 characters, e.g. macOS's default TMPDIR (/var/folders/xx/.../T/, about 49): a developer on a Mac gets voice test failures that are not product bugs.",
+   "evidence": "review of fix/ci-2de0a25 (merged at c5910a9): margin probe 44 characters pass, 45 fail ('.../app/dependencies is too deep for espeak-ng ... 160 characters').",
+   "expected": "The voice tests size their folders from the real temp folder's length (as the U-069 deep case does) or use a short fixed root when the temp folder is long; the guard test runs the macOS length too.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "source": "review of fix/ci-2de0a25"
+  }
+ ],
+ "verification": [
+  {
+   "id": "C-1",
+   "problem": "A CLI or an API a task builds is never tried, and nothing is tried in the task's own environment: only pages are tried, by a headless Chromium on the host with the network off, also for full-review work and on a PC where Docker is ready (where the task itself ran in the container, ADR 0101). The owner's decision (3) says work a person will use (a page, an app, a CLI, an API) is started in its own environment (the Docker sandbox on the owner's PC) and used as a person would.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts:124-140 (pages only, chromium.launch on the host); packages/runtime/src/loop/try-it.ts; docs/decisions/0104-proportional-verification-of-code-tasks.md:66-79 ('The try runs on the host for every level in this version ...; trying inside the Docker sandbox and trying a CLI or an API are later work'); docs/status/handoff/NEXT-SESSION.md:130-141 (owner decisions of 2026-11-01) point (3); merge.problems_left[1] 'verification: no CLI or API try it'.",
+   "expected": "Per the owner's decision (3): a CLI a task builds is run with sample input from its brief or criteria and an API it builds is started and called, and pages are opened, inside the task's sandbox lease (the container when Docker is ready, always for a full review), with outputs and screenshots as the critic's evidence; 'Reviewed and tried' only when something was tried; what could not be tried says why in 'See what was checked'. Tested in a composed runtime test (a CLI task, an API task, a page task with the fake engine) and a real-daemon case; F2's Linux Docker run walks it for real.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "verification",
+   "sources": [
+    0
+   ],
+   "reason": "Not the owner's choice: decision (3) already says what and where (a CLI, an API, in the Docker sandbox on the owner's PC); ADR 0104 called it 'later work', which is the phase C fixer's scope, not an owner decision, and 'accept page-only for this round' would re-open decision (3). No phaseE.json area owns the review path (try-it.ts, capabilities/browser, the sandbox lease), so it goes to a sixth phase E area, 'verification' (handoffs.json 'verification'), with C-3 and C-17."
+  },
+  {
+   "id": "C-3",
+   "problem": "The project's own tests run only when they are package.json scripts: a Python, Rust or Go project's tests (pytest, cargo test, go test) are never run by the review, and the review does not even say so ('See what was checked' lists nothing as not run), although the owner's decision (1) says the project's build, lint and tests always run for a code task.",
+   "evidence": "packages/runtime/src/loop/project-checks.ts:46-50 (no package.json: checks [] and skipped null); packages/runtime/src/loop/critic.ts:356, :368 (notChecked only from skipped, so nothing is said); packages/runtime/src/loop/verification.ts:78 ('its package.json scripts'); the runner image has python3 (services/cloud-runner/Dockerfile:8); docs/status/handoff/NEXT-SESSION.md:130-141 (owner decisions of 2026-11-01) point (1).",
+   "expected": "Per the owner's decision (1): a code task's project tests run whatever the language: the usual command when its marker is in the task's folder (pytest or python -m unittest for pyproject.toml/pytest.ini/setup.cfg/tests/test_*.py, cargo test for Cargo.toml, go test ./... for go.mod), in the task's sandbox lease; a tool missing where the checks run is a 'not run, because ...' line, never a failure; a project with test files no check ran says so in 'See what was checked'. Unit tests for the detection and a composed test with a Python project.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "verification",
+   "sources": [
+    2
+   ],
+   "reason": "Not the owner's choice: decision (1) says the tests always run; how to find the command without false failures is engineering (marker files, 'not run' when the tool is missing). No phaseE.json area owns project-checks.ts, so it goes to the 'verification' area with C-1."
+  },
+  {
+   "id": "C-17",
+   "problem": "The page try launches Chromium on the host with Playwright's default chromiumSandbox: false (--no-sandbox) and opens model-written pages with it at every level, full-review tasks' pages too, while ADR 0101 runs full-review work only in the container.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts:133-137 (chromium.launch({ headless, timeout, executablePath }), no chromiumSandbox, so Playwright adds --no-sandbox; on Windows the probe may pick the person's own Edge or Chrome); ADR 0104 point 4; ADR 0101 ('better to force to use Docker, so that reviews can be comprehensive'); docs/status/handoff/NEXT-SESSION.md:130-141 (owner decisions of 2026-11-01) point (3).",
+   "expected": "Chromium's own sandbox is on wherever it starts (chromiumSandbox: true, falling back to off only where it cannot start, and the evidence says so); full-review work is tried inside the container (with C-1). Unit test of the launch options; the fallback in a test with a launcher that refuses the sandbox.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "verification",
+   "sources": [
+    21,
+    32
+   ],
+   "reason": "Not the owner's choice: where full-review work is tried is answered by decision (3) (its own environment, the Docker sandbox on the owner's PC) and ADR 0101; turning Chromium's sandbox on is hardening with no trade-off for the owner to weigh. Goes with C-1 to the 'verification' area."
+  },
+  {
+   "id": "L-4",
+   "problem": "A retry brief turns every critic note into an instruction, including notes the critic called unrelated or not asked for, so the retry edits code outside its task.",
+   "evidence": "Money lib retry brief (call 136): '[info] The existing round2 test fails \u2026 It is unrelated to this change \u2026 -> Resolve it and show the evidence' and '[info] clamp does not handle lo > hi or NaN. The brief did not ask for either. -> Resolve it\u2026'. The clamp retry rewrote src/round.js (Math.floor to Math.round) and stopped at its budget unreviewed. The first report's plain 'an existing round2 failure that I did not touch' (call 132) made no question card. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Info notes, and failures the task did not cause, are not retry orders; a check that failed before the task leads to one question card (the fixup's expectation).",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "verification",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-5",
+   "problem": "A worker can redefine the project's test script in the same change, and the runtime then runs the worker's version as the project's check.",
+   "evidence": "Clamp lib: the coder replaced the person's 'test' script with 'node --test test/clamp.test.js', its own file only (clamp-log). The check then read 'test: passed', and the critic accepted with 'The only gap is that the test script names a single file' (85, call 95). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "A change to the scripts that judge the work is flagged or checked against the scripts before the change, so 'test: passed' means the project's tests passed. The check runs the project's scripts as they were before the task (from the base commit) and flags a change to them for the critic, or runs both and says so.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "verification",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "R-1",
+   "problem": "The page try can leave a headless Chromium running: chromium.launch() runs before serveFolder()/mkdirSync() and outside the try/finally, so a throw from either leaves the browser process alive on the person's PC.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts (launch before serveFolder/mkdirSync, outside try/finally); found by the reviewer of fix/ci-193e579 (2026-11-02).",
+   "expected": "The browser is launched inside the try whose finally closes it (or closed on every path); a unit test with a serveFolder that throws shows the browser closed.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "verification",
+   "source": "review of fix/ci-193e579"
+  }
+ ],
+ "decisions": [
+  {
+   "id": "C-49",
+   "problem": "Repository projects: every task branches from origin/<default>, so a task that depends on a done task whose PR is not merged yet does not see that work (five sibling branches off main on the bench); with the real model the coder recreates files and a checker checks nothing.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:213-215 (createBranch from origin/<base>) and :238, :253 (rebase and changed files against origin/<base>); the critic's diff is origin/HEAD...HEAD (packages/runtime/src/loop/critic.ts).",
+   "expected": "The owner's choice, then an area builds it with the critic's diff on the same base.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "decisions",
+   "sources": [
+    87,
+    116
+   ],
+   "reason": "Owner's choice: stacked PRs (a dependent task's branch and PR base on its dependency's branch), or merge the dependencies' unmerged branches into the task's branch (the critic's diff then needs the same base), or hold a dependent task until its dependency's PR is merged.",
+   "owner_question": "In a repository project, a task whose dependency's pull request is not merged yet: base its branch and PR on the dependency's branch (stacked PRs), merge the dependencies' unmerged branches into its branch, or hold it until the dependency's PR is merged?",
+   "decided": "Merge the dependencies' unmerged task branches into the dependent task's branch before it starts (its PR still targets the default branch, so the person can merge in any order); the PR body names the PRs whose work it includes until they are merged; the critic's diff and the changed-file list are the task's own commits (against the merge base that includes the dependencies), not the dependencies' work. A merge conflict between dependencies is a card for the person, never a silent drop."
+  },
+  {
+   "id": "C-64",
+   "problem": "On a Claude subscription, research reads no page: the hooks deny every WebFetch because the researcher's and science-evaluator's allowed_domains are empty (only WebSearch works). Until the person chooses an order, tasks use the subscription first, so an install with both a subscription and an API key sends research to this path.",
+   "evidence": "packages/runtime/src/agent/cc-tools.ts:77-82 (WebFetch domainFields ['url']); evals/registry/specialists/researcher/specialist.md:15 and science-evaluator/specialist.md:15 (allowed_domains: []); packages/runtime/test/security-sdk.test.ts asserts the denial; packages/runtime/src/daemon/billing-order-types.ts:48-52 and docs/user-guide.md:486-487 ('Until you choose an order, tasks use the subscription first').",
+   "expected": "The owner's choice; the user guide then says what is true (C-71).",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "decisions",
+   "sources": [
+    119,
+    121
+   ],
+   "reason": "The owner's research decision names the API-key path only, and opening the SDK path's WebFetch is a security change, so it is the owner's. The earlier reason ('API key billing first makes the API-key path the one used') does not hold by default: with both credentials saved and no order chosen, tasks go to the subscription first.",
+   "owner_question": "On a Claude subscription the researcher reads no web page (search only), and tasks use the subscription first until you choose an order: let the subscription's WebFetch read public pages under the same rules as on the API key, send research tasks to the API key whenever one is saved, or keep the subscription search-only and say so?",
+   "decided": "A task whose specialist needs the web (researcher, science-evaluator) goes to the API key whenever one is saved, whatever the billing order; with only a subscription it runs search-only and the plan card, brief and user guide say so (no WebFetch opened on the SDK path)."
+  },
+  {
+   "id": "C-36",
+   "problem": "A task stopped by the session's own budget goes back to Ready, so a task that alone always exceeds the session budget is run again by every session until the person acts (each run bounded by the session budget and the monthly cap).",
+   "evidence": "packages/runtime/src/session/runner.ts:1945-1959 (budget_exceeded: released to ready, attempt unchanged, no card).",
+   "expected": "The owner's choice, recorded in ADR 0105 or the session-engine doc.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "decisions",
+   "sources": [
+    55,
+    75
+   ],
+   "reason": "Behaviour change from continuity the reviewer flagged for the owner. Owner's choice: after the second session-budget stop of the same task, file a card (raise the session budget or the task's, or cancel), or keep re-running it each session as now.",
+   "owner_question": "When one task uses up a session's whole budget, should the second such stop file a card (raise the session's or the task's budget, or cancel it), or should every session keep re-running it as now?",
+   "decided": "The second session-budget stop of the same task files one card: raise the session's budget, raise the task's, or cancel the task (words per design \u00a75); the task waits for the answer instead of being re-run by every session."
+  },
+  {
+   "id": "C-57",
+   "problem": "Every session on a repository project leaves a status PR for the person to merge, even for a one-task project.",
+   "evidence": "ADR 0106 (docs/decisions/0106-an-empty-repository-and-where-the-status-update-goes.md); STATUS_BRANCH 'fr/status'.",
+   "expected": "The owner's choice, in ADR 0106.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "decisions",
+   "sources": [
+    110
+   ],
+   "reason": "Owner's choice: keep one status PR per repository session, or keep docs/status.md off GitHub (shown in the app) until the person asks.",
+   "owner_question": "On a repository project, should each session's status update go to GitHub as a status pull request as now, or stay in the app until you ask for it on GitHub?",
+   "decided": "A repository project keeps docs/status.md in the app and opens no status pull request by default; a project setting (or command) turns the status PR on; ADR 0106 updated."
+  },
+  {
+   "id": "C-63",
+   "problem": "There is no web search on an API key: the researcher reads only pages the brief or the plan names.",
+   "evidence": "packages/capabilities has no search capability; ADR 0107 records it; packages/runtime/src/session/executor.ts:720-728 (NO_WEB_SEARCH_LINE); the owner's decision: 'web access on the API-key path through Forerunner's own fetch/search capability, within the network rules' (docs/status/handoff/NEXT-SESSION.md:142-143).",
+   "expected": "The owner's answer recorded in ADR 0107; if a search service is chosen, a 'web_search' capability behind the same network rules as web_fetch.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "decisions",
+   "sources": [
+    118
+   ],
+   "reason": "Partly answered: the owner asked for Forerunner's own search within the network rules, so Anthropic's server-side search (outside the runtime's hooks) is not an option to offer. What remains is the owner's: a search service needs its own account, key and cost.",
+   "owner_question": "Web search on an API key (you asked for Forerunner's own, within its network rules) needs a search service with its own key and cost: add one now (you pick the service and create its key), or keep page reading only (pages the brief or plan names) for this round?",
+   "decided": "No search service this round: page reading only (pages the brief or plan names); every screen, brief and the user guide say so truthfully (no promise of search on the API key)."
+  },
+  {
+   "id": "C-66",
+   "problem": "No screen sets a project's site list or block list for the page reader and browser (settings.browser), and no view carries a project's version, so PUT /projects/:id/settings can only be called after a 409 conflict reveals it.",
+   "evidence": "packages/runtime/src/daemon/server.ts:928 (GET /projects/:id: the project card, no version) and :1723-1747 (PUT needs body.version); apps/ui/src/api/client.ts:661, :1101 (updateProjectSettings exists; no screen calls it).",
+   "expected": "The owner's choice; if yes, a project setting with a version-carrying view and a UI test.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "decisions",
+   "sources": [
+    122,
+    136
+   ],
+   "reason": "A new control, not a fix. Owner's choice: add the site list and block list to the project page this round (with the version in the project view), or leave them API-only.",
+   "owner_question": "Should the project page get a site list and a block list for web reading this round (with the project's version in its view), or stay API-only?",
+   "decided": "No site list or block list control this round; nothing to build. If a screen or doc implies one exists, make it true."
+  },
+  {
+   "id": "L-14",
+   "problem": "In a repository project the dependent check task fails because its branch lacks the unmerged work of the task it depends on.",
+   "evidence": "Approve and start on the 2-task plan (coder, then tester) on forerunner-sandbox: 'Check the page and README section' failed with 'The worktree has neither `index.html` nor a \"Hello page\" section\u2026' (steps 13, 17; call log line 10: git log shows only f6aa072). PR #4 was open and unmerged, and the tester branched from origin/main. It passed only after I merged #4 on GitHub and pressed Try again. This is the open item from the fix's new_problems, now confirmed with the real model. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "A dependent task sees its dependency's unmerged work (a stacked branch or a merge into the task branch), or the plan or Start says it waits for the person's merge, instead of a failed-task card on the first run. This is C-49, now confirmed live: build the decided default (merge the dependencies' unmerged branches into the dependent task's branch).",
+   "severity": "major",
+   "disposition": "area",
+   "area": "decisions",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-16",
+   "problem": "The Overview lists another project's stale docs PR as this project's docs.",
+   "evidence": "'Forerunner's docs, merge them when you like' shows '\"The project's standard docs\" \u00b7 pull request #1' (steps 13, 40). That PR is fr/docs-scaffold from 2026-11-01, by an earlier project. Its .forerunner/project.json names project 01a19979\u2026 'Sandbox hello', and it adds the same docs/overview.md and docs/status.md as #3 and #5, so merging every docs PR conflicts. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Only this project's docs PRs are listed, or a left-over one is marked as from an earlier project.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "decisions",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-17",
+   "problem": "The chat calls an already merged PR unmerged.",
+   "evidence": "steps/22: 'where are my files?' answered that PRs 4 and 6 wait and 'Until you merge them on GitHub, the work is not on the default branch'. #4 had been merged five minutes earlier, and the Overview no longer listed it. The chat's '# Your files' block (call log line 18) lists done tasks' PR links without their merge state. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "The chat names only PRs still open, or says which are already merged.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "decisions",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-19",
+   "problem": "PR texts carry model leftovers.",
+   "evidence": "PR #7 (a New-task task without criteria) has an empty 'Acceptance criteria:' heading. Commit messages carry the report's '**Summary**' markdown, and PR bodies end with the model's 'Lesson:' lines (PRs #4, #6, #7). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "No empty criteria heading; commit messages in plain text; internal lessons left out of the PR.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "decisions",
+   "source": "phase C live check with the real model (2026-11-02)"
+  }
+ ],
+ "stops": [
+  {
+   "id": "L-1",
+   "problem": "Quitting Forerunner while the critic reviews a task leaves the task 'Being reviewed' for good after reopening.",
+   "evidence": "Garden club Contact: quit at 14:08:16 during 'Being reviewed'; after the restart the row and drawer read 'Being reviewed \u00b7 The critic is checking the work.' with Cancel only (52, 60). The Start dialog does not list it (59). The Update says 'Your last session was interrupted when Forerunner closed. Nothing was left half done.' (53). daemon.log: '[session-recovery] interrupted sessions ended at start {\"tasks\":[]}'. Likely cause: recovery.ts releases only tasks the agent still claims, and the graceful quit had released the claim with the status left at in_review. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "After reopening, the task reads Ready and the Update says it is ready again, as in the fixup's bench walk; the next Start runs and reviews it. Root-cause it on the bench: quit (the daemon's graceful shutdown) during a review, start again; recovery must return an in_review task with no live review to Ready (and say so in the Update), whether or not a claim is still held. Test across a real restart (validation rule 4).",
+   "severity": "major",
+   "disposition": "area",
+   "area": "stops",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-7",
+   "problem": "The Cancel dialog for a task left 'Being reviewed' by a quit promises that what it changed is removed, but nothing is removed.",
+   "evidence": "61-club4-03-cancel-dialog: 'Drops it. Its review stops now and what it changed is removed; Undo brings it back.' Line (62): 'Cancelled \"Contact page in contact.html\".' and contact.html stayed. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Dialog says only 'Drops it.' when no live run or review would be stopped (fixup blocking 3).",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "stops",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-8",
+   "problem": "Cancel pressed in the first moment of 'Being reviewed' does not stop the review, while the line says it did.",
+   "evidence": "c9b: kill switch 'task stopped' at 14:25:13.550 (stoppedRuns 1). Critic calls 122 and 123 ran after it, to an accept, spending CHF 0.03; the drawer shows 'Review by the critic \u00b7 Finished'. The line said 'its review stopped and what it changed is removed'. credits.html stayed in Files about 6 s longer and was removed only after the review. Pressed 3 s into the review instead, it worked (104-108). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "A cancel at any point of 'Being reviewed' stops the review at once and removes the work, as the line says.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "stops",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-6",
+   "problem": "Undo of a cancel made during a running session usually fails, because the session's next task changes the same files within seconds, though the dialog and line promise 'Undo brings it back'.",
+   "evidence": "Bakery: print task cancelled at 14:14:23; the next task wrote index.html at 14:14:29 (call 73). Undo then said 'What it changed could not be put back: the folder changed in the same places since.' (79), and print.css never came back. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Either the promise is worded for this case (Undo may fail if other work changes the same files), or the cancelled work can still be brought back, for example as a reopened task that redoes it.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "stops",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-10",
+   "problem": "In Chat, 'Skip the <task> task' pauses the task instead of cancelling it.",
+   "evidence": "112-c5chat-01-confirm: 'Stop \"Credits page in credits.html\"? Its run stops now and it is paused\u2026'; after Yes: 'paused until you press Resume' (113), row 'Paused by you' (114). (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "Per the C5 live check, 'Skip the \u2026 task' plus Yes cancels it with the same line as the row's Cancel, or the chat asks which the person means.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "stops",
+   "source": "phase C live check with the real model (2026-11-02)"
+  }
+ ],
+ "asking": [
+  {
+   "id": "L-2",
+   "problem": "Questions a specialist writes one per line without bullets (the brief's own 'one question per line') are not read, so the person gets a sign-off card instead of the questions.",
+   "evidence": "Garden club 'Home page' report (call 24) ends '**Questions for the person:**' then 'What is the club's official name?' and 'Is there a description\u2026' as plain lines. The critic chose human (call 26). The Inbox shows '\"Home page in index.html\" needs your sign-off' with only Accept the work, Send it back or Cancel task, and no questions (40, 83). person-questions.ts ITEM requires '-', '*', '\u2022' or '1.'. The same flow with '- ' bullets (Contact, call 47) gave the questions card. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "The specialist's questions become one questions card the person can answer, whatever list style the report uses; Accept should not close work that waits on the person. Parse a questions block in any list style (plain lines, bullets, numbers) after the heading; test with the live report text.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "asking",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-3",
+   "problem": "'Go ahead without' is not passed to the specialist: its next run asks the same question again and offers Go ahead without again, which can loop and costs a run each time.",
+   "evidence": "Members chart: first ask_person (call 106), Go ahead without pressed (92: 'goes on without your answers'). The next brief (call 114) has no mention of the choice ('## The previous attempt' only). call 116 asks the same question again, and 98 shows a new card with Go ahead without. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "The next brief says the person chose to go ahead without answers, so the specialist decides, says what it assumed, or reports why it cannot (a missing input file) without re-asking.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "asking",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-12",
+   "problem": "The questions card quotes the wrong words, with a stray leading colon.",
+   "evidence": "Contact card body: 'The specialist said: \": I made no edits this run. Both pages were already in the worktree\u2026\"'. The reason it asks (the email is a placeholder) is not quoted. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "The card quotes why the specialist asks.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "asking",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-11",
+   "problem": "A brief that promises the owner's content gets a plan with no step that asks for it; the page is accepted full of placeholders and the person is never asked.",
+   "evidence": "Brief 'A one-page website for a small bakery in Bern; I will give you the real menu, hours and address' produced plan (66, intake call 51) of coder 'Build the one-page bakery site' and tester 'Check the site', with 'All shop facts are placeholders'. Build was accepted at 90 with PLACEHOLDER markers; there was no card for the menu, hours or address. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "The plan includes a person task (or a question) for the content the brief says the owner will give, and the build waits on it. The intake (evals/registry/principals/project-manager.md and packages/runtime/src/session/intake*) adds a person task for content the brief says the owner will give; test with a fixture of the live intake reply.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "asking",
+   "source": "phase C live check with the real model (2026-11-02)"
+  }
+ ],
+ "cost": [
+  {
+   "id": "L-15",
+   "problem": "One research task costs USD 1.32 (CHF 1.06), about 40 times a coder task, mostly because the growing conversation (with the fetched page text) is re-sent each turn without a cache.",
+   "evidence": "Call log lines 25-35: input_tokens grow from 1.3k to 77.7k with no cache, while cache_read stays at 2,053 (only the system prompt). The page text includes extractor noise ('[html_comment <!-->] \"[\"'). Line 32 ended at max_tokens 4,096 with nothing usable (USD 0.17) before a 16,384 retry. Line 34 rewrote the 17 KB file to move one section (USD 0.22). The plan estimate was CHF 0.96. (live report: /tmp/frbench/live-reports/phaseC-*.md; screenshots /tmp/frbench/livec-a/steps and /tmp/frbench/livec-b/steps)",
+   "expected": "A cache breakpoint on the message history (or dropping page text once used), and enough max_tokens for the first long write, so a research task costs a fraction of this. Prompt caching on the agent loop: a cache breakpoint on the growing message history (Anthropic prompt caching, see the claude-api reference in the runtime's provider code), max_tokens large enough for a long file write, page text trimmed once used; measure on the bench with the model-call log (cache_read grows across turns).",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "cost",
+   "source": "phase C live check with the real model (2026-11-02)"
+  },
+  {
+   "id": "L-22",
+   "problem": "Plan and start estimates are about 10 times above what a task really costs with the real model (coder and tester tasks), so the Start dialog leaves out tasks that would fit and budget cards appear for no reason; a research task costs more than its estimate.",
+   "evidence": "Live check (verification-continuity walker): 'The start check leaves out over-estimate tasks and live costs are about 10x below the estimates'; quote page tasks estimated CHF 0.12 and 0.14 on the plan card cost CHF 0.01 each (Windows window check 10-tasks-tab-with-a-pr.png on the stand-in; live call logs in /tmp/frbench/livec-a); research task estimated CHF 0.96 cost USD 1.32.",
+   "expected": "Estimates within a factor of about 2 of the real cost per specialist kind, from the app's own price table and the recorded costs of finished tasks (calibrate from the live call logs); the Start dialog's sentences stay true.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "cost",
+   "source": "phase C live check"
+  }
+ ],
+ "credential-chooser": [
+  {
+   "id": "W5-2",
+   "problem": "C-68: the plan card does not flag a task naming a specialist this install does not have. The run then waits with 'No specialist is named X'.",
+   "evidence": "apps/ui/src/pages/InboxPage.tsx:268-285 (cannotRunHere: 'a name the list does not have says nothing here'), :334. packages/runtime/src/session/executor.ts:640-646 (the run's 'No specialist is named' summary).",
+   "expected": "The daemon gives each plan task its canonical specialist, or marks it unknown. The plan card then says 'No specialist here is named 'X': this task will wait for you; change who does it after you approve' (the expected of handoffs.json answers C-68). Tested with a real-daemon case and an Inbox test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "credential-chooser",
+   "sources": [
+    1
+   ],
+   "reason": "credential-chooser (group 3) already edits cannotRunHere in InboxPage.tsx, the plan card's runs-on line and the plan card view. C-68 is not in its spec yet. The item sat in handoffs.json under 'answers', which has merged without doing it, so marking it a duplicate would drop it."
+  },
+  {
+   "id": "W5-20",
+   "problem": "For a web routing hand-over (ADR 0107: no web reader here, so a researcher task goes to a specialist with web access), task.started still names the original specialist; only task.finished names who ran it.",
+   "evidence": "packages/runtime/src/session/executor.ts:833-860 (the hand-over is decided inside runTask, after pickBilling chooses the driver). The runner's chooseSpecialist does not see it.",
+   "expected": "The driver is chosen before the run starts, so chooseSpecialist (and task.started) name the specialist that runs.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "credential-chooser",
+   "sources": [
+    42
+   ],
+   "reason": "credential-chooser replaces pickBilling's webFirst call in executor.ts with the task's needs; deciding the driver before the run belongs to the same change. Rare (only with FORERUNNER_WEB_FETCH=off)."
+  }
+ ],
+ "collab-bench": [
+  {
+   "id": "W5-13",
+   "problem": "The bench accepts a UI port on the Fetch spec's blocked list (1719, 1720, 1723). start.mjs's readiness fetch fails with 'bad port' and the start times out after 90 s; Chromium blocks the port too.",
+   "evidence": "scripts/bench/start.mjs:37-41 (any integer port accepted), :106 (vite --strictPort). No blocked-port check anywhere in scripts/bench.",
+   "expected": "start.mjs refuses a blocked port at once, with a sentence naming it. Workflow scripts assign ports outside the list.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "collab-bench",
+   "sources": [
+    21
+   ],
+   "reason": "collab-bench (wave 8) owns start.mjs and lib.mjs and adds ports (two daemons, two UIs, a proxy). The session lead's workflow scripts should avoid the list now."
+  }
+ ],
+ "collab-privacy-service": [
+  {
+   "id": "W5-68",
+   "problem": "The state service's Inbox, which the phone and approvals-web read, still lists the chat's read-backs (chat_only rows) as cards and counts them. A paired phone shows the second yes/no card beside the card it answers (the U-029 two-cards problem the desktop no longer has), and the project card's waiting count and health include it.",
+   "evidence": "services/state-api/src/routes/inbox.ts:239 (GET /inbox requests) and :290-293 (GET /requests) call humanRequest.open with no chat_only filter. services/state-api/src/views.ts:488, :505-508, :524 (projectCard health and waitingOnYou count every open row). apps/ui/src/mobile/screens/InboxScreen.tsx:32-37 shows every open request. Entry 27 ('Now done in GET /inbox, inbox.changed, the chat's open_requests, projectCard, projectHealth') names only the daemon's lists; no code under services/ or apps/ui/src/mobile reads change_card.chat_only.",
+   "expected": "The state service leaves out rows with change_card.chat_only on GET /inbox, GET /requests, the blocking count and the project card (as isChatOnlyCard does in the daemon), tested in services/state-api/test/routes.test.ts with a chat_only row beside its card.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "collab-privacy-service",
+   "sources": [
+    27
+   ],
+   "reason": "collab-privacy-service (wave 8) already changes services/state-api/src/routes/inbox.ts and the push fanout for who sees which rows; this is one more filter on the same lists. The phone round (phase H) then checks it on the phone."
+  }
+ ],
+ "ci-precondition": [
+  {
+   "id": "W6-1",
+   "problem": "CI is red on the wave-6 merge c8c16fb. Both workflows have finished and failed: the Desktop app workflow on Windows and Linux (UI unit tests), and CI's unit tests on both ubuntu and windows. Every step after the unit tests was skipped, so the integration tests, gate harnesses, live harness offline tests, injection suite, docs and link checks (and, on Desktop, Playwright, Rust, the Tauri build and the installed check) are unproven on CI at c8c16fb.",
+   "evidence": "Desktop app run 41533695023: apps/ui/test/real-daemon.test.ts:7276 fails on both OS. This is the C-57 case from b89db43. The seed GitOps at :7210-7213 has an identity, but :7276 runs a plain `git -C seedDir merge --no-ff` through run(), which bypasses it ('fatal: empty ident name' / 'Committer identity unknown'). CI run 41533695121 fails packages/runtime/test/verification.test.ts:846 and :920 (C-1, two cases) on ubuntu and windows. The tried command's output arrives as '\\x1b[33m9\\x1b[39m': ci.yml:14 sets FORCE_COLOR: 1, try-run.ts:44 TRY_ENV does not clear it, and `FORCE_COLOR=1 node -e 'console.log(9)'` prints ESC[33m9ESC[39m. Windows also failed three load-sensitive cases: testenv/test/githost.test.ts:504 (timed out at 20 s), :597 (2 closed PRs, expected 3) and packages/runtime/test/notifications-hear-once.test.ts:222 (the session did not end in time). Earlier, at 3cbf6cc, the live harness dry run failed on ubuntu (harness.test.ts:195: 2 PRs, expected 1). The Docker job 'full-review task in the Docker sandbox' passed (23/23).",
+   "expected": "Both workflows green on c8c16fb before any group-1 branch merges. The seed merge goes through the seed's GitOps (or gets -c user.name/user.email). Tried commands run without forced colour (NO_COLOR=1, or FORCE_COLOR removed from their env), or the evidence strips ANSI codes, so a person's 'See what was checked' never carries escapes. The Windows githost and notifications cases wait on state with a message. The skipped steps then run green on both OS, and a full pnpm check passes.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "ci-precondition (session lead, now, before group 1 merges; not a wave 7 area)",
+   "sources": [
+    289
+   ],
+   "reason": "wave7_left_out makes CI green on the wave-6 merge a precondition that every wave 7 fixer starts from. Both root causes reproduce locally without real GitHub or Windows (FORCE_COLOR=1; no global git identity), so this is a fix to do now, not a live check after wave 7. Local runs pass only because the bench has a git identity and no FORCE_COLOR."
+  }
+ ],
+ "collab-claims": [
+  {
+   "id": "W6-6",
+   "problem": "Cancelling a task that runs on another computer says 'Cancelled \"X\".' Nothing was stopped here, while that computer's runner watch stops the run and sets its work aside, as before phase E.",
+   "evidence": "packages/commands/src/commands/task.ts:339-345 (moveSentence without extra.work gives 'Cancelled \"X\".'); kill.stopTask finds no registration here (KillSwitch.hasTask, note 147); runner.ts watchTask on the other computer; task-words.ts:85-90 (a run on another computer stops on its own once it sees the move).",
+   "expected": "Whatever collab-claims settles for cross-computer runs ('a session belongs to the install that runs it'): the line says what happens on the other computer, or the Cancel names whose computer runs it.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "collab-claims",
+   "sources": [
+    143
+   ],
+   "reason": "Multi-computer claims and stops are wave 8's collab-claims (one task, one runner; another person's session can never be stopped from your PC). The fixer marked it out of scope."
+  }
+ ],
+ "budget-resume": [
+  {
+   "id": "W6-7",
+   "problem": "The Cancel dialog's consequence line is 139 characters for a running task and 142 for a review, against design \u00a75.1's limit of 100, before any 'X waits on it' names. The line after the action grew by the same amount. At merge the chat read-back took stops' form ('Cancel \"X\"? It is dropped; its run stops now and what it changed is removed.'), and the lead was asked to confirm that wording.",
+   "evidence": "apps/ui/src/lib/task-actions.ts:48 ('Drops it.') and :112-122 (cancelWorkLine); packages/commands/src/commands/task.ts:316-317 (CANCEL_UNDO_WORDS), :270-297 (moveAsk), :340-345 (moveSentence); docs/design/core-experience.md:313 (\u2264 100 characters). Measured: 139 and 142 characters.",
+   "expected": "A true line of at most 100 characters with 'Drops it.', for example 'Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.' (97). Use it in the command, the UI dialog, the line after the action, the chat read-back and fake-tasks.ts, with the tests that assert it.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    155,
+    162,
+    291
+   ],
+   "reason": "budget-resume owns cancelWorkLine and the cancel and undo words (C-37's linked-folder sentence, the stuck dependents' names, the cancel of a paused task). It adds to this very line, so the length belongs with that rewrite."
+  },
+  {
+   "id": "W6-21",
+   "problem": "Acceptance (b) C-36 and (c) C-64 were not walked on the bench. The stand-in costs 1 \u00b5USD per token, so no session budget can be used up, and the bench has no subscription path. A knob such as FORERUNNER_BENCH_USAGE=<title>:<tokens> in role-player.ts was suggested.",
+   "evidence": "testenv/src/bench/role-player.ts:256-265 computes usage from the text length only, with no knob (grep). Composed tests only: session-budget-card.test.ts, subscription-path.test.ts.",
+   "expected": "A stand-in knob that inflates a run's usage, so the session-budget pause card can be walked on the bench. Document it in scripts/bench/README.md.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    212,
+    218,
+    226,
+    229,
+    247
+   ],
+   "reason": "budget-resume replaces C-36's second-stop card with one pause card at the first session-budget stop (fix scope 4) and walks budgets on the bench, so the knob belongs there. C-64's research routing is superseded by credential-chooser, and its subscription half is the owner's checklist step 6 (no subscription in the cloud)."
+  },
+  {
+   "id": "W6-23",
+   "problem": "A task whose estimate alone exceeds the session's work budget is left out by every session, and no card says so. The same result starts 'Nothing could run: no task is ready.' while it says 'Left for next time: \"Long report\" (about CHF 1.20); this session's CHF 0.40 was used.', though nothing was spent.",
+   "evidence": "packages/runtime/src/session/runner.ts:1196 (no items gives NOTHING_RUNNABLE) and :2585-2590 (no Update for NOTHING_RUNNABLE); packages/runtime/src/session/result.ts:160-182 ('Nothing could run: no task is ready.' beside the leftOutForBudget line). Only the Start dialog tells the person (StartSessionDialog.tsx:135-146: '\u2026 needs about CHF 1.20, more than this session's work budget \u2026 Give the session a larger budget, or the task a smaller one.'); a scheduled or chat start shows nothing.",
+   "expected": "One card naming the session's work budget, with 'Continue (CHF N more)' for that task (the owner's budget decision), and a result that neither says no task is ready nor that the budget was used.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    214
+   ],
+   "reason": "C-36's sibling. budget-resume owns the one card that names the real limit, Continue, and the result's budget lines. 'cost' (L-22) lowers the over-estimates that cause it but does not remove the case. Minor rather than major: the Start dialog already names the task, its estimate and what to change."
+  },
+  {
+   "id": "W6-24",
+   "problem": "A run that ends failed leaves its uncommitted files in the task's worktree, and the next attempt's checkout carries them. A dependency merge that git then refuses fails with git's words.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:370 (returns before commit and push for any outcome but done or in_review). This is the same line as budget-resume's first problem, which covers a pause.",
+   "expected": "A failed run's leftovers are set aside (or the worktree is reset to its last commit, with a log line) before the next attempt starts, so a retry starts clean.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    215
+   ],
+   "reason": "Same root and the same code as budget-resume (1)/(2), which change that early return and the resume start point. The failed outcome should get its clean start in the same change."
+  }
+ ],
+ "dependent-branches": [
+  {
+   "id": "W6-22",
+   "problem": "The dependent-branch conflict card (two conflicting unmerged dependencies) is asserted only at the executor, with exact words, not through the Inbox in a composed session.",
+   "evidence": "fix/decisions report: the runner's could-not-run card carries the executor's summary (plainStopReason). No composed case for two conflicting dependencies.",
+   "expected": "A composed case (real git, the testenv fake GitHub) where a conflicting dependency merge files one Inbox card naming the PRs in words.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "dependent-branches",
+   "sources": [
+    213
+   ],
+   "reason": "dependent-branches rebuilds dependent branches and the deps base (--no-ff), and its acceptance (d) already wants 'a rebuild that conflicts files one card naming the PR'. The deps-base conflict card belongs in the same composed tests."
+  }
+ ],
+ "merged-copy": [
+  {
+   "id": "W6-25",
+   "problem": "Until its first session ends, a project made from a brief has no copy of its repository. While the plan waits or the first session runs, the Docs tab reads README.md as 'not written yet'.",
+   "evidence": "packages/runtime/src/loop/docs.ts:364 (refreshCopy's only caller is the session-end status write) and :564-577.",
+   "expected": "The copy is cloned when the repository is linked, or when the intake writes its docs PR, so Docs and Files read the repository at once.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "merged-copy",
+   "sources": [
+    231
+   ],
+   "reason": "merged-copy makes refreshCopy callable outside the status write and owns the copy's lifecycle."
+  },
+  {
+   "id": "W6-26",
+   "problem": "`.forerunner-try/` (the try's samples, its server driver and a cargo build folder) is not excluded from git. If the daemon dies mid-review, the next 'Workspace before' commit or a retry's PR commit can pick it up.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:241-258 (WORKSPACE_GITIGNORE has no .forerunner-try/, and is written only when a folder has no .gitignore); packages/runtime/src/loop/try-plan.ts:26 TRY_FOLDER.",
+   "expected": "Forerunner's own folders (.forerunner-try/, with 'Local only') are excluded through .git/info/exclude and the neverPush list, whatever .gitignore the project has.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "merged-copy",
+   "sources": [
+    255,
+    282
+   ],
+   "reason": "merged-copy adds the .git/info/exclude guard and neverPush for what never leaves this computer. .forerunner-try/ is the same kind of folder."
+  }
+ ],
+ "repo-guide": [
+  {
+   "id": "W6-27",
+   "problem": "A second project on the same repository gets no doc set. Its scaffold finds fr/docs-scaffold already holding the first project's files, writes nothing and records no PR. Its Docs tab then says 'not written yet' while that PR stays open, and nothing says why.",
+   "evidence": "packages/runtime/src/loop/docs.ts:58 (DOCS_SCAFFOLD_BRANCH = 'fr/docs-scaffold', one fixed name for every project), :255-279 (written is empty when the marker is another project's, so prUrl is null).",
+   "expected": "One scaffold branch per project (or the second project says in one sentence that the repository's docs come from the first). Add a test with two projects on one bare repository.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "repo-guide",
+   "sources": [
+    228,
+    230,
+    241
+   ],
+   "reason": "repo-guide (wave 8) rewrites the scaffold and the guide's docs branch in loop/docs.ts, and collab-journey's third install on the same repository meets this case. 228's other points are W6-41 (budget card), W6-63 (request id), W6-28 (100 PRs) and W6-72 (the lesson-line patterns differ: not harmless)."
+  }
+ ],
+ "sites": [
+  {
+   "id": "W6-29",
+   "problem": "The user guide tells the person to set the environment variable FORERUNNER_WEB_FETCH=off, an internal name in person-facing text. It also says there is no screen for the site lists.",
+   "evidence": "docs/user-guide.md:618-626.",
+   "expected": "The guide describes the 'Web pages research may read' setting in words, with no environment variable.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "sites",
+   "sources": [
+    246
+   ],
+   "reason": "sites adds the web_access setting and its row and rewrites this user-guide paragraph (C-71)."
+  },
+  {
+   "id": "W6-30",
+   "problem": "The agent browser launches Chromium without its own sandbox (Playwright's default chromiumSandbox: false) and browses the open web on its allowlist. This is the same class as C-17, which was fixed only for the page try.",
+   "evidence": "packages/capabilities/src/browser/profile.ts:298-303 (launchPersistentContext with no chromiumSandbox); compare packages/capabilities/src/browser/try-page.ts:207-216 (chromiumSandbox: true with a stated fallback). Noted in docs/maintainers/browser.md.",
+   "expected": "chromiumSandbox: true wherever it starts, falling back only where it cannot start and saying so, with a launch seam so a test proves the option.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "sites",
+   "sources": [
+    251,
+    252
+   ],
+   "reason": "No wave 7 area lists profile.ts. sites is the nearest owner of browser security: it changes the browser binding's block list (browser-ports.ts, browserSettingsOf) and rewrites browser.md and security.md, where this gap is noted. sites does not widen the agent browser's reach: browser.allowedDomains stays its list (sites fix scope 3)."
+  },
+  {
+   "id": "R-9",
+   "problem": "The agent browser's goto fails intermittently when a blocked redirect is followed by a re-navigation to the same URL: 'interrupted by another navigation to /chain'; BrowserSession.goto retries only an interruption by 'chrome-error:'. browser.integration.test.ts 'aborts subresources and redirects to hosts outside the allowlist, follows allowed ones' fails 2 of 10 runs on 2622e74 (1 of 6 on e16bb8c), and the afterEach closeAll can then hit the 120 s hook timeout.",
+   "evidence": "packages/capabilities/src/browser/session.ts ~491 (goto's retry condition); reported by the merge agent of fix/test-tmp (2026-11-03).",
+   "expected": "goto treats an interruption by a navigation to the same URL (after a blocked redirect) like the chrome-error case: it waits for that navigation and returns its result; the test passes 20 of 20 runs; closeAll never hangs on a page still navigating. Never retried away in the test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "sites",
+   "source": "merge of fix/test-tmp"
+  }
+ ]
+}

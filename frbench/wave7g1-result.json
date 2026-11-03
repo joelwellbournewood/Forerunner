@@ -1,0 +1,1226 @@
+{
+ "wave": 7,
+ "areas": [
+  {
+   "key": "merge-record",
+   "fix": {
+    "area": "merge-record",
+    "branch": "fix/merge-record",
+    "head_sha": "7488f79c846015be5e8ccffaefc41a5f97ffa071",
+    "commits": [
+     {
+      "sha": "e4d6347",
+      "subject": "state: a merge record per task's reviewed pull request (U-028)"
+     },
+     {
+      "sha": "86414a5",
+      "subject": "githost: merge commits by default, allow_merge_commit and the branch's rules (U-028)"
+     },
+     {
+      "sha": "dcb32ae",
+      "subject": "runtime: the merge record, one gated merge entry, no replay, the rules first (U-028)"
+     },
+     {
+      "sha": "7488f79",
+      "subject": "runtime: Stop all holds the merge retries; no record stays merging (U-028)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocker] The merge step replayed a branch that carried another task's work. When main moved it rebased the PR branch and force-pushed it, so a dependent task's branch (built with its dependency's unmerged branch merged in) got the dependency's commits copied. Those commits never reached main as themselves, GitHub never marked the dependency's PR merged, and merging it later conflicted.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts: '(a) a dependent branch whose base moved is merged as it is, with a merge commit: nothing replayed or forced, the dependency's commit reaches main once and both PRs are merged' and '(a) a rule that the branch be up to date brings main in by merging (a normal push), the record moves to the new head, and the retry merges it once its checks pass'. Before: the dependency PR stayed open, and the up-to-date head was a single-parent rebased commit.",
+      "how": "mergeChecked (packages/runtime/src/loop/merge.ts) never rebases and never force-pushes. A base that moved is merged as it is with a merge commit, and GitHub combines the two. Only when an update is needed (a strict required-checks rule, or the gate's `update` flag) is main merged into the branch in the worktree: a merge commit and a normal push, `conflict` with the files when it does not merge cleanly, and back to the reviewed head when bringing main in changed the own change. The record then moves to the new head, and the reviewed head's checks must pass there. The testenv fake host now marks a PR merged when its head reaches the base inside another merge, as GitHub does.",
+      "check_in_the_app": "Live (bench-live on joelwellbournewood/forerunner-sandbox, wave 7 live check 1 until merge-in-app lands):\n1. Create a repository project on forerunner-sandbox at Standard with one task, \"Add a page\". Run it. Its PR stays open, and the daemon log has `[merge] merge record {... state: left_to_you, status: not_allowed}`.\n2. Set the project to Trusted (Settings, or chat \"set autonomy to Trusted\" and confirm).\n3. Add \"Add a footer to the page\", depending on the page task, and press Start.\n4. While the footer's PR is being reviewed (it opens a few seconds before the merge), edit README.md on main on GitHub's website.\n5. Check on GitHub that the footer PR is merged by a commit \"Merge pull request #N ...\" with two parents. The page PR is marked Merged too. Neither PR's timeline shows a force-push.\n6. Check that the Overview no longer lists the page PR under Waiting for you to merge.\nThe bench showed the same before and after (scratchpad merge-walk.cjs chain)."
+     },
+     {
+      "problem": "[blocker] The reviewed version was not saved. mergeReviewed took the worktree's HEAD as the reviewed commit whenever it ran, and its own rebase moved that HEAD. A retry, or a crash in the middle, could merge a commit nobody reviewed.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts '(b) the reviewed version holds: a commit pushed after the accept is never merged by the retry' and '(b) a crash after main was merged in: the head keeps the task's own change, so the record moves to it and the retry merges it'. Before there was no record and no retry.",
+      "how": "New table merge_record (migration 0006, MergeRecordRepo pin/move/claim/forAgent/forTask). mergeReviewed pins reviewed_head_sha (the worktree HEAD at the accept), reviewed_base_sha and own_change_id. It does this first, in every mode and at every level. own_change_id comes from capabilities ownChangeId: the patch id of the task's own diff without context lines, measured from DEPS_BASE_REF, from the marker merged with main once main was merged in, or from the fork point. Every merge is pinned to the record's sha. A moved PR head moves the record only when its own change id is unchanged. Anything else is head_moved, left to the person with one sentence and one card. With no worktree at the accept the reviewed version is unknown: the record goes to left_to_you as unverified and is never merged unattended.",
+      "check_in_the_app": "Bench/tests only. A live check would push to a PR branch after the accept, which needs CI on forerunner-sandbox to hold the merge open.\nOptional live step: on a repository with a GitHub Actions check that sleeps a few minutes, run one task at Trusted. While its check runs, push a commit to its PR branch on GitHub. After the check passes and the next minute's poll: the PR is not merged, the Inbox has one card (\"... changed after the review ...\"), and the daemon log shows `merge record ... state: left_to_you, status: head_moved`."
+     },
+     {
+      "problem": "[blocker] A waiting merge was lost. If the checks were still running when the session's wait ended, the step filed a card and wrote only the task's reason text. Nothing retried it, nothing survived the PC sleeping or the app closing, and not_allowed and unverified filed nothing at all.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record-restart.test.ts 'the record is on disk; at the next start a merge left in the middle is settled, and the retry merges the waiting one once its checks pass': before, no record existed and the session's wait hung on the clock. Also merge-record.test.ts '(c) a merge whose checks still run is kept, no card is filed, and the retry merges it ...', '(c) Stop all holds the retry ...', '(h) a merge left to the person always says why ...', and githost-watcher.test.ts 'runs the merge retry pass once per poll ...'.",
+      "how": "A merge that waits keeps its record in waiting_checks, with the sentence \"#4 merges when its checks pass.\" and no card. GitHostWatcher.poll() calls a new `retryMerges` dep (ReviewedPrMerge.retryWaiting). That pass tries each waiting or queued record of the install's own agent once, with no inline wait, and does nothing while Stop all holds the agent. resumeAtStart, called next to recoverInterruptedSessions in compose, settles records left `merging`: merged on the host becomes merged, closed becomes left_to_you, open goes back to waiting. Every record left to the person has a sentence, including not_allowed and unverified. Cards are filed once per record, only where the person must act. After about a day of tries a stuck record goes to the person. A stop or an unexpected error never leaves a record stuck in `merging`.",
+      "check_in_the_app": "Bench (merge-walk.cjs restart, after): an in_progress check was on the PR at the accept, so the daemon log has `merge record ... state: waiting_checks, status: checks_pending`. The daemon was killed hard (restart-daemon.mjs --hard) and the check set green. 9 s later the log has `merge record ... state: merged` and `pull request merged {... method: merge}`, with no session; the PR is merged with a merge commit.\nLive needs CI on forerunner-sandbox, which has none. If a sleep-2-minutes Actions check is added:\n1. Run one task at Trusted.\n2. Quit the app while the check runs.\n3. Start it again after the check is green.\n4. Within about a minute the PR is merged on GitHub with no session started, and Settings > activity has one merge_pr audit row on a session id starting with merge-."
+     },
+     {
+      "problem": "[major] A retry outside a session had no authority of its own: the token and the wait were derived from the session's. A record kept per install also has to say whose it is, because the state can be the shared Postgres store.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts '(c) ... the retry merges it with no session on its own narrow token, one audit row each; another agent's record is not touched' and '(d) the gate reads the level at every call: a record made at level 3, the level then lowered to 2, is not merged by the retry'",
+      "how": "mergeRecorded(record, authority) is the only merge entry. It asks mayMerge(project, record, authority) first, re-reading the project each time: today unattended only at level 3 or above, and a person's click always, as an approval added for exactly that merge_pr call. A refusal writes one audit row on the hooks' audit port. Outside a session the call runs on tokens.issue: merge_pr only, that worktree, the git host's domain only, no secrets, budget 0, ten minutes, the project's current level, session id merge-<record id>. The token is revoked after the call and goes through beforeToolCall unchanged. The record carries agent_id, and only the install's agents (ReviewedPrMergeDeps.agentIds) are retried or resumed. claim() is optimistic on the row's version, so two daemons never merge one PR twice.",
+      "check_in_the_app": "Tests only: merge-record.test.ts (c), (d) and merge-record-restart.test.ts. On the bench restart walk, the retry's audit row was on a token of its own."
+     },
+     {
+      "problem": "[major] Squash was the default: GitHubHost.mergePullRequest sent merge_method 'squash' and the merge step never chose a method. The in-memory host ignored the method.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/capabilities/test/merge-commits.test.ts 'merges with a merge commit by default: two parents, the merge commit on the PR, the method on the wire' and 'reads allow_merge_commit; a repository without merge commits refuses one'; packages/runtime/test/merge-record.test.ts '(f) a repository that does not allow merge commits is never merged by Forerunner: one sentence' (before: it squash-merged)",
+      "how": "The default is now merge_method 'merge', and the merge step always sends 'merge' pinned to the record's sha. getRepo reads allow_merge_commit, and a merged PR carries mergeCommitSha. A repository or branch rule that allows no merge commit gives merge_commits_off with one sentence, and nothing merges. MemoryGitHost honours the method (`merges` log, setAllowMergeCommit). The testenv fake host reports allow_* in the repo JSON, PATCH /repos sets them, host.setMergeSettings exists, and it refuses a method that is off with GitHub's 405.",
+      "check_in_the_app": "Live: after the chain walk above, the merged PR on GitHub shows \"merged commit ... into main\" as a merge commit with two parents, not a squash.\nOptional live step: on forerunner-sandbox Settings > General, untick \"Allow merge commits\" (keep squash allowed) and run one task at Trusted. The PR stays open, and the Inbox card and daemon log say \"This repository does not allow merge commits, and Forerunner merges only with one ...\". Tick it again afterwards."
+     },
+     {
+      "problem": "[major] Nothing read the branch's rules. GitHub does not let a PR's author approve it, an admin is exempt from classic protection by default, and merging a dependent PR marks its dependency merged. An automatic merge or an admin token could go around the person's own rules.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts '(e) a rule that needs an approving review: nothing merges, even on an admin token that GitHub would let around classic protection; one sentence and one card' (before: the admin token merged around classic protection); packages/capabilities/test/merge-commits.test.ts 'reads a ruleset's rules ...' and 'reads classic protection as an admin ...'",
+      "how": "A new GitHost.getBranchRules(repo, branch) reads the rulesets (GET /rules/branches/{branch}; a 404 counts as none) and, when the token may read it, the classic protection, with the branch's `protected` flag and visible checks for anyone. It returns required approvals, code owners, required checks, up-to-date, allowed methods, blockers in words, and `unreadable` when the token is an admin's but the protection cannot be read. rulesBlock turns these into blocked_by_rules or merge_commits_off with one sentence, unattended and on a click alike, never with an admin bypass. Required checks are waited for as checks. The testenv fake host serves the rules route and classic protection (an admin's read only) and applies both on merge, with admin bypass of classic protection unless enforce_admins.",
+      "check_in_the_app": "Live (token-only GitHub settings, no model cost beyond one task):\n1. On forerunner-sandbox Settings > Branches, add classic protection on main: \"Require a pull request before merging\" with 1 approval. Do not tick \"Do not allow bypassing\"; the token is an admin's.\n2. Run one small task at Trusted.\n3. Check that the PR stays open. Before, the admin token merged it. Exactly one Inbox card says \"This repository needs an approving review before merging, and GitHub does not let you approve your own pull request: merge it on GitHub once someone else approved it.\", and the daemon log has `status: blocked_by_rules`.\n4. Remove the protection afterwards and close the PR."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "GitHub's asynchronous merge request with bypass_rules: false",
+      "why": "The spec allows it only after checking GitHub's documentation, which is not in /tmp/frbench/owner-q/docs and was not checked here. The merge uses the plain endpoint pinned to the sha, after Forerunner's own read of the rules. This is recorded in ADR 0111 point 6 and in runtime.md Known issues."
+     },
+     {
+      "problem": "A BEFORE bench walk of the restart run (daemon stopped while checks run)",
+      "why": "The old code waits up to 10 minutes inside the session, with no setting to shorten it, then files a card. The failing-before evidence is the composed restart test (it hung on the clock before) plus the AFTER bench walk. The chain run has both BEFORE and AFTER on the bench."
+     },
+     {
+      "problem": "Marking a dependency's record merged when GitHub marks its PR merged inside another merge",
+      "why": "That is the watcher's reporting, which belongs to 'dependent-branches' (onPullRequestState calling ReviewedPrMerge.merged and moving the record). On the bench, the 'Add the page' record stays left_to_you (not_allowed) although its PR is merged on the host."
+     },
+     {
+      "problem": "The PR executor's own rebases (post-run sync pr-executor.ts:389 for a branch without DEPS_BASE_REF, continueResolved :691)",
+      "why": "These belong to 'dependent-branches', which uses the new holdsMergedWork and ownChangeId helpers. merge-record does not change pr-executor.ts."
+     },
+     {
+      "problem": "Playwright, cargo fmt/clippy/test",
+      "why": "No UI or desktop-shell file changed. The UI vitest suite (which composes the real daemon in real-daemon.test.ts) was run and passes."
+     },
+     {
+      "problem": "CHANGELOG [Unreleased] line",
+      "why": "The task says the session lead writes CHANGELOG.md, UPDATE-LOG.md and requirements.md from this report. Suggested line: \"Merging is safe before either mode ships: a durable merge record pins the reviewed version; waiting merges are retried with no session; merge commits only; the branch's rules are read first and never gone around; the merge step never rebases or force-pushes (U-028, ADR 0111).\""
+     },
+     {
+      "problem": "Postgres-backed tests (postgres.integration.test.ts, migrations.integration.test.ts)",
+      "why": "They skip without FORERUNNER_TEST_PG, which is expected. Both were updated (the conformance suite gained a merge-records describe; the forward migration expects [2..6], v6) and run in CI where Postgres is set."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "EXIT 0; unit: 443 files, 4565 passed, 6 skipped (log /tmp/frbench/fix-merge-record/check.txt)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0; 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 passed, 73 skipped. Baseline was 4 passed / 6 skipped; one file was added by an earlier wave (/tmp/frbench/fix-merge-record/integration.txt)"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0; 13 files, 25 passed, 1 skipped, the same as the baseline (/tmp/frbench/fix-merge-record/e2e.txt)"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "EXIT 0; 83 files, 869 tests passed (/tmp/frbench/fix-merge-record/ui-vitest.txt)"
+     },
+     {
+      "command": "npx vitest run --project unit packages/runtime/test/merge-record.test.ts packages/runtime/test/loop-merge.test.ts packages/runtime/test/merge-record-restart.test.ts (after the last commit)",
+      "result": "33 passed. Before the fix all 9 original merge-record tests failed (/tmp/frbench/fix-merge-record/failing-before.txt). The Stop all test fails with the guard removed (2 audit rows instead of 1)."
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing"
+     },
+     {
+      "command": "bench fix-merge-record (--provider bench, --githost 48187, FORERUNNER_GITHOST_POLL_MS=5000, FORERUNNER_BENCH_CRITIC_DELAY_MS=3000, FORERUNNER_MERGE_CHECKS_WAIT_MS=0 for the after runs): BEFORE on c8c16fb (chain), AFTER on this branch (chain, restart)",
+      "result": "BEFORE: the footer PR #3 was force-pushed (head 18e529a -> b1b9028, forced), then squash-merged as one commit \"Add the footer (#3)\" holding both tasks' files. The page PR #2 stayed open and still showed under Waiting for you to merge. AFTER: #3 was merged by a two-parent merge commit 427cf7d, #2 was marked merged (its commit afc85a8 is on main as itself), and no head changed. Restart: record waiting_checks, daemon killed, check green, record merged 9 s later with no session, merge commit 6e212f0. Bench stopped and its home deleted."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-merge-record/before/steps/01-before-chain-overview.png",
+      "/tmp/frbench/fix-merge-record/before/merge-walk-before-chain.json"
+     ],
+     "after": [
+      "/tmp/frbench/fix-merge-record/after/steps/01-after-chain-overview.png",
+      "/tmp/frbench/fix-merge-record/after/steps/02-after2-restart-overview.png",
+      "/tmp/frbench/fix-merge-record/after/merge-walk-after-chain.json",
+      "/tmp/frbench/fix-merge-record/after/merge-walk-after-restart.json",
+      "/tmp/frbench/fix-merge-record/after/daemon-merge-lines.txt"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/loop-merge.test.ts 'level 3: the PR is merged on the host at the reviewed head ...'",
+      "why": "It asserted `rebased: false`. The merge step no longer rebases at all (ADR 0111), so `rebased` is never set. The test now asserts it is absent and that the merge record is merged with method merge and the merge sha."
+     },
+     {
+      "test": "packages/runtime/test/loop-merge.test.ts 'a check still running when the wait ends is never merged: the human is asked ...' (now '... the merge record waits for the retry, no card ...')",
+      "why": "Owner's decision of 2026-11-02 (ADR 0111 point 3): a waiting merge is kept and retried by the watcher, so nobody is asked about running checks. The test asserts no request and the record waiting_checks."
+     },
+     {
+      "test": "packages/runtime/test/loop-merge.test.ts 'a base that moved in the same file conflicts on the rebase ...' (now '... conflicts: the human gets a request naming the file ...')",
+      "why": "There is no rebase any more. The host reports the conflict and the files come from git merge-tree in the worktree. Assertions unchanged: status conflict, conflicts [src/feature.ts], a request naming the file."
+     },
+     {
+      "test": "packages/runtime/test/loop-merge.test.ts 'a base that moved elsewhere is rebased onto first ...' (now '... is merged as it is: no rebase, no force-push, a merge commit at the reviewed head')",
+      "why": "ADR 0111 point 4: a moved base is merged as it is. The test asserts headSha is the reviewed head, no forced push event, and a two-parent merge commit whose second parent is the reviewed head."
+     },
+     {
+      "test": "packages/runtime/test/loop-merge.test.ts 'no check on the head yet while the base branch reports CI is pending ...'",
+      "why": "Pending still means pending, but it now waits on the record for the retry instead of filing a card. The test asserts no request and the record waiting_checks."
+     },
+     {
+      "test": "packages/runtime/test/loop-merge.test.ts 'after the rebase push a host that still shows the old head is waited for ...' (now 'after the push of a merged-in base ...')",
+      "why": "The stale-host wait now covers the push of a merged-in base (input update: true), not a rebase. The stub host gained getRepo/getBranchRules. The test asserts updated: true, method merge, and a new head whose first parent is the reviewed commit."
+     },
+     {
+      "test": "packages/state/test/schema.test.ts and packages/state/test/migrations.integration.test.ts (applied/version arrays, entity list, v1 snapshot subset)",
+      "why": "Migration 0006 (merge_record) was added. The expected versions grow from 5 to 6, the entity list gains merge_record, and the v1 snapshot strip excludes the new table, as migrations.md prescribes. This is a schema change, not a weakened test."
+     }
+    ],
+    "new_problems": [
+     "The session result is untrue for a merge that waits on checks. runner.ts:2294 counts every non-merged outcome as openPrs, and result.ts:194 says \"Left 1 reviewed pull request for you to merge.\" for checks_pending, although the retry merges it by itself. Bench evidence: /tmp/frbench/fix-merge-record/after/steps/02-after2-restart-overview.txt says that line, and the daemon log shows the PR merged 9 s after the restart. runner.ts is closed to merge areas and result.ts is shared, so this was not changed here. For merge-in-app's result line builder: count waiting_checks as 'merges when its checks pass'.",
+     "A dependency's merge record stays left_to_you (not_allowed) after GitHub marks its PR merged inside the dependent's merge commit (bench: the 'Add the page' record). That is for dependent-branches' watcher callback, which should call ReviewedPrMerge.merged and move the record to merged.",
+     "The 'I merged it' answer on the left-open card (session/pr-answers.ts) records the merge on the task row only and does not touch the merge record. Merge-in-app's words should come from the record, so they need the watcher's merged report, or pr-answers should move the record.",
+     "PrTaskExecutor still rebases onto origin/<base> after a run for a branch without DEPS_BASE_REF (pr-executor.ts:389) and in continueResolved (:691). A resumed branch that merged main in through GitHub's Update branch could be rebased there. This is dependent-branches' (holdsMergedWork is exported for it).",
+     "Pre-existing '(s)' plurals in githost-watcher.ts inbox and reason lines ('all N check(s) passed', :617 and :769), which breaks design \u00a75.6. For polish."
+    ],
+    "notes_for_other_areas": [
+     "merge-in-app: replace only the body of the exported `mayMerge(project, record, authority)` in packages/runtime/src/loop/merge.ts, or pass `gate` in ReviewedPrMergeDeps. Keep the signature and the return type MergeGate: { allowed: true, approval: 'mode'|'person', by, update? } | { allowed: false, code: 'autonomy_insufficient', reason, sentence }. `update: true` makes the merge bring main into the branch first, for the automatic mode's checks on the combined result. The in-app click is `rt.merge.mergeRecorded(record, { kind: 'person', humanId })`. It adds the approval key for exactly that merge_pr call to RunContext.approvals, so hooks.ts stays unchanged. A record with no reviewed sha merges the PR's current head on a click only (say 'Merged #3 as it is on GitHub now.'). Records carry reviewed_base_sha for 'main has not moved since the review'. The record's sentence (rulesBlock / merge_commits_off / not_allowed) is the row's words when there is no button.",
+     "Merge record API (packages/state): `store.mergeRecord` (MergeRecordRepo) has pin(input), move(id, state, patch) checked against MERGE_RECORD_TRANSITIONS, claim(row) (optimistic, null when someone else took it), forAgent(agentId, states) and forTask(taskId). Columns: task_id, project_id, agent_id, pr_number, pr_url, reviewed_head_sha, reviewed_base_sha, own_change_id, state (queued|merging|waiting_checks|merged|left_to_you), approval (none|mode|person), approved_by, merge_sha, method (merge|squash|rebase), attempts, sentence, last_outcome. Migration 0006. No other wave 7 area should add a table.",
+     "dependent-branches: the helpers are in packages/capabilities/src/githost/branch-rules.ts. holdsMergedWork(git, base) is true when the worktree has DEPS_BASE_REF or a merge commit since base. ownChangeId(git, base, head?) gives the patch id of the own change, or null when it cannot be told; a rebuild that only drops commits main already has keeps the record when ownChangeId is unchanged. New GitOps methods: resolveRef, mergeBase, mergeTree (merge-tree --write-tree), conflictFiles, patchId(from, to) and parentsOf. Report PRs the watcher sees merged on GitHub with `rt.merge.merged({ task, record, mergeSha, method })` and move the record with store.mergeRecord.move(id, 'merged', {...}). A rebuild that removes a dependency should move the record to left_to_you with its sentence.",
+     "onMerged: `rt.merge.onMerged(listener)` (returns an unsubscribe) hears every merge this step makes: session, retry and resume. The event is MergedEvent { task, record, mergeSha, method }. compose.ts already subscribes one listener that logs 'pull request merged' and emits the project event. merged-copy should subscribe here for the copy refresh, and merged-actions should read record.method and record.merge_sha for Take this work out (Forerunner's merges are always 'merge', so git revert -m 1 applies).",
+     "GitHost additions (packages/capabilities/src/githost/types.ts): getBranchRules(repo, branch) returns BranchRules { requiredApprovals, codeOwnerReview, upToDate, requiredChecks, allowedMethods, blockers, unreadable }; RepoInfo.allowMergeCommit; PullRequestInfo.mergeCommitSha (null unless merged); the MergeMethod type. mergePullRequest defaults to 'merge'. MemoryGitHost adds setBranchRules, setAllowMergeCommit and a `merges` log. The testenv FakeGitHost adds setMergeSettings, setBranchRules and setBranchProtection, marks a PR merged when its head reaches the base inside another merge, and applies approvals, linear history and allowed methods on merge (with admin bypass of classic protection, as GitHub does). dependent-branches still adds 'closing a PR and squash/rebase merges if missing'; squash and rebase merges already work in the fake.",
+     "MergeStatus (packages/runtime/src/loop/ports.ts) gained blocked_by_rules, merge_commits_off and unreachable. MergeOutcome gained `sentence` and `updated`; `rebased` is never set any more. pr.left_open events now carry these statuses, and leftOpenWords (merge-in-app's) words their reasons, e.g. 'main needs an approving review'.",
+     "Cards: a merge left to the person files one MERGE_LEFT_OPEN_KEY card once per move into left_to_you, and only for checks_failed, conflict, head_moved, blocked_by_rules, merge_commits_off or failed, or for a record stuck about a day. not_allowed, unverified, closed and checks_pending file no card; their words are on the record.",
+     "compose.ts: merge-record's region is the ReviewedPrMerge construction, the onMerged listener, `retryMerges: () => merge.retryWaiting()` in the GitHostWatcher deps, and `merge.resumeAtStart()` next to recoverInterruptedSessions (opts.recoverSessions ?? services). Env FORERUNNER_MERGE_CHECKS_WAIT_MS (0 allowed: no inline wait) and FORERUNNER_MERGE_CHECKS_POLL_MS. `stopped: (agentId) => kill.isFrozen({ agentId })` holds retries during Stop all.",
+     "githost-watcher.ts: merge-record added only the `retryMerges` dep and the private retryWaitingMerges() call in poll(), after the cursor is saved. dependent-branches adds onPullRequestState in readPullRequest and onDefaultBranchHead in poll().",
+     "ADR: docs/decisions/0111-the-merge-record-and-merge-commits-only.md (amends 0062 and 0106 point 6; both status lines and the README rows now say so). budget-stop is in the same group and may also take 0111: renumber one at merge time. dependent-branches and merge-in-app amend this ADR.",
+     "Docs touched: runtime.md (merge section, autonomy line, git host watcher, Known issues), capabilities.md, migrations.md (0006, next is 0007), testing.md (fake host merge settings and rules), data-model.md (regenerated), and user-guide.md ('How Forerunner merges', after the dependent-PR paragraph)."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "I ran my own bench, \"review-merge-record\" (daemon 48190, UI 1790, the stand-in host on 48197), from a detached checkout of fix/merge-record at 7488f79. It used --provider bench with FORERUNNER_GITHOST_POLL_MS=5000 and FORERUNNER_BENCH_CRITIC_DELAY_MS=4000. A walk script of my own (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/rmr/walk.cjs) did the person's steps in the UI: New task with the dependency picker, Start session and its confirm, then the Overview, Tasks, Inbox and session pages. I read the host through its API and bare repo, and the merge records read-only from state.sqlite. Evidence is in /tmp/frbench/review-merge-record/round1/ (chain, crash, moved) and round2/ (stopall, pending, nomerge). In each folder steps/ holds the screens and walk-*.json holds the graphs, records and daemon merge lines.\n\n1. Chain (round1, steps 07-18). At Standard, \"Add the page\" was accepted and PR #3 stayed open. The record went to left_to_you/not_allowed with the sentence \"#3 waits for you to merge it: Forerunner merges by itself only at Trusted.\" and no card (\"Nothing needs you\"). I set Trusted and added \"Add the footer\" depending on it. While #4 was under review I moved main through the host's contents API. Result: #4 merged by the two-parent merge commit 04baeaa (parents bd82c26 and 889c399), #3 marked merged with the same commit, and no PR head changed during the run (head trace empty, no force-push). The record is merged/method merge/approval mode. The Overview says \"Merged 1 pull request\" and \"No pull request waits for you.\" #3's record stays left_to_you, as the fixer says (that is dependent-branches').\n\n2. Crash in the middle (round1, steps 19-25). Default 10-minute in-session wait. An in_progress check was put on #5 before the accept, and the record was \"merging\" while the session waited. I killed the daemon hard (restart-daemon --hard). At start the record was resumed to waiting_checks (\"merge record resumed\"). After I set the check green, the watcher's retry merged #5 within 2 s, with merge commit 828ad36 (two parents) and no session. The session page reads \"Interrupted: Forerunner closed: nothing done\", which is the sessions engine's existing wording.\n\n3. Head moved after the review (round1, steps 26-31). I pushed a README commit to #6's branch while the merge waited and set both heads green. #6 was not merged, the record kept reviewed 36ea447, state left_to_you/head_moved, and one card was filed. The card (30-moved-inbox.png) and the session line show \"the PR head 03808d8b405c is not the reviewed commit 36ea447320d8.\" They do not show the record's sentence (blocking 1).\n\n4. Stop all (round2, stopall). During the inline wait the record went merging -> waiting_checks. With the check green and Stop all holding, nothing merged for 15 s. After Allow again it merged within 1 s.\n\n5. Pending with FORERUNNER_MERGE_CHECKS_WAIT_MS=0 (round2, steps 09-17). The session ended with the record waiting_checks (\"#3 merges when its checks pass.\") and no card. After green, the retry merged it 5 s later with no session. On screen it still says \"Pull request #3 waits for you to merge it: a check is still running: ci/test.\" and \"Left 1 reviewed pull request for you to merge\" (non-blocking, words owned by merge-in-app).\n\n6. Merge commits off (round2, steps 18-23). After PATCH allow_merge_commit:false, #4 stayed open: left_to_you/merge_commits_off with one card. The card shows \"the repository does not allow merge commits.\", not the record's sentence.\n\nA first attempt hit the fake host's 5000-requests-per-hour limit because my walk polled too fast. I restarted the bench fresh and slowed the polling; that was not a product problem. The bench is stopped and its home deleted.\n\nDiff and tests:\n- The named tests pass: 64 in merge-record, loop-merge, merge-record-restart, merge-commits and schema, plus 19 in githost-watcher.\n- Failing before: with base merge.ts and ports.ts put back, all 10 merge-record tests and the changed loop-merge tests fail. (a) fails because the dependency PR stays open; (e) fails with \"expected true to be false\" (the admin token merged around classic protection). I then restored the branch files.\n- Full suite on the branch: pnpm check EXIT 0 (443 files, 4565 passed). The docs check cannot diff against origin/main here; run with --base claude/nifty-knuth-f9udt0 it is ok (40 files). test:integration EXIT 0 (5 passed, 6 skipped), test:e2e EXIT 0 (13 files, 25 passed, 1 skipped), UI vitest EXIT 0 (83 files, 869 passed). No conflict markers.\n- No daemon route changed, so no real-daemon or fake-daemon case is needed.\n- Persisted state is tested across a restart (composed twice on one home).\n- The changed loop-merge, schema and migration assertions follow the design (ADR 0111 points 3 and 4, migration 0006). Each is replaced by an equal or stronger assertion; none was removed.",
+    "blocking": [
+     {
+      "issue": "The record's sentence for the person reaches no screen. The left-open card and the session line still carry the internal message, with commit ids for a moved head. The user guide, the report's live checks and the tests all treat the sentence as what the person reads, but only the internal field is asserted (validation.md rules 2 and 9).",
+      "where": "packages/runtime/src/loop/merge.ts:1319 (fileLeftOpenRequest builds `why` from outcome.reason, i.e. the internal message, not outcome.sentence); docs/user-guide.md 'How Forerunner merges'; packages/runtime/test/merge-record.test.ts:460-500",
+      "evidence": "Bench: /tmp/frbench/review-merge-record/round1/steps/30-moved-inbox.png. The card reads 'The critic accepted \"Add the about page\", but its pull request\u2026 / the PR head 03808d8b405c is not the reviewed commit 36ea447320d8.', and the session line says the same (31-moved-session.txt). The record's sentence is '#6 changed after the review: look at the new commits, then merge it yourself or send it back.'. /tmp/frbench/review-merge-record/round2/steps/22-nomerge-inbox.txt shows the card 'the repository does not allow merge commits.', while the record has 'This repository does not allow merge commits, and Forerunner merges only with one: merge #4 on GitHub, or allow merge commits in its settings.'. The rules case files 'was not merged: main needs an approving review' (reason = 'PR left open for you: ' + rulesBlock().message). The user guide says the pull request 'waits for you with one sentence (\"#4 changed after the review: ...\")' and is left 'with that sentence and one card'. The report's live checks expect 'Exactly one Inbox card says \"This repository needs an approving review before merging, ...\"', a card '\"... changed after the review ...\"', and 'the Inbox card and daemon log say \"This repository does not allow merge commits, and Forerunner merges only with one ...\"'. The daemon log carries only state and status. Tests (b), (e), (f) and (h) assert record.sentence, an internal field no screen shows, plus card counts; no test asserts the text of a card for blocked_by_rules, merge_commits_off or head_moved.",
+      "expected": "The person reads the record's sentence where they meet the refusal. fileLeftOpenRequest (merge-record's own merge.ts) should build the card's body from outcome.sentence when there is one: no commit ids, what to do next. Add assertions on the card text the Inbox shows (the request row's why, or requestView(row)) in merge-record.test.ts (b), (e) and (f). Then correct the check_in_the_app steps to the real card and log text. If the card is deliberately left to merge-in-app instead, the user guide must not quote sentences no screen shows yet, and the live checks must expect today's card text."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "The merge step never rebases or force-pushes; a moved base is merged as it is with a two-parent merge commit; the dependency's PR is marked merged; nothing is copied",
+      "holds": true,
+      "note": "Tests (a) pass on the branch and fail with base merge.ts (the dependency PR stays open). Bench chain: merge commit 04baeaa with parents bd82c26 and 889c399, #3 and #4 merged by it, PR heads unchanged, no force-push."
+     },
+     {
+      "claim": "A rule that the branch be up to date brings main in by merging and a normal push; the record moves to the new head; the retry merges once checks pass",
+      "holds": true,
+      "note": "Test (a)2 passes; with the base code the up-to-date head is a single-parent rebased commit. Not walked on the bench: the bench host has no HTTP route to set rules."
+     },
+     {
+      "claim": "The reviewed version is pinned; a commit pushed after the accept is never merged; a head that keeps the own change moves the record",
+      "holds": true,
+      "note": "Tests (b) pass. Bench moved walk: record kept at reviewed 36ea447, left_to_you/head_moved, PR open, one card."
+     },
+     {
+      "claim": "A waiting merge is kept, survives a restart, and is merged by the watcher's retry with no session",
+      "holds": true,
+      "note": "merge-record-restart.test.ts passes. Bench crash walk: merging -> waiting_checks at start -> merged 2 s after green. Pending walk: merged 5 s after green with no session (only manual sessions exist)."
+     },
+     {
+      "claim": "The retry runs on its own narrow token through beforeToolCall, one audit row per call; another agent's record is untouched; the gate re-reads the level at every call",
+      "holds": true,
+      "note": "Tests (c) and (d) pass. The token comes from tokens.issue (merge_pr only, budget 0, ten minutes) and is revoked in finally."
+     },
+     {
+      "claim": "Stop all holds the merge retries; no record stays merging",
+      "holds": true,
+      "note": "Test passes. Bench stopall: held for 15 s while green, merged 1 s after Allow again; the killed session left the record waiting_checks."
+     },
+     {
+      "claim": "Merge commits by default; a repository without merge commits is never merged, with one sentence",
+      "holds": true,
+      "note": "merge-commits.test.ts and (f) pass. Bench nomerge: PR #4 open, record merge_commits_off with its sentence on the record."
+     },
+     {
+      "claim": "The branch's rules are read first; an admin token never goes around classic protection",
+      "holds": true,
+      "note": "(e) fails on the base code (the admin merged) and passes on the branch. Checked by tests only; the bench host cannot set rules over HTTP."
+     },
+     {
+      "claim": "check_in_the_app: the Inbox card says the record's sentence (the approving-review sentence, '... changed after the review ...', the merge-commits sentence), and the daemon log says the merge-commits sentence",
+      "holds": false,
+      "note": "The bench cards show the internal message instead (30-moved-inbox.png, 22-nomerge-inbox.txt), and the daemon log has only state and status. See blocking 1."
+     },
+     {
+      "claim": "Cards only where the person must act; not_allowed, unverified, checks_pending and closed file none",
+      "holds": true,
+      "note": "Bench chain-1, pending and crash Inboxes: 'Nothing needs you'. Moved and nomerge walks: exactly one card each."
+     },
+     {
+      "claim": "pnpm check, test:integration, test:e2e and the UI vitest suite pass",
+      "holds": true,
+      "note": "Rerun here: all EXIT 0 with the same counts. The docs check passes against the base with --base."
+     },
+     {
+      "claim": "tests_changed_for_design are design changes, not weakenings",
+      "holds": true,
+      "note": "Each changed loop-merge assertion follows ADR 0111 and is replaced by an equal or stronger one (no forced push, two parents, record state). The schema and migration arrays grow to 6."
+     },
+     {
+      "claim": "not_done items carry reasons; no triage or phase C handoff items for this area",
+      "holds": true,
+      "note": "The triage and handoffs.json lists for merge-record are both empty. The async merge, the watcher's merged reporting and the PR executor rebases are rightly left to later areas."
+     }
+    ],
+    "non_blocking": [
+     "Words that became untrue for a merge that now merges itself. The session line 'Pull request #3 waits for you to merge it: a check is still running: ci/test.' (runner pr.left_open + event-lines leftOpenWords) and the result 'Left 1 reviewed pull request for you to merge' stay on the Overview even after the retry merged it. The same screen then also says 'No pull request waits for you.' (round2/steps/13-pending-before-green-session.txt, 14-pending-after-green-overview.txt). The fixer listed the result line only; merge-in-app, which owns leftOpenWords and the result line builder, must cover the pr.left_open line for checks_pending and unreachable too.",
+     "A merge made by the retry or resume outside a session leaves no Update or notification. The person learns of it only because the Overview list empties (design \u00a73.8: things the app did by itself are an Update). For merge-in-app or an onMerged subscriber.",
+     "In the update path, a crash after the local merge of main but before the push leaves the worktree HEAD ahead of the PR head. The next try then answers head_moved ('changed after the review') and files a card although nothing changed (merge.ts:357-361). Safe, but the words are wrong; resetting the branch to the PR head when the extra commit is the unpushed merge would fix it.",
+     "getBranchRules reads only a 404 as 'no rules'. A 403 on GET /rules/branches throws tool_not_allowed and turns every merge into 'failed' with a card. Also, if GitHub reports protected: true with a 404 on /protection for a branch covered only by rulesets, an admin token is read as 'unreadable' and blocked. Neither was checked against GitHub. Add a live step: on forerunner-sandbox with the token, GET /repos/{o}/{r}/rules/branches/main, and GET /branches/main with a ruleset-only rule.",
+     "The rules read is conservative: required conversation resolution, code scanning and push restrictions always block, even when nothing is unresolved or the token's user is allowed. Over-cautious, not unsafe.",
+     "Each retry attempt is one allowed merge_pr audit row, one issued token and about 5 host calls. A record whose checks run all day makes about 1440 of each at the default one-minute poll.",
+     "The stuck-after-a-day sentence 'The checks of #N have not finished in a day' is also used when the host was unreachable for a day.",
+     "The watcher, and so the merge retry, exists only when a GitHub token was present at compose (githostWatchEnabled). A daemon that started before GitHub was connected does not retry waiting merges until it restarts.",
+     "After a crash the session page says 'Interrupted: Forerunner closed: nothing done' and the Overview 'No session yet' although the task was accepted and its PR merged afterwards. These are the sessions engine's existing words.",
+     "Later areas depend on: mayMerge/MergeGate and mergeRecorded (merge-in-app); holdsMergedWork and ownChangeId in packages/capabilities/src/githost/branch-rules.ts and ReviewedPrMerge.merged/onMerged (dependent-branches, merged-copy, merged-actions); store.mergeRecord (MergeRecordRepo) and migration 0006; GitHost.getBranchRules and RepoInfo.allowMergeCommit."
+    ]
+   },
+   "fixup": {
+    "area": "merge-record",
+    "branch": "fix/merge-record",
+    "head_sha": "581128b4b30032caa640fe91a8a0459894d02b01",
+    "commits": [
+     {
+      "sha": "581128b",
+      "subject": "runtime: the left-open card says the merge record's sentence (U-028)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[review blocking 1] The record's sentence never reached a screen. fileLeftOpenRequest (packages/runtime/src/loop/merge.ts) built the card's `why` from outcome.reason, which is the merge step's internal message. So the Inbox card for a moved head read 'the PR head 03808d8b405c is not the reviewed commit 36ea447320d8.', and for merge commits off it read 'the repository does not allow merge commits.'. Its title was cut off at the PR URL ('...but its pull request\u2026') and its buttons had no consequence lines. The daemon's 'merge record' log line had only state and status, yet the user guide and the fixer's live checks quoted the sentences.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts: '(b) the reviewed version holds: a commit pushed after the accept is never merged by the retry' (body was 'the PR head 33295088782a is not the reviewed commit 63db5069dfae.', title 'The critic accepted \"Add feature\", but its pull request\u2026', explains null), '(e) a rule that needs an approving review ...' (card body and the log line's sentence), '(f) a repository that does not allow merge commits ...' (card body). Log: /tmp/frbench/fixup-merge-record/failing-before.txt. The cards are read through requestViews, which is what GET /requests and GET /inbox return. Extended: packages/runtime/test/pr-answers.test.ts 'the card the merge step files now carries its key ...' reads the title, body, consequence lines and the answered line from GET /inbox.",
+      "how": "fileLeftOpenRequest now writes why = 'The critic accepted \"<task>\", but pull request #N was not merged. <the record's sentence>', with no URL, and stores `sentence` on change_card. An outcome with no sentence is worded from its reason: 'It was left open: check ci/test failed.'. A new mergeLeftOpenCard in packages/runtime/src/daemon/request-words.ts (key ANSWER_CARD_KEYS.mergeLeftOpen = 'merge:left_open', added in wiring/request-answers.ts) titles the card from the task title and the PR number, so a title with a colon still works. Its body is change_card.sentence; a card filed before this falls back to its why after the first sentence. Each answer gets a consequence line: 'I merged it' says 'Closes this card and notes on the task that you merged it.', and 'Leave it open' says 'Closes this card; the pull request stays open on GitHub.'. Once answered, the card says 'Noted: you merged pull request #N.' or 'Left open: pull request #N stays open on GitHub.'. settle() now adds `sentence` to the 'merge record' log line.",
+      "check_in_the_app": "Bench (done, --provider bench, stand-in host on 48207; walk script /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fmr/walk.cjs, adapted from the reviewer's):\n1. moved: a project on bench/seeded at Trusted gets the task 'Add the about page', with a running check put on its PR. After the review a commit is pushed to the PR branch and both heads are set green. The Inbox has one card: title 'The critic accepted \"Add the about page\", but pull request #2 was not merged', body '#2 changed after the review: look at the new commits, then merge it yourself or send it back.', and both buttons with their lines (after/moved/steps/05-moved-inbox.png). The daemon log line is `merge record {... state: left_to_you, status: head_moved, sentence: \"#2 changed after the review: ...\"}`.\n2. nomerge: the repo is set to allow_merge_commit:false. Card body: 'This repository does not allow merge commits, and Forerunner merges only with one: merge #3 on GitHub, or allow merge commits in its settings.' (after/nomerge/steps/05-nomerge-inbox.txt). The log line has the same sentence.\n3. Pressing Leave it open on card 1 shows 'Done: Left open: pull request #2 stays open on GitHub.', and the Answered list says the same (after/answer/steps/02-03).\n4. chain (regression): the footer PR #5 is merged by the two-parent commit bade694. #4 is marked merged by the same commit, and no PR head changed.\n\nLive (for the session lead, in wave 7 live check 1 on forerunner-sandbox; nothing here changes its branch protection, as phaseE7-live.md requires):\n1. In the first chain (Standard, or 'You press Merge' once merge-in-app lands), after the session, grep the daemon log for 'merge record'. Each accepted task has `state: left_to_you, status: not_allowed` and a `sentence` (\"#N waits for you to merge it: ...\"). No Inbox card is filed for them.\n2. Read-only rules check, with the token the app stores: GET /repos/joelwellbournewood/forerunner-sandbox/rules/branches/main should be [] or a 404, and GET /repos/joelwellbournewood/forerunner-sandbox/branches/main should be protected:false. Then the automatic-mode merge in live check 1 merges with no blocked_by_rules line in the log. If `protected` is true while /branches/main/protection is a 404, note it: getBranchRules would then block an admin token (see not_done).\n3. The approvals, merge-commits-off and moved-head cards are covered on the bench and in tests above, not live."
+     },
+     {
+      "problem": "[review non-blocking, my area] The 'stuck for a day' sentence said 'The checks of #N have not finished in a day' even when GitHub had not answered for a day (status unreachable).",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts '(c) a merge that waited about a day goes to the person, with what it waited on: checks still running, or GitHub not answering' (new; it failed on the unreachable sentence)",
+      "how": "settle() picks the sentence by status. Unreachable gives 'GitHub has not answered about #N for a day: look at it on GitHub, then merge it.', and running checks keep the checks sentence. Both file one card that carries the sentence. The test takes the merge step's GitHub down with a proxy that throws a retryable error.",
+      "check_in_the_app": "Tests only: a day of retries cannot be walked. The test sets attempts to MAX_MERGE_ATTEMPTS and runs one retry with checks still running, then one with GitHub not answering. The Inbox card body shows each sentence."
+     },
+     {
+      "problem": "[review non-blocking, my area] In the update path, a crash after the base was merged into the task folder but before the push left the folder's HEAD ahead of the PR head. The next try said head_moved ('changed after the review') and filed a card, though nothing had changed (merge.ts, the `local !== head` check).",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts '(b) a crash after main was merged in locally, before the push: that merge is set aside, main is brought in again, and nothing goes to the person' (new; before, the PR head stayed at the reviewed commit and the record went to left_to_you/head_moved)",
+      "how": "mergeChecked now fetches first. If the folder's HEAD is a merge whose first parent is the PR head and whose second parent is already in origin/<base> (unpushedBaseMerge), the branch is set back to the PR head with checkout -B and the base is merged in again with a normal push. Anything else is still head_moved. The test checks two parents [reviewed, main], no force-push, the record waiting_checks at the new head, no card, and that the retry merges it.",
+      "check_in_the_app": "Tests only: a crash between the local merge and its push cannot be timed on the bench."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "The session page's line for a merge left open still shows the step's message, for example 'Pull request #6 waits for you to merge it: the PR head 03808d8b405c is not the reviewed commit 36ea447320d8.'",
+      "why": "The runner emits that line (pr.left_open in runner.ts mergeReviewed, which carries status and reason but no sentence), and event-lines.ts leftOpenWords words it. shared_files closes runner.ts to the merge areas and gives leftOpenWords to merge-in-app. The Inbox card and the log line now carry the sentence. To show it on the session page, either the runner's payload gets `sentence: outcome.sentence` (the session lead's call on runner.ts), or merge-in-app words the line from `status`. Recorded in runtime.md Known issues."
+     },
+     {
+      "problem": "Each retry attempt is one merge_pr audit row and one issued token, about 1440 a day for checks that run all day.",
+      "why": "Cutting this needs a read-only pre-check of the checks before the gated call. That changes the flow the reviewer confirmed (one gated entry through beforeToolCall). Left as is and recorded in runtime.md Known issues."
+     },
+     {
+      "problem": "getBranchRules treats a 403 on /rules/branches as a failed merge with one card. It also reads an admin token on a branch GitHub reports `protected` with a 404 on /protection as unreadable, and blocks it.",
+      "why": "Not checked against GitHub. This machine may not use the GitHub token. A read-only live step was added to check_in_the_app, and runtime.md Known issues records it."
+     },
+     {
+      "problem": "The retry runs only where the git host watcher runs, which needs a GitHub token when the daemon starts.",
+      "why": "That is compose wiring (githostWatchEnabled), not the merge step. Recorded in runtime.md Known issues."
+     },
+     {
+      "problem": "Words that became untrue once a waiting merge merges by itself: 'Left 1 reviewed pull request for you to merge' in the result line, and no Update for a merge done by the retry or the resume.",
+      "why": "merge-in-app owns these words (the result line builder and leftOpenWords), and onMerged subscribers own the Updates. Both were already listed for later areas."
+     }
+    ],
+    "validation": [
+     {
+      "command": "npx vitest run --project unit packages/runtime/test/merge-record.test.ts (before the fix)",
+      "result": "12 tests, 5 failed: (b) reviewed version holds, (b) crash before the push, (c) a day of waiting, (e) approving review, (f) merge commits off (/tmp/frbench/fixup-merge-record/failing-before.txt)"
+     },
+     {
+      "command": "npx vitest run --project unit merge-record, pr-answers, request-answers, loop-merge, merge-record-restart (after)",
+      "result": "5 files, 51 passed"
+     },
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+      "result": "EXIT 0; 443 files, 4567 passed, 6 skipped (/tmp/frbench/fixup-merge-record/check.txt)"
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (40 files). pnpm check's run cannot diff against origin/main here."
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0; 5 passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 passed, 73 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0; 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "EXIT 0; 83 files, 869 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "EXIT 0; 33 passed. Run because request-words.ts is also used by the UI's stand-in daemon."
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing"
+     },
+     {
+      "command": "bench fixup-merge-record (--provider bench, stand-in host 48207, FORERUNNER_GITHOST_POLL_MS=5000, FORERUNNER_BENCH_CRITIC_DELAY_MS=4000): walks moved, nomerge, chain, answer",
+      "result": "moved and nomerge: one card each, body = the record's sentence, consequence lines shown, the log line has the sentence. answer: 'Done: Left open: pull request #2 stays open on GitHub.'. chain: #5 merged by the two-parent commit bade694, #4 marked merged too, no head changed. Bench stopped, its home and host repositories deleted; evidence in /tmp/frbench/fixup-merge-record/after/."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-merge-record/round1/steps/30-moved-inbox.png",
+      "/tmp/frbench/review-merge-record/round2/steps/22-nomerge-inbox.txt"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-merge-record/after/moved/steps/05-moved-inbox.png",
+      "/tmp/frbench/fixup-merge-record/after/nomerge/steps/05-nomerge-inbox.png",
+      "/tmp/frbench/fixup-merge-record/after/answer/steps/02-inbox-after-answer.png",
+      "/tmp/frbench/fixup-merge-record/after/answer/steps/03-inbox-answered-open.png",
+      "/tmp/frbench/fixup-merge-record/after/chain/walk-chain.json",
+      "/tmp/frbench/fixup-merge-record/after/daemon-merge-lines.txt"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/merge-record.test.ts (b) 'the reviewed version holds', (e) 'a rule that needs an approving review', (f) 'merge commits off'",
+      "why": "Made stronger, not weaker. Sentence matches became exact strings, and (e)'s count of one request became an exact check of that one card's title, body and buttons. Both read the card as the Inbox shows it."
+     }
+    ],
+    "new_problems": [
+     "The session page's pr.left_open line carries the step's message with commit ids (runner.ts mergeReviewed emits only `reason` and `status`). The Inbox card and the log now say the sentence. Fixing the session page needs `sentence` in the runner's payload, and runner.ts is closed to merge areas, or merge-in-app wording it from `status` in leftOpenWords. Bench evidence: /tmp/frbench/fixup-merge-record/after/moved/steps/06-moved-session.txt."
+    ],
+    "notes_for_other_areas": [
+     "merge-in-app: the left-open card now has its own words: mergeLeftOpenCard and mergeLeftOpenOutcome in packages/runtime/src/daemon/request-words.ts, keyed on ANSWER_CARD_KEYS.mergeLeftOpen ('merge:left_open', equal to MERGE_LEFT_OPEN_KEY). Its body is change_card.sentence, which fileLeftOpenRequest stores. A new answer such as a Merge button should be added to that function's choices and to pr-answers.ts.",
+     "merge-in-app (leftOpenWords): MergeOutcome.sentence is set for every left-open outcome, but the runner's pr.left_open payload does not carry it. Words built from the event need the sentence in the payload (runner.ts) or the status.",
+     "Stuck records now say what they waited on: 'The checks of #N have not finished in a day: ...' (checks_pending) or 'GitHub has not answered about #N for a day: ...' (unreachable). Both are on the record and on its card.",
+     "mergeChecked's update path now sets aside an unpushed merge of the base onto the PR head (unpushedBaseMerge in loop/merge.ts) instead of answering head_moved. dependent-branches: the same pattern applies if the PR executor finds such a commit in a resumed worktree."
+    ]
+   }
+  },
+  {
+   "key": "budget-stop",
+   "fix": {
+    "area": "budget-stop",
+    "branch": "fix/budget-stop",
+    "head_sha": "20e463620d03c7c4567ed9c099d033c72b20899c",
+    "commits": [
+     {
+      "sha": "7a0739e",
+      "subject": "budget-stop: a stop on the subscription really stops Claude Code and counts it once (U-042)"
+     },
+     {
+      "sha": "9036cd4",
+      "subject": "budget-stop: each run has a wrap-up line, and a task's run hears it once on both paths (U-042)"
+     },
+     {
+      "sha": "cfd80c8",
+      "subject": "budget-stop: a budget stop is a paused task that names its limit, and a run cannot eat the review share (U-042)"
+     },
+     {
+      "sha": "9c6cf36",
+      "subject": "budget-stop: the decision, the maintainer docs, the user guide and the bench's budget journey (U-042)"
+     },
+     {
+      "sha": "d8741c6",
+      "subject": "budget-stop: the composed test checks that a paused task feeds no estimate (U-042)"
+     },
+     {
+      "sha": "20e4636",
+      "subject": "budget-stop: the budget release scenario follows the work-budget cap and the wrap-up (U-042)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocker] On the subscription a budget stop did not stop Claude Code: Forerunner's refusal ended only its own for-await loop, nothing aborted the SDK query, unregister() took the run off the kill switch (Stop now could not reach it) and the hooks still allowed tools after run() returned.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/sdk-driver.test.ts > 'SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)' > 'returns only after Claude Code has exited, and no tool is allowed after the stop', 'the hooks refuse a tool call that arrives after run() returned (its token is ended)', 'Stop now reaches the run while Claude Code winds down, and ends it at once', 'a process that does not wind down is ended after the wait'",
+      "how": "agent/sdk.ts: every stop that is not the kill switch's (budget, time limit, error) aborts the controller and awaitExit() drains Claude Code's remaining messages (booking their usage) until it exits, at most SDK_STOP_WAIT_MS (15 s), then calls the Query's close() and waits SDK_CLOSE_WAIT_MS (5 s). During the wait the run is re-registered with the kill switch ('(stopping)'), so Stop now / a person's move ends the wait at once with close(). Every hook refuses from the abort on; EnforcementHooks.endRun(ctx) revokes the run's token when run() returns, so a late PreToolUse is refused and audited and a late PostToolUse answers continue:false. The kill switch's own stop still returns at once (2 s promise). The in-flight read is kept (no message lost).",
+      "check_in_the_app": "No cloud live check (no subscription token): owner's checklist step 6. On a Claude subscription only (no API key), create a coder task with a tiny budget (CHF 0.02) and Start: after the task reads 'Paused at its budget', the task's folder (Files tab / Open folder) does not change any more (compare the file times a minute later); Settings > Costs (or the session's spend) shows the run's cost once, matching Claude Code's own total; pressing Stop now while a run goes on ends it at once."
+     },
+     {
+      "problem": "[blocker] Subscription usage was counted per streamed assistant message: parallel tool calls share one message id and one usage (input counted twice) and a streamed message's output_tokens is a placeholder (output too low).",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/sdk-driver.test.ts > 'counts each message once by its id and takes the output from the result'",
+      "how": "agent/sdk.ts: usage is booked once per message id (counted set); at the result message the totals (sum of modelUsage over models, else result.usage) are compared with what was booked and the difference (the real output, subagents) is booked as one more share (usageLeft), so the run's ledger equals Claude Code's totals.",
+      "check_in_the_app": "Owner's checklist step 6 (subscription): after a task run on the subscription, the run's cost in the task drawer / Costs view matches Claude Code's reported total for the run (not about double the input, not near-zero output)."
+     },
+     {
+      "problem": "[major] Claude Code's own error_max_budget_usd result read as provider_error (Failed, retried at once as a passing glitch); maxBudgetUsd equalled the run cap so Claude Code's stop could come first.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/sdk-driver.test.ts > 'Claude Code's own spending stop reads as a budget stop, not a passing glitch' and 'sets Claude Code's own limit slightly above the run's cap, so Forerunner's stop comes first'",
+      "how": "sdk.ts: subtype error_max_budget_usd -> outcome budget_exceeded with error { code: budget_exceeded, level: 'run' }; maxBudgetUsd = claudeCodeBudgetUsd(cap) = cap x 1.1 + USD 0.01.",
+      "check_in_the_app": "Owner's checklist step 6: a subscription task stopped by Claude Code's own limit reads 'Paused at its budget' (not Failed) and is not retried at once."
+     },
+     {
+      "problem": "[major] The agent was never told about its budget: the 80% decision was only a warning event; the model started new work until the call that would go over was refused. Plus the tiny-budget case (reserve at least the cap).",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget.test.ts (5 new cases: one wrap-up line at the cap less the reserve and the wrap-up once; the two-call reserve; tiny budget is save only; no room for the first call is save only; review run has none) and packages/runtime/test/wrap-up.test.ts (exactly one block after the tool results in the next request; tiny budget hears none and its line says save only; a non-task run hears none; SDK PostToolUse additionalContext once)",
+      "how": "enforcement/budget.ts: SessionBudget fixes each work run's line at its first call (wrapUpLineOf: cap less max(20% of cap, 2 x the first call's estimate)); the call that would pass the line answers 'wrap_up' once; saveOnly when line <= first call's worst case. hooks.ts beforeModelCall passes wrap_up (outranks finish_current) and the line. loop.ts appends WRAP_UP_TEXT as one text block after the last tool results (new message object) only when RunRequest.wrapUp is set; sdk.ts returns it once as PostToolUse additionalContext. Both emit budget_line/wrap_up_sent and report wrapUpSent; the executor turns them into session-log lines (TaskStep 'note' -> task.step) and adds WRAP_UP_BRIEF_LINE to every brief.",
+      "check_in_the_app": "Live check 3 case 1 (bench-live, folder project): a coder task with a brief sized above its budget (a script with tests in four files and a README); Start; open the session, tick Details: the run's first line reads 'This run may spend CHF X: at CHF Y it is told to wrap up, keeping a reserve of CHF Z to finish.' (set the budget to about 3x Z, expected CHF 0.30-0.60; if it says 'save only', raise it and start again); later 'Told the coder to wrap up: about a fifth of this task's budget is left (...)'. In the model-call log exactly one specialist request first carries, as the last user message's last block after the tool_result blocks, 'About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: as a list.' Case 3: a CHF 0.02 budget: no request contains that text and the Details line says '... too little to wrap up (a reserve of CHF ... is two calls): save only, it pauses at its budget with its work kept.'"
+     },
+     {
+      "problem": "[major] A graceful wrap-up would read as done (reviewed, rejected, counted as a failed try; Run row 'completed'); a hard stop dropped the run's last words (the error replaced the report, next run read 'It failed: The run failed: run budget would be exceeded').",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts > 'a run at its line hears the wrap-up once; with work left it is paused: no review, no try, report and handoff kept', 'a tiny budget hears no wrap-up and pauses at its budget with the save only', 'a paused task stays paused across a restart'; apps/ui/test/real-daemon.test.ts > 'a budget stop is a clean pause (budget-stop, ADR 0111)'",
+      "how": "session/budget-pause.ts (parseHandoff, stopSourceOf, limitWords, pauseSentence, handoffArtifact/handoffOf). executor.ts: paused when the outcome is budget_exceeded (stoppedBy budget) or the run heard the wrap-up and lists Left to do items (stoppedBy wrap_up); TaskExecutionResult 'paused' with budgetStop and handoff; Run row 'paused' (graceful, written by the executor) or 'budget_exceeded' (hard); artifacts keep report + stop words beside + { handoff }. runner.ts routes 'paused' with no critic and no try to today's budget card. task-words 'Paused at its budget' (budgetPauseLabel); the drawer shows a paused run's report (task.finished 'report', pairReports); task-context's previous attempt says 'It paused at a budget. It reported (as data): ...'; failureWords budget_exceeded is 'The run stopped at a budget before its next step.'; compose's onTaskFinished feeds no estimate for a paused task. The stand-in gets FORERUNNER_BENCH_LONG and answers the wrap-up with the two headings.",
+      "check_in_the_app": "Live check 3 case 1 continued: the run ends paused: the Tasks tab row reads 'Paused at its budget'; the model-call log has no critic call for this task; the drawer's run reads 'Paused' with the sentence 'The run paused before its budget of CHF ... ran out: it spent CHF ... and listed N things left to do.' and the report below it ending with 'Where I stopped:' and a 'Left to do:' list; the Inbox has one budget card for it (today's card: Raise the budget / Cancel task; 'Continue (CHF N more)' is budget-resume's). Case 3: the tiny task also reads 'Paused at its budget', no critic call; its drawer run reads 'Stopped at a budget'."
+     },
+     {
+      "problem": "[major] The real limit was not named: a stop at the month's cap, the project's budget or the subscription's share went down the task-budget path whenever the task's cap was below the session's (card offered 'Raise the budget'; every later task in the session got the same card).",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts > 'a stop at the month's cap names the month (budget-stop, ADR 0111)' > 'the run's sentence and the card name this month's cap, and the session stops there'",
+      "how": "Both drivers carry the refusal's details.level and capUsdMicro on their error; stopSourceOf maps run/session/task/project/month/plan to BudgetStop.source (task_budget, specialist_limit, session, project, month, plan); the run's sentence, budgetStopTitle (the card) and the status label (budgetPauseLabel) name it; a pause at project/month/plan ends the session (stopEndsSession); a session-source pause goes the C-36 way (sessionBudgetStops counts 'paused' runs).",
+      "check_in_the_app": "Optional on the bench or live: Settings > monthly cap set just above this month's spend; start a session with a task whose own budget is larger: the session log says '\"X\" stopped at this month's cap of CHF ...: it spent CHF ..., and its next step would have gone over.', the Inbox card title is '\"X\" stopped at this month's cap of CHF ...', the task reads 'Paused at this month's cap', and the session stops there (later tasks not started)."
+     },
+     {
+      "problem": "[major] A running task could eat the share kept for reviews: its cap was the smaller of the task's cap and what the whole session had left.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts > 'a run is capped at what is left of the session's work budget, so its review keeps the reserve' (before: the scripted coder never finished and the run ate the whole session)",
+      "how": "executor.ts: sessionLeftUsdMicro = min(session token budget, SessionBudget.workRemainingUsdMicro()) (cap less reserveShare, less spent); runCapSource 'session' when that is the smaller.",
+      "check_in_the_app": "Bench or live: start a session with a small budget (e.g. CHF 1.60 with a task that has no budget): the run's Details line says 'This run may spend CHF 1.28 ...' (80% of the session), not the whole session; a task that finishes is reviewed by the critic in the same session."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "The code-side save (work-in-progress commit), the resume from the handoff ('## Where the last run stopped' in the next brief), the card naming the real limit with 'Continue (CHF N more)', and the session-budget pause at the first stop",
+      "why": "Owned by 'budget-resume' (group 4) per phaseE7.json; this area routes 'paused' to today's budget card and the C-36 session path as the spec says, and leaves the handoff artifact (handoffOf) for budget-resume to read."
+     },
+     {
+      "problem": "Today's budget card body for a wrap-up pause still says 'So far it spent CHF 0.02; its next step would have gone over the budget.' (request-words budgetCard), which is not true for a run that ended after the wrap-up; and its 'Raise the budget' does not help for a month-cap stop",
+      "why": "The card's words and options are 'budget-resume''s (request-words.ts, the needs_human budget card); the title already names the real limit."
+     },
+     {
+      "problem": "CHANGELOG.md entry",
+      "why": "The task instructions forbid editing CHANGELOG.md, docs/status/UPDATE-LOG.md and docs/requirements.md; the session lead writes them from this report."
+     },
+     {
+      "problem": "Live confirmation of the subscription stop and the per-message count",
+      "why": "No subscription token in the cloud; covered by fake-SDK tests and goes to the owner's checklist step 6."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0; unit 442 files, 4564 passed, 6 skipped; secret-scan clean (1999 files)"
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (38 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0; 5 files passed, 6 skipped (Postgres-backed, expected); 30 passed, 71 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0; 13 files passed; 25 passed, 1 skipped (scenario 5 updated for the design)"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "83 files, 870 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "33 passed"
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+     },
+     {
+      "command": "node scripts/bench/journeys/budget.cjs fix-budget-stop final --long-chf 0.035 --tiny-chf 0.01 (bench --provider bench --env 'FORERUNNER_BENCH_LONG=Write the')",
+      "result": "6/6 checks ok: one wrap-up request with one block after the tool_result; long task paused, no critic call, report kept; tiny task no wrap-up, paused, no critic call; the run's log line names the reserve / save only. Before (same journey on c8c16fb with CHF 0.007/0.006): 5 of 6 failed (no wrap-up, 'Needs your decision: its budget is used', report replaced by the stop sentence, no budget line)."
+     },
+     {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/sdk-driver.test.ts > 'passes one credential, the token's limits and our hooks to the SDK and accounts usage'",
+      "why": "maxBudgetUsd is now just above the run's cap (2.5 -> 2.76) so Forerunner's stop comes first (ADR 0111)."
+     },
+     {
+      "test": "packages/runtime/test/sdk-driver.test.ts > 'PreToolUse hook denies tools outside the token and stops on budget exhaustion'",
+      "why": "It called the hooks after run() returned (the evidence the spec names: 'allow'); the run's token is now ended then, so the fake asks them while the run goes on, as Claude Code does. A new case asserts the refusal after the run."
+     },
+     {
+      "test": "packages/runtime/test/security-sdk.test.ts (runDriver helper, 5 cases)",
+      "why": "Same reason: the fake SDK holds the run open while the cases call PreToolUse/PostToolUse; their security assertions are unchanged."
+     },
+     {
+      "test": "packages/runtime/test/workspace-runs.test.ts > 'subscription (Agent SDK driver): the run's working folder is the workspace'",
+      "why": "It read claimsForRun after the SDK run; the token is revoked at the end now, so the claims are read while the run runs."
+     },
+     {
+      "test": "packages/runtime/test/task-budget-cap.test.ts (3 cases: budget reached mid-run, budget spent, the session's stop)",
+      "why": "The outcome is 'paused' (was needs_human / budget_exceeded), budgetStop carries stoppedBy, a spent budget carries an empty handoff, and the session's stop is named source 'session' with its sentence."
+     },
+     {
+      "test": "packages/runtime/test/continuity-budget.test.ts, apps/ui/test/inbox.test.tsx, apps/ui/test/real-daemon.test.ts (continuity case)",
+      "why": "The task's status reads 'Paused at its budget' (was 'Needs your decision: its budget is used'); inbox.test.tsx's drawer assertion now requires 'Paused at its budget' and still forbids 'Paused by you', Resume and 'Press Resume'."
+     },
+     {
+      "test": "packages/runtime/test/closeout-executor.test.ts > child token budget",
+      "why": "A run is capped at what is left of the session's work budget (USD 0.10 after USD 0.70 of USD 1 spent), not the whole remainder (USD 0.30)."
+     },
+     {
+      "test": "packages/runtime/test/executor-brief.test.ts > 'the executor reports every model call and tool result to the runner'",
+      "why": "The run's budget line is now the first step (a TaskStep 'note')."
+     },
+     {
+      "test": "tests/e2e/scenarios/05-budget.scenario.test.ts",
+      "why": "It asserted the run spent past 80% of the session (into the review share) and an 80% warning; now the run stops at the work budget, hears one wrap-up, and task.finished's outcome is 'paused' (Run row still budget_exceeded, the task released to ready as before)."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-budget-stop/before/01-before-tasks-tab.png",
+      "/tmp/frbench/fix-budget-stop/before/02-before-drawer-write-the-guide.png",
+      "/tmp/frbench/fix-budget-stop/before/03-before-drawer-write-the-notes.png",
+      "/tmp/frbench/fix-budget-stop/before/04-before-inbox.png",
+      "/tmp/frbench/fix-budget-stop/before/05-before-session.png",
+      "/tmp/frbench/fix-budget-stop/before/before-budget.json"
+     ],
+     "after": [
+      "/tmp/frbench/fix-budget-stop/steps/12-final-tasks-tab.png",
+      "/tmp/frbench/fix-budget-stop/steps/13-final-drawer-write-the-guide.png",
+      "/tmp/frbench/fix-budget-stop/steps/14-final-drawer-write-the-notes.png",
+      "/tmp/frbench/fix-budget-stop/steps/15-final-inbox.png",
+      "/tmp/frbench/fix-budget-stop/steps/16-final-session.png",
+      "/tmp/frbench/fix-budget-stop/steps/17-final-session-details.png",
+      "/tmp/frbench/fix-budget-stop/steps/final-budget.json"
+     ]
+    },
+    "new_problems": [
+     "The project header reads 'Waiting for you: 2 questions' when the open cards are budget cards (seen before and after: /tmp/frbench/fix-budget-stop/steps/13-final-drawer-write-the-guide.png): project-status counts every card as a question.",
+     "The session review grades a session whose tasks all paused: 'Session review: sent back for changes (grade 70, 2 findings)... 0 done task(s)' (/tmp/frbench/fix-budget-stop/steps/17-final-session-details.png).",
+     "The SDK driver's pre-flight estimate uses the step cap as input tokens (sdk.ts: req.pricing.estimate(ctx.budget.limits.stepCap, 4096)), so on the subscription the first call's worst case, and with it the run's reserve, is almost only max_tokens; pre-existing, for 'cost'.",
+     "EstimateModel.refresh still folds a task that paused and later finished from all its runs (it reads finished tasks only, so a paused run's cost is folded once the task is done); the live hook skips paused results now; the learner rule is 'cost''s.",
+     "On the subscription the wrap-up reaches Claude Code only with a tool result after the hooks decided (PostToolUse): a run whose next step is its final answer ends without it and is reviewed as usual (by design, noted in ADR 0111's consequences would be fair to add)."
+    ],
+    "notes_for_other_areas": [
+     "budget-resume: read a paused run's handoff with handoffOf(run.artifacts) from packages/runtime/src/session/budget-pause.ts ({ stopped, leftToDo, stoppedBy: 'wrap_up' | 'budget' }, already redacted and cut; quote it as data). TaskExecutionResult.outcome 'paused' carries budgetStop { capUsdMicro, spentUsdMicro, source: BudgetStopSource ('task_budget' | 'specialist_limit' | 'session' | 'project' | 'month' | 'plan'), specialist, stoppedBy } and handoff. limitWords(source, cap, chf, specialist) and pauseSentence() word the limit; budgetStopTitle (budget-card.ts) already names every source; budgetPauseLabel(source) in daemon/task-words.ts gives the status. Run rows: 'paused' (graceful) and 'budget_exceeded' (hard); artifacts [report, error (hard stop), { handoff }]. The runner's routing is in runner.ts run(): the needs_human branch condition `result.outcome === 'paused' && source !== 'session'` (with stopEndsSession for project/month/plan) and the budget_exceeded branch for a session-source pause (C-36, sessionBudgetStops now counts 'paused' runs). task.finished carries `report` for a paused run (the drawer shows it). task-context.ts's previous attempt says 'It paused at a budget. It reported (as data): ...' until your '## Where the last run stopped' replaces it. pr-executor.ts returns a paused result early at :370 as before (your pause commit goes there).",
+     "cost: the Run row outcomes to skip as full-cost samples are 'paused' and 'budget_exceeded'; compose.ts onTaskFinished already returns early for result.outcome === 'paused' (a test in budget-pause.test.ts: rt.estimates.recentSamples() has no sample for the paused task). The reserve uses the shared estimate through RunPricing.estimate at the run's first call (SessionBudget.wrapUpLineOf / wrapUpLineOf(cap, firstCallEstimate), WRAP_UP_SHARE, WRAP_UP_CALLS in enforcement/budget.ts): improving the estimate moves the line with no change there. See new_problems for the SDK pre-flight estimate (stepCap as input tokens).",
+     "credential-limits: sdk.ts's result handling (handle(), type === 'result') now has the error_max_budget_usd branch before `else if (msg.is_error)`; the auth mapping stays in that is_error branch and in the sdkError/usage-limit block after the loop. SdkRunResult.error carries level/source/capUsdMicro; RunResult.error (loop) carries level/capUsdMicro. Every non-kill stop of an SDK run now waits for Claude Code to exit (awaitExit, SDK_STOP_WAIT_MS 15 s + SDK_CLOSE_WAIT_MS 5 s) and EnforcementHooks.endRun revokes the run's token at its end (a token is not reusable after run() returns).",
+     "web-search / cost (loop.ts): the wrap-up is appended by appendText(messages, text) right after beforeModelCall when pre.decision === 'wrap_up' and RunRequest.wrapUp is set; new RunEvent types budget_line and wrap_up_sent; RunResult.wrapUpSent. beforeModelCall's decision union is now 'allow' | 'finish_current' | 'wrap_up' with an optional `line` on a run's first call.",
+     "sites (sdk.ts): sdkHooks() takes a 4th argument (WrapUpState); the PostToolUse return merges updatedMCPToolOutput and additionalContext into one hookSpecificOutput; a PostToolUse whose afterToolCall throws (token ended) returns { continue: false }.",
+     "All areas: SessionBudget.workRemainingUsdMicro() is what a task's run may spend at most (the executor's run cap); TaskStep has a new kind 'note' (the runner emits it as task.step with text, no step counted).",
+     "Bench and tests: FORERUNNER_BENCH_LONG=<title substring> makes the stand-in write one part per call until it hears the wrap-up (WRAP_UP_MARK in testenv/src/bench/role-player.ts, which must match the start of WRAP_UP_TEXT in loop.ts); every stand-in specialist that hears the wrap-up answers with 'Where I stopped:' and 'Left to do:'. scripts/bench/journeys/budget.cjs walks the acceptance (results in <bench>/steps/<label>-budget.json).",
+     "Session lead: the ADR is docs/decisions/0111-a-budget-stop-is-a-clean-pause.md (index row added, ADR 0105 amended); 'merge-record' in the same group may also take 0111: renumber at merge time. packages/critic/src/critic.ts got one field (wrapUpSent: false on its synthetic RunResult) and docs/maintainers/critic.md a line, required by the RunResult type."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Setup: detached worktree at fix/budget-stop (20e4636), pnpm install, Playwright local config. Bench \"review-budget-stop\" (daemon 48191, UI 1791, --fresh --provider bench --env FORERUNNER_BENCH_LONG=\"Write the\"). Bench stopped, its home deleted. Screenshots and texts are in /tmp/frbench/review-budget-stop/steps/, with a copy of the model-call log in steps/model-calls.jsonl.\n\nWalk A: everything through the UI like a person (my script: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk.cjs).\n- Created two tasks with New task, Who does it = coder: \"Write the guide\" with Budget CHF 0.035 and \"Write the notes\" with CHF 0.01 (02-, 03-). Pressed Start session, then Start (05-a-start-dialog.png).\n- The session ended by itself: '\"Write the guide\" and \"Write the notes\" need your decision (Inbox). CHF 0.03.' The notes task ran after the guide paused, so work kept going by itself.\n- Tasks tab (07-a-tasks-after.png): both rows read \"Paused at its budget\" with Answer and Cancel.\n- Guide drawer (08-): \"Paused at its budget\". The run row reads \"Paused \u00b7 CHF 0.02\". It shows the sentence \"The run paused before its budget of CHF 0.04 ran out: it spent CHF 0.02 and listed 2 things left to do.\" and then the kept report with \"Where I stopped:\" and a \"Left to do:\" list.\n- Notes drawer (09-): its run reads \"Stopped at a budget\": \"The run stopped at its budget of CHF 0.01: it spent CHF 0.01, and its next step would have gone over.\"\n- Inbox (10-): one budget card per task (today's card: Raise the budget / Cancel task).\n- Session Details (13-a-session-details.txt):\n  - line 92: \"This run may spend CHF 0.04: at CHF 0.03 it is told to wrap up, keeping a reserve of CHF 0.01 to finish.\"\n  - line 234: \"Told the coder to wrap up: ...\"\n  - line 316: \"This run may spend CHF 0.01, too little to wrap up (...): save only, ...\"\n- Model-call log: 13 guide calls. Exactly one request (the 13th) first carries the wrap-up. Its last message's blocks are [tool_result, text], and the text is WRAP_UP_TEXT. The last request holds one wrap-up block in total, and none is ever inside a tool_result. The notes task's 4 calls carry no wrap-up. There are 0 critic calls.\n- Daemon restart (restart-daemon.mjs): both tasks still read \"Paused at its budget\", and the drawer still shows the run's report (33-, 34-).\n- Neighbour check: a CHF 1.00 \"Write the manual\" ran 30 parts without reaching its line, finished and was accepted by the critic (21-m-session.txt), so normal tasks are still reviewed.\n\nMonth cap walk (walk-month.cjs, start-month.cjs, view-month.cjs):\n- In Settings I lowered the Monthly spending cap to CHF 0.23 and confirmed. The Start dialog then refuses any session budget above what is left this month (26-n-start-dialog.png). So I started without a typed budget, as a budget card's Raise, a schedule or the chat would.\n- The run's sentence, the card title ('\"Write the manual\" stopped at this month's cap of CHF 0.23') and the status chip (\"Paused at this month's cap\") all name the month.\n- But the session page says \"Stopped: the budget is used\" and \"The session's budget is used. CHF 0.04.\" while showing \"CHF 0.04 of CHF 5.00 (1%)\" (32-v-session-month.txt). The Inbox update says the same (31-v-inbox-month.txt).\n- Pressing Raise the budget on the paused guide's card started a session that stopped at once on the month cap and again said \"Stopped: the budget is used\" at CHF 0.00 of CHF 5.00 (0%) (38-x-session-after-raise.txt).\n\nValidation:\n- The named runtime tests pass (10 files, 75 tests).\n- Against the merge base c8c16fb's source, with the branch's tests kept, 21 of the new or changed cases fail for behavioural reasons:\n  - sdk-driver: state.exited false; a late PreToolUse allowed; input 400 instead of 300; 'error' instead of budget_exceeded; maxBudgetUsd 1.\n  - budget-pause: no wrap-up request; no handoff; the month case.\n  - wrap-up and task-budget-cap cases also fail.\n  - The sibling \"never told to wrap up \u2192 reviewed\" passes on the base, as it should.\n- pnpm check exit 0: 442 files, 4564 passed. Lint shows only 69 warnings in files this branch does not touch.\n- docs-check --base claude/nifty-knuth-f9udt0 ok. pnpm test:integration exit 0 (30 passed, 71 skipped). pnpm test:e2e exit 0 (25 passed, 1 skipped). UI vitest 83 files / 870 passed. Playwright 33 passed. The worktree is left clean.",
+    "blocking": [
+     {
+      "issue": "A stop at this month's cap, the project's budget or the subscription's share ends the session, and the session's own words then say the session's budget is used. That is false, and it names the wrong limit, which is the very thing this area fixes. The push notification also advises \"Start a session with a larger budget to go on\", which cannot help: the Start dialog refuses a budget above what is left this month.",
+      "where": "packages/runtime/src/session/runner.ts:2013-2022 (stopReason = \"budget_exceeded\" for stopEndsSession sources); packages/runtime/src/session/result.ts:95-97; packages/runtime/src/session/stop-words.ts:66-68; packages/runtime/src/notifications/producers.ts:225, 251-262",
+      "evidence": "On the bench, after Settings > Monthly spending cap CHF 0.23 and a session started without a typed budget:\n- /tmp/frbench/review-budget-stop/steps/32-v-session-month.txt: header \"Stopped: the budget is used\", \"Spent of this session's budget CHF 0.04 of CHF 5.00 (1%)\", summary '\"Write the manual\" needs your decision (Inbox). The session's budget is used. CHF 0.04.', last line \"Stopped: the budget is used: 1 needs you.\". The run's own line two rows above says it \"stopped at this month's cap of CHF 0.23\".\n- 31-v-inbox-month.txt, Updates: \"Review month cap (n): The session's budget is used. CHF 0.04.\"\n- 38-x-session-after-raise.txt: the session that Raise the budget started stopped at once at the month cap with \"Stopped: the budget is used\" at CHF 0.00 of CHF 5.00 (0%).\n- The composed month test (budget-pause.test.ts) checks the run's sentence, the card and the label, but not the session's words.",
+      "expected": "A session ended by a month, project or subscription-share pause says the limit that ended it: for example \"Stopped at this month's cap of CHF 0.23\" in the header, the result line and the Inbox update. Its notification does not advise a larger session budget. The fix is a distinct stop reason, or words taken from the BudgetStop source. The composed month case (or a real-daemon case) should assert the session's status text and summary."
+     },
+     {
+      "issue": "A tiny budget that cannot pay for even one call never reports its budget line, so there is no \"save only\" line at all. The tiny-budget rule (reserve at least the cap) promises it, and live check 3 case 3 at CHF 0.02 lands exactly in this case on the real model. The fixer's check_in_the_app for case 3 (\"the Details line says '... too little to wrap up ...: save only ...'\") will not hold live.",
+      "where": "packages/runtime/src/enforcement/budget.ts:152-170 (precheck calls precheckCaps first; precheckCaps throws run_budget before runLines.set, so no `line` is returned and no budget_line event is emitted)",
+      "evidence": "A probe test I ran and then removed: LoopAgentDriver with a token budget of 500 micro-USD, maxTokensPerCall 1000, wrapUp set. Result: outcome budget_exceeded, provider calls 0, events [\"run_start\",\"run_end\"], no budget_line.\n\nArithmetic for live check 3 case 3:\n- The coder runs on claude-sonnet-5-5 with maxTokens 4096 (models/ladder.ts MODE_DEFAULTS.coder).\n- That model is priced at USD 2 / 10 per million tokens (billing/src/pricing.ts:98).\n- fitMaxTokens never goes below that floor, so the first call's worst case is at least 4096 x USD 10/M = USD 0.041.\n- A CHF 0.02 budget is USD 0.025. The first call is refused, nothing runs, and no budget line reaches the session log.\n\nbudget.test.ts only covers lines whose first call fits.",
+      "expected": "The run's budget line (save only, naming the reserve) is reported even when its first call is refused. For example: fix the line before the cap check throws, or carry it in the refusal's details so the driver emits budget_line. Add a test whose first call's estimate is above the cap, checking that the session log has the save-only line. Or, at the least, the live_check uses a budget that fits one call but not two on the coder's model."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "On the subscription a budget stop really stops Claude Code: run() returns only after the process exited, no tool is allowed after the stop, Stop now reaches it while it winds down, a process that does not wind down is ended after the wait",
+      "holds": true,
+      "note": "The sdk-driver 'a budget stop really stops Claude Code' cases pass on the branch and fail on c8c16fb's source (state.exited false; a late PreToolUse allowed). The fake's tool calls are tied to iteration, so two base failures are timeouts rather than an observed 'allow'. Read sdk.ts awaitExit: the run is re-registered as '(stopping)', there is a forced close() and the waits run on the simulated clock. Not checked live (no subscription token)."
+     },
+     {
+      "claim": "The hooks refuse a tool call after run() returned (endRun revokes the run's token)",
+      "holds": true,
+      "note": "Passes on the branch. On base, late.continue is undefined (allowed). The token is the per-run child derived in executor.ts:934, so revoking it touches nothing else (claimsForRun is used only during a run)."
+     },
+     {
+      "claim": "Usage is counted once per message id and the result's totals book the rest",
+      "holds": true,
+      "note": "Test passes (300/60/20; ledger 360). On base: input 400."
+     },
+     {
+      "claim": "error_max_budget_usd reads as budget_exceeded (level run); maxBudgetUsd = cap x 1.1 + USD 0.01",
+      "holds": true,
+      "note": "Tests pass; on base 'error' and 1.0."
+     },
+     {
+      "claim": "Each work run has one wrap-up line; the loop adds one text block after the tool results; the SDK path gives additionalContext once; non-task runs hear nothing",
+      "holds": true,
+      "note": "wrap-up.test.ts and budget.test.ts pass and fail on base. On the bench the model-call log shows exactly one request carrying it, blocks [tool_result, text], never inside a tool_result."
+     },
+     {
+      "claim": "Tiny budget: no wrap-up, the save-only line, pause at its budget",
+      "holds": false,
+      "note": "Holds when one call fits (bench CHF 0.01 on the stand-in: line 316 of 13-a-session-details.txt). It does not hold when the first call does not fit: no line at all, and this is the live CHF 0.02 Sonnet case (blocking item 2)."
+     },
+     {
+      "claim": "A run that wrapped up with work left, or stopped at a budget, is paused: no critic, no try, report and handoff kept, Run row 'paused' (graceful) or 'budget_exceeded' (hard), across a restart",
+      "holds": true,
+      "note": "Bench: 0 critic calls, attempt 0, drawer 'Paused' / 'Stopped at a budget', report with both headings. Still the same after restart-daemon.mjs. budget-pause.test.ts passes, including its restart case, and fails on base."
+     },
+     {
+      "claim": "A run that wraps up with nothing left, or never heard the wrap-up, is reviewed as usual",
+      "holds": true,
+      "note": "Composed tests 'Notes page' and 'Plan page' pass ('Plan page' also passes on base, as a sibling should). On the bench 'Write the manual' finished without a wrap-up and was accepted by the critic."
+     },
+     {
+      "claim": "The real limit is named (month, project, plan, session) in the run's sentence, the card title and the task's status",
+      "holds": true,
+      "note": "Bench month walk: the run's sentence, the card title and 'Paused at this month's cap' all name it. The session's own summary and header do not (blocking item 1)."
+     },
+     {
+      "claim": "A run is capped at what is left of the session's work budget",
+      "holds": true,
+      "note": "Composed 'Big report' case (CHF 1.28 of a USD 2 session) passes and fails on base. closeout-executor 100_000. e2e scenario 5 now checks the ledger is at most 80% of the cap. Not walked on the bench: the stand-in's per-call cost cannot reach a CHF 1.28 line, and the Start dialog refuses smaller sessions for an unbudgeted coder task."
+     },
+     {
+      "claim": "compose's onTaskFinished feeds no estimate for a paused task",
+      "holds": true,
+      "note": "Asserted in budget-pause.test.ts (recentSamples). Read compose.ts:2273."
+     },
+     {
+      "claim": "Tests changed for the design were not weakened",
+      "holds": true,
+      "note": "Every removed assertion and renamed test was checked:\n- security-sdk and workspace-runs keep their assertions; only the fake now holds the run open.\n- The PreToolUse test keeps both deny and allow.\n- inbox.test.tsx still forbids 'Paused by you', Resume and USD.\n- e2e 05's swaps of the 80% warning for wrap_up_sent and of budget_exceeded for paused follow ADR 0111.\nNo .skip or .only was added and no case was deleted."
+     },
+     {
+      "claim": "No new route, so no fake-daemon change is needed; the fake uses the daemon's own taskDisplay",
+      "holds": true,
+      "note": "apps/ui/test/fake-tasks.ts imports taskDisplay from the runtime. A real-daemon case was added in its own describe block."
+     },
+     {
+      "claim": "Validation commands green",
+      "holds": true,
+      "note": "Re-run here:\n- pnpm check exit 0\n- docs-check ok\n- pnpm test:integration exit 0\n- pnpm test:e2e exit 0\n- UI vitest 870 passed\n- Playwright 33 passed"
+     }
+    ],
+    "non_blocking": [
+     "The wrap-up log line contradicts itself: \"Told the coder to wrap up: about a fifth of this task's budget is left (it spent CHF 0.02 of CHF 0.04)\" (13-a-session-details.txt:234). The line fires when what was spent plus the next call's worst case passes it, so the agent is told 'a fifth left' while about 40% (live, often about half) is left. Suggest wording the log line by the line ('its next step would pass CHF 0.03; CHF 0.01 is kept to finish') rather than 'a fifth is left (spent X of Y)'.",
+     "Today's budget card is wrong for a graceful wrap-up pause. Its title says 'stopped at its budget of CHF 0.04' and its body 'its next step would have gone over the budget' (10-a-inbox.png), and Raise the budget does not help after a month-cap stop (38-x: the raised session stopped at once). The fixer lists the card as budget-resume's (request-words, budget-card options); it is worth naming in that area's spec.",
+     "sdk.ts awaitExit drains through handle(m, false), and handle's result branch still sets outcome = 'error' / provider_error on any is_error result and overwrites finalText. A late result after Forerunner's stop would turn a budget pause into a Failed task that is retried as a passing glitch. I did not observe this: the fakes send no late result, and the SDK throws 'Claude Code process aborted by user' on abort. Cheap to guard: during the drain only book usage.",
+     "Late usage that fails to book during the drain is swallowed (`late(r.value).catch(() => undefined)`). After Stop all revokes the run's token, what Claude Code still reports is not booked. usageLeft also books modelUsage totals, which include auxiliary or other-model calls, at the run model's price.",
+     "A paused run now records lessons (executor.ts paused branch: `lessons: this.screenedLessons(...)`; before `[]`). The bench session ended with lessonsRecorded 1 from paused runs only. Probably intended, but ADR 0111 does not mention it.",
+     "Wording: 'save only' and 'a reserve of CHF 0.01 is two calls' (with a cap of CHF 0.01, after rounding) read as jargon or odd. 'with its work kept' promises a save that budget-resume builds.",
+     "The month, project and subscription-share stops are reached only by a start without a typed budget: the Start dialog refuses a budget above what is left this month (26-n-start-dialog.png). Pre-existing and fine, but a live check of the month path must start from a budget card's Raise, the chat or a schedule.",
+     "Pre-existing, as the fixer also noted: the project header counts budget cards as 'Waiting for you: 2 questions' (07-, 08-), and the session review grades a session whose tasks all paused ('sent back for changes (grade 70, 2 findings)... 0 done task(s)', 13-).",
+     "For later areas I checked that these exist and work as the fixer describes:\n- handoffOf(run.artifacts) and parseHandoff in packages/runtime/src/session/budget-pause.ts\n- stopSourceOf, limitWords, pauseSentence, stopEndsSession and budgetLineWords in the same file\n- budgetPauseLabel in packages/runtime/src/daemon/task-words.ts\n- budgetStopTitle in packages/runtime/src/session/budget-card.ts\n- SessionBudget.workRemainingUsdMicro, wrapUpLineOf, WRAP_UP_SHARE and WRAP_UP_CALLS in packages/runtime/src/enforcement/budget.ts\n- WRAP_UP_TEXT in packages/runtime/src/agent/loop.ts and WRAP_UP_MARK in testenv/src/bench/role-player.ts (must stay in sync)\n- EnforcementHooks.endRun\n- the TaskStep 'note' kind\n- task.finished's report field\n- the runner's needs_human branch for paused results"
+    ]
+   },
+   "fixup": {
+    "area": "budget-stop",
+    "branch": "fix/budget-stop",
+    "head_sha": "7c886fdb8311a1161ca094065671f2bb70cc5ac6",
+    "commits": [
+     {
+      "sha": "7c886fd",
+      "subject": "budget-stop: a session a month, project or subscription stop ended names that limit, and a budget below one call still says its line (U-042)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocking 1] When a task paused at this month's cap, the project's budget or the subscription's share, its session ended with the wrong words. The badge said \"Stopped: the budget is used\" and the result said \"The session's budget is used.\" while only 1% of the session's own CHF 5.00 was spent. The Inbox Update said the same. The urgent notification advised \"Start a session with a larger budget to go on\", which the month's cap refuses.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts > 'a stop at the month's cap names the month' > 'the session it ends names this month's cap too: its status, its result, its log, the Update and the notification'; apps/ui/test/real-daemon.test.ts > 'a session ended at this month's cap names it' > 'the session page, its result, its log and the Inbox Update say this month's cap, not the session's budget' (before: 'Stopped: the budget is used'); packages/runtime/test/session-status-words.test.ts > 'a session stopped at an outer limit names it' (2 cases); packages/runtime/test/notifications-channels.test.ts > 'session end at an outer limit: the urgent budget_stop names it and what helps'; services/state-api/test/push.test.ts > 'a session ended at this month's cap (stop_reason budget_month) is the urgent budget stop and names the month'",
+      "how": "Root cause: runner.ts set stopReason = 'budget_exceeded' for every stopEndsSession source, and all of the session's words read only that reason. Now the runner sets budgetStopReasonOf(source), which gives budget_month, budget_project or budget_plan; the session's own budget keeps budget_exceeded. It also keeps the limit's amount as stopCapChfMicro on LastSessionOutcome, SessionResult and SessionEndFacts. Where each piece of wording now comes from:\n- stop-words.ts: sessionStatusText reads 'Stopped at this month's cap'; stopLimitWords and isBudgetStopReason are new.\n- result.ts: stopWords(reason, capChf) gives 'Stopped at this month's cap of CHF 0.23.'. This feeds the result, the Inbox Update and the chat's 'How it ended'.\n- event-lines: the log's end line is 'Stopped at this month's cap: 1 needs you.'.\n- task-display: reviewStopWords gives 'the session stopped at this month's cap'.\n- producers.ts: budgetStop has the title '<Project>: stopped at this month's cap'. The body gives the amounts and then what helps: raise the monthly spending cap or the project budget in Settings, or wait for the subscription's usage to reset. It never suggests a larger session budget.\n- State service push fan-out: treats these reasons as the urgent budget stop and names the limit.\nThe partial patch's approach was kept. Every reader of stop_reason was checked; the UI reads only statusText and the summary.",
+      "check_in_the_app": "Bench (done, --provider bench, journey `budget.cjs <n> <label> --month`):\n1. Settings > Monthly spending cap set to this month's spend + CHF 0.02.\n2. A coder task 'Write the guide for the month' with its own budget of CHF 1.00, started without a typed budget.\n3. Task row: 'Paused at this month's cap'.\n4. Inbox card: '\"...\" stopped at this month's cap of CHF 0.05'.\n5. Session page badge: 'Stopped at this month's cap'. Result: '\"...\" needs your decision (Inbox). Stopped at this month's cap of CHF 0.05. CHF 0.02.' Log: 'Stopped at this month's cap: 1 needs you. CHF 0.02.'\n6. Inbox Update: 'Stopped at this month's cap of CHF 0.05.'\n7. Notification: title '<project>: stopped at this month's cap', body 'This month's cap is CHF 0.05. The session spent CHF 0.02. Raise the monthly spending cap in Settings to go on.'\n8. Pressing Raise the budget on the card started a session that stopped at once with the same words. The words were still the same after a daemon restart.\nLive (optional): the Start dialog refuses a typed budget above what is left this month, so start the session from a budget card's Raise the budget, from the chat, or with no typed budget. Then check that the session page, the Inbox Update and the notification say 'this month's cap' and never 'the budget is used' or 'a larger budget'."
+     },
+     {
+      "problem": "[blocking 2] A budget below the worst case of its first call never reported its budget line, so the session log had no 'save only' line at all. This is exactly live check 3 case 3: CHF 0.02 on the coder's Sonnet, where 4,096 output tokens alone cost USD 0.041.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget.test.ts > 'a first call refused at the run's cap still carries the run's save-only line'; packages/runtime/test/wrap-up.test.ts > 'a budget too small for even its first call still says its save-only line' (loop path) and '... (review of budget-stop)' (SDK path); packages/runtime/test/budget-pause.test.ts > 'a budget below its first step's cost says so (save only) and pauses before that step'",
+      "how": "Root cause: SessionBudget.precheck called precheckCaps, which throws, before it fixed the run's line. Now:\n- precheck fixes the line (wrapUpLineOf, which gains firstCallUsdMicro) before the caps are checked.\n- A refusal of the run's first call carries the line as details.line. The hooks add it to the outer-cap refusal as well.\n- On a refusal with no call made, the loop's and the SDK driver's catch blocks emit budget_line from wrapUpLineIn(details).\n- budgetLineWords says: 'This run may spend CHF 0.02, less than its first step may cost (CHF 0.05): save only, it pauses at its budget before that step.'\n- The executor routes the run as a paused hard stop, as before.",
+      "check_in_the_app": "Bench (done): `budget.cjs <n> final --long-chf 0.035 --tiny-chf 0.01 --below-chf 0.0005`. The 'Write the summary' task made no specialist call. Its Details line reads 'This run may spend CHF 0.00, less than its first step may cost (CHF 0.00): save only, it pauses at its budget before that step.' (the stand-in's prices are tiny, so both amounts round to CHF 0.00). It reads 'Paused at its budget' with no critic call.\nLive check 3 case 3 (bench-live, a coder task with a CHF 0.02 budget):\n1. The model-call log has no request for that task at all. A CHF 0.02 budget cannot pay for one Sonnet call, so it is refused before the call; that also means there is no wrap-up text anywhere.\n2. Session > Details shows 'This run may spend CHF 0.02, less than its first step may cost (CHF 0.0X): save only, it pauses at its budget before that step.'\n3. The task reads 'Paused at its budget', and its drawer run reads 'Stopped at a budget'.\nTo see a tiny budget that runs at least one call instead, use CHF 0.08 (it fits one Sonnet call but not two). The line should then say 'This run may spend CHF 0.08, too little to wrap up (two steps may cost CHF 0.0X): save only, it pauses at its budget with its work kept.', no request should contain the wrap-up text, and it pauses at its budget."
+     },
+     {
+      "problem": "[review, non-blocking] The wrap-up's log line was false. It said 'Told the coder to wrap up: about a fifth of this task's budget is left (it spent CHF 0.02 of CHF 0.04)' when about 40% was left. Two related wording problems: the save-only line said 'a reserve of CHF 0.01 is two calls', and a draft wording ('its next step could pass CHF 0.19') contradicted the spent amount after rounding.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts > 'a run at its line hears the wrap-up once; with work left it is paused: ...' (the new wording assertion; before: 'Told the coder to wrap up: about a fifth of this task's budget is left ...')",
+      "how": "budget-pause.ts wrapUpSentWords(specialist, spent, cap, line): 'Told the coder to wrap up: it spent CHF 0.02 of CHF 0.04, and the last CHF 0.01 is kept to finish.' The executor remembers the run's budget_line for this. The save-only line now says 'two steps may cost CHF X'; when saveOnly is true the reserve is always two calls. ADR 0111 and runtime.md quote the new lines.",
+      "check_in_the_app": "Live check 3 case 1: in Session > Details the wrap-up line reads 'Told the coder to wrap up: it spent CHF X of CHF Y, and the last CHF Z is kept to finish.', where Z equals the reserve named in the run's first line. No line says 'a fifth of this task's budget is left'. The model's wrap-up text (WRAP_UP_TEXT) is unchanged."
+     },
+     {
+      "problem": "[review, non-blocking] While the SDK driver drained after a stop, it read a late result like any other. An aborted query's own error_during_execution result would turn a budget pause into a Failed task that is retried as a passing glitch, and overwrite the run's final text. Separately, a late message that could not be booked was dropped without a trace.",
+      "u_ids": [
+       "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/sdk-driver.test.ts > 'a budget stop really stops Claude Code' > 'a late error result while Claude Code winds down leaves the budget stop as it was'",
+      "how": "In sdk.ts handle(), during the drain (enforce false) a result books its usage (resultTotals / usageLeft) and then returns before setting outcome, error or finalText. awaitExit now logs a warning ('a stopped run's late message was not booked') instead of discarding the failure silently.",
+      "check_in_the_app": "No cloud check: there is no subscription token. Add this to owner's checklist step 6: on a subscription, a task stopped at its budget reads 'Paused at its budget' (never Failed) and is not retried at once."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Today's budget card is wrong after a graceful wrap-up pause and after a month-cap stop. Its body still says 'its next step would have gone over the budget'. On the bench its Raise the budget said 'Sets its budget to CHF 0.44' but answered 'Raised the budget of \"Write the guide for the month\" to CHF 1.00' (the task already had CHF 1.00). The session that button started stopped at once at the month's cap and filed an identical new card.",
+      "why": "The card's words and options belong to 'budget-resume' (request-words.ts budgetCard, budget-card.ts options). Its card must offer what helps for a month, project or plan stop. The card title already names the limit, and the session's words do now too. Evidence: /tmp/frbench/fixup-budget-stop/steps/15-raise-after-press.txt."
+     },
+     {
+      "problem": "Late usage after Stop all is still not booked. Once the run's token is revoked, afterModelCall fails token verification. usageLeft also books modelUsage totals, which can include other models' calls, at the run model's price.",
+      "why": "Booking spend against a revoked token would change token verification in enforcement, which is out of this area's scope. It is now logged instead of swallowed. This belongs to 'cost' or a later area."
+     },
+     {
+      "problem": "CHANGELOG.md entry",
+      "why": "The task forbids editing CHANGELOG.md, UPDATE-LOG.md and requirements.md; the session lead writes those."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0; unit 442 files, 4574 passed, 6 skipped; link-check ok (204 files); secret-scan clean (1999 files); lint warnings only, in lines from earlier commits (non-null assertions in sdk-driver.test.ts, optional chains in loop.ts/compose.ts)"
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (48 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0; 5 files passed, 6 skipped (Postgres, expected); 30 passed, 71 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0; 13 files; 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "83 files, 871 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "33 passed"
+     },
+     {
+      "command": "New and changed tests against the fixer's source (git checkout fix/budget-stop@20e4636 -- packages/runtime/src services/state-api/src, tests kept)",
+      "result": "13 of the runtime and state-api cases fail before. Three of them fail only because the line now carries firstCallUsdMicro. The real-daemon month case fails with 'expected \"Stopped: the budget is used\" to be \"Stopped at this month's cap\"'. The strengthened wrap-up wording assertion failed before the rewording. All pass after."
+     },
+     {
+      "command": "node scripts/bench/journeys/budget.cjs fixup-budget-stop final --long-chf 0.035 --tiny-chf 0.01 --below-chf 0.0005 (bench --fresh --provider bench --env FORERUNNER_BENCH_LONG=\"Write the\", ports 48201/1801)",
+      "result": "11/11 checks ok:\n- the long task heard exactly one wrap-up block, was paused with no critic call, and kept its report;\n- the tiny task heard no wrap-up and was paused with no critic call;\n- the reserve line, the new wrap-up line and the 'two steps may cost' save-only line all appear;\n- the task below its first step made 0 calls, printed its line, and was paused with no critic call."
+     },
+     {
+      "command": "node scripts/bench/journeys/budget.cjs fixup-budget-stop final --month",
+      "result": "7/7 checks ok: the task status, the card, the session badge, the result, the log, the Inbox Update and the notification all name this month's cap. After pressing Raise the budget, and after restart-daemon.mjs, the sessions still read 'Stopped at this month's cap'. The bench is stopped and its home and browser profile are deleted."
+     },
+     {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/budget.test.ts: 'a run gets one wrap-up line at its cap less the reserve, and the wrap-up once', 'the reserve is two calls when they cost more than a fifth of the cap', 'a tiny budget has no room to wrap up: save only, and never a wrap-up'",
+      "why": "RunWrapUpLine gained firstCallUsdMicro, which the drivers need to word a budget below its first call. The expected objects add the field and keep every other value."
+     },
+     {
+      "test": "packages/runtime/test/budget-pause.test.ts > 'a run at its line hears the wrap-up once; ...'",
+      "why": "Strengthened, not weakened. The old check, startsWith('Told the coder to wrap up'), is now an exact line check that also forbids 'a fifth of this task's budget is left'."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-budget-stop/steps/32-v-session-month.txt",
+      "/tmp/frbench/review-budget-stop/steps/31-v-inbox-month.txt",
+      "/tmp/frbench/review-budget-stop/steps/38-x-session-after-raise.txt",
+      "/tmp/frbench/review-budget-stop/steps/13-a-session-details.txt"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-budget-stop/steps/14-view-month-session.png",
+      "/tmp/frbench/fixup-budget-stop/steps/06-final-month-session.txt",
+      "/tmp/frbench/fixup-budget-stop/steps/05-final-month-inbox.png",
+      "/tmp/frbench/fixup-budget-stop/steps/04-final-month-tasks-tab.png",
+      "/tmp/frbench/fixup-budget-stop/steps/16-raise-session-after.png",
+      "/tmp/frbench/fixup-budget-stop/steps/13-view-session-details.txt",
+      "/tmp/frbench/fixup-budget-stop/steps/08-view-drawer-write-the-guide.png",
+      "/tmp/frbench/fixup-budget-stop/steps/09-view-drawer-write-the-notes.png",
+      "/tmp/frbench/fixup-budget-stop/steps/10-view-drawer-write-the-summary.png",
+      "/tmp/frbench/fixup-budget-stop/steps/11-view-inbox.png",
+      "/tmp/frbench/fixup-budget-stop/steps/final-budget.json",
+      "/tmp/frbench/fixup-budget-stop/steps/final-month.json",
+      "/tmp/frbench/fixup-budget-stop/steps/model-calls.jsonl"
+     ]
+    },
+    "new_problems": [
+     "Budget-resume's card loops on a month-cap stop. Raise the budget raises the task's budget, or keeps a larger one, and answers 'to CHF 1.00' where its line promised 'CHF 0.44'. The session it starts stops at once at the month's cap and files the same card again. Evidence: /tmp/frbench/fixup-budget-stop/steps/15-raise-after-press.txt and 16-raise-session-after.png.",
+     "For a 'plan' level stop, BudgetStop.capUsdMicro carries a plan share (0..1), not USD. CapsPort reports plan spent and cap as shares, and hooks.ts passes outer.capUsdMicro through. Nothing words that number today, because the plan's words ignore the amount. A later area that shows the plan cap must not format it as CHF.",
+     "Pre-existing, also seen by the fixer and the reviewer: the project header counts budget cards as 'Waiting for you: 3 questions' (/tmp/frbench/fixup-budget-stop/steps/10-view-drawer-write-the-summary.txt). The session review also grades a session in which every task paused: 'sent back for changes (grade 70, 2 findings)... 0 done task(s)' (13-view-session-details.txt).",
+     "The bench's budget journey needs a profile on which setup was already skipped: on a fresh profile its first screenshots show the setup assistant (/tmp/frbench/fixup-budget-stop/steps/01-final-tasks-tab.txt). The checks read the daemon, so they are unaffected."
+    ],
+    "notes_for_other_areas": [
+     "budget-resume: a session that a pause at an outer limit ended now has stop reason budget_month, budget_project or budget_plan. Use budgetStopReasonOf(source) and isBudgetStopReason(reason) in packages/runtime/src/session/stop-words.ts, never `=== \"budget_exceeded\"`. Its amount is SessionResult.stopCapChfMicro and LastSessionOutcome.stopCapChfMicro. stopLimitWords(reason, capChf) gives 'this month's cap of CHF 0.23'. The C-36 session-budget path still uses budget_exceeded. The card's body and options (request-words.ts, budget-card.ts) still say 'its next step would have gone over the budget' and offer Raise the budget for a month, project or plan stop; that is yours (see new_problems).",
+     "budget-resume and cost: RunWrapUpLine (enforcement/budget.ts) now carries firstCallUsdMicro. A refusal of a run's first call carries the line as ForerunnerError.details.line; read it with wrapUpLineIn(details). The drivers emit budget_line from it, so a run that made no call still has its line. budgetLineWords and wrapUpSentWords are in session/budget-pause.ts.",
+     "credential-limits (sdk.ts): handle(msg, enforce=false) during the drain now returns right after booking a result's usage, before the error_max_budget_usd and is_error branches. Any auth mapping you add to the result branch only applies while enforcing. awaitExit logs 'a stopped run's late message was not booked' when booking fails.",
+     "Notifications and the state service: producers.budgetStop names the outer limit in its title ('<Project>: stopped at this month's cap'). Its body is the amounts plus what helps, using goOnAfter: 'Raise the monthly spending cap in Settings to go on.', 'Raise the project budget in Settings to go on.' or 'It can go on once your Claude subscription's usage resets.'. The state service's push fan-out (BUDGET_STOP_BODIES in services/state-api/src/push/fanout.ts) treats these stop reasons as the urgent budget stop.",
+     "Bench: scripts/bench/journeys/budget.cjs takes --below-chf <n> (a task below its first call) and --month [--month-margin-chf n]. Run --month last: the lowered cap stays."
+    ]
+   }
+  },
+  {
+   "key": "polish-desktop",
+   "fix": {
+    "area": "polish-desktop",
+    "branch": "fix/polish-desktop",
+    "head_sha": "7ebff44cf2c971053867d179150e257f9cc3d203",
+    "commits": [
+     {
+      "sha": "9fbdfa514ebde947257304ee88906baa99c306f6",
+      "subject": "polish-desktop: a Ctrl- or Shift-click on one of the app's own links shows that page in the window (Q7)"
+     },
+     {
+      "sha": "7ebff44cf2c971053867d179150e257f9cc3d203",
+      "subject": "polish-desktop: the window check's comment names both in-app clicks (Q7)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[minor] Q7 (the owner's decision of 2026-11-02): in the desktop window, a Ctrl-click or Shift-click on one of the app's own links (the sidebar's Inbox) did nothing. WebView2 raises a new-window request for a modified click, and on_new_window refused every new-window request for the app's own origins. windows::new_window_action answered Refuse, and Desktop app run 41495902701 logged \"the shell refused it (http, new window)\". The CI window check expected exactly that: nothing happens.",
+      "u_ids": [],
+      "failing_test_before": "apps/desktop/src-tauri/src/windows.rs: windows::tests::an_app_page_asked_for_in_a_new_window_is_shown_in_this_window (before the fix it failed with left: Refuse, right: ShowHere(\"/inbox\")). Also scripts/desktop-window-check.test.ts: \"expects a Ctrl- or Shift-click on Inbox to show the Inbox in this window, and fails what run 41495902701 passed\" (before: inAppClickVerdict is not a function) and \"reads the lines the shell writes (tauri-plugin-log format, CRLF on Windows)\" (before: the new \"shown in this window\" log line was not read). Both window-check tests were run against the old script and failed, and pass now.",
+      "how": "Root cause: apps/desktop/src-tauri/src/windows.rs new_window_action returned Refuse for any URL that navigation_allowed covers, the app's own pages included. Nothing sent such a page back to the existing window.\n\nFix:\n- new_window_action now answers a new variant, LeaveAction::ShowHere(route), for a page on the app's origins. It uses deeplink::on_app_origin, which I factored out of navigation_allowed without changing what it does.\n- windows::app_route() builds the route from the page's path, query and fragment. A path starting with // or /\\ gets no route, because it would read as another host.\n- leave() handles ShowHere through show_here(). That evaluates deeplink::navigate_script(route) on the main window from a spawned task, off the webview's own new-window handler. The script uses history.pushState plus popstate, which React Router follows, the same way as deep links and the tray's Updates entry.\n- So the move is client-side, like a plain click: the page keeps its daemon token and nothing reloads.\n- The shell logs \"shown in this window (new window): <url>\" (windows::shown_in_window_line, query left out).\n- about:blank and the splash are still refused. Web pages still go to the system browser. No second window is ever created.\n- LeaveAction lost Copy (ShowHere carries a String).\n- The existing test links_that_leave_the_app_open_web_pages_in_the_browser_only no longer asserts Refuse for an app page; see tests_changed_for_design.\n\nWindow check (scripts/desktop-window-check.mjs):\n- parseHandoffs reads the new line as {kind: \"window\"}.\n- New pure function inAppClickVerdict passes only when: the shell's \"shown in this window\" line came; nothing went to a browser or the file manager; the page saw the key held; the window moved from the project page to /inbox and shows the Inbox heading (#inbox-title, which renders only after the daemon answered); and the page-target count did not grow.\n- The journey now Ctrl-clicks and then Shift-clicks Inbox, each from the project's page, then goes back to the project (Home, then the project card) so the file: link and Open folder steps run as before.\n- Run 41495902701's refusal now fails the check. The owner changed what is expected; the check is not weaker.\n\nDocs:\n- ADR 0031 amended, point 6, plus the header and Alternatives sections, as the owner's decision of 2026-11-02 (Q7); README row updated.\n- docs/maintainers/apps.md: the injection paragraph, \"How a link leaves the app\" and the module map.\n- docs/maintainers/testing.md: the window check's steps, the run notes and the test list.\n- docs/user-guide.md: the Links section.\n\nPer the task text, I did not edit UPDATE-LOG.md or CHANGELOG.md; see new_problems for the suggested entries.",
+      "check_in_the_app": "Live check 6 (no model cost). On the installed build from the Desktop app workflow run of the merged branch, on Windows, in the job \"desktop window check (windows-latest)\":\n\n1. The step summary must show \"ok a Ctrl+click on one of the app's own links (Inbox) shows that page in this window, with no browser and no second window\", with a detail like \"the shell showed it in this window (new window: http://tauri.localhost/inbox); the page saw the click with Ctrl held; the window moved to /inbox; the page shows it; 1 page target(s), 1 before\".\n2. It must show the same line for Shift+click.\n3. \"a Ctrl+click on a link that leaves the app goes to the system browser\" and the Shift+click version must still be ok (\"new window: http://127.0.0.1:<port>/window-check/ctrl-click\"), along with the target=\"_blank\" and PR-link checks.\n4. Open the artifact desktop-window-check. desktop-shell.log must have two lines \"shown in this window (new window): http://tauri.localhost/inbox\" and no \"opening http from the window refused (new window)\". The screenshots NN-after-a-ctrl-click-on-inbox.png and NN-after-a-shift-click-on-inbox.png must show the Inbox.\n5. Any failure detail naming \"the shell refused it\" means the build ran a shell from before this change.\n\nBy hand in the installed app:\n1. Open a project's Tasks tab, hold Ctrl and click Inbox in the top bar. The Inbox shows in the same window, with no second window and no browser tab.\n2. Click Home, open the project, hold Shift and click Inbox. Same result.\n3. Hold Ctrl and click a task's PR link. It still opens in your browser."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "No before/after walk of the real desktop window on this machine. The bench's --attach dry run drives Chromium, not the shell, so the in-app click steps are reported as skipped there. In a browser, Ctrl+click opens a background tab and the original page stays, which the after screenshots show.",
+      "why": "The behaviour lives in WebView2 (Windows) and the shell's on_new_window. This machine has no WebView2, and the Linux window (WebKitGTK) has no CDP endpoint for the driver. I did not try building and driving the Linux shell under Xvfb: its Ctrl-click path may differ from WebView2's, and the extra Rust build would have pushed free disk further below the 8 GB floor. The before evidence is Desktop app run 41495902701 (/tmp/frbench/ci-artifacts/window-41495902701/log.txt line 190). The after evidence is the cargo tests plus live check 6 on Windows CI after the merge."
+     },
+     {
+      "problem": "The UPDATE-LOG U-entry for Q7 and the CHANGELOG line that the area spec lists",
+      "why": "The task text says the session lead writes docs/status/UPDATE-LOG.md and CHANGELOG.md from this report, so parallel areas do not conflict. Suggested texts are in new_problems."
+     },
+     {
+      "problem": "Playwright UI browser suite not run",
+      "why": "This area changed no UI code (apps/ui untouched); the task asks for Playwright only when the UI was touched. The UI vitest suite was run and is green."
+     }
+    ],
+    "validation": [
+     {
+      "command": "cargo fmt --check (apps/desktop/src-tauri)",
+      "result": "clean, after cargo fmt"
+     },
+     {
+      "command": "CARGO_TARGET_DIR=/tmp/frbench/cargo-target CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings",
+      "result": "exit 0, no warnings. Debuginfo was off only to save disk; the build output (2.1 GB) was deleted afterwards."
+     },
+     {
+      "command": "CARGO_TARGET_DIR=/tmp/frbench/cargo-target CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo test",
+      "result": "151 passed, 0 failed. Before the fix, windows::tests::an_app_page_asked_for_in_a_new_window_is_shown_in_this_window failed with left: Refuse, right: ShowHere(\"/inbox\")."
+     },
+     {
+      "command": "npx vitest run scripts/desktop-window-check.test.ts",
+      "result": "43 passed. Against the old script, 2 failed (the new verdict test and the log-line test)."
+     },
+     {
+      "command": "pnpm check",
+      "result": "exit 0: lint (64 warnings, all already there before this change), lint:paths, typecheck, unit (440 files, 4542 passed, 6 skipped), link-check ok, secret-scan clean. Its docs:check could not diff against origin/main because this worktree has no origin, so it was run separately below."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (9 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 71 skipped (Postgres tests skip without FORERUNNER_TEST_PG, as expected)"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped (same as baseline)"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 83 files, 869 passed"
+     },
+     {
+      "command": "node scripts/desktop-window-check.mjs --attach http://127.0.0.1:9382 --app-origin http://127.0.0.1:1782 --home <bench home> --out ... (bench fix-polish-desktop, before and after)",
+      "result": "every required check passed both times. After the change, the two new in-app steps ran and were skipped (no shell), with \"the page saw the click with Ctrl held\" and \"... Shift held\"; the journey went on to the Overview, and the page threw no uncaught error."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "nothing found"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-polish-desktop/window-before/10-tasks-tab-with-a-pr.png",
+      "/tmp/frbench/fix-polish-desktop/window-before/11-after-the-pr-click.png",
+      "/tmp/frbench/ci-artifacts/window-41495902701/log.txt (line 190: Windows CI, the real window, the in-app Ctrl+click refused)"
+     ],
+     "after": [
+      "/tmp/frbench/fix-polish-desktop/window-after/12-after-a-ctrl-click-on-inbox.png",
+      "/tmp/frbench/fix-polish-desktop/window-after/13-after-a-shift-click-on-inbox.png",
+      "/tmp/frbench/fix-polish-desktop/window-after/result.json"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "apps/desktop/src-tauri/src/windows.rs windows::tests::links_that_leave_the_app_open_web_pages_in_the_browser_only",
+      "why": "Its last assertion expected new_window_action to Refuse an app page (http://localhost:1420/projects/p1/tasks). The owner's decision Q7 changed that: an app page is now shown in this window. The assertion moved, with the new expectation (ShowHere), into the new test an_app_page_asked_for_in_a_new_window_is_shown_in_this_window. Every refusal and browser assertion in the old test is unchanged."
+     },
+     {
+      "test": "scripts/desktop-window-check.mjs, the step \"a Ctrl+click on one of the app's own links opens no browser and no second window\"",
+      "why": "Replaced by two steps, a Ctrl+click and a Shift+click on Inbox, that expect the Inbox in the same window (inAppClickVerdict), where the old step expected nothing to happen. The owner's decision changed what is expected. The check is stricter: the no-browser and no-second-window parts remain, and the refusal it used to pass now fails."
+     }
+    ],
+    "new_problems": [
+     "CHANGELOG.md line 91 still says \"A Ctrl-click on one of the app's own links keeps you where you are.\" It is untrue after this change, and the session lead should update it. Suggested line: \"In the desktop app, a Ctrl- or Shift-click on one of the app's own links (Inbox, a project) works like a plain click and shows that page in the same window; it used to do nothing (Q7).\"",
+     "Suggested UPDATE-LOG U-entry for Q7. Problem: a Ctrl- or Shift-click on one of the app's own links did nothing in the desktop window. Fix: the shell shows that page in the same window (windows::new_window_action, LeaveAction::ShowHere), never a second window or the browser. Check in the app: hold Ctrl and click Inbox, and the Inbox shows in the same window; same with Shift; a Ctrl-click on a PR link still opens the browser.",
+     "Deep links (fr://) know only inbox, projects, sessions, settings, memory and extensions (deeplink.rs ROOTS). The UI also has /changes, /performance, /updates, /setup and /settings/capabilities/email. The Ctrl-click path deliberately does not use that list; it takes any path on the app's origins. Not a bug in this area, just a difference to keep in mind if deep links should cover every screen."
+    ],
+    "notes_for_other_areas": [
+     "Desktop shell (apps/desktop/src-tauri/src/windows.rs): LeaveAction now has ShowHere(String) and is Clone, no longer Copy. New pub fns: app_route(url) -> Option<String> (path, query and fragment of an app page) and shown_in_window_line(url, via), plus the const SHOWN_IN_WINDOW = \"shown in this window\". deeplink.rs has a new pub fn on_app_origin(url, origins), used by navigation_allowed and new_window_action. No later wave 7 area depends on these. An area that adds another way into the window should go through new_window_action or show_route rather than opening a window.",
+     "scripts/desktop-window-check.mjs: parseHandoffs now also returns {kind: \"window\", via, target} for the shell's \"shown in this window\" line, and the new export inAppClickVerdict judges an in-app modified click. Code that filters hand-offs with kind !== \"refused\" now also sees \"window\" entries. Only the file: link step does that today, and it can never get one.",
+     "After the in-app click steps, the window check goes back to the project's page through Home and the project card (backToProject). A later area that adds a window-check step after them starts on the project's Overview, not the Tasks tab."
+    ]
+   },
+   "review": {
+    "verdict": "pass",
+    "acceptance_walk": "Worktree detached at fix/polish-desktop (7ebff44). Ran pnpm install --frozen-lockfile and copied the Playwright local config, which git ignores. Started bench \"review-polish-desktop\" (daemon 48192, UI 1792, --fresh, --provider bench) and headless Chromium 153 with a DevTools port of 9392.\n\n1) The CI window-check journey, dry run: `node scripts/desktop-window-check.mjs --attach http://127.0.0.1:9392 --app-origin http://127.0.0.1:1792 --home <bench home> --out /tmp/frbench/review-polish-desktop/window-after`. Result: \"every required check passed\". The journey ran: new project from a brief, plan card, Approve and start, the session completed with 2 of 2 tasks done, Tasks tab, PR link. The two new steps ran from the Tasks tab and then from the Overview, through backToProject. Both were skipped (there is no shell in --attach mode), with \"the page saw the click with Ctrl held\" and \"... Shift held\". The file: link and Overview folder steps still ran after them, and \"the page threw no uncaught error: none\". Log: /tmp/frbench/review-polish-desktop/window-after.log. I looked at screenshots 12, 13 and 14 in that folder: the browser keeps the original tab (Ctrl+click opens a background tab), and the Overview shows normally afterwards.\n\n2) A person-level stand-in for the shell's new answer. In a Chromium browser driven by Playwright, through scripts/bench/recorder.cjs, I did a real Ctrl+click and Shift+click on the top bar's Inbox from a project's Tasks tab. I caught the new-window request, closed that tab as the shell's Deny does, and evaluated exactly the script deeplink::navigate_script(app_route(url)) builds on the original page (/tmp/frbench/review-polish-desktop/walk/walk.cjs). Results:\n- Ctrl+click: the window moved from /projects/<id>/tasks to /inbox without a reload (a marker on window survived). The #inbox-title heading rendered, so the daemon answered with the page's token.\n- Shift+click: same result.\n- Back returned to the Tasks tab. Plain Home and project clicks still worked afterwards, and Back, Back, Forward went /, /inbox, / correctly, so the router was not broken by the pushState that has no router index.\n- A Ctrl+click on the Overview's \"Open the session\" link moved the window to /sessions/<id>.\n- No console errors or failed requests were recorded (problems: []).\nScreenshots: /tmp/frbench/review-polish-desktop/steps/02-inbox-from-tasks-control.png (Inbox shown), 04-inbox-shift-from-tasks-shift.png, 06-open-the-session-link-control.png.\n\n3) Edge walks (walk2.cjs, walk3.cjs): I tried a Ctrl+click on the current tab while the URL carries a query. On the Tasks tab with ?task=, the drawer is modal, so the tab cannot be clicked. On the Files tab with ?path=, the tab link keeps the query, so a plain click and the emulated Ctrl+click both stay on the file. Both behave the same.\n\nThe screens these steps pass through (top bar, Inbox, Tasks tab, Overview, session page) were not changed by this branch; apps/ui is untouched.\n\nThe real WebView2 path cannot be walked on this machine: WebView2 is Windows-only and WebKitGTK has no DevTools endpoint. The decisive evidence is live check 6 on Windows CI after the merge. The fixer's check_in_the_app steps match /tmp/frbench/phaseE7-live.md section 6.\n\nBench stopped with scripts/bench/stop.mjs. I stopped my Chromium by its PID, deleted the bench home and the browser profiles, and deleted the cargo build output after each build (free disk is back to 8.6 GB).",
+    "blocking": [],
+    "claims_checked": [
+     {
+      "claim": "Before the fix, new_window_action refused an app page and Desktop app run 41495902701 logged the refusal; the CI check passed it as 'nothing happens'",
+      "holds": true,
+      "note": "/tmp/frbench/ci-artifacts/window-41495902701/log.txt: 'ok a Ctrl+click on one of the app's own links opens no browser and no second window: the shell refused it (http, new window) ...' at 18:20:02, followed by 'the window stays on the app's page after a Ctrl+click on an in-app link'."
+     },
+     {
+      "claim": "cargo test windows::tests::an_app_page_asked_for_in_a_new_window_is_shown_in_this_window failed before the fix with left: Refuse, right: ShowHere(\"/inbox\")",
+      "holds": true,
+      "note": "I removed only the three on_app_origin -> ShowHere lines from new_window_action and ran `cargo test --lib windows::`. Result: 'panicked at src/windows.rs:627:9 ... left: Refuse right: ShowHere(\"/inbox\")', with 1 of 8 window tests failing. Restored with git checkout afterwards."
+     },
+     {
+      "claim": "The two window-check tests fail against the old script and pass now",
+      "holds": true,
+      "note": "I ran the branch's test file against `git show claude/nifty-knuth-f9udt0:scripts/desktop-window-check.mjs`, using a temporary copy that I removed afterwards. Two tests failed: 'reads the lines the shell writes' (the deep-equal is missing the two 'window' entries) and 'expects a Ctrl- or Shift-click on Inbox ...' (TypeError: inAppClickVerdict is not a function). On the branch: 43 of 43 pass."
+     },
+     {
+      "claim": "cargo fmt --check clean; cargo clippy --all-targets -- -D warnings exit 0; cargo test 151 passed",
+      "holds": true,
+      "note": "Reproduced with CARGO_TARGET_DIR=/tmp/frbench/cargo-target, CARGO_PROFILE_DEV_DEBUG=0 and CARGO_INCREMENTAL=0. fmt exit 0; clippy exit 0 with 0 warnings; test result: ok, 151 passed, 0 failed. Logs: /tmp/frbench/review-polish-desktop/cargo-test.log and cargo-clippy.log."
+     },
+     {
+      "claim": "An app page is moved to client-side (pushState plus popstate), so the page keeps its daemon token and does not reload",
+      "holds": true,
+      "note": "Browser emulation of the shell's ShowHere using the exact navigate_script text: a marker on window survived and the Inbox heading rendered after daemon data loaded. Back and Forward and later plain clicks work. show_here spawns off the new-window handler, and window.eval only queues to the event loop, so it runs after Deny returns."
+     },
+     {
+      "claim": "about:blank and the splash are still refused, web pages go to the browser, look-alike hosts and ports go to the browser, a release build does not treat the dev server as the app, no second window is created",
+      "holds": true,
+      "note": "The new cargo test asserts each of these. on_new_window still returns NewWindowResponse::Deny on every path. deeplink::on_app_origin is a pure extraction: navigation_allowed keeps its about:blank and splash checks, and the deeplink tests pass."
+     },
+     {
+      "claim": "A path starting with // or /\\ gets no route",
+      "holds": true,
+      "note": "app_route returns None for http://tauri.localhost//evil.example/x (the url crate turns \\ into / for http), and for tauri://localhost//... and tauri://localhost/\\...; both cases are tested. The route reaches the page only as a JSON string; a test pins the escaping."
+     },
+     {
+      "claim": "The window check is stricter, not weaker: run 41495902701's refusal now fails",
+      "holds": true,
+      "note": "inAppClickVerdict requires all of: a 'shown in this window' line, no browser or folder hand-off, the key held, the window moved to /inbox from a different URL, #inbox-title visible, and no second window. The old 'stays' assertion was replaced by the new expectation the owner decided. The noSecondWindow call count (2) and the guard against a .catch(() => []) are unchanged. No other assertion was removed."
+     },
+     {
+      "claim": "tests_changed_for_design: the Refuse assertion for an app page in links_that_leave_the_app_open_web_pages_in_the_browser_only moved to the new test",
+      "holds": true,
+      "note": "Only that one assert_eq was removed from the old test. Every refusal and browser assertion in it is unchanged. The new test asserts ShowHere for the dev-server origin and other app origins."
+     },
+     {
+      "claim": "docs-check ok (9 files); pnpm check parts green; unit suite 4542 passed",
+      "holds": true,
+      "note": "docs-check --base claude/nifty-knuth-f9udt0: ok (9 files). biome on the changed scripts: clean. lint:paths: ok. tsc -p tsconfig.node.json: 0 errors. docs:links: ok. secrets:scan: clean. pnpm test: 440 files, 4542 passed, 6 skipped. The doc-reading tests (release-notes, docs, queue-docs-routes, docs-check) pass. No conflict markers."
+     },
+     {
+      "claim": "No daemon route, persisted state or UI code changed, so no real-daemon.test.ts case, fake-daemon change, restart test or Playwright run is needed",
+      "holds": true,
+      "note": "The diff covers only apps/desktop/src-tauri (deeplink.rs, windows.rs), scripts/desktop-window-check.*, ADR 0031 and its README row, docs/maintainers/apps.md and testing.md, and docs/user-guide.md. apps/ui is untouched."
+     },
+     {
+      "claim": "not_done items carry valid reasons (no real WebView2 walk here; UPDATE-LOG and CHANGELOG left to the session lead; Playwright not run because the UI is untouched)",
+      "holds": true,
+      "note": "The task text forbids editing UPDATE-LOG and CHANGELOG, and the fixer put suggested texts for both in new_problems. The area's triage list and the phase C hand-offs for polish-desktop are both empty, so the only item in scope is Q7."
+     }
+    ],
+    "non_blocking": [
+     "CHANGELOG.md line 91 still says \"A Ctrl-click on one of the app's own links keeps you where you are.\" That is untrue after this change. The session lead should replace it when writing the Q7 U-entry; the fixer's report suggests the text.",
+     "docs/maintainers/validation.md 'Gaps today' (around line 158) still describes the window job's in-app step as \"Ctrl- and Shift-clicked links (out of the app, and Ctrl on one of its own)\". It now Ctrl- and Shift-clicks one of the app's own links and expects that page in the window. The fixer updated testing.md and apps.md but not this sentence.",
+     "deeplink::navigate_script compares only window.location.pathname with the route. app_route can now include a query and a fragment, so a Ctrl-click on a link to the current path without its query (when the current URL has one) leaves the query in place, whereas a plain click drops it. A Ctrl-click on a same-page #fragment also does not scroll. I could not reach the query case in the UI (the Tasks drawer is modal; the Files tab link keeps ?path=), so it is theoretical.",
+     "After a shown-in-this-window move, history.state is {} with no React Router idx. Deep links and the tray's Updates entry already work this way, and Back/Forward worked in my walk. It would only matter if the UI used useBlocker, which it does not.",
+     "The real proof (WebView2 raising a new-window request for an in-app Ctrl+click and Shift+click, and the shell moving the window) is still pending until the Desktop app workflow's window check runs on Windows for the merged branch (live check 6). Shift+click on an in-app link has never run in the real window.",
+     "Out of this area, seen during the walk: the session page's stream badge shows 'finished', 'live' or 'polling every 5 s' (apps/ui/src/pages/SessionPage.tsx:292), which is close to the raw-state and jargon style the writing rules discourage."
+    ]
+   },
+   "fixup": null
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "fix/merge-record (581128b): merge commit b1b4985, no conflicts",
+   "fix/budget-stop (7c886fd): merge commit 9205625, one conflict (docs/decisions/README.md)",
+   "fix/polish-desktop (7ebff44): merge commit e16bb8c, no conflicts"
+  ],
+  "head_sha": "e16bb8cf8fe2cb4621e4d8e738a15d1a6017e4e6",
+  "pushed": true,
+  "conflicts_resolved": [
+   "docs/decisions/README.md: merge-record and budget-stop both added an ADR 0111 row. merge-record merged first and keeps 0111 (docs/decisions/0111-the-merge-record-and-merge-commits-only.md). budget-stop's ADR is renumbered to 0112: the file is now docs/decisions/0112-a-budget-stop-is-a-clean-pause.md (heading '# 0112 \u2014 ...') and its README row is '| 0112 |', placed after 0111's row. The renumbering is recorded in the body of merge commit 9205625.",
+   "Every reference to ADR 0111 that budget-stop added now says 0112. That covers 41 files only budget-stop touched: code comments, test and describe names, ADR 0105's amendment and its link, apps.md, critic.md, notifications.md, state-service.md, scripts/bench/README.md, budget.cjs, role-player.ts, fanout.ts and e2e scenario 05. In the files both areas touched, only budget-stop's lines changed: runtime.md (the 4 budget lines, including the link), testing.md (the stand-in wrap-up sentence) and compose.ts (the paused-run comment in onTaskFinished). merge-record's 0111 references are unchanged, and `git grep 0111` now finds only merge-record's (plus unrelated numbers in tests/live/spend.json).",
+   "compose.ts, runtime.md, testing.md and user-guide.md merged by themselves. Their regions do not overlap: merge-record has the ReviewedPrMerge wiring and the retry and resume, budget-stop has onTaskFinished's early return for a paused task and stopCapChfMicro on the session result. polish-desktop's docs (apps.md, testing.md, user-guide.md, ADR 0031) merged cleanly."
+  ],
+  "integration_fixes": [
+   "None needed. Apart from the ADR renumbering in the conflict resolution, nothing failed after the merges, so I made no separate fix commits."
+  ],
+  "validation": [
+   {
+    "command": "git grep -n '^<<<<<<< '",
+    "result": "nothing found"
+   },
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "Done, lockfile unchanged"
+   },
+   {
+    "command": "pnpm lint",
+    "result": "EXIT 0, 69 warnings, all already in the tree before this merge (/tmp/frbench/merge-w7/lint.txt)"
+   },
+   {
+    "command": "pnpm lint:paths",
+    "result": "EXIT 0"
+   },
+   {
+    "command": "pnpm typecheck",
+    "result": "EXIT 0"
+   },
+   {
+    "command": "pnpm test (unit)",
+    "result": "EXIT 0: 447 files passed, 4612 tests passed, 6 skipped (/tmp/frbench/merge-w7/unit.txt)"
+   },
+   {
+    "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+    "result": "docs-check: ok (92 files)"
+   },
+   {
+    "command": "pnpm docs:links",
+    "result": "link-check: ok (205 files)"
+   },
+   {
+    "command": "pnpm secrets:scan",
+    "result": "secret-scan: clean (2010 files)"
+   },
+   {
+    "command": "pnpm test:integration",
+    "result": "EXIT 0: 5 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG); 30 tests passed, 73 skipped"
+   },
+   {
+    "command": "pnpm test:e2e",
+    "result": "EXIT 0: 13 files; 25 passed, 1 skipped (same as baseline)"
+   },
+   {
+    "command": "pnpm --filter @forerunner/live test",
+    "result": "EXIT 0: 11 files passed, 4 skipped; 61 passed, 17 skipped"
+   },
+   {
+    "command": "pnpm test:injection",
+    "result": "EXIT 0: Failures: None (report /tmp/forerunner-injection-report/injection-report.md)"
+   },
+   {
+    "command": "HOME=<empty dir> FORCE_COLOR=1 vitest run --project unit (as CI runs it)",
+    "result": "EXIT 0: 447 files, 4612 passed, 6 skipped"
+   },
+   {
+    "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 vitest run --config vitest.config.ts (as CI runs it)",
+    "result": "EXIT 0: 83 files, 871 passed"
+   },
+   {
+    "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+    "result": "EXIT 0: 83 files, 871 passed"
+   },
+   {
+    "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+    "result": "EXIT 0: 33 passed"
+   },
+   {
+    "command": "cargo fmt --check (apps/desktop/src-tauri)",
+    "result": "EXIT 0"
+   },
+   {
+    "command": "CARGO_TARGET_DIR=/tmp/frbench/cargo-target CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings",
+    "result": "EXIT 0, no warnings (debuginfo off only to save disk)"
+   },
+   {
+    "command": "CARGO_TARGET_DIR=/tmp/frbench/cargo-target CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo test",
+    "result": "EXIT 0: 151 passed, 0 failed. Build output deleted afterwards; free disk back to 7.9 GB"
+   },
+   {
+    "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+    "result": "printed nothing: all 17 commits are signed, including the 3 merge commits"
+   },
+   {
+    "command": "git push -u origin claude/nifty-knuth-f9udt0",
+    "result": "ok on the first try: 77497b4..e16bb8c, a fast-forward (no force)"
+   }
+  ],
+  "smoke": "Bench merge-w7 (--fresh, --provider bench, daemon 48210, UI 1810), journeys/smoke.cjs: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The plan card had 2 tasks; Approve and start ran a session that completed 2/2 tasks; the page, stylesheet and script were written; the Files tab and Overview show the folder; the chat answers and names a task. The journey script needed no change. Bench stopped with stop.mjs, and its home and browser profile were deleted. Result: /tmp/frbench/merge-w7/smoke-result.json (also /tmp/frbench/merge-w7/steps/smoke-result.json); logs in /tmp/frbench/merge-w7/.",
+  "problems_left": [
+   "Nothing the merge broke is left broken. CI on e16bb8c is still pending: Windows CI and the Desktop app workflow's window check (live check 6, the real WebView2 proof for polish-desktop's Ctrl- and Shift-click) have not run yet.",
+   "ADR renumbering for the session lead: budget-stop's ADR is now 0112 (docs/decisions/0112-a-budget-stop-is-a-clean-pause.md). The area reports, test names quoted in them and the suggested CHANGELOG and UPDATE-LOG texts still say 'ADR 0111' for budget-stop; write 0112 for budget-stop and keep 0111 for merge-record. Later wave 7 areas should amend the right one: budget-resume amends 0112; dependent-branches and merge-in-app amend 0111.",
+   "polish-desktop non-blocking, not fixed (out of merge scope): CHANGELOG.md line 91 ('A Ctrl-click on one of the app's own links keeps you where you are.') is untrue now, and docs/maintainers/validation.md 'Gaps today' (around line 158) still describes the window check's old in-app Ctrl step. The session lead writes CHANGELOG; validation.md needs one sentence.",
+   "merge-record leftovers, carried as their reports say: the session page's pr.left_open line still shows the step's message with commit ids (runner.ts payload has no sentence; for merge-in-app or the session lead). 'Left 1 reviewed pull request for you to merge' still shows for a merge that waits on checks and later merges itself. A dependency's record stays left_to_you after GitHub marks its PR merged (dependent-branches). getBranchRules' 403 and ruleset-only handling is unchecked against GitHub. Each retry makes one audit row and one token.",
+   "budget-stop leftovers, carried as their reports say: today's budget card body ('its next step would have gone over the budget') is wrong after a wrap-up pause. Its Raise the budget loops on a month-cap stop: it raises the task's budget and the new session stops again at the cap (budget-resume). A 'plan' stop's capUsdMicro is a share, not USD. Late usage after Stop all is not booked. The project header counts budget cards as questions, and the session review grades a session whose tasks all paused (both were there before)."
+  ]
+ }
+}

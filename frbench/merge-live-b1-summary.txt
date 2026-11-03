@@ -1,0 +1,6 @@
+check exit=0 secs=331
+integration exit=0 secs=38
+e2e exit=0 secs=110
+ui-vitest exit=0 secs=99
+playwright exit=0 secs=58
+DONE

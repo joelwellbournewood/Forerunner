@@ -1,0 +1,357 @@
+{
+  "bench": "fix-live-context",
+  "startedAt": "2026-11-01T22:54:44.081Z",
+  "checks": [
+    {
+      "name": "the setup assistant opens first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the Claude step offers a way past it without a key",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Home shows an empty project list with New project",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan from the brief reaches the Inbox",
+      "ok": true,
+      "detail": "pending"
+    },
+    {
+      "name": "the Inbox shows the plan card",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan card shows the plan's tasks by title",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan card has no change-card JSON or risk badges",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "approving says what happened",
+      "ok": true,
+      "detail": "Done: Plan approved: 5 tasks written; working on them."
+    },
+    {
+      "name": "approving writes the plan's tasks",
+      "ok": true,
+      "detail": "5 task(s)"
+    },
+    {
+      "name": "Approve and start starts a session",
+      "ok": true,
+      "detail": "01a19952-b844-731c-8960-21a2fb980fef"
+    },
+    {
+      "name": "session 1 ends",
+      "ok": true,
+      "detail": "completed; the page shows \"Done\""
+    },
+    {
+      "name": "every planned task is done",
+      "ok": true,
+      "detail": "5/5 done after 1 session(s)"
+    },
+    {
+      "name": "the project's folder exists",
+      "ok": true,
+      "detail": "/tmp/frbench/fix-live-context/home/data/projects/01a19952-a280-709c-b54c-4ef414a69062/workspace"
+    },
+    {
+      "name": "index.html was written to the project's folder",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "script.js was written to the project's folder",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "styles.css was written to the project's folder",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "README.md was written to the project's folder",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "script.js holds the quotes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "index.html links styles.css and script.js",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the project Chat answers",
+      "ok": true,
+      "detail": "[stand-in model] I was given 0 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked active, a task list, no project doc excerpts, no lessons, the facts now, active_project, unread_messages, open_requests, running_sessions, and 30 command tool(s)."
+    }
+  ],
+  "findings": [],
+  "sessions": [
+    {
+      "n": 1,
+      "sessionId": "01a19952-b844-731c-8960-21a2fb980fef",
+      "status": "completed",
+      "statusShown": "Done",
+      "trigger": "Approve and start",
+      "changed": [
+        "Create the page skeleton in index.html: new -> done",
+        "Show a random quote on every load in script.js: new -> done",
+        "Style the page in styles.css: new -> done",
+        "Check that index.html, styles.css and script.js work together: new -> done",
+        "Write the README: what the page does and how to open it: new -> done"
+      ],
+      "endedPageChars": 8378
+    }
+  ],
+  "notes": [
+    "the Done step says \"Until Claude is connected your agent cannot start work\" (true for a real install without a key; this bench serves a stand-in model through --provider bench, which the setup page does not know about)",
+    "the project's folder is /tmp/frbench/fix-live-context/home/data/projects/01a19952-a280-709c-b54c-4ef414a69062/workspace (a project without a repository works there, U-037); the app does not show this path on the Summary or Tasks tab"
+  ],
+  "projectId": "01a19952-a280-709c-b54c-4ef414a69062",
+  "tasksAfterApproval": [
+    {
+      "id": "01a19952-b823-7470-ba49-d1a078542fe3",
+      "title": "Create the page skeleton in index.html",
+      "status": "done",
+      "specialist": "coder",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b824-73d6-89aa-9c57541a8709",
+      "title": "Show a random quote on every load in script.js",
+      "status": "done",
+      "specialist": "coder",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b825-753f-b701-f5b6f0752376",
+      "title": "Style the page in styles.css",
+      "status": "done",
+      "specialist": "designer",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b825-7540-8521-df0c7a86805f",
+      "title": "Check that index.html, styles.css and script.js work together",
+      "status": "done",
+      "specialist": "tester",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b825-7541-a9db-19227ff54fce",
+      "title": "Write the README: what the page does and how to open it",
+      "status": "done",
+      "specialist": "writer-marketing",
+      "prUrl": null
+    }
+  ],
+  "taskButtonsAfterApproval": [
+    "Quote page\n▾",
+    "Talk",
+    "Ctrl+K",
+    "Stop all",
+    "Create a repository",
+    "Start session",
+    "Refresh",
+    "New task",
+    "Create the page skeleton in index.html",
+    "Redo",
+    "Show a random quote on every load in script.js",
+    "Style the page in styles.css",
+    "Check that index.html, styles.css and script.js work together",
+    "Write the README: what the page does and how to open it"
+  ],
+  "lastSessionText": "Did 5 tasks: \"Create the page skeleton in index.html\", \"Show a random quote on every load in script.js\", \"Style the page in styles.css\" and 2 more. Nothing left. CHF 0.05.\n\nended Nov 01, 2026, 10:55 PM · completed · open the log",
+  "tasksFinal": [
+    {
+      "id": "01a19952-b823-7470-ba49-d1a078542fe3",
+      "title": "Create the page skeleton in index.html",
+      "status": "done",
+      "specialist": "coder",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b824-73d6-89aa-9c57541a8709",
+      "title": "Show a random quote on every load in script.js",
+      "status": "done",
+      "specialist": "coder",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b825-753f-b701-f5b6f0752376",
+      "title": "Style the page in styles.css",
+      "status": "done",
+      "specialist": "designer",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b825-7540-8521-df0c7a86805f",
+      "title": "Check that index.html, styles.css and script.js work together",
+      "status": "done",
+      "specialist": "tester",
+      "prUrl": null
+    },
+    {
+      "id": "01a19952-b825-7541-a9db-19227ff54fce",
+      "title": "Write the README: what the page does and how to open it",
+      "status": "done",
+      "specialist": "writer-marketing",
+      "prUrl": null
+    }
+  ],
+  "taskButtonsFinal": [
+    "Quote page\n▾",
+    "Talk",
+    "Ctrl+K",
+    "Stop all",
+    "Create a repository",
+    "Start session",
+    "Refresh",
+    "New task",
+    "Create the page skeleton in index.html",
+    "Redo",
+    "Show a random quote on every load in script.js",
+    "Style the page in styles.css",
+    "Check that index.html, styles.css and script.js work together",
+    "Write the README: what the page does and how to open it"
+  ],
+  "lastSessionTextFinal": "Did 5 tasks: \"Create the page skeleton in index.html\", \"Show a random quote on every load in script.js\", \"Style the page in styles.css\" and 2 more. Nothing left. CHF 0.05.\n\nended Nov 01, 2026, 10:55 PM · completed · open the log",
+  "workspace": "/tmp/frbench/fix-live-context/home/data/projects/01a19952-a280-709c-b54c-4ef414a69062/workspace",
+  "workspaceFiles": [
+    ".forerunner/project.json",
+    ".git/COMMIT_EDITMSG",
+    ".git/HEAD",
+    ".git/config",
+    ".git/description",
+    ".git/hooks/applypatch-msg.sample",
+    ".git/hooks/commit-msg.sample",
+    ".git/hooks/fsmonitor-watchman.sample",
+    ".git/hooks/post-update.sample",
+    ".git/hooks/pre-applypatch.sample",
+    ".git/hooks/pre-commit.sample",
+    ".git/hooks/pre-merge-commit.sample",
+    ".git/hooks/pre-push.sample",
+    ".git/hooks/pre-rebase.sample",
+    ".git/hooks/pre-receive.sample",
+    ".git/hooks/prepare-commit-msg.sample",
+    ".git/hooks/push-to-checkout.sample",
+    ".git/hooks/sendemail-validate.sample",
+    ".git/hooks/update.sample",
+    ".git/index",
+    ".git/info/exclude",
+    ".git/logs/HEAD",
+    ".git/logs/refs/heads/main",
+    ".git/objects/03/f4f322e82553b144200020d159dc94384ea62f",
+    ".git/objects/05/54d17bc971becf6ff0c4351c38b54221f24e75",
+    ".git/objects/13/66855cbeabb1a15ba4822867960a0e4291ba22",
+    ".git/objects/18/dbe8f8b46f3e20cd3f2f392dbd0b7e16f8f595",
+    ".git/objects/36/4e7a4ce16365a5936785889014143100c42539",
+    ".git/objects/3c/d13c5651960bd7c76ce5655c70357c9d6df6ea",
+    ".git/objects/43/08e83c5448cb81f683441839b43866ed741158",
+    ".git/objects/4a/21f2f0249c1f4a9261a180fb1698073b8c66d5",
+    ".git/objects/53/310c837ae8a85bc33d6241aa8f4df8301168a6",
+    ".git/objects/57/d6a43f6a3bdf24ba1f2ce9237490ec57400a6f",
+    ".git/objects/61/331e502e65695cc9c310d42bd0b4841d2e1e7e",
+    ".git/objects/64/6faeef89d7cc325dc83c13cc89350a87c4d027",
+    ".git/objects/64/fb9b4158f03eb30132c9e6827210e895e1883c",
+    ".git/objects/65/1546203ba61e0059ef904a3a979954f305cdbc",
+    ".git/objects/74/383b2e9b0db38edf06d1618832b85bde3e0490",
+    ".git/objects/7b/e2ce7df9ac173884ad320243d0b2fe4a7847fd",
+    ".git/objects/87/415458b2035a08de7930c3abd7154795ca84f1",
+    ".git/objects/9b/4e8a9a50d8ee15c55596c70820f5fdbca4cdc6",
+    ".git/objects/9b/5ea8ff0783054e35d33ab56e2d9aba2c39cac3",
+    ".git/objects/9b/afd3b419269815b90817adc185e5094960302a",
+    ".git/objects/b6/7d4b3bff20757fdc4796241189ba0354888ca1",
+    ".git/objects/c4/313b16bf653d518aa1ee3e8e6dbb02af6e3dcd",
+    ".git/objects/cc/dd0f2651f183b8b7fa5cda0eabcf7112e3da03",
+    ".git/objects/d4/86af58491fae3d47330415261b6d95e687cc6c",
+    ".git/objects/d7/1eec46c697891416c9b7782676a8a59dcf57e8",
+    ".git/objects/ec/25118d9a40c19a7127962db4dcc2191f0264e1",
+    ".git/objects/ee/4b28502408f2975e7e6754232c58e51be3c2dc",
+    ".git/objects/fa/49b80287cc208586385060e6f826a52c783968",
+    ".git/objects/fe/adb5fff91c34ef78b096e63725cbeb13b28ade",
+    ".git/refs/heads/main",
+    "README.md",
+    "checks/check-that-index-html-styles-css-and-scr.md",
+    "docs/architecture.md",
+    "docs/data.md",
+    "docs/decisions/0001-plain-static-page.md",
+    "docs/decisions/README.md",
+    "docs/overview.md",
+    "docs/runbook.md",
+    "docs/status.md",
+    "docs/testing.md",
+    "index.html",
+    "script.js",
+    "styles.css"
+  ],
+  "chatContext": {
+    "model": "fake-haiku",
+    "effort": "low",
+    "thinking": "off",
+    "maxTokens": 1024,
+    "messages": 1,
+    "tools": [
+      "autonomy_set",
+      "budget_set",
+      "capability_grant",
+      "device_revoke",
+      "email_mode_set",
+      "files_list",
+      "memory_record",
+      "model_settings_set",
+      "note_add",
+      "project_create",
+      "project_switch",
+      "repo_create",
+      "request_answer",
+      "session_last",
+      "session_pause",
+      "session_resume",
+      "session_start",
+      "session_stop",
+      "settings_set",
+      "specialist_propose",
+      "summary_speak",
+      "task_create",
+      "task_dependencies",
+      "task_get",
+      "task_pause",
+      "task_reopen",
+      "task_resume",
+      "task_transition",
+      "task_update",
+      "tasks_list"
+    ],
+    "systemChars": 4841,
+    "userMessage": "# Now\n- now: 2026-11-01T22:55:20.725Z\n- active_project: Quote page\n- unread_messages: 1\n- open_requests: 0\n- running_sessions: 0\n\n# Tasks of Quote page (run order; 5 of 5 done, 0 open)\n- \"Create the page skeleton in index.html\": Done; by the coder\n- \"Show a random quote on every load in script.js\": Done; by the coder\n- \"Style the page in styles.css\": Done; by the designer\n- \"Check that index.html, styles.css and script.js work together\": Done; by the tester\n- \"Write the README: what the page does and how to open it\": Done; by the writer-marketing\n\n# Last session (ended 2026-11-01T22:55:05.014Z)\nResult: Did 5 tasks: \"Create the page skeleton in index.html\", \"Show a random quote on every load in script.js\", \"Style the page in styles.css\" and 2 more. Nothing left. CHF 0.05.\nDone: \"Create the page skeleton in index.html\", \"Show a random quote on every load in script.js\", \"Style the page in styles.css\", \"Check that index.html, styles.css and script.js work together\", \"Write the README: what the page does and how to open it\"\nEnded because: completed\nSpent: CHF 0.05\n\n# Your files\nThe project's folder: /tmp/frbench/fix-live-context/home/data/projects/01a19952-a280-709c-b54c-4ef414a69062/workspace\n\nWhat is the state of my project and what is left to do?",
+    "reply": "[stand-in model] I was given 0 earlier turn(s) of this conversation, 1 project(s) in the system prompt with one marked active, a task list, no project doc excerpts, no lessons, the facts now, active_project, unread_messages, open_requests, running_sessions, and 30 command tool(s)."
+  },
+  "modelCalls": {
+    "intake": 1,
+    "specialist": 21,
+    "critic": 10,
+    "chat": 1
+  },
+  "problems": [],
+  "daemonErrors": [],
+  "finishedAt": "2026-11-01T22:55:21.806Z"
+}

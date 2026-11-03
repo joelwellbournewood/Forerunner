@@ -1,0 +1,842 @@
+[
+ [
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"'Try it' for a CLI (with sample input) or an API (HTTP), and trying inside the Docker sandbox for full-review tasks\", \"why\": \"Only pages are tried, by a headless Chromium on the host with the network off and nothing outside the task's folder served (ADR 0104 says so). A CLI/API try needs a per-project way to start the work and sample input; trying inside the container needs a browser in the runner image. Left for a follow-up so the page path could be finished, tested and walked completely.\"}"
+ ],
+ [
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Raising the stored tier of a deploy/migration task when it is created (planner, New task, chat)\", \"why\": \"The review floor and the sign-off rule make Done require the full review and the person's sign-off, and Edit offers such a task no light review; but a task created at tier 1 for ops-deploy still runs in the process sandbox. Changing every creation path (intake, chat intent, New task, commands) touches areas owned by others; ADR 0104 consequences record it.\"}"
+ ],
+ [
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"The project's own checks beyond npm scripts (pytest/unittest, cargo, go test)\", \"why\": \"Only package.json build/lint/typecheck/test scripts are run, to avoid false failures from guessed commands; a project's settings.checks still run. Python projects (live3 B4) get the critic's read and the brief's test request but no automatic test run yet.\"}"
+ ],
+ [
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"'A task that adds behaviour adds tests' enforced by code\", \"why\": \"It is in the specialist's brief and the critic's prompt (a change adding behaviour without a test is a major finding, which blocks accept), not detected by code: deciding what 'behaviour' is needs the model.\"}"
+ ],
+ [
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"live1 #6: an accepted review's findings show as '0 open' and are not followed up\", \"why\": \"By design (critic package): an accept's findings are notes stored as wontfix (anything medium or above blocks accept). The prompt now says a part left undone is major, never a note, and numbers are counted from the evidence; no code change.\"}"
+ ],
+ [
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Live confirmation with the real model\", \"why\": \"No Claude API key on this machine; the stand-in, the real daemon tests and the bench walk cover the mechanics. Precise LIVE CHECK steps are in each fixed item's check_in_the_app for the helper session.\"}"
+ ],
+ [
+  "verification",
+  "fix",
+  "new_problems",
+  "Settings \u2192 Sandbox (Docker) card still says 'Full-review tasks (risk tier 2 and above) run their tests ...' (apps/ui/src/pages/SandboxSettingsCard.tsx; asserted in apps/ui/test/settings-sandbox.test.tsx:22): a tier word on a person screen (design \u00a75 rule 6); sandbox area."
+ ],
+ [
+  "verification",
+  "fix",
+  "new_problems",
+  "Settings \u2192 Advanced, the calibration seed's 'Review tier' select offers raw 0-3 (apps/ui/src/pages/SettingsFields.tsx:394)."
+ ],
+ [
+  "verification",
+  "fix",
+  "new_problems",
+  "packages/runtime/test/monthly-jobs-wiring.test.ts waits up to 30 s of real time for the calibration run (settle loop, no message of what it saw) and failed once in a full unit run under load average 11-12 (passed alone and in two other full runs): a Windows-CI timing risk of the kind 5b1fb2b/9140369 fixed."
+ ],
+ [
+  "verification",
+  "fix",
+  "new_problems",
+  "Bench walk: the 'Members chart' task created in New task with Who does it = data-analyst ran as 'coder' (Tasks tab 'Who does it: coder', /tmp/frbench/fix-verification-shots/after/16-after2-06-tasks-after.png); the walk's selectOption may have failed silently (not verified): worth a look in the New task dialog's specialist list on the bench."
+ ],
+ [
+  "verification",
+  "fix",
+  "new_problems",
+  "The bench's stand-in critic marks 'The page links styles.css: met' even when the page it accepts does not link it (testenv stand-in limitation; the try's evidence in the drawer shows the truth). It proves mechanics only."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "API: TaskView.check {label: 'Reviewed'|'Reviewed and tried', tried} (null/absent otherwise); TaskDetailView.review.check and .evidence {checks[{name,passed,output}], tried[{what,target,ok,output,screenshots[{label,file}]}], notChecked[]}; GET /tasks/:id/evidence?file=<review>/<name>.png -> {file, contentType, base64} (client.taskEvidence); fake daemon: state.reviewEvidence (Map by task id) and state.evidenceFiles (Map '<task>/<file>' -> base64). github-result/continuity: the drawer's review section now has a check line and 'See what was checked' under it; keep your PR/cancel words outside it."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "Compose: ComposeOptions.tryIt (a TryItPort, or false to turn it off); CriticLoopDeps.sandbox, tryIt, readTools, specialistFloor, hasCommand. The critic's review lease uses the task's stored tier (process sandbox at 0/1)."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "Tests: since ADR 0104 every finished task gets a critic call, tier 0 included. A composed test with a scripted provider and a task it expects to close should wrap the provider in AcceptingCriticProvider (packages/runtime/test/helpers.ts) or script submit_review."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "packages/runtime/src/loop/verification.ts exports reviewTierOf, reviewFloorOf, signoffReasonOf, SIGNOFF_SPECIALISTS (Map), outcomeCriterion, HOW_WORK_IS_CHECKED, TESTS_FOR_BEHAVIOUR. ReviewEvidence gained questionsForPerson, tried, notChecked, projectFiles, signoffRequired; the review row keeps {verification} in its evidence."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "needs-me: @forerunner/critic quotedWords() no longer starts a quote at a file name's dot ('csv is missing'); retry-card bodies benefit. A critic-sourced questions card now quotes the specialist's report (askPersonInstead context), not 'The critic: ...'."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "continuity: live2 C1 (a cancelled running task's files kept and the critic reviewing it) is unchanged by this area: the runner still reviews only a task whose status is in_progress after its run."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "research-web: a science-evaluator task is reviewed at its registry floor 2 (the full review); a researcher at 1."
+ ],
+ [
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "ADR number 0104 is taken by this area (proportional verification)."
+ ],
+ [
+  "verification",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"The New task dialog, the planner and chat can still create an ops-deploy or migration task at the light review (its run then uses the process sandbox, while its review is the full one with sign-off)\", \"why\": \"This was a non-blocking reviewer note and is in the fixer's not_done too. Fixing only the New task dialog would cover one creation path of four, and the intake, chat and commands paths belong to other areas. Edit now raises such a task when it is saved and says so.\"}"
+ ],
+ [
+  "verification",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Telling the person about a failure the task did not cause, beyond the evidence\", \"why\": \"I chose this: a page error that is not the task's is a low finding plus a line in 'See what was checked'. There is no separate Inbox card, because the task is not blocked by it. For a test, the specialist's question card is how the person hears about it. The question card depends on the real model saying so; the stand-in never does. The engine test drives it with a scripted report, and the LIVE CHECK above asks the helper to confirm it.\"}"
+ ],
+ [
+  "verification",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer's non-blocking security note: Chromium for the try runs with Playwright's default chromiumSandbox: false, on the host, at every review level\", \"why\": \"Needs the owner's word, as the reviewer said. I did not change it in this fix-up.\"}"
+ ],
+ [
+  "verification",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Live confirmation with the real model\", \"why\": \"There is no API key on this machine. The LIVE CHECK steps are in check_in_the_app.\"}"
+ ],
+ [
+  "verification",
+  "fixup",
+  "new_problems",
+  "Phone (phase H): apps/ui/src/mobile/screens/ReviewsScreen.tsx:160 shows a 'tier N' badge. This is a tier word on a person screen; I left it for the phone round."
+ ],
+ [
+  "verification",
+  "fixup",
+  "new_problems",
+  "The critic's summary stays the model's even when a code rule changes the verdict. On the bench the clamp drawer read 'The critic sent it back for changes.' and then 'Accepted: 1 changed file match the brief.' (the stand-in's summary; screenshot 27-after-c-04-drawer-clamp.png). A real model that accepted while a check failed would show the same contradiction. With this fix every review of a code task carries the check output, so it should be rare, but the drawer could say why the verdict changed."
+ ],
+ [
+  "verification",
+  "fixup",
+  "new_problems",
+  "Screenshots under <data>/evidence/<task>/ are never removed (reviewer note, confirmed, unchanged)."
+ ],
+ [
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "critic package: new exports measuredFindingOf, resolvedByRerun, triedProblems, NOT_CAUSED_BY_TASK (measured.ts) and NOT_YOUR_FAILURE (tier0.ts). Findings whose description is 'Check failed: <name>' or 'Tried <page>: <problem>' are resolved only by a passing re-run in a review. Do not add a code path that resolves them on an accept, and do not create model findings with those prefixes for other purposes."
+ ],
+ [
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "TriedEvidence gained pageFiles (the folder files the page asked for) and causedByTask. capabilities PageTry.pageFiles is filled by tryPages. Exported attributeTry(t, taskFiles) is in packages/runtime/src/loop/critic.ts."
+ ],
+ [
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "CriticLoop now reads the task.files events (TASK_FILES_EVENT) of every session in which the task ran. Continuity/github-result: if you change when or how the runner emits task.files, the review's view of the task's files changes with it."
+ ],
+ [
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "With a sandbox port and no injected hasCommand, the review lease now runs 'npm --version' before the npm scripts. A test that asserts a lease's exact calls should inject hasCommand (as the verification tests do)."
+ ],
+ [
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "UI: FULL_REVIEW_SPECIALISTS in apps/ui/src/lib/task-actions.ts is now a ReadonlyMap<specialist, words> ('A deploy', 'A data migration'), and FULL_REVIEW_TIER = 2 is exported. EditTaskForm testids: edit-full-review-note."
+ ],
+ [
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "real-daemon helper composeWithRolePlayer now also returns criticCalls. An area that adds a real-daemon case running npm through the process sandbox must give compose an env with PATH (see the 'retry that changes no file' describe); with FORERUNNER_HOME alone the lease cannot find npm."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "Security, needs the owner's word: try-page.ts:129 launches Chromium with Playwright's default `chromiumSandbox: false`, which adds `--no-sandbox` (playwright-core 1.64.1 coreBundle.js:44767). Model-written pages, including those of full-review tasks, are opened on the host at every level. The area's fix_scope asked to keep ADR 0101 (full review only in Docker). ADR 0104 \u00a74 says so openly, but consider `chromiumSandbox: true` where it works, and the container for tier 2 and above."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "A deploy or migration stored at tier 1 still reads 'Light review' in its row while it is reviewed at the full level with sign-off. Saving any edit raises it to tier 2 without saying so, after which it waits for Docker. The New task dialog still offers Light review for ops-deploy (in not_done)."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "A sign-off card makes the row read 'Needs your decision' with Answer / Try again / Cancel (it is the retry card kind). This existed before for tier-3 sign-offs; the design's status for a needs_human task with a card is 'Needs your answer'."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "The retry ladder handed 'Add clamp in src/clamp.js' to migration-specialist (U-044 alternate). The row and drawer then name migration-specialist, yet no sign-off follows because the item's specialist is used. That choice of alternate is odd, but it is not new here."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "Screenshots under <data>/evidence/<task>/ are never removed (not on project delete, Redo or uninstall). They are about 30 to 60 KB each, two per review."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "The light-review option still says 'nothing runs in isolation' while the project's checks and the page try now run for light reviews too. That is still true, but it no longer describes what happens."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "Once blocking 1 is fixed, a project-wide test failure or page error that an earlier task left behind will block every later code task (walk D's styles task is sent back for an error in index.html). The ADR should say how that reaches the person."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "The fixer's new_problems are confirmed: the monthly-jobs-wiring 30 s real-time wait is a Windows-CI risk. The 'Members chart ran as coder' note is a walk-script selector bug, not an app bug: `page.getByLabel('Who does it')` also matches the Tasks tab filter."
+ ],
+ [
+  "verification",
+  "review",
+  "non_blocking",
+  "The stand-in critic's summary 'Accepted: 1 changed file(s) match the brief' shows on the sign-off card. That is testenv wording, not the app's, but it puts '(s)' on bench screenshots."
+ ],
+ [
+  "continuity",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Cancel from chat walked through the Chat UI on the bench\", \"why\": \"The stand-in chat only runs command tools through a 'tool: <name> {json}' line and my scripted attempt was refused by the worktree guard; the path chat's Yes takes (POST /commands/execute task.transition -> personMove -> stopTask) is covered by continuity-cancel.test.ts ('cancelling a task while the critic reviews it') and the live check step above.\"}"
+ ],
+ [
+  "continuity",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Re-checks live2 #4 and #10 (chat behaviour) judged with the real model\", \"why\": \"Needs the real model. On the bench (/tmp/frbench/fix-continuity/steps/chat-recheck-result.json) the chat call now carries the earlier turn, the task list by title, the project folder and the open card in full; ids are still in the context for tools (project '[id \\u2026]', request '01a19b5e:') with the prompt rule 'never by an id'. LIVE CHECK: add a task in chat, then 'make it wait for <other>' in the next turn (it must find it), ask 'where are the files?' (it must give the folder path), and check no reply contains an id.\"}"
+ ],
+ [
+  "continuity",
+  "fix",
+  "not_done",
+  "{\"problem\": \"The web-refusal text itself (live D: tool names, 'set the task back to ready')\", \"why\": \"research-web owns that executor hunk (shared_files). The card normalises it (plainStopReason drops '(cc:\\u2026)' lists and turns 'set the task back to ready' into 'try again'); the stored reason is now whole sentences.\"}"
+ ],
+ [
+  "continuity",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Closing a task's pull request when it is cancelled during review\", \"why\": \"github-result's area; the cancel says plainly that the pull request stays open (ADR 0104 point 4).\"}"
+ ],
+ [
+  "continuity",
+  "fix",
+  "new_problems",
+  "Settings confirmation cards: the Answered entry of a preview closed without confirming (answered 'no') reads 'Answered.', not that nothing changed (/tmp/frbench/fix-continuity/steps/f-recheck-result.json). needs-me/system-text."
+ ],
+ [
+  "continuity",
+  "fix",
+  "new_problems",
+  "Undo of a cancel reads 'Undone: reopened the task \"X\"; it is ready again and a session picks it up.' but the undo starts no session (existing undoMoveSentence in packages/commands/src/commands/task.ts). Promise the code does not keep (design \u00a75 rule 9)."
+ ],
+ [
+  "continuity",
+  "fix",
+  "new_problems",
+  "Chat context still carries raw ids for tool use (project '[id \u2026]', open request '01a19b5e:'); the prompt forbids naming them; live walk 2 #10 (ids leaked into replies) needs a live re-check (/tmp/frbench/fix-continuity/steps/chat-recheck-given.txt)."
+ ],
+ [
+  "continuity",
+  "fix",
+  "new_problems",
+  "Inbox Update after a session whose only task now waits on a card reads 'the session ended without finishing a task.' while the card is right above it; could name the card (needs-me/system-text)."
+ ],
+ [
+  "continuity",
+  "fix",
+  "new_problems",
+  "Changes a person makes by hand in the project folder while a task runs are set aside with that run when it is cancelled (they come back with Undo); documented in ADR 0104, consequences."
+ ],
+ [
+  "continuity",
+  "fix",
+  "new_problems",
+  "live D items outside this area: New task offers researcher/science-evaluator on an API key without warning; data-only science tasks refused because the registry lists cc:WebFetch (research-web)."
+ ],
+ [
+  "continuity",
+  "fix",
+  "notes_for_other_areas",
+  "verification: two small hunks in your review path. runner.ts: before the review the task is re-read and a task no longer in_review is recorded as moved (never reviewed); the review runs under its own controller registered with the kill switch under the task id (so stopTask stops it), aborted by the session's too. packages/critic/src/critic.ts: after the critic Run row is written, a review whose ctx.signal was aborted throws killed (no Review row, no 'Critic review did not complete' finding). Keep both when you change the review path."
+ ],
+ [
+  "continuity",
+  "fix",
+  "notes_for_other_areas",
+  "research-web: every needs_human the executor returns without its own card now gets a task:cannot_run card ('\"X\" could not run', Try again / Cancel task) and the stored reason is plainStopReason(summary, 200, 1). The card body is plainStopReason(summary) (2 sentences; '(cc:\u2026)' lists dropped; 'set the task back to ready' -> 'try again'). If you rewrite the web-refusal summary, keep sentence 1 = why, sentence 2 = what to do; once the researcher has web tools the refusal case disappears and the card still covers other refusals."
+ ],
+ [
+  "continuity",
+  "fix",
+  "notes_for_other_areas",
+  "github-result: a cancel of a task with pr_url says 'its pull request stays open' (moveSentence work 'pull_request'; UI cancelWorkLine). PrTaskExecutor.setAside/bringBack act on the task's own worktree for repository projects (uncommitted changes only). If you add closing the PR on cancel, update both sentences and ADR 0104 point 4."
+ ],
+ [
+  "continuity",
+  "fix",
+  "notes_for_other_areas",
+  "New APIs: TaskExecutor.setAside?(task) (runner.ts); PrTaskExecutor.setAside/bringBack and setAsideRef(); GitOps.setAside(ref, message) and bringBack(ref); CommandPorts.bringBackWork(taskId) -> 'restored'|'missing'|'conflict'; CommandDef.undo may return a sentence that is appended to the undo's sentence (closures too); TaskDisplay.blocker.cardKind gained 'budget' and 'cannot_run'; ANSWER_CARD_KEYS.budgetStop ('task:budget_stop') and cannotRun ('task:cannot_run') with readers budgetStopAnswer/cannotRunAnswer; RuntimeApp.syncApprovals result gained budgetStops and cannotRun; task.moved_while_running payload gained setAside (count) and files; TaskExecutionResult.budgetStop; LoopTaskExecutorDeps.chfPerUsd."
+ ],
+ [
+  "continuity",
+  "fix",
+  "notes_for_other_areas",
+  "Behaviour change for everyone: a run stopped by the session's own budget leaves its task ready (listed in skipped, attempt unchanged), no longer needs_human; the Tasks tab Cancel/Stop on a task in_review now stops the critic's review."
+ ],
+ [
+  "continuity",
+  "fix",
+  "notes_for_other_areas",
+  "ADR 0104 is taken by this area (cancel takes a running task's work out; Undo brings it back). If verification also took 0104, the merge renumbers one (shared_files rule)."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Undo of a cancel says '\\u2026it is ready again and a session picks it up.' but starts no session\", \"why\": \"This predates the branch (undoMoveSentence in packages/commands/src/commands/task.ts). It is system-text wording the reviewer marked non-blocking. Left for system-text / needs-me.\"}"
+ ],
+ [
+  "continuity",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"For a project linked to the person's own folder, cancelling a live run still says 'what it changed is removed', but nothing is set aside there (ADR 0104 point 2)\", \"why\": \"Not blocking. A true sentence needs the cancel to know the project's folder kind and a third wording in the command, the UI dialog and the fake. Listed as a follow-up.\"}"
+ ],
+ [
+  "continuity",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Chat 'Skip the <title> task' is read as Pause; the raw 'illegal transition done \\u2192 cancelled' reply; the chat read-back does not say the run stops\", \"why\": \"Chat area (reviewer's non-blocking). The chat's Yes path (/commands/execute task.transition) is covered by continuity-cancel.test.ts and works with the new liveness answer.\"}"
+ ],
+ [
+  "continuity",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"A session whose only task the person cancelled ends with the result 'CHF 0.00.'\", \"why\": \"Summary-writer area (reviewer's non-blocking; seen again on the bench, c-after-result.json session1).\"}"
+ ],
+ [
+  "continuity",
+  "fixup",
+  "new_problems",
+  "A task in review with an open card that is not a retry card (an approval card, as in the UI fixtures) still reads 'Being reviewed', and its Cancel dialog would promise removal. No such card is filed for a task in review today (only review_failed, findings:blocked and signoff, all retry kind); if one is added, taskDisplay's in_review case must take it."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "new_problems",
+  "A review stopped by the session, or by a cancel, leaves the critic's Run row: the drawer lists 'Review by the critic \u00b7 Stopped' with no verdict. This is truthful (it says what was spent), but a person may wonder what it is. It is the critic's design from fix/continuity (packages/critic/src/critic.ts)."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "new_problems",
+  "Bench walk s: after 'Stopped by you during \"X\". It is ready again.' the session log adds 'Stopped by you: nothing done. CHF 0.00.' Two stop lines in a row (summary/system-text)."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "new_problems",
+  "The answers commit in a workspace is authored 'Forerunner <forerunner@localhost>', while the executor's baselines use the person's git identity ('Alice (Forerunner)'). This is cosmetic, in the workspace's own git only."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "notes_for_other_areas",
+  "verification (owns the review path in runner.ts): the review-failed branch now does the following. If the session's own controller is aborted and the person did not move the task, an in_review task goes back to ready with `restoreStatus(\u2026, 'in_review', reason)`, `runningTask` is set and `killed` is thrown. A task the person moved records `recordMove(now, 'review_failed', 'review', stoppedByMove(reviewController))` first. Keep both. taskDisplay (daemon/task-words.ts): in_review with a retry-kind card is key 'answer', label 'Needs your decision', blocker cardKind 'retry'. apps/ui actionsFor: key 'answer' with status in_review gives ['answer','cancel'] (Try again is not offered: in_review \u2192 ready is no graph edge)."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "notes_for_other_areas",
+  "session engine: `recordMove(t, outcome, during, stopped)` now takes `stopped`; work is set aside only when it is true. After a run, the move is recorded before the session's stop only when the person's move stopped the run first (`stoppedByMove`). session/recovery.ts `reviewBackToReady`: a released task still in_review goes to ready unless a holding card is open, and only tasks actually ready again are named in the summary and Update."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "notes_for_other_areas",
+  "commands: `CommandPorts.stopTask` now returns `boolean | undefined` (whether a live run or review was stopped); `moveSentence`'s `work` follows it. Any new port implementation must return `kill.stopTask(...).stoppedRuns > 0` or the cancel line says only 'Cancelled \"X\".'"
+ ],
+ [
+  "continuity",
+  "fixup",
+  "notes_for_other_areas",
+  "capabilities: new `GitOps.commitFile(path, content, message)` and `GitOps.fileAt(rev, path)`; `git()` merges `extra.env` into its own env instead of replacing it. Any other app write into a workspace while a run goes on (none today besides the answers) should use commitFile so a cancel's set-aside and the critic's diff do not hold it."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "notes_for_other_areas",
+  "testenv/bench: `BenchOptions.criticDelayMs` / FORERUNNER_BENCH_CRITIC_DELAY_MS (default 0) waits before each critic reply, abortable. Use it to walk anything during 'Being reviewed'. Keep it 0 when the monthly calibration may run (about 160 critic calls)."
+ ],
+ [
+  "continuity",
+  "fixup",
+  "notes_for_other_areas",
+  "ADR 0104 gained points 6 (only a live run or review is set aside, and only then said) and 7 (the app's own writes are not the run's), plus the Stop-now and crash notes. It is still 0104; if verification also took 0104, the merge renumbers one."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "Undo of a cancel says '\u2026it is ready again and a session picks it up.' but no session starts (bench b2: 0 running). This predates the branch (undoMoveSentence) and the fixer listed it."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "Chat: 'Skip the <title> task' is parsed as Pause, not Cancel. 'Skip the task \"<title>\"' fails with 'no task matches \"task \"\u2026\"\"'. When the task finished before Yes, the reply is the raw 'Not done: task: illegal transition done \u2192 cancelled.'. The read-back 'Cancel \"X\"? It is dropped.' does not say a running task's run stops and its work is removed; only the line after Yes does. All of this belongs to the chat area."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "The fake daemon's undo (apps/ui/test/fake-daemon.ts performUndo) does not append 'What it changed is back in the folder.' as the real executor now does (validation rule 3 drift)."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "A session whose only task the person cancelled ends with the summary 'CHF 0.00.' and no Update line (bench session 01a19bdd). Summary-writer area."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "Behaviour change: a task stopped by the session's own budget is now Ready, so a task that alone always exceeds the session budget is re-run by every session until the person acts. Each run is bounded by the session budget and the monthly cap. Worth the owner knowing."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "The runner's review-path hunks (re-reading the task before review, the review controller registered under the task) are in the path verification owns (shared_files). The fixer flagged this in notes_for_other_areas; merge carefully."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "Start dialog with nothing fitting (budget CHF 0.20) shows one 'needs about \u2026, more than this session's work budget' line per task, all saying the same thing (predates the branch). 'The tasks that run first take about Z' adds up every runnable estimate, which can include tasks that run after the one left out."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "A cancelled task's stored reason contains '(request <id>)' (budget-card.ts:205, cannot-run-card.ts:201). Not shown today ('Cancelled' only), but the drawer or chat could surface it."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "For a project linked to the person's own folder, the cancel line still says 'what it changed is removed' although ADR 0104 point 2 sets nothing aside there."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "On the bench, New task with Budget CHF 0.01 does not stop the stand-in (its run costs about CHF 0.01). The helper's live check with the real model will stop as described."
+ ],
+ [
+  "continuity",
+  "review",
+  "non_blocking",
+  "tests/e2e/scenarios/02-email-task.scenario.test.ts failed once (['ack'] vs ['ack','completion']) and passed in 4 later runs. It looks flaky, and Windows CI is slower."
+ ],
+ [
+  "github-result",
+  "fix",
+  "not_done",
+  "{\"problem\": \"A Merge action in the app for a waiting pull request\", \"why\": \"The design (\\u00a73.4, \\u00a73.8, \\u00a73.10) lists no Merge action and makes PRs open in the system browser; ADR 0062 keeps merging at level 3 Trusted. The Overview links each PR to GitHub instead.\"}"
+ ],
+ [
+  "github-result",
+  "fix",
+  "not_done",
+  "{\"problem\": \"An Inbox card or Update per waiting PR, so needs-you counts include PRs\", \"why\": \"Design \\u00a73.8 says only the plan, questions, failed tasks, Docker waits and risky changes are cards and \\\"nothing else counts as needs you\\\"; the one place for waiting PRs is the Overview (\\u00a75.10 one place per fact). Counts agree (0 cards).\"}"
+ ],
+ [
+  "github-result",
+  "fix",
+  "not_done",
+  "{\"problem\": \"PR/branch on the Changes page\", \"why\": \"The Changes page lists only the person's own changes (design \\u00a75.11: the person's clicks are in Changes); the agent's file changes, now with the PR, are on the session page and in its log.\"}"
+ ],
+ [
+  "github-result",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Live confirmation on forerunner-sandbox\", \"why\": \"No Claude key and no GitHub token reach this agent; the LIVE CHECK steps are in each item's check_in_the_app for the helper. The empty-repository path cannot be checked live on forerunner-sandbox (it already has a commit and the token is scoped to it).\"}"
+ ],
+ [
+  "github-result",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Desktop shell (open-folder command)\", \"why\": \"Wave 3 already added Open folder (folder.rs); nothing in this area needed the shell, so cargo was not run.\"}"
+ ],
+ [
+  "github-result",
+  "fix",
+  "new_problems",
+  "[major, not fixed] Repository projects: every task branches from origin/<default>, so a task that depends on a done task whose PR is not merged yet does not see that work. Bench (stand-in, bench/seeded, autonomy 2): 'Show a random quote ... in script.js', 'Style the page' and 'Check that index.html, styles.css and script.js work together' each ran on a branch from 'Initial commit' with none of the earlier tasks' files (git log --all --graph of the bench repo: five sibling branches off main). With the real model the coder will recreate files and the checker checks nothing. Fix needs a decision (stacked PRs with base = dependency branch, or merging the dependencies' unmerged branches into the task branch, which then also changes what the critic's origin/HEAD...HEAD diff shows): PrTaskExecutor.execute (packages/capabilities/src/githost/pr-executor.ts, createBranch from origin/<base>) and the critic's GitDiffPort (packages/runtime/src/loop/critic.ts)."
+ ],
+ [
+  "github-result",
+  "fix",
+  "new_problems",
+  "[minor] A failure reason is cut at a dot inside a file name: the before walk's log showed '\"Create the page skeleton in index.html\" failed: html' cannot be created from it.' (the reason split at 'index.'). The empty-repo cause is gone, but any error text with a file name hits the same cut (system-text: the failed-task line's sentence cutting)."
+ ],
+ [
+  "github-result",
+  "fix",
+  "new_problems",
+  "[minor] merge.ts still writes the internal 'PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)' into task.reason (packages/runtime/src/loop/merge.ts:439); the session log line is now worded, but any screen that shows a done task's reason would show the raw text."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "ProjectCard.repository {fullName, url} (null without a repository); a repository project's card now has folder null, so the status sentence reads 'Done: all N tasks.' without a path. GET /projects/:id/pull-requests -> ProjectPullRequestsView {repository, waiting[{kind: task|docs, taskId, title, number, url, branch}], error}. DocView.pullRequest {number, url} for docs waiting in a docs PR."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "ProjectDocsPort.writeSessionStatus no longer takes prBranch; statusBranchFor is gone; STATUS_BRANCH = 'fr/status'; isDocsBranch(); ProjectDocs.docsInPullRequests(project). The runner's prBranches list was removed (it only chose the status branch)."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "verification: in a project's folder the session's work is now committed at session end (ProjectDocs.statusInFolder). A review that runs after the session ends (or in a later session) on a folder task would find `git diff HEAD` empty; keep reviews inside the session, or diff against the task's 'Workspace before' baseline commit."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "executor.ts: gitConstraints(task.branch, project.repos) is github-result's hunk of the brief's constraints (who commits/pushes/opens the PR, git read commands work); verification's checking words are separate lines."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "capabilities: ensureBaseBranch(...) for any new git flow that branches from origin/<base>; GitOps.remoteBranches(), changedFiles(base, head); pushFailedWords(); ensureWorkspaceGitignore()/WORKSPACE_GITIGNORE."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "agent/sdk.ts: scrubGitConfigEnv keeps git's GIT_CONFIG_* set consistent (feeds the process sandbox and the Claude Code path); research-web's fetch tools are unaffected."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "Runner event task.files now carries prUrl and branch; event-lines: prNumberWords(), leftOpenWords()."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "intake.ts: one paragraph added after 'say what the files must contain and which check must pass.' (Forerunner decides where files live and keeps them in git)."
+ ],
+ [
+  "github-result",
+  "fix",
+  "notes_for_other_areas",
+  "Bench: start.mjs --githost <port> runs the fake git host (bench/empty with no commit, bench/seeded) with its token stored via fr setup; stop.mjs ends it; documented in scripts/bench/README.md and testing.md."
+ ],
+ [
+  "github-result",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Non-blocking review items: the Files tab's \\\"as merged\\\" copy is stale until the next session; the \\\"GitHub did not answer (<error>)\\\" wording, which shows the error text and also appears when there is no token; a status PR for every repository session; the repository project's status sentence has no pointer to the work; the branch name on the session page carries an 8-character task-id prefix; the folder project's \\\"Create a repository?\\\" card makes a finished project read \\\"Waiting for you: 1 question\\\"; whether git is in the Docker runner image is unchecked\", \"why\": \"Not blocking, and outside the three findings this fix-up had to close. They stand as the reviewer described them, for the leftovers sweep (E).\"}"
+ ],
+ [
+  "github-result",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Live confirmation on forerunner-sandbox\", \"why\": \"No Claude key and no GitHub token reach this agent. Each fixed item has LIVE CHECK steps for the helper. The refused-first-commit path needs an empty repository the token can read but not write.\"}"
+ ],
+ [
+  "github-result",
+  "fixup",
+  "new_problems",
+  "[minor, pre-existing] The Overview's Last result keeps a session-time sentence after the person acts. After Mark done anyway on the README card it still read '\"Write the README ...\" needs your decision (Inbox).' while the header said 'Done: all 5 tasks.' (bench step 10-a2-after-mark-done-overview). The result is the session's record, but design \u00a75.4 asks for text that is true now; this belongs to the system-text or sessions area."
+ ],
+ [
+  "github-result",
+  "fixup",
+  "new_problems",
+  "[minor, sibling, from the review] packages/runtime/src/data/import.ts:601 creates the migration branch from origin/<default> without ensureBaseBranch, so a data import into an empty repository still fails with git's text. It should use ensureBaseBranch and firstPushFailedWords."
+ ],
+ [
+  "github-result",
+  "fixup",
+  "notes_for_other_areas",
+  "ProjectPullRequestView.review: 'critic' | 'you' | 'none' | null (null for Forerunner's docs PRs). Any screen that lists a task's PR or calls it 'reviewed' should read this field, not the task's reason: at level 2 the merge writes 'PR left open for you: ...' over the critic's words."
+ ],
+ [
+  "github-result",
+  "fixup",
+  "notes_for_other_areas",
+  "session/findings.ts exports ACCEPTED_AT_SIGNOFF ('you accepted the work at sign-off'), used where findings.ts wrote that literal. verification: if the sign-off or Mark-done reasons change, reviewOf in daemon/pull-requests.ts reads them with startsWith, together with ACCEPTED_WITHOUT_REVIEW from @forerunner/critic."
+ ],
+ [
+  "github-result",
+  "fixup",
+  "notes_for_other_areas",
+  "session/result.ts: the PR sentence is now 'Left N reviewed pull request(s) for you to merge.' (what the session did), no longer '... wait for you to merge.'"
+ ],
+ [
+  "github-result",
+  "fixup",
+  "notes_for_other_areas",
+  "capabilities githost: push-words.ts exports pushFailure(e), pushFailedWords(repo, branch, e) and firstPushFailedWords(repo, e). ensureBaseBranch throws firstPushFailedWords text with code provider_auth for a refusal (not transient for the runner) and provider_error otherwise; details.failure is the kind."
+ ],
+ [
+  "github-result",
+  "fixup",
+  "notes_for_other_areas",
+  "agent/sdk.ts: scrubGitConfigEnv drops any git config entry whose key or value holds a URL with a user part (ssh://git@ included), an Authorization header or a token shape."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "The Files tab text \"This computer's copy of <repo> as merged\" is stale between a merge on GitHub and the next session: after merging #1 on the host, notes.html was missing until a session refreshed the docs clone (step 50). Fetch and reset the clone when Files is opened, or say \"as of the last session\"."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "The \"GitHub did not answer\" text on the Overview embeds the error text in parentheses (pull-requests.ts:75). A project whose GitHub token is missing would also read \"GitHub did not answer\", which is not true then. Design \u00a75.8."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "Every session on a repository project leaves a status PR for the person to merge (even a one-task project). This follows ADR 0104 and is defensible; the owner may want the status kept off GitHub until asked."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "A repository project's status sentence is just \"Done: all N tasks.\" with no pointer to where the work is. Design \u00a72 rule 6 has \"Your files: <path>\"; for a repository, \"Your files: on GitHub, 6 pull requests to merge\" would keep that."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "The branch shown on the session page (\"branch fr/01a19c00-create-...\") carries an 8-character task-id prefix (pre-existing branch naming; design \u00a75.3 says no ids)."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "Pre-existing, not this area: the folder project's \"Code work is planned for Folder page, which has no repository ... with no branch, pull request or review on GitHub. Create a repository for it?\" card makes a finished project read \"Waiting for you: 1 question\" on Home. Design \u00a73.8 does not list this card type, and \"no ... review\" is not true (the critic reviews folder tasks)."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "The brief promises that git's read commands work in the folder. That holds in the process sandbox; whether the Docker runner image (forerunner-runner) has git installed was not checked here, since the image is built elsewhere."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "Sibling not covered: packages/runtime/src/data/import.ts:601 creates the migration branch from origin/<default> without ensureBaseBranch, so a data import into an empty repository would still fail with git's text. This is outside this area's journeys."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "The fixer's new_problems stand and are confirmed on the bench: all task branches start from main, so a dependent task does not see its dependency's unmerged work (five sibling branches in every graph). This needs an owner decision (stacked PRs or merging dependency branches)."
+ ],
+ [
+  "github-result",
+  "review",
+  "non_blocking",
+  "The real-daemon case for waiting PRs inserts the done task directly into the store rather than running a session; the bench walk covers the session path."
+ ],
+ [
+  "research-web",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Web search on an API key (cc:WebSearch)\", \"why\": \"No search capability or provider exists in packages/capabilities. Per the fix scope, fetch only, with the limitation recorded in ADR 0107. Anthropic's server-side web search tool would run outside the runtime's hooks, with an unpriced per-search charge, and the stand-in cannot play it. That is left for a later decision.\"}"
+ ],
+ [
+  "research-web",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Research on a Claude subscription (the SDK path): the Agent SDK's WebFetch is still checked against the run token's domain list, which is empty for the researcher, so every page is refused there; WebSearch works.\", \"why\": \"The owner's decision named the API-key path. Changing the SDK path means changing the enforcement hooks' domain check for cc:WebFetch, and packages/runtime/test/security-sdk.test.ts deliberately asserts that denial. That is a security decision for that path. Reported under new_problems.\"}"
+ ],
+ [
+  "research-web",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Ports are not restricted for public hosts, and machines behind a mandatory proxy cannot read pages\", \"why\": \"Kept simple. The client connects directly and ignores proxy variables. Both are recorded in ADR 0107 as known gaps.\"}"
+ ],
+ [
+  "research-web",
+  "fix",
+  "new_problems",
+  "Subscription path: research reads no page. packages/runtime/src/agent/cc-tools.ts gives WebFetch domainFields ['url'], and the executor derives the run token's allowedDomains from the registry's allowed_domains, which is [] for the researcher. On a subscription the hooks therefore deny every WebFetch outside github.com (security-sdk.test.ts asserts domain denial); WebSearch works. Tasks use the subscription first by default (user guide)."
+ ],
+ [
+  "research-web",
+  "fix",
+  "new_problems",
+  "No API view carries a project's version, and no screen edits settings.browser (the site list and block list web_fetch and the browser read). PUT /projects/:id/settings needs the version, which a client can only learn from the 409 conflict answer (seen on the bench walk)."
+ ],
+ [
+  "research-web",
+  "fix",
+  "new_problems",
+  "Still present, owned by continuity: other executor refusals (task budget spent, unknown specialist, retry ladder with no stand-in) still end as needs_human with no Inbox card. Only the missing-web-tool case is gone."
+ ],
+ [
+  "research-web",
+  "fix",
+  "new_problems",
+  "Plan card: a plan task naming a specialist this install does not have (an invented name) is not flagged. The intake canonicalises aliases only when it writes the plan, so the UI cannot tell an alias from an unknown name; the run then waits with 'No specialist is named X'."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "ADR number: I took 0107 because verification, continuity and github-result each took 0104 in their worktrees; the merge may renumber."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "verification (owns loop/critic.ts and the review path): one isolated hunk was added after the evidence object in LoopCriticPort: `webSourceEvidence(result.webSources)` appends to evidence.inputFiles ('web page <url>', the page text as data) and evidence.artifacts ('web page not read: <url> (<words>)'). Keep it if you rebuild the evidence; it is what lets the critic check a researcher's citations."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "runner.ts (shared): TaskExecutionResult has a new optional `webSources?: WebSource[]` (session/web-sources.ts), and stepLine has a web_fetch branch ('read the web page <host><path>'). Neither touches the review path or the stop/cancel paths."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "executor.ts web-routing hunk: needsWeb && !hasWeb no longer returns needs_human; it runs with NO_WEB_ACCESS_LINE. NO_WEB_SEARCH_LINE is added for loop runs of entries naming cc:WebSearch where web_fetch is offered. withWebSourceLog wraps the run's tools. Run artifacts gain {webSources:[...]}."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "intake.ts: NO_WEB_RULE reworded, and compose passes webSpecialists: () => hasOauth || webFetchOn. Only the web paragraph changed."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "New API field: GET /settings/models specialists[].limitation (string|null, zod default null). New RuntimeApp.webAccess(). Fake daemon option `noWebAccess`. composeWithRolePlayer in real-daemon.test.ts takes an optional second argument daemonEnv and returns criticCalls."
+ ],
+ [
+  "research-web",
+  "fix",
+  "notes_for_other_areas",
+  "Bench: the stand-in researcher reads up to three URLs its brief names via web_fetch and writes the .md target with citations (plans.ts urlsNamed/factsOf/researchContent). A loopback page must be on the project's site list (PUT /projects/:id/settings {browser:{allowedDomains:['127.0.0.1']}}). Walk scripts: /tmp/frbench/fix-research-web/scripts/research-walk.cjs and noweb-walk.cjs."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "Block list bypass with a trailing dot: http://example.com./ is read although example.com is on the project's block list (verified live with tsx against webFetchTool). The hostname should be normalised in policy.ts hostOfUrl (strip one trailing '.') before domainCovered. The site list has the mirror-image quirk. The impact is low today, because no screen sets settings.browser.blockedDomains."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "docs/user-guide.md (research paragraph) says that on a Claude subscription 'the researcher uses Claude Code's own web tools instead'. The ADR and the fixer's new_problems both say that path refuses every WebFetch, because the researcher's allowed_domains is empty, so research there reads no page and only search works. The sentence should state that gap rather than imply it works (writing rule 9)."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "The task drawer does not show which web pages a run read or which were refused. The Run row's artifacts {webSources} are not rendered, and the report shown in the drawer is cut after 'Commands run ...', so its 'Sources read' section never shows. A person sees refusals only in the file and under session Details. Design \u00a73.5 lists 'what it read' for runs; the gap is in the drawer's existing rendering, not in this diff."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "The plan card's 'Cannot read the web on this computer' chip cannot be walked on the bench: the stand-in intake never plans a researcher task. A FORERUNNER_BENCH_PLAN option that adds a research task would let the helper's live check and future reviews see it end to end."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "No screen sets a project's site list or block list. PUT /projects/:id/settings needs the version, which a client learns only from the 409 conflict answer; my walk hit the 409 first. The fixer reported this."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "With the stand-in critic, a research task whose only page was refused ends Done and 'accepted'. That is the stand-in, which accepts everything. The helper's live check should confirm that the real critic, which is shown 'web page not read: ... (Refused ...)', sends such work back or says so."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "pnpm check had one failure, packages/runtime/test/repo-create.test.ts 'Create the repository ...' (U-037). That code is untouched by this diff, and the test passed 3 of 3 runs alone, so it looks like a flake under load. It may still deserve a look for a real-time wait."
+ ],
+ [
+  "research-web",
+  "review",
+  "non_blocking",
+  "ADR number 0107 was chosen to avoid 0104 clashes; the merge may need to renumber it, and README/doc references with it."
+ ]
+]

@@ -1,0 +1,35 @@
+# Live-model check, 2026-11-01 22:30-22:42 UTC (helper session, real Anthropic API)
+
+Bench `live1`, `--provider bench-live`, branch claude/nifty-knuth-f9udt0 at 3455a24 (wave 2 merged).
+25 model calls, USD 0.632 (intake sonnet 6 calls 0.353; specialist sonnet 12 calls 0.200; critic sonnet 4 calls 0.077; chat haiku effort low 3 calls 0.002).
+Screenshots were in the helper's container (/tmp/frbench/live1/steps/01-40), not on this machine.
+Real intake replies (fixtures): /tmp/frbench/live1-fixtures.json once received (array of {line, model, stop_reason, usage, reply_text}, plus the first call's request {system, messages}).
+
+## What the person saw
+- Setup: works. The Done step says "Until Claude is connected your agent cannot start work" although a key is present (bench-specific, polish).
+- New project from the brief: "Drafting the plan from your brief… It lands in your Inbox for you to approve." (true). ~40 s later: "Planning failed. Nothing was written. Claude's plan was missing parts Forerunner needs." [Try again]. Untrue: nothing was missing; plan.reason was too long (log line 1).
+- Try again: worked on the first retry (line 3). Inbox card "Plan for "Quote page": 4 tasks": Build the quote page · coder · about CHF 0.64; Test the pick logic and page rendering · tester · about CHF 0.40; Human decisions: hosting, repository, quote source · you; Publish the page and write the runbook · ops-deploy · Needs Docker; "About CHF 1.04 for these tasks." Sensible plan, right size. Card problems: long (the decision record pasted in full, incl. "Status: proposed. The human reads this before approving." and "Answers: _pending_"); the publish task shows no cost and the total leaves it out; no separator in `"Test the pick logic and page rendering"Needs Docker`.
+- Approve and start: "Done: Plan approved: 4 tasks written; working on them." Right and short. A question card follows with 5 good questions.
+- Session: ~1.5 min, 36 steps, CHF 0.22, "completed". Coder wrote index.html, style.css, quotes.js (30 quotes), app.js and checked with node. Tester wrote 12 node:test tests, all passing, updated docs/testing.md. Critic on build task (line 10): accepted, grade 80, but a self-contradicting finding ("I count 29 entries… which leaves 30"; real count 30); it only read the diff, ran nothing; its 3 findings show as "0 open". Critic on test task (line 18): accepted, grade 88, reasonable. Session summary: "Did 2 tasks: "Build the quote page" and "Test the pick logic and page rendering". 1 task waits on other tasks. CHF 0.22." Short and true, but does not say a task waits on the person; the session-end event says "0 need you" while the question card is open.
+- Chat: "what happened in the last session and what is left?" correct and short (names both done tasks, CHF 0.22, the decisions task needs answers in the Inbox, Publish waits on it). "what failed and why?" correct ("Nothing failed in the last session…", points to the open question). Both answers show raw `**…**` (markdown not rendered). Asked while planning had failed, the chat answered "The Quote page project has no tasks yet… I can add tasks…": not told the plan failed, no mention of Try again.
+- Inbox: the question card, an Update "Quote page: did 2 tasks: …" from Alice, "Answered (1)" with the plan. Right.
+- Tasks tab: two tasks Done, accepted, CHF 0.07 and 0.09; "Needs your answer · You · Answer"; Publish "Waiting for "Human decisions: hosting, repository,…"" and "CHF 0.00 of CHF 0.32 budget" (0.32 is the project's spend: wrong field).
+- Summary tab: "0 open questions" while 5 questions wait in the Inbox.
+- Second project, one-line brief "A page that shows a random quote": all 3 plan tries failed: twice reason too long (lines 22, 24), last try valid JSON rejected as "not JSON" (line 25). The one valid plan (line 23, also rejected by the fence bug) had 6 tasks over 3 milestones (person questions, writer-marketing "Curate the quote data file", coder, tester, reviewer, ops-deploy): too big for a one-line brief. Each intake writes ~5,600 output tokens (~14 KB incl. 9 full docs), ~USD 0.06 each. "Small-project mode: off" is sent to the model.
+
+## Problems
+1. BLOCKER: plan rejected when plan.reason > 500 characters. 4 of 6 tries (lines 1, 22, 24, 25; lengths 603, 754, 592). Daemon log: "plan.reason: Too big: expected string to have <=500 characters". The intake prompt shows `"reason": string` with no limit; no automatic retry with the error. Files: packages/runtime/src/session/intake.ts (prompt, validation), packages/runtime/src/session/project-plan.ts:77 (limit).
+2. BLOCKER: valid JSON reply rejected as "not the JSON plan Forerunner asks for." parseIntakeReply (intake.ts:391) takes the first ``` fence anywhere in the reply; the docs strings contain markdown code fences, so it parses a doc snippet. Lines 23 and 25: JSON.parse of the whole reply succeeds; the fence capture is `[ { "text": "string, non-empty, under 280 characters", … } ]`.
+3. MAJOR: failure text untrue: "Claude's plan was missing parts Forerunner needs" for a field that was too long (intake.ts:481).
+4. MAJOR: chat not told the plan failed (said "no tasks yet… I can add tasks", no Try again). The chat context builder only sends "(no tasks yet)".
+5. MAJOR: plans oversized for a one-line brief (5-6 tasks over 2-3 milestones incl. reviewer, Docker deploy, writer-marketing); ~5,600 output tokens per intake; "Small-project mode: off" sent. Design §3.3: a one-line brief gets a small plan (1-3 tasks), the doc set scaffolded silently.
+6. MINOR: critic contradicts itself and only reads the diff; its findings show as "0 open", not followed up.
+7. MINOR: the person task is not counted as needing the person: session summary and end event "0 need you"; Summary tab "0 open questions"; 5 questions wait in the Inbox.
+8. MINOR: the coder's brief asks for work it cannot do ("committed in the project working tree"; coder: "I did not run git commit"); the critic flagged it.
+9. POLISH: plan card separator and missing cost (above); decision record pasted in full on the plan card; raw `**` markdown in chat and session events ("**Summary**:"); Tasks tab "of CHF 0.32 budget" uses project spend; New project dialog requires a Goal even when the brief is one line.
+
+## Bench with a real model
+- smoke.cjs checks stand-in texts ("Create the page skeleton in index.html", "[stand-in model]" in the chat reply, script.js/styles.css/`const QUOTES = [`); the real coder named files app.js/style.css. When planning fails it never presses Try again. It passes "every planned task is done" on 0/0 tasks. It reports "plan card missing… the project said the plan waits in the Inbox" even when the project said planning failed. Live: 4 of 14 checks passed; the failures are the bench's.
+- The setup Done-step note assumes --provider bench.
+- Worked unchanged: start.mjs --provider bench-live, the model-call log (usage included, no key), recorder.cjs, stop.mjs.
+- The model-call log has no USD field (the helper priced it from usage with packages/billing/src/pricing.ts).

@@ -1,0 +1,28 @@
+{
+ "workflow": "Workflow({scriptPath: <below>, resumeFromRunId: \"wf_dbd51cc4-c3a\", args: <below>}) from cwd /home/user/Forerunner",
+ "scriptPath": "/root/.claude/projects/-home-user-Forerunner/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/workflows/scripts/forerunner-phase-e6.js",
+ "resumeFromRunId": "wf_dbd51cc4-c3a",
+ "args": {
+  "wave": 9,
+  "keys": [
+   "merge-in-app",
+   "credential-chooser",
+   "cost",
+   "merged-copy"
+  ],
+  "noMerge": false,
+  "note": "This is wave 7 group 3 of 6 (wave 7 spec: /tmp/frbench/phaseE7.json; each area's full spec is in /tmp/frbench/phaseE.json areas by key, with shared_files saying who owns which part of a shared file; later groups: 4 budget-resume, web-search; 5 merged-actions, sites; 6 polish). Groups 1 (merge-record, budget-stop, polish-desktop) and 2 (dependent-branches, credential-limits) are merged at 4b727ae, with the test temp-folder fix (2622e74) and the window-check settle fix (2de0a25); CI was fully green on 77497b4 and e16bb8c's CI; CI on 4b727ae pending. ADRs: merge-record 0111 (dependent-branches amended it), budget-stop 0112; amend the right one. Earlier groups' leftovers that name your area are in /tmp/frbench/wave7g1-result.json and /tmp/frbench/wave7g2-result.json (areas[].fix/fixup not_done and new_problems, review non_blocking, merge.problems_left): read both and fix those that are yours (e.g. merge-in-app: the dependent PR's words promise 'use Merge in Forerunner', the rebuild card's choices, the pr.left_open line; credential-chooser: the Accounts row while a key is Refused). Session-lead defaults for two open owner questions (U-078), to build in credential-chooser unless the owner answers otherwise: when the first credential hits its limit and a second could serve, the default is to WAIT for the first, and a setting 'When my first choice runs out mid-session: use the other one / wait' (default wait) switches it; a refused subscription files its card and its task work waits for the person, unless that setting is 'use the other one', in which case it moves to the API key (say on the card that this costs money). Wave 7 builds the owner's decisions of 2026-11-02 (/tmp/frbench/owner-decisions-2026-11-02.json; research in /tmp/frbench/owner-answers.md): they are decided, build them as the spec says, and record each in its ADR as the owner's decision of 2026-11-02. Later groups build on your work: name in your report every function or file a later area depends on. The live checks after the merge are in /tmp/frbench/phaseE7-live.md and phaseE7-live-extra.md; write your live_check steps to match.",
+  "fixNotes": {
+   "merged-copy": "Resume note for merged-copy: an earlier run of this fix was cut off by a usage limit after it had made 9 commits on fix/merged-copy (head 6a1c21a, base c5910a9; 33 files, +2641/-152: this computer's copy follows every merge with one lock per copy and its Local only folder, ADR 0113, the watcher's read of a head the copy has, a test that a review's try folder is never committed or pushed; U-037, W6-26). That work is NOT stale: do not reset fix/merged-copy to a fresh base. In your worktree run `git checkout -B fix/merged-copy-resume fix/merged-copy`, merge the current branch in if it moved since c5910a9, read `git log --oneline claude/nifty-knuth-f9udt0..fix/merged-copy` and its diff, check which spec problems and handoff items it already covers (and that its tests pass), finish the rest, and after every commit run `git branch -f fix/merged-copy HEAD`. Report every commit on the branch, the earlier ones too."
+  }
+ },
+ "state_at_stop": {
+  "head": "c5910a9 (pushed, CI fully green)",
+  "fix/merge-in-app": "cce8cbf, fixer done (cached)",
+  "fix/credential-chooser": "fff29af, fixer done (cached)",
+  "fix/cost": "5aaaabe, fixer done (cached)",
+  "fix/merged-copy": "6a1c21a, 9 commits, fixer cut off; reruns with fixNotes",
+  "reviews": "all failed on the weekly limit; rerun",
+  "merge": "not run"
+ }
+}

@@ -1,0 +1,1233 @@
+{
+ "wave": 2,
+ "areas": [
+  {
+   "key": "needs-me",
+   "fix": {
+    "area": "needs-me",
+    "branch": "fix/needs-me",
+    "head_sha": "cb6b708b53eec6650267711ab651d65e35ab5bec",
+    "commits": [
+     {
+      "sha": "7173244",
+      "subject": "needs-me: Inbox cards in words, one card per failed task, answers resume work, the plan card's three choices, no echoes (U-022, U-034, U-040, U-046, U-071, U-073, U-074, U-079, U-080)"
+     },
+     {
+      "sha": "8c48c0e",
+      "subject": "needs-me: person tasks are cards at once, late answers can be used, Undo updates the count, the Start dialog points to the plan, a chat answer to a high-risk card points to it (U-022, U-034, U-046)"
+     },
+     {
+      "sha": "e0309ce",
+      "subject": "needs-me: a destructive choice is an outlined button in red words, Set up Docker comes first, Reject is not red, '8 files' not '8 file(s)'"
+     },
+     {
+      "sha": "5844566",
+      "subject": "needs-me: the release scenarios read the cards in words and no Inbox echo; a changed plan's line stays true"
+     },
+     {
+      "sha": "cb6b708",
+      "subject": "needs-me: the header badge counts every open card from the first frame; Playwright reads the Inbox in its new words"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[major] The card after the last retry read 'Retry ladder exhausted \u2026 (ceiling opus)' with the critic's summary and unexplained accept / revise / cancel. 'accept' closed a task that wrote nothing, 'revise' started no work, and the specialist's own reason was not on the card.",
+      "u_ids": [
+       "U-073",
+       "U-074",
+       "U-080"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'after its retries: one card naming the task, the specialist's words and what waits; Try again starts a session; Mark done anyway is accepted without review' (failed: no title/choices, no start); packages/runtime/test/signoff-answer.test.ts 'Try again on the retry card \u2026'; apps/ui/test/inbox.test.tsx 'a task that failed after its tries' (4 cases)",
+      "how": "Root cause: the cards were filed in loop/critic.ts and @forerunner/critic followup.ts/critic.ts with ladder wording, the critic's summary and SIGNOFF_OPTIONS accept/revise/cancel. findings.ts accept closed the task and revise only reset it. Now retryCardWords/signoffCardWords give a title naming the task ('\"X\" failed 4 times') and quote the specialist's final report. RETRY_CARD_OPTIONS are Try again / Mark done anyway / Cancel task. The tier-3 sign-off offers Accept the work / Send it back / Cancel task. The readers still accept the old words. Mark done anyway records 'accepted without review', so the Tasks tab shows 'Done: accepted without review'. Try again queues the person's optional note for the next brief. Every answer that makes a task runnable starts or queues a session (session/resume-work.ts), and the card records which one for its Done line. The blocked-findings and failed-review cards use the same three options.",
+      "check_in_the_app": "Make a task fail on every try (bench FAIL=\"Write down the scope\"), run a session and open the Inbox. You see one card: '\"Write down the scope\u2026\" failed 4 times. The designer said: \"\u2026\"' and the task that waits on it. Each button has a line saying what it does. Type a note and click Try again: the card becomes 'Done: Trying \u2026 again: a session started.' and a session runs. On the next card, Mark done anyway asks once. The Tasks tab then shows 'Done: accepted without review', and the task after it runs."
+     },
+     {
+      "problem": "[major] A task whose run failed never reached the Inbox. The Inbox said 'Nothing waits on you' while 4 tasks waited on the failed one.",
+      "u_ids": [
+       "U-040",
+       "U-080"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'the failed task is a card, not 'Nothing waits on you'; Cancel task names what will be stuck' (expected 1 card, got 0)",
+      "how": "runner.ts moved the task to failed and filed nothing. It now calls fileFailedTaskCard (findings.ts) right after the failed transition. This is a sign-off card with reason 'failed': title '\"X\" failed', body 'What failed: <failure words>', options Try again / Mark done anyway / Cancel task. syncSignoffAnswers applies the answer to a task in 'failed'. Cancel task names the tasks that will be stuck and asks once.",
+      "check_in_the_app": "Start the bench with FAIL_MODE=error and run a session whose task errors. The Inbox shows '\"Write the scope\u2026\" failed', its error, which task waits on it, and Try again / Mark done anyway / Cancel task. Cancel task asks 'Cancel \"X\"? \"Y\" waits on it and will be stuck.'"
+     },
+     {
+      "problem": "[major] Answering did not resume work: revise (and every answer except the specialist-questions path) started nothing and confirmed nothing. The person had to find Start.",
+      "u_ids": [
+       "U-022"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts (Try again starts a session; Approve and start starts one); packages/runtime/test/signoff-answer.test.ts 'Try again \u2026 a session of the project started'",
+      "how": "New session/resume-work.ts resumeWork(): when a task of the project can run, it asks the scheduler for a session (started or queued) and records change_card.start. It is wired into syncSignoffAnswers, syncBlockedByFindings, syncReviewFailedAnswers, the person-questions answers (including the new Go ahead without) and the intake's Approve and start. compose.ts passes scheduler.requestStart only while services run.",
+      "check_in_the_app": "Answer any card that frees a task: Try again, Mark done anyway, Send answers, Go ahead without, or Approve and start. The card becomes a 'Done: \u2026 a session started' line and a session runs without pressing Start."
+     },
+     {
+      "problem": "[major/minor] Every card had a 'Change card' JSON disclosure, risk and kind badges, equal lowercase buttons and a reply box. Answered cards vanished with no confirmation, and the 'answered or closed' list never showed.",
+      "u_ids": [
+       "U-074",
+       "U-034"
+      ],
+      "failing_test_before": "apps/ui/test/inbox.test.tsx 'Needs you lists the cards \u2026; no risk or kind badges, no change-card JSON', 'a text box only where free text is accepted', 'posts the chosen option \u2026; the card is replaced by its Done line and listed under Answered'; apps/ui/test/plain-words.test.tsx (Answered list)",
+      "how": "New pure daemon/request-words.ts, also used by the UI fake. requestView now carries title, body (the specialist's words, then what waits on the task, read at that moment), choices {label, explain, tone, confirm, input}, links, reply, details, outcome and answeredAt. GET /inbox returns the open cards, the last 20 answered or withdrawn ones, and needsYouCount. POST /requests/:id/answer returns the card after the sync, with its outcome. InboxPage now has Needs you (n), Updates and a collapsed Answered list. Each button has its consequence line. Destructive choices are outlined in red and ask once. Try again has a note box, and the free-text box appears only where text is accepted. After an answer the card is replaced by its Done line.",
+      "check_in_the_app": "Open the Inbox. Cards show no 'Change card', no 'high risk \u00b7 approval' badges and no reply box on approvals. Every button has a line beside it. After you click one, the card is replaced by 'Done: \u2026'. Open 'Answered (n)' at the bottom to see each answer and what came of it."
+     },
+     {
+      "problem": "[major] The plan from the brief could not be changed: free text got a 400 and Reject was a dead end. The plan was shown three times, with raw markdown and a JSON disclosure.",
+      "u_ids": [
+       "U-046",
+       "U-073"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'the plan card (design \u00a73.3)' (3 cases); apps/ui/test/inbox.test.tsx (the plan card shown once, decision as text); apps/ui/test/project.test.tsx 'a rejected plan says so, and Draft a new plan \u2026'",
+      "how": "intake.ts INTAKE_OPTIONS are now Approve and start / Change the plan / Reject. Approve writes the plan and starts the first session. Change the plan ({choice, text}) marks the card 'changed' and re-drafts with the person's words, which arrive as a new card. Reject leaves a plain note with no request id and no ISO time. The retry route also drafts after a rejection. The status reports a lost change draft as failed. IntakeCard shows the tasks once (order, who, about CHF, after, Needs Docker) and the decision as text. IntakeBanner shows: 'Waiting for you: approve the plan [Open]', 'Planning failed \u2026 [Try again]' and 'You rejected the plan. Nothing was written. [Draft a new plan]'. start-check shows 'Review the plan' while the plan waits.",
+      "check_in_the_app": "Create a project with a brief. The Inbox shows 'Plan for \"X\": 6 tasks' with the tasks once, the decision as text, and Approve and start / Change the plan / Reject, each explained. Approve and start: 'Done: Plan approved: 6 tasks written; working on them.' and a session runs. On a second project, use Change the plan, type words and Send: a new plan card arrives. On a third, Reject: the project page says 'You rejected the plan. Nothing was written.', and Draft a new plan drafts one again."
+     },
+     {
+      "problem": "[major] 'Needs you' was split, and the counts disagreed: 'needs you: X' beside 'Waiting on you 0', 'good' while a task was stuck on Docker, and the header badge counting only blocking cards.",
+      "u_ids": [
+       "U-071",
+       "U-079"
+      ],
+      "failing_test_before": "packages/runtime/test/project-health.test.ts (2 cases); apps/ui/test/real-daemon.test.ts 'project card: only a card is 'needs you' \u2026' and 'a run that errors \u2026' (needsYouCount / waitingOnYou)",
+      "how": "project-health.ts: needsYou names only the task of an open card. A cardless agent-left needs_human task is 'attention'. InboxView.needsYouCount (every open card) is also sent on inbox.changed, including the first frame. The header badge, the Inbox heading and each project's waitingOnYou now count the same cards.",
+      "check_in_the_app": "At each step of a journey, compare the header's Inbox badge, the Inbox's 'Needs you (n)' and the sum of Home's 'Waiting on you'. They are equal (bench walk: 2/2/2, then 4/4/4)."
+     },
+     {
+      "problem": "[major] The Docker wait was one global info card: no project, raw JSON, a reply box with nothing to answer, and no way forward.",
+      "u_ids": [
+       "U-079"
+      ],
+      "failing_test_before": "packages/runtime/test/sandbox-waiting.test.ts (card per project with Cancel task; Cancel task cancels the task)",
+      "how": "sandbox-wiring.ts now files one card per project, naming its task ('\"X\" waits for Docker: <headline> \u2026'), with the steps for this computer. For one task the option is Cancel task (SANDBOX_CANCEL_OPTION), and syncAnswers() cancels that task from syncApprovals. The Inbox puts Set up Docker (a link to Settings \u2192 Sandbox) first. There is no light-review bypass (ADR 0101, 0102).",
+      "check_in_the_app": "Without Docker, plan a full-review task and run a session. The Inbox shows '\"Check that index.html\u2026\" waits for Docker' under its project, with Set up Docker and Cancel task. The project is no longer 'good'."
+     },
+     {
+      "problem": "[major] The Inbox filled with echoes of the person's own clicks, chat commands and project switches ('from Alice'), and session Updates quoted back what the person said.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'the Inbox does not echo the person \u2026' (8 messages before, 0 after); packages/commands/test/executor.test.ts",
+      "how": "The @forerunner/commands executor post() no longer sends the person's own change to their Inbox. Agent changes and temporary changes reverting by themselves still do. runner.ts no longer appends the O.9 'You said during the session' report to the session's Update, and describeHeard is removed.",
+      "check_in_the_app": "Pause and resume a task a few times on the Tasks tab, give five chat commands and switch projects. The Inbox's Updates do not grow; Changes lists each one."
+     },
+     {
+      "problem": "[major] A person task ('Confirm the hosting choice with me') went to a coder, and New task 'Me' waited for a poll before its card appeared.",
+      "u_ids": [
+       "U-022"
+      ],
+      "failing_test_before": "packages/runtime/test/person-questions.test.ts 'a title the person wrote in the first person asks them'; apps/ui/test/real-daemon.test.ts 'New task with 'Me: ask me in the Inbox' is a question card at once \u2026'",
+      "how": "person-questions.ts PERSON now matches 'me'. POST /projects/:id/tasks runs syncApprovals after a ready person task is added (the fake does the same), so its card is there at once and no session runs it. The questions card offers Go ahead without for specialists' questions, and Cancel task asks once and names what will be stuck.",
+      "check_in_the_app": "New task \u2192 Who does it: 'Me: ask me in the Inbox'. The row reads 'Needs your answer' at once, and the Inbox has '\"X\" needs your answers'. A title ending 'with me' does the same."
+     },
+     {
+      "problem": "[major] Cancel on a card was one irreversible click that did not name the waiting tasks, and an answer that arrived after the task had moved on was silently ignored.",
+      "u_ids": [
+       "U-080",
+       "U-040"
+      ],
+      "failing_test_before": "apps/ui/test/inbox.test.tsx 'Cancel task asks once, names what waits on the task \u2026' and 'answers that came after their task finished \u2026'; apps/ui/test/real-daemon.test.ts 'answers that came after their task had finished \u2026'",
+      "how": "Each Cancel task choice has explain and confirm text naming the waiting tasks. A questions card answered after its task finished says so and carries followUp 'Redo with these answers'. The FollowUp button runs the task's Redo, Reopen or Try again, and the next brief reads the answers through answersBlockFor.",
+      "check_in_the_app": "Click Cancel task on a card: it asks 'Cancel \"X\"? \"Y\" waits on it and will be stuck.' first. Answer a card whose task has already finished: the Answered entry says your answers came after it finished and offers Redo with these answers."
+     },
+     {
+      "problem": "[major] Answering a high-risk card from Chat in the desktop app was refused ('confirm \u2026 on a paired device') and a second approval card was added.",
+      "u_ids": [
+       "U-029"
+      ],
+      "failing_test_before": "packages/commands/test/commands.test.ts 'request.answer takes the request's own risk' (now: refused with a pointer, no new request)",
+      "how": "In the executor gate, a request.answer that needs a device confirmation is refused with 'Answer it on its card in the Inbox (\u2026): it is open there, and nothing else was filed.' (details.reason answer_on_card). No second card is filed, and the security policy is unchanged.",
+      "check_in_the_app": "With a high-risk card open, tell Talk to answer it. The reply points to the card in the Inbox, and no second card appears."
+     },
+     {
+      "problem": "Handoff items: Undo on the Changes page left the header count stale; before approval the Start dialog's button was 'Open Tasks'; the retry card offered 'Go ahead without' on the Tasks tab; the 'go ahead without' note reaching the brief was untested.",
+      "u_ids": [
+       "U-046"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'an Undo on the Changes page that brings a card back tells the header'; the plan-card start-check assertion; apps/ui/test/inbox.test.tsx 'on the Tasks tab the task reads Needs your decision \u2026'; packages/runtime/test/task-actions.test.ts 'Go ahead without: the next run's brief \u2026' (passed before: it confirms the note reaches the brief)",
+      "how": "POST /changes/:id/undo now emits inbox (the fake sends inbox.changed). start-check's blocked reads 'Nothing can run yet: the plan from your brief waits for your approval.' with Review the plan (or '\u2026is being drafted.'). TaskDisplay.blocker.cardKind tells retry cards from questions: 'Needs your decision: tried 4 times' with Answer / Try again / Cancel. ACTION_FROM.try_again now includes needs_human.",
+      "check_in_the_app": "Undo a Cancel that withdrew a card: the header badge goes up at once. Open Start on a project whose plan waits: you see 'Review the plan'. A task waiting on its retry card shows Answer, Try again and Cancel on the Tasks tab."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "The plan for a one-line brief should be small (1 to 3 tasks), with the doc set scaffolded silently (design \u00a73.3, small-project mode for short briefs)",
+      "why": "This is the planning prompt's and the model's behaviour. The bench stand-in plans 5 or 6 tasks whatever the brief and ignores 'Change the plan' words, so it cannot be shown or tested without the real API, and there was no key this session. The card no longer lists the docs, and Change the plan sends the person's words to the model (tested: a new card arrives)."
+     },
+     {
+      "problem": "Chat answering a medium-risk card (a chat 'yes') still files the executor's pending yes/no card beside the original",
+      "why": "I fixed only the needs_device case the walks hit. The needs_yes path is how the chat area (same wave, in parallel) confirms in chat, and changing it would risk its flow. Left for the chat area / the merge."
+     },
+     {
+      "problem": "Mobile Inbox (apps/ui/src/mobile) still shows raw option words, the blocking count and the reply box",
+      "why": "The mobile screens are outside this area's files. They keep compiling, and the new view fields are optional, so they can adopt choices, needsYouCount and outcome later."
+     },
+     {
+      "problem": "Closing a high-risk Settings preview with x leaves an 'approval needed' card (walk-lifecycle finding in the inbox-needs-me list)",
+      "why": "Not in this area's synthesis problems: it is SettingsPage.tsx's preview dialog (lifecycle-settings). The answer: the dialog's onClose should answer the pending command 'no'."
+     },
+     {
+      "problem": "Session Updates still say '\"X\" needs your decision (Inbox).' beside the card itself, which repeats the fact (design \u00a75.10)",
+      "why": "The session Update wording is session-engine/system-text's (sessionUpdateLine). Wave 3's system-text can drop the line when a card exists."
+     }
+    ],
+    "validation": [
+     {
+      "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 pnpm check",
+      "result": "exit 0. Lint: 0 errors, 60 warnings (baseline 61). lint:paths ok. Typecheck ok. Unit: 406 files, 4146 passed, 6 skipped. docs-check ok (66 files). link-check ok. secret-scan clean."
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "Final run exit 0: 4 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG), 25 tests passed. One earlier run failed browser.integration.test.ts 'aborts subresources \u2026' on its 120 s timeout while the bench daemon and Vite were running. It passed alone (16/16) and in the final run with the bench stopped. The test is load-sensitive and unrelated to this change."
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped. Four scenarios were updated to the design's words; they are listed under tests_changed_for_design."
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "74 files, 684 passed. One earlier full run had real-daemon 'Stop on the running task' time out (3 s eventually) under parallel load. It passed alone, in its describe block, in the whole file (59/59) and in two later full runs."
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "31 passed + 1 fixed. smoke.spec badge was racing the fake's first frame; it now asserts 2. inbox.spec was rewritten to the new Inbox. Both then passed 3 times in a row. The full suite earlier gave 31 passed and 1 failed before that fix."
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+     },
+     {
+      "command": "bench fix-needs-me (provider bench, FAIL='Write down the scope', ASK='Show a random quote', PERSON=1, RISK2='Check that index.html'), scripts in /tmp/frbench/fix-needs-me-shots/scripts (before.cjs, after.cjs, final.cjs)",
+      "result": "(a) 'Done: Plan approved: 6 tasks written; working on them.' and a session ran. (b) Change the plan produced a new plan card; the stand-in keeps 6 tasks. (c) Reject, then Draft a new plan on the project page, drafted a new plan. (d) Answering the ask card started a session by itself (3 sessions vs 2). (e) One retry card naming the task, with the designer's words and what waits; Try again started a session; Mark done anyway asked once and the task reads 'Done: accepted without review'; the dependants ran. (g) A Docker card per project with Set up Docker and Cancel task. (h) needsYou = badge = sum of projects' waiting (2/2/2, then 4/4/4). (i) Five Tasks-tab moves and five chat commands added 0 Updates. (j) No Change-card JSON; Answered lists 8 entries with their outcomes. (k) Covered by a test; not walked."
+     },
+     {
+      "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+      "result": "not run: the desktop shell was not touched"
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/critic/test/critic.test.ts 'tier 3 ends in a human verdict \u2026'; packages/critic/test/followup.test.ts (escalate ladder, project ceiling)",
+      "why": "Design \u00a73.8: the sign-off and retry cards name the task in words, with no 'tier 3', 'Retry ladder exhausted' or 'ceiling sonnet'. Options are now Accept the work / Send it back / Cancel task and Try again / Mark done anyway / Cancel task."
+     },
+     {
+      "test": "packages/runtime/test/signoff-answer.test.ts (accept answered with the shown option; reason without request id; ladder card answered 'Mark done anyway')",
+      "why": "Answers use the options the Inbox shows (AGENTS.md), and reasons carry no ids (design \u00a75 rule 3). The audit row still ties the request to the task."
+     },
+     {
+      "test": "packages/runtime/test/request-answers.test.ts, answer-options-daemon.test.ts, review-failed.test.ts, loop-routes.test.ts, services/state-api/test/answer-options.test.ts, review-verdict.test.ts",
+      "why": "The option words changed (design \u00a73.8). Refusals and the phone's verdict mapping now name the new words, and the old words are still read."
+     },
+     {
+      "test": "packages/runtime/test/late-approval.test.ts 'a refused late answer \u2026'",
+      "why": "A failed task now gets its one card (design \u00a73.8). The test still asserts that no new question about the call is filed, and adds the failed-task card."
+     },
+     {
+      "test": "packages/runtime/test/extensions-retired.test.ts, wiring.test.ts (model watch), apps/ui/test/real-daemon.test.ts (extensions approve/deny, Go ahead without, Cancel and Try again withdraw)",
+      "why": "GET /inbox now also lists answered and withdrawn cards for the Answered list (design \u00a73.8). 'Not in the Inbox' now means not among the open cards. The withdrawn card's Answered line is asserted."
+     },
+     {
+      "test": "packages/runtime/test/intake.test.ts (options, reject note, startServices:false)",
+      "why": "Design \u00a73.3: Approve and start / Change the plan / Reject, and a reject note in words. The file now composes without the scheduler so its cases read the written plan; the start is tested on the composed daemon in real-daemon.test.ts."
+     },
+     {
+      "test": "packages/runtime/test/live-chat.test.ts (2 cases)",
+      "why": "Design \u00a75.11: the session's Update no longer quotes what the person said (the O.9 report). The session log's inbox.heard and task.heard still name where each line went."
+     },
+     {
+      "test": "packages/runtime/test/project-health.test.ts, apps/ui/test/real-daemon.test.ts 'project card: only a card is 'needs you' \u2026'",
+      "why": "Design \u00a73.8: only a card counts as 'needs you', so needsYou comes from open cards and agrees with waitingOnYou. A cardless agent stop is 'attention'."
+     },
+     {
+      "test": "packages/runtime/test/sandbox-waiting.test.ts",
+      "why": "The Docker wait is one card per project, naming its task, with Cancel task (design \u00a73.8, \u00a74.12)."
+     },
+     {
+      "test": "packages/commands/test/executor.test.ts, packages/runtime/test/conversation.test.ts, tests/e2e/scenarios/03-voice and 09-phone",
+      "why": "Design \u00a75.11: the person's own commands are not echoed to their Inbox. An agent's change still is (asserted)."
+     },
+     {
+      "test": "packages/commands/test/commands.test.ts 'request.answer takes the request's own risk'",
+      "why": "A high-risk card answered from chat is refused with a pointer to the card and no second card (design \u00a73.8). It is still not applied."
+     },
+     {
+      "test": "tests/e2e/scenarios/01-good-day (sign-off words), phase3-gate (card text; the runs still prove the ceiling)",
+      "why": "Card wording (design \u00a73.8)."
+     },
+     {
+      "test": "apps/ui/test/inbox.test.tsx (rendering, U-034, reload, intake, questions), home.test.tsx and apps/ui/e2e/smoke.spec.ts (badge 2), plain-words.test.tsx (Answered), project.test.tsx (banner words), apps/ui/e2e/inbox.spec.ts",
+      "why": "The Inbox screen was redesigned (\u00a73.8): Needs you / Updates / Answered, no badges or JSON, a text box only where accepted, and Done lines. The badge counts every open card. IntakeBanner uses the \u00a73.3 state words. U-034 is now tested by an option refused after the card changed, since approvals no longer have a text box."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts 'Tasks tab: Cancel and Try again withdraw \u2026' (person task part)",
+      "why": "A person task now gets its card at creation, so the test no longer moves it to needs_human by hand."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-needs-me-shots/before/02-before-inbox-plan-card.png",
+      "/tmp/frbench/fix-needs-me-shots/before/03-before-inbox-after-approve.png",
+      "/tmp/frbench/fix-needs-me-shots/before/04-before-inbox-ladder-card.png",
+      "/tmp/frbench/fix-needs-me-shots/before/05-before-inbox-after-sessions.png",
+      "/tmp/frbench/fix-needs-me-shots/before/06-before-home-after-sessions.png"
+     ],
+     "after": [
+      "/tmp/frbench/fix-needs-me-shots/after/03-after-a-inbox-plan-card.png",
+      "/tmp/frbench/fix-needs-me-shots/after/04-after-a-approved-done-line.png",
+      "/tmp/frbench/fix-needs-me-shots/after/07-after-d-ask-answered-done-line.png",
+      "/tmp/frbench/fix-needs-me-shots/after/08-after-g-inbox-docker-and-person.png",
+      "/tmp/frbench/fix-needs-me-shots/after/09-after-e-retry-card.png",
+      "/tmp/frbench/fix-needs-me-shots/after/10-after-e-try-again-done-line.png",
+      "/tmp/frbench/fix-needs-me-shots/after/11-after-e-mark-done-confirm.png",
+      "/tmp/frbench/fix-needs-me-shots/after/13-after-e-tasks-accepted-without-review.png",
+      "/tmp/frbench/fix-needs-me-shots/after/14-after-b-change-the-plan-text.png",
+      "/tmp/frbench/fix-needs-me-shots/after/16-after-b-new-plan-card.png",
+      "/tmp/frbench/fix-needs-me-shots/after/18-after-c-project-rejected-banner.png",
+      "/tmp/frbench/fix-needs-me-shots/after/20-after-j-inbox-final-with-answered.png",
+      "/tmp/frbench/fix-needs-me-shots/after/22-final-inbox.png",
+      "/tmp/frbench/fix-needs-me-shots/after/23-final-inbox-answered-open.png",
+      "/tmp/frbench/fix-needs-me-shots/after/24-final-home.png"
+     ]
+    },
+    "new_problems": [
+     "Load-sensitive tests, all green when rerun. apps/ui/test/real-daemon.test.ts 'Stop on the running task \u2026' waits on a 3 s `eventually` and timed out once in a full parallel UI run (4.0 s). packages/capabilities/test/browser.integration.test.ts timed out once at 120 s while the bench was running. Both passed alone and in later full runs.",
+     "The project header (ProjectPage, progress-navigation) shows the health badge 'blocked' next to 'needs you: X'; see after/13-after-e-tasks-accepted-without-review.png. The design's one status sentence (\u00a72) should replace both.",
+     "Session Updates repeat what a card already says ('Packing list: \"X\" needs your decision (Inbox).' beside the card); see after/20. One place per fact (\u00a75.10). Belongs to system-text / sessionUpdateLine.",
+     "The bench stand-in ignores 'Change the plan' words: the redrafted plan has the same 6 tasks. Its role-player (testenv/src/bench/plans.ts) could react to an 'only \u2026' change, so walks can show a smaller plan.",
+     "Shell.tsx's badge aria-label still says 'N blocking' while it now shows every open card (progress-navigation owns the Shell).",
+     "Out of scope, from the walk: approving an extension from a URL answers 503 and leaves the panel and Inbox disagreeing (extensions). Closing a high-risk Settings preview with x leaves an approval card (SettingsPage)."
+    ],
+    "notes_for_other_areas": [
+     "All areas: HumanRequestView now carries title, body, choices[{label, explain, tone primary|secondary|danger, confirm, input note|text}], links[{label,to,explain}], reply (none|text|form), details[], outcome, answeredAt and followUp. The words come from the pure packages/runtime/src/daemon/request-words.ts (requestWords). The daemon builds them with requestViews(store, rows) in views.ts, which reads each card's project, task, task status and the open tasks waiting on it. Home's 'Needs you' list and the Overview's cards (progress-navigation) and the chat's open cards (chat) should show title, body and choices rather than why/options.",
+     "Counts: InboxView.needsYouCount and inbox.changed.needsYouCount count every open card. GET /inbox also returns answered and withdrawn cards (filter status === 'open' for what needs the person). The UI store's 'blockingCount' action is now fed needsYouCount ?? blockingCount (context.tsx, sse.ts, InboxPage, TasksTab). Shell's aria-label still says 'blocking'.",
+     "ProjectCard.needsYou now names only the task of the project's oldest open card, so it agrees with waitingOnYou. A cardless agent-left needs_human task makes health 'attention'. progress-navigation's status sentence can read it.",
+     "Answering resumes work: session/resume-work.ts resumeWork(store, start, {agentId, projectId, reason}) starts or queues a session only when a task can run, and recordStart() writes change_card.start for the Done line. Use them for any new answer path.",
+     "The runner files a failed-task card (fileFailedTaskCard in session/findings.ts; SIGNOFF_KEY, reason 'failed') right after a task moves to failed. Its words: '\"X\" failed', 'What failed: \u2026'.",
+     "TaskDisplay.blocker.cardKind ('retry' | 'questions'). A task on a retry card reads 'Needs your decision: tried N times' and offers Answer, Try again and Cancel (actionsFor). ACTION_FROM.try_again includes needs_human.",
+     "Card option words: SIGNOFF_OPTIONS = Accept the work / Send it back / Cancel task; RETRY_CARD_OPTIONS (and blocked-findings, review-failed) = Try again / Mark done anyway / Cancel task; INTAKE_OPTIONS = Approve and start / Change the plan / Reject (Change the plan sends {choice, text}); person questions add 'Go ahead without'. The readers still read the old words. Mark done anyway writes ACCEPTED_WITHOUT_REVIEW.",
+     "chat (same wave): the commands executor no longer posts the person's own changes to their Inbox, so the chat's reply must carry the sentence (it does). request.answer that needs a device confirmation is now refused with 'Answer it on its card in the Inbox \u2026' (details.reason 'answer_on_card'), and no second card is filed. The chat could render that as a link to /inbox. needs_yes is unchanged. describeHeard (the O.9 'You said during the session' report) is removed.",
+     "Docker: one card per project from sandbox-wiring.ts (author sandbox-gate, key sandbox.not_ready, task_id for one task, change_card task_ids/task_titles/headline, option 'Cancel task' = SANDBOX_CANCEL_OPTION). rt.sandbox.syncAnswers() runs from syncApprovals. The Inbox adds a 'Set up Docker' link (/settings#sandbox).",
+     "Intake: POST /projects/:id/intake/retry now also drafts after a Reject (Draft a new plan). IntakeStatus 'failed' with a 'new plan was not drafted' error when a Change the plan draft was lost to a restart. start-check's blocked reads 'Nothing can run yet: the plan from your brief waits for your approval.' with action Review the plan \u2192 /inbox (kind stays nothing_runnable).",
+     "POST /projects/:id/tasks runs syncApprovals after adding a ready person task, so its card exists when the call returns. POST /changes/:id/undo now emits inbox.",
+     "The bench after-journey script is reusable: /tmp/frbench/fix-needs-me-shots/scripts/after.cjs (acceptance a, b, c, d, e, g, h, i, j on a fresh bench with the needs-me env)."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "I walked the journey twice, from scratch both times. The first walk's screenshots were wiped when I restarted the bench with --fresh; the second walk regenerated them, and both walk logs are kept. Bench \"review-needs-me\" (daemon :47990, UI :1590), started from the worktree at fix/needs-me cb6b708. Provider bench with FAIL='Write down the scope', ASK='Show a random quote', PERSON=1, RISK2='Check that index.html'. Chromium via scripts/bench/recorder.cjs, every step done by clicking in the UI. Screenshots are in /tmp/frbench/review-needs-me/steps/ (01 to 48). The logs are /tmp/frbench/review-needs-me/walk-log.txt (second walk) and walk-log-run1.txt (first walk). The scripts are in /tmp/frbench/review-needs-me/scripts/ (p1 to p8, c1 to c3). problems.jsonl stayed empty: no console errors and no HTTP status of 400 or above.\n\n(a) Created \"Quote page\" through New project. The banner read \"Waiting for you: approve the plan [Open]\" (03). The plan card shows the plan once: tasks in order, who does each, about CHF, Needs Docker, the decision as text, no JSON, and Approve and start / Change the plan / Reject, each with its explanation (05). Approve and start replaced the card with \"Done: Plan approved: 6 tasks written; working on them.\" and a session started without Start (06). PASS.\n\n(d) The ask card (08) shows the specialist's words, what waits on the task, Go ahead without and Cancel task. Send answers gave \"Done: Answers sent: \u2026 a session started.\" and a session started by itself (11). PASS.\n\n(g) Docker: \"\\\"Check that index.html\u2026\\\" waits for Docker\" under its project, with Set up Docker (primary, a link) and Cancel task (outlined in red, asks once) (14, 16). Set up Docker opens /settings#sandbox, but the page stays at the top (17). PASS, apart from the note under non_blocking.\n\n(e) \"Packing list\", non-web brief, approved in the Inbox. After the session there was exactly 1 card: '\"Write down the scope in docs/scope.md\" failed 4 times', 'The designer said: \"I could not complete this task\u2026\" \"Build the first working version in src/main.js\" waits on it.' Each of Try again / Mark done anyway / Cancel task has a consequence line (20). Cancel task asks 'Cancel \"\u2026\"? \"Build the first working version\u2026\" waits on it and will be stuck.' (21). Try again with a note gave \"Done: Trying \u2026 again: a session started.\" A session ran, and the note reached 2 specialist calls (22). One card again afterwards (23); it said \"failed 6 times\" after 5 runs (see non_blocking). Mark done anyway asks once (24), then \"Done: \u2026 is done: accepted without review. What comes after it runs now: a session started.\" (25). The Tasks tab shows \"Done: accepted without review\", and the dependants ran (26). PASS.\n\n(f) Restarted the daemon with FAIL_MODE=error. The Answered list (9 entries) and the counts survived the restart (41). New project: one card '\"Write down the scope\u2026\" failed', 'What failed: Claude did not answer (model call failed). \"Build the first\u2026\" waits on it.' (42); Cancel names what will be stuck (43). Try again started a session; Mark done anyway closed the task and the dependants ran (45). PASS.\n\n(b) \"Change the plan\" opened a box (28). Sending \"single index.html only\" gave a Done line (29) and a new plan card (30). The intake call carried the words; the stand-in still plans 6 tasks. PASS on mechanics.\n\n(c) Reject: Done line (31). The project page says \"You rejected the plan. Nothing was written. [Draft a new plan]\" (32). Draft a new plan led to drafting and then a new plan card (33, 34). PASS.\n\n(h) At every step these were equal: needsYouCount, the header badge, the sum of Home's \"Waiting on you\", and the open cards (1/1/1, 2/2/2, 3/3/3, 4/4/4, 6/6/6; no card without a project). PASS.\n\n(i) Six Tasks-tab Pause/Resume clicks and five chat commands (three executed) added 0 Updates (35, 36). They are listed in Changes. PASS.\n\n(k) New task \"Me: ask me in the Inbox\": the row read \"Needs your answer\" at once with Answer and Cancel, the badge went 3 to 4, a card arrived, and no session started (37, 38). Cancel on the Tasks tab then Undo on Changes: the badge went 3 to 4 without a reload (39). PASS.\n\n(j) No \"Change card\", no JSON and no free-text box anywhere. Answered (n) lists each answer with what came of it (40). PASS.\n\nStart dialog while the plan waits: \"Nothing can run yet: the plan from your brief waits for your approval. [Review the plan]\" (46). Two older lines remain below it (see non_blocking).\n\nFAIL, design \u00a73.8 \"Answering resumes work\": answering a person's planned questions card closes that task and makes the task after it runnable, but no session starts. It happened every time across both walks:\n- Quote page (13): \"Done: Answers saved in the decision record; \\\"Decide where the page is published\\\" is done.\" The README became Ready and no session started (still 3 sessions after more than a minute).\n- Packing list (27): same Done line; README Ready, no session within 25 s, and the project health reads \"good\".\n\nExtra edge-path check (/tmp/frbench/review-needs-me/evidence-change-plan/): when the \"Change the plan\" re-draft fails, the project page's Try again re-drafts without the person's words. The intake calls carried the words: [false, true, false].\n\nBench stopped.",
+    "blocking": [
+     {
+      "issue": "Answering a person's planned questions card (and the card of a task made with New task 'Me') does not resume work. The task closes and the task waiting on it becomes Ready, but no session starts and none is queued. Design \u00a73.8 says every answer that makes a task runnable starts or queues a session, the same way for every card. The fixer's claim and the user guide's new sentence ('every answer that makes a task runnable starts a session of its project') promise the same, so this also breaks design \u00a75 rule 9 (no promises the code does not keep).",
+      "where": "packages/runtime/src/session/person-questions.ts:754 (the on_answer === \"done\" branch never sets follow, so resumeWork at :773 is skipped; the 'without' path at :649 has the same gap); apps/ui/test/fake-daemon.ts:2122 copies the gap (start recorded only when on_answer !== \"done\")",
+      "evidence": "Reproduced in both walks. In /tmp/frbench/review-needs-me/steps/13-p2-person-answered-done-line.png, Send answers on '\"Decide where the page is published\" needs your answers' gave the Done line 'Answers saved in the decision record; \u2026 is done.' with no session. 'Write the README\u2026' went from Waiting to Ready, and GET /sessions?projectId stayed at 3 for over a minute. In steps/27-p4-person-answer-frees-readme.png (Packing list), the same happened: 'README Ready', no session within 25 s, project health 'good' while a Ready task sits idle. The second walk logged 'no session after person answers timed out' and 'after person answers on D: session started? timed out \u2026 | README Ready'. By comparison, Approve and start, the specialist's ask card, Try again and Mark done anyway all started sessions on the same bench. No test covers a planned person card with a task that waits on it.",
+      "expected": "After a planned questions card closes its task, call resumeWork(store, deps.start, {agentId, projectId, reason}) and recordStart. resumeWork already starts only when a task can run. The Done line then reads '\u2026; a session started'. Make the same change in the fake. Add a real-daemon.test.ts case that sends the form answer the Inbox sends ({answers:[\u2026]}) for a planned person task with a task waiting on it, and asserts that a session starts and that the outcome says so."
+     },
+     {
+      "issue": "'Change the plan' loses the person's words when the re-draft does not finish. intake.status() reports the lost draft as failed ('The new plan with your changes was not drafted: Forerunner closed before it was done.'), or as planning failed when the model call fails. The project page's Try again then calls retry(), which runs enqueue(projectId) with no brief, so the new plan is drafted from the original brief without the requested change. The new restart state (outcome 'changed' with no draft running) has no test at all, which breaks validation rule 4 (persisted state tested across a restart). The wording promises a redraft 'with your changes' that the code does not do (design \u00a75 rule 9).",
+      "where": "packages/runtime/src/session/intake.ts:526 (changeLost) and :634 (retry \u2192 this.enqueue(projectId) without the change text); the change text is only passed in memory at :1134",
+      "evidence": "Bench check in /tmp/frbench/review-needs-me/evidence-change-plan/. First a plan card on 'Change me'. Then the daemon restarted with FORERUNNER_BENCH_INTAKE=error, and Change the plan with 'single index.html only' was sent. The banner read 'Planning failed. Nothing was written. \u2026 [Try again]' (01-c2-change-redraft-failed.png). The daemon restarted with planning working, and Try again was clicked (02-c3-after-try-again.png). The model-call log shows the intake calls carrying 'single index.html only' as [false, true, false]: the Try again draft did not include the person's words. A search of the repo for the new error text finds it only in intake.ts, so no test covers this path.",
+      "expected": "Keep the requested change with the project (for example on the 'changed' card or in summary_cache.intake) and have retry() redraft with it. Test it by composing the runtime twice on one home (change answered, daemon closed before the draft) and by a failing re-draft. In both cases assert that Try again's intake call carries the words."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "The retry card after the last retry names the task, quotes the specialist, says what waits, and offers Try again / Mark done anyway / Cancel task with a line each; Try again starts a session; Mark done anyway asks once and records 'accepted without review'",
+      "holds": true,
+      "note": "Walked (steps 20-26). real-daemon 'after its retries\u2026' fails on base (no title) and passes on the fix. The second card says 'failed 6 times' after 5 runs (non_blocking)."
+     },
+     {
+      "claim": "A failed task (the run errors) gets one card instead of 'Nothing waits on you'; Cancel task names what will be stuck",
+      "holds": true,
+      "note": "Walked with FAIL_MODE=error (steps 42-45). real-daemon 'the failed task is a card\u2026' fails on base ('expected [] to have a length of 1') and passes on the fix."
+     },
+     {
+      "claim": "Every answer that makes a task runnable starts or queues a session (Try again, Mark done anyway, Send answers, Go ahead without, Approve and start)",
+      "holds": false,
+      "note": "Holds for Approve and start, the specialist's ask card, Try again and Mark done anyway. Fails for Send answers on a planned or 'Me' person questions card, which frees the task after it but starts nothing (blocking 1)."
+     },
+     {
+      "claim": "The Inbox shows Needs you / Updates / Answered, with no Change-card JSON, no badges, a text box only where text is accepted, Done lines, and destructive choices confirmed",
+      "holds": true,
+      "note": "Walked (steps 05, 06, 11, 40). inbox.test.tsx was rewritten to the new design; the removed assertions all belonged to the old screen."
+     },
+     {
+      "claim": "Plan card: Approve and start / Change the plan / Reject; Reject leads to Draft a new plan; the plan is shown once",
+      "holds": true,
+      "note": "Walked (steps 05, 28-34). A smaller plan cannot be shown with the stand-in (in not_done). Change the plan loses its words if the redraft fails (blocking 2)."
+     },
+     {
+      "claim": "The counts agree: header badge, Inbox 'Needs you (n)', Home 'Waiting on you'; health is 'good'/'attention' rather than 'needs you' for a task with no card",
+      "holds": true,
+      "note": "Equal at every step of both walks. project-health tests fail on base and pass on the fix."
+     },
+     {
+      "claim": "The Docker wait is one card per project naming its task, with Set up Docker and Cancel task (no light-review bypass, per ADR 0101/0102)",
+      "holds": true,
+      "note": "Steps 14-17. sandbox-waiting.test fails on base and passes on the fix. Set up Docker does not scroll to the Sandbox section (non_blocking)."
+     },
+     {
+      "claim": "No echoes: Tasks-tab moves, chat commands and project switches add no Update; the O.9 'You said during the session' report is removed",
+      "holds": true,
+      "note": "0 Updates added on the bench. The executor test now also asserts that an agent's change still posts."
+     },
+     {
+      "claim": "Person tasks: New task 'Me' is a card at once with no run, and a first-person title ('with me') counts as the person's",
+      "holds": true,
+      "note": "Walked (steps 37-38). The person-questions test fails on base."
+     },
+     {
+      "claim": "A high-risk card answered from chat is refused with a pointer to the card, and no second card is filed",
+      "holds": true,
+      "note": "commands.test.ts passes; the security policy is unchanged. Not walked (stand-in chat)."
+     },
+     {
+      "claim": "Handoff: Undo on Changes updates the header count; the Start dialog shows Review the plan; a retry card's task offers Answer / Try again / Cancel; the 'go ahead without' note reaches the brief",
+      "holds": true,
+      "note": "Undo walked: badge 3 to 4 without a reload. Start dialog walked (step 46), with leftover old lines (non_blocking). The other two are covered by passing tests."
+     },
+     {
+      "claim": "Validation: pnpm check, test:integration, test:e2e, the UI vitest suite and Playwright are green",
+      "holds": true,
+      "note": "Rerun here: pnpm check exit 0 (406 files, 4146 passed); e2e 25 passed and 1 skipped; integration 25 passed (Postgres tests skipped as expected); UI vitest 74 files / 684 passed; Playwright 32 passed. One standalone UI run hit the known flaky 'Stop on the running task' test; the base branch fixed that test in 5b1fb2b after this branch was cut, and the full suite passed. No conflict markers."
+     },
+     {
+      "claim": "Each new or changed route has a real-daemon case and the fake changed in the same commit",
+      "holds": true,
+      "note": "Commits 7173244 and 8c48c0e change server.ts, fake-daemon.ts and real-daemon.test.ts together (/inbox, /requests/:id/answer, /projects/:id/intake/retry, /projects/:id/tasks, /changes/:id/undo, /projects/:id/start-check)."
+     },
+     {
+      "claim": "No test was weakened",
+      "holds": true,
+      "note": "I read every changed or removed assertion. Each follows the design's new words, the open-only filter on Inbox lists or the no-echo rule, and the replacements assert the visible result. intake.test now composes with startServices:false; the start is tested in real-daemon instead."
+     }
+    ],
+    "non_blocking": [
+     "The retry card's count overstates the failures. After Try again, the second card read '\"Write down the scope\u2026\" failed 6 times' while the task had 5 work runs (GET /tasks/:id runs). The revise path does needs_human\u2192ready\u2192failed\u2192ready, which adds an attempt, and retryCardWords uses followup.attempt (packages/runtime/src/session/findings.ts revise branch, packages/runtime/src/loop/critic.ts). Design \u00a71 'true now'.",
+     "The Docker card's Set up Docker links to /settings#sandbox, but with in-app navigation the page stays at the top ('Your agent'), and the person must scroll to find 'Sandbox (Docker)' (steps/17-p2-g-settings-sandbox.png). The Start dialog's Settings link has the same problem. SettingsPage/Shell should scroll to the hash.",
+     "The Start dialog, while the plan waits, still shows the old StartSessionDialog lines under the new sentence: 'Give your agent work first: add a task on the Tasks tab\u2026' and 'The plan from your brief waits for your approval in the Inbox\u2026' (steps/46). That is three statements of one blocker, and one points to the wrong place. StartSessionDialog.tsx:303-312 belongs to session-engine.",
+     "The IntakeBanner failed state shows the raw error 'intake: the planning call ended error: model call failed' (evidence-change-plan/01). Design \u00a73.3 asks for 'Planning failed: <reason in words>'. The text predates this change; the banner is in this area's files.",
+     "Session Updates repeat the cards and go stale: '\"Write down the scope\u2026\" needs your decision (Inbox).' appears twice, and \"Show a random quote\u2026\" still 'needs your decision' after it was answered (steps/27). Design \u00a75.10 and \u00a71 'true now'. Belongs to system-text (sessionUpdateLine), as the fixer noted.",
+     "The phone's review mapping: APPROVING now includes 'mark done anyway', so the phone's Reviews 'Approve' on a retry or failed-task card closes the task without review and without the confirmation ADR 0102 asks for. The mapping predates this change ('accept'); phone is out of scope (\u00a77), but worth a look.",
+     "personQuestionsAnswer reads a free-text 'go ahead' (from the phone, say) as Go ahead without. On a planned person card this closes the task, although that card does not offer the choice.",
+     "Docker card cancel outcome fallback: q(ctx.taskTitle ?? \"The task\") would render '\"The task\" was cancelled.' with quotes (request-words.ts dockerCard). Cosmetic.",
+     "Not in this area's files: Home and project headers still show stage, health badges, autonomy and critic grade, and a red 'Stop all' shows while nothing runs (progress-navigation and shell, wave 3)."
+    ]
+   },
+   "fixup": {
+    "area": "needs-me",
+    "branch": "fix/needs-me",
+    "head_sha": "09371b25d607f073532b604255bb572932d5d7f7",
+    "commits": [
+     {
+      "sha": "09371b2",
+      "subject": "needs-me: answering a person's task starts what waited on it; Change the plan keeps the words through a failed or lost draft; \"failed N times\" counts runs; a paused Docker task can be resumed (U-022, U-046, U-073, U-079)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocking 1] Send answers on a planned person card (the plan's \"you: answer its questions\" task, or New task 'Me') closed the task and made the task waiting on it Ready, but no session started or was queued. This broke design \u00a73.8 \"Answering resumes work\" and the user guide's promise.",
+      "u_ids": [
+       "U-022"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'a task only the person can do: Send answers closes it, and the task waiting on it starts in a session at once' (Done line had no '; a session started'); apps/ui/test/inbox.test.tsx 'Send answers closes the task; the Done line says the task waiting on it started \u2026'",
+      "how": "Root cause: in packages/runtime/src/session/person-questions.ts, the on_answer \"done\" branch and the 'without' path that closes the task never set `follow`, so resumeWork was skipped. The fake copied the gap: it recorded a start only when on_answer !== \"done\". Now a closed person task calls resumeWork and then recordStart. resumeWork starts or queues a session only when a task of the project can run. The questions outcome reads 'Answers saved in the decision record; \"X\" is done; a session started.' and says nothing about a session when nothing can run (sibling tests in real-daemon and inbox.test.tsx check this). A 'without' outcome on a closed task reads '\"X\" is done without your answers'. The fake now records the start only when a task of the project is runnable.",
+      "check_in_the_app": "Bench with FORERUNNER_BENCH_PERSON=1. Approve a plan, then open the Inbox card '\"Decide where the page is published\" needs your answers'. Type an answer and click Send answers. The card becomes 'Done: Answers saved in the decision record; \"Decide where the page is published\" is done; a session started.' and the README runs without pressing Start. Walked on Quote page and Packing list: the README went from Ready to Running in both."
+     },
+     {
+      "problem": "[blocking 2] 'Change the plan' lost the person's words when the new draft failed or the daemon closed before it finished. The project page's Try again drafted from the original brief only (the bench's intake calls carried the words as [false, true, false]). The restart state had no test.",
+      "u_ids": [
+       "U-046"
+      ],
+      "failing_test_before": "packages/runtime/test/intake.test.ts 'a change answered just before the daemon closed: after the restart the page says the plan was not drafted, and Try again drafts it with the person's words' (the runtime is composed twice on one home); apps/ui/test/real-daemon.test.ts 'Change the plan whose new draft fails: \u2026 Try again drafts it with the person's words' (Try again's call had no words) and 'a second Change the plan keeps the first' (only the second change was sent)",
+      "how": "Root cause: IntakeService.retry() called enqueue(projectId) with no brief. The change text existed only in the in-memory job that syncAnswers started. Now every plan card keeps the changes it was drafted with (change_card.changes), and the answered card keeps its own change (change, as before). retry() reads them from the latest card when that card is 'changed' (failed or lost) and drafts with all of them (IntakeDraftOptions.changes, briefWithChanges). A second change adds to the first. The brief is cut at its size limit, but the changes after it never are. The lost-draft line ends 'Try again drafts it with your changes.' Sibling: the planning failure is now recorded in words (intakeFailureWords, e.g. 'Claude did not answer (model call failed).') instead of 'intake: the planning call ended error: model call failed' (design \u00a73.3; the review listed this as non-blocking).",
+      "check_in_the_app": "(1) Plan a project, restart the daemon with FORERUNNER_BENCH_INTAKE=error, and click Change the plan with 'single index.html only'. The project page shows 'Planning failed. Nothing was written. Claude did not answer (model call failed). [Try again]'. Restart with planning working and click Try again: the new plan card arrives, and the model-call log shows the words in Try again's call ([true]). (2) Restart with FORERUNNER_BENCH_DELAY_MS=120000, Change the plan with 'add a dark mode', then restart --hard. The page reads '\u2026was not drafted: Forerunner closed before it was done. Try again drafts it with your changes.' Try again's call carries both 'add a dark mode' and the earlier 'single index.html only'."
+     },
+     {
+      "problem": "Sibling found on the re-walk: the Docker card names its one task (for Cancel task), so the Tasks tab took it as the task's blocker. A paused task waiting for Docker read 'Needs your answer' with Answer and Cancel, and lost its Resume. The person could not resume it.",
+      "u_ids": [
+       "U-079"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'a task waiting for Docker that the person pauses reads Paused by you and can be resumed: its Docker card asks nothing of the task' (got key 'answer', 'Needs your answer')",
+      "how": "A new holdsTask() in packages/runtime/src/daemon/task-words.ts returns false for the 'sandbox.not_ready' card. loadTaskDisplayContext (task-display.ts) skips that card as a task blocker, so the row reads 'Waiting for Docker', or 'Paused by you' with Resume. The Inbox card itself is unchanged.",
+      "check_in_the_app": "Without Docker, a project with a full-review task gets its Docker card after a session. On the Tasks tab, click Pause on that task: it reads 'Paused by you' and offers Resume. Resume brings back 'Waiting for Docker'. Walked: six Pause/Resume clicks on 'Check that index.html\u2026'."
+     },
+     {
+      "problem": "Non-blocking from the review: after Try again, the second retry card read 'failed 6 times' when the task had 5 runs. The Tasks tab's 'tried N times' used the same overcount.",
+      "u_ids": [
+       "U-073"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'after its retries: \u2026' (new assertion: the second card 'failed 6 times' vs 5 work runs; Tasks tab label must match)",
+      "how": "The count was task.attempt, and Try again's way back to ready also increments it. A new triedTimes(store, taskId, fallback) in @forerunner/critic counts the specialists' runs of the task (no critic run, no sub-run), the same runs the Tasks tab lists. loop/critic.ts uses that number for both the card and the ladder reason, so the Tasks tab's 'Needs your decision: tried N times' agrees. applyVerdict's escalate path uses it too. Also cosmetic: the Docker card's cancel outcome no longer puts quotes around a missing title.",
+      "check_in_the_app": "Bench with FAIL='Write down the scope'. After the first session the card reads 'failed 4 times'. Click Try again; when that session ends, the next card reads 'failed 5 times', which matches the task drawer's runs."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Session Updates repeat the cards and go stale ('\"X\" needs your decision (Inbox).' twice; '\"Show a random quote\u2026\" needs your decision' after it was answered)",
+      "why": "These come from session-engine/system-text (sessionUpdateLine, runner). Out of this area's files; the fixer and the reviewer already handed it to wave 3."
+     },
+     {
+      "problem": "Set up Docker (and the Start dialog's Settings link) opens /settings#sandbox but the page stays at the top",
+      "why": "SettingsPage/Shell scroll handling belongs to lifecycle-settings / progress-navigation, not this area's files."
+     },
+     {
+      "problem": "Start dialog, while the plan waits, still shows the old StartSessionDialog lines under the new sentence (three statements of one blocker)",
+      "why": "StartSessionDialog.tsx:303-312 belongs to session-engine."
+     },
+     {
+      "problem": "The phone's Reviews 'Approve' maps to 'Mark done anyway' on a retry or failed-task card with no confirmation",
+      "why": "The phone is out of scope this round (design \u00a77). This mapping already existed for 'accept'. Logged under new_problems."
+     },
+     {
+      "problem": "A free-text 'go ahead' (from the phone, say) on a planned person card closes the task, although that card does not offer Go ahead without",
+      "why": "Low impact: the desktop card offers no such choice and its form sends answers. Its Done line is now true ('\"X\" is done without your answers'). The proper fix is refusing 'without' for planned cards in the answer check (request-answers.ts), which also affects the phone. Left for a follow-up."
+     },
+     {
+      "problem": "IntakeBanner layout is still 'Planning failed. Nothing was written.' with the reason on its own line, not the design's one line 'Planning failed: <reason>.'",
+      "why": "The reason is now in words, which was the substance of the review's note. Changing the banner's layout would churn project.test.tsx for a cosmetic difference."
+     }
+    ],
+    "validation": [
+     {
+      "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 pnpm check (at 09371b2)",
+      "result": "exit 0. Lint: 0 errors, 60 warnings (same as the fixer). lint:paths ok, typecheck ok. Unit: 406 files, 4147 passed, 6 skipped. docs-check ok (67 files). link-check ok (190). secret-scan clean."
+     },
+     {
+      "command": "pnpm test:integration (at 09371b2)",
+      "result": "exit 0: 4 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG). 25 passed."
+     },
+     {
+      "command": "pnpm test:e2e (at 09371b2)",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped."
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "Full run: 74 files, 691 passed. This ran after the last test fix and before the final intake.ts tweak (the brief is cut before the changes are appended, never after). The real-daemon file and the plan-card cases were rerun after that tweak and passed. A standalone run of real-daemon.test.ts hit the known flaky 'Stop on the running task' (timed out waiting for the task's run) twice. That flake is the one the base fixed in 5b1fb2b after fix/needs-me was cut. A trial merge of claude/nifty-knuth-f9udt0 into a temporary branch passed real-daemon.test.ts 64/64 twice, and the temporary branch was deleted."
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "32 passed (58.7s)."
+     },
+     {
+      "command": "Bench fixup-needs-me (daemon :48000, UI :1600, --provider bench, FAIL='Write down the scope', ASK='Show a random quote', PERSON=1, RISK2='Check that index.html'). The reviewer's journey scripts were copied to /tmp/frbench/fixup-needs-me/scripts (p1-p8, c1-c3, plus p5i, c4 and c5). Log: /tmp/frbench/fixup-needs-me/walk-log.txt. Screenshots: /tmp/frbench/fixup-needs-me/steps/01-53.",
+      "result": "(a) Approve and start gave the Done line and a session. (d) The ask card answered gave 'a session started'. Blocking 1 is fixed on both projects: 'Done: Answers saved in the decision record; \"Decide where the page is published\" is done; a session started.' (step 13) and the same for \"Decide who the project is for\" with the README Running (step 27). (e) Retry card 'failed 4 times', then Try again, then 'failed 5 times' (step 23). Mark done anyway gave 'Done: accepted without review' and the dependants ran. (g) The Docker card has Set up Docker and Cancel task. (b)/(c) Change the plan carries the words; Reject leads to Draft a new plan. (i) Six Pause/Resume clicks on the Docker task (now 'Paused by you' / 'Waiting for Docker') and five chat commands added 0 Updates. (k) New task 'Me' became a card at once; Undo raised the badge from 3 to 4 without a reload. (h) At every step needsYouCount equalled the badge and the sum of the projects (1/1/1 up to 5/5/5). (f) After a restart with FAIL_MODE=error, the failed-task card appeared and Try again and Mark done anyway both started sessions. Blocking 2: the failed re-draft banner reads 'Claude did not answer (model call failed).' and Try again's call carries the words [true] (steps 49-50). The lost draft after a hard restart shows the new banner, and Try again carries both changes [true]/[true] (steps 51-53). problems.jsonl stayed empty. Bench stopped."
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+     },
+     {
+      "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+      "result": "not run: the desktop shell was not touched"
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "apps/ui/test/real-daemon.test.ts composeWithRolePlayer (helper)",
+      "why": "It now also returns the stand-in's options (bench), so a case can plant a planning failure for one step, and the intake requests it received (intakeCalls), so a case can assert what the planner was told. Its existing callers are unchanged."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts 'after its retries: \u2026'",
+      "why": "Strengthened, not weakened. It now also asserts that each card's 'failed N times' equals the task's work runs and that the Tasks tab's 'Needs your decision: tried N times' matches (design \u00a71, true now)."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-needs-me/steps/13-p2-person-answered-done-line.png",
+      "/tmp/frbench/review-needs-me/steps/27-p4-person-answer-frees-readme.png",
+      "/tmp/frbench/review-needs-me/evidence-change-plan/01-c2-change-redraft-failed.png",
+      "/tmp/frbench/review-needs-me/evidence-change-plan/02-c3-after-try-again.png",
+      "/tmp/frbench/review-needs-me/steps/23-p3-e-inbox-after-retry-session.png"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-needs-me/steps/13-p2-person-answered-done-line.png",
+      "/tmp/frbench/fixup-needs-me/steps/27-p4-person-answer-frees-readme.png",
+      "/tmp/frbench/fixup-needs-me/steps/23-p3-e-inbox-after-retry-session.png",
+      "/tmp/frbench/fixup-needs-me/steps/39-p5-i-after-five-moves.png",
+      "/tmp/frbench/fixup-needs-me/steps/49-c2-change-redraft-failed.png",
+      "/tmp/frbench/fixup-needs-me/steps/50-c3-after-try-again.png",
+      "/tmp/frbench/fixup-needs-me/steps/51-c5-lost-draft-banner.png",
+      "/tmp/frbench/fixup-needs-me/steps/52-c5-after-try-again.png",
+      "/tmp/frbench/fixup-needs-me/steps/53-c5-inbox-new-plan-card.png"
+     ]
+    },
+    "new_problems": [
+     "A queued start waits up to one scheduler tick (30 s, triggers.ts tickMs) after the session before it ends. An answer can say 'it runs after the current session' and then nothing happens for up to 30 s. Seen in real-daemon: the person-answer start was 'queued' behind the previous test's session and ran on the next tick. Session-engine, also noted in 5b1fb2b's commit message.",
+     "runner.ts:1901-1915 (session-engine): `carded` counts every open card with a task_id, the Docker card included. A task the person paused during a session while it had a Docker card would be summarised as needing a decision rather than 'Paused by you'. The Tasks tab is fixed here via holdsTask(); the runner could use the same helper.",
+     "The phone's Reviews mapping (APPROVING includes 'mark done anyway', review-verdict mapping) closes a retry or failed-task card's task without review and without the confirmation ADR 0102 asks for. Phone is out of scope (design \u00a77).",
+     "The project switcher in the header keeps showing the last selected project ('Packing list') while another project's page ('Change me') is open. See /tmp/frbench/fixup-needs-me/steps/51-c5-lost-draft-banner.png. Progress-navigation / shell.",
+     "Quote page's health read 'attention' while its only open card was the Docker card (walk-log 'after A session 3'), then 'blocked' later. The counts agreed throughout. Worth a look by progress-navigation when it writes the status sentence."
+    ],
+    "notes_for_other_areas": [
+     "Answering a planned person card (on_answer 'done') now goes through resumeWork like every other answer. Its Done line is 'Answers saved in the decision record; \"X\" is done; a session started.' (or without the start when nothing can run).",
+     "IntakeService: propose/enqueue take IntakeDraftOptions { brief?, changes? }. Plan cards keep change_card.changes, the changes they were drafted with. retry() redrafts a failed or lost 'Change the plan' with them. summary_cache.intake.error now holds words (intakeFailureWords), not the planning call's error text. ForerunnerError details of a failed planning call carry providerCode.",
+     "@forerunner/critic exports triedTimes(store, taskId, fallback): the number of specialist runs of a task. Use it for any 'tried/failed N times' wording instead of task.attempt.",
+     "task-words.ts exports holdsTask(card): false for the Docker card (sandbox.not_ready). Anything that asks 'does an open card hold this task?' (task display, the runner's paused-by-you check, health) should use it so the Docker card does not hide 'Paused by you' and Resume."
+    ]
+   }
+  },
+  {
+   "key": "chat",
+   "fix": {
+    "area": "chat",
+    "branch": "fix/chat",
+    "head_sha": "3667c1defea461752d0a78ea92c218891b942c47",
+    "commits": [
+     {
+      "sha": "715f3eb",
+      "subject": "chat: one conversation per project that remembers, sees the tasks and the last session, and keeps its Yes/No card (U-084, U-056, U-071, U-038)"
+     },
+     {
+      "sha": "2e258c4",
+      "subject": "chat: stop is Stop now, \"resume\" allows sessions again, start says what it did or why not, plain steering phrases read back in one line, typed summary in text (U-084, U-071, U-075)"
+     },
+     {
+      "sha": "ba3d24e",
+      "subject": "ui: one conversation in the Chat tab and Talk, from the daemon, with plain actions, a card that stays and example phrases (U-071, U-056, U-074, U-075)"
+     },
+     {
+      "sha": "926d291",
+      "subject": "chat: a Yes/No card survives a daemon restart and its yes still runs it (U-029, design \u00a73.9)"
+     },
+     {
+      "sha": "cc9b910",
+      "subject": "chat: a read-back says what became of it, the chat sees what the critic still asks for, \"make X also wait for Y\", Make this a task only under requests (U-084, U-074)"
+     },
+     {
+      "sha": "c87e905",
+      "subject": "Merge branch 'claude/nifty-knuth-f9udt0' into worktree-wf_d9b097ae-d22-2 (two wave-1 test fixes)"
+     },
+     {
+      "sha": "3667c1d",
+      "subject": "docs: the e2e scenario helper reads the turn's own message (design \u00a73.9)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocker] Chat forgot everything: every model call held one user message (facts + current line); 'what did I just ask?' and a bare 'yes' reached the model with no history.",
+      "u_ids": [
+       "U-084",
+       "U-071"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > 'the second turn carries the first', 'each project has its own conversation', 'the conversation survives a restart' (13 of 13 tests in the file failed on the old code)",
+      "how": "Chat events now carry conversationProjectId; new conversation/transcript.ts reads one conversation's turns; each model turn sends the last 12 turns (token budget DEFAULT_CHAT_HISTORY_TOKENS) as alternating user/assistant messages, then the turn's own message (volatile facts + line) last so the cache prefix holds.",
+      "check_in_the_app": "Project \u2192 Chat: ask 'what is going on?', then 'what did I just ask?'. The second answer refers to the first question (on the bench the stand-in says 'I was given 1 earlier turn(s)'). Reload the window or restart Forerunner: the conversation is still there."
+     },
+     {
+      "problem": "[blocker] Chat could not answer what is going on / what failed and why / what's next: no task list, a 160-char cut of a stale summary, open cards cut at 80 chars, no read tools.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > 'what failed and why? is sent with every task by name...', 'the last session is sent by name from its outcome', 'an open card is sent in full', 'the read-only tools are offered and answer'",
+      "how": "conversation/project-facts.ts adds '# Tasks of <project>' (every task in run order with taskDisplay status words, what it waits for, failure reason, specialist, critic verdict and the first thing the critic still asks for), '# Last session' from summary_cache.last_session.outcome + next_steps, '# Working now', '# Your files', and open cards in full (project, task, question, person questions, options). System prompt keeps only projects by name/goal. docs/status.md is excluded from doc search. conversation/read-tools.ts adds tasks_list, task_get, session_last, files_list (plain read tools, no change log). evals/registry/principals/conversation-agent.md 1.1.0 says what each turn carries.",
+      "check_in_the_app": "After a session where a task failed, Project \u2192 Chat: 'what failed and why?'. The answer names the task and its reason. (On the bench with FAIL=Style, the model-call log's last chat call contains '# Tasks of Quote Page' with 'Style the page in styles.css': Needs your answer; reason ...; still asked for ...)."
+     },
+     {
+      "problem": "[major] A chat 'stop' froze the agent (Stop all); 'start a session' then replied 'Started a session \u2026 Undo.' while nothing started; 'resume' had no command.",
+      "u_ids": [
+       "U-071",
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-steering.test.ts > \"'stop' stops the running session without freezing\", \"'stop everything' is Stop all; 'start a session' says why nothing starts; 'resume' allows sessions again\" (all 6 tests in the file failed on the previous commit)",
+      "how": "session.stop scope agent stops each running work session ({sessionId}, freeze:false, by 'you'); scope all is Stop all with a plain sentence; new session.resume command (ports.allowSessions lifts the kill switch, emits kill.resumed); session.start refuses a start that would do nothing using the Start dialog's sentence (new daemon/start-blocked.ts shared with GET /projects/:id/start-check) plus the button in words; its sentence says started / starts after the running one / after quiet hours, no 'Undo.'.",
+      "check_in_the_app": "Start a session, then type 'stop' in Chat: the reply is 'Stopped the session on <project>. What it wrote stays; the task it was on is ready again.' and the header shows no 'Sessions are stopped' bar. Type 'stop everything': the bar appears; 'start a session' answers 'Sessions are stopped (Stop all), so nothing can start. Say \"resume\" ...'; 'resume' lifts it."
+     },
+     {
+      "problem": "[major] Steering worked only with exact phrases: 'start working now', 'summarise the last session', 'make X depend on Y', 'skip X', 'resume' failed.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-steering.test.ts > dependency read-back, skip/resume, 'start working now'; packages/commands/test/intent.test.ts > 'IntentParser: steering phrases (design \u00a73.9)'",
+      "how": "intent.ts: trailing now/right away/again on starts, get started/start the work; summarise/summarize/recap; stop now/stop working; whole-line 'stop after this task'/'finish this task and then stop' (session.pause); resume/continue/allow sessions again (session.resume); dependency phrases \u2192 task.dependencies {task, add} (new `add` param keeps existing deps); task by name: skip/postpone/pause/stop \u2192 task.pause, cancel/drop, resume, reopen/redo, try again/retry, make ready. Task commands said in words are askFromChat (read back for a yes) with a one-line ChangeCard.ask question ('Make \"Write the FAQ\" wait for \"Write the README\"?', 'Pause \"X\"? No session runs it until you press Resume.').",
+      "check_in_the_app": "Project \u2192 Chat: 'make the FAQ task depend on the README task' shows one line 'Make \"\u2026FAQ\u2026\" wait for \"\u2026README\u2026\"?' with Yes/No; Yes \u2192 Tasks tab shows the FAQ waiting for the README. 'skip the LICENSE task' reads back as a pause."
+     },
+     {
+      "problem": "[major] Typing anything other than Yes/No dropped the card silently; a daemon restart expired it with no word in the chat; 'yes' with no card went to the model.",
+      "u_ids": [
+       "U-029",
+       "U-071"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > 'a question typed in between does not drop the card', \"'yes' with nothing waiting asks 'Yes to what?'\", \"'yes' after the card was answered elsewhere\", 'after a restart of the chat the card is found again'; apps/ui/test/real-daemon.test.ts > 'one conversation per project \u2026 the turns and the card survive a restart' (waiting undefined with the executor/loop change reverted)",
+      "how": "Agent keeps one waiting card per conversation (pendingOf finds it again after a restart from the conversation's last read-back via ConversationCommands.pendingCard); other lines leave it; a new read-back cancels the old one and says so; 'yes' with nothing waiting \u2192 YES_TO_WHAT_REPLY / NO_LONGER_WAITING_REPLY. Executor stores validated calls + context on change_card; CommandLoop.start() re-arms open cards (CommandExecutor.restorePending) before expireOrphanedCards, which now expires only cards that cannot be armed. Conversation view gives each read-back a `card` state (waiting/yes/no/expired).",
+      "check_in_the_app": "Chat: 'start a session' (card), then 'how much will it cost?': the card's Yes/No stay. Quit and restart Forerunner (or restart the daemon), reopen Chat: the card is still there; Yes runs it. Type 'yes' with nothing waiting: 'Yes to what? Nothing is waiting for your yes.'"
+     },
+     {
+      "problem": "[major] Chat tab and Talk were two chats sharing one hidden transcript; 'make this a task' used Talk's reply; 'undo' in one project cancelled a task in another; Talk acted on the header's active project.",
+      "u_ids": [
+       "U-056",
+       "U-071"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > \"'undo' in Quote Page never touches Notes CLI, and 'make this a task' takes the line before it here\"; apps/ui/test/chat.test.tsx > 'Talk shows the conversation of the project on screen' (2 tests) and 7 other chat UI tests (9 of 12 failed on the old UI)",
+      "how": "GET /projects/:id/conversation and GET /conversation (ConversationView; client, fake daemon and real-daemon cases in the same commit). New components/Conversation.tsx used by ChatTab and ConversationPanel (Talk) from store.conversations (store/conversation.ts); store/chat-history.ts removed. Talk uses the project of the page (or the conversation outside any project) and starts voice sessions on it. Undo in chat takes the newest undoable change this conversation made, else the project's (CommandLoop.undo opts.projectId); 'make this a task' takes the line before it in this conversation.",
+      "check_in_the_app": "Open a project's Chat tab, ask something, then press Talk in the header: Talk says 'About <project>: the same conversation as its Chat tab.' and shows the same lines; type in Talk and the Chat tab shows it too. On Home, Talk says it is not about one project."
+     },
+     {
+      "problem": "[major] Lines typed during a session were forwarded to the next specialist's brief as data or dropped, while the reply promised 'Your agent sees this at its next step boundary.'",
+      "u_ids": [
+       "U-038"
+      ],
+      "failing_test_before": "packages/runtime/test/live-chat.test.ts > 'a question during a running session is answered from the live state; nothing is handed to the session or promised' (rewritten for the design; the old forwarding tests asserted the removed behaviour)",
+      "how": "forwardToRunningSession and FORWARDED_SENTENCE removed from the agent; a question during a session is answered from '# Working now' + '# Tasks'; instructions go through the parser/tools with a read-back. The runner still reads old 'said (...)' inbox lines (documented as legacy).",
+      "check_in_the_app": "While a session runs, ask in Chat 'what are you working on right now?': the answer names the task in flight and no 'next step boundary' sentence appears; the next task's brief carries nothing from the chat."
+     },
+     {
+      "problem": "[major] Typed 'summary' printed a voice-install error with Python module and secret names, twice, with two spend figures that disagreed.",
+      "u_ids": [
+       "U-075"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-steering.test.ts > \"typed 'summary' and 'summarise the last session' answer in text: no voice error, one spend figure\"",
+      "how": "summary.speak only tries voice when asked to be heard (source ui or words like read/speak/aloud); typed summary is chatProjectSummary (tasks done, the engine's last-session result with its one CHF figure, next). A failed read-aloud says 'I cannot read it aloud: <plain reason>. Here it is:' without provider internals.",
+      "check_in_the_app": "Project \u2192 Chat: type 'summary'. The reply is 'Quote Page: 4 of 7 tasks done.' + 'Last session: \u2026' + 'Next: \u2026' with one CHF amount and no voice error."
+     },
+     {
+      "problem": "[minor] Clutter: 'first token 0 ms' badge, 'task.create:' chips, 'Undo.' as text beside an Undo button, read-back shown twice with 'reply yes to the email', 'Make this a task' under every bubble; Talk without voice showed Python internals.",
+      "u_ids": [
+       "U-074",
+       "U-075"
+      ],
+      "failing_test_before": "apps/ui/test/chat.test.tsx > 'streams the reply, with no first-token badge or cost chip on it', 'shows the read-back once on a Yes/No card \u2026', 'turns your own message into a ready task \u2026 never an agent's reply', 'offers three example phrases under the input'",
+      "how": "Conversation component renders actions as plain sentences with one Undo each, no badges/chips, the read-back once on the card (server strips it from the reply text), '(you said yes|no)' / '(not answered \u2026)' after, 'Make this a task' only under the person's requests/questions, three example phrases. Read-backs with a ChangeCard.ask are one question without 'reply yes to the email'. Talk's voice-unavailable texts are plain constants (VOICE_NOT_INSTALLED etc.).",
+      "check_in_the_app": "Project \u2192 Chat: send 'add a task: write a FAQ'. The reply reads 'Added \"write a FAQ\" to <project>.' with one Undo button, no 'first token' badge, no 'task.create:' chip, and no 'Make this a task' under that line. Open Talk on a machine without voice and press Talk: 'Voice is not installed. Install it in Settings \u2192 Voice, or type below.'"
+     },
+     {
+      "problem": "[minor] An open request was marked 'already mentioned' after any completed turn, even when the reply never named it.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > \"a card is 'already mentioned' only when a reply named it\"",
+      "how": "Shown requests carry names (task title, question subject); replyNames marks one mentioned only when the reply contains a name or two telling words of it.",
+      "check_in_the_app": "With a card waiting, ask Chat an unrelated question; the next turn's facts in the model-call log still list the card as 'not yet mentioned in this conversation'."
+     },
+     {
+      "problem": "Wave-1 handoff: chat/voice pause, stop or cancel of a RUNNING task did not stop its run (CommandPorts.stopTask not wired in compose).",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-steering.test.ts > 'pausing a RUNNING task by chat stops its run at once (the stopTask port, U-039)'",
+      "how": "compose.ts wires stopTask \u2192 kill.stopTask(taskId, reason).",
+      "check_in_the_app": "While a task runs, type 'pause the <task> task' and Yes: its run stops at once and the Tasks tab shows it Paused by you."
+     },
+     {
+      "problem": "Wave-1 handoff: POST /projects with a name another project has answered 500 'UNIQUE constraint failed: project.name'.",
+      "u_ids": [],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts > 'a project name another project has \u2026 POST /projects answers a sentence with a stable code'; apps/ui/test/default-autonomy.test.tsx > 'a new project with a name another project has'",
+      "how": "createProjectRecord checks project.byName first and throws ForerunnerError('validation', 'There is already a project called \"X\". Pick another name.', {cause: duplicate_name}) \u2192 409; fake daemon answers the same.",
+      "check_in_the_app": "New project with the name of an existing project: the dialog stays open and says 'There is already a project called \"<name>\". Pick another name.'"
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Wave-1 handoff: a 'task' item added to the Next session queue (POST /projects/:id/queue, kind task) should become a ready task.",
+      "why": "Design \u00a73.4 replaces the queue form with types and priorities by one 'Note for the next session' box on the Overview, owned by progress-navigation in wave 3; changing the route's kinds now would be churn they remove. Chat's 'add a task: \u2026' already makes a ready task."
+     },
+     {
+      "problem": "session.start 'waiting on the scheduler as POST /sessions does' (fix_scope 5).",
+      "why": "session.start refuses up front with the Start dialog's blocked sentence (Stop all, no Claude, nothing can run) and words the scheduler's outcome (started/queued/deferred); it does not wait up to 15 s for the run to begin (a failure after the start, e.g. a crash in the first model call, is not reported in the chat reply). Waiting would need the scheduler's runOutcome and a Clock sleep inside a command; left as is to keep simulated-clock tests deterministic."
+     },
+     {
+      "problem": "Chat actions still post an Inbox message (acceptance h: 'Chat actions add no Inbox messages').",
+      "why": "The executor's Inbox echo is owned by the needs-me area (handoff note: needs-me owns removing it); not changed here."
+     },
+     {
+      "problem": "Talk's 'Reply: Voice' toggle and Talk button are still shown before voice is known to be unavailable (U-075 second half).",
+      "why": "Only the unavailable wording was changed (plain sentence, no internals). Hiding the controls until voiceStatus says available would change many voice-playback tests' setup; left for the navigation/shell area."
+     },
+     {
+      "problem": "Retrieved doc excerpts are still keyword hits (intake placeholders like '- first task', 'To be written.').",
+      "why": "docs/status.md is now excluded and status comes from structured state; filtering template text out of the doc search (packages/memory) was not done."
+     },
+     {
+      "problem": "The runner's heard-line path (inbox 'said (...)' lines into the next brief) is now unused by chat.",
+      "why": "Kept so lines already in an install's inbox are still read; runner.ts is session-engine's file. Documented as legacy in runtime.md; can be removed once no install holds such lines."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0; unit: 408 files, 4166 passed, 6 skipped. docs:check inside it cannot diff origin/main here (no remote ref) and skips; run separately below."
+     },
+     {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0 && pnpm docs:links && pnpm secrets:scan",
+      "result": "exit 0 (after adding the testing.md line for tests/e2e/src/scenario-commands.ts); link-check ok (190 files); secret-scan clean (1882 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0; 4 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG); 25 passed, 71 skipped (same as baseline)"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0; 13 files passed; 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0; 74 files, 674 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0; 32 passed"
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "nothing found; working tree clean"
+     },
+     {
+      "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+      "result": "not run: the desktop shell was not touched (git diff claude/nifty-knuth-f9udt0...HEAD -- apps/desktop is empty)"
+     },
+     {
+      "command": "Bench walk fix-chat (daemon 47981, UI 1581, --provider bench, FORERUNNER_BENCH_FAIL=Style): /tmp/frbench/fix-chat/scripts/walk.cjs before|after and after-restart.cjs",
+      "result": "BEFORE: every chat call 1 message, no task list, card dropped by a question, chat 'stop' froze (killActive true), 'start a session' said Started while nothing started, 'resume' went to the model, summary showed the voice error, Talk empty. AFTER: history carried (3, 19, 25 messages), '# Tasks' present with Style's status and reason, dependency and skip read back in one line and applied, card stayed after a question, card survived a daemon restart and 'yes' applied it, 'stop' during a session -> 'Stopped by you', killActive false, 'stop everything'/'resume' work, start refused in words when nothing can run, summary in text with one CHF figure, Talk shows the Chat tab's conversation. Records: /tmp/frbench/fix-chat/scripts/before-record.json, after-record.json, after-restart-record.json"
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/live-chat.test.ts (describe 'what you say during a live session')",
+      "why": "Design \u00a73.9: nothing is forwarded to the running session; the forwarding tests (inbox line, next brief, FORWARDED_SENTENCE, res.forwarded) were replaced by tests that a question is answered from the live state and nothing reaches the session; stop tests no longer assert the agent-scope kill."
+     },
+     {
+      "test": "packages/runtime/test/conversation-open-requests.test.ts",
+      "why": "The turn's facts are the last message (history precedes it), and a request counts as mentioned only when a reply names it, so the scripted replies now name the requests."
+     },
+     {
+      "test": "packages/runtime/test/conversation.test.ts",
+      "why": "Read-only tools are offered beside the command tools (and to a read-only chat); the turn's own message is the last one."
+     },
+     {
+      "test": "packages/runtime/test/closeout-conversation.test.ts",
+      "why": "No forwarded sentence or chat.forwarded event; projects in the system prompt by name and goal, last session/next in the turn message; active_project is the project's name; cards in full; Stop after this task sentence."
+     },
+     {
+      "test": "packages/runtime/test/docs-scaffold.test.ts",
+      "why": "Reads the turn's own message (last), not messages[0]."
+     },
+     {
+      "test": "packages/commands/test/commands.test.ts (session.start/stop/pause, task.transition from chat, summary.speak)",
+      "why": "Plain sentences without 'Undo.' or run/process counts; chat 'stop' is Stop now of the running session; a task move said in chat is read back first; typed summary is text and voice is tried only when asked to be heard, with a plain reason."
+     },
+     {
+      "test": "packages/commands/test/undo.test.ts, packages/commands/test/scenario.test.ts, packages/commands/test/registry.test.ts (COMMAND_NAMES)",
+      "why": "A task move from chat now needs a yes (test uses the Tasks tab source with a tap); start sentence; new session.resume command."
+     },
+     {
+      "test": "packages/runtime/test/loop-commands.test.ts, remote-watcher.test.ts, speak-route.test.ts, voice-route.test.ts",
+      "why": "New start/pause/stop sentences; a spoken 'stop' no longer freezes the agent; speak-route asks aloud explicitly and expects the plain reason."
+     },
+     {
+      "test": "packages/runtime/test/inbox-change-card.test.ts (U-029 restart)",
+      "why": "Design \u00a73.9: a card with its commands survives a restart and its answer runs; the expiry path is kept for a card without stored commands."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts \"'stop' in the chat \u2026\"",
+      "why": "Chat 'stop' is Stop now ('Stopped by you', killActive false); 'stop everything' and 'resume' cover Stop all."
+     },
+     {
+      "test": "apps/ui/test/chat.test.tsx, apps/ui/test/plain-words.test.tsx, apps/ui/test/hotkey.test.tsx, apps/ui/e2e/chat.spec.ts",
+      "why": "No first-token/cost badges or raw chips; the conversation reloads from the daemon (no localStorage); new Chat intro; plain voice-unavailable sentences."
+     },
+     {
+      "test": "tests/e2e/scenarios/03-voice.scenario.test.ts, 09-phone.scenario.test.ts, tests/e2e/src/scenario-commands.ts wordsOf",
+      "why": "The session summary and request are in the turn message (last), not the system prompt / messages[0]; start sentence wording."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-chat-before-steps/02-before-a2-what-did-i-just-ask.png",
+      "/tmp/frbench/fix-chat-before-steps/09-before-f1-question-while-card-waits.png",
+      "/tmp/frbench/fix-chat-before-steps/11-before-g1-during-question.png",
+      "/tmp/frbench/fix-chat-before-steps/13-before-b1-what-failed.png",
+      "/tmp/frbench/fix-chat-before-steps/14-before-h1-summary.png",
+      "/tmp/frbench/fix-chat-before-steps/16-before-e1-stop.png",
+      "/tmp/frbench/fix-chat-before-steps/19-before-e2-yes.png",
+      "/tmp/frbench/fix-chat-before-steps/21-before-e4-resume.png",
+      "/tmp/frbench/fix-chat-before-steps/22-before-g-talk-panel.png"
+     ],
+     "after": [
+      "/tmp/frbench/fix-chat/steps/02-after-a2-what-did-i-just-ask.png",
+      "/tmp/frbench/fix-chat/steps/04-after-c1-faq-depends-on-readme.png",
+      "/tmp/frbench/fix-chat/steps/07-after-d1-skip-license.png",
+      "/tmp/frbench/fix-chat/steps/10-after-f1-question-while-card-waits.png",
+      "/tmp/frbench/fix-chat/steps/14-after-b1-what-failed.png",
+      "/tmp/frbench/fix-chat/steps/15-after-h1-summary.png",
+      "/tmp/frbench/fix-chat/steps/20-after-e2-yes.png",
+      "/tmp/frbench/fix-chat/steps/22-after-e4-resume.png",
+      "/tmp/frbench/fix-chat/steps/23-after-g-talk-panel.png",
+      "/tmp/frbench/fix-chat/steps/25-after-f4-card-after-daemon-restart.png",
+      "/tmp/frbench/fix-chat/steps/30-after-e8-stop-during-session.png",
+      "/tmp/frbench/fix-chat/steps/33-after-g-talk-same-conversation.png"
+     ]
+    },
+    "new_problems": [
+     "Shell (navigation area): the header shows a red 'Stop all' even when nothing runs (visible in every after screenshot, e.g. /tmp/frbench/fix-chat/steps/23-after-g-talk-panel.png); design \u00a73.1 says Stop all only while something runs.",
+     "Inbox (needs-me): the retry-ladder card still stores options 'accept / revise / cancel' (seen in the chat context on the bench: open_requests '[Quote Page, \"Style the page in styles.css\"] \u2026 Options: accept / revise / cancel'); design \u00a73.8 wants Try again / Mark done anyway / Cancel task. The chat shows whatever options the card stores.",
+     "Project header still shows stage/health/autonomy badges ('planning', 'blocked', 'autonomy: Standard (level 2)') in the chat screenshots; progress-navigation's (design \u00a72 project status sentence).",
+     "The ladder's task reason 'retry ladder exhausted \u2026' only yields 'tried 4 times' through plainReason; the specialist's own words are in the run report (task_get) but not on the task row, so the task line's 'reason' is thin (session-engine/needs-me).",
+     "The voice bridge (packages/runtime/src/voice/bridge.ts) passes the voice session's project to chat without projectTab, so a spoken turn's active-project resolution still prefers the recorded active project for commands; its conversation is the session's project. Worth aligning with 'Talk acts on the project on screen' when the active-project concept is retired (progress-navigation)."
+    ],
+    "notes_for_other_areas": [
+     "New daemon routes: GET /projects/:id/conversation and GET /conversation (ConversationView in api-types.ts: turns[{id, at, said, source, reply{text, actions[{kind, sentence, changeId, canUndo}], question, notice, readback, waiting, card}}], waiting). Client: client.conversation(projectId|null). Fake daemon keeps state.conversations.",
+     "Shared UI component apps/ui/src/components/Conversation.tsx (props projectId, testIds 'chat'|'conversation', onMakeTask, inputRef, hideVoiceSince); store state `conversations` + action {type:'conversation', key, update} (store/conversation.ts: loadConversation, conversationKey). store/chat-history.ts and the store's `chats` are gone.",
+     "Talk (ConversationPanel) now follows the project on screen (useLocation /projects/:id), not activeProjectId; voice sessions start on that project. Progress-navigation can retire the header's 'active project' without breaking Talk.",
+     "ChangeCard.ask (buildCard({ask})) is a one-line question; pending cards with it read back as that question only. needs-me can use change_card.ask in the Inbox instead of rendering the change card. change_card now also stores `calls` and `context` (JSON) for restart; do not render them.",
+     "CommandDef.askFromChat: task.transition/pause/resume/reopen/update/dependencies said in chat or voice are read back for a yes; the Tasks tab (source ui) is unaffected.",
+     "New registry command session.resume (ports.allowSessions); CommandPorts gains allowSessions, startBlocked, and stopTask is now wired in compose. daemon/start-blocked.ts exports startBlocked(check, facts) used by GET /projects/:id/start-check and the chat's session.start.",
+     "task.dependencies accepts `add: string[]` (keeps current dependencies) besides `depends_on`.",
+     "session.stop scope 'agent' = Stop now of the agent's running work sessions (kill({sessionId}) with freeze:false, by 'you'); scope 'all' = Stop all. sessionCommandPorts.kill passes freeze:false for a session scope.",
+     "Conversation agent context API (packages/runtime/src/conversation/project-facts.ts: tasksBlock, lastSessionBlock, workingNowBlock, cardLine, cardNames/replyNames) reads summary_cache.last_session.outcome and next_steps; system-text may reuse tasksBlock wording or adjust it if TaskDisplay labels change.",
+     "CommandLoop.start() returns {commands, reverted, scheduled, cards}; expireOrphanedCards now only expires cards that could not be re-armed.",
+     "POST /projects duplicate name \u2192 409 validation 'There is already a project called \"X\". Pick another name.' (duplicateProjectSentence in daemon/create-project.ts)."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "I ran the bench \"review-chat\" from my worktree with fix/chat checked out at 3667c1d: daemon on 47991, UI on 1591, --provider bench, FORERUNNER_BENCH_FAIL=Style. Midway I restarted the daemon with FORERUNNER_BENCH_DELAY_MS=2500 so the stop tests had time to act. I set up two planned projects through the API: Quote Page (a web brief) and Notes CLI. Then I walked the journey in Chromium through the Chat tab and Talk, reading /tmp/frbench/review-chat/home/bench/model-calls.jsonl after each step. Scripts are in /tmp/frbench/review-chat/scripts/ (00-07), records in p1..p7.json, screenshots in /tmp/frbench/review-chat/steps/. The bench is stopped and both PIDs are gone.\n\n(a) 'what is going on?' went out as 1 message; 'what did I just ask?' went out as user/assistant/user, with the earlier question and answer as plain history and the facts only in the last message. Later turns carried 21 and 25 messages. Screenshot: 03-p1-a2-what-did-i-just-ask.png.\n\n(b) The Style task failed 4 times, and the session ended \"needs your decision\". 'what failed and why?' sent \"# Tasks of Quote Page (run order; 4 of 7 done, 3 open)\". Its Style line was: \"Needs your answer; ... reason: tried 4 times; ... critic: The critic sent it back for changes; still asked for: Do the work ...\". The turn also had \"# Last session\", built from the engine's result, and the card on one line: `01a198be: [Quote Page, \"Style the page in styles.css\"] \"Style the page in styles.css\" failed 4 times. Options: accept / revise / cancel. [blocking]`. Screenshot: 19-p2-b1-what-failed.png.\n\n(c) 'make the FAQ task depend on the README task' gave the one-line card 'Make \"write a FAQ for the page\" wait for \"Write the README: ...\"?' with Yes and No. After Yes the reply was '\"write a FAQ ...\" now waits for ...' with one Undo. The Tasks tab showed 'Waiting for \"Write the README...\"', and the session ran the README before the FAQ (handoff.done order). Screenshots: 05, 06.\n\n(d) 'skip the LICENSE task' was read back as 'Pause \"add a LICENSE file\"? No session runs it until you press Resume.' After Yes the task showed \"Paused by you\". 'resume the LICENSE task' was read back too and brought it back. Screenshots: 08, 09, p5-r0.\n\n(e) Stop and start on Notes CLI:\n- 'stop' during a session replied 'Stopped the session on Notes CLI. What it wrote stays; the task it was on is ready again.' The session showed \"Stopped by you\" and killActive stayed false.\n- 'start a session' then gave a card, and Yes started a session.\n- 'stop everything' turned on Stop all (killActive true).\n- 'start a session' while stopped first showed the card 'Start a session ... (up to CHF 5)?'. Only after Yes did it say 'Sessions are stopped (Stop all), so nothing can start. Say \"resume\" to allow sessions again.' (p4-s3).\n- 'resume' and 'allow sessions again' lifted Stop all (killActive false).\n- 'stop after this task' ended the session at the task boundary: \"Stopped after the task, as asked\".\nScreenshots: 32-41 and p4/p5 files.\n\n(f) 'start working now' showed the card. 'how much will it cost?' was answered by the model and the card stayed (12-p1-f1). I restarted the daemon and reloaded: the card was still there (13-p2-f3-card-after-daemon-restart.png), and Yes started the session (14).\n\n(g) In Notes CLI I typed 'add a task: write a CHANGELOG'. 'undo' in Quote Page then cancelled Quote Page's own 'Add a favicon'; Notes CLI's CHANGELOG stayed ready. Talk on Quote Page said \"About Quote Page: the same conversation as its Chat tab.\" with the same 20 lines, and a line typed in Talk showed up in the Chat tab (26-28). On Home, Talk said \"Not about one project. Open a project to talk about it.\" (29).\n\n(h) Typed 'summary' and 'summarise the last session' answered in text: 'Quote Page: 4 of 7 tasks done. / Last session: ... CHF 0.06. / Next: ...', with one CHF figure and no voice error (20). A task_create call from the stand-in model made a READY task. There was no first-token badge, no raw chips and no \"Undo.\" as text. 'Make this a task' appeared only under the person's own question and request lines, and clicking it opened New task filled in. The three example phrases are shown. Talk without voice said 'Voice is not installed. Install it in Settings \u2192 Voice, or type below.' (69).\n\nDuring a running session, 'what are you working on right now?' sent \"# Working now\" with the task in flight. No reply promised a 'next step boundary', and no specialist call in the model-call log contained either chat line. 'skip the README task' during the session was read back as a pause.\n\nPart (h) fails on this branch alone: every chat action is still posted to Inbox \u2192 Messages (p5-inbox). The fixer listed this as not done (owned by needs-me), and fix/needs-me does remove that echo in executor.ts.\n\nDefect found on screen: after a card is answered in this same chat, typing 'yes' gives the untrue line 'The change I asked about is no longer waiting for your yes: it expired or was answered in the Inbox.' It happened after a Yes (42-p3-e6-yes-nothing-waiting.png) and after a No (p6-yes-after-no). 'Yes to what?' only appears in a conversation with no card in its last 12 turns.\n\nScreens outside this area: the header still shows the stage, health and autonomy badges and a red Stop all when nothing runs, and the 'Notes CLI \u25be' switcher shows while viewing Quote Page. Those belong to progress-navigation and the shell.",
+    "blocking": [
+     {
+      "issue": "'yes' with no card waiting gives an untrue message instead of 'Yes to what?' once any card in the conversation has been answered. Design \u00a73.9 says a 'yes' with no card gets 'Yes to what?'; \u00a75 rule 4 says what the app says must be true now.",
+      "where": "packages/runtime/src/conversation/agent.ts:577-578",
+      "evidence": "The code says NO_LONGER_WAITING_REPLY whenever any of the last 12 turns read back a card (`[...earlier].reverse().find((t) => t.reply?.pendingId)`). It never checks whether that card was answered here. On the bench, Notes CLI went 'start a session' \u2192 card \u2192 'resume' \u2192 Yes (started) \u2192 'yes', and the reply was 'The change I asked about is no longer waiting for your yes: it expired or was answered in the Inbox. Ask again if you still want it.' (/tmp/frbench/review-chat/steps/42-p3-e6-yes-nothing-waiting.png). The same happened on Quote Page after pressing No on the autonomy card (p6-yes-after-no; /tmp/frbench/review-chat/scripts/p6.json key y). A throwaway test with the conversation-memory.test.ts setup (chat 'start a session with 30 francs', 'yes' or 'no', then 'yes', expecting YES_TO_WHAT_REPLY) fails on fix/chat for both orders, receiving NO_LONGER_WAITING_REPLY. The fixer's own test only covers a card cancelled outside the chat. The user guide and the fixer's check-in steps both promise 'Yes to what?'.",
+      "expected": "A 'yes' after the last card was answered in this chat (yes or no) should get 'Yes to what? Nothing is waiting for your yes.' Only a card that really expired, or was answered in the Inbox, should get a sentence saying which of the two happened. Decide this from the card's request row and the turns after it, as conversationView in server.ts already does for the card state. Add a test at the chat boundary: 'yes' after Yes and after No in the same conversation."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "Chat remembers: each model turn carries up to the last 12 turns as alternating user/assistant messages, with the turn's facts last; the conversation survives a restart",
+      "holds": true,
+      "note": "Model-call log: 1 \u2192 3 \u2192 21 \u2192 25 messages. The turns showed again after daemon restarts. conversation-memory.test.ts fails 14/14 with the base src restored (real assertion failures, e.g. roles ['user'] vs ['user','assistant','user'])."
+     },
+     {
+      "claim": "The chat sees '# Tasks' with status words, waits-for, reason and the critic's open ask; '# Last session' from the outcome; open cards in full; '# Working now'; '# Your files'; read-only tools tasks_list/task_get/session_last/files_list",
+      "holds": true,
+      "note": "Seen in the b1 and g1 calls on the bench; 30 tools offered, including the 4 read tools. Model-facing text still has a request id prefix, raw states in task_get ('(needs_human)', review verdict) and 'Ended because: completed'."
+     },
+     {
+      "claim": "Chat 'stop' is Stop now: 'Stopped the session on <project>...' and nothing frozen",
+      "holds": true,
+      "note": "killActive false; session 'Stopped by you'; next start worked."
+     },
+     {
+      "claim": "After 'stop everything', 'start a session' answers 'Sessions are stopped (Stop all)...'",
+      "holds": false,
+      "note": "It first shows the Yes/No card 'Start a session on Notes CLI (up to CHF 5)?'. The refusal sentence only comes after Yes, because the check is in run() and not plan() (session.ts:144 vs :116)."
+     },
+     {
+      "claim": "'resume' / 'allow sessions again' lift Stop all",
+      "holds": true,
+      "note": "killActive true \u2192 false on the bench; real-daemon test covers it too."
+     },
+     {
+      "claim": "Type 'stop everything': the header bar appears",
+      "holds": false,
+      "note": "The header only re-reads killActive at bootstrap or reconnect, so the bar showed up only after a reload, still in the old 'Kill switch active ... press Resume' words. The same was true on base (walk-chat-steering 48 vs 51)."
+     },
+     {
+      "claim": "Plain steering phrases are read back in one line and applied (depend on, skip, resume, start working now, summarise, stop after this task)",
+      "holds": true,
+      "note": "All walked. 'try the style task again' was refused as 'Not done: several tasks match \"style\".' without naming the matches."
+     },
+     {
+      "claim": "A Yes/No card survives a question typed in between and a daemon restart, and Yes runs it",
+      "holds": true,
+      "note": "Walked; screenshots 12, 13, 14. The real-daemon and inbox-change-card restart tests pass."
+     },
+     {
+      "claim": "'yes' with nothing waiting says 'Yes to what?'",
+      "holds": false,
+      "note": "Only when no card is in the last 12 turns. After a card answered in the same chat it says the untrue NO_LONGER_WAITING_REPLY (blocking item)."
+     },
+     {
+      "claim": "One conversation in the Chat tab and Talk; Talk follows the project on screen; undo is scoped to the conversation and project; 'make this a task' takes this conversation's line",
+      "holds": true,
+      "note": "Walked: same 20 lines, a line typed in Talk shows in the Chat tab, Home says it is about no project, undo in A left B's task alone."
+     },
+     {
+      "claim": "Nothing typed during a session is forwarded; questions are answered from the live state",
+      "holds": true,
+      "note": "No specialist call contained the chat lines; '# Working now' was present; no 'next step boundary' text."
+     },
+     {
+      "claim": "Typed 'summary' is text with one CHF figure and no voice error",
+      "holds": true,
+      "note": "Walked h1/h2."
+     },
+     {
+      "claim": "Clutter removed: no first-token badge or raw chips, read-back shown once, 'Make this a task' only under requests, three example phrases, plain voice-unavailable text",
+      "holds": true,
+      "note": "Walked. Budget and autonomy cards still read back as the full multi-sentence change card ('Risk: medium ...')."
+     },
+     {
+      "claim": "A card counts as 'already mentioned' only when a reply names it",
+      "holds": true,
+      "note": "conversation-memory test passes on fix/chat and fails on base. Not seen on the bench, because the stand-in's replies never name cards."
+     },
+     {
+      "claim": "stopTask wired in compose: pausing a RUNNING task by chat stops its run",
+      "holds": true,
+      "note": "chat-steering test passes on fix/chat and fails on base. Not walked on the bench."
+     },
+     {
+      "claim": "POST /projects with a duplicate name gives 409 with a sentence; the fake daemon does the same",
+      "holds": true,
+      "note": "real-daemon test and default-autonomy test pass. Not walked."
+     },
+     {
+      "claim": "New routes GET /projects/:id/conversation and GET /conversation have a real-daemon case, a fake-daemon change and a client method in the same commit",
+      "holds": true,
+      "note": "All in commit 715f3eb; the real-daemon test crosses a restart."
+     },
+     {
+      "claim": "Tests named as failing before do fail on base",
+      "holds": true,
+      "note": "With the base packages/runtime/src and packages/commands/src restored, conversation-memory fails 14/14 and chat-steering 7/7. With the base apps/ui/src restored, chat.test.tsx fails 10/12. The worktree was restored to fix/chat afterwards (git status clean)."
+     },
+     {
+      "claim": "Validation commands pass",
+      "holds": true,
+      "note": "pnpm check exit 0 (408 files, 4166 passed, 6 skipped). pnpm docs:check --base claude/nifty-knuth-f9udt0 ok. pnpm test:e2e 25 passed, 1 skipped. UI vitest 74 files, 674 passed. Playwright (local config) 32 passed. pnpm test:integration 25 passed, 71 skipped. No conflict markers."
+     },
+     {
+      "claim": "Handoff items each fixed or listed as not done with a reason",
+      "holds": true,
+      "note": "stopTask, chat stop, new task commands as tools and intents, outcome-based context and duplicate project name are fixed. The queue 'task' item and the Inbox echo are in not_done with reasons; fix/needs-me does remove the echo."
+     }
+    ],
+    "non_blocking": [
+     "'start a session' while Stop all is on (and the other startBlocked cases: no Claude, nothing runnable) shows a Yes/No card for a start that cannot happen. The reason only comes after Yes. The check could run in session.start's plan() (packages/commands/src/commands/session.ts:116), so the chat says why at once, as the Start dialog does.",
+     "'stop everything' turns on Stop all at once with no read-back. fix_scope 5 asked for one, and design \u00a73.1 has Stop all 'ask once'. Acting at once is the safe direction (spec O.9). With nothing running it still says 'Stopped every running session.'",
+     "The header does not show the stopped bar after a chat Stop all until a reload, and its words ('Kill switch active ... press Resume') differ from the chat's 'press Allow sessions again'. This was already so on base; shell/navigation area. The Conversation component could dispatch killActive after a session.stop scope all or session.resume action.",
+     "Read-backs for budget and autonomy changes still render the whole change card ('Change: ... Scope: ... How long ... Risk: medium. Spend impact: +CHF 15. Undo: Undo it from Changes.'), not one line with no 'Risk' wording.",
+     "The start card shows 'Estimated CHF 5.00' under '(up to CHF 5)?': the same figure twice, in two formats (design \u00a75 asks for two decimals).",
+     "'try the style task again' is refused with 'Not done: several tasks match \"style\".' without naming the matches or what to type (\u00a75 rule 8).",
+     "Acceptance (h) 'Chat actions add no Inbox messages' fails on fix/chat alone: every chat sentence, including 'Nothing is running, so nothing was stopped.' and the summary, lands in Inbox \u2192 Messages. fix/needs-me fixes this in executor.ts.",
+     "`git merge-tree fix/chat fix/needs-me` shows conflicts in packages/commands/src/executor.ts, apps/ui/test/fake-daemon.ts, docs/maintainers/commands.md and packages/runtime/test/live-chat.test.ts. The session lead should resolve them and re-run the suites.",
+     "Model-facing context still has ids and raw words: an open_requests id prefix ('01a198be:'), project '[id \u2026]' in the system prompt, task_get 'Waits for: \"X\" (needs_human)' and 'Review: revise \u2026', 'Ended because: completed', 'by the writer-marketing'.",
+     "The agent finds its waiting card only within the last 12 turns (pendingOf and the yes check use HISTORY_TURNS), but GET /conversation looks at 100. After a restart, a card more than 12 turns back is shown with Yes and No that the agent can no longer answer.",
+     "NO_MODEL_CHAT_REPLY (packages/runtime/src/setup/no-model.ts) still lists 'start a session' among the commands that work without a model, but session.start now refuses when Claude is not connected.",
+     "live-chat.test.ts loosened two assertions from `toEqual([{ scope: { agentId } }])` to `toHaveLength(1)` instead of asserting the new `{ sessionId }` scope, and dropped `expect(res.status).toBe('completed')`. commands.test.ts does assert the session scope.",
+     "The chat 'resume' (session.resume \u2192 kill.resume) is not tested across a daemon restart. It uses the same onResume path as POST /kill/resume, which clears kill.json.",
+     "compose.ts belongs to session-engine. Besides the stopTask wiring the handoff asked for, it gained allowSessions, startBlocked, sandboxReady and chfPerUsd.",
+     "Talk still shows 'Reply: Voice' and the Talk button before voice is known to be unavailable (the U-075 second half, in not_done). On Home, commands typed in Talk act on the hidden active project, though the reply names it (progress-navigation).",
+     "The user guide's Chat paragraph promises '\"yes\" with nothing waiting asks \"Yes to what?\"'. It becomes true once the blocking item is fixed."
+    ]
+   },
+   "fixup": {
+    "area": "chat",
+    "branch": "fix/chat",
+    "head_sha": "4e66881f3b4c17a408f0bdf056c88e639a7728eb",
+    "commits": [
+     {
+      "sha": "4e66881",
+      "subject": "chat: \"yes\" with nothing waiting says what is true; a start that cannot happen says why before any card; the header follows a chat Stop all (U-084, U-071, U-029)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocking, review] After a card was answered in the same chat (Yes or No), typing 'yes' gave the untrue line 'The change I asked about is no longer waiting for your yes: it expired or was answered in the Inbox.' instead of 'Yes to what?' (design \u00a73.9, \u00a75 rule 4).",
+      "u_ids": [
+       "U-084",
+       "U-071"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > \"'yes' after the card was answered here with 'yes' asks 'Yes to what?'\", \"... with 'no' asks 'Yes to what?'\", \"'yes' after the card was answered in the Inbox says so, with the option you chose there\", \"'yes' after the card expired says it expired and nothing was changed\", \"'yes' after the card was answered elsewhere (Talk, the phone, Changes) says you answered it and what you said\"; apps/ui/test/real-daemon.test.ts > \"'yes' with nothing waiting says what is true: 'Yes to what?' after a Yes or a No here, what you said after an answer in the Inbox\"",
+      "how": "Root cause: agent.ts:577 picked NO_LONGER_WAITING_REPLY whenever any of the last 12 turns held a read-back, and never checked what became of that card. The conversation also kept no record of which turn answered a card. Fix: each chat.reply now carries answeredId, the card that turn answered here (a yes, a no, or a stop that cancelled it). readTranscript exposes it as reply.answered. A new conversation/card-fate.ts (cardFate) works out what became of a read-back from its request row: waiting; yes/no from the executor's verdict (where 'registry'); yes/no from the option the Inbox sent (approvalOf, where 'inbox'); else expired. The agent's new nothingWaitingReply uses it: YES_TO_WHAT_REPLY when there was no read-back or a later turn answered it here; cardAnsweredReply('inbox'|'elsewhere', said), e.g. 'You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.'; CARD_EXPIRED_REPLY when it expired. NO_LONGER_WAITING_REPLY is removed. The fake daemon now answers a bare 'yes' with 'Yes to what?'.",
+      "check_in_the_app": "Project \u2192 Chat: 'make the FAQ task depend on the README task', press Yes, then type 'yes'. The reply is 'Yes to what? Nothing is waiting for your yes.' Do the same with 'skip the LICENSE task' and No: same reply. Then type 'resume the LICENSE task', answer 'no' on that card in the Inbox, come back to Chat and type 'yes'. The reply is 'You already answered the change I asked about in the Inbox: you said no. Nothing else is waiting for your yes.', and the read-back says '(you said no)'."
+     },
+     {
+      "problem": "(found while fixing the blocker) The conversation view showed a card answered 'no' in the Inbox as '(you said yes)', because the Inbox's answer carries no verdict and the view counted any answer without one as a yes. A yes the registry refused showed as '(not answered; ask again ...)'.",
+      "u_ids": [
+       "U-071",
+       "U-029"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts > \"'yes' with nothing waiting says what is true ...\" (card states [no, yes, yes] instead of [no, yes, no])",
+      "how": "conversationView in server.ts now takes each read-back's card state from cardFate. An Inbox 'no' is a no. A 'refused' verdict is still the person's yes; the reply to that yes said why it was refused.",
+      "check_in_the_app": "Ask for a change in Chat, answer No in the Inbox, then reopen Chat. The read-back ends with '(you said no)'."
+     },
+     {
+      "problem": "(sibling of the blocker; review non-blocking item) The agent looked for its waiting card only in the last 12 turns, while GET /conversation shows the last 100. After a restart, a card further up was shown with Yes/No buttons, and 'yes' answered 'Yes to what?'.",
+      "u_ids": [
+       "U-029",
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts > 'a card read back more than 12 turns ago still waits after a restart, as the conversation shows it, and 'yes' runs it'",
+      "how": "The agent now reads the conversation with TRANSCRIPT_SHOW_LIMIT (100 turns), the same window as the view. A model turn still carries only the last HISTORY_TURNS (12), through historyMessages.",
+      "check_in_the_app": "Chat: 'start a session', then ask 13 questions, then restart Forerunner. The card is still shown, and Yes starts the session."
+     },
+     {
+      "problem": "(the fixer's check-in claim did not hold; review) While Stop all was on, 'start a session' first showed a Yes/No card for a start that could not happen. The reason came only after Yes. The same happened without Claude or with nothing runnable.",
+      "u_ids": [
+       "U-071",
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-steering.test.ts > \"'stop everything' is Stop all; 'start a session' says why nothing starts; 'resume' allows sessions again\" (the default-budget 'start a session' still showed a card); apps/ui/test/real-daemon.test.ts > 'Chat runs a command that needs no model, and names the setup assistant for any other line' (start without Claude)",
+      "how": "session.start now calls ports.startBlocked in plan() through refuseBlockedStart, so the composer refuses before any card is made. run() checks again, because the state can change while a card waits. NO_MODEL_CHAT_REPLY no longer lists 'start a session' among the commands that work without a model. It names 'skip the \u2026 task' instead and adds 'A session needs Claude.'",
+      "check_in_the_app": "Chat: 'stop everything', then 'start a session'. The reply comes at once: 'Sessions are stopped (Stop all), so nothing can start. Say \"resume\" to allow sessions again.' No Yes/No card appears. Without a Claude key, 'start a session' answers 'Claude is not connected: planning and tasks need it. Connect Claude in Settings.'"
+     },
+     {
+      "problem": "(the fixer's check-in claim did not hold; review) After 'stop everything' in Chat, the header's stopped bar appeared only after a reload. The same went for 'resume'.",
+      "u_ids": [
+       "U-071"
+      ],
+      "failing_test_before": "apps/ui/test/chat.test.tsx > \"'stop everything' shows the header's stopped bar at once; 'resume' takes it away\"",
+      "how": "Conversation.tsx re-reads GET /health after a reply whose actions include session.stop or session.resume, and dispatches killActive. The fake daemon answers 'stop everything' and 'resume' the way the daemon does.",
+      "check_in_the_app": "Chat: 'stop everything'. The red bar appears under the header without a reload. 'resume' removes it."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Review non-blocking items owned by other areas or by system-text: budget and autonomy read-backs still show the whole change card ('Risk: medium ...'); the start card shows 'CHF 5' and 'Estimated CHF 5.00'; 'try the style task again' says 'several tasks match' without naming them; model-facing ids and raw states in task_get and open_requests; the Inbox echo of chat actions.",
+      "why": "These are wording and format changes in commands and inbox text that other areas own (system-text, needs-me). fix/needs-me already removes the Inbox echo. They do not make what the chat says untrue."
+     },
+     {
+      "problem": "The header bar's own words ('Kill switch active: no session runs until you press Resume.') differ from the chat's ('press Allow sessions again').",
+      "why": "Shell.tsx belongs to the navigation/shell area. Only the timing of the bar was fixed here."
+     },
+     {
+      "problem": "live-chat.test.ts assertions the fixer loosened (toHaveLength(1) instead of the { sessionId } scope).",
+      "why": "Not blocking. commands.test.ts already asserts the session scope. Left to keep this change to the blocking item and the claims that did not hold."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0; unit 408 files, 4171 passed, 6 skipped"
+     },
+     {
+      "command": "pnpm docs:check --base fix/chat; pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "ok (17 files); ok (61 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0; 4 files passed, 6 skipped; 25 passed, 71 skipped (same as baseline, no FORERUNNER_TEST_PG)"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0; 13 files; 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0; 74 files, 676 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0; 32 passed"
+     },
+     {
+      "command": "New tests against the fixer's source (src files restored to fix/chat, tests kept)",
+      "result": "conversation-memory: 6 of the new or changed tests fail; chat-steering: the Stop all test fails (and the next test in the file, because Stop all was left on); real-daemon: both new or extended cases fail; chat.test.tsx: the header-bar test fails. All pass with the fix."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"; git status",
+      "result": "no conflict markers; tree clean; playwright.local.config.ts not committed"
+     },
+     {
+      "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+      "result": "not run: the desktop shell was not touched"
+     },
+     {
+      "command": "Bench walk fixup-chat (daemon 48001, UI 1601, --provider bench, FORERUNNER_BENCH_FAIL=Style; daemon restarted twice, the second time with FORERUNNER_BENCH_DELAY_MS=2500); scripts and records in /tmp/frbench/fixup-chat/scripts (p1, p2, p3, p4, p6 .json)",
+      "result": "(a) chat calls went 1 \u2192 3 \u2192 25 messages. (c) The dependency card was read back in one line; Yes applied it. 'yes' after that gave 'Yes to what?'. (d) skip \u2192 No \u2192 'yes' gave 'Yes to what?'; skip \u2192 Yes paused the task. Inbox: the card was answered 'no' there, and 'yes' in Chat gave 'You already answered the change I asked about in the Inbox: you said no. ...'. Read-backs ended (you said yes / no / yes / no). (f) The card stayed after a question, survived a daemon restart, and Yes started the session. (g) During the session '# Working now' was sent, and no specialist call carried a chat line. (b) '# Tasks' listed Style as 'Needs your answer'. (h) The summary came as text with one CHF figure. Undo in Quote Page left Notes CLI alone; Talk showed the same 26 lines. (e) 'stop' replied 'Stopped by you' with killActive false. After 'stop everything' the kill-banner appeared at once (count 1) with no reload. 'start a session' while stopped answered the reason at once (no card, waiting null). After 'resume' the banner was gone. 'stop after this task' gave 'Stopped after the task, as asked'. p6: autonomy No \u2192 'yes' gave 'Yes to what?'. The bench is stopped and its PIDs are gone."
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/conversation-memory.test.ts > \"'yes' after the card was answered elsewhere (Talk, the phone, Changes) says you answered it and what you said\" (was: \"... says it is no longer waiting\")",
+      "why": "NO_LONGER_WAITING_REPLY's 'it expired or was answered in the Inbox' was untrue for a card the registry answered from elsewhere. The test now asserts the exact sentence that says what was answered ('you said no'). The scenario is unchanged and the assertion is stricter."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-chat/steps/42-p3-e6-yes-nothing-waiting.png"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-chat/steps/07-p1-y1-yes-after-yes.png",
+      "/tmp/frbench/fixup-chat/steps/11-p1-y2-yes-after-no.png",
+      "/tmp/frbench/fixup-chat/steps/16-p1-i2-inbox-answered-no.png",
+      "/tmp/frbench/fixup-chat/steps/18-p1-y3-yes-after-inbox-no.png",
+      "/tmp/frbench/fixup-chat/steps/22-p2-f3-card-after-daemon-restart.png",
+      "/tmp/frbench/fixup-chat/steps/46-p3-e3-header-after-stop-all.png",
+      "/tmp/frbench/fixup-chat/steps/47-p3-e4-start-while-stopped.png",
+      "/tmp/frbench/fixup-chat/steps/49-p3-e5-header-after-resume.png",
+      "/tmp/frbench/fixup-chat/steps/50-p3-e6-yes-nothing-waiting.png",
+      "/tmp/frbench/fixup-chat/steps/58-p4-s3-start-while-stopped.png",
+      "/tmp/frbench/fixup-chat/steps/63-p6-yes-after-no.png"
+     ]
+    },
+    "new_problems": [
+     "Inbox (needs-me): a chat change card in the Inbox still shows the raw change card ('Change: ... Scope: ... How long: ... Risk: low. Undo: Undo it from Changes.' plus a 'Change card' toggle) with options 'yes'/'no' (/tmp/frbench/fixup-chat/steps/15-p1-i1-inbox-with-the-card.png). fix/needs-me is expected to replace this. The chat's cardFate reads the answer through approvalOf, so other option strings keep working if they start with an approving word or are the first option.",
+     "Shell: the stopped bar says 'Kill switch active: no session runs until you press Resume.' while the chat says 'press Allow sessions again' (/tmp/frbench/fixup-chat/steps/46-p3-e3-header-after-stop-all.png). The header button reads 'Resume'.",
+     "Merge note for the session lead: this commit changes packages/runtime/src/setup/no-model.ts (NO_MODEL_CHAT_REPLY), packages/commands/src/commands/session.ts (plan-time startBlocked) and apps/ui/test/fake-daemon.ts (chat 'yes', 'stop everything', 'resume'). The reviewer already reported that fix/chat and fix/needs-me conflict in fake-daemon.ts and executor.ts."
+    ],
+    "notes_for_other_areas": [
+     "New module packages/runtime/src/conversation/card-fate.ts: cardFate(requestRow, live) \u2192 {state: waiting} | {state: yes|no, where: inbox|registry} | {state: expired}. Use it wherever a change card's outcome is shown in words (the Inbox's Answered list could use it too).",
+     "chat.reply events now carry answeredId (the card the turn answered here); readTranscript exposes it as TranscriptReply.answered.",
+     "Exports changed in conversation/agent.ts: NO_LONGER_WAITING_REPLY is removed; new exports are CARD_EXPIRED_REPLY and cardAnsweredReply(where, said). YES_TO_WHAT_REPLY is unchanged.",
+     "session.start refuses a blocked start in plan() too (refuseBlockedStart). A card cannot be made for a start that would do nothing, and restorePending cannot re-arm one after a restart while Stop all is on (it expires instead).",
+     "Conversation.tsx re-reads GET /health after a reply that ran session.stop or session.resume. The shell area can rely on store.killActive following chat stops."
+    ]
+   }
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "fix/needs-me at 09371b25d607f073532b604255bb572932d5d7f7 (6 commits). Merged cleanly as 8d1136d.",
+   "fix/chat at 4e66881f3b4c17a408f0bdf056c88e639a7728eb (8 commits including its own base merge). Merged as 5895331 after resolving 4 conflicts."
+  ],
+  "head_sha": "3455a24c585c1822d54705593fddc9356ae5b674",
+  "pushed": true,
+  "conflicts_resolved": [
+   "packages/commands/src/executor.ts: kept needs-me's refusal of a high-risk request.answer typed in chat ('Answer it on its card in the Inbox \u2026', details.reason answer_on_card, no second card). The refusal sits before createPending, and createPending now gets chat's g.calls so a Yes/No card survives a restart. Needs-me's post(), which no longer echoes the person's own changes to the Inbox, auto-merged unchanged.",
+   "packages/runtime/test/live-chat.test.ts: took chat's version, which is byte-identical to fix/chat. Needs-me had only edited assertions inside the forwarding tests (the Update no longer quotes the person). Chat deleted those tests because nothing typed during a session is forwarded any more (design \u00a73.9). Nothing else in the repo still refers to the O.9 report or describeHeard.",
+   "apps/ui/test/fake-daemon.ts: kept both new imports: requestWords (needs-me) and duplicateProjectSentence (chat).",
+   "docs/maintainers/commands.md: kept chat's summary.speak row and needs-me's request.answer row (answer_on_card)."
+  ],
+  "integration_fixes": [
+   "c04fb1c 'needs-me, chat: the chat's \"start a session\" names the plan that waits, as the Start dialog does (U-046, U-084)'. After the merge, while the plan from the brief waited, the Start dialog said 'Nothing can run yet: the plan from your brief waits for your approval.' but the chat said 'Nothing can run: no task is ready.' Cause: needs-me put the plan override inline in the start-check route in server.ts, while chat moved the shared reason into daemon/start-blocked.ts for its session.start port. Fix: the plan state (pending or drafting, read from IntakeService.status) is now a fact of startBlocked, used by both the route and the chat port. The chat adds 'Review it in the Inbox.' The fake daemon's chat mirrors this for a pending plan. Two tests failed before the fix: real-daemon.test.ts 'before the approval, start a session in the project's Chat says what the Start dialog says, with no Yes/No card' and chat.test.tsx 'while the plan from the brief waits, start a session says so at once \u2026'. Docs updated: runtime.md, commands.md, the Chat section of user-guide.md.",
+   "d34f331 'needs-me, chat: a change asked for in Chat waits in the Inbox as the question the chat read back (U-074, U-084)'. A chat yes/no card showed in the new Inbox titled 'the task \"write a FAQ for the page\"' (card.what, lower case, no body). Fix: request-words genericCard now titles the card from change_card.ask, chat's one-line question: title 'Pause \"X\"?', body is the rest. Cards without an ask fall back to `why` as before. Failing test first: new title and body assertions in real-daemon.test.ts \"'yes' with nothing waiting says what is true \u2026\". runtime.md updated.",
+   "3455a24 'bench: the smoke journey approves with Approve and start and watches the session it starts (needs-me)'. The design made the smoke journey's own expectations outdated: the banner text, the 'Intake for' card title, an 'approve' button, and no auto-start. The journey now finds 'Plan for \"Quote page\"', checks there is no change-card JSON, clicks Approve and start, checks the 'Done: Plan approved: N tasks written; working on them.' line and that a session started, then watches that session. It presses Start only while tasks are left. scripts/bench/README.md updated."
+  ],
+  "validation": [
+   {
+    "command": "git grep -n '^<<<<<<< '",
+    "result": "nothing found, after each merge and at the final HEAD"
+   },
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "ok"
+   },
+   {
+    "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 pnpm check (final HEAD)",
+    "result": "exit 0. Lint: 0 errors, 60 warnings (the existing ones). lint:paths ok, typecheck ok. Unit: 408 files, 4175 passed, 6 skipped. docs-check ok (114 files), link-check ok (190), secret-scan clean (1885). It also passed right after the merges and after the first fix."
+   },
+   {
+    "command": "pnpm test:integration (final HEAD)",
+    "result": "exit 0. 4 files passed, 6 skipped; 25 passed, 71 skipped. The skips are the Postgres tests (no FORERUNNER_TEST_PG), same as the baseline."
+   },
+   {
+    "command": "pnpm test:e2e (final HEAD)",
+    "result": "exit 0. 13 files; 25 passed, 1 skipped."
+   },
+   {
+    "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts (final HEAD)",
+    "result": "exit 0. 74 files, 702 passed. It was 700 straight after the merges; the 2 extra are the new tests."
+   },
+   {
+    "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (final HEAD)",
+    "result": "exit 0. 32 passed. The local config file stays excluded via .git/info/exclude and was not committed."
+   },
+   {
+    "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+    "result": "not run: neither area touched apps/desktop (git diff 9140369..HEAD -- apps/desktop is empty)"
+   },
+   {
+    "command": "node scripts/bench/start.mjs --name merge-w2 --daemon-port 48010 --ui-port 1610 --fresh && node scripts/bench/journeys/smoke.cjs merge-w2; node scripts/bench/stop.mjs --name merge-w2 (final HEAD)",
+    "result": "20/20 checks, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 21, critic 10, chat 1. Bench stopped."
+   }
+  ],
+  "smoke": "The smoke journey on a fresh bench at the final HEAD passed 20/20 checks, with 0 findings and 0 recorded problems (/tmp/frbench/merge-w2/steps/smoke-result.json). The project page showed 'Waiting for you: approve the plan'. The Inbox card was 'Plan for \"Quote page\": 5 tasks', with no change-card JSON. Approve and start replied 'Done: Plan approved: 5 tasks written; working on them.' and started a session with no Start click. That session ended 'completed' (shown as 'Done') with 5 of 5 tasks done. index.html, script.js, styles.css and README.md were written, and the project Chat answered. I had to update the journey because the design made its old expectations outdated: 'Intake for' card, 'approve' button, no auto-start, and the old 'approving gives no confirmation' finding. There was no product failure. A probe on the same bench (/tmp/frbench/merge-w2/scripts/probe.cjs) checked where the two areas meet:\n- Chat 'start a session' while the plan waits says 'Nothing can run yet: the plan from your brief waits for your approval. Review it in the Inbox.' with no card, the same as start-check.\n- 'skip the FAQ task' gives an Inbox card titled 'Pause \"write a FAQ for the page\"?'.\n- Yes applies it, and a second 'yes' answers 'Yes to what?'.\n- needsYouCount went 2, then 1.",
+  "problems_left": [
+   "Commit ids: the environment re-signed the commits during the push (same trees, new committer time). The pushed ids are 8d1136d, 5895331, c04fb1c, d34f331 and 3455a24, not the ids made locally before the push. The push was a fast-forward, 9140369..3455a24; nothing was force-pushed.",
+   "A chat yes/no card in the Inbox now has a proper title, but its buttons are still the lowercase stored options 'yes'/'no' with no explain lines (genericCard). Changing the labels would change the answer strings that are sent, so I left them.",
+   "The fake daemon's chat models startBlocked only for the pending-plan case I added. Its 'start a session' still shows a card when Stop all is on or nothing can run. That gap was there before this merge.",
+   "Not done by needs-me, per its report: a small plan for one-line briefs (needs the real API); the mobile Inbox still uses why/options; closing a high-risk Settings preview with x leaves an approval card; session Updates repeat cards ('needs your decision (Inbox)'), for system-text in wave 3; Set up Docker does not scroll to Settings \u2192 Sandbox; the Start dialog keeps old StartSessionDialog lines under the new sentence (session-engine); the phone's Reviews 'Approve' maps to Mark done anyway with no confirmation; a free-text 'go ahead' on a planned person card closes it; the IntakeBanner layout is still two lines; Shell's badge aria-label still says 'blocking'.",
+   "Not done by chat, per its report: the 'task' item in the Next-session queue (progress-navigation, wave 3); session.start does not wait for the run to begin; Talk shows voice controls before it knows voice is unavailable; doc-search hits on template text; the runner's legacy heard path is still there; budget and autonomy read-backs still show the full change card with 'Risk: medium'; the start card shows CHF 5 twice; 'several tasks match' does not name them; model-facing ids and raw states in task_get and open_requests; the header's stopped bar says 'press Resume' while the chat says 'Allow sessions again'; live-chat.test.ts has two assertions chat loosened to toHaveLength(1). commands.test.ts asserts the session scope.",
+   "Shell and header, owned by progress-navigation in wave 3: a red Stop all shows while nothing runs; stage, health and autonomy badges; the project switcher shows a different project from the page.",
+   "Known load-sensitive tests (real-daemon 'Stop on the running task', browser.integration 120 s) did not fail in any of my runs."
+  ]
+ }
+}

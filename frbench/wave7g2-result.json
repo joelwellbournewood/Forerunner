@@ -1,0 +1,872 @@
+{
+ "wave": 8,
+ "areas": [
+  {
+   "key": "dependent-branches",
+   "fix": {
+    "area": "dependent-branches",
+    "branch": "fix/dependent-branches",
+    "head_sha": "cafcc7e",
+    "commits": [
+     {
+      "sha": "ba2c50b",
+      "subject": "dependent-branches: no replay in the PR executor, a redo starts a fresh branch, the PR says how to merge it (U-028)"
+     },
+     {
+      "sha": "08962c6",
+      "subject": "dependent-branches: the git host watcher reports what it reads (U-028)"
+     },
+     {
+      "sha": "23e6934",
+      "subject": "dependent-branches: rebuild dependents when what they build on is merged, closed or redone, and never merge a voided review unseen (U-028)"
+     },
+     {
+      "sha": "3736f5a",
+      "subject": "dependent-branches: ADR 0111 amended, maintainer docs and the user guide (U-028)"
+     },
+     {
+      "sha": "0e8431d",
+      "subject": "dependent-branches: in a chain, a dependent follows its rebuilt dependency instead of being voided (U-028)"
+     },
+     {
+      "sha": "9a85dac",
+      "subject": "dependent-branches: a rebuild check reads before it touches the worktree (U-028)"
+     },
+     {
+      "sha": "d62d5d8",
+      "subject": "dependent-branches: the real-daemon C-49 case reads the new PR words (U-028)"
+     },
+     {
+      "sha": "cafcc7e",
+      "subject": "dependent-branches: a guard for live check 1's second chain (U-028)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocker] The PR executor replayed a dependency's commits. A single dependency was brought in by a fast-forward (no merge commit), the next run deleted DEPS_BASE_REF once no dependency was open and rebased onto main, so after a squash-merge of the dependency its commits were replayed (conflict) or, after a close, carried silently.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches.test.ts '(a) a dependency squash-merged on GitHub: the dependent's next run replays none of its commits and its pull request holds only its own commits and files' (before: needs_human, the replay conflicted) and '(a) a branch built on one dependency shows it brought that work in: a merge commit, and a marker the next run keeps' (before: one parent)",
+      "how": "dependencyBase merges each dependency with --no-ff (GitOps.mergeFrom noFastForward) and records each held dependency as refs/forerunner/deps/<task id>; the marker is never removed while the branch holds a dependency (only a rebuild onto main without open deps removes it; a marker the branch does not hold is dropped as stale); execute()'s resume and post-run syncs and continueResolved's sync decide by holdsMergedWork (merge, never rebase); a run rebuilds a branch whose held dependency went away (merged by squash/rebase, closed, redone, cancelled) before and after the inner executor with git rebase --onto <new base> DEPS_BASE_REF (GitOps.rebaseOntoFrom), replaying only the task's own commits.",
+      "check_in_the_app": "Live (session lead, live check 1 second chain, bench-live on forerunner-sandbox, merge mode 'You press Merge'): run a 2-task chain (a page, then a change to that page that depends on it). On GitHub's website press Squash and merge on the first PR. Within one watcher poll (about a minute): the dependent PR's Commits tab shows only its own commit (no copy of the page commit), its Files tab only its own change, GitHub shows one force-push on it, and its body no longer has the 'Builds on' line. Then Merge the dependent (in the app once merge-in-app lands, or 'Create a merge commit' on GitHub): no conflict, and main's history has the page change once (the squash commit)."
+     },
+     {
+      "problem": "[blocker] Every dependent PR said 'Merge in any order.' (true only for GitHub's merge commits); a dependency closed unmerged, redone or cancelled stayed inside the dependent branch and could reach main with it; a dependency merged by squash or rebase never rebuilt the dependent, whose PR kept listing the dependency's files.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches.test.ts '(f) a dependent pull request says how to merge it: never Merge in any order'; packages/runtime/test/dependent-branches-merge.test.ts '(c) the dependency squash-merged on GitHub ...', '(c) a chain of three, the first squash-merged ...', '(d) a dependency closed without merging ...', '(d) a dependency redone ...', '(d) a rebuild that conflicts ...' (each failed with the watcher reports switched off; the chain case failed on the first rebuild: the third task was voided)",
+      "how": "buildsOnText says 'Builds on #4 (not merged yet): this pull request includes its changes. Merge #4 first, or use Merge in Forerunner, which merges them in order.' and withBuildsOn keeps that paragraph true (GitHost.updatePullRequest). PrTaskExecutor.rebuildDependents(projectId, changedDependencyTaskId, hooks) rebuilds every done dependent holding that work, a task before those that build on it; a rebuild that keeps the own change records refs/forerunner/rebuilt/<old head> so the next task in the chain follows it (rebuiltTo). Pushed with a lease (never the default branch). session/dependent-branches.ts (DependentBranches, wired in compose.ts) calls it from onMerged (Forerunner's merges and those seen on GitHub), from every close, and from a per-poll sweep (a dependency redone or cancelled, rebuilds a busy worktree postponed). A conflicting rebuild leaves the branch as it was and files one card naming the PRs.",
+      "check_in_the_app": "Live check 1 first chain: the dependent PRs' bodies say 'Builds on #N (not merged yet): ... Merge #N first, or use Merge in Forerunner, which merges them in order.'; none says 'Merge in any order'. Bench (done, --provider bench, fake host): /tmp/frbench/fix-dependent-branches-before/walk-before.json vs /tmp/frbench/fix-dependent-branches-after/walk-after.json: after the first PR's squash, before = footer PR commits [Add the page, Add the footer], files [footer, page], 'Merge in any order', and main ended with 'Add the page' twice; after = footer PR [Add the footer] files [footer], notes PR follows the rebuilt footer (no page commit), main has the page once."
+     },
+     {
+      "problem": "[major] A rebuild could drop a closed or redone dependency without a conflict, leaving the task's own diff unchanged, so a reviewed version that moved with it could merge unattended on a base without the code it was reviewed on.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts '(d) a dependency closed without merging: the dependent is rebuilt without it, its review is void (one sentence, one card), and a merge the gate would make unattended at level 3 does not happen' and 'a dependency closed while the dependent was being reviewed: the dependent is rebuilt before its merge and is not merged unattended'",
+      "how": "beforePush settles the dependent's merge record before the push: a dependency dropped whose work is not in main (closed, redone, cancelled) moves the record to left_to_you with '#8 was rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you: look at it before you merge it, or send it back.' and one card (fileLeftOpenRequest with rebuild/without; request-words titles it '\"<task>\" was rebuilt without pull request #4'); a rebuild that only dropped what main has keeps the record on the new head when ownChangeId is unchanged; a merge already waiting does not follow a head when its record was moved meanwhile (merge.ts). The runner's merge port (DependentBranches.mergePort) rebuilds an accepted task first, so work closed while it was reviewed never merges with it. The retry pass never takes left_to_you records, so nothing merges it unattended in any mode.",
+      "check_in_the_app": "Bench (done): /tmp/frbench/fix-dependent-branches-after/steps/20-after-close-2-after-inbox.png: after closing the first PR on the fake GitHub, the Inbox shows one card '\"Write the contact page\" was rebuilt without pull request #5' with the sentence; walk-after-close.json shows the contact PR holds only its own commit and file. Live (optional, not in live check 1): at 'Merge automatically after review', close a dependency's PR on GitHub before its dependent merges; the dependent is not merged by itself and its card says it was rebuilt without the closed PR."
+     },
+     {
+      "problem": "[major] The watcher stopped reading a PR once it was not open and reported nothing, so a merge on GitHub by any method, a close, or an open PR's mergeable never reached the rest of the app (and a dependency's record stayed 'waiting for you' after GitHub marked it merged: merge-record's leftover).",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/githost-watcher.test.ts '(g) reports what it reads: an open PR with its mergeable and head each poll, a merged one once with its merge commit, a closed one once' and '(g) a callback that fails keeps the PR read the next poll, and never stops the poll'; packages/runtime/test/dependent-branches-merge.test.ts 'a merge the dependency's PR got inside the dependent's merge commit marks its record merged'; packages/runtime/test/dependent-branches-restart.test.ts (a squash while the app was closed, seen at the next start)",
+      "how": "GitHostWatcherDeps.onPullRequestState(pr, info) for every PR read (open each poll, merged or closed once, before it is marked closed; a throwing callback keeps a merged/closed PR read again next poll) and onDefaultBranchHead(project, sha) once per repository project per poll (repositoryProjects; getRepo once per repo, GitHost.getBranchHead). compose.ts: a merged task PR marks its record merged (merge_sha, method from PrTaskExecutor.mergeMethodOf, last_outcome merged_on_host) and goes through ReviewedPrMerge.merged; a closed one leaves its record to the person ('#4 was closed without merging.') and rebuilds dependents.",
+      "check_in_the_app": "Live check 1 second chain: after the squash on GitHub's website, the squash-merged task no longer shows as waiting for you to merge (its merge record is merged, method squash; the daemon log line 'pull request merged on the host' names it); the dependent's row is not 'waiting on' it."
+     },
+     {
+      "problem": "[major] A redo of a task whose PR was merged or closed reused its branch name and looked for open PRs only: with delete-on-merge off the push was refused; and its merge record answered 'merged' for the new PR.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches.test.ts '(e) a redo of a task whose pull request was squash-merged, or closed, opens a new pull request from a fresh branch; the old branch stays on GitHub' (before: failed, push refused); packages/runtime/test/dependent-branches-merge.test.ts '(e) a redo of a task whose pull request was squash-merged on GitHub: ... its merge record starts again' (before: the old merged record)",
+      "how": "freshBranch: when the task's branch has a merged or closed PR and none open, the run pushes to the old name with -r2, -r3 (unused on the host and by any PR); MergeRecordRepo.pin starts the record again (queued, no merge commit, method or attempts) for a different PR URL instead of returning the merged one.",
+      "check_in_the_app": "Live (optional): press Redo on a task whose PR was merged on forerunner-sandbox; the next session opens a new PR from <old branch>-r2, the old branch stays on GitHub, and the task's row waits for you to merge the new PR (not 'Merged')."
+     },
+     {
+      "problem": "W6-22: the dependent-branch conflict card (two conflicting unmerged dependencies) was asserted only at the executor, not through the Inbox in a composed session.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "none (a test gap): packages/runtime/test/dependent-branches-merge.test.ts 'two unmerged dependencies that conflict: the dependent waits with one Inbox card naming both pull requests (W6-22)' passes on the old code too",
+      "how": "Composed case with the runner, real git and the fake GitHub: the dependent ends needs_human and requestViews shows one card containing '\"Write the other page\" (pull request #N) and \"Write the page\" (pull request #M) both change index.html'.",
+      "check_in_the_app": "No live step needed."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "CHANGELOG [Unreleased] line, docs/status/UPDATE-LOG.md U-entry and requirements rows",
+      "why": "The task says the session lead writes those from this report. Suggested CHANGELOG line: 'Dependent pull requests stay true: no replay, a rebuild when what they build on is merged by squash or rebase, closed or redone (a review that read work which is gone waits for you), a redo opens a new branch, and the PR says to merge in order (ADR 0111 amended).'"
+     },
+     {
+      "problem": "Rebuilds that could not run (a busy or dirty worktree) are remembered in memory only",
+      "why": "After a restart the run's own rebuild (before and after the inner executor), the merge port's check before an accepted task's merge, and the sweep's redo/cancel detection still cover them; a merge or close seen while a done dependent's worktree was busy and then a restart before the next sweep is not retried. Written in ADR 0111's amendment as a known gap."
+     },
+     {
+      "problem": "A merge already under way when a dependency closes can still finish before the rebuild pushes",
+      "why": "The rebuild voids the record first and a waiting merge no longer follows a moved head (merge.ts), but a merge whose final host call is already in flight cannot be stopped without a lock shared with merge-record's step. Narrow window; written in the ADR."
+     },
+     {
+      "problem": "testenv githost: close a PR, squash and rebase merges",
+      "why": "Nothing to add: merge-record's fake host already closes PRs (PATCH state) and makes squash and rebase merges as GitHub does; PR files are three-dot like GitHub."
+     },
+     {
+      "problem": "Live checks",
+      "why": "Not run here (stand-in only, by instruction). The steps are in each fixed item's check_in_the_app (live check 1, second chain is the squash step)."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "EXIT 0: 449 files, 4631 passed, 6 skipped; lint 69 warnings, no errors; docs:check cannot diff origin/main here, run separately below"
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (24 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0: 5 files passed, 6 skipped (30 passed, 73 skipped; Postgres cases skip without FORERUNNER_TEST_PG)"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "83 files, 870 passed, 1 failed (real-daemon C-49 case asserting the old 'not merged yet' words); updated in d62d5d8, that file's C-49 cases then 3 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "EXIT 0: 33 passed"
+     },
+     {
+      "command": "npx vitest run --project unit packages/runtime/test/dependent-branches*.test.ts packages/runtime/test/githost-watcher.test.ts packages/capabilities/test/pr-executor.test.ts packages/capabilities/test/git.test.ts packages/runtime/test/merge-record*.test.ts packages/runtime/test/loop-merge.test.ts (after the last commits)",
+      "result": "all pass (dependent-branches 6 + merge 12 + restart 1, watcher 21, pr-executor 13, git 11, merge-record and loop-merge suites)"
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing"
+     },
+     {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+     },
+     {
+      "command": "bench fix-dependent-branches (--provider bench, fake host on 48227), BEFORE from the base code, AFTER from this branch",
+      "result": "BEFORE: after the squash the footer PR listed the page's commit and file, said 'Merge in any order', the page's record stayed 'waiting for you', main ended with the page change twice. AFTER round 1 found a real bug (the third task voided), fixed in 0e8431d with its test; AFTER round 2: footer and notes PRs hold only their own commits, both records follow their new heads, the page's record is merged (squash), main has each change once; close walk: one Inbox card, the contact PR rebuilt without the closed PR. Bench stopped, its home deleted."
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/capabilities/test/pr-executor.test.ts: 'B sees A's unmerged file; ...', 'a chain: C waits for B, ...', 'B's next attempt (sent back) keeps the base ...'",
+      "why": "ADR 0111 (amended): a dependent PR no longer says 'Builds on #1 (\"A\"), not merged yet: ... Merge in any order.' but 'Builds on #1 (not merged yet): this pull request includes its changes. Merge #1 first, or use Merge in Forerunner, which merges them in order.'; each now asserts the whole new sentence (one also asserts 'any order' is gone)."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts: 'B starts from A's open pull request; B's PR targets main and names A's; B's files and review are its own'",
+      "why": "Same words change; asserts the full new sentence and that 'any order' is gone."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-dependent-branches-before/walk-before.json",
+      "/tmp/frbench/fix-dependent-branches-before/steps/05-before-1-chain-tasks.png",
+      "/tmp/frbench/fix-dependent-branches-before/steps/07-before-2-after-squash-overview.png",
+      "/tmp/frbench/fix-dependent-branches-before/steps/10-before-3-end-overview.png",
+      "/tmp/frbench/fix-dependent-branches-after-round1/walk-after.log (the AFTER round-1 chain bug, fixed in 0e8431d)"
+     ],
+     "after": [
+      "/tmp/frbench/fix-dependent-branches-after/walk-after.json",
+      "/tmp/frbench/fix-dependent-branches-after/walk-after-close.json",
+      "/tmp/frbench/fix-dependent-branches-after/steps/07-after-2-after-squash-overview.png",
+      "/tmp/frbench/fix-dependent-branches-after/steps/08-after-2-after-squash-tasks.png",
+      "/tmp/frbench/fix-dependent-branches-after/steps/20-after-close-2-after-inbox.png",
+      "/tmp/frbench/fix-dependent-branches-after/walk.cjs (the walk script)"
+     ]
+    },
+    "new_problems": [
+     "ReviewedPrMerge.resumeAtStart (merge-record's, loop/merge.ts) records method 'merge' for a PR the host says was merged, whatever GitHub's method was; PrTaskExecutor.mergeMethodOf could read the real one. Matters for merged-actions' Take this work out, which reads the record's method.",
+     "The Overview's merge list does not show a voided record's sentence ('#8 was rebuilt without #4 ...'); only the Inbox card says it (merge-in-app owns the Overview words).",
+     "The left-open card filed for a rebuild offers 'I merged it' (primary) and 'Leave it open' (merge-record's options); for a review voided by a rebuild, Merge (merge-in-app) and Redo would fit better.",
+     "mergeMethodOf reads a one-commit PR merged by rebase as 'squash' (the two are the same commit shape); several-commit PRs are told apart by the last commit's patch id.",
+     "The sweep checks every done dependent of a cancelled dependency on every poll (two local git commands each, no host call) for as long as the dependency stays cancelled.",
+     "Dependent worktrees made before this change whose marker the old code already deleted cannot be rebuilt (nothing says what they hold); they fall back to the merge rule only when they hold a merge commit."
+    ],
+    "notes_for_other_areas": [
+     "merge-in-app (group 3): subscribe in compose.ts inside the watcher's onPullRequestState lambda (today it calls dependentBranches.pullRequestState(pr, info) then emits the project event); info is the full PullRequestInfo (open: mergeable and head.sha every poll). onDefaultBranchHead today is (project) => dependentBranches.sweep(project.projectId): add your work beside it. RuntimeApp.dependentBranches is the instance. A person's Merge on a voided record (left_to_you, last_outcome rebuilt_without / rebuilt_changed / rebuild_conflict) goes through mergeRecorded(record, {kind:'person'}): the pinned reviewed head is the pre-rebuild one, the merge step sees head_moved and follows the rebuilt head only when ownChangeId matches (attended click).",
+     "merge-in-app: new merge_record.last_outcome values: merged_on_host (merged on GitHub, seen by the watcher), closed, rebuilt_without, rebuilt_changed, rebuild_conflict. fileLeftOpenRequest takes an optional card (JsonObject) merged into change_card; rebuild cards carry change_card.rebuild ('rebuilt_without' | 'rebuilt_changed' | 'conflict') and without (PR numbers); request-words.ts rebuildTitle titles them.",
+     "merge-in-app / merged-actions: merging a chain in order is safe with merge commits: rebuildDependents(projectId, taskId) runs on every onMerged and leaves a dependent whose dependency is in main as itself untouched (only its 'Builds on' line is updated).",
+     "merged-copy (group 3): GitOps.push is called with force: true (force-with-lease) by PrTaskExecutor.rebuildIn for task branches; your neverPush list must allow task branches. Subscribe your refresh to onMerged (already hears merges seen on GitHub through DependentBranches) and to onDefaultBranchHead in compose.ts.",
+     "budget-resume (group 4): pr-executor.ts execute() now only resolves the target and runs executeIn(ctx, target, dir) under a per-worktree lock (inWorktree; rebuilds use tryWorktree and skip a busy worktree). The resume start point is in executeIn: resume = createBranch(branch, origin/branch), dropStaleMarker, rebuildBranch, then the merge rule (holdsMergedWork); the fresh path sets the deps base (setDepsBase) then createBranch. A pause commit must leave the worktree clean or rebuildIn reports busy.",
+     "merged-actions (group 5): records of PRs merged on GitHub now carry merge_sha and method (merge | squash | rebase, PrTaskExecutor.mergeMethodOf(task, mergeSha, headSha)).",
+     "APIs added: GitHost.updatePullRequest(repo, n, {title?, body?, state?}) and getBranchHead(repo, branch) (GitHubHost, MemoryGitHost); GitOps.mergeFrom(ref, msg, {noFastForward}), rebaseOntoFrom(onto, upstream, branch?), refsUnder(prefix), commitCount(from, to); pr-executor exports rebuildDependents, rebuildTask, mergeMethodOf, buildsOnText, withBuildsOn, droppedWords, DEPS_HELD_PREFIX, depsHeldRef, REBUILT_PREFIX, VOIDING_STATES and the types HeldState, HeldDependency, DependentRebuild, DependentOutcome, RebuildHooks; runtime session/dependent-branches.ts exports DependentBranches and the sentences rebuiltWithoutSentence, rebuiltChangedSentence, rebuildConflictSentence; GitHostWatcherDeps gains onPullRequestState, repositoryProjects, onDefaultBranchHead.",
+     "Small changes made in merge-record's files (kept compatible): loop/merge.ts run() re-reads the record on head_moved and returns its word when another process moved it; state/repos/merge-record.ts pin() starts the record again for a different PR URL. ADR 0111 is amended (section 'Amendment: dependent branches kept true'); merge-in-app amends it after this."
+    ]
+   },
+   "review": {
+    "verdict": "pass",
+    "acceptance_walk": "Bench \"review-dependent-branches\" (stand-in model `--provider bench`; fake GitHub host on port 48233 with `bench/seeded`; watcher polling every 3 s). Daemon on 48230, UI on 1830, started from fix/dependent-branches at cafcc7e. Each project is at level 2 (\"You press Merge\"), and every task was made in the UI with New task and the dependency picker, then started with Start session. Walk script: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/walk.cjs. Results: walk-<journey>.json next to it. Screenshots and texts: /tmp/frbench/review-dependent-branches/steps/.\n\n1. **Chain of three, then a squash on GitHub (steps 01-13).**\n   - **Before the squash:**\n     - Footer PR #3 had the commits [Add the page, Build on \"Add the page\" (#2), Add the footer] and the files [footer, page].\n     - Notes PR #4 held all three tasks' work.\n     - The bodies said \"Builds on #2 (not merged yet): this pull request includes its changes. Merge #2 first, or use Merge in Forerunner, which merges them in order.\" and \"Builds on #2 and #3 ...\". Nothing said \"any order\".\n     - All three records were left_to_you (not_allowed).\n   - **After I squash-merged #2 through the host API:**\n     - Within one poll, #3 held only [Add the footer], its file list only the footer, and the \"Builds on\" line was gone.\n     - #4 followed the rebuilt footer: [Add the footer, Build on \"Add the footer\" (#3), Add the notes], files footer and notes, body \"Builds on #3\". It was not voided and got no card.\n     - #2's record was merged, method squash, last_outcome merged_on_host.\n     - The #3 and #4 records moved to their new heads, still waiting for the person.\n     - The Overview's \"Waiting for you to merge\" listed only #3 and #4 (08-chain-2-after-squash-overview.png). The squash-merged task was no longer listed as waiting. The Inbox was empty.\n   - **Then #3 and #4 merged with merge commits on the host:**\n     - After #3 merged, #4 listed only notes and its \"Builds on\" line was gone.\n     - Every record was merged, with method merge.\n     - main holds each notes/coder-*.md file in exactly one commit: no replay, no duplicate.\n2. **Close (steps 14-20).**\n   - I closed welcome PR #5 on the host without merging.\n   - #5's record became left_to_you with \"#5 was closed without merging.\"\n   - Contact PR #6 was rebuilt with only its own commit and file.\n   - #6's record became left_to_you (rebuilt_without), with the reviewed head kept at the pre-rebuild commit.\n   - The Inbox shows one card titled '\"Write the contact page\" was rebuilt without pull request #5', naming the project and the task (19-close-after-close-inbox.png). Body: \"#6 was rebuilt without #5, which was closed. It was reviewed with #5's changes, so it waits for you: look at it before you merge it, or send it back.\" Two sentences, no ids.\n   - Later polls filed no second card (20-close-inbox-later.png).\n   - The Overview lists only #6 as waiting. The project header says Waiting for you: \"Write the contact page\".\n3. **Redo of a squash-merged task through the Tasks tab (steps 21-29).**\n   - The task's branch became `fr/...-write-the-about-page-r2`, and the old branch stayed on the host.\n   - No new PR came: the stand-in wrote byte-identical content on top of main, so the run ended \"failed (no changes were made in the worktree)\". This is a stand-in artifact; the same outcome existed before this change.\n   - Case (e) in dependent-branches.test.ts and dependent-branches-merge.test.ts covers the new PR with real git against the fake GitHub.\n   - Redo did not start a session; I pressed Start. That is not this area's.\n4. **Redo of a dependency whose PR is still open (steps 30-37).**\n   - At the next poll, order PR #9 was rebuilt without menu #8.\n   - Its record is left_to_you with \"#9 was rebuilt without #8, which is being redone. ...\" and one card (37-redo-dep-after-redo-inbox.png).\n5. **Ladder (critic sends the dependent back, `FORERUNNER_BENCH_CRITIC_REJECT=prices`, critic delay 8 s).**\n   - While \"Write the prices\" was being reviewed, I squash-merged its dependency #10.\n   - The critic sent it back, and the rework run rebuilt the branch first (log: \"dependent branch rebuilt ... 10:copied\").\n   - PR #11 ended with only [Write the prices], only its own file and no \"Builds on\" line. The record is left_to_you (not_allowed).\n\nEvery screen on the way matched core-experience.md for this area: card shape, two-sentence body, plain words, and an Overview that is true after the squash. The work went on by itself where the design asks: the watcher rebuilt with no session, and the ladder rerun rebuilt before running. The bench is stopped and its home deleted.",
+    "blocking": [],
+    "claims_checked": [
+     {
+      "claim": "(a) After a squash-merge, a dependent's next run replays none of the dependency's commits, and its PR holds only its own commits and files.",
+      "holds": true,
+      "note": "Passes on the fix. On claude/nifty-knuth-f9udt0 source, with the new test file unchanged, it fails: \"expected 'needs_human' to be 'in_review'\" (the replay conflicted). The bench ladder journey shows the same thing through the UI."
+     },
+     {
+      "claim": "(a) A branch built on one dependency gets a --no-ff merge commit and keeps its marker across runs.",
+      "holds": true,
+      "note": "Fails on base source: \"expected [Array(1)] to have a length of 2\"."
+     },
+     {
+      "claim": "(c) A squash on GitHub rebuilds the dependent through the watcher callback, the dependency is no longer listed as waiting, and the dependent merges without a conflict.",
+      "holds": true,
+      "note": "The composed test fails on base source: PR commits were ['Add page','Add footer']. Bench chain journey confirmed: record merged/squash, Overview lists only #3 and #4."
+     },
+     {
+      "claim": "A chain of three: the third task follows the rebuilt second one instead of being voided (0e8431d).",
+      "holds": true,
+      "note": "Composed test passes. On the bench, #4 followed rebuilt #3 with no void and no card."
+     },
+     {
+      "claim": "(d) A close, redo or cancel rebuilds the dependent without that dependency and voids its review (left_to_you, one sentence, one card); nothing merges it unattended at level 3; a conflicting rebuild leaves the branch untouched and files one card naming the PRs.",
+      "holds": true,
+      "note": "Composed tests pass and fail on base source. Bench close and redo-dep journeys show the card and sentence. The retry pass takes only waiting_checks and queued (merge.ts:796)."
+     },
+     {
+      "claim": "(e) A redo of a merged or closed task pushes to a fresh -r2 branch, the old branch stays, and the merge record starts again.",
+      "holds": true,
+      "note": "Fails on base source: outcome 'failed', push refused. On the bench the branch became -r2 and the old branch remained. No new PR came only because the stand-in wrote identical content."
+     },
+     {
+      "claim": "(f) No PR body says 'Merge in any order'.",
+      "holds": true,
+      "note": "Grep finds the old words only in comments and in negative assertions. The bench PR bodies carry the new sentence."
+     },
+     {
+      "claim": "(g) The watcher reports open PRs every poll, merged and closed ones once, keeps a failed report to be read again, and reports the default branch head once per project per poll.",
+      "holds": true,
+      "note": "Both (g) cases fail on base source and pass on the fix. The test checks the head sha for open PRs but does not assert `mergeable`."
+     },
+     {
+      "claim": "Across a restart, a squash made while the app was closed is seen at the next start's first poll.",
+      "holds": true,
+      "note": "dependent-branches-restart.test.ts (runtime composed twice on one SQLite home) fails on base source and passes on the fix."
+     },
+     {
+      "claim": "W6-22: a composed test of the card for two conflicting dependencies.",
+      "holds": true,
+      "note": "Passes. It closes a test gap; as the fixer says, it also passes on the old code."
+     },
+     {
+      "claim": "Group 1 leftovers are fixed: a dependency marked merged inside its dependent's merge commit, and the post-run sync and continueResolved deciding by holdsMergedWork.",
+      "holds": true,
+      "note": "Test passes. Bench records show merged_on_host with methods squash and merge. pr-executor.ts uses holdsMergedWork at the post-run sync and in continueResolved."
+     },
+     {
+      "claim": "No test was weakened.",
+      "holds": true,
+      "note": "The only removed assertions are the five old 'Builds on #N (\"title\"), not merged yet' strings. Each was replaced by the full new sentence plus `not.toMatch(/any order/i)`; the spec changed the words. No test was deleted or skipped."
+     },
+     {
+      "claim": "Validation is green.",
+      "holds": true,
+      "note": "Re-run here: lint, lint:paths, typecheck, docs-check --base claude/nifty-knuth-f9udt0 (25 files), docs:links and secrets:scan all exit 0. pnpm test: 449 files, 4632 passed, 6 skipped. test:integration: 30 passed, 73 skipped. test:e2e: 25 passed, 1 skipped. UI vitest: 83 files, 871 passed. Playwright (local config): 33 passed."
+     },
+     {
+      "claim": "No daemon route changed, so no real-daemon or fake-daemon case is owed.",
+      "holds": true,
+      "note": "server.ts and fake-daemon.ts are not in the diff. The existing real-daemon C-49 case was updated for the new words and passes."
+     }
+    ],
+    "non_blocking": [
+     "Card options: the rebuild card reuses merge-record's left-open card, whose primary button is \"I merged it\" and secondary \"Leave it open\". For a voided review that is not the safe or likely option (core-experience.md \u00a73.8). The body's \"or send it back\" names no action the person can find: the done task offers Redo, and the user guide says Redo. merge-in-app could offer Merge and Redo here. The fixer already reported this.",
+     "Hardcoded branch name: rebuiltChangedSentence and request-words.ts rebuildTitle say \"rebuilt onto main\" whatever the repository's default branch is, which is untrue for master or trunk (writing rule 4). The path is rare: a squash after which the task's own change differs.",
+     "Stale card: \"#9 was rebuilt without #8, which is being redone\" stays on the card and the record after #8's redo is done again with the same PR head (bench redo-dep). The sentence was true when written, but reads stale afterwards.",
+     "Commit noise: with --no-ff, a chain's third task gets two \"Build on ... (pull request #2)\" merge commits (one from #3's history, one of its own), and after a rebuild a \"Build on #3\" merge commit reaches main. This shows on GitHub's Commits tab and in main's history; the content is correct.",
+     "PR words promise a button that does not exist yet: the dependent PR says \"use Merge in Forerunner\", but that button arrives only with merge-in-app (group 3). This matches the spec, but until group 3 merges the words promise a feature that does not exist (writing rule 9).",
+     "MergeRecordRepo.pin now moves a merged record back to queued for a different PR URL, without the state graph: MERGE_RECORD_TRANSITIONS still says merged: [], so the generated graph doc and the code disagree. The packages/state suite (SQLite and Postgres) has no case for the new behaviour; only the composed SQLite test (e) covers it.",
+     "Chain edge case: if the middle task of a chain is busy when the first one's squash is seen, the third is rebuilt onto main plus the middle task's old branch, which still holds the first task's pre-squash commits. Once the middle task is rebuilt, the third follows it (rebuiltTo) and is not rebuilt again, so its PR can keep those old commits. The file content stays correct.",
+     "No shared worktree lock: the worktree lock is private to pr-executor, so ReviewedPrMerge's own git steps in a task worktree (mergeChecked's update path) are not serialised with a rebuild of the same worktree. This is part of the known in-flight-merge gap the ADR names.",
+     "Upgrade gap: the owed rebuilds live in memory. Also, PRs the old watcher already marked closed in its cursor are never reported after an upgrade. Both are written in ADR 0111 or are upgrade-only.",
+     "Not this area: the Overview's Last result keeps \"Left 3 reviewed pull requests for you to merge\" after one of them was squash-merged (merge-in-app owns the result lines). A failed card shows \"**Summary**\" markdown (the polish area owns the sign-off card).",
+     "Not this area: Redo of a done task starts no session; I had to press Start."
+    ]
+   },
+   "fixup": null
+  },
+  {
+   "key": "credential-limits",
+   "fix": {
+    "area": "credential-limits",
+    "branch": "fix/credential-limits",
+    "head_sha": "19eb2aab5c46ebfdc1dd403f4cbf13c608a97df2",
+    "commits": [
+     {
+      "sha": "f5ca95a6b59b14a510654d8bcee5fb10b2b554e3",
+      "subject": "bench: a Messages API stand-in and --provider bench-api (U-078)"
+     },
+     {
+      "sha": "f19d1c6410dd44e1635be54a80710123ffbd1330",
+      "subject": "credentials: a refused credential is named on one card, work waits at a limit and starts by itself, 'Wait' by default (U-078)"
+     },
+     {
+      "sha": "1404ae352b3e2f0e24ec6026ada4fc7e39c7b059",
+      "subject": "sessions: a session that waits for a credential says so in its badge and last line (U-078)"
+     },
+     {
+      "sha": "19eb2aab5c46ebfdc1dd403f4cbf13c608a97df2",
+      "subject": "settings: the row count of two screen tests follows the new mid-session setting (U-078)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocker] A refused API key or an expired sign-in was never reported as refused. The loop turned it into provider_error \"model call failed\", a passing error tried again at once, and the task then failed with its own card. The next task picked the same refused key, so on the bench: 4 calls and 2 failed tasks, and Settings read 'Can be used now'.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts > a refused API key (U-078) > one card names it, every task waits for a new key (none failed), and saving one starts the work (failed before: 'expected 4 to be 1'). Also packages/runtime/test/subscription-path.test.ts > 'an authentication_failed assistant error ...' and 'a 401 result marks the sign-in refused, files one card, and the API key takes over'; packages/runtime/test/billing-order.test.ts > 'a refused key in a chat call: the next credential answers, the key reads Refused with one card, and a new key ends it (U-078)'; packages/runtime/test/routed-provider.test.ts > 'a refused credential (U-078) is marked refused and the call is made once more on the next source'; packages/billing/test/router.test.ts > 'skips a refused source with code refused'; apps/ui/test/inbox.test.tsx > 'a refused API key is one card ...'; apps/ui/test/settings-billing-order.test.tsx > 'a key Anthropic refused reads Refused ...'",
+      "how": "Root cause: agent/loop.ts kept only USAGE_LIMIT_CODE and 'unavailable' from a failed call, and agent/sdk.ts mapped every is_error result to provider_error. Changes:\n- provider_auth now survives the loop. On the SDK path, isClaudeCodeRefusal (provider/usage-limit.ts) reads an authentication_failed assistant error, or a result that reads as a 401 or an expired sign-in. The mapping sits only in the enforcing branch, after budget-stop's drain.\n- RouterTaskBilling.refuse (wiring/billing-pick.ts) marks the source: limits.refusedAt, refusedKey (credentialFingerprint: the first 16 hex characters of the SHA-256, never the value) and refusedWhy. It writes a billing.refused audit row and files one Inbox card per source while the mark stands (session/credential-wait.ts fileRefusedCard, key credential:refused). The card's words are in request-words.ts: title 'Anthropic refused your API key' (or '... your Claude sign-in'), body 'Save a new one in Settings. The work that needs it waits and starts by itself then.', a 'Save a new key' link to /setup, no choices.\n- VaultLedgerProbe reports `refused` while the vault holds the refused credential, and BillingRouter skips the source with SkipCode `refused`.\n- RoutedProvider (chat, planning, reviews) marks the source the same way and makes the call once more on the next source.\n- The executor rests or refuses the source, then words what really comes next (stoppedRunSentence plus nextCredential, a pick that only reads). The runner releases the claim without counting a try and never treats it as a passing error. It then either puts the task back at the head of the queue for the credential that takes over, or ends the session on the wait.\n- Settings' billing order view gets blocked 'refused'. BillingOrderSection.tsx shows 'Refused: Anthropic did not accept this key. Save a new one under Accounts and keys'.\n- Saving a new key in the setup assistant ends the mark at once and closes the card (SetupRoutesDeps.onClaudeCredentialSaved, then RuntimeApp.billing.waits.credentialSaved). A key saved another way (fr setup) ends it on the daemon's next scheduler tick, because the fingerprint no longer matches (takeReady).",
+      "check_in_the_app": "Bench (done, no real key):\n1. `node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u> --fresh --provider bench-api --api-key refused`, then `node scripts/bench/journeys/credentials.cjs <n> <label> --save-key ok`.\n2. Inbox: exactly one card 'Anthropic refused your API key' with 'Save a new key' and no answer buttons; no failed-task card.\n3. Tasks tab: both rows read 'Waits for a new API key' with Pause and Cancel.\n4. Session page: 'Waits for a new API key: save one in Settings.'\n5. Settings \u2192 Advanced \u2192 Claude: which to use first: 'Refused: Anthropic did not accept this key. Save a new one under Accounts and keys'.\n6. api-requests.jsonl: one 401 for the refused key's id, then only 200s for the new key's id.\n7. After the new key: the card is under Answered with 'A new one is saved; the work that waited for it goes on.', and both tasks are Done without a click.\n\nLive check 2 (after the merge, routed provider, real API base, about USD 0.05):\n1. Start a bench with no --provider flag and an invalid key written straight into its vault: `node scripts/bench/start.mjs --name live-cred --daemon-port <p> --ui-port <u> --fresh --provider none --api-key refused`. This stores 'sk-ant-api03-bench-refused-<hex>'; the real API answers 401 and nothing is spent.\n2. Run `node scripts/bench/journeys/credentials.cjs live-cred live`. It makes two small tasks and starts a session without a planning call; a planning call would also meet the refusal, which files the same single card.\n3. Expect exactly one Inbox card, 'Anthropic refused your API key' / 'Save a new one in Settings. ...'.\n4. Expect both tasks Ready with the row 'Waits for a new API key' and no failed-task card.\n5. Expect the session result 'Waits for a new API key: save one in Settings.' and the badge 'Waiting for a Claude credential'.\n6. Settings \u2192 Advanced \u2192 Claude: which to use first reads 'Refused: ...'.\n7. Expect one 'billing source refused' warning in daemon.log and one billing.refused audit row.\n8. In the app, open Settings \u2192 Accounts and keys \u2192 Open the setup assistant and paste the real key (from FORERUNNER_ANTHROPIC_API_KEY, never echoed).\n9. Expect within about 30 s: the card under Answered with 'A new one is saved; the work that waited for it goes on.', the Settings row 'Can be used now', a session started by itself (trigger budget_reset) and both tasks Done."
+     },
+     {
+      "problem": "[blocker] With one credential at its limit (or every one resting) the rest of the session failed task by task. Each task got a failed-task card reading the router's 'no billing source available for session work on the pc runner'. This was seen on the bench before the fix.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts > a key at its usage limit (U-078) > the work waits until the reset, says so, and starts by itself then, after a restart too (failed before: a failed task, 'expected [ Array(1) ] to deeply equal []')",
+      "how": "Root cause: BillingRouter.pick threw 'unavailable' when nothing could serve, executor.pickBilling did not catch it, and the runner made it a failed task. Changes:\n- The router's cooldown skips now carry `until`.\n- credentialWaitOf (session/credential-wait.ts) reads a wait from a router 'unavailable': the 'wait' rule's waitFor, else the earliest resting source's reset, else a refused source.\n- executor.pickBilling turns such a wait into ForerunnerError('unavailable') with details.wait and the wait's sentence, and keeps the wait on the source (noteWait). The runner's catch turns it into a usage_limit result with credentialWait.\n- The runner then ends the session on the wait (stop reason credential_wait) and leaves the rest of the queue ready, so there is no row of failed tasks.\n- The sentences:\n  - the session result's first builder: 'Waits until 15:40 (your subscription's limit) and starts by itself.' or 'Waits for a new API key: save one in Settings.';\n  - the task row, through TaskDisplayContext.credentialWait from credentialWaitRow: 'Waits until 15:40, your subscription's limit', key `waiting`, detail 'It starts by itself then.';\n  - the session badge: 'Waiting for a Claude credential';\n  - the end line: 'Waiting for a Claude credential: nothing done. CHF 0.00.'.\n- Times are said in the person's time zone (clockTime).\n- failureWords never shows the router's own sentence ('No Claude credential can be used now.'), and provider_auth reads 'Anthropic refused the Claude key or sign-in. Save a new one in Settings.'.",
+      "check_in_the_app": "Bench (done):\n1. `start.mjs --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2`, then `credentials.cjs <n> <label> --wait-start 300`.\n2. No task fails. The session reads 'Waits until 03:53 (your API key's limit) and starts by itself.' with the badge 'Waiting for a Claude credential'.\n3. Rows read 'Waits until 03:53, your API key's limit'. Settings reads 'Resting until Nov 03, 2026, 03:53 AM (its usage limit); waiting work starts by itself then'. There is no Inbox card.\n4. At 03:53 a session starts by itself and both tasks end Done.\n\nIn the app:\n1. With one credential at its limit, press Start.\n2. The session ends with the one 'Waits until \u2026' sentence, never 'no billing source available'.\n3. Quit and reopen before the reset: the rows still say 'Waits until \u2026'. At the reset a session starts by itself."
+     },
+     {
+      "problem": "[major] Nothing started a task again when the limit reset, while its sentence promised it 'goes back to ready and runs on the next credential'.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts > a key at its usage limit (U-078) > ... starts by itself then, after a restart too (closes the runtime, composes it again on the same home, ticks the scheduler before and after the reset). apps/ui/test/real-daemon.test.ts > 'a Claude credential at its limit (credential-limits, U-078)' > under the default 'Wait' ... the start at the reset runs them",
+      "how": "The wait is kept on the billing source it waits for (limits.waiting: projectId, agentId, since), so it survives a restart. RouterTaskBilling.takeReady takes the projects whose source serves again: the rest has ended and no refusal stands. It also clears a refusal that a new credential ended, together with its card. RuntimeApp.billing.waits.wake() runs before every scheduler tick (Scheduler refresh in compose.ts) and once from credentialSaved. It requests one session start per project (trigger budget_reset) while the project has ready work. The sentences say exactly what is scheduled (stoppedRunSentence): 'Your Claude subscription reached its usage limit; \"X\" waits until 15:00 (your subscription's limit) and starts by itself.'",
+      "check_in_the_app": "Bench: shown in the limited walk above (/tmp/frbench/fix-credential-limits/after/06-after-limited-after-reset-tasks-tab.png).\n\nIn the app:\n1. After a 'Waits until HH:MM' session, leave the app open, or quit and reopen it.\n2. At HH:MM (within about 30 s) the project's session starts by itself, and the Tasks tab follows it to Done."
+     },
+     {
+      "problem": "[major] With a second credential, today's behaviour contradicted the decided default 'Wait'. The session's other tasks moved onto the other credential (plan-limit work became API money without a choice), while the stopped task was held out with no start scheduled.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/task-usage-limit.test.ts (rewritten for the decided behaviour) > \"under 'Wait'\" > waits for the reset with nothing on the API key, says so, and starts by itself at the reset. packages/billing/test/router.test.ts > \"'Wait' (U-078): a first choice that rests holds the pick instead of moving on\". apps/ui/test/real-daemon.test.ts > credential-limits block, both cases. apps/ui/test/settings-all.test.tsx > 'when my first choice runs out mid-session: Wait by default; Use the other one asks a yes'",
+      "how": "There is a new setting, 'When my first choice runs out mid-session' (human.notify_prefs.mid_session_limit; SETTING_SPECS.mid_session_limit; medium risk with narrows, so use_other asks a yes). It defaults to 'wait'; settings-view.ts gives the row 'Tasks only ... Chat, planning and reviews always use the next one.'. The UI shows it as a select in Other settings (MID_SESSION_LIMITS in SettingsFields.tsx), and the fake daemon lists the same row.\n\nThe executor's billingRequest sets TaskBillingRequest.waitOnRest under 'wait', and BillingRouter applies RouteContext.waitOnRest. A resting source that ranks ahead of every source that could serve throws 'unavailable' with details.waitFor, so nothing moves onto the other credential. A refusal is not 'running out': the next credential serves under both values.\n\nUnder 'use_other' the stopped task is put back at the head of the queue and continues at once on the next credential, at most MAX_CREDENTIAL_MOVES per task in a session. The log then reads 'Your Claude subscription reached its usage limit; \"X\" continues on your API key now.' Non-task calls never set waitOnRest, so ADR 0100 point 4 stands for them.",
+      "check_in_the_app": "Two credentials, the subscription at its limit (real-daemon test; the bench has no Claude Code):\n1. Under the default, the session ends 'Waits until 11:40 (your subscription's limit) and starts by itself.' and no task call reaches the API key.\n2. Settings \u2192 Advanced \u2192 Other settings \u2192 'When my first choice runs out mid-session' \u2192 Change \u2192 'Use the other one at once (may cost money)' asks a Yes.\n3. After the Yes, a stopped task goes on at once on the API key, and the log says 'continues on your API key now'.\n\nThe owner confirms the meaning with a second credential in U-078 (owner question below)."
+     },
+     {
+      "problem": "[major] The bench could not exercise the router: `--provider bench-live` bypasses the routed provider, the billing sources, the marks and a key saved in the vault, and no Messages API stand-in existed.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/messages-api-stand-in.test.ts (new: the app's own Anthropic adapter against the stand-in reads provider_auth for a refused key, provider_usage_limit with the 'regain access' reset for the 429 and 400 forms, text and tool calls otherwise, and a log without key text); packages/runtime/test/cli-daemon-provider.test.ts > 'bench-api keeps the routed provider and points the Anthropic API at the stand-in (U-078)'",
+      "how": "testenv/src/provider/messages-api.ts:\n- messagesApiStandIn answers POST /v1/messages (SSE, or one JSON message), GET /v1/models and GET /v1/models/<id> per key.\n- keyRule and keyRuleFromEnv decide by the key's text: 'refused' gets 401; 'limited' gets the 429 spend cap or the 400 spend limit for N minutes, then is served.\n- keyIdOf logs keys by a SHA-256 id only.\n- standInFetch is the fetch that routes the Anthropic API to the stand-in.\n\n`fr daemon --provider bench-api` (cli/main.ts daemonFetch; repository checkout only, refuses without testenv/) keeps the routed provider and composes with benchApiFetch (testenv/src/bench/index.ts): the role-player behind the stand-in, with each request logged in <home>/bench/api-requests.jsonl.\n\nBench scripts:\n- start.mjs --provider bench-api --api-key refused|limited|ok writes a key of that kind straight into the vault (scripts/bench/vault-key.ts, storeBenchKey); bench.json gets apiRequestLog.\n- journeys/credentials.cjs walks the person's view.\n- The README and testing.md describe it.",
+      "check_in_the_app": "`node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u> --fresh --provider bench-api --api-key refused`. daemon.log shows '[bench] Messages API stand-in; request log: ...'; Settings lists one API key; every request appears in <home>/bench/api-requests.jsonl with keyId and answer, never the key."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "U-078 entry in docs/status/UPDATE-LOG.md (with the owner question) and the CHANGELOG line",
+      "why": "The task forbids editing UPDATE-LOG.md, CHANGELOG.md and requirements.md: the session lead writes those from this report. Owner question for U-078: what 'When my first choice runs out mid-session: Wait' means when a second credential could serve.\n- Built (a): nothing moves onto the other credential. The stopped task and the session's other tasks whose first choice is that credential wait for its reset and start by themselves.\n- Option (b): only the stopped task waits; the others go on to the other credential as before, with the stopped task's start scheduled at the reset.\n- Changing it changes one rule: RouteContext.waitOnRest in BillingRouter.pick, and the sentences."
+     },
+     {
+      "problem": "Under 'Wait', a session ends at the first task that must wait. Tasks whose first usable choice is another credential (a research task, whose first kind is the API key while the subscription rests) are not run in that session.",
+      "why": "I chose this so the session ends on one sentence instead of a started-then-waiting line per task. Those tasks stay Ready and run in the session started at the reset, or when the person presses Start (the pick then serves them on their own first choice). Running them in the same session would need a billing dry-run before each task's start line, which is in runTask code another area owns."
+     },
+     {
+      "problem": "The subscription path on the bench (a refused Claude sign-in on the stand-in)",
+      "why": "Claude Code needs its own binary and real auth, so the stand-in serves only the Messages API. This path is covered by the fake Agent SDK in subscription-path.test.ts (authentication_failed and a 401 result) and real-daemon.test.ts. A live check needs a subscription token: the owner's checklist step 6 ('a refused Claude sign-in gives the same single card')."
+     },
+     {
+      "problem": "A separate composed test for a critic review that meets a refused key",
+      "why": "Reviews use the same RoutedProvider (withPurpose('critic')) as chat. The refusal path is tested on the class (routed-provider.test.ts) and composed through chat (billing-order.test.ts: marked Refused, one card, next source answers, new key ends it); no review-specific branch exists."
+     },
+     {
+      "problem": "setup/wizard.ts and secrets/store-routes.ts were not changed",
+      "why": "store-routes refuses Claude keys (they go through the setup assistant), so nothing is saved there. A key stored by `fr setup` (wizard) ends the refused mark by itself on the daemon's next scheduler tick, because the mark keeps the refused credential's fingerprint (RouterTaskBilling.takeReady). The setup assistant's POST /setup/anthropic ends it at once."
+     },
+     {
+      "problem": "A subscription's plan-share cap or a key's monthly cap does not count as 'running out' under 'Wait'",
+      "why": "Both are Forerunner's own budget lines with no reset time a wait could name. They keep ADR 0044's behaviour: the router skips them and the next source serves. Only a provider's usage limit (a rest with a reset) is held by 'Wait'."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan) at 1404ae3",
+      "result": "EXIT 0. Lint: 0 errors, 69 warnings, all already in the tree. check-paths ok (1410 files). Unit: 449 files, 4624 passed, 6 skipped. docs:check needs a base here (origin/main does not exist in this clone). link-check ok (205 files). secret-scan clean (2016 files)."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (62 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0: 5 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG); 30 passed, 73 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0: 13 files; 25 passed, 1 skipped (same as baseline)"
+     },
+     {
+      "command": "cd apps/ui && FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+      "result": "876 passed and 1 failed out of 877. The failure was settings.test.tsx's row count, 16 for 15, caused by the new setting row. After updating it in 19eb2aa, settings.test.tsx passes (10 of 10); every other file passed in the full run."
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "32 passed and 1 failed. The failure was e2e/palette.spec.ts's row count, the same cause. After updating it in 19eb2aa, palette.spec.ts passes (2 of 2)."
+     },
+     {
+      "command": "npx tsc -p tsconfig.node.json --noEmit; cd apps/ui && pnpm typecheck",
+      "result": "both clean"
+     },
+     {
+      "command": "vitest (single files): credential-limits, task-usage-limit, subscription-path, billing-order, routed-provider, router, messages-api-stand-in, cli-daemon-provider; UI: real-daemon -t credential-limits, settings-all, settings-billing-order, inbox -t refused, tasks -t 'Claude credential'",
+      "result": "all pass. Before the fix, credential-limits.test.ts was checked against the code (src at f5ca95a) and both cases failed: 'expected 4 to be 1' and a failed task."
+     },
+     {
+      "command": "bench BEFORE and AFTER (fix-credential-limits, --provider bench-api)",
+      "result": "Before: refused key \u2192 2 failed tasks 'Claude did not answer (model call failed).', 4 requests, Settings 'Can be used now'; limited key \u2192 'Failed: no billing source available for session work on the pc runner', nothing started at the reset. After: refused key \u2192 1 request, 1 card, rows 'Waits for a new API key', Settings 'Refused', a new key saved \u2192 both tasks Done by themselves; limited key \u2192 'Waits until 03:53 (your API key's limit) and starts by itself.', rows 'Waits until 03:53, your API key's limit', at 03:53 a session started by itself (trigger budget_reset) and both tasks Done."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "nothing found"
+     },
+     {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-credential-limits/before/01-before-refused-first-tasks-tab.png",
+      "/tmp/frbench/fix-credential-limits/before/02-before-refused-first-inbox.png",
+      "/tmp/frbench/fix-credential-limits/before/03-before-refused-first-session.png",
+      "/tmp/frbench/fix-credential-limits/before/05-before-refused-first-settings.png",
+      "/tmp/frbench/fix-credential-limits/before/01-before-limited-first-tasks-tab.png",
+      "/tmp/frbench/fix-credential-limits/before/02-before-limited-first-inbox.png",
+      "/tmp/frbench/fix-credential-limits/before/06-before-limited-after-reset-tasks-tab.png"
+     ],
+     "after": [
+      "/tmp/frbench/fix-credential-limits/after/01-after-refused-first-tasks-tab.png",
+      "/tmp/frbench/fix-credential-limits/after/02-after-refused-first-inbox.png",
+      "/tmp/frbench/fix-credential-limits/after/03-after-refused-first-session.png",
+      "/tmp/frbench/fix-credential-limits/after/04-after-refused-first-overview.png",
+      "/tmp/frbench/fix-credential-limits/after/05-after-refused-first-settings.png",
+      "/tmp/frbench/fix-credential-limits/after/06-after-refused-after-key-tasks-tab.png",
+      "/tmp/frbench/fix-credential-limits/after/07-after-refused-after-key-inbox.png",
+      "/tmp/frbench/fix-credential-limits/after/01-after-limited-first-tasks-tab.png",
+      "/tmp/frbench/fix-credential-limits/after/03-after-limited-first-session.png",
+      "/tmp/frbench/fix-credential-limits/after/05-after-limited-first-settings.png",
+      "/tmp/frbench/fix-credential-limits/after/06-after-limited-after-reset-tasks-tab.png"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/task-usage-limit.test.ts ('goes back to ready ... and the next session uses the API key')",
+      "why": "The owner's decision of 2026-11-02 makes 'Wait' the default. With two credentials the next session no longer runs the task on the API key: it waits for the reset and a session starts by itself then. The test now covers the 'Wait' case (nothing on the key, the sentence, the row, the start at the reset) and a 'Use the other one' case (continues at once in the same session)."
+     },
+     {
+      "test": "packages/runtime/test/routed-provider.test.ts ('another error is passed on as it is, with no rest and no retry')",
+      "why": "A refused credential (provider_auth) is no longer passed on: it is marked and the call is made once more on the next source. The case now uses another error (provider_error), and a new case covers the refusal."
+     },
+     {
+      "test": "packages/billing/test/router.test.ts ('skips a resting source with code cooldown ...')",
+      "why": "A cooldown skip now also carries `until`, which the wait's sentence and the start at the reset read. The expected skip gains that field; nothing else changed."
+     },
+     {
+      "test": "apps/ui/test/settings-billing-order.test.tsx (the Resting words)",
+      "why": "The Resting row now says what happens to the waiting work: 'Resting until <time> (its usage limit); waiting work starts by itself then'."
+     },
+     {
+      "test": "apps/ui/test/settings.test.tsx and apps/ui/e2e/palette.spec.ts (row counts 15 \u2192 16)",
+      "why": "The new setting 'When my first choice runs out mid-session' is one more row a command changes."
+     }
+    ],
+    "new_problems": [
+     "The Start dialog's start check does not know about a credential wait. With the only credential resting or refused it still says 'This session runs \"X\" ...'; Start then ends at once with 'Waits until \u2026' / 'Waits for a new API key \u2026'. True, but the dialog could say so first (a `blocked` kind for it). This belongs to the screens/start-check owner. Evidence: daemon/start-blocked.ts and startCheck have no billing input.",
+     "The session page shows 'The writer started \"X\"' just before the wait's line when the pick itself waited (nothing ran). Deciding the billing before the start line needs a dry-run pick in runTask, which another area owns. Evidence: /tmp/frbench/fix-credential-limits/after/03-after-limited-first-session.png.",
+     "A refused key also refuses the planning call (intake). The intake's failure reads 'No Claude credential can be used now (the API key: Anthropic refused it; save a new one in Settings).' with Try again, beside the one refused card. Nothing restarts the planning by itself once a new key is saved: the person presses Try again. A wake for waiting intakes would be a later step.",
+     "With a refused key and the subscription saved, the default order runs task work on the subscription. With a refused subscription and a key saved under 'Wait', task work moves to the API key, which is money: a refusal is not 'running out', so the owner's 'Wait' does not hold it back. That is a reading worth confirming with the owner beside the U-078 question."
+    ],
+    "notes_for_other_areas": [
+     "credential-chooser (group 3):\n- The pick request is now built in one place, SessionExecutor.billingRequest(ctx, tier, webFirst) in session/executor.ts. Replace firstKinds/firstWhy there; pickBilling and nextCredential both use it.\n- The 'wait' rule is RouteContext.waitOnRest in BillingRouter.pick (packages/billing/src/router.ts). It compares the best resting source's rank with the best candidate's. So filter capabilities before the router (RouterTaskBilling.pick's candidates), and 'Wait' then holds only to a first choice that can do the task.\n- RouterTaskBilling also has refuse(sourceId, why), noteWait(sourceId, projectId, agentId), takeReady() and credentialSaved(kind).\n- BillingOrderSourceView.blocked gained 'refused'.\n- BillingOrderSection.tsx: this area changed only usableNow's 'resting' and 'refused' cases.",
+     "merge-in-app (group 3), budget-resume (group 4), polish (group 6): session/result.ts now has RESULT_LINE_BUILDERS, an ordered array of { name, line: 1|2|3, build(f, o, told) }. Append your builder where the order says: what waits first (the credential wait is the first builder), then what happened (merged / waits to merge), then the cancelled line, the cost last. LastSessionOutcome gained credentialWait (a sentence).",
+     "budget-resume: the stop reason CREDENTIAL_WAIT_STOP ('credential_wait', session/credential-wait.ts) now has sessionStatusText 'Waiting for a Claude credential' in session/stop-words.ts. Its session.ended line leaves out the 'not started' count (event-lines.ts). TaskExecutionResult gained credentialWait; outcome 'usage_limit' now also covers a refusal (errorCode 'provider_auth') and a pick that waited.",
+     "web-search (group 4): extend testenv/src/provider/messages-api.ts. The SSE conversion is the `sse()` function and the request conversion is toModelRequest. The stand-in currently drops unknown content block types (server_tool_use, web_search_tool_result) in both directions. Add them there, with the search answers as a knob beside keyRuleFromEnv (FORERUNNER_BENCH_API_*).",
+     "sites (group 5): bench-api's fetch is daemonFetch in packages/runtime/src/cli/main.ts (benchApiFetch in testenv/src/bench/index.ts). The loopback seam for bench and bench-api goes beside daemonProvider/daemonFetch.",
+     "Words other areas can reuse (session/credential-wait.ts):\n- waitSentence, waitRowWords, stoppedRunSentence, clockTime (a time in the person's zone), yourCredential;\n- fileRefusedCard, closeRefusedCards, openRefusedCards;\n- CREDENTIAL_REFUSED_KEY 'credential:refused'. The card's words are in request-words.ts refusedCredentialCard.",
+     "task-words.ts: TaskDisplayContext gained credentialWait ({ label, detail } | null). loadTaskDisplayContext fills it from credentialWaitRow(store, projectId) in task-display.ts, so the Tasks tab, Overview, chat facts and read tools all say 'Waits until \u2026'. The fake daemon fills it from taskMeta.credentialWaits (apps/ui/test/fake-tasks.ts).",
+     "Settings: SETTING_SPECS.mid_session_limit (packages/commands), the row human.mid_session_limit in settings-view.ts, SETTING_KEYS and SettingsFields.tsx (MID_SESSION_LIMITS, describeSetting, structuredCommand), and the fake daemon's SETTING_RISK and fixtures row. Later setting rows append after it. Two screen tests count the rows (settings.test.tsx: 16; e2e/palette.spec.ts: 16), so a new row there moves both counts.",
+     "RuntimeApp.billing.waits: { wake(), credentialSaved(kind) } in compose.ts. wake runs in the Scheduler's refresh before every tick. SetupRoutesDeps.onClaudeCredentialSaved is wired in server.ts.",
+     "ADR: docs/decisions/0100 has the amendment 'credential-limits' (points 8 to 11) and its README row. credential-chooser amends 0100 after it."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Bench \"review-credential-limits\" (daemon 48231, UI 1831), started from my worktree at 19eb2aa with --provider bench-api and the stand-in only. No real key was used. For each walk I made a project and two writer tasks through the API, then did everything else as a person in Chromium. Evidence is in /tmp/frbench/review-credential-limits/evidence/ (steps-refused, steps-limited, steps-intake, reset.out, reset2.out).\n\n1) One refused key (--api-key refused).\n- Overview \u2192 Start session \u2192 the dialog \u2192 Start (steps-refused/01-03).\n- The session ended \"Waits for a new API key: save one in Settings. CHF 0.00.\" with the badge \"Waiting for a Claude credential\". The log line reads 'Anthropic refused your API key; \"Write notes/a.md\" waits for a new API key: save one in Settings.' (06).\n- Tasks tab: both rows read \"Waits for a new API key\" with Pause and Cancel, and no task failed (04). The drawer says \"Save one in Settings; it starts by itself then.\" (10).\n- Inbox: exactly one card, \"Anthropic refused your API key\", with \"Save a new key\" and no answer buttons (05). Settings \u2192 Advanced: \"Refused: Anthropic did not accept this key. Save a new one under Accounts and keys\" (09).\n- api-requests.jsonl has one 401 on /v1/messages, plus one 401 from a /v1/models probe made before the session.\n- restart-daemon.mjs: the mark, the card and the rows all survived.\n- I clicked \"Save a new key\" on the card. It opens the setup assistant on its Welcome step; I typed a name, Continue, pasted a key, \"Check and save\" (\"Key works\").\n- Within about 4 s a session started by itself (trigger budget_reset) and both tasks were Done. The card moved to Answered with \"A new one is saved; the work that waited for it goes on.\" and Settings read \"Can be used now\" (steps-refused/16-23).\n\n2) One key at its limit (--api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=3).\n- Start from the UI. The session ended \"Waits until 04:36 (your API key's limit) and starts by itself.\" Rows read \"Waits until 04:36, your API key's limit\" / \"It starts by itself then.\" Settings read \"Resting until Nov 03, 2026, 04:36 AM (its usage limit); waiting work starts by itself then\". There was no Inbox card and no failed task (steps-limited/01-11).\n- I restarted the daemon before the reset. The rows still said \"Waits until 04:36\".\n- At 04:36:26 a session started by itself (budget_reset). The stand-in's limit window starts again in a new daemon process, so it limited the key once more. The app handled that correctly: \"Waits until 04:40 \u2026\" again. At 04:40:26 another session started by itself and both tasks were Done (reset.out, reset2.out).\n\n3) Settings \u2192 Advanced \u2192 \"When my first choice runs out mid-session\" \u2192 Change \u2192 \"Use the other one at once (may cost money)\" \u2192 Preview and apply. It asked a Yes, then stored use_other.\n\n4) Neighbouring journey: a refused key with New project first (steps-intake). The project page reads \"Planning failed: Anthropic refused the Claude key or sign-in. Save a new one in Settings. [Try again]\" and one card is filed. After a new key was saved through the card's link, the card closed with \"the work that waited for it goes on\", but the project stayed \"Planning failed \u2026 [Try again]\" (intake state failed). See blocking item 1.\n\nCode and tests:\n- Read the whole diff.\n- Copied credential-limits.test.ts, task-usage-limit.test.ts and real-daemon.test.ts onto an extract of f5ca95a (base plus the stand-in only). All of them fail there: 'expected 4 to be 1', 'expected [ Array(1) ] to deeply equal []', the old sentence, and 'unknown setting mid_session_limit'.\n- On the branch: the 8 named runtime files pass (72 tests); pnpm test 4624 passed / 6 skipped; UI vitest 877/877; Playwright 33/33; test:e2e 25 passed / 1 skipped; test:integration 30 passed / 73 skipped (Postgres); typecheck, lint (0 errors), docs-check against claude/nifty-knuth-f9udt0, secret scan and the conflict-marker search are all clean.\n- The bench is stopped. Its home, its browser profile and my scratch tree are deleted, and the worktree is unchanged.",
+    "blocking": [
+     {
+      "issue": "When a refused key is first met by planning (a new project's brief, the most likely first step for a person), the planning fails and never starts again after a new key is saved. Meanwhile this area's own card promises that it will, which breaks design \u00a75.9 ('no promises the code does not keep') and fix_scope point 4 ('honest words \u2026 agreeing with what is scheduled in every case'). The planned live check 2 in /tmp/frbench/phaseE7-live.md \u00a72 cannot pass. Its step 1 uses a one-task brief and expects a task that waits; its step 2 expects 'the waiting task starts by itself' after the key is saved. The fixer's live check avoids this by creating tasks with no planning call.",
+      "where": "packages/runtime/src/daemon/request-words.ts:847 and :990 (the card's words); packages/runtime/src/daemon/compose.ts:3060 (credentialSaved wakes only task waits kept in limits.waiting); the intake ends 'failed' on the provider_auth result, so project-status.ts planFailedLine offers Try again",
+      "evidence": "Bench, fresh home with --api-key refused, New project 'A page that shows a random quote':\n- Project page: 'Planning failed: Anthropic refused the Claude key or sign-in. Save a new one in Settings. [Try again]' (evidence/steps-intake/01-intakefirst-project-after-create.png).\n- Inbox card body: 'The work that needs it waits and starts by itself then.' (02).\n- After 'Save a new key' \u2192 setup assistant \u2192 Check and save: the card is under Answered with 'A new one is saved; the work that waited for it goes on.' (07-savekey2-inbox-after-key.png).\n- GET /projects/:id/intake still returns state 'failed' and the status line is still 'Planning failed: Anthropic refused the Claude key or sign-in [Try again]'.\n- There is no automatic intake retry anywhere (session/intake.ts), and the fixer's own new_problems says the same.",
+      "expected": "Planning that meets a refusal (or a resting credential) waits like task work. The project status says 'Waits for a new API key' with 'Save a new key', not Try again, which cannot work while the mark stands. credentialSaved, or the wake at a reset, drafts the plan again by itself. Test it at the boundary: compose with a refused key, POST /projects with a brief, assert one card and the project status, POST /setup/anthropic with the exact body the UI sends, then assert the plan card arrives with no Try again. Only if the owner prefers no restart should the card and its Answered line stop promising that the work starts by itself."
+     },
+     {
+      "issue": "The refused-key path breaks validation rules 3 and 4. The new persisted refused mark (limits.refusedAt and refusedKey, read against the vault on every pick) is never tested across a restart. No real-daemon.test.ts case drives the changed routes for a refused credential through the UI client: GET /inbox with the credential:refused card, GET /settings/billing-order with blocked 'refused', and POST /setup/anthropic, which now ends the mark and starts the waiting work.",
+      "where": "packages/runtime/test/credential-limits.test.ts:145-214 (the refused case composes once); apps/ui/test/real-daemon.test.ts:7508-7693 (the credential-limits block has only the two limit cases)",
+      "evidence": "The refused case calls w.start() once (line 150); only the limit case composes twice (lines 222 and 258). The real-daemon block's two cases are 'under the default Wait \u2026' and 'Use the other one \u2026'. Neither uses a refused key, client.inbox with the card, blocked 'refused', or client.setupAnthropic. I confirmed by hand on the bench that the mark and the card survive restart-daemon.mjs, but no test does.",
+      "expected": "Add a restart to the refused case: close the runtime, compose again on the same home and vault, and assert the card, the rows ('Waits for a new API key') and Settings 'Refused' are still there and that a key saved after the restart still clears them. Add a refused case to the real-daemon credential-limits block that goes through the UI client: client.inbox shows the one card with its 'Save a new key' link, client.billingOrder reads blocked 'refused', client.setupAnthropic(newKey) clears it, and the tasks finish."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "A refused API key gives one card, every task waits (none failed), Settings shows Refused, and saving a new key closes the card and starts the work by itself",
+      "holds": true,
+      "note": "Walked on the bench through the UI (steps-refused 01-23). The work started within about 4 s of the key being saved (trigger budget_reset)."
+     },
+     {
+      "claim": "credential-limits.test.ts failed before ('expected 4 to be 1', a failed task)",
+      "holds": true,
+      "note": "Ran it on an extract of f5ca95a: both cases fail with exactly those messages."
+     },
+     {
+      "claim": "task-usage-limit.test.ts (rewritten) and the real-daemon credential-limits block fail on the old code",
+      "holds": true,
+      "note": "On f5ca95a: the old sentence 'The Claude subscription reached its u\u2026', 'refused' instead of 'done', and real-daemon 'expected undefined to be wait' / 'unknown setting mid_session_limit'."
+     },
+     {
+      "claim": "At a limit the session ends with 'Waits until HH:MM \u2026 and starts by itself', the rows say so, and a session starts by itself at the reset, after a restart too",
+      "holds": true,
+      "note": "Bench: 'Waits until 04:36', daemon restarted before the reset, a budget_reset session at 04:36:26. The stand-in limited the key again (its window is per process), the app waited until 04:40, then both tasks were Done."
+     },
+     {
+      "claim": "'Use the other one' asks a yes and is stored",
+      "holds": true,
+      "note": "Bench Settings walk: needs_yes, Yes, value use_other."
+     },
+     {
+      "claim": "api-requests.jsonl shows one 401 for the refused key, then only 200s for the new key",
+      "holds": false,
+      "note": "Minor: there are two 401s for the refused key, one /v1/messages and one /v1/models probe made before the session. The probe does not mark the source, so Settings reads 'Can be used now' until the first model call."
+     },
+     {
+      "claim": "Saving a key in the setup assistant ends the mark at once and closes the card",
+      "holds": true,
+      "note": "Bench and credential-limits.test.ts."
+     },
+     {
+      "claim": "The named tests pass and the full validation is green",
+      "holds": true,
+      "note": "8 runtime files with 72 tests; unit 4624 passed / 6 skipped; UI 877; Playwright 33; e2e 25 passed / 1 skipped; integration 30 passed (73 skipped without Postgres); typecheck, lint, docs-check and secret scan are clean."
+     },
+     {
+      "claim": "No test was weakened",
+      "holds": true,
+      "note": "Each changed assertion has a design reason. routed-provider's pass-through case moved to provider_error and a new refusal case was added. The router's skip gained 'until'. The Resting words changed. Row counts went from 15 to 16 for the new setting. task-usage-limit was rewritten for the decided 'Wait' with stricter assertions."
+     },
+     {
+      "claim": "ADR 0100 is amended (points 8 to 11) and records the owner's decision of 2026-11-02",
+      "holds": true
+     },
+     {
+      "claim": "A refused planning call files the same single card; planning is not restarted after a new key (new_problems)",
+      "holds": true,
+      "note": "True as stated, but the card's words promise that the work starts by itself, so this is blocking item 1."
+     },
+     {
+      "claim": "The review path needs no separate composed test because it uses the same RoutedProvider (not_done)",
+      "holds": true,
+      "note": "compose.ts:1524 shows criticProvider = routed.withPurpose('critic') with taskBilling, which has refuse(). The acceptance's 'a review meeting a refused key' is still covered only at class level."
+     }
+    ],
+    "non_blocking": [
+     "The project status on Home and in the project header falls back to '0 of 2 done [Open Tasks]' for a project whose tasks wait for a credential. Before the session it read 'Ready to continue: 2 tasks ready'. The cause is the new display key 'waiting' (project-status.ts has no credential-wait sentence, and that file is outside this area). Design \u00a71/\u00a72 want a sentence like 'Waiting until 04:36: your API key's limit' (evidence/steps-refused/08-refused-home.png).",
+     "The Start dialog still says 'This session runs \"Write notes/a.md\" (about CHF 0.60) \u2026' while the only key is refused or resting, and the session then ends at once (steps-refused/11). This is the fixer's own new_problem; the start check belongs to the screens owner.",
+     "Settings \u2192 Basics \u2192 Accounts and keys reads 'Claude: connected (API key)' while the key is Refused under Advanced (steps-refused/09).",
+     "Home's Needs you row offers 'Answer' on the refused card, which has nothing to answer. 'Save a new key' would be the main button there.",
+     "The card's 'Save a new key' link opens the setup assistant on Welcome, not on the Claude step. On a home whose setup was never finished, Continue stays disabled until a name is typed. The live checker needs this step (or the link could open /setup at the Claude step).",
+     "Mixed time formats on one screen: the wait sentence says '04:36', the session log stamps say '04:32:05 AM', and Settings says 'Nov 03, 2026, 04:36 AM'.",
+     "The mid-session setting's dialog reads 'Chat, planning and reviews always use the next one.. The same change \u2026' with a double period, because the new description ends with '.' and the dialog adds another.",
+     "The task drawer lists the refused or limited run as 'Failed' while the task itself is not failed (steps-refused/10).",
+     "The bench stand-in's limit window ('limited for N minutes from its first call') starts again with each daemon process, so after restart-daemon.mjs the key is limited for another N minutes. scripts/bench/README.md should say so.",
+     "limits is read and written back without a version check by rest, refuse, noteWait, takeReady (on every scheduler tick while a source has waits or a stale mark) and credentialSaved. A write landing at the same moment can be lost, for example a restingUntil written while takeReady patches.",
+     "A limits.waiting entry on a refused API key stays until that key is replaced. If the person adds a subscription instead, later ready tasks in that project still read 'Waits for a new API key' while Start would run them on the subscription.",
+     "wake() takes the waiting entries off the source before scheduler.request. If the start then fails (Stop all is on) or is queued and lost when the app quits, the wait is gone and the rows go back to plain Ready.",
+     "REFUSED_TEXT in provider/usage-limit.ts matches a bare \\b401\\b in any is_error result text, so a non-auth error that mentions 401 would be read as a refusal.",
+     "The intake's failure line keeps the older wording 'the planning call ended error: \u2026' in daemon.log. The person's line is fine ('Planning failed: Anthropic refused \u2026').",
+     "docs/user-guide.md: the refusal paragraph promises 'the waiting work starts by itself', which has the same planning caveat as blocking item 1. A reflow also joined 'Until you choose an order, \u2026' onto the end of that paragraph.",
+     "The fake daemon does not model a refusal: setupAnthropic does not end a 'refused' billing row in the fake. Only the inbox and billing-order fixtures carry the new state.",
+     "Later areas depend on: SessionExecutor.billingRequest and nextCredential (session/executor.ts); RouteContext.waitOnRest (packages/billing/src/router.ts); RouterTaskBilling.refuse, noteWait, takeReady and credentialSaved, plus credentialFingerprint, refusedSince and waitingOf (wiring/billing-pick.ts); session/credential-wait.ts (credentialWaitOf, waitSentence, waitRowWords, stoppedRunSentence, clockTime, fileRefusedCard, closeRefusedCards, CREDENTIAL_WAIT_STOP, CREDENTIAL_REFUSED_KEY); RESULT_LINE_BUILDERS (session/result.ts); TaskDisplayContext.credentialWait and credentialWaitRow (daemon/task-words.ts, task-display.ts); RuntimeApp.billing.waits; testenv/src/provider/messages-api.ts (sse, toModelRequest, keyRuleFromEnv); daemonFetch in cli/main.ts; SETTING_SPECS.mid_session_limit; the settings row counts of 16 in settings.test.tsx and palette.spec.ts.",
+     "Live-check note for the lead: phaseE7-live.md \u00a72 step 1 uses a brief. On this branch the refusal stops the planning, so step 2 ('the waiting task starts by itself') only works with tasks made without planning, as the fixer's credentials.cjs does. Until blocking item 1 is fixed, either use the fixer's steps or expect the planning to need Try again. In the setup assistant, type a name on Welcome before Continue on a bench whose setup was skipped."
+    ]
+   },
+   "fixup": {
+    "area": "credential-limits",
+    "branch": "fix/credential-limits",
+    "head_sha": "1ab16f12c2e4394aac86aa012d5d259958edb9c9",
+    "commits": [
+     {
+      "sha": "1ab16f12c2e4394aac86aa012d5d259958edb9c9",
+      "subject": "credentials: planning that meets a refused or resting key waits and is drafted by itself; the refused path is tested across a restart and through the UI client (U-078)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "[blocking 1] Planning is usually the first call to meet a refused key (a new project's brief). It ended 'Planning failed: Anthropic refused the Claude key or sign-in. [Try again]'. Try again cannot work while the key is refused, and nothing drafted the plan again after a new key was saved. Meanwhile the one refused card promised 'The work that needs it waits and starts by itself then' (design \u00a75.9). A planning call at a usage limit also ended 'failed'.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts:\n- 'planning that meets a refused API key (U-078) > waits for a new key instead of failing, says so with where to save one, and drafts the plan by itself once it is saved, after a restart too' (before: expected 'failed' to be 'waiting')\n- '... > at a usage limit the plan waits until the reset, says until when, and is drafted by itself then' (same message)\n\napps/ui/test/real-daemon.test.ts, the credential-limits block: 'a refused API key: one card with where to save a new one, planning and tasks wait (none failed), Settings says Refused, and the key saved in the setup assistant starts both by itself'. Before: timed out waiting for the planning to wait; state 'failed', error 'Anthropic refused the Claude key or sign-in...'.\n\napps/ui/test/project.test.tsx (all 3 failed on the old src):\n- 'a plan that waits for a new key says so, links to where it is saved, and offers no Try again; saving it drafts the plan (U-078)'\n- 'a plan that waits for a usage limit says until when and that it starts by itself, with no button (U-078)'\n- 'the Start dialog names a plan that waits for a new key, with where to save one (U-078)'",
+      "how": "Root cause: IntakeService.enqueue recorded every failure the same way (summary_cache.intake.failed_at and error, so state 'failed'). The credential wait (limits.waiting) and RuntimeApp.billing.waits.wake() only knew task work, so credentialSaved and the reset woke sessions for ready tasks and never the plan.\n\nChanges:\n- provider/routed.ts: RoutedProvider.waitNow(model?) reports what a call of its purpose would wait for now. It is a pick that only reads, using credentialWaitOf on the router's 'no source'.\n- session/intake.ts:\n  - IntakeDeps.credentialWait { now(), note(wait, projectId) }.\n  - A background draft whose planning call ended provider_auth, unavailable or USAGE_LIMIT_CODE asks now(). With a wait, it keeps the wait in summary_cache.intake.wait, and note() keeps the project on that source's limits.waiting. Both survive a restart.\n  - status() answers the new state 'waiting' with `wait` (IntakeWaitView: reason, kind, until, text, short, save) and no error. A wait read back from storage goes through credentialWaitFrom.\n  - retry() accepts 'waiting' and keeps the changes of a 'Change the plan' draft.\n- session/credential-wait.ts: planWaitWords ('Planning waits for a new API key: save one in Settings.' / 'Planning waits until 16:40 (your API key's limit) and starts by itself.'), saveLink and credentialWaitFrom. waitRowWords now also returns line and save.\n- daemon/compose.ts, credentialWaits.wake(): a project whose intake waits gets intake.retry once its source serves. If the same pass started a task session, the plan keeps its wait for the next tick, because a planning call holds the agent's one session and the runner refuses a start while it runs. The intake is wired to routed.withPurpose('interactive').waitNow() and to taskBilling.noteWait.\n- GET /projects/:id/intake gains state 'waiting' and `wait` (api-types IntakeStatusView, append-only).\n- Status words:\n  - project-status.ts gives a planning-wait line ('Planning waits for a new API key' [Save a new key], kind waiting; at a limit kind planning, no action).\n  - start-blocked.ts (and the chat's startBlocked in compose) says 'Nothing can run yet. Planning waits ...' with the save link.\n  - project-facts.ts planLine and emptyTasksLine say the plan waits and that there is no Try again.\n- UI:\n  - IntakeBanner shows the wait text, Save a new key on a refusal, and no Try again.\n  - useIntakeStatus reads the plan again whenever the store's project card changes (every project.changed), so a plan drafted by itself follows without a reload.\n  - ProjectPage and StartSessionDialog treat 'waiting' like a plan in the works.\n- Fake daemon, same commit:\n  - The intake retry accepts 'waiting'.\n  - The start check names a waiting plan.\n  - projectCardOf passes planWait and credentialWait.\n  - POST /setup/anthropic ends a refusal (endRefusal): the Settings row, the card, waiting plans and task waits.\n- ADR 0100 point 12; runtime.md, apps.md, testing.md, user-guide.md.",
+      "check_in_the_app": "Bench (done, --provider bench-api, stand-in only). Evidence is in /tmp/frbench/fixup-credential-limits-evidence/plan-refused and /plan-limited.\n\nRefused key:\n1. `start.mjs --name <n> ... --fresh --provider bench-api --api-key refused`.\n2. Home \u2192 New project, name 'Quote page', brief 'A page that shows a random quote.' \u2192 Create project.\n3. The project page banner reads 'Planning waits for a new API key: save one in Settings.' with a blue 'Save a new key' button and no Try again.\n4. Home reads 'Planning waits for a new API key'. The Inbox has exactly one 'Anthropic refused your API key' card. Start session shows 'Nothing can run yet. Planning waits for a new API key: save one in Settings.'\n5. Restart the daemon (restart-daemon.mjs). The banner still waits.\n6. On the card, Save a new key \u2192 the setup assistant \u2192 paste a key \u2192 Check and save ('Key works').\n7. Back on the project, the plan card waits in the Inbox (drafted by itself, about 1 s after the save). The refused card is under Answered with 'A new one is saved; the work that waited for it goes on.'\n8. Approve and start \u2192 both tasks Done.\n9. api-requests.jsonl shows one 401 on /v1/models, one 401 on /v1/messages, then only 200s for the new key's id.\n\nLimit:\n1. `--api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2`, then `credentials.cjs <n> plan-limited --brief \"A page that shows a random quote.\" --wait-start 300`.\n2. The plan reads 'Planning waits until 05:40 (your API key's limit) and starts by itself.' and the status reads 'Planning waits until 05:40, your API key's limit' with no button.\n3. At 05:40 the plan was drafted by itself.\n\nLive check (after the merge, phaseE7-live.md \u00a72, routed provider, real API base):\n1. Start the bench with an invalid key written into its vault and no --provider flag: `node scripts/bench/start.mjs --name live-cred --daemon-port <p> --ui-port <u> --fresh --provider none --api-key refused`.\n2. Either in the UI (New project, a one-task brief such as 'A page that shows a random quote.') or with `node scripts/bench/journeys/credentials.cjs live-cred live --brief \"A page that shows a random quote.\"`, expect:\n   - the project page: 'Planning waits for a new API key: save one in Settings.' [Save a new key], never 'Planning failed' or Try again;\n   - exactly one Inbox card 'Anthropic refused your API key' / 'Save a new one in Settings. ...';\n   - Settings \u2192 Advanced \u2192 Claude: which to use first: 'Refused: ...'.\n3. Click Save a new key on the card. In the setup assistant, type a name on Welcome first if the bench's setup was skipped. Paste the real key (FORERUNNER_ANTHROPIC_API_KEY, never echoed) \u2192 Check and save.\n4. Within a few seconds the plan card is in the Inbox and the refused card is under Answered ('A new one is saved; the work that waited for it goes on.').\n5. Approve and start \u2192 the task runs and is Done.\n\nCost: one planning call plus the task, about USD 0.10-0.20.\n\nThe tasks-without-planning variant (credentials.cjs without --brief) also works as the fixer described."
+     },
+     {
+      "problem": "[blocking 2] Validation rules 3 and 4 were broken on the refused-key path:\n- The persisted refused mark (limits.refusedAt and refusedKey, read against the vault on every pick) was never tested across a restart.\n- No real-daemon case drove, through the UI client, the routes this area changed for a refused credential (GET /inbox with the credential:refused card, GET /settings/billing-order with blocked 'refused', POST /setup/anthropic ending the mark and starting the waiting work).",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts, 'a refused API key (U-078) > one card names it, every task waits ...'. It now closes the runtime after the second session and composes again on the same home and vault, then checks:\n- the card, the rows ('Waits for a new API key') and Settings 'Refused' are still there;\n- a scheduler tick makes no call;\n- the project status sentence is right;\n- a key saved after the restart clears the mark, the card and the wait, and both tasks finish.\n\nOn the old code the restart part held. It failed at the status sentence: expected kind 'waiting' 'Waiting for a new API key: 2 tasks', got kind 'paused' '0 of 2 done'. That is the reviewer's first non-blocking item, now fixed.\n\napps/ui/test/real-daemon.test.ts: the new refused case in the credential-limits block (see above) goes through client.intakeStatus, client.project().statusLine, client.startCheck, client.inbox (one card, no choices, link Save a new key \u2192 /setup), client.billingOrder (blocked 'refused'), client.setupAnthropic(newKey) (mark gone, card answered with its outcome, tasks Done with a budget_reset session, plan pending after the next tick) and the stand-in's log (one 401, then only 200s).",
+      "how": "Tests only for the restart and the boundary. The real-daemon case composes as `fr daemon` does: no injected provider, the vault's refused key, fetchImpl = standInFetch(messagesApiStandIn({ model: the bench role-player, answerFor: keyRule({ refuse: ['refused'] }) })).\n\nThe status-sentence fix the restart assertion needed:\n- project-status.ts gains a credential-wait line for tasks: 'Waiting for a new API key: 2 tasks' [Save a new key], kind waiting; at a limit 'Waiting until 16:40 (your API key's limit): 2 tasks', kind paused, no action.\n- It counts only rows whose label is the credential wait's, so tasks waiting on a dependency are not counted.\n- The words come from TaskDisplayContext.credentialWait.line and save (credentialWaitRow via waitRowWords). views.ts passes it in.\n- apps/ui/test/tasks.test.tsx 'a project whose tasks wait for a new key says so in its status, with where to save one' covers the screen (failed before).",
+      "check_in_the_app": "Bench (done; /tmp/frbench/fixup-credential-limits-evidence/tasks-refused and /tasks-limited):\n- `--api-key refused`, then `credentials.cjs <n> tasks-refused --save-key ok`: the project header reads 'Waiting for a new API key: 2 tasks' [Save a new key] next to the rows 'Waits for a new API key'. Before it read '0 of 2 done [Open Tasks]'. After the key, both tasks are Done by themselves.\n- `--api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2`, then `credentials.cjs <n> tasks-limited --wait-start 300`: the header reads 'Waiting until 05:43 (your API key's limit): 2 tasks'. A session started by itself at the reset and both tasks are Done.\n\nIn the app: with a refused key, quit and reopen Forerunner. The Inbox card, the rows and Settings 'Refused' are still there. Saving a new key then starts the work."
+     },
+     {
+      "problem": "[non-blocking, cheap, in this area]\n- REFUSED_TEXT counted a bare '401' anywhere in a Claude Code error result, so a run whose own output held the number ('expected 401 to be 200') marked the subscription refused.\n- The mid-session setting's dialog read 'use the next one.. The same change'.\n- The user guide's refusal paragraph promised that waiting work starts by itself without the planning case, and 'Until you choose an order, ...' had been joined onto it.\n- The bench README did not say the stand-in's limit window starts again with each daemon process.\n- wake() dropped a task wait when Stop all was on.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/claude-code-refusal.test.ts (new): 'a test that expects 401 is no refusal' and 'a log line with the number is no refusal' failed before.\n\napps/ui/test/settings-all.test.tsx 'when my first choice runs out mid-session ...': the new assertion that the dialog has no '..' fails with the old description.",
+      "how": "- provider/usage-limit.ts: REFUSED_TEXT needs 'API Error 401', 'status 401', 'HTTP 401' or '401 Unauthorized'. It still matches authentication_error, an expired or revoked token, '/login' and 'not logged in'.\n- settings-view.ts and the fixture: the description ends without a full stop, like every other row (the dialog adds one).\n- docs/user-guide.md: the paragraph is rewritten and split.\n- scripts/bench/README.md and testing.md: the per-process window, and credentials.cjs --brief.\n- compose.ts wake(): with Stop all on, the task wait is noted again instead of requesting a start that cannot run.",
+      "check_in_the_app": "Settings \u2192 Advanced \u2192 Other settings \u2192 'When my first choice runs out mid-session' \u2192 Change: the dialog reads '... always use the next one. The same change ...' with one full stop."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "U-078 entry in docs/status/UPDATE-LOG.md and the CHANGELOG line",
+      "why": "The task forbids editing them; the session lead writes them. Add to U-078:\n- Planning that meets a refused or resting key now waits and is drafted by itself (ADR 0100 point 12).\n- The fixer's owner questions stand: what 'Wait' means with a second credential, and whether a refused subscription with a key saved should move task work onto the key."
+     },
+     {
+      "problem": "Reviewer non-blocking items left as they are",
+      "why": "Each is outside this fixup's blocking scope, or owned by another area:\n- The Start dialog still says 'This session runs \"X\" ...' for tasks while the only key is refused or resting. The start check is the screens owner's. A waiting plan is named now (startBlocked's plan case), but task waits are not.\n- Settings \u2192 Basics \u2192 Accounts and keys still reads 'Claude: connected (API key)' while the key is Refused (SettingsPage AccountsSection).\n- Home's Needs you row offers 'Answer' on the refused card.\n- The card's link opens the setup assistant on Welcome, not on the Claude step. The live checker types a name first on a bench whose setup was skipped.\n- Mixed time formats (wait '04:36', log '04:32:05 AM', Settings 'Nov 03, 2026, 04:36 AM'). This is polish.\n- The task drawer lists a refused or limited run as 'Failed'.\n- limits is read-modify-written without a version check (rest, refuse, noteWait, takeReady, credentialSaved).\n- A limits.waiting entry on a refused key keeps the rows saying 'Waits for a new API key' if the person adds a subscription instead of a new key.\n- A start that wake() requested and that was queued and lost when the app quit loses its wait. Stop all is handled now; a scheduler start that fails asynchronously is not.\n- The /v1/models probe of the refused key (before any session) does not mark the source.\n- The intake's daemon.log line keeps 'the planning call ended error: ...'.\n- A separate composed test for a critic review meeting a refused key (the fixer's reasoning stands: same RoutedProvider)."
+     },
+     {
+      "problem": "A plan waiting on a resting subscription while an API key could serve the planning call",
+      "why": "Planning is a non-task purpose, so ADR 0100 point 4 applies: the next source serves and there is no wait. waitNow() returns null whenever any credential can serve the planning call, so the intake then fails or succeeds as before. It only waits when the only credential that may serve it is refused or resting. That is the intended reading."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "EXIT 0. 450 test files; 4636 passed, 6 skipped. check-paths ok (1411 files). link-check ok (205 files). secret-scan clean (2016 files). docs:check needs a base here (no origin/main)."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base e16bb8c ; node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (64 files), both bases"
+     },
+     {
+      "command": "npx biome check --diagnostic-level=error .",
+      "result": "no errors (the 69 warnings were already in the tree)"
+     },
+     {
+      "command": "npx tsc -p tsconfig.node.json --noEmit; (cd apps/ui && pnpm typecheck)",
+      "result": "clean (re-run after the last intake edit)"
+     },
+     {
+      "command": "npx vitest run --project unit packages/runtime/test/{credential-limits,intake,intake-live,start-blocked,task-usage-limit}.test.ts (re-run after the last edit)",
+      "result": "5 files, 67 passed"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0: 5 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG); 30 passed, 73 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0: 13 files; 25 passed, 1 skipped (same as baseline)"
+     },
+     {
+      "command": "cd apps/ui && FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+      "result": "EXIT 0: 83 files, 882 passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "33 passed"
+     },
+     {
+      "command": "Before the fix (packages/runtime/src and apps/ui/src reverted to 19eb2aa, new tests kept)",
+      "result": "credential-limits.test.ts: 4 of 4 failed (expected 'failed' to be 'waiting', twice; the status sentence, twice). real-daemon refused case: failed (planning state 'failed'). project.test.tsx and tasks.test.tsx: the 4 new U-078 tests failed. claude-code-refusal.test.ts: 2 failed. settings-all mid-session: failed with the old description ('..'). The source patch was then reapplied and checked identical to the validated tree."
+     },
+     {
+      "command": "Bench fixup-credential-limits (daemon 48241, UI 1841, --provider bench-api, stand-in only, no real key)",
+      "result": "Four walks, all checks ok:\n- Planning with a refused key, through the UI, with a daemon restart: waiting banner, Home line, one card, Start dialog sentence, wait kept after the restart, plan drafted by itself after the setup assistant saved a key, Approve and start \u2192 tasks Done.\n- Planning at a limit: the wait sentence, then drafted by itself at the reset.\n- Tasks with a refused key: header 'Waiting for a new API key: 2 tasks' [Save a new key]; Done after the key.\n- Tasks at a limit: header 'Waiting until 05:43 (...)'; a budget_reset session at the reset, both Done.\nThe bench is stopped and its home and browser profile are deleted. Evidence: /tmp/frbench/fixup-credential-limits-evidence/."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "nothing found"
+     },
+     {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-credential-limits/evidence/steps-intake/01-intakefirst-project-after-create.png",
+      "/tmp/frbench/review-credential-limits/evidence/steps-intake/02-intakefirst-inbox.png",
+      "/tmp/frbench/fix-credential-limits/after/04-after-refused-first-overview.png"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/01-plan-refused-project-page.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/02-plan-refused-home.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/03-plan-refused-inbox.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/04-plan-refused-start-dialog.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/05-plan-refused-after-restart.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/06-setup-assistant-from-the-card.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/08-plan-drafted-after-the-key.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-refused/11-tasks-done-after-approve.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-limited/03-plan-limited-first-overview.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/plan-limited/07-plan-limited-after-reset-overview.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/tasks-refused/04-tasks-refused-first-overview.png",
+      "/tmp/frbench/fixup-credential-limits-evidence/tasks-limited/04-tasks-limited-first-overview.png"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/credential-limits.test.ts 'a refused API key ...'",
+      "why": "Stronger, not weaker. It now restarts the runtime between the second session and the new key and asserts the persisted state across the restart, plus the new status sentence. The key is saved on the restarted runtime."
+     },
+     {
+      "test": "apps/ui/test/settings-all.test.tsx (mid-session row text)",
+      "why": "The description lost its trailing full stop so the dialog shows one. The row assertion drops the period, and two dialog assertions are added (one full stop, no '..')."
+     },
+     {
+      "test": "apps/ui/test/fixtures.ts SETTINGS mid_session_limit description",
+      "why": "Mirrors settings-view.ts: no trailing full stop."
+     }
+    ],
+    "new_problems": [
+     "Starting a session while a planning call runs is refused by the runner ('already working in another session'). The intake creates a running session row for the same agent, and the scheduler does not know about it, so a start requested during a planning call fails asynchronously. This fixup avoids the race inside wake() (the plan waits a tick when the same pass started a session). The general case is outside this area: a person's or the scheduler's start during New project's planning. Evidence: runner.ts start() checks store.session.active(agent.id); intake.ts propose() inserts a running session and never asks the scheduler.",
+     "UI unit tests rendered with renderApp() have no live event stream unless streamOptions are passed (the fake daemon's state.listeners stays empty). A test that relies on project.changed must pass a liveEvents helper, as tasks.test.tsx, settings-agent-name.test.tsx and now project.test.tsx each define their own copy. A shared helper in apps/ui/test/helpers.tsx would avoid the copies (the bench area or polish)."
+    ],
+    "notes_for_other_areas": [
+     "Planning wait API (later areas that touch the intake or the status sentence):\n- IntakeState gained 'waiting'.\n- IntakeStatus.wait is IntakeWaitView { reason, kind, until, text, short, save } (session/intake.ts).\n- IntakeDeps.credentialWait { now(), note(wait, projectId) }; the intake's wait is stored in summary_cache.intake.wait.\n- GET /projects/:id/intake: IntakeStatusView.state has 'waiting' and an optional wait (api-types.ts, append-only).\n- RoutedProvider.waitNow(model?) in provider/routed.ts is a read-only pick for the provider's purpose.",
+     "session/credential-wait.ts:\n- New: planWaitWords, saveLink, credentialWaitFrom, CredentialWaitWords.\n- waitRowWords now returns { label, detail, line, save }.\n- TaskDisplayContext.credentialWait gained optional line and save (credentialWaitRow fills them; the fake's taskMeta.credentialWaits takes them too).",
+     "daemon/project-status.ts (for 'screens' and 'polish'):\n- New input fields planWait and credentialWait (views.ts passes them).\n- Two new branches: the tasks' credential-wait line right after the Docker line in section 3, and the planning-wait line in section 5 after 'Planning failed'.\n- The ready, done and 'Waiting for you' lines are not changed.",
+     "daemon/start-blocked.ts: StartBlockedFacts.plan accepts 'waiting', with planWait { text, save }. server.ts startBlocked and compose.ts (the chat's startBlocked) pass it. The task-level credential wait in the Start dialog is still the screens owner's.",
+     "compose.ts credentialWaits.wake() (budget-resume, group 4) now:\n- collects the projects whose intake waits and retries them after the task starts of the same pass, deferring them to the next tick when a task session was requested;\n- with Stop all on, re-notes a task wait instead of requesting a start.",
+     "apps/ui:\n- IntakeBanner handles state 'waiting' (data-state=\"waiting\", testids intake-wait and intake-save-key).\n- useIntakeStatus re-reads on every change of the store's project card.\n- ProjectPage's planBanner and StartSessionDialog's planBlocks include 'waiting'.",
+     "Fake daemon:\n- endRefusal(kind), called from POST /setup/anthropic, clears refused billing rows, withdraws open credential:refused cards, moves waiting intakes (reason refused) to drafting and deletes refused task waits.\n- projectCardOf passes planWait and credentialWait.\n- The start check and the intake retry know 'waiting'.",
+     "scripts/bench/journeys/credentials.cjs --brief \"<text>\" walks the planning case (with --save-key ok or --wait-start <s>). Use it for phaseE7-live.md \u00a72 step 1."
+    ]
+   }
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "fix/dependent-branches (cafcc7e) -> merge commit fe3b9c4",
+   "fix/credential-limits (1ab16f1, including the fixup) -> merge commit 4b727ae"
+  ],
+  "head_sha": "4b727ae2b6817d372e8f0b43b85d32841a901d87",
+  "pushed": true,
+  "conflicts_resolved": [
+   "packages/runtime/src/daemon/compose.ts imports (the only conflict): kept credential-limits' `import type { CredentialWait } from \"../session/credential-wait.ts\"` and dependent-branches' `import { DependentBranches } from \"../session/dependent-branches.ts\"` side by side, sorted. The rest auto-merged cleanly because each area stayed in its own regions per shared_files: compose.ts (dependent-branches has the watcher callbacks, onMerged and rebuildDependents; credential-limits has billing waits and the wake before every scheduler tick), request-words.ts (each area added its own card words), real-daemon.test.ts (separate describe blocks), docs/decisions/README.md (ADR 0111 and ADR 0100 amendment rows), runtime.md, apps.md, testing.md and user-guide.md. Typecheck and every suite passed on the merged tree."
+  ],
+  "integration_fixes": [
+   "No code fixes were needed after the merge. One housekeeping step: git produced both merge commits without a body or attribution, and the second carried a '# Conflicts:' comment. Before pushing, I re-created both with `git commit-tree -S`, keeping the same trees and parents. They now have descriptive messages in the repo's merge style (area summary, the conflict resolution, Co-Authored-By and Claude-Session lines). I moved the branch with `git update-ref` only after confirming the new tip's tree equals the old tip's (0cc14ca tree == 4b727ae tree)."
+  ],
+  "validation": [
+   {
+    "command": "git grep -n '^<<<<<<< '",
+    "result": "nothing found"
+   },
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "ok (Done in 1.2s)"
+   },
+   {
+    "command": "pnpm lint",
+    "result": "exit 0: 1634 files, 69 warnings (same as before the merge), no errors"
+   },
+   {
+    "command": "pnpm lint:paths",
+    "result": "exit 0: check-paths ok (1422 files)"
+   },
+   {
+    "command": "pnpm typecheck",
+    "result": "exit 0"
+   },
+   {
+    "command": "pnpm test (unit)",
+    "result": "exit 0: 453 files passed; 4669 tests passed, 6 skipped"
+   },
+   {
+    "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+    "result": "exit 0: docs-check ok (94 files)"
+   },
+   {
+    "command": "pnpm docs:links",
+    "result": "exit 0: link-check ok (205 files)"
+   },
+   {
+    "command": "pnpm secrets:scan",
+    "result": "exit 0: clean (2028 files)"
+   },
+   {
+    "command": "pnpm test:integration",
+    "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 73 skipped (Postgres cases skip without FORERUNNER_TEST_PG)"
+   },
+   {
+    "command": "pnpm test:e2e",
+    "result": "exit 0: 13 files; 25 passed, 1 skipped"
+   },
+   {
+    "command": "pnpm --filter @forerunner/live test",
+    "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+   },
+   {
+    "command": "pnpm test:injection",
+    "result": "exit 0: Failures: None (report /tmp/forerunner-injection-report/injection-report.md)"
+   },
+   {
+    "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm test (unit, as CI runs it)",
+    "result": "exit 0: 453 files passed; 4669 tests passed, 6 skipped"
+   },
+   {
+    "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> pnpm vitest run --config vitest.config.ts",
+    "result": "exit 0: 84 files, 883 passed"
+   },
+   {
+    "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+    "result": "exit 0: 84 files, 883 passed"
+   },
+   {
+    "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+    "result": "exit 0: 34 passed"
+   },
+   {
+    "command": "cargo fmt --check / clippy / test (apps/desktop/src-tauri)",
+    "result": "not run: neither area touched apps/desktop (git diff 2de0a25..HEAD -- apps/desktop is empty)"
+   },
+   {
+    "command": "signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD) ... grep '^gpgsig'",
+    "result": "printed nothing: all 15 commits signed"
+   },
+   {
+    "command": "git push -u origin claude/nifty-knuth-f9udt0",
+    "result": "pushed 2de0a25..4b727ae on the first attempt; no force-push"
+   }
+  ],
+  "smoke": "Bench merge-w8 (--provider bench, daemon on 48250, UI on 1850, --fresh): scripts/bench/journeys/smoke.cjs passed 25/25 checks with 0 findings and 0 recorded problems. The journey script needed no change. Model calls were intake 1, specialist 9, critic 6 and chat 1. One session took the 2-task plan from the brief to 2/2 done, the page files were written, and the critic reviewed the work. The bench was stopped with stop.mjs. Its home and browser profile are deleted; the steps and result are kept in /tmp/frbench/merge-w8/steps (smoke-result.json).",
+  "problems_left": [
+   "Nothing the merge broke is left: every suite is green and the branch is pushed. CI on 4b727ae is still to run.",
+   "dependent-branches leftovers for later areas: the rebuild card reuses merge-record's left-open card ('I merged it' / 'Leave it open') where Merge and Redo would fit (merge-in-app). rebuiltChangedSentence and rebuildTitle say 'onto main' whatever the default branch is called. The dependent PR's words promise 'use Merge in Forerunner' before merge-in-app (group 3) adds that button. MergeRecordRepo.pin moves a merged record back to queued, but MERGE_RECORD_TRANSITIONS still says merged: [] and no packages/state case covers it. Rebuilds that could not run are owed in memory only (ADR 0111 known gap). ReviewedPrMerge.resumeAtStart records method 'merge' whatever GitHub used.",
+   "credential-limits leftovers for later areas: the Start dialog does not name a task-level credential wait (owned by screens). Accounts and keys reads 'Claude: connected (API key)' while the key is Refused. Home's Needs you row offers 'Answer' on the refused card. The card's link opens the setup assistant on Welcome, not on the Claude step. Time formats are mixed. The task drawer lists a refused run as 'Failed'. limits is read-modify-written with no version check. A wake() start that is queued and then lost when the app quits loses its wait. A start requested while a planning call runs is refused by the runner. The owner questions for U-078 stand: what 'Wait' means when a second credential could serve, and whether a refused subscription should move task work onto the API key.",
+   "Disk: the root filesystem showed 7.8 GB free both before and after this run, below the 8 GB target. This merge added nothing lasting, and the bench home, browser profile and the empty CI HOME were deleted."
+  ]
+ }
+}

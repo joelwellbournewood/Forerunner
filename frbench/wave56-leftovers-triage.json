@@ -1,0 +1,2088 @@
+{
+ "_about": "Triage of the 294 leftovers of phase E waves 5 (answers, screens, noise, bench) and 6 (stops, asking, decisions, verification), merged at c8c16fb. Raw entries: /tmp/frbench/wave56-leftovers-raw.json (sources are indexes into it); full reports: /tmp/frbench/wave5-result.json and /tmp/frbench/wave6-result.json. Evidence was checked at c8c16fb. Dispositions: area (copied into /tmp/frbench/handoffs.json under the area's key; W6-1 under 'ci-precondition', the session lead's fix before any group-1 branch merges), live-check (/tmp/frbench/phaseE7-live-extra.md), owner-decision (/tmp/frbench/owner-questions-wave56.md), phone (phase H), and info, fixed and duplicate (this file only). 'corrections' records what the triage's review changed.",
+ "items": [
+  {
+   "id": "W5-1",
+   "problem": "A task added in chat gets no acceptance criteria, and its 'What done looks like' is the raw words with the leading 'to' ('to write a README...'). With a model available, a line longer than a title is still parsed, not given to the model's task_create (later #34 part). The bench stand-in plays no task_create from free text either.",
+   "evidence": "packages/commands/src/intent.ts:645-662 (matchAddTask: params title, outcome: text, status ready; no criteria). intent.ts:314-323 (taskTitleOf strips 'to' from the title only; the outcome keeps it). The chat model is offered task.create as the tool task_create (packages/commands/src/registry.ts:124 toolName; acceptance_criteria at commands/task.ts:573), but the pattern parser answers 'add a task: ...' first. The stand-in plays a tool only from a 'tool: <name> {json}' line (testenv/src/bench/role-player.ts:1197-1216), never from free text.",
+   "expected": "With a model, a chat line longer than a title goes to the model's task_create (title, outcome without 'to', criteria). The parser stays for installs without a model (U-047). The stand-in plays task_create from free text, so the bench path still adds the task.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    0,
+    15,
+    38
+   ],
+   "reason": "A small leftover of 'answers' (its fix_scope item 3) that touches the chat parser, the conversation agent and role-player.ts. No wave 7 area owns chat, and 'polish' takes small leftovers of any area. The first half of entry 15 (the pending tool result's echo) is a note and holds."
+  },
+  {
+   "id": "W5-2",
+   "problem": "C-68: the plan card does not flag a task naming a specialist this install does not have. The run then waits with 'No specialist is named X'.",
+   "evidence": "apps/ui/src/pages/InboxPage.tsx:268-285 (cannotRunHere: 'a name the list does not have says nothing here'), :334. packages/runtime/src/session/executor.ts:640-646 (the run's 'No specialist is named' summary).",
+   "expected": "The daemon gives each plan task its canonical specialist, or marks it unknown. The plan card then says 'No specialist here is named 'X': this task will wait for you; change who does it after you approve' (the expected of handoffs.json answers C-68). Tested with a real-daemon case and an Inbox test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "credential-chooser",
+   "sources": [
+    1
+   ],
+   "reason": "credential-chooser (group 3) already edits cannotRunHere in InboxPage.tsx, the plan card's runs-on line and the plan card view. C-68 is not in its spec yet. The item sat in handoffs.json under 'answers', which has merged without doing it, so marking it a duplicate would drop it."
+  },
+  {
+   "id": "W5-3",
+   "problem": "later #10: the runner's dead heard-line path is still there (recheckInbox reads inbox lines that nothing has written since wave 2).",
+   "evidence": "packages/runtime/src/session/live-chat.ts:46-52 (heardMessageBody, used only by tests; heardLineOf). packages/runtime/src/session/runner.ts:1334, :2132, :3137-3151.",
+   "expected": "The path is removed (no behaviour change), or it is kept with one sentence saying why. live-chat.test.ts is adjusted to match.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    2
+   ],
+   "reason": "'answers' left it to avoid merge churn in runner.ts. Polish runs last in wave 7, after the areas that touch runner.ts."
+  },
+  {
+   "id": "W5-4",
+   "problem": "Deploy or migration tasks that an older daemon stored at tier 1 still run in the process sandbox, because the sandbox gate reads the stored tier.",
+   "evidence": "packages/runtime/src/session/sandbox-gate.ts:34-35 (needsContainerSandbox reads task.risk_tier). New writes go through riskTierFor (session/project-plan.ts:69-71; commands/task.ts:665, :1065; server.ts routes go through task.create and task.update). docs/status/handoff/NEXT-SESSION.md:152 ('The owner's old Forerunner install is not kept: no upgrade check') and :110 (remove the old install).",
+   "expected": "No action: no install with old rows is kept.",
+   "severity": "minor",
+   "disposition": "info",
+   "area": "answers",
+   "sources": [
+    3
+   ],
+   "reason": "Already decided: the owner removes the old install, so old rows need no migration."
+  },
+  {
+   "id": "W5-5",
+   "problem": "KillFileWatcher checks kill.json only at its first 500 ms tick, so a session started in the daemon's first half second runs despite a persisted Stop all.",
+   "evidence": "packages/runtime/src/enforcement/killfile.ts:94-101 (start() arms the first check after intervalMs, which is 500). packages/runtime/src/daemon/compose.ts:3682-3683. Nothing else reads kill.json at start: readKillRequest runs only at killfile.ts:107 and at server.ts:1676 for resume.",
+   "expected": "start() checks kill.json once, synchronously, before anything can start, then polls. A test shows it without advancing the clock.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    4
+   ],
+   "reason": "A small safety leftover, owned by 'screens', which has merged. budget-stop (running) may touch killswitch.ts, but only for the registration. Polish takes small leftovers of any area."
+  },
+  {
+   "id": "W5-6",
+   "problem": "science-evaluator has registry risk_tier_floor 2 but is not a sign-off or full-review specialist. The critic reviews it at the full review while its stored tier and sandbox stay light (the same class as C-2). A ladder hand-over brings an ordinary task there too: a data-analyst task that failed twice goes to the science-evaluator. Its later attempts are then reviewed at the full review while the row reads 'Light review' and runs in the process sandbox.",
+   "evidence": "evals/registry/specialists/science-evaluator/specialist.md:8-19 (its tools cover the data-analyst's and the reviewer's; risk_tier_floor: 2). packages/runtime/src/loop/verification.ts:38-41 (SIGNOFF_SPECIALISTS: ops-deploy and migration-specialist only). packages/runtime/src/session/project-plan.ts:69-71 (riskTierFor raises only those). packages/runtime/src/registry/alternates.ts:147-152, :180 (keepsSignoff compares the sign-off kind only, not the review floor). packages/runtime/src/session/executor.ts:1032 (task.specialist patched to the stand-in). session/runner.ts:3341 (the next plan item comes from task.specialist). loop/critic.ts:352-353 (the review's floor comes from that specialist). apps/ui/src/lib/task-actions.ts:191-193 (reviewLevelValue raises only deploys and migrations).",
+   "expected": "One review level for a science-evaluator task everywhere. Either it runs in Docker at the full review (riskTierFor raises it, and a stand-in keeps the review floor as it keeps the sign-off), or its registry floor becomes 1.",
+   "severity": "minor",
+   "disposition": "owner-decision",
+   "area": "owner",
+   "sources": [
+    5
+   ],
+   "reason": "Whether research and data checks need Docker is the owner's choice. Owner decision 4 named deploys and migrations only, and the 2026-11-02 decisions do not cover it. Options: (a) the full review in Docker, with the ladder keeping the floor; (b) floor 1 and the light review. Entry 45's floor question (W5-23) ends up here."
+  },
+  {
+   "id": "W5-7",
+   "problem": "Merge notes from 'answers' and 'screens': expect a conflict in apps.md; keep personQuestionsAnswerFor when 'asking' merges; keep keepsSignoff in alternateSpecialist and return keptAcross from ladderStandIn; ranBy in reviewTask meets fixup-answers' code.",
+   "evidence": "Done at the merges. packages/runtime/src/wiring/request-answers.ts:322-327, :483 (personQuestionsAnswerFor kept after the wave 6 asking merge). packages/runtime/src/registry/alternates.ts:147-152, :180 (keepsSignoff in the filter). packages/runtime/src/session/executor.ts:575-599 (ladderStandIn returns { keptAcross }), :797 (retryConstraints kept). runner.ts:1775 (ranBy). /tmp/frbench/wave5-result.json merge.conflicts_resolved (apps.md merged word by word).",
+   "expected": "Nothing left.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "answers",
+   "sources": [
+    6,
+    7,
+    25,
+    28,
+    40,
+    71
+   ],
+   "reason": "Each merge note was applied at merge 3cbf6cc or at the wave 6 merge, and each still holds at c8c16fb."
+  },
+  {
+   "id": "W5-8",
+   "problem": "Notes for other areas from 'answers': isChatOnlyCard, cardReference, CommandPorts.cardWords, riskTierFor, ConversationView sessionId and START_WAIT_MS, offersGoAheadWithout and personQuestionsAnswerFor, isScaffoldPlaceholder, the chat kill writing kill.json, CommandDef.redirect and moveAsCardAnswer, the answer_on_card refusal words, the fake's beginSession.",
+   "evidence": "All present at c8c16fb: request-answers.ts:106, :250-327; conversation/agent.ts:437; compose.ts:3107 (cardWords), :3006-3007 (a chat Stop all writes kill.json); session/project-plan.ts:69; loop/commands.ts:597; packages/memory/src/docs.ts:103; packages/commands/src/types.ts:434, commands/task.ts:216; packages/commands/src/executor.ts:366-367; apps/ui/test/fake-daemon.ts:2201, :2666. Entry 27 ('every person-facing list leaves out chat_only rows: done') does not hold for the state service; it is now W5-68.",
+   "expected": "Interfaces later areas use; no change.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "answers",
+   "sources": [
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    16,
+    26,
+    29,
+    30
+   ],
+   "reason": "Notes, not problems."
+  },
+  {
+   "id": "W5-9",
+   "problem": "Read-backs of other chat commands (session.start, task.pause, cancel with no card) are still filed as counted Inbox approval cards. While 'Start a session on X (up to CHF 5)?' waits, the header reads 'Waiting for you: 1 question', and the Pause read-back shows under Needs you.",
+   "evidence": "packages/commands/src/executor.ts:418-419 (chat_only only when card.command === 'request.answer' from chat or voice), :420-440 (every other read-back becomes an approval row in the Inbox). task.pause is low risk (docs/maintainers/commands.md:72) and session.start is low or medium (:79), yet both count as 'Waiting for you'. docs/design/core-experience.md §3.8 ('What becomes a card (and nothing else counts as \"needs you\"): ... risky changes waiting for approval') and §3.9 (a change is read back once in the chat with [Yes] [No], and survives reloads). d34f331 is the wave 2 merge's fix to the card's title (request-words.ts genericCard by change_card.ask), not an owner decision.",
+   "expected": "A change read back in chat or voice that needs only a yes is chat_only: Yes and No are in the chat, its row is kept across a restart, and it stays out of the Inbox and its counts, as an answer's read-back already does. Only a change that needs this computer's OK (high risk) waits as an Inbox card. Tested at GET /inbox and the header count with 'pause X' and 'start a session' said in chat, the fake daemon changed in the same commit.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    17,
+    24,
+    31
+   ],
+   "reason": "The design already answers it (§3.8, §3.9), so it is not an owner question. d34f331 was the session lead's title fix at a merge. No wave 7 area owns the commands executor, polish takes small leftovers, and L-13's 'counts name the card kinds' is polish's already."
+  },
+  {
+   "id": "W5-10",
+   "problem": "After the plan is approved from Chat on the same page, the plan banner keeps 'Waiting for you: approve the plan [Open]' beside the header's next card.",
+   "evidence": "apps/ui/src/pages/project/IntakeBanner.tsx:44-49 (the status is re-read only while the state is 'drafting'), :95-100 ('Waiting for you: approve the plan.'). Bench step /tmp/frbench/fixup-answers/steps/04-b-chat-after-yes.png.",
+   "expected": "The banner re-reads after an answer (inbox.changed, or the chat reporting done) and disappears once the plan is approved.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    18,
+    23,
+    32
+   ],
+   "reason": "IntakeBanner.tsx is one of polish's files (polish already changes the drafting words there)."
+  },
+  {
+   "id": "W5-11",
+   "problem": "A command the chat model calls runs as the agent, so its sentence is posted as an Update: 'Plan approved: 3 tasks written; working on them.' appears under Updates, echoing the person's own answer.",
+   "evidence": "packages/runtime/src/loop/commands.ts:275 (chat tool calls run with actor kind 'agent'). packages/commands/src/executor.ts:687-698 (theirOwn only when the actor is the human; otherwise message.send to the Inbox).",
+   "expected": "A change the person asked for in chat (the agent acting on the person's turn) is not echoed as an Update (design §3.8, §5.11). It stays in Changes and in the chat.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    33
+   ],
+   "reason": "Older than wave 5; Inbox noise left over. No wave 7 area owns the executor's post(), and polish takes small leftovers."
+  },
+  {
+   "id": "W5-12",
+   "problem": "The executor's run warnings ('the coder tries again: the only specialist that could take it over ... keeps the full review and your sign-off', 'the retry ladder hands this task to ...') never become session events. The person and the session log never see why a specialist stayed or changed.",
+   "evidence": "packages/runtime/src/daemon/compose.ts:2142-2143 (onEvent only does events.emit('run')), :2752-2759 (the only 'run' subscriber reads run_end and injection_flagged). packages/runtime/src/session/executor.ts:524-528, :674-685 (the warnings). A bench session had 4 task.started events and no warning events.",
+   "expected": "The ladder's warnings reach the session log as person lines. The hand-over is already told by task.started's takes-over line; the reason for 'tries again' (kept across the sign-off line) is told nowhere.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    20,
+    22
+   ],
+   "reason": "Older than wave 5; a small session-log leftover of the ladder (screens and answers). No wave 7 area owns the run-event wiring."
+  },
+  {
+   "id": "W5-13",
+   "problem": "The bench accepts a UI port on the Fetch spec's blocked list (1719, 1720, 1723). start.mjs's readiness fetch fails with 'bad port' and the start times out after 90 s; Chromium blocks the port too.",
+   "evidence": "scripts/bench/start.mjs:37-41 (any integer port accepted), :106 (vite --strictPort). No blocked-port check anywhere in scripts/bench.",
+   "expected": "start.mjs refuses a blocked port at once, with a sentence naming it. Workflow scripts assign ports outside the list.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "collab-bench",
+   "sources": [
+    21
+   ],
+   "reason": "collab-bench (wave 8) owns start.mjs and lib.mjs and adds ports (two daemons, two UIs, a proxy). The session lead's workflow scripts should avoid the list now."
+  },
+  {
+   "id": "W5-14",
+   "problem": "The chat's start wait has no test of what the person reads when the run fails before its session begins, or when the wait times out.",
+   "evidence": "packages/runtime/src/loop/commands.ts:758-767 (the runOutcome failure is rethrown; the timeout branch). No test passes wait.timeoutMs or a failing runOutcome (packages/runtime/test/loop-commands.test.ts has none).",
+   "expected": "Two tests at the chat boundary: a run that fails before session.started gives the run's error in words, and a timeout says the start is on its way instead of a false 'started'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    34,
+    19
+   ],
+   "reason": "Test coverage left by 'answers' (rule 9). Entry 19 also lists the items in W5-15, W5-16 and W5-1 (the leading 'to')."
+  },
+  {
+   "id": "W5-15",
+   "problem": "The person-questions card stores its option as 'Cancel the task' (what a refusal's details.options names) while its button reads 'Cancel task'.",
+   "evidence": "packages/runtime/src/wiring/request-answers.ts:227 (CANCEL_TASK_OPTION 'Cancel the task'), packages/runtime/src/session/person-questions.ts:66, request-answers.ts:577-583 (details.options). packages/runtime/src/daemon/request-words.ts:346-347 (label 'Cancel task'). The doubled quotes and the mid-word cut are fixed (packages/commands/src/executor.ts:359-367, cardTitleOf, 766dba0). The '(s)' plurals part does not hold: cardLine runs plainReason, which applies plainPlurals (conversation/project-facts.ts:261, daemon/task-words.ts:143), so 'Intake for 'X': 1 milestone(s), 3 task(s)' reads '1 milestone, 3 tasks'.",
+   "expected": "One word for the action, on the card and in the options a refusal names ('Cancel task'); old cards are still accepted.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    35
+   ],
+   "reason": "Words. One part was fixed in 766dba0 and one part does not hold at c8c16fb; the rest is polish."
+  },
+  {
+   "id": "W5-16",
+   "problem": "New task for ops-deploy or migration-specialist preselects 'Full review' (tier 2) and offers 'Full review and your sign-off' (tier 3) beside it, with the note 'keeps the full review and your sign-off'. For these specialists the two choices do the same thing, since sign-off is decided by the specialist.",
+   "evidence": "apps/ui/src/pages/project/NewTaskDialog.tsx:192-196 (tier = max(chosen, 2)), :259-260 (the tier 2 and 3 choices kept), :312-315 (the note). apps/ui/src/lib/task-actions.ts:197-206 (reviewLevelChoices). packages/runtime/src/loop/verification.ts:38-41.",
+   "expected": "For a sign-off specialist the dialog shows one full-review choice that says it includes the sign-off.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    36
+   ],
+   "reason": "Polish already changes the words of reviewLevelChoices (C-23), and L-13's New task part about ops-deploy is polish's."
+  },
+  {
+   "id": "W5-17",
+   "problem": "docs/maintainers/commands.md called the failed-task card medium, while a card filed after the ladder's last rung was high on the bench, so chat answers to it are refused.",
+   "evidence": "docs/maintainers/commands.md:87 now says 'the retry card after the ladder's last rung is high when the critic found a high or critical problem' and lists the runner's failed-task card as medium (766dba0). packages/runtime/src/session/findings.ts:381 (fileFailedTaskCard risk 'medium').",
+   "expected": "Nothing left.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "answers",
+   "sources": [
+    37
+   ],
+   "reason": "Fixed in the answers fixup (766dba0)."
+  },
+  {
+   "id": "W5-18",
+   "problem": "Real-model check of the answers area: answering cards from chat (one card, no second card, no notification), and the model never showing a card reference such as '01a19d7b-9' (the shortest unique start, which may include the hyphen).",
+   "evidence": "Checked only with the stand-in so far. conversation/agent.ts:437 (cardReference). /tmp/frbench/wave5-result.json, the answers fixup's check_in_the_app.",
+   "expected": "Live: the chat answers cards by reference, never prints one, and the Inbox count stays at one card.",
+   "severity": "minor",
+   "disposition": "live-check",
+   "area": "live-check",
+   "sources": [
+    39
+   ],
+   "reason": "Needs the real model: what the stand-in says is scripted."
+  },
+  {
+   "id": "W5-19",
+   "problem": "A stand-in with fewer tools never takes a task, even when its words fit better (a coder's page task never goes to the designer).",
+   "evidence": "docs/decisions/0108-the-ladders-stand-in-is-named-before-it-runs.md:49-51 ('Left for the owner'). evals/registry/specialists/designer/specialist.md:9-13 (no cc:Bash, cc:MultiEdit). packages/runtime/src/registry/alternates.ts:181-185 (covers on tools).",
+   "expected": "The owner chooses: keep tool coverage as the rule (shipped), or let a specialist with fewer tools take a task whose words fit.",
+   "severity": "polish",
+   "disposition": "owner-decision",
+   "area": "owner",
+   "sources": [
+    41
+   ],
+   "reason": "ADR 0108 leaves it to the owner; it is not in the 2026-11-02 decisions."
+  },
+  {
+   "id": "W5-20",
+   "problem": "For a web routing hand-over (ADR 0107: no web reader here, so a researcher task goes to a specialist with web access), task.started still names the original specialist; only task.finished names who ran it.",
+   "evidence": "packages/runtime/src/session/executor.ts:833-860 (the hand-over is decided inside runTask, after pickBilling chooses the driver). The runner's chooseSpecialist does not see it.",
+   "expected": "The driver is chosen before the run starts, so chooseSpecialist (and task.started) name the specialist that runs.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "credential-chooser",
+   "sources": [
+    42
+   ],
+   "reason": "credential-chooser replaces pickBilling's webFirst call in executor.ts with the task's needs; deciding the driver before the run belongs to the same change. Rare (only with FORERUNNER_WEB_FETCH=off)."
+  },
+  {
+   "id": "W5-21",
+   "problem": "The phone screens (apps/ui/src/mobile, for example the mobile Changes view) got none of the screens fixes.",
+   "evidence": "fix/screens did not change apps/ui/src/mobile.",
+   "expected": "The phone round carries the screens fixes over.",
+   "severity": "minor",
+   "disposition": "phone",
+   "area": "phone",
+   "sources": [
+    43
+   ],
+   "reason": "Phase H."
+  },
+  {
+   "id": "W5-22",
+   "problem": "The planning session's page shows its raw summary 'intake: Alpha after (completed: 2 docs)' under the title.",
+   "evidence": "packages/runtime/src/session/intake.ts:1396, :1547 (summary 'intake: <name> (<outcome>: <note>)'). apps/ui/src/pages/SessionPage.tsx:406-412 (shown as it is). /tmp/frbench/fix-screens-after-steps/06-after-e-planning-session.txt.",
+   "expected": "A plain sentence ('Planned Alpha: 3 tasks and 2 docs.'), per design §5 rules 3 and 6.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    44,
+    84
+   ],
+   "reason": "Words on a screen."
+  },
+  {
+   "id": "W5-23",
+   "problem": "A ladder hand-over could cross the sign-off line. The critic reviewed the stand-in's work with the plan's specialist, and after the hand-over the next attempt became the stand-in's plan item, so a light-review coder task ended in 'needs your sign-off'.",
+   "evidence": "packages/runtime/src/registry/alternates.ts:147-152, :180 (keepsSignoff: a stand-in is of the same sign-off kind). packages/runtime/src/session/executor.ts:575-599, :664-680 (keptAcross: the specialist keeps the task, its level, its sandbox and its sign-off). ADR 0108 now uses the tester-to-coder example.",
+   "expected": "Nothing left for the sign-off. The floor crossing that remains (a data-analyst task handed to the science-evaluator) is W5-6.",
+   "severity": "major",
+   "disposition": "fixed",
+   "area": "screens",
+   "sources": [
+    45,
+    65,
+    80
+   ],
+   "reason": "Fixed by fixup-answers B3 and merge 3cbf6cc (ca577c6): the coder and the migration-specialist no longer stand in for each other. Entry 45's general question (a stand-in's review floor) still applies to the science-evaluator's floor 2, so it moves with W5-6."
+  },
+  {
+   "id": "W5-24",
+   "problem": "A review stopped before the critic's model call began (during the project checks or the try) writes no critic Run row, so the drawer shows no trace that a review started.",
+   "evidence": "packages/critic/src/critic.ts:561-563 (the Run row is inserted only after the model call). packages/runtime/src/daemon/task-display.ts:376-390 ('Review stopped' only from a stopped critic Run row).",
+   "expected": "A review stopped at any point shows 'Review stopped' with its reason in the drawer.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    46
+   ],
+   "reason": "A small drawer leftover of 'screens' (a sibling of C-41). Polish already owns critic.ts for C-19."
+  },
+  {
+   "id": "W5-25",
+   "problem": "Without a key and under Stop all, the ready line names the missing key first, while the Start dialog names Stop all first.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:216-223 (hasModel before stopped). packages/runtime/src/daemon/start-blocked.ts:71-80 (stopped before no_model).",
+   "expected": "One order in both places.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    47
+   ],
+   "reason": "Words; polish owns the lines of project-status.ts next to the ready line."
+  },
+  {
+   "id": "W5-26",
+   "problem": "The monthly-jobs-wiring test 'fires the calibration once on day 1' took 27-37 s with a real-time loop and failed under load.",
+   "evidence": "packages/runtime/test/monthly-jobs-wiring.test.ts:26-40 (until: waits on state for up to 120 s and says what it saw), :178 (32ec40b, bench C-8, an ancestor of c8c16fb).",
+   "expected": "Nothing left, unless CI shows it flaking again.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "bench",
+   "sources": [
+    48
+   ],
+   "reason": "Fixed by bench's C-8 commit 32ec40b, merged in wave 5."
+  },
+  {
+   "id": "W5-27",
+   "problem": "Several agents use the shared scratchpad at once; another agent overwrote a walk script with the same name.",
+   "evidence": "The workflow environment, not the repository (screens renamed its files screens-walk-*.cjs and fixup-screens-*.cjs).",
+   "expected": "Workflow scripts give each agent's scratch files unique names.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "screens",
+   "sources": [
+    49,
+    67
+   ],
+   "reason": "A note for the session lead's workflow scripts; nothing in the repository."
+  },
+  {
+   "id": "W5-28",
+   "problem": "Notes for other areas from 'screens': session-steps.ts helpers, TaskDetailView runs fields, POST /sessions answering 409 when nothing can run, POST /kill/resume stoppedProjects, the ready line variants, lastSession.since, chooseSpecialist forwarding, alternateSpecialist task ranking, startUndoRefusal and undoBadge, fileUnder on Windows, busyHere, the fake's busyProjectId, stoppedSessions by stop_all, the stopped review words.",
+   "evidence": "Present at c8c16fb: apps/ui/src/lib/session-steps.ts; daemon/start-blocked.ts:35 (busyHere); apps/ui/test/fake-daemon.ts:233, :2109; enforcement/killswitch.ts:163-164, :185; daemon/task-display.ts:266-267; loop/commands.ts:300; daemon/docs-routes.ts:157.",
+   "expected": "Interfaces later areas use (the phone's start must give a ready task first, in W5-21's round).",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "screens",
+   "sources": [
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    68,
+    69,
+    70,
+    73
+   ],
+   "reason": "Notes, not problems."
+  },
+  {
+   "id": "W5-29",
+   "problem": "Real-model checks of the screens area: a running task's drawer step lines move and its file links open Files; a hand-over shows '... takes over ... from ...' and the stand-in's name on its finished and 'could not do' lines (now on a tester task, since a coder keeps its own task under the sign-off rule); a researcher task lists 'Read: ...' in its drawer.",
+   "evidence": "Checked only with the stand-in. /tmp/frbench/wave5-result.json merge problems_left. Not in /tmp/frbench/phaseE7-live.md.",
+   "expected": "Live: each line as described.",
+   "severity": "minor",
+   "disposition": "live-check",
+   "area": "live-check",
+   "sources": [
+    60,
+    85,
+    137
+   ],
+   "reason": "Needs the real model's runs and failures. Entry 137 also names the answers checks (W5-18) and the noise checks (W5-41)."
+  },
+  {
+   "id": "W5-30",
+   "problem": "Changes shows raw source and scope badges ('ui', 'chat', 'global', 'session', 'project').",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:216-219.",
+   "expected": "Words a person reads ('In the app', 'In chat'; 'This project', 'Everywhere'), with the e2e and unit assertions on data-source kept.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    61,
+    75
+   ],
+   "reason": "Words on a screen."
+  },
+  {
+   "id": "W5-31",
+   "problem": "Connect Claude goes to /setup from the ready and plan-failed lines, but to /settings from the Start dialog.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:66 (CONNECT_CLAUDE to /setup). packages/runtime/src/daemon/start-blocked.ts:81 (/settings). A U-047 real-daemon assertion pins /settings.",
+   "expected": "One target for Connect Claude everywhere, with the pinned assertion changed to match.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    62,
+    78
+   ],
+   "reason": "Words and links, polish's kind of work."
+  },
+  {
+   "id": "W5-32",
+   "problem": "The drawer links every changed file, even one deleted since; the Files tab then says '<file> is not a file of this project'.",
+   "evidence": "apps/ui/src/pages/project/TaskDrawer.tsx:346-376 (every file is a Link). packages/runtime/src/daemon/docs-routes.ts:324.",
+   "expected": "A file deleted since is shown as plain text (or the Files tab says it was removed), from a stat in GET /tasks/:id.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    63,
+    79
+   ],
+   "reason": "A small drawer leftover."
+  },
+  {
+   "id": "W5-33",
+   "problem": "After a restart while still stopped, a second Stop all rewrites kill.json with only the sessions stopped in memory, so Continue where it stopped forgets the sessions stopped before the restart.",
+   "evidence": "packages/runtime/src/daemon/server.ts:1644-1654 (sessions = rt.kill.stoppedSessions(), held in memory only), :1673-1677 (resume reads kill.json). compose.ts:3006-3014 does the same for a chat Stop all.",
+   "expected": "A Stop all keeps the sessions kill.json already names.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    64,
+    81
+   ],
+   "reason": "An edge case 'screens' left; a small leftover."
+  },
+  {
+   "id": "W5-34",
+   "problem": "reviewSentence's default branch still writes 'The critic's verdict: <words>.' for an unknown verdict value, using the banned word.",
+   "evidence": "packages/runtime/src/daemon/task-display.ts:155.",
+   "expected": "The default branch uses the drawer's review words, without 'verdict'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    66
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W5-35",
+   "problem": "An undo row in Changes ('Undone: quiet hours is back to off.') was badged 'Cannot be undone' with no reason.",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:21-28 (undoBadge returns null for a row that is itself an Undo; the view carries commands, api-types.ts:2095; executor.ts:1049 logs [{name: 'undo'}]), :229-235.",
+   "expected": "Nothing left.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "screens",
+   "sources": [
+    72,
+    74
+   ],
+   "reason": "Fixed in the screens fixup (be96fa6)."
+  },
+  {
+   "id": "W5-36",
+   "problem": "The fake daemon's session.start undo keyed on after.session_id, a row shape the real daemon did not produce for a start.",
+   "evidence": "packages/runtime/src/loop/commands.ts:413-416 (a row naming its session is judged by that session, 3cbf6cc). packages/commands/src/commands/session.ts:215 (the start now records after.session_id). apps/ui/test/fake-daemon.ts:5236-5246 (the same rule).",
+   "expected": "Nothing left.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "screens",
+   "sources": [
+    76
+   ],
+   "reason": "The merge (3cbf6cc) made the real daemon write and judge after.session_id, as the fake does."
+  },
+  {
+   "id": "W5-37",
+   "problem": "In pr-executor.ts, chooseSpecialist was inserted between setAside's doc comment and setAside.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:563-571 (chooseSpecialist with its own comment), :573-579 (setAside's comment above setAside).",
+   "expected": "Nothing left.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "screens",
+   "sources": [
+    77
+   ],
+   "reason": "Fixed at c8c16fb."
+  },
+  {
+   "id": "W5-38",
+   "problem": "On the base commit, the U-044 real-daemon case first fails on a missing run.sessionId (404), which hides its real cause.",
+   "evidence": "A review note; the case passes at c8c16fb.",
+   "expected": "No action.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "screens",
+   "sources": [
+    82
+   ],
+   "reason": "A note on what the test shows; the reviewer confirmed it fails for the right reason once the field exists."
+  },
+  {
+   "id": "W5-39",
+   "problem": "docs-routes-files.test.ts left its temporary folders behind.",
+   "evidence": "packages/runtime/test/docs-routes-files.test.ts:13-22 (made[] and an afterAll rmSync, be96fa6).",
+   "expected": "Nothing left.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "screens",
+   "sources": [
+    83
+   ],
+   "reason": "Fixed in the screens fixup."
+  },
+  {
+   "id": "W5-40",
+   "problem": "Forerunner has no way to delete a project (no route, UI control or command), so C-20's 'a project's evidence goes when the project is deleted' has nothing to hook into.",
+   "evidence": "No project.delete command in packages/commands/src. No DELETE /projects route in packages/runtime/src/daemon/server.ts (its only app.delete is /memory/lessons/:id). Nothing in docs/requirements.md.",
+   "expected": "The owner decides whether a person can delete or archive a project. If yes, its evidence under <data>/evidence goes with it.",
+   "severity": "minor",
+   "disposition": "owner-decision",
+   "area": "owner",
+   "sources": [
+    86,
+    93
+   ],
+   "reason": "A missing feature that no requirement asks for; whether to add it is the owner's call."
+  },
+  {
+   "id": "W5-41",
+   "problem": "Real-model checks of the noise area: #95 (no lesson line or scratch notes in a report deliverable), #96 (the reviewer writes no file), #100 (the tester fills docs/testing.md). A data-analyst plus writer-marketing run (about USD 0.20) and a reviewer plus tester run (about USD 0.15).",
+   "evidence": "The stand-in's briefAsRead decides from the brief text (testenv/src/bench/role-player.ts), so the bench confirms the brief line, not the model's behaviour.",
+   "expected": "Live: no Lesson line in report.md, no notes.md, no review file.",
+   "severity": "minor",
+   "disposition": "live-check",
+   "area": "live-check",
+   "sources": [
+    87,
+    110
+   ],
+   "reason": "Needs the real model."
+  },
+  {
+   "id": "W5-42",
+   "problem": "A specialist without a write tool (the reviewer) can still write files through run_command; only the prompt and the critic enforce the rule.",
+   "evidence": "docs/decisions/0109-a-reviewers-findings-are-its-report.md:45-49, :63-65 (a read-only command folder is the follow-up; not built).",
+   "expected": "Either a read-only folder for such runs (a Docker mount and the process stand-in), or the stated limitation is kept.",
+   "severity": "minor",
+   "disposition": "owner-decision",
+   "area": "owner",
+   "sources": [
+    88,
+    111
+   ],
+   "reason": "A sandbox change for both runners that no wave 7 or 8 area owns; whether to build it is a scope call for the owner. Entry 111's ADR renumbering is done (0109)."
+  },
+  {
+   "id": "W5-43",
+   "problem": "scripts/bench/README.md does not mention the stand-in's briefAsRead behaviour (a lesson line in a report deliverable, a writer's notes.md).",
+   "evidence": "scripts/bench/README.md has no briefAsRead; docs/maintainers/testing.md:2537 describes it.",
+   "expected": "The bench README says it in one sentence.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    89,
+    99
+   ],
+   "reason": "Docs."
+  },
+  {
+   "id": "W5-44",
+   "problem": "The brief's 'Questions for the person' line says 'end the report with ...'. A specialist whose deliverable is a report may put its questions in report.md, where askPersonInstead and the critic (which read the run's final message) never see them, so no card is filed.",
+   "evidence": "packages/runtime/src/session/executor.ts:796. packages/runtime/src/loop/critic.ts:635-648 (reportedQuestions reads result.finalReport or the summary).",
+   "expected": "The line says 'end your final message' (as LESSONS_CONSTRAINT does, executor.ts:148-149), with a test like lessons-out-of-deliverables.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    90,
+    109
+   ],
+   "reason": "One brief line, and no wave 7 area owns it (budget-stop's headings are a different line)."
+  },
+  {
+   "id": "W5-45",
+   "problem": "Session-end notification titles with several task names shorten each name and then cut: 'Quote page: did 3 tasks: \"Create the...\", \"Show a...\" and...'.",
+   "evidence": "packages/runtime/src/notifications/producers.ts:51-66 (fit), :29-36 (cut).",
+   "expected": "The first task is named, followed by 'and 2 more'.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    91,
+    105
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W5-46",
+   "problem": "The injection notification says 'Instructions found in web_page content were ignored', and its body lists raw rule ids and the tool name ('Ignored 4 passages from email_read (approval_bypass, exfiltrate, ...)').",
+   "evidence": "packages/runtime/src/notifications/producers.ts:335, :361. ADR 0047. Scenario 6 and capabilities-wiring assert the exact title.",
+   "expected": "Plain words ('A web page you had read held instructions; they were ignored.'), with ADR 0047 and the two tests amended.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    92,
+    107
+   ],
+   "reason": "Words (design §5.3, §5.6). Noise's later #80 shortened the body only."
+  },
+  {
+   "id": "W5-47",
+   "problem": "Notes for other areas from 'noise': SessionResult.news, sessionResultLines and isNewsLine, sessionEndIsNews, the stopSaid and humanRequestId payloads, LESSONS_CONSTRAINT, keepOnlyThisTry, findingView plain words, the ADR number and registry versions, the real-daemon bench capture.",
+   "evidence": "Present at c8c16fb: session/runner.ts:422 (news), session/result.ts:124, :224, :257; notifications/producers.ts:211; session/executor.ts:148; loop/try-it.ts:93; runner.ts:1823-1847. The ADR was renumbered to 0109 at the merge.",
+   "expected": "Interfaces later areas use (the phone push should use news, phase H).",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "noise",
+   "sources": [
+    94,
+    95,
+    96,
+    97,
+    98,
+    100,
+    101,
+    102,
+    103
+   ],
+   "reason": "Notes, not problems."
+  },
+  {
+   "id": "W5-48",
+   "problem": "For a task waiting for Docker, the session-end result calls it ready to continue: '\"Style the page in styles.css\" is ready to continue.' When its card was filed, the news drops 'Waiting for Docker' and keeps only that sentence. Without the card, both sentences show.",
+   "evidence": "packages/runtime/src/session/result.ts:130 (told.docker empties waitingForDocker), :183-186 (leftOver from readyNow). session/runner.ts:2271-2276 (leftOver is readyNow less the budget's left-outs; waitingForDocker is a subset of readyNow and is not taken out).",
+   "expected": "A task waiting for Docker is never called ready to continue.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    104
+   ],
+   "reason": "An untrue sentence in result.ts; polish appends to result.ts after merge-in-app."
+  },
+  {
+   "id": "W5-49",
+   "problem": "A session that ends 'failed' with an internal error, with nothing in its result but money, now sends no notification.",
+   "evidence": "packages/runtime/src/notifications/producers.ts:211-215 (sessionEndIsNews reads only the lines, never SessionEndFacts.status, :128). stopWords('internal') is empty.",
+   "expected": "A failed session is news, with words for the error.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    106
+   ],
+   "reason": "A small notification leftover of 'noise'."
+  },
+  {
+   "id": "W5-50",
+   "problem": "The notification body is cut mid-sentence when the rest is long ('... 2 tasks wait on... Open the session for the details.').",
+   "evidence": "packages/runtime/src/notifications/producers.ts:80-91 (bodyOf), :29-36 (cut).",
+   "expected": "The body keeps whole sentences and drops the ones that do not fit.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    108
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W5-51",
+   "problem": "On a session page, the header's project selector shows the active project, not the session's project ('Quote page' on another project's session).",
+   "evidence": "apps/ui/src/shell/Shell.tsx:44-46 (viewed only for /projects/:id/*; /sessions/:id falls back to activeProject). The entry's other half, the stand-in critic's 'Accepted: 1 changed file match the brief.', is fixed (testenv/src/bench/role-player.ts:1109-1115).",
+   "expected": "The header names the project of the session on screen (design §3.1).",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    112
+   ],
+   "reason": "Shell.tsx is one of polish's files."
+  },
+  {
+   "id": "W5-52",
+   "problem": "Leftover 16, second half: the real-daemon 'Stop on the running task' test and capabilities browser.integration were to be made event-driven only if they flake.",
+   "evidence": "Neither flaked in this phase's full runs (bench report).",
+   "expected": "Revisit only if CI shows them flaking.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "bench",
+   "sources": [
+    113
+   ],
+   "reason": "The spec's condition was not met."
+  },
+  {
+   "id": "W5-53",
+   "problem": "After the supervised restart at the end of setup, the page goes Home as soon as the token-free /health answers, before a token-bearing call works, so GET /inbox and GET /events answer 401 a few times.",
+   "evidence": "apps/ui/src/pages/SetupPage.tsx:338-345 (navigate after client.health()). problems.jsonl of /tmp/frbench/fix-bench-after (2 refused /health calls, 3 transient 401s).",
+   "expected": "The page waits for a token-bearing call (or the shell's reload) before going Home; no 401 in problems.jsonl.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    114,
+    117,
+    128
+   ],
+   "reason": "SetupPage.tsx is one of polish's files; nothing stays stuck."
+  },
+  {
+   "id": "W5-54",
+   "problem": "The project header's done sentence shows the raw workspace path with the project id ('Done: all 2 tasks. Your files: /tmp/.../projects/<uuid>/workspace').",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:251.",
+   "expected": "As the polish item says: 'Done: all N tasks.' with the files action, the path left to Your files.",
+   "severity": "polish",
+   "disposition": "duplicate",
+   "area": "polish",
+   "sources": [
+    115,
+    127
+   ],
+   "reason": "Already in the problems of the 'polish' area in /tmp/frbench/phaseE.json: 'later #53, #54 (#52)' (and C-58 for repository projects)."
+  },
+  {
+   "id": "W5-55",
+   "problem": "POST /setup/finish runs runSetup({}) again, so daemon.log shows a second 'setup written' line, with stored [] and skipped [github, anthropic, subscription], right after a token was stored.",
+   "evidence": "packages/runtime/src/setup/routes.ts:288-291.",
+   "expected": "Finish writes config.json only when none exists and logs nothing misleading.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    116
+   ],
+   "reason": "A small leftover in the setup route."
+  },
+  {
+   "id": "W5-56",
+   "problem": "Notes for other areas from 'bench': the supervisor and reconnect, the stand-in's plan words, FORERUNNER_BENCH_PLAN research, the critic's criteria checks, fakeEventAudience, the new real-daemon describe blocks.",
+   "evidence": "Present at c8c16fb: scripts/bench/supervise.mjs; testenv/src/bench/role-player.ts:953 (judgeCriterion); apps/ui/test/fake-daemon.ts:600; scripts/bench/README.md:19.",
+   "expected": "Interfaces later areas use.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "bench",
+   "sources": [
+    118,
+    119,
+    120,
+    121
+   ],
+   "reason": "Notes, not problems."
+  },
+  {
+   "id": "W5-57",
+   "problem": "Bench checks proposed for the real model: on a fresh bench-live bench, paste a GitHub token in the setup assistant, Check and save, Continue, Start using Forerunner. Within seconds the page is connected on Home and daemon.log shows both '=== bench supervisor' lines; intake.cjs on bench-live names the project after the brief.",
+   "evidence": "/tmp/frbench/fix-bench-after/walk-setup/daemon.log has both '=== bench supervisor' lines (exit 86, then 'the daemon is back ... bench.json has its new token') from a setup finished on the stand-in bench with --githost-in-setup. The restart and reconnect do not depend on the model. intake.cjs takes the name from the script's own projectNameFor (scripts/bench/journeys/intake.cjs:29, :40), asserted in scripts/bench-scripts.test.ts.",
+   "expected": "No live check; already walked on the stand-in bench.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "bench",
+   "sources": [
+    122,
+    126
+   ],
+   "reason": "Nothing here needs the real model: the stand-in bench walked the restart path, and the project name is the script's, covered by a unit test."
+  },
+  {
+   "id": "W5-58",
+   "problem": "C-10 is only partly closed. The stand-in critic marks a criterion met as soon as it has read the file the criterion names, whatever the claim ('[met] README.md has a How to run section - read README.md' for a README without that section). A capitalised single-segment *.js name (App.js) is not judged at all.",
+   "evidence": "testenv/src/bench/role-player.ts:997-1008 (a read file gives met with 'read X'). testenv/src/bench/plans.ts:643 (/^[A-Z][A-Za-z0-9]*\\.js$/ skipped). docs/maintainers/testing.md:2537 says a criterion is met only when a file shows it.",
+   "expected": "Unchecked claims read 'not checked by the stand-in', or the stand-in looks for the quoted words. App.js is judged.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    123,
+    130
+   ],
+   "reason": "A bench stand-in leftover of 'bench'; no wave 7 area owns the critic in role-player.ts."
+  },
+  {
+   "id": "W5-59",
+   "problem": "Only the helper fakeEventAudience is tested. Nothing tests that the fake's pushEvent and GET /sessions/:id/events use it, and no screen test pushes a marked event.",
+   "evidence": "apps/ui/test/fake-daemon.ts:600-606, :6458-6459. apps/ui/test/fake-daemon-audience.test.ts (the helper only).",
+   "expected": "A UI test pushes a person event and a detail event and, by default, sees only the person line.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    124
+   ],
+   "reason": "A test gap."
+  },
+  {
+   "id": "W5-60",
+   "problem": "After restart-daemon.mjs, both recorder.cjs's followDaemon and an explicit reconnect(page, name) reload the page (session-engine.cjs, session-engine-failures.cjs). reconnect's reload has no guard, so the two may race.",
+   "evidence": "scripts/bench/recorder.cjs:100, :173-192, :203-206. scripts/bench/journeys/session-engine.cjs:143, session-engine-failures.cjs:66, :84, :112.",
+   "expected": "One reload per restart (reconnect tells followDaemon the token it saw, or the journeys drop the explicit reconnect).",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    125
+   ],
+   "reason": "A bench script leftover."
+  },
+  {
+   "id": "W5-61",
+   "problem": "supervise.mjs treats only exit 86 as a restart and ignores the request's exitCode, while the shell's is_restart_exit honours request.exitCode and also 75.",
+   "evidence": "scripts/bench/supervise.mjs:19. apps/desktop/src-tauri/src/restart.rs:86-91.",
+   "expected": "The supervisor reads restart.json's exitCode, as the shell does.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    129
+   ],
+   "reason": "Harmless today (restart.ts writes 86); a bench script leftover."
+  },
+  {
+   "id": "W5-62",
+   "problem": "In scripts/bench-scripts.test.ts, the supervisor describe was inserted between the smoke checks' doc comment and their describe.",
+   "evidence": "scripts/bench-scripts.test.ts:214-226 (the smoke-checks comment sits above the supervisor block; the smoke describe is at :368).",
+   "expected": "Each comment sits above its own describe.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    131
+   ],
+   "reason": "Cosmetic."
+  },
+  {
+   "id": "W5-63",
+   "problem": "The bench reviewer did not re-run pnpm test:integration, and ran each C-8 test once, not five times under load.",
+   "evidence": "A review note; the merge ran the full suite green at 3cbf6cc.",
+   "expected": "No action.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "bench",
+   "sources": [
+    132
+   ],
+   "reason": "A note on what was checked."
+  },
+  {
+   "id": "W5-64",
+   "problem": "The wave 5 merge broke nothing that is still open.",
+   "evidence": "/tmp/frbench/wave5-result.json merge.validation (every suite green on 3cbf6cc).",
+   "expected": "No action.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "merge",
+   "sources": [
+    133
+   ],
+   "reason": "Not a problem."
+  },
+  {
+   "id": "W5-65",
+   "problem": "No UI test asserts that the fake daemon's chat 'stop everything' stops running sessions and records their projects, as its POST /kill does (676ec3a).",
+   "evidence": "apps/ui/test/chat.test.tsx:296-313 asserts only the stopped bar.",
+   "expected": "A UI test: a running session, 'stop everything' in chat, then the stopped bar's Continue names that project.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    134
+   ],
+   "reason": "A test gap."
+  },
+  {
+   "id": "W5-66",
+   "problem": "The phone's Stop all never writes kill.json, so it may not survive a daemon restart, and Continue where it stopped would not see its sessions after one.",
+   "evidence": "packages/runtime/src/remote/watcher.ts:698-708 (runKill: kill.stop with by 'stop_all', no writeKillRequest). writeKillRequest is called only at daemon/server.ts:1645, compose.ts:3007 and cli/main.ts:321.",
+   "expected": "The phone's Stop all writes kill.json with its sessions, as POST /kill does.",
+   "severity": "minor",
+   "disposition": "phone",
+   "area": "phone",
+   "sources": [
+    135
+   ],
+   "reason": "The phone's watcher (phase H)."
+  },
+  {
+   "id": "W5-67",
+   "problem": "The merge's summary of the areas' not_done and non_blocking items (C-68, the model's task_create, the heard-line path, old tier-1 rows, the plan banner, the Changes badges, the Connect Claude target, Questions for the person, the injection title, the transient 401).",
+   "evidence": "/tmp/frbench/wave5-result.json merge.problems_left.",
+   "expected": "Each item is triaged on its own.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "merge",
+   "sources": [
+    136
+   ],
+   "reason": "A summary: see W5-2, W5-1, W5-3, W5-4, W5-10, W5-30, W5-31, W5-44, W5-46 and W5-53."
+  },
+  {
+   "id": "W5-68",
+   "problem": "The state service's Inbox, which the phone and approvals-web read, still lists the chat's read-backs (chat_only rows) as cards and counts them. A paired phone shows the second yes/no card beside the card it answers (the U-029 two-cards problem the desktop no longer has), and the project card's waiting count and health include it.",
+   "evidence": "services/state-api/src/routes/inbox.ts:239 (GET /inbox requests) and :290-293 (GET /requests) call humanRequest.open with no chat_only filter. services/state-api/src/views.ts:488, :505-508, :524 (projectCard health and waitingOnYou count every open row). apps/ui/src/mobile/screens/InboxScreen.tsx:32-37 shows every open request. Entry 27 ('Now done in GET /inbox, inbox.changed, the chat's open_requests, projectCard, projectHealth') names only the daemon's lists; no code under services/ or apps/ui/src/mobile reads change_card.chat_only.",
+   "expected": "The state service leaves out rows with change_card.chat_only on GET /inbox, GET /requests, the blocking count and the project card (as isChatOnlyCard does in the daemon), tested in services/state-api/test/routes.test.ts with a chat_only row beside its card.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "collab-privacy-service",
+   "sources": [
+    27
+   ],
+   "reason": "collab-privacy-service (wave 8) already changes services/state-api/src/routes/inbox.ts and the push fanout for who sees which rows; this is one more filter on the same lists. The phone round (phase H) then checks it on the phone."
+  },
+  {
+   "id": "W6-1",
+   "problem": "CI is red on the wave-6 merge c8c16fb. Both workflows have finished and failed: the Desktop app workflow on Windows and Linux (UI unit tests), and CI's unit tests on both ubuntu and windows. Every step after the unit tests was skipped, so the integration tests, gate harnesses, live harness offline tests, injection suite, docs and link checks (and, on Desktop, Playwright, Rust, the Tauri build and the installed check) are unproven on CI at c8c16fb.",
+   "evidence": "Desktop app run 41533695023: apps/ui/test/real-daemon.test.ts:7276 fails on both OS. This is the C-57 case from b89db43. The seed GitOps at :7210-7213 has an identity, but :7276 runs a plain `git -C seedDir merge --no-ff` through run(), which bypasses it ('fatal: empty ident name' / 'Committer identity unknown'). CI run 41533695121 fails packages/runtime/test/verification.test.ts:846 and :920 (C-1, two cases) on ubuntu and windows. The tried command's output arrives as '\\x1b[33m9\\x1b[39m': ci.yml:14 sets FORCE_COLOR: 1, try-run.ts:44 TRY_ENV does not clear it, and `FORCE_COLOR=1 node -e 'console.log(9)'` prints ESC[33m9ESC[39m. Windows also failed three load-sensitive cases: testenv/test/githost.test.ts:504 (timed out at 20 s), :597 (2 closed PRs, expected 3) and packages/runtime/test/notifications-hear-once.test.ts:222 (the session did not end in time). Earlier, at 3cbf6cc, the live harness dry run failed on ubuntu (harness.test.ts:195: 2 PRs, expected 1). The Docker job 'full-review task in the Docker sandbox' passed (23/23).",
+   "expected": "Both workflows green on c8c16fb before any group-1 branch merges. The seed merge goes through the seed's GitOps (or gets -c user.name/user.email). Tried commands run without forced colour (NO_COLOR=1, or FORCE_COLOR removed from their env), or the evidence strips ANSI codes, so a person's 'See what was checked' never carries escapes. The Windows githost and notifications cases wait on state with a message. The skipped steps then run green on both OS, and a full pnpm check passes.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "ci-precondition (session lead, now, before group 1 merges; not a wave 7 area)",
+   "sources": [
+    289
+   ],
+   "reason": "wave7_left_out makes CI green on the wave-6 merge a precondition that every wave 7 fixer starts from. Both root causes reproduce locally without real GitHub or Windows (FORCE_COLOR=1; no global git identity), so this is a fix to do now, not a live check after wave 7. Local runs pass only because the bench has a git identity and no FORCE_COLOR."
+  },
+  {
+   "id": "W6-2",
+   "problem": "Quit (POST /shutdown) does not wait for running sessions to write their own end. It stops the runs, waits 100 ms and closes the store. A Quit during a review therefore ends as 'Interrupted: Forerunner closed while this session ran.' (recovered at the next start) instead of 'Stopped: Forerunner was closed' (§4.9).",
+   "evidence": "packages/runtime/src/daemon/server.ts:212-213 (SHUTDOWN_DELAY_MS = 100), :1662-1668 (kill.stop, then setTimeout(onShutdown, 100)); packages/runtime/src/cli/main.ts:385-391 (daemon.stop, then keep.close, with no wait for the runner). Seen in the fixup's walk (a): both Quit and a crash gave the 'interrupted' Update.",
+   "expected": "/shutdown waits, bounded at a few seconds, for each stopped session to record its own end before the store closes, so a Quit reads 'Stopped: Forerunner was closed'. Cover it with a real-daemon case using a slow try.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    138,
+    157,
+    164,
+    293
+   ],
+   "reason": "No wave 7 area owns server.ts /shutdown or main.ts shutdown. It is a small leftover of 'stops', and both outcomes already leave the task Ready with a true sentence. Entry 293 is the merge's list of examples: its other examples are W6-8, W6-11, W6-27 and W6-31."
+  },
+  {
+   "id": "W6-3",
+   "problem": "A project whose only task is cancelled reads 'No tasks yet' in its header and on the Overview.",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:133-139 (progressOf leaves cancelled tasks out of total), :257-262 (total === 0 gives 'No tasks yet'); /tmp/frbench/fix-stops/steps/23-after-e-03-tasks.png.",
+   "expected": "A status line that is true, for example 'Cancelled: \"Credits page in credits.html\"' or 'Nothing to do: 1 task cancelled', with Open Tasks. Assert it in a UI and a real-daemon case.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    140
+   ],
+   "reason": "polish owns project-status.ts's done and waiting lines."
+  },
+  {
+   "id": "W6-4",
+   "problem": "Try-it checks the abort signal only between pages. A Cancel while a page is open waits for that page's two widths (about 1.7 s) before the review ends and the files leave the folder. The Cancel dialog shows 'Saving…' for more than 0.5 s in the meantime.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts:181-191: `if (opts.signal?.aborted) break` before each page only, and tryOne gets no signal. fix-stops steps/13-after-b-03-after-cancel.png. No model call is made after the Cancel.",
+   "expected": "An abort closes the page (and the browser it owns) at once: check the signal between widths and abort the navigation. A unit test with a slow page shows the try ending within about 100 ms of the abort.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    141,
+    144
+   ],
+   "reason": "A small leftover of 'stops' and 'verification' in try-page.ts. No wave 7 area owns the page try."
+  },
+  {
+   "id": "W6-5",
+   "problem": "UI tests that depend on how long real work takes fail under machine load and pass alone: session.test.tsx 'while it runs…', setup-assistant.test.tsx 'Skip for now', and e2e session.spec.ts 'Stop now asks once…'.",
+   "evidence": "apps/ui/test/session.test.tsx:157-176 (waitFor with the default 1 s, eventDelayMs 60); apps/ui/test/setup-assistant.test.tsx:56-70 (default waitFor); apps/ui/e2e/session.spec.ts:63-87 (stop.count() then click, which races the session's end). 32ec40b (C-8) changed the runtime and e2e scenario tests and added one real-daemon.test.ts case; it did not touch these three.",
+   "expected": "Each waits on the state it needs, with a longer timeout and a failure message that says what it saw, and passes 5 runs in a row under load, as C-8 did for the runtime tests.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    142,
+    176
+   ],
+   "reason": "Load-sensitive UI tests are a small leftover. 142's other half (monthly-jobs-wiring) is fixed: see W6-44. The Windows runtime and testenv timeouts seen on CI are part of W6-1."
+  },
+  {
+   "id": "W6-6",
+   "problem": "Cancelling a task that runs on another computer says 'Cancelled \"X\".' Nothing was stopped here, while that computer's runner watch stops the run and sets its work aside, as before phase E.",
+   "evidence": "packages/commands/src/commands/task.ts:339-345 (moveSentence without extra.work gives 'Cancelled \"X\".'); kill.stopTask finds no registration here (KillSwitch.hasTask, note 147); runner.ts watchTask on the other computer; task-words.ts:85-90 (a run on another computer stops on its own once it sees the move).",
+   "expected": "Whatever collab-claims settles for cross-computer runs ('a session belongs to the install that runs it'): the line says what happens on the other computer, or the Cancel names whose computer runs it.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "collab-claims",
+   "sources": [
+    143
+   ],
+   "reason": "Multi-computer claims and stops are wave 8's collab-claims (one task, one runner; another person's session can never be stopped from your PC). The fixer marked it out of scope."
+  },
+  {
+   "id": "W6-7",
+   "problem": "The Cancel dialog's consequence line is 139 characters for a running task and 142 for a review, against design §5.1's limit of 100, before any 'X waits on it' names. The line after the action grew by the same amount. At merge the chat read-back took stops' form ('Cancel \"X\"? It is dropped; its run stops now and what it changed is removed.'), and the lead was asked to confirm that wording.",
+   "evidence": "apps/ui/src/lib/task-actions.ts:48 ('Drops it.') and :112-122 (cancelWorkLine); packages/commands/src/commands/task.ts:316-317 (CANCEL_UNDO_WORDS), :270-297 (moveAsk), :340-345 (moveSentence); docs/design/core-experience.md:313 (≤ 100 characters). Measured: 139 and 142 characters.",
+   "expected": "A true line of at most 100 characters with 'Drops it.', for example 'Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.' (97). Use it in the command, the UI dialog, the line after the action, the chat read-back and fake-tasks.ts, with the tests that assert it.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    155,
+    162,
+    291
+   ],
+   "reason": "budget-resume owns cancelWorkLine and the cancel and undo words (C-37's linked-folder sentence, the stuck dependents' names, the cancel of a paused task). It adds to this very line, so the length belongs with that rewrite."
+  },
+  {
+   "id": "W6-8",
+   "problem": "After a quit or crash recovery, the Overview's 'Last result' reads 'No session yet.', although the session ended 'Interrupted: Forerunner closed…'. This predates the branch.",
+   "evidence": "packages/runtime/src/session/recovery.ts has no summary_cache or last_session write (grep). The runner writes last_session only on its own end path (packages/runtime/src/session/runner.ts:2537). apps/ui/src/pages/project/SummaryTab.tsx:168 falls back to 'No session yet.'. Review steps-1/07, 12.",
+   "expected": "endDeadSession writes the project's last_session with the recovered outcome, so the Overview shows the interrupted session's sentence (§5.10, true now). Add a real-daemon case after a restart.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    156,
+    163
+   ],
+   "reason": "A small leftover of 'stops' in recovery.ts and the Overview. No wave 7 area owns it. collab-feed (wave 8) later keys last_session per agent and keeps this write."
+  },
+  {
+   "id": "W6-9",
+   "problem": "After a Cancel, the session result says 'N tasks wait on other tasks.' while the rows read 'Stuck: \"X\" was cancelled'. This predates the branch.",
+   "evidence": "packages/runtime/src/session/result.ts:196-200: 'on it' only when a task failed or needs the person, else 'on other tasks'. There is no case for a cancelled holder. Seen as '4 tasks wait on other tasks. CHF 0.00.' and '1 task waits on other tasks. CHF 0.01.'.",
+   "expected": "The result names it, for example '1 task waits on \"X\", which you cancelled.', in C-39's own line builder in result.ts.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    158,
+    165
+   ],
+   "reason": "A sibling of C-39 (polish's handoff: the result after a cancel) in result.ts. 158's other two points are W6-60 (a deliberate pending promise) and W6-10 (the Changes page)."
+  },
+  {
+   "id": "W6-10",
+   "problem": "The Changes page shows a raw command name under each change's sentence ('task.transition · before / after'). This predates the branch.",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:43-51 (commandNames returns the command's name) and :258-261 (the details summary).",
+   "expected": "The disclosure is worded for a person (for example 'Details: before and after'), with no internal command names.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    168
+   ],
+   "reason": "Words on a screen. Not the same as system-text #6 or later #36 (the 'Said:' and 'undoable' lines)."
+  },
+  {
+   "id": "W6-11",
+   "problem": "A note queued while a session runs never reaches a task that the same session runs next. This covers Try again or Redo with a note, a task action's note, and findings' notes about a task. The note stays queued until a later session.",
+   "evidence": "packages/runtime/src/session/runner.ts:918 (the brief is built once by runStartupChecklist) and :1483 (notesForTask(brief.queue.items, …) for every task). Queue writers: commands/task.ts:407-408 queueNote, findings.ts:205 and :652 noteAboutTask. person-questions.ts:990-995 says the same in a comment ('a session already running reads the queue only at its start'). L-3 was this bug for Go ahead without, and asking avoided it by reading the card at run start.",
+   "expected": "Before each task the runner reads the queue's unread notes for that task (or re-reads the queue), so a note given during the session reaches that task's next run in the same session. Add a real-daemon case: Try again with a note while the session runs, and the task's brief carries it.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    170,
+    172
+   ],
+   "reason": "No wave 7 area owns the runner's note read. It is a contained change in runner.ts, and polish runs last, after every area that edits runner.ts."
+  },
+  {
+   "id": "W6-12",
+   "problem": "After the second questions card (go_ahead: false, filed after Go ahead without), the card offers no second Go ahead without on screen. But a 'go ahead' typed in chat or on the phone, or POST /tasks/:id/action go_ahead, is still accepted on it.",
+   "evidence": "packages/runtime/src/wiring/request-answers.ts:250-256 (offersGoAheadWithout reads only card.source), :327, :485; packages/runtime/src/daemon/server.ts:1135-1136 (go_ahead maps to task.resume without_answers with no card check); request-words.ts:318 (planned = !offersGoAheadWithout(card)).",
+   "expected": "A separate predicate refuses 'without' on a go_ahead:false card, in the answer reader and in the task action, with the NEEDS_YOUR_ANSWERS words. It must not reuse offersGoAheadWithout, which would flip questionsCard's 'planned' body. Add a real-daemon test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    171,
+    290
+   ],
+   "reason": "A small gap between 'asking' and 'answers', left by the merge. It affects chat and the daemon route too, so it is not phone-only."
+  },
+  {
+   "id": "W6-13",
+   "problem": "The plan card's Done line can promise work that does not happen. When every first task waits for Docker, resumeWork counts them as ready, the start is 'started', and the line reads 'Plan approved: N tasks written; working on them.' while the session runs nothing until Docker is ready. When the start is nothing_to_run for a reason other than a person task (every task waits on one that is not done and will not run by itself), or no start was recorded, the line says '; press Start on the project to work on them', and Start then runs nothing (design §5.9).",
+   "evidence": "packages/runtime/src/daemon/request-words.ts:490-505 (intakeOutcome: only plansPersonTask gets its own words; 'started' gives 'working on them'; everything else gives 'press Start…'); packages/runtime/src/session/resume-work.ts:37-52 (nothing_to_run only when no ready non-person task has its dependencies done, otherwise 'started'); packages/state/src/repos/task.ts:377-386 (readyTasks does not check Docker); packages/runtime/src/session/intake.ts:1903-1911.",
+   "expected": "The Done line says why nothing runs now (for example 'the work waits for Docker: set it up in Settings', or what it waits on), true now. Add a real-daemon case for the Docker case and for nothing_to_run.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    174
+   ],
+   "reason": "Card words in request-words.ts. The raw entry's Docker example takes the 'started' branch, not 'press Start'. Both branches can be untrue."
+  },
+  {
+   "id": "W6-14",
+   "problem": "When the work waits on the person's content step, the Start dialog says '\"Build the page…\" waits on \"Give the opening hours and the photos\" (needs you): that will not be done by itself. Change what it waits for on the Tasks tab, or try the failed task again.' Nothing failed, and the step is done once the person answers.",
+   "evidence": "apps/ui/src/pages/project/StartSessionDialog.tsx:59-68 (stuck() counts needs_human with failed and cancelled) and :107-116 (one sentence for all of them); review-asking steps/52-d2-start-dialog.txt.",
+   "expected": "A dependency that waits for the person reads, for example, '\"Build the page\" waits for your answers to \"Give the opening hours and the photos\" (Inbox).' 'Try the failed task again' appears only for a failed dependency. Test it in the Start dialog UI test.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    191,
+    193,
+    201
+   ],
+   "reason": "polish owns StartSessionDialog.tsx's waitsOnText and these lines. 191's other points are W6-15, W6-16, W6-17, W6-18 and W6-45."
+  },
+  {
+   "id": "W6-15",
+   "problem": "After Go ahead without was pressed while the session ran, the Done line read '\"Members chart\" goes on without your answers: it runs after the current session.' The same session actually ran it ('did 3 tasks').",
+   "evidence": "packages/runtime/src/daemon/request-words.ts:209-213 (startWords 'queued' gives 'it runs after the current session'). The running session re-plans and takes ready tasks (runner.ts:1197-1200).",
+   "expected": "Words that are true whether the running session or the next one takes it, for example 'the running session picks it up'. Add a real-daemon case.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    202
+   ],
+   "reason": "Card words in request-words.ts."
+  },
+  {
+   "id": "W6-16",
+   "problem": "The session result says '\"Home page in index.html\" needs your decision (Inbox).' for a task whose card is a set of questions.",
+   "evidence": "packages/runtime/src/session/result.ts:212-214 (needsYouSentence, one wording) used for every needs_human task (runner.ts:2254-2270).",
+   "expected": "A questions card reads, for example, '\"Home page\" waits for your answers (Inbox).', and the Update still removes that sentence (sessionUpdateLine).",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    209
+   ],
+   "reason": "Words in result.ts."
+  },
+  {
+   "id": "W6-17",
+   "problem": "A person-task row shows 'Light review · High priority'. After the Tasks tab's Go ahead without, a Ready row keeps 'needs you' in the Critic column.",
+   "evidence": "apps/ui/src/pages/project/TasksTab.tsx:434-437 (reviewLevelName for every task, the person's too); apps/ui/src/lib/plain-words.ts:54-66 (verdictLabel 'human' gives 'needs you', from the last verdict whatever the status).",
+   "expected": "A person task shows no review level. A ready task does not read 'needs you' in the Critic column.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    208
+   ],
+   "reason": "Words on the Tasks tab."
+  },
+  {
+   "id": "W6-18",
+   "problem": "The bench stand-in's FORERUNNER_BENCH_MISSING still reports data/members.csv missing after the file is added to the folder, so the missing-input path cannot be walked to Done.",
+   "evidence": "testenv/src/bench/role-player.ts:591-621 (missingHit is matched by title only, and the folder is never checked).",
+   "expected": "The stand-in plays 'missing' only while the data/... file is absent, so the walk can reach Done. Document it in scripts/bench/README.md.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    210
+   ],
+   "reason": "A small bench leftover ('bench' was wave 5). No wave 7 area owns role-player.ts."
+  },
+  {
+   "id": "W6-19",
+   "problem": "After the person answers a go_ahead:false card, the next brief says both 'The person answered the questions…' and WITHOUT_ANSWERS_NOTE ('chose to go ahead without answering'), with the old questions listed as left open.",
+   "evidence": "packages/runtime/src/session/person-questions.ts:648-684 (answersBlockFor appends the without block whenever withoutAnswersOn is set); packages/runtime/src/session/executor.ts:1050 (drops the queued duplicate by exact text). Log call 41 in the review.",
+   "expected": "When answers came after the without choice, the block says the later answers replace it, and drops 'left open' for answered questions. Keep executor.ts's dedupe and the bench stand-in's reading in step.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    188,
+    203
+   ],
+   "reason": "Model-facing words in a contained function. The fixup left it only because of the dedupe coupling."
+  },
+  {
+   "id": "W6-20",
+   "problem": "resumeWork filters person tasks by specialist only, while isPersonTask also counts legacy person titles, so a legacy person task can still count as runnable work.",
+   "evidence": "packages/runtime/src/session/resume-work.ts:34-38 (specialist 'person' only); packages/runtime/src/session/person-questions.ts:114-123 (isPersonTask: the specialist or LEGACY_TITLE/ASK_TITLE/PERSONS_ANSWER).",
+   "expected": "resumeWork uses isPersonTask, with a unit test for a legacy-titled person task.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    206
+   ],
+   "reason": "A one-line consistency fix. budget-resume also edits resume-work.ts, and polish runs after it."
+  },
+  {
+   "id": "W6-21",
+   "problem": "Acceptance (b) C-36 and (c) C-64 were not walked on the bench. The stand-in costs 1 µUSD per token, so no session budget can be used up, and the bench has no subscription path. A knob such as FORERUNNER_BENCH_USAGE=<title>:<tokens> in role-player.ts was suggested.",
+   "evidence": "testenv/src/bench/role-player.ts:256-265 computes usage from the text length only, with no knob (grep). Composed tests only: session-budget-card.test.ts, subscription-path.test.ts.",
+   "expected": "A stand-in knob that inflates a run's usage, so the session-budget pause card can be walked on the bench. Document it in scripts/bench/README.md.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    212,
+    218,
+    226,
+    229,
+    247
+   ],
+   "reason": "budget-resume replaces C-36's second-stop card with one pause card at the first session-budget stop (fix scope 4) and walks budgets on the bench, so the knob belongs there. C-64's research routing is superseded by credential-chooser, and its subscription half is the owner's checklist step 6 (no subscription in the cloud)."
+  },
+  {
+   "id": "W6-22",
+   "problem": "The dependent-branch conflict card (two conflicting unmerged dependencies) is asserted only at the executor, with exact words, not through the Inbox in a composed session.",
+   "evidence": "fix/decisions report: the runner's could-not-run card carries the executor's summary (plainStopReason). No composed case for two conflicting dependencies.",
+   "expected": "A composed case (real git, the testenv fake GitHub) where a conflicting dependency merge files one Inbox card naming the PRs in words.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "dependent-branches",
+   "sources": [
+    213
+   ],
+   "reason": "dependent-branches rebuilds dependent branches and the deps base (--no-ff), and its acceptance (d) already wants 'a rebuild that conflicts files one card naming the PR'. The deps-base conflict card belongs in the same composed tests."
+  },
+  {
+   "id": "W6-23",
+   "problem": "A task whose estimate alone exceeds the session's work budget is left out by every session, and no card says so. The same result starts 'Nothing could run: no task is ready.' while it says 'Left for next time: \"Long report\" (about CHF 1.20); this session's CHF 0.40 was used.', though nothing was spent.",
+   "evidence": "packages/runtime/src/session/runner.ts:1196 (no items gives NOTHING_RUNNABLE) and :2585-2590 (no Update for NOTHING_RUNNABLE); packages/runtime/src/session/result.ts:160-182 ('Nothing could run: no task is ready.' beside the leftOutForBudget line). Only the Start dialog tells the person (StartSessionDialog.tsx:135-146: '… needs about CHF 1.20, more than this session's work budget … Give the session a larger budget, or the task a smaller one.'); a scheduled or chat start shows nothing.",
+   "expected": "One card naming the session's work budget, with 'Continue (CHF N more)' for that task (the owner's budget decision), and a result that neither says no task is ready nor that the budget was used.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    214
+   ],
+   "reason": "C-36's sibling. budget-resume owns the one card that names the real limit, Continue, and the result's budget lines. 'cost' (L-22) lowers the over-estimates that cause it but does not remove the case. Minor rather than major: the Start dialog already names the task, its estimate and what to change."
+  },
+  {
+   "id": "W6-24",
+   "problem": "A run that ends failed leaves its uncommitted files in the task's worktree, and the next attempt's checkout carries them. A dependency merge that git then refuses fails with git's words.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:370 (returns before commit and push for any outcome but done or in_review). This is the same line as budget-resume's first problem, which covers a pause.",
+   "expected": "A failed run's leftovers are set aside (or the worktree is reset to its last commit, with a log line) before the next attempt starts, so a retry starts clean.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "budget-resume",
+   "sources": [
+    215
+   ],
+   "reason": "Same root and the same code as budget-resume (1)/(2), which change that early return and the resume start point. The failed outcome should get its clean start in the same change."
+  },
+  {
+   "id": "W6-25",
+   "problem": "Until its first session ends, a project made from a brief has no copy of its repository. While the plan waits or the first session runs, the Docs tab reads README.md as 'not written yet'.",
+   "evidence": "packages/runtime/src/loop/docs.ts:364 (refreshCopy's only caller is the session-end status write) and :564-577.",
+   "expected": "The copy is cloned when the repository is linked, or when the intake writes its docs PR, so Docs and Files read the repository at once.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "merged-copy",
+   "sources": [
+    231
+   ],
+   "reason": "merged-copy makes refreshCopy callable outside the status write and owns the copy's lifecycle."
+  },
+  {
+   "id": "W6-26",
+   "problem": "`.forerunner-try/` (the try's samples, its server driver and a cargo build folder) is not excluded from git. If the daemon dies mid-review, the next 'Workspace before' commit or a retry's PR commit can pick it up.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:241-258 (WORKSPACE_GITIGNORE has no .forerunner-try/, and is written only when a folder has no .gitignore); packages/runtime/src/loop/try-plan.ts:26 TRY_FOLDER.",
+   "expected": "Forerunner's own folders (.forerunner-try/, with 'Local only') are excluded through .git/info/exclude and the neverPush list, whatever .gitignore the project has.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "merged-copy",
+   "sources": [
+    255,
+    282
+   ],
+   "reason": "merged-copy adds the .git/info/exclude guard and neverPush for what never leaves this computer. .forerunner-try/ is the same kind of folder."
+  },
+  {
+   "id": "W6-27",
+   "problem": "A second project on the same repository gets no doc set. Its scaffold finds fr/docs-scaffold already holding the first project's files, writes nothing and records no PR. Its Docs tab then says 'not written yet' while that PR stays open, and nothing says why.",
+   "evidence": "packages/runtime/src/loop/docs.ts:58 (DOCS_SCAFFOLD_BRANCH = 'fr/docs-scaffold', one fixed name for every project), :255-279 (written is empty when the marker is another project's, so prUrl is null).",
+   "expected": "One scaffold branch per project (or the second project says in one sentence that the repository's docs come from the first). Add a test with two projects on one bare repository.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "repo-guide",
+   "sources": [
+    228,
+    230,
+    241
+   ],
+   "reason": "repo-guide (wave 8) rewrites the scaffold and the guide's docs branch in loop/docs.ts, and collab-journey's third install on the same repository meets this case. 228's other points are W6-41 (budget card), W6-63 (request id), W6-28 (100 PRs) and W6-72 (the lesson-line patterns differ: not harmless)."
+  },
+  {
+   "id": "W6-28",
+   "problem": "The open pull requests are read from the first page of 100 only. With more open PRs, the chat (L-17) calls a done task's open PR beyond them merged, and the Overview's list is cut.",
+   "evidence": "packages/capabilities/src/githost/github.ts:399-415 (listPullRequests, per_page 100, one request; the class has an every-page helper, paged(), at :298); packages/runtime/src/daemon/compose.ts:3389-3398; packages/runtime/src/daemon/pull-requests.ts:96.",
+   "expected": "listPullRequests follows GitHub's next pages, as the repository list does. Add a unit test on the fake host with more than 100 open PRs.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    233,
+    245
+   ],
+   "reason": "A small fix in github.ts. merge-record (group 1, running) also edits github.ts and cannot be given this, and polish runs after it."
+  },
+  {
+   "id": "W6-29",
+   "problem": "The user guide tells the person to set the environment variable FORERUNNER_WEB_FETCH=off, an internal name in person-facing text. It also says there is no screen for the site lists.",
+   "evidence": "docs/user-guide.md:618-626.",
+   "expected": "The guide describes the 'Web pages research may read' setting in words, with no environment variable.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "sites",
+   "sources": [
+    246
+   ],
+   "reason": "sites adds the web_access setting and its row and rewrites this user-guide paragraph (C-71)."
+  },
+  {
+   "id": "W6-30",
+   "problem": "The agent browser launches Chromium without its own sandbox (Playwright's default chromiumSandbox: false) and browses the open web on its allowlist. This is the same class as C-17, which was fixed only for the page try.",
+   "evidence": "packages/capabilities/src/browser/profile.ts:298-303 (launchPersistentContext with no chromiumSandbox); compare packages/capabilities/src/browser/try-page.ts:207-216 (chromiumSandbox: true with a stated fallback). Noted in docs/maintainers/browser.md.",
+   "expected": "chromiumSandbox: true wherever it starts, falling back only where it cannot start and saying so, with a launch seam so a test proves the option.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "sites",
+   "sources": [
+    251,
+    252
+   ],
+   "reason": "No wave 7 area lists profile.ts. sites is the nearest owner of browser security: it changes the browser binding's block list (browser-ports.ts, browserSettingsOf) and rewrites browser.md and security.md, where this gap is noted. sites does not widen the agent browser's reach: browser.allowedDomains stays its list (sites fix scope 3)."
+  },
+  {
+   "id": "W6-31",
+   "problem": "The process sandbox kills only the direct child of a command. A command try, an npm check or a worker's command that starts children leaves them running on Linux and macOS when it is stopped or times out.",
+   "evidence": "packages/platform/src/shell.ts:123-147 (spawnProcess never sets detached) and :232-255 (killTree's process.kill(-pid) fails with ESRCH and falls back to child.kill). Windows uses taskkill /T. Only the server driver detaches (try-run.ts:666). The fixup's try-run.test.ts 'out of time' case on the fixer's head showed 'still running 10 s after the try ran out of time'. docs/user-guide.md:159-160 promises 'Nothing a try started keeps running after it', which this breaks for a command try's children.",
+   "expected": "Sandboxed runs on POSIX start in their own process group (detached), so a stop or timeout kills the whole tree. Add tests for a command that spawns a child, for git and for npm.",
+   "severity": "major",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    264,
+    266
+   ],
+   "reason": "A platform-wide leftover of 'verification'. No wave 7 area owns shell.ts, and the server try already has its own guard. It is larger than most polish items: size it in the area."
+  },
+  {
+   "id": "W6-32",
+   "problem": "`npx wc <file>` is not recognised as a usage line. The drawer then says the tool was not tried because neither the brief nor a README says how to run it, which is untrue.",
+   "evidence": "packages/runtime/src/loop/try-plan.ts:117-118 (SCRIPT now accepts './wc.js', so `node ./wc.js` is recognised; PROGRAMS is only node, python3 and python, with no npx).",
+   "expected": "An `npx <bin>` usage line whose bin the task's package.json names is tried, or the drawer says why it was not.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    265,
+    274
+   ],
+   "reason": "A small leftover of 'verification'. 274's `node ./wc.js` half is fixed. 265's other points are W6-33, W6-34, W6-26, W6-43, W6-35, W6-54 and W6-51."
+  },
+  {
+   "id": "W6-33",
+   "problem": "A try that changes an existing file of the task (`node todo.js add milk` writes todos.json) leaves the change in the folder and only names it. The next 'Workspace before' commit, or a retry's PR commit, picks it up.",
+   "evidence": "packages/runtime/src/loop/try-run.ts:79-94 (created files are removed; changed files are only named in the note).",
+   "expected": "Files the try changed are put back after it (git restore of tracked files changed by the try, or a content snapshot of those files), so the task's work is what the critic reviewed.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    279
+   ],
+   "reason": "A small leftover of 'verification'. The worktree is under git, so the changed tracked files can be restored without snapshotting the whole folder."
+  },
+  {
+   "id": "W6-34",
+   "problem": "A Python project that mixes unittest files and plain pytest-style files runs no tests on a machine without pytest ('pytest is not installed'), although unittest could run the TestCase files.",
+   "evidence": "packages/runtime/src/loop/project-checks.ts:317-358 (unittestStyle requires every test file to import unittest, else only pytest is tried).",
+   "expected": "Without pytest, the unittest files run and 'See what was checked' names the pytest-style files as not run.",
+   "severity": "minor",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    281
+   ],
+   "reason": "A small leftover of 'verification' in project-checks.ts."
+  },
+  {
+   "id": "W6-35",
+   "problem": "Person-facing evidence under 'See what was checked' quotes the browser's raw refusal, for example '(Chromium sandboxing failed!)'.",
+   "evidence": "packages/capabilities/src/browser/try-page.ts:184-190 (the browser's own words appended to NO_BROWSER_SANDBOX) and :232-240 (sandboxRefusal). The 'process sandbox' wording is gone (packages/runtime/src/loop/try-run.ts:52-58).",
+   "expected": "One plain sentence ('the browser ran without its own sandbox: this computer does not allow it'), with the raw line kept in the log.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    284
+   ],
+   "reason": "Words."
+  },
+  {
+   "id": "W6-36",
+   "problem": "The live checks each area listed in check_in_the_app are still for the session lead: bench-live L-1/L-8/L-10/L-7 (including the PR read-back: chat 'skip the <task> task' on a task 'Being reviewed' with a PR reads back that its pull request stays open), L-2/L-3/L-11, C-49/C-57/C-64/L-17, and C-1/C-3/C-17.",
+   "evidence": "The areas' check_in_the_app in /tmp/frbench/wave6-result.json. packages/commands/src/commands/task.ts:270-297 holds the pr_url branch to check live. The PR read-back was walked on the bench with --githost (fixup-stops walk f). The live part is the real model and real GitHub.",
+   "expected": "Walked with the real model and GitHub on forerunner-sandbox after wave 7, using the stated steps, except for three. C-64's both-credentials step needs a Claude subscription token, which the cloud does not have, so it goes to the owner's checklist step 6; its routing is re-checked by credential-chooser's live journey 2. C-49's 'Merge B's PR first: A's PR shows merged too' is replaced by live journey 1 (merge commits, then a squash on GitHub's website; see W6-42). C-36's steps are superseded by budget-resume's journey 3. The Windows parts (L-8 Quit, C-17's absent sandbox line, C-1's 9009 case) are the owner's PC checklist.",
+   "severity": "minor",
+   "disposition": "live-check",
+   "area": "live-check",
+   "sources": [
+    169,
+    292
+   ],
+   "reason": "These need the real model and real GitHub. Add them to the live-check list after wave 7, beside wave7_live_check_after_merge, without the subscription-only and superseded steps."
+  },
+  {
+   "id": "W6-37",
+   "problem": "Once Go ahead without is chosen, ask_person stays refused on the task for good. Every later brief, Redo included, says 'Do not ask the person again', so a Redo that needs a new question cannot ask it.",
+   "evidence": "packages/runtime/src/session/person-questions.ts:560-561 (refused whenever wentAheadWithout), :676-679 (the brief's line). Neither design §4.6 nor ADR 0102 settles it.",
+   "expected": "The owner chooses: (a) keep it for good; (b) a Redo clears the choice; (c) a new questions card is allowed after a Redo only.",
+   "severity": "minor",
+   "disposition": "owner-decision",
+   "area": "owner",
+   "sources": [
+    189,
+    204
+   ],
+   "reason": "What the person sees and is asked is the owner's choice. The owner's decisions of 2026-11-02 do not cover it."
+  },
+  {
+   "id": "W6-38",
+   "problem": "The person's content step can make a 'Plan size: small' plan four tasks, against the design's 'one to three tasks'.",
+   "evidence": "The asking fixup (L-11): the person task is added to the plan (intake-content.ts withOwnersContent), and dropping work to make room would break L-11.",
+   "expected": "The owner reads the design: whether the person's step counts toward the one-to-three tasks.",
+   "severity": "polish",
+   "disposition": "owner-decision",
+   "area": "owner",
+   "sources": [
+    190,
+    207
+   ],
+   "reason": "Reading the design text is the owner's call. Not covered by the 2026-11-02 decisions."
+  },
+  {
+   "id": "W6-39",
+   "problem": "At autonomy 3, ReviewedPrMerge rebases a dependent task's branch, which holds its dependency's merge commits, before merging. The rebase copies the dependency's commits into the branch.",
+   "evidence": "packages/runtime/src/loop/merge.ts:243 rebaseOnto and :252 force-push.",
+   "expected": "As merge-record specifies: no rebase or force-push in the merge step, merge commits only.",
+   "severity": "major",
+   "disposition": "duplicate",
+   "area": "merge-record",
+   "sources": [
+    217
+   ],
+   "reason": "Already merge-record's first [blocker] ('The merge step replays a branch that carries another task's work')."
+  },
+  {
+   "id": "W6-40",
+   "problem": "A merge on GitHub reaches the Docs and Files tabs, and the chat's docs search, only when the next session ends, while the tabs say 'This computer's copy of <repo> as merged'. Refreshing on every read was rejected, because it could race the status-PR write.",
+   "evidence": "packages/runtime/src/loop/docs.ts:364 (refreshCopy only at the session's status write).",
+   "expected": "The copy refreshes after every merge, in the app or on GitHub, under one lock per copy.",
+   "severity": "major",
+   "disposition": "duplicate",
+   "area": "merged-copy",
+   "sources": [
+    227,
+    232
+   ],
+   "reason": "Already C-53 and merged-copy's first problem (refresh after every merge), with the per-copy lock that answers the race."
+  },
+  {
+   "id": "W6-41",
+   "problem": "The session-budget card says 'Two sessions of <this session's cap>' even when the two stopped sessions had different caps. Its 'Raise its budget' says 'Starts one session of CHF X for it now', but that session runs other ready tasks first by priority.",
+   "evidence": "packages/runtime/src/session/budget-card.ts (fix/decisions' SESSION_BUDGET_STOP_OPTIONS, the second-stop card).",
+   "expected": "Replaced by one pause card at the first stop that names the real limit, with 'Continue (CHF N more)'.",
+   "severity": "minor",
+   "disposition": "duplicate",
+   "area": "budget-resume",
+   "sources": [
+    234,
+    242
+   ],
+   "reason": "budget-resume (4) supersedes this card: SESSION_BUDGET_STOP_OPTIONS and the stop count go."
+  },
+  {
+   "id": "W6-42",
+   "problem": "C-49's check_in_the_app says 'Merge B's PR first: A's PR shows merged too'. That holds only for a merge commit, not for a squash or rebase merge.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:152-156 ('Merge in any order.'), /tmp/frbench/owner-q/gitexp.",
+   "expected": "PR words and live steps that are true for each merge method.",
+   "severity": "minor",
+   "disposition": "duplicate",
+   "area": "dependent-branches",
+   "sources": [
+    235,
+    248
+   ],
+   "reason": "Already dependent-branches' second [blocker] and acceptance (f) ('no PR body says Merge in any order'), plus wave7_live_check_after_merge journey 1 (merge commits, then a squash on GitHub's website)."
+  },
+  {
+   "id": "W6-43",
+   "problem": "New task's review label 'Light review: the critic reads the work, nothing runs in isolation' is untrue: a light review's tries run in the process sandbox, or in the container when Docker is ready.",
+   "evidence": "apps/ui/src/lib/task-actions.ts:203.",
+   "expected": "As C-23 says.",
+   "severity": "polish",
+   "disposition": "duplicate",
+   "area": "polish",
+   "sources": [
+    283
+   ],
+   "reason": "Already C-23 in polish's handoff_items."
+  },
+  {
+   "id": "W6-44",
+   "problem": "monthly-jobs-wiring's calibration test waited at most 30 s of real time with no message, and failed under load.",
+   "evidence": "Fixed by 32ec40b (C-8, wave 5 bench): packages/runtime/test/monthly-jobs-wiring.test.ts:26-40 (until(): at least 10 s, 120 s by default, and the timeout says what it saw) and :178, :196 (waits for the run's state and its notification).",
+   "expected": "Waits on state with a message.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "bench",
+   "sources": [
+    173,
+    253
+   ],
+   "reason": "Holds at c8c16fb. It did not fail on either CI OS at c8c16fb."
+  },
+  {
+   "id": "W6-45",
+   "problem": "An Update 'the session ended without finishing a task.' sat beside each questions card.",
+   "evidence": "Fixed by the wave-5 noise fix (C-32): packages/runtime/src/session/result.ts:246-269 (sessionUpdateLine drops what an open card says and posts nothing when nothing else is news); runner.ts:2254-2270 (a questions-card task is needsYou); packages/runtime/test/session-update.test.ts:112-125. The sentence survives only in a code comment (result.ts:254).",
+   "expected": "No Update when the card says it all.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "noise",
+   "sources": [
+    175,
+    194,
+    211
+   ],
+   "reason": "The asking walks ran on a branch without wave 5's noise fix, which c8c16fb merges."
+  },
+  {
+   "id": "W6-46",
+   "problem": "go-ahead-without.test.ts's restart case asserted only the ask_person refusal, not the brief.",
+   "evidence": "packages/runtime/test/go-ahead-without.test.ts:258-278 now asserts answersBlockFor after the restart (WITHOUT_ANSWERS_NOTE, the question, the 'Do not ask the person again' line).",
+   "expected": "The brief is asserted after the restart.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "asking",
+   "sources": [
+    205
+   ],
+   "reason": "Fixed in the asking fixup."
+  },
+  {
+   "id": "W6-47",
+   "problem": "The plan card's 'Approve and start' explanation said 'starts working on them now' on plans whose work waits for the person task.",
+   "evidence": "packages/runtime/src/daemon/request-words.ts:405-409 ('Writes these N tasks; the work starts once you answer its questions in the Inbox.' when workWaitsOnPerson) and :480-488. Both branches survived the merge.",
+   "expected": "True words for both cases.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "asking",
+   "sources": [
+    198,
+    200
+   ],
+   "reason": "Fixed in the asking fixup and kept at the merge."
+  },
+  {
+   "id": "W6-48",
+   "problem": "The fake daemon's GET /settings had no project.status_pull_request row, so no UI test rendered or clicked it.",
+   "evidence": "apps/ui/test/fake-daemon.ts:3272-3276 (the row) and :4736 (its card); apps/ui/test/settings-all.test.tsx:96-122.",
+   "expected": "The UI test renders and changes the row.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "decisions",
+   "sources": [
+    216,
+    239
+   ],
+   "reason": "Fixed in the decisions fixup."
+  },
+  {
+   "id": "W6-49",
+   "problem": "The Status pull request Settings row appeared for a project linked to a local folder, where it changes nothing.",
+   "evidence": "packages/runtime/src/daemon/settings-view.ts:237-247 (only when onHostRepository); the fake daemon mirrors it.",
+   "expected": "The row only for a host repository.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "decisions",
+   "sources": [
+    237,
+    240
+   ],
+   "reason": "Fixed in the decisions fixup."
+  },
+  {
+   "id": "W6-50",
+   "problem": "The fake daemon's 'Raise its budget' on a session_budget card set budget = max(budget, raise_to), while the daemon sets max(budget, actual + raise_to).",
+   "evidence": "apps/ui/test/fake-daemon.ts:2530-2540 (max(budget, actual + promised), with the daemon's reason).",
+   "expected": "The same as budget-card.ts.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "decisions",
+   "sources": [
+    238,
+    243
+   ],
+   "reason": "Fixed in the decisions fixup. The card itself goes in budget-resume (W6-41)."
+  },
+  {
+   "id": "W6-51",
+   "problem": "The command try inside the real Docker container had not been proven: there was no disk for a local dockerd, and CI's extended sandbox-full-review job had not run.",
+   "evidence": "CI run 41533695121 at c8c16fb: job 'full-review task in the Docker sandbox' (125580071617) passed, 23/23 checks, including 'the engine ran the review's node src/greet.js Ada in the task's container (docker exec)'; scripts/sandbox-full-review.mjs:57-102, :495-508 (TRY_COMMAND, triedInContainer, 'Reviewed and tried').",
+   "expected": "The CI job passes with the container-try checks.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    250,
+    263,
+    273,
+    287
+   ],
+   "reason": "The job ran on the merge and passed. The rest of CI is W6-1."
+  },
+  {
+   "id": "W6-52",
+   "problem": "The process sandbox's 'network off' is only HTTP(S)_PROXY pointing at a deny-all proxy, which Node's fetch ignores. The person-facing words are fixed, but the critic is still told before every try that the work was tried 'in the task's sandbox, network off'. That is untrue for the process sandbox.",
+   "evidence": "Fixed for the person: packages/runtime/src/loop/try-run.ts:46-58 (whereWords: 'on this computer, not in a container (a program that ignores proxy settings can still reach the network)'); docs/user-guide.md:153-156. Still open: packages/critic/src/evidence.ts:56-62 (TRIED_TRUST_LINE: '…; in the task's sandbox, network off)'), sent above every try in the critic's request. Raw 267 asked for exactly this search.",
+   "expected": "TRIED_TRUST_LINE says where the tries ran as whereWords does (or names no network state), with the critic test asserting it through the constant.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    267,
+    276
+   ],
+   "reason": "Model-facing words, so polish severity. No wave 7 area owns packages/critic/src/evidence.ts's trust line."
+  },
+  {
+   "id": "W6-53",
+   "problem": "On Windows without Docker, a `python3 x.py` try where only the Microsoft Store alias exists exits 9009, which would read as a blocking 'exited with code 9009'.",
+   "evidence": "packages/runtime/src/loop/try-run.ts:393-403 (notInstalled knows 9009 with 'was not found|is not recognized').",
+   "expected": "It reads 'not installed'.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    277
+   ],
+   "reason": "Fixed in the verification fixup. A real Windows run is part of the owner's checklist."
+  },
+  {
+   "id": "W6-54",
+   "problem": "ADR numbers collided: 0108 was taken twice (decisions' ladder stand-in, screens' reviewer's findings), and verification used 0110. The lead had to renumber at merge.",
+   "evidence": "docs/decisions at c8c16fb: 0108-the-ladders-stand-in-is-named-before-it-runs.md, 0109-a-reviewers-findings-are-its-report.md, 0110-work-is-tried-in-its-own-environment.md, with no duplicate number; references to 0108 and 0109 point to the right files (README.md:119-120, adding-a-specialist.md:395, intake.test.ts:232).",
+   "expected": "One file per number.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    262,
+    286
+   ],
+   "reason": "Renumbered at the merge."
+  },
+  {
+   "id": "W6-55",
+   "problem": "A long-running CLI (a watcher) was planned as a command and would read 'it did not finish within 30 s', a blocking finding.",
+   "evidence": "packages/runtime/src/loop/try-plan.ts:58 and :453-464 (CommandTry.keepsRunning); packages/runtime/src/loop/try-run.ts:35 (COMMAND_KEEPS_RUNNING_MS 5 s), :157-177 ('it kept running, as the brief says'); docs/user-guide.md:158-159.",
+   "expected": "A tool the brief says keeps running is stopped after a few seconds without a finding.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    269,
+    278
+   ],
+   "reason": "Fixed in the verification fixup."
+  },
+  {
+   "id": "W6-56",
+   "problem": "Marker checks ran outside the try's leftover clean-up: cargo test could create Cargo.lock, and go test could rewrite go.mod/go.sum in the person's folder.",
+   "evidence": "packages/runtime/src/loop/critic.ts:1100-1108 (runMarkerCheck uses holdFolder, try-run.ts:516: it removes the files created and puts back go.mod, go.sum, Cargo.toml and Cargo.lock).",
+   "expected": "The folder stays as the work left it.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    270,
+    280
+   ],
+   "reason": "Fixed in the verification fixup."
+  },
+  {
+   "id": "W6-57",
+   "problem": "After an aborted server try, runTries reported 'the try did not finish (exit null)' instead of a stop.",
+   "evidence": "packages/runtime/src/loop/try-run.ts:72-76 (stopIfAborted after each tryServer) and :104-109 (throws the abort reason or ForerunnerError 'killed').",
+   "expected": "A stop is handled by the runner, not judged as a problem of the work.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    271,
+    285
+   ],
+   "reason": "Fixed in the verification fixup."
+  },
+  {
+   "id": "W6-58",
+   "problem": "The required action for a failed command or server try used page words ('Make node server.js work when it is opened as a person would use it').",
+   "evidence": "packages/critic/src/measured.ts:23-27 (triedAction by kind); packages/critic/src/critic.ts:769.",
+   "expected": "Command and server words.",
+   "severity": "minor",
+   "disposition": "fixed",
+   "area": "verification",
+   "sources": [
+    272,
+    275
+   ],
+   "reason": "Fixed in the verification fixup."
+  },
+  {
+   "id": "W6-59",
+   "problem": "Merge touch-points flagged for the lead: moveAsk's cancel branch, rewritten by both stops and answers (it must keep three cases); conflicts in real-daemon.test.ts, apps.md and task.ts; applyAnswers' without branch (it must not queue WITHOUT_ANSWERS_NOTE); answers' openPullRequests and repositoryFacts hunks; the bench's toolContent beside specialistAnswer.",
+   "evidence": "At c8c16fb: packages/commands/src/commands/task.ts:270-297 (a running or live-review task with pr_url: 'its pull request stays open'; without one: 'what it changed is removed'; a review with no review running: only 'It is dropped'); packages/runtime/src/session/person-questions.ts:990-995 (no note queued); packages/runtime/src/conversation/agent.ts:168, :1301 and compose.ts:3389-3398; testenv/src/bench/role-player.ts:490, :774.",
+   "expected": "Every case kept after the merge.",
+   "severity": "polish",
+   "disposition": "fixed",
+   "area": "stops",
+   "sources": [
+    161,
+    166,
+    178,
+    225,
+    288
+   ],
+   "reason": "Reconciled at the merge. The wording choice and line length are W6-7."
+  },
+  {
+   "id": "W6-60",
+   "problem": "The real-daemon L-1 test's first runtime has a tryPages that never resolves, and it is closed with rt.close() while the session's promise stays pending.",
+   "evidence": "apps/ui/test/real-daemon.test.ts (the L-1 describe): it models a browser step that does not end when the process is asked to stop.",
+   "expected": "None needed.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "stops",
+   "sources": [
+    167
+   ],
+   "reason": "Deliberate and harmless: it leaves nothing queued for the next test, and resolving it would run the old runner against a closed store."
+  },
+  {
+   "id": "W6-61",
+   "problem": "A Cancel pressed on a row still shown as Running, after the task had moved to in_review, got 409 'This task changed: it is now Being reviewed.'.",
+   "evidence": "/tmp/frbench/fixup-stops/steps/problems.jsonl 19:52:44; 20-abc-error.txt shows the dialog kept open with 'This task changed: it is now Being reviewed.', the review's consequence line, and the row refreshed to 'Being reviewed' with Cancel.",
+   "expected": "This is correct optimistic-version behaviour.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "stops",
+   "sources": [
+    159
+   ],
+   "reason": "Observation only. The dialog told the person and the row refreshed."
+  },
+  {
+   "id": "W6-62",
+   "problem": "Limits of the narrowed promise reader: 'we will provide catering menus for events' still gets a person step, and 'I'll send the photos the day before' is missed (its head noun is 'day').",
+   "evidence": "packages/runtime/src/session/intake-content.ts (promisedContent, handedToForerunner, head noun).",
+   "expected": "None: the intake prompt's rule covers a missed promise, and Change the plan drops a wrong step.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "asking",
+   "sources": [
+    192
+   ],
+   "reason": "A heuristic kept on the cautious side, by design."
+  },
+  {
+   "id": "W6-63",
+   "problem": "The cancel transition reason on the session-budget card copies the '(request <id>)' pattern.",
+   "evidence": "packages/runtime/src/session/budget-card.ts:392-393; packages/runtime/src/daemon/task-words.ts IDS strips '(request …)' from shown reasons.",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "decisions",
+   "sources": [
+    244
+   ],
+   "reason": "It is not shown on any task screen, and the card is replaced by budget-resume anyway."
+  },
+  {
+   "id": "W6-64",
+   "problem": "A page of a full-review task is opened by a browser on the host, not inside the Docker container.",
+   "evidence": "docs/decisions/0110-work-is-tried-in-its-own-environment.md:91 (point 4): the runner image has no browser (about 500 MB more), a --network none container cannot publish a port, and the page is opened on the host with the network off and Chromium's sandbox required (try-page.ts:207-216).",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "verification",
+   "sources": [
+    249
+   ],
+   "reason": "A recorded design choice."
+  },
+  {
+   "id": "W6-65",
+   "problem": "The bench before-walks for L-6 (Undo) and L-10 (chat skip) on the old code were not done on the bench.",
+   "evidence": "The before-evidence is the live run's screenshots (/tmp/frbench/livec-a/steps/79-bakery2-08-after-undo, 112..114-c5chat-*) and the failing-first tests.",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "stops",
+   "sources": [
+    139
+   ],
+   "reason": "Evidence exists elsewhere, and the after-walks were done."
+  },
+  {
+   "id": "W6-66",
+   "problem": "pnpm lint reports 64 warnings across the repo (it exits 0), none in the asking fixup's files.",
+   "evidence": "The asking fixup's lint run; CI's Lint step passed on c8c16fb.",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "asking",
+   "sources": [
+    195
+   ],
+   "reason": "Not an error, and not introduced by wave 6."
+  },
+  {
+   "id": "W6-67",
+   "problem": "Bench machine housekeeping: disk fell to 4.7 to 7.3 GB free from other agents (no local dockerd was started); fix-asking and fix-noise shared one scratchpad (walk scripts overwritten after the walks); /tmp/frbench/fixup-verification-phaseC can be deleted.",
+   "evidence": "The areas' reports. The evidence folders are unaffected.",
+   "expected": "None in the product.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "bench",
+   "sources": [
+    145,
+    177,
+    254,
+    268
+   ],
+   "reason": "Environment notes for the session lead, not product problems."
+  },
+  {
+   "id": "W6-68",
+   "problem": "Stops' notes for other areas: TaskDisplay.live and the fake daemon's taskMeta.notLive; KillSwitch.hasTask; CommandPorts.liveWork and moveAsk's live and pr_url parameters; CANCEL_UNDO_WORDS and UNDO_CONFLICT_WORDS shared with the UI; 'skip X' as cancel versus 'skip X for now' as pause; the critic throws 'killed' on an aborted signal; the review's controller registered before in_review; endDeadSession returns in_review tasks to ready; ADR 0105's amendment and the docs touched.",
+   "evidence": "packages/runtime/src/daemon/api-types.ts (TaskDisplay.live); packages/commands/src/types.ts (liveWork); packages/commands/src/commands/task.ts:270-317; packages/commands/src/intent.ts; packages/runtime/src/session/recovery.ts; docs/decisions/0105-….",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "stops",
+   "sources": [
+    146,
+    147,
+    148,
+    149,
+    150,
+    151,
+    152,
+    153,
+    154,
+    160
+   ],
+   "reason": "API and wording facts for later areas, not problems."
+  },
+  {
+   "id": "W6-69",
+   "problem": "Asking's notes for other areas: TaskView.display.blocker.goAhead and actionsFor; resumeWork no longer counts person tasks; critic.ts askPersonInstead's context; executor.ts answersBlockFor ordering; questionsCard's punctuation strip; quotedWords' heading fix; intake-content.ts and the PM prompt's added sentence (carry it over if the registry is re-synced from forerunner-registry); FORERUNNER_BENCH_ASK_STYLE; asking-live fixtures; withOwnersContent and dropsOwnersContent; IntakeDraftOptions.read and planRead; the reviewer's before screenshots.",
+   "evidence": "packages/runtime/src/session/person-questions.ts, intake-content.ts, intake.ts; packages/runtime/src/daemon/request-words.ts; evals/registry/principals/project-manager.md; testenv/src/bench/role-player.ts; packages/runtime/test/fixtures/asking-live.json.",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "asking",
+   "sources": [
+    179,
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    186,
+    187,
+    196,
+    197,
+    199
+   ],
+   "reason": "API and wording facts, not problems. Only the registry re-sync note asks for future care. 180's nothing_to_run start leaves questionsOutcome's Done lines true (request-words.ts:363-380)."
+  },
+  {
+   "id": "W6-70",
+   "problem": "Decisions' notes for other areas: the githost API for dependency bases (DEPS_BASE_REF, mergeFrom, etc.); GitDiffPort diffs from DEPS_BASE_REF; billing's firstKinds/firstWhy, webSearchOnly and SEARCH_ONLY_LIMITATION; the session budget card's exports; the status_pull_request API; BillingOrderSection.tsx's two sentences changed for C-64; refreshCopy (keep a refresh of the copy when the status location changes).",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts, git.ts; packages/runtime/src/loop/critic.ts; packages/runtime/src/wiring/billing-pick.ts; packages/runtime/src/session/budget-card.ts; packages/runtime/src/loop/docs.ts:564-577.",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "decisions",
+   "sources": [
+    219,
+    220,
+    221,
+    222,
+    223,
+    224,
+    236
+   ],
+   "reason": "API facts that wave 7 areas build on (merge-record, dependent-branches, credential-chooser, budget-resume, merged-copy already cite them), not problems."
+  },
+  {
+   "id": "W6-71",
+   "problem": "Verification's notes for other areas: TaskReviewEvidence.tried[].kind is required (the fake daemon's seeds carry it); TriedEvidence.kind and TRIED_TRUST_LINE; the new try-plan and try-run modules and project-checks exports; TryPagesRequest.fullReview mapped to requireBrowserSandbox; retryConstraints and HOW_WORK_IS_CHECKED asserted through the constant; the bench's toolContent (counter, greeter and server stand-ins).",
+   "evidence": "packages/runtime/src/daemon/api-types.ts (TaskReviewEvidence); packages/critic/src; packages/runtime/src/loop/try-plan.ts, try-run.ts, project-checks.ts; packages/runtime/src/session/executor.ts; testenv/src/bench/role-player.ts:774.",
+   "expected": "None.",
+   "severity": "polish",
+   "disposition": "info",
+   "area": "verification",
+   "sources": [
+    256,
+    257,
+    258,
+    259,
+    260,
+    261
+   ],
+   "reason": "API facts, not problems. TRIED_TRUST_LINE's network claim is W6-52."
+  },
+  {
+   "id": "W6-72",
+   "problem": "Two parts of the code read 'Lesson:' lines differently. A line written as '-Lesson: …' or 'Lesson : …' is recorded as a lesson but stays in the pull request body and the commit message. A bold '**Lesson:** …' or a 'Lessons:' line is taken out of the PR but never recorded as a lesson.",
+   "evidence": "packages/capabilities/src/githost/pr-executor.ts:179-185 (withoutLessons: /^\\s*(?:[-*]\\s+)?(?:\\*\\*)?lessons?:/i) versus packages/runtime/src/session/runner.ts:642 (LESSON_LINE: /^\\s*(?:[-*]\\s*)?lesson\\s*:\\s*(.+?)\\s*$/i). Probe: '-Lesson: x' and 'Lesson : x' give removed=false, recorded=true; '**Lesson:** x' and 'Lessons: x' give removed=true, recorded=false.",
+   "expected": "One shared lesson-line pattern, exported once and used by both. Every line recorded as a lesson is then left out of the PR body and commit (L-19), and a bold or plural lesson line is recorded too. Add a unit test with the variants.",
+   "severity": "polish",
+   "disposition": "area",
+   "area": "polish",
+   "sources": [
+    228
+   ],
+   "reason": "228's last point, which W6-27's reason called harmless on the claim that pr-executor removes a superset. It does not. A small consistency fix; polish runs after the wave 7 areas that edit pr-executor.ts."
+  }
+ ],
+ "corrections": {
+  "wave5": [
+   {
+    "id": "W5-9",
+    "was": "owner-decision (area owner): changing it would reverse the wave 2 decision d34f331",
+    "now": "area polish, minor: the design already answers it",
+    "evidence": "docs/design/core-experience.md §3.8: 'What becomes a card (and nothing else counts as \"needs you\"): ... risky changes waiting for approval'. §3.9: a change is read back once, in the chat, with [Yes] [No]. d34f331 is the wave 2 merge's fix to the card's title (request-words.ts genericCard titles by change_card.ask). The session lead made it; the owner did not. task.pause is low risk (docs/maintainers/commands.md:72), yet its read-back is a counted Inbox approval row (packages/commands/src/executor.ts:418-440)."
+   },
+   {
+    "id": "W5-57",
+    "was": "live-check (bench-live, real model)",
+    "now": "info (bench): the stand-in bench already did it",
+    "evidence": "/tmp/frbench/fix-bench-after/walk-setup/daemon.log has both '=== bench supervisor' lines (exit 86, 'the daemon is back ... new token') from a setup finished on the stand-in bench with --githost-in-setup. The restart and reconnect do not depend on the model. intake.cjs takes the project name from the script's own projectNameFor (scripts/bench/journeys/intake.cjs:29, :40), and scripts/bench-scripts.test.ts asserts it."
+   },
+   {
+    "id": "W5-6",
+    "was": "only the science-evaluator's own tasks were described",
+    "now": "Still an owner decision. Added: a ladder hand-over gets an ordinary task there too, and the expected now names the floor rule for stand-ins",
+    "evidence": "keepsSignoff compares only the sign-off kind (packages/runtime/src/registry/alternates.ts:147-152, :180). The science-evaluator's tools (specialist.md:8-15) cover the data-analyst's and the reviewer's, and its description shares 'quantitative' and 'data' with the data-analyst's. executor.ts:1032 stores the stand-in as task.specialist. runner.ts:3341 builds the next plan item from it. loop/critic.ts:352-353 then reads floor 2 while risk_tier stays 1."
+   },
+   {
+    "id": "W5-1",
+    "was": "evidence said 'no task_create tool anywhere in packages/runtime/src/conversation or testenv/src/bench'",
+    "now": "The chat model is offered task_create. The pattern parser answers first, and the stand-in plays a tool only when told to",
+    "evidence": "packages/commands/src/registry.ts:124 (toolName: task.create becomes task_create, with acceptance_criteria at commands/task.ts:573). testenv/src/bench/role-player.ts:1197-1216 (a tool call only from a 'tool: <name> {json}' line)."
+   },
+   {
+    "id": "W5-8",
+    "was": "info, with raw entry 27 ('every person-facing list or count of open cards leaves out isChatOnlyCard rows: done')",
+    "now": "Entry 27 moved to the new item W5-68. The rest stays info",
+    "evidence": "services/state-api/src/routes/inbox.ts:239 and :290-293 and services/state-api/src/views.ts:488, :524 read humanRequest.open without the chat_only filter. The phone's InboxScreen reads that list (apps/ui/src/mobile/screens/InboxScreen.tsx:32-37)."
+   },
+   {
+    "id": "W5-68",
+    "was": "(part of W5-8, info)",
+    "now": "area collab-privacy-service, minor",
+    "evidence": "See W5-8. No code in services/state-api or apps/ui/src/mobile reads change_card.chat_only (grep for chat_only and isChatOnlyCard finds nothing there)."
+   },
+   {
+    "id": "summary",
+    "was": "'34 to wave 7 areas (31 polish ...), 6 owner-decision, 11 fixed, 9 info'",
+    "now": "The triage's own counts were 36 area items (33 polish, 2 credential-chooser, 1 collab-bench), 5 owner-decision, 8 fixed and 11 info. After these corrections: 38 area items (34 polish, 2 credential-chooser, 1 collab-bench, 1 collab-polish-service... see below), 3 live-check, 2 phone, 4 owner-decision, 8 fixed, 12 info and 1 duplicate: 68 items",
+    "evidence": "Counted from the dispositions in the triage list. The 38 area items are 34 polish, 2 credential-chooser, 1 collab-bench and 1 collab-privacy-service."
+   }
+  ],
+  "wave6": [
+   {
+    "id": "W6-1",
+    "was": "disposition live-check, area live-check; evidence said check (windows) was still running",
+    "now": "disposition area, area ci-precondition (session lead, now, before any group-1 branch merges); evidence adds the finished Windows job and the skipped steps",
+    "evidence": "gh run view 41533695121: check (windows-latest) finished and failed with 5 cases: the two C-1 cases (verification.test.ts:846 and :920, the same ANSI '\\x1b[33m9\\x1b[39m' output), testenv/test/githost.test.ts:504 'supports squash and rebase merges' (timed out at 20 s), :597 'lists PRs by state…' (2 closed PRs, expected 3), and packages/runtime/test/notifications-hear-once.test.ts:222 (the session did not end in time). Both root causes reproduce locally without real GitHub or Windows: .github/workflows/ci.yml:14 sets FORCE_COLOR: 1 and `FORCE_COLOR=1 node -e 'console.log(9)'` prints ESC[33m9ESC[39m (try-run.ts:44 TRY_ENV adds only PYTHONDONTWRITEBYTECODE to the try's env); real-daemon.test.ts:7210-7213 gives the seed GitOps an identity, but :7276 runs a plain `git -C seedDir merge --no-ff` through run(), which bypasses it. That makes it a fix to do now, not a live check after wave 7."
+   },
+   {
+    "id": "W6-5",
+    "was": "32ec40b (C-8) changed only the runtime and e2e scenario tests",
+    "now": "32ec40b changed the runtime and e2e scenario tests and added one apps/ui/test/real-daemon.test.ts case. It did not touch the three tests named here",
+    "evidence": "git show --stat 32ec40b: apps/ui/test/real-daemon.test.ts +85, monthly-jobs-wiring.test.ts, repo-create.test.ts, 02-email-task.scenario.test.ts, testing.md."
+   },
+   {
+    "id": "W6-13",
+    "was": "The example 'every task waits for Docker' gives nothing_to_run and '; press Start on the project to work on them'",
+    "now": "With Docker-waiting tasks the start is 'started' and the line reads '; working on them' while nothing runs. The 'press Start' branch is reached only when no ready non-person task has its dependencies done (or no start was recorded)",
+    "evidence": "resume-work.ts:37-52 returns nothing_to_run only when readyTasks, without person tasks, is empty, and otherwise 'started'. task.ts:377-386 readyTasks counts ready tasks whose dependencies are done and does not check Docker. intake.ts:1903-1911 records that start, and request-words.ts:490-505 words it."
+   },
+   {
+    "id": "W6-23",
+    "was": "severity major",
+    "now": "severity minor",
+    "evidence": "The person is told before a Start: StartSessionDialog.tsx:135-146 says '\"X\" needs about CHF 1.20, more than this session's work budget of CHF 0.40 … Give the session a larger budget, or the task a smaller one.' Two things are missing: a card for sessions started without the dialog, and true result words (result.ts:160-182)."
+   },
+   {
+    "id": "W6-27",
+    "was": "reason: withoutLessons and LESSON_LINE differ harmlessly, because pr-executor.ts:179-185 removes a superset of runner.ts:642's lines",
+    "now": "Not a superset. That point of 228 is a real small gap and is now item W6-72",
+    "evidence": "Probe of the two regexes: '-Lesson: x' and 'Lesson : x' are recorded by LESSON_LINE (runner.ts:642) but not removed by withoutLessons (pr-executor.ts:182). '**Lesson:** x' and 'Lessons: x' are removed but never recorded."
+   },
+   {
+    "id": "W6-30",
+    "was": "reason: sites makes 'any public website' the default, which widens what this unsandboxed browser can reach",
+    "now": "Area stays sites, as the nearest owner of browser security (browser-ports.ts, browserSettingsOf's block list, browser.md, security.md). sites does not widen the agent browser's reach",
+    "evidence": "sites fix_scope (3): 'settings.browser.allowedDomains is ignored by the reader and never turned into only (it stays the browser binding's and the sandbox's)'. web_access governs the page reader (fetch.ts), not launchAgentBrowser (profile.ts:263-303)."
+   },
+   {
+    "id": "W6-31",
+    "was": "evidence named only the code and the test",
+    "now": "evidence adds the user guide's promise that this breaks",
+    "evidence": "docs/user-guide.md:159-160: 'Nothing a try started keeps running after it, also when you stop the session while a server is being tried'. That holds for the guarded server try but not for a command try's children on Linux or macOS."
+   },
+   {
+    "id": "W6-36",
+    "was": "All listed checks walked with the real model and GitHub on forerunner-sandbox after wave 7",
+    "now": "The C-64 both-credentials step needs a Claude subscription token, which the cloud does not have, so it goes to the owner's checklist step 6. Its routing is superseded by credential-chooser (live journey 2). C-49's 'Merge B's PR first' step is replaced by live journey 1 (W6-42). C-36's steps are superseded by budget-resume (journey 3)",
+    "evidence": "wave6-result.json decisions fix check_in_the_app[2] ('Save both a Claude subscription and an API key'); phaseE.json wave7_left_out ('Live checks that need a Claude subscription token … the owner's checklist step 6'); wave7_live_check_after_merge journeys 1-3."
+   },
+   {
+    "id": "W6-52",
+    "was": "disposition fixed (verification)",
+    "now": "disposition area, area polish, severity polish. The person-facing words are fixed, but one text still promises no network",
+    "evidence": "packages/critic/src/evidence.ts:56-62 TRIED_TRUST_LINE tells the critic before every try that the work was tried 'in the task's sandbox, network off'. Since try-run.ts:46-58 that is untrue for the process sandbox. Raw 267 asked for exactly this search."
+   },
+   {
+    "id": "W6-72",
+    "was": "(not an item; folded into W6-27's reason as harmless)",
+    "now": "new polish item in area polish",
+    "evidence": "pr-executor.ts:179-185 versus runner.ts:642, the probe above."
+   }
+  ]
+ }
+}

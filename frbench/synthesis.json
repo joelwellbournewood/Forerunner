@@ -1,0 +1,425 @@
+{
+ "headline": "What is wrong, in plain words (verified in the code on branch claude/nifty-knuth-f9udt0 at 57c2197):\n1. Work stops after every task. A session plans once, from the tasks that are ready when it starts, and runs that fixed list. A 7-step chain needs 7 Start presses, and every task the critic sends back waits for another Start. The 5-task first project needed 3 starts, and a failing step needed 4 starts before anyone asked the person.\n2. One crash or forced close locks the agent for good. Every Start then answers \"agent Alice already has an active session <uuid>\", and Stop, Stop all and a restart do not clear it. The monthly critic calibration does the same thing: it runs as the person's own agent, today on a fresh install.\n3. The person cannot see the results or the progress. No screen shows the project folder or the files. Nothing shows that a session is running. The session page says \"Steps 0 / 200\" for the whole run. Summary says \"Next steps: Nothing planned\" while 4 tasks are left, and the project says \"planning\" for ever, even when it is finished.\n4. The chat has no memory and no view of the project. Every model turn gets only the current line: no earlier turns, no task list, no failures, and a 160-character cut of a stale summary. It cannot say what failed or what is left. A chat \"stop\" freezes the agent, and a later \"start\" says \"Started a session\" when nothing started.\n5. \"Needs you\" is spread over five places and none of them is complete. Failed tasks, \"Needs me\" and the Docker wait never become an Inbox card. The one card that does appear offers \"accept / revise / cancel\" with no explanation: \"accept\" closes work that was never built, and \"revise\" starts nothing.\n6. The Tasks screen is the raw state machine. \"Needs me\", \"Mark failed\" and \"Send to review\" lead to dead ends. A task cannot be opened, edited, reopened or redone, and the rows do not update while work runs. The PR link is target=_blank, which the desktop window ignores.\n7. Specialists are told almost nothing. Their brief has no project goal or brief, no word about what the previous step produced, and none of the person's notes (although the dialog says \"your agent reads it\"). When a run fails, the error is replaced by the model's first sentence.\n8. What the system writes is long, stale and in machine language. Summaries call just-finished tasks \"(ready)\" and list six zero counts. Decisions show raw JSON with the card's instructions as the question. Screens show UUIDs, raw states, USD and event-type names. Every one of your own clicks is echoed into the Inbox.",
+ "areas": [
+  {
+   "key": "session-engine",
+   "title": "Session engine: keep going until done, recover from crashes and stops, tell specialists enough, report the result briefly",
+   "problems": [
+    "[blocker] After a hard crash or forced close mid-session the agent can never start a session again. Every Start returns 409 'agent Alice already has an active session <uuid>'. Stop, Stop all + Resume and a clean restart do not clear it, while the ghost session shows 'running / live' for ever. Evidence: /tmp/frbench/walk-chain-and-failure/steps/87,88,91,93,97-*.png; /tmp/frbench/walk-lifecycle/steps/28,31,33,34-*.png; problems.jsonl 409 POST /sessions",
+    "[major] A session runs only the tasks that were ready when it started. A 7-task chain took 7 Starts, 5 tasks took 3, and 6 done tasks took 8. Each session ended 'completed' while the next task was already unblocked. Evidence: /tmp/frbench/smoke/steps/14,16,24-*.png; /tmp/frbench/walk-first-project/steps/25-37; /tmp/frbench/walk-chain-and-failure/steps/13,15,35-*.png and notes.jsonl {starts:7}; /tmp/frbench/walk-tasks-tab/steps/16-tasks-tab-after-refresh.png",
+    "[major] Critic send-backs and retries wait for the next manual Start. It took 4 Starts, each 'completed' in green, to reach the sign-off card. Evidence: /tmp/frbench/walk-needs-me/steps/36-41; /tmp/frbench/walk-chain-and-failure/steps/51,58,68-*.png; /tmp/frbench/walk-words-and-structure/steps/38,43-*.txt",
+    "[major] The monthly critic calibration runs as the person's agent. On the 1st of the month it blocks Start with the same 409 and makes about 160 critic calls (up to USD 10 with a real key). It also runs, and fails, on an install with no key. Evidence: /tmp/frbench/smoke/steps/20-session-2-did-not-open.png; /tmp/frbench/smoke/steps/problems.jsonl; /tmp/frbench/walk-lifecycle daemon.log 'calibration failed \u2026 no model for tier sonnet on provider none'",
+    "[major] The approved first-session plan and the queued notes (the 'Project brief' note included) are used up when a session starts. They are lost if the session is stopped after 7 s, if it plans nothing, or if Start is pressed before the plan is approved. After that no specialist ever sees the person's brief, and a 'task' item in the queue never becomes a task. Evidence: /tmp/frbench/walk-first-project/steps/79,80-*.png, 76-78; /tmp/frbench/walk-lifecycle/steps/03,16-*.png",
+    "[major] A failed run's reason is the model's first remark ('I'll look at what is already in the folder first.'). 'model call failed' appears only in daemon.log. Evidence: /tmp/frbench/inject/steps/01-failed-task-and-docker-wait-on-the-tasks-tab.png; /tmp/frbench/walk-chain-and-failure/steps/124-c-s3-tasks-tab.png; /tmp/frbench/walk-needs-me/steps/64,65",
+    "[major] Specialists get no project goal or brief. The words 'greeting' and 'date' appear in no brief after the first one. They get no word about the step before ('builds on the step before' without naming it), no report or error from the previous attempt, and none of the person's move reasons (0 matches in the model-call log). A retry after an error says 'the critic's findings below', and no findings follow. Judged from the model-call log. Evidence: /tmp/frbench/walk-first-project/home/bench/model-calls.jsonl seq 162,167,174,180,187; /tmp/frbench/walk-tasks-tab/home/bench/model-calls.jsonl; /tmp/frbench/walk-chain-and-failure/home/bench/model-calls.jsonl seq 18,219",
+    "[major] The end-of-session summary is a 100-word paragraph. It starts with a waiting list captured before the work ran, so tasks that were just done or just failed read '(ready)', and it ends with six zero counts. The 'Left out for budget' line is in USD. The same paragraph is copied to the session page, the Overview, an Inbox message and the notification. Evidence: /tmp/frbench/walk-words-and-structure/steps/19,23,83-*; /tmp/frbench/walk-chain-and-failure/steps/15,123-*; /tmp/frbench/walk-lifecycle/steps/49-*.txt; /tmp/frbench/walk-needs-me/steps/77-78 (31 unread messages)",
+    "[major] Nothing moves while a task runs: 'Steps 0 / 200', 'CHF 0.00' and no log line for the whole run. No session events exist between task.started and task.files. Evidence: /tmp/frbench/walk-lifecycle/steps/11,22-*.png; /tmp/frbench/walk-first-project/steps/58-change-session-t-9s.png; /tmp/frbench/walk-chain-and-failure/steps/82-b-recovery-s1-live.png",
+    "[major] Stop kills the task at once, with error styling, and calls it 'killed' / 'Kill switch: one session stopped'. Quit leaves the task with the reason 'kill switch'. The session page has no 'stop after this task'. Evidence: /tmp/frbench/walk-lifecycle/steps/12,13,27-*.png; /tmp/frbench/walk-chain-and-failure/steps/104,105-*.png",
+    "[major] The Start dialog says only what will NOT run. Start stays enabled when nothing can run, which makes empty 'completed' sessions graded 100 that use up the queue. The default budget is hidden; -5 and 0 are silently replaced and 1000000 is accepted. The kill switch and a missing key show only after pressing Start. The typed Reason is thrown away. Evidence: /tmp/frbench/walk-lifecycle/steps/04,07,08,19,49,72-*; /tmp/frbench/walk-chain-and-failure/steps/71,101,126-*.png; /tmp/frbench/walk-first-project/steps/16-start-session-dialog-before-approving.png",
+    "[major] The project stage stays 'planning' and milestones never close. The project never says it is finished. docs/status.md says 'Blocked: nothing' while the whole chain is blocked, and Chat reads it. Evidence: /tmp/frbench/walk-first-project/steps/alldone-Plan-vp.png, 66-home-at-the-end.png; /tmp/frbench/walk-chain-and-failure/home/data/projects/01a196f8-1b65-75e6-bc6e-3cec2e81d6d4/workspace/docs/status.md",
+    "[minor] The retry ladder hands a CSS task to writer-marketing while the log says 'designer'. Evidence: /tmp/frbench/walk-words-and-structure/steps/38,43-*.txt; model-calls.jsonl seq 185-194",
+    "[minor] A queued start says in the same dialog that it 'would plan nothing'. Evidence: /tmp/frbench/walk-chain-and-failure/steps/101-q-second-while-first-runs-after-start.png"
+   ],
+   "u_entries": [
+    "U-038",
+    "U-040",
+    "U-043",
+    "U-044",
+    "U-071",
+    "U-072",
+    "U-074",
+    "U-086"
+   ],
+   "root_causes": [
+    "Fixed plan (verified): runner.ts:807 reads store.task.readyTasks once. StaticPlanner (runner.ts:2646-2676) plans only tasks whose dependencies are all done at that moment (packages/state/src/repos/task.ts:264-273). runner.ts:981 then loops over the fixed plan.items. Tasks unblocked during the session are never seen.",
+    "Retries leave the session (verified): runner.ts:1394-1396 only does retried.push(task.id) for a revise or retry verdict. The critic follow-up puts the task back to ready for a later session.",
+    "Orphan sessions (verified): runner.ts:505-513 refuses a start while store.session.active(agent.id) returns a row, and session.ts:117 returns every running or paused row whether or not a process is behind it. At daemon start, compose.ts:3386-3391 closes only intake sessions (intake.closeExpired, intake.ts:544). POST /sessions/:id/stop (server.ts:1241-1245) only calls kill.stop, and KillSwitch.stop (killswitch.ts:111-160) aborts in-memory registrations and never writes the session or run row.",
+    "Calibration holds the principal (verified): jobs/calibration.ts:263-264 inserts a status 'running' session with agent_id = deps.agentId, and compose.ts:2679 passes agentId: agent.id (the principal). triggers.ts:310-333 fires a monthly schedule seen for the first time on its due day as soon as its time has passed. The job is scheduled whatever the provider.",
+    "Queue consumed too early (verified): runner.ts:769 runs consumeQueue() during the brief, before planning. runner.ts:979 calls markFirstSessionRun() before any task runs, whatever the outcome.",
+    "Failure reason (verified): executor.ts:1018-1020 sets summary = finalText.slice(0,2000) || error || outcome, so any text the model wrote before the error wins. runner.ts:1427-1436 then stores result.summary.slice(0,200) as the failed reason.",
+    "Thin brief (verified): executor.ts:552-575 builds goal = `${title}: ${outcome}`, contextLinks = [task:<id>, pr, branch] and fixed constraints. It has no project goal or brief, no results of the tasks it depends on, no previous report or error and no task.reason. retryConstraints (executor.ts:319-341) writes the 'findings below' rung line for every attempt >= 1, whether or not findings exist. renderBrief is brief.ts:47.",
+    "Stale summary (verified): runner.ts:833 computes `waiting` at plan time, and the same list is passed to summarize() at the end (runner.ts:1533-1555). summarize() (runner.ts:2397-2470) joins about 15 templates with countsSentence last. summarizeLeftOut (runner.ts:2473-2486) formats amounts with '$'.",
+    "next_steps (verified): runner.ts:1767 writes summary_cache.next_steps = skipped.slice(0,3), which is empty whenever the plan ran. views.ts and agent.ts:980 both read it.",
+    "Frozen progress: runner.ts:1808-1813 writes steps and spent_usd_micro only at the end, and SessionRepo.recordSpend (session.ts:106, verified) is never called per step. The specialist's model and tool steps are not kept as session events (U-086).",
+    "Stop reasons: /shutdown (server.ts:1279, verified) calls kill.stop('all','Forerunner quit'). The claim release writes 'kill switch' for every stop (compose.ts:1542-1547; unconfirmed, from the lifecycle walk). Pause exists only in the command registry (wiring/session-ports.ts:53-85; unconfirmed).",
+    "Start dialog (verified): StartSessionDialog.tsx:280-287 disables Start only on busy || !identity. nothingRuns (:144) is not used for it. Budgets <= 0 become undefined (:122-126). NotInThisSession (:66-97) lists only what will not run. The reason is not passed to runner.start (compose.ts:2771-2781; unconfirmed, from the lifecycle walk).",
+    "Stage and milestones (verified): create-project.ts:45 sets stage 'planning', and no runtime code writes the stage again. No runtime code moves a milestone to done; only the person's edit route (server.ts:940) changes milestones.",
+    "Specialist hand-over (verified): executor.ts:456-476 swaps the specialist after task.started was emitted with the planned one. The alternate ranking in registry/alternates.ts was not read (unconfirmed)."
+   ],
+   "fix_scope": "1. Replace the fixed loop with re-planning. After every task and every critic verdict, re-read readyTasks and the sandbox gate. Take the newly unblocked tasks, the sent-back tasks (next rung, same session, within the ladder) and the tasks the person made ready, in first-session order and then by priority. Stop only on: nothing runnable, budget used (keep the reserve), stop by the person, or wall clock. Record one named stop reason.\n2. Startup recovery in compose.ts, before triggers start: end every running or paused work session of this install's agents that has no live runner (status stopped, stop_reason 'interrupted'). End running run rows, release claims, put claimed and in_progress tasks back to ready with the reason 'Forerunner closed while it ran', and post one Update. Make /sessions/:id/stop end a row that has no live registration. Never show the raw claim_conflict text.\n3. Calibration runs as the critic agent (or a system agent), never holds the principal, is skipped without a working provider, and does not fire on the day an install first sees its schedule.\n4. Use queue items and the first-session plan only when the run they were given to finishes (done or in review). Return them after a killed, stopped, failed or empty session. A 'task' queue item becomes a ready task when it is queued.\n5. A failed run's reason is the error in words (result.error first for errored runs). A transient error is retried once at once.\n6. Brief: a fixed 'Project' section (goal, the person's brief from summary_cache.brief, pointers to docs/overview.md and the decision record). 'Done before this task': each dependency's title, changed files and one-line result. On a retry, the previous attempt's report or error. The person's latest note on the task and the session note. Answers given, or 'the person chose to go ahead without answering'. The 'findings below' line only when findings follow.\n7. Rewrite summarize() to design \u00a75: at most 3 lines, task names, the state at the end (recompute waiting), CHF, no zero counts. Write a structured last_session.outcome {done[], failed[{title,reason}], needsYou[], leftOver[]} for Overview and Chat. Stop writing next_steps = skipped. The session-end Inbox message becomes one line with a link.\n8. Live progress: recordSpend per model call, and a short persisted task.step session event per tool call (feeds U-086).\n9. Stops: POST /sessions/:id/pause ('Stop after this task'); POST /sessions/:id/stop is 'Stop now' with reason 'you'. Carry the reason (you / Stop all / quit / interrupted) into session.ended, the task reason and the notification. A person's stop is not an error event.\n10. Start dialog and start-check: say what will run ('runs X, then continues with N more'). Prefill the real default budget. Refuse a budget <= 0 or above what is left this month. Disable Start, with the reason and the unblocking button, when nothing can run, sessions are stopped or there is no provider. Keep the person on the page after Start. Queued wording. The Reason field becomes 'Note for this session' and reaches every brief (thread it through compose runSession into SessionStartOptions).\n11. Close a milestone when all its tasks are done and advance the stage. Fill docs/status.md 'Blocked' from waitingTasks and the sandbox wait.\n12. Emit task.started after the specialist is chosen. Pick an alternate by task kind (U-044); this may be deferred.",
+   "files": [
+    "packages/runtime/src/session/runner.ts",
+    "packages/runtime/src/session/executor.ts",
+    "packages/runtime/src/brief.ts",
+    "packages/runtime/src/session/next-session.ts",
+    "packages/runtime/src/session/triggers.ts",
+    "packages/runtime/src/jobs/calibration.ts",
+    "packages/runtime/src/enforcement/killswitch.ts",
+    "packages/runtime/src/wiring/session-ports.ts",
+    "packages/runtime/src/registry/alternates.ts",
+    "packages/runtime/src/daemon/compose.ts",
+    "packages/runtime/src/daemon/server.ts (POST /sessions, /sessions/:id/stop|pause, /shutdown, /projects/:id/start-check only)",
+    "packages/runtime/src/daemon/api-types.ts (owner; session and start-check types)",
+    "packages/state/src/repos/session.ts",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx",
+    "apps/ui/src/api/client.ts (session routes)",
+    "apps/ui/test/fake-daemon.ts (session routes)",
+    "apps/ui/test/real-daemon.test.ts (session routes)",
+    "packages/runtime/test/ (runner, executor, recovery, calibration tests)",
+    "docs/maintainers/runtime.md",
+    "docs/user-guide.md (sessions section)"
+   ],
+   "acceptance": "Fresh bench (--provider bench, --fresh, a date on the 1st of the month or the calibration schedule forced due).\n(a) With FORERUNNER_BENCH_PLAN=chain, approve the 7-task plan and press Start ONCE. All 7 tasks run in that one session. The session result has at most 3 lines, names what was done with CHF, and has no '(ready)' list. No 409 at any point, including while the calibration runs.\n(b) With CRITIC_REJECT on one task, the rework is accepted in the same session.\n(c) With FAIL='Step 3' (report mode), the retries all run in one session, then exactly one Inbox card appears. Steps 4-7 are not attempted. The result says that Step 3 needs your decision.\n(d) With FAIL_MODE=error, the task row reads 'Failed: \u2026model call failed\u2026', not the model's first remark.\n(e) Run restart-daemon.mjs --hard while a task runs. After reconnecting, the old session reads 'Interrupted', the task is Ready, one Update is posted, and the next Start works the first time.\n(f) With DELAY_MS=3000, the session page's steps and spend move during a task; the DB has task.step events mid-task. 'Stop after this task' finishes the current task and then ends. 'Stop now' puts the task back to Ready with 'Stopped by you' and no error line.\n(g) In the model-call log, every specialist brief carries the project goal and the brief's words ('greeting', 'date' for the first-project brief). Each chain step names the previous step's title and file. A retry after an error carries the error. A reason typed in Mark ready / Try again appears in the next brief.\n(h) Start is disabled before the plan is approved and when nothing can run. After approval, the first specialist still gets the brief.\n(i) When every task is done, the milestone is done and the project status reads Done.",
+   "depends_on": []
+  },
+  {
+   "key": "tasks-screen",
+   "title": "Tasks screen: plain per-state actions, live rows, a task drawer with editing, Reopen and Redo, links that open",
+   "problems": [
+    "[major] Clicking PR does nothing in the desktop window, because it is a raw <a target=_blank>. The same bug is in SandboxSettingsCard.tsx:165, UpdatesPage.tsx:400 and PeersSection.tsx:77. Evidence: /tmp/frbench/walk-tasks-tab/steps/35-tasks-tab-with-pr-link.png; /tmp/frbench/walk-tasks-tab/scripts/10-pr.cjs",
+    "[major] The move buttons are the raw state graph: 'Needs me / Mark failed / Cancel / Depends on\u2026', 'Send to review', 'Mark done'. The dialog's whole explanation is 'ready \u2192 needs_human', and badges and filters show raw states. Evidence: /tmp/frbench/walk-tasks-tab/steps/11,21,41,49-*.png; /tmp/frbench/smoke/steps/13-tasks-after-approval.png",
+    "[major] 'Send to review' on a running task throws its work away and leaves it in review for ever. The only way out is 'Mark done', which closes work that was never built. Evidence: /tmp/frbench/walk-tasks-tab/steps/48,49,50-*.png, 51-changes-page-from-in-changes.txt",
+    "[major] 'Needs me' parks a task silently: there is no card and the reason never reaches the agent, yet the project then says 'needs you'. Evidence: /tmp/frbench/walk-tasks-tab/steps/19,20-*.png; /tmp/frbench/walk-chain-and-failure/steps/136-139; /tmp/frbench/walk-needs-me/steps/50-b-needs-me-dialog.png",
+    "[major] The Tasks tab never updates by itself while a session runs: rows say 'ready' while the task is in_progress. Evidence: /tmp/frbench/walk-tasks-tab/steps/40-mark-failed-screen-before-refresh.png; /tmp/frbench/walk-first-project/steps/59-tasks-tab-during-change-t-9s.png",
+    "[major] A task cannot be opened or edited. The outcome and criteria are never shown, and a tier-2 task can only be recreated. Evidence: /tmp/frbench/walk-tasks-tab/steps/36,54-*.png; /tmp/frbench/walk-first-project/steps/46-after-clicking-a-done-task-title.png",
+    "[major] A cancelled task cannot be reopened and a done task cannot be redone. Evidence: /tmp/frbench/walk-tasks-tab/steps/24,25,49-*.png",
+    "[major] Mark ready on a task that waits for answers runs it without them. Its question card stays open and blocking, and a later answer does nothing. Evidence: /tmp/frbench/walk-tasks-tab/steps/47,53-*.png; /tmp/frbench/walk-needs-me/steps/68,69,70-*.png",
+    "[major] New task offers 'full review (tier 2/3)' with no word that it needs Docker, and the task then waits for ever. Tasks that wait for a dependency or for Docker show 'ready', and dependency labels say '(ready)'. Evidence: /tmp/frbench/walk-tasks-tab/steps/06,12-*.png; /tmp/frbench/walk-chain-and-failure/steps/07-a-tasks-after-approval.png, 158-d-tasks-with-docker-wait.png",
+    "[minor] Undo is offered for some moves and not others, 'Undo.' appears twice, and dependency edits are not in the change log. Evidence: /tmp/frbench/walk-tasks-tab/steps/20-needs-me-on-ready-after.png, 51-changes-page-from-in-changes.txt",
+    "[minor] New task has no specialist field, so every hand-made task runs as coder. Chat's task_create tool makes a DRAFT task. Evidence: /tmp/frbench/walk-tasks-tab/steps/10,49-*.png; /tmp/frbench/walk-first-project/steps/chat-tool-task-create-vp.png, 64-start-dialog-with-only-a-draft-task.png",
+    "[minor] Row lines show raw ids and machine reasons ('claimed by 01a196d2-\u2026', 'request 01a196fe-\u2026', 'retry ladder exhausted \u2026 (ceiling opus)'). A stale-row move shows the version error twice with no reload. The dependency picker silently accepts a failed task. Evidence: /tmp/frbench/walk-tasks-tab/steps/33,49,54-*.png; /tmp/frbench/walk-words-and-structure/steps/75-tasks-after-accept-on-ladder-card.txt",
+    "[polish] The cap text stays on finished rows, '1,50' is refused, rows jump on reload, and the search offers ids nobody can see. Evidence: /tmp/frbench/walk-tasks-tab/steps/09-new-task-budget-with-comma.png, 11 vs 16"
+   ],
+   "u_entries": [
+    "U-040",
+    "U-061",
+    "U-071",
+    "U-074",
+    "U-079",
+    "U-080",
+    "U-084"
+   ],
+   "root_causes": [
+    "Links (verified): TasksTab.tsx:332-340 renders a raw <a target=\"_blank\"> instead of ExternalLink (components/ExternalLink.tsx:9-29 drops target in the shell). windows.rs:102 handles only on_navigation, and there is no new-window handler. grep finds the same at SandboxSettingsCard.tsx:165, UpdatesPage.tsx:400 and PeersSection.tsx:77. Tauri's default for an unhandled new-window request was not observed (unconfirmed).",
+    "Buttons = graph (verified): lib/task-transitions.ts:6-16 mirrors TASK_TRANSITIONS. humanTransitions (:33) turns every non-agent edge into a button with TRANSITION_LABELS (:39-48), and done/cancelled have none. TasksTab.tsx:358-368 renders them, and :307 shows t.status raw.",
+    "Transition route (verified): server.ts:961-1003 executes task.transition, then rt.kill.stopTask. It never closes the task's open requests. in_review is never planned again, because sessions plan only readyTasks.",
+    "No live data (verified): TasksTab.tsx:108-115 loads tasks and runs once with useAsync and never subscribes. ProjectPage.tsx:56 prefers its own one-off fetch (`project.data ?? cached`), and context.tsx:117-121 only upserts the store on project.changed.",
+    "No edit or reopen (verified): server.ts has only POST /tasks/:id/transition (:961) and /tasks/:id/dependencies (:1007), which bypasses the commands and the change log. commands/task.ts has create and transition only. TaskRepo.reopen exists (state repos/task.ts:238) but only Undo calls it.",
+    "Command defaults and sentences (verified): commands/task.ts:35 defaults status to 'draft'. transitionSentence (:151-152) uses raw states and appends ' Undo.'. CreateTaskBody has no specialist (api-types.ts:638-650; unconfirmed line). NewTaskDialog lists tiers 0-3 with no sandbox status."
+   ],
+   "fix_scope": "1. Replace task-transitions.ts with the per-status action table of design \u00a73.5: Make ready, Edit, Change what it waits for, Pause, Resume, Stop, Try again, Answer, Redo, Reopen, Cancel. Remove Mark failed, Send to review, Mark done and Needs me from the person's buttons. Each dialog shows one consequence line and an optional 'Note for the agent'. Cancel names the tasks that wait on it.\n2. The daemon computes `display` {label, tone, blocker:{kind,title,requestId}} in taskView (views.ts) from status, dependencies, the sandbox state and open requests. This one map feeds the badge, the filter, the Start dialog and Chat. claimedBy becomes the agent's name. The cap line shows only on open tasks.\n3. Commands in packages/commands/src/commands/task.ts: task.update (wording, criteria, priority, budget, review level, specialist; logged, undoable); task.reopen (cancelled to ready; done to ready with a note); task.dependencies (replaces the direct route; logged, undoable, read back in Chat). Pause = ready to needs_human with the marker 'paused by you'; Resume = back to ready. task.create defaults to ready. Sentences drop ' Undo.'. Every person move can be undone by restoring the previous status.\n4. Routes: PATCH /tasks/:id and POST /tasks/:id/reopen; dependencies go through the command. A person's move closes the task's open question or sign-off cards with 'withdrawn: you moved the task' and records 'go ahead without answers' for the brief.\n5. A new TaskDrawer: outcome, criteria, what it waits for, runs (specialist, report, error; steps once the engine keeps them), changed files, the review in plain words, the PR, Edit.\n6. NewTaskDialog: review level with Docker status ('Full review: needs Docker, not running on this computer'); 'Who does it' (let the agent choose / a specialist / 'Me: ask me in the Inbox', which sets specialist 'person' for needs-me); Low/Medium/High priority; a decimal comma is accepted.\n7. Live: reload on project.changed and session events. Show rows in run order and keep filters in the URL.\n8. Links: an inline ExternalLink variant used at all four target=_blank sites. An on_new_window handler in windows.rs opens http(s) links in the system browser. A test fails on any target=\"_blank\" outside ExternalLink in the desktop UI.",
+   "files": [
+    "apps/ui/src/pages/project/TasksTab.tsx",
+    "apps/ui/src/lib/task-transitions.ts",
+    "apps/ui/src/pages/project/DependencyPicker.tsx",
+    "apps/ui/src/pages/project/NewTaskDialog.tsx",
+    "apps/ui/src/pages/project/TaskDrawer.tsx (new)",
+    "apps/ui/src/components/ExternalLink.tsx",
+    "apps/ui/src/pages/SandboxSettingsCard.tsx (link line only)",
+    "apps/ui/src/pages/UpdatesPage.tsx (link line only)",
+    "apps/ui/src/pages/project/PeersSection.tsx (link line only)",
+    "apps/desktop/src-tauri/src/windows.rs",
+    "packages/commands/src/commands/task.ts (owner)",
+    "packages/commands/src/commands/index.ts (owner)",
+    "packages/state/src/repos/task.ts (owner; reopen from done)",
+    "packages/runtime/src/daemon/server.ts (/tasks/* handlers only)",
+    "packages/runtime/src/daemon/views.ts (taskView only)",
+    "packages/runtime/src/daemon/api-types.ts (task bodies and views)",
+    "apps/ui/src/api/client.ts (owner)",
+    "apps/ui/test/fake-daemon.ts (owner)",
+    "apps/ui/test/real-daemon.test.ts (owner)",
+    "apps/ui/test/tasks.test.tsx",
+    "docs/user-guide.md (tasks section)",
+    "docs/maintainers (ui and commands docs)"
+   ],
+   "acceptance": "Bench walk-tasks-tab journey (fresh home, a project with no brief, five tasks made with New task, one at 'Full review').\n(a) The dialog says that Full review needs Docker, which is not running.\n(b) Rows read 'Waiting for \"Write a README\u2026\"' and 'Waiting for Docker'. No visible text matches needs_human|in_progress|claimed by|request 01|ready \u2192 .\n(c) Clicking a title opens the drawer with the outcome and criteria. Edit lowers the Docker task's review level, and the next session runs it.\n(d) Start a session and stay on Tasks: rows go Running, then Done, without Refresh.\n(e) Pause makes a task 'Paused by you', creates no Inbox card and does not make the project 'needs you'. Resume makes it Ready.\n(f) Stop on a running task stops only that run.\n(g) Cancel on a task with a dependant names the dependant. Reopen brings the cancelled task back as Ready. Redo with a note on a done task reopens it, and the note is in the next brief (model-call log, after the session-engine merge).\n(h) Mark ready on a task with open questions withdraws its card with a line.\n(i) Undo after every action restores the previous state.\n(j) With pr_url set in the DB and the shell config injected, the PR link has no target attribute and opens through the shell's navigation. The cargo test for the new-window handler passes, and the unit test forbids target=\"_blank\".\n(k) A stand-in chat tool call task_create makes a READY task.",
+   "depends_on": []
+  },
+  {
+   "key": "needs-me",
+   "title": "The needs-me loop: one Inbox list, cards that say what and why in plain words, answers that resume work",
+   "problems": [
+    "[major] The card after the last retry is jargon ('Retry ladder exhausted \u2026 (ceiling opus)'), and accept / revise / cancel are unexplained. 'accept' marked done a task that wrote nothing, and its dependant then ran. The specialist's own reason is not on the card. Evidence: /tmp/frbench/walk-needs-me/scripts/signoff-card.png, steps/52-b-after-accept.png; /tmp/frbench/walk-words-and-structure/steps/inbox-ladder-card-expanded.png, 74,75-*; /tmp/frbench/walk-chain-and-failure/steps/70,78-*.png",
+    "[major] 'revise' (and every answer except the ask_person path) starts no work and confirms nothing; the person must find Start. Evidence: /tmp/frbench/walk-needs-me/steps/44-b-after-revise.png; /tmp/frbench/walk-chain-and-failure/steps/79,80-*",
+    "[major] A failed task never reaches the Inbox. The Inbox says 'Nothing waits on you' while 4 tasks wait on the failed one. Evidence: /tmp/frbench/walk-chain-and-failure/steps/123,124,125-*.png; /tmp/frbench/walk-needs-me/steps/64,67-*.png",
+    "[major] 'Needs you' is split across Inbox requests, Home 'Waiting on you', the header badge, the Summary 'open questions' and the Tasks 'Needs me' button, and the counts disagree. Examples: 'needs you: \u2026' next to 'Waiting on you 0'; 'blocked' just for a plan waiting for approval; 'good' with a task stuck on Docker. Evidence: /tmp/frbench/walk-needs-me/steps/05,79-*.png; /tmp/frbench/walk-words-and-structure/steps/76-*.txt",
+    "[major] The plan from the brief cannot be changed. Free text on the plan card is refused with a 400 ('Choose one of: approve, reject'), and Reject is a dead end that leaves a note with an id and an ISO time and no button to plan again. Evidence: /tmp/frbench/walk-first-project/steps/intake-free-text-vp.png, project-two-after-reject-vp.png; /tmp/frbench/walk-needs-me/steps/14,15,17-*.png",
+    "[major] The Docker wait is one global info card. It has no project, raw JSON, a reply box with nothing to answer and a Linux-only command, and offers no way forward without Docker. Evidence: /tmp/frbench/walk-needs-me/scripts/docker-card-open.png; /tmp/frbench/walk-chain-and-failure/steps/159-d-inbox-with-docker-wait.png",
+    "[major] A person-written question task ('Confirm the hosting choice with me') goes to a coder and is closed without asking. Evidence: /tmp/frbench/walk-needs-me/steps/46,48-*",
+    "[major] Cancel on a card is one irreversible click that does not say which tasks wait on it. An answer that arrives after the task moved on is silently ignored (task_moved_on). Evidence: /tmp/frbench/walk-needs-me/steps/34,57,70-*.png",
+    "[major] The Inbox fills with near-identical paragraphs: every session summary, 'Switched the active project\u2026', and an echo of every Tasks-tab click and chat command 'from Alice'. Counts seen: 31 unread, 15 after one Tasks journey, 17 after a short chat. Evidence: /tmp/frbench/walk-needs-me/steps/77,78-*.png; /tmp/frbench/walk-tasks-tab/steps/47-inbox-after-phase-b.txt; /tmp/frbench/walk-chat-steering/steps/64-*.png",
+    "[major] Answering a blocking card from Chat in the desktop app is refused ('confirm in the app on a paired device'), and a second card is added. Evidence: /tmp/frbench/walk-chat-steering/steps/62,63,64-*.png",
+    "[minor] Answered cards vanish with no confirmation and no next step, and the 'answered or closed' list never renders. Evidence: /tmp/frbench/smoke/steps/10-inbox-after-approve.png; /tmp/frbench/walk-needs-me/steps/10,13-*.png",
+    "[minor] The plan card shows the plan three times, has a raw 'Change card' JSON disclosure, equal lowercase approve/reject buttons, jargon, and a 5-task / 8-doc plan for a one-line brief. Evidence: /tmp/frbench/smoke/steps/09-inbox-with-the-plan.png; /tmp/frbench/walk-first-project/steps/17-inbox-with-the-plan.png; /tmp/frbench/walk-needs-me/steps/07,08-*.png"
+   ],
+   "u_entries": [
+    "U-022",
+    "U-029",
+    "U-034",
+    "U-040",
+    "U-046",
+    "U-071",
+    "U-073",
+    "U-074",
+    "U-079",
+    "U-080"
+   ],
+   "root_causes": [
+    "Ladder card (verified): loop/critic.ts:409-445 files kind 'approval' with why = 'Retry ladder exhausted \u2026' + the critic's output.summary (not the run's report), the raw SIGNOFF_OPTIONS and risk 'high'. session/findings.ts:475-487: accept resolves the open findings and closeFromNeedsHuman moves the task to done. revise (:488-512) moves the task to ready and only tellOwner messages the agent; no session start is filed.",
+    "Rendering (verified): InboxPage.tsx:686 renders <details>Change card</details> on every card, :694 renders every option as an equal Button, and the free-text row is on every card. GET /inbox (server.ts near :1290) returns humanRequest.open only, so the 'answered or closed' list (InboxPage.tsx:526) never has rows.",
+    "No failed-task card (verified): runner.ts:1427-1436 moves the task to failed. Only the needs_human paths file requests (critic.ts:409-445, person-questions.ts).",
+    "Split needs-you (verified): project-health.ts:11-35 marks the project 'blocked' for any blocking request and counts a card-less needs_human as needsYou. views.ts:149 waitingOnYou counts open requests only. sandbox-wiring.ts:154 files the Docker notice with project_id null.",
+    "Intake (verified): intake.ts:90 INTAKE_OPTIONS = ['approve','reject']. The reject note (intake.ts:1110) carries the id and an ISO time. IntakeBanner shows Retry only for 'failed'. The retry route answers an already answered intake 'as it stands' (api-types.ts:2143; unconfirmed line).",
+    "Echoes (verified): commands/executor.ts:502-510 sends every executed command's sentence to the human as an info message from the agent, whatever the source. Project switches are posted by commands/project.ts:62 (unconfirmed).",
+    "Person tasks (verified): person-questions.ts:85-88 PERSON matches human / person / owner, not 'me'. A late answer is recorded as task_moved_on with no message (:688-693; unconfirmed line).",
+    "Chat answer of a high-risk card: the request's own risk applies whatever the surface (commands/request.ts:43; unconfirmed policy location)."
+   ],
+   "fix_scope": "1. Inbox: two lists, Needs you and Updates. One card component; requestView supplies for each option {label, explain, tone, confirm}. Remove the Change card disclosure. Show free text only on kinds that accept it. After an answer, an inline 'Done: what happens next' line. GET /inbox returns recently answered requests for a collapsed Answered list.\n2. Ladder card (critic.ts, findings.ts): the title names the project and task. The body quotes the specialist's last report in one sentence and counts the dependants. Options: 'Try again' (back to ready and files a start like the ask-answer path), 'Mark done anyway' (secondary, confirmed, reason 'accepted without review'), 'Cancel task' (names the dependants).\n3. Failed-task card: when a task ends failed after the engine's in-session retries and has dependants, file one card with Try again / Cancel task. Hook it at the failure path in runner.ts after the session-engine merge, or in a task-transition listener.\n4. One 'waits on me' model: project-health derives from open cards only, and person-paused tasks do not count. The Docker notice is filed per project with the options 'Run with a light review' (lowers that task's tier in a transaction), 'Set up Docker' and 'Cancel task', with steps for the person's OS.\n5. Intake: 'Approve and start' (approve plus start a session), 'Change the plan' (free text re-runs the intake with those words), Reject followed by 'Draft a new plan' on the project page (the retry route accepts a rejected intake). The plan is shown once, and small-project mode applies to short briefs.\n6. Late and withdrawn answers: when an answer arrives for a task that moved on, post 'Your answers came after the task finished. [Redo with these answers]'.\n7. Person tasks: isPersonTask also matches specialist 'person' (New task 'Me') and first-person titles; such a task is filed as a card at once, with no run.\n8. No echoes: commands/executor.ts skips the info message when the human acted from the UI or from chat. No messages for project switches the person made.\n9. A card answered from in-app chat counts as an in-app confirmation, or the reply links to the existing card instead of filing a new one.",
+   "files": [
+    "apps/ui/src/pages/InboxPage.tsx",
+    "apps/ui/src/pages/project/IntakeBanner.tsx",
+    "packages/runtime/src/loop/critic.ts",
+    "packages/runtime/src/session/findings.ts",
+    "packages/runtime/src/session/person-questions.ts",
+    "packages/runtime/src/session/intake.ts",
+    "packages/runtime/src/daemon/project-health.ts",
+    "packages/runtime/src/daemon/sandbox-wiring.ts",
+    "packages/critic/src/followup.ts",
+    "packages/commands/src/executor.ts",
+    "packages/commands/src/commands/request.ts",
+    "packages/commands/src/commands/project.ts",
+    "packages/runtime/src/daemon/server.ts (/inbox, /requests/:id/answer, /projects/:id/intake/* only)",
+    "packages/runtime/src/daemon/views.ts (requestView only)",
+    "packages/runtime/src/daemon/api-types.ts (inbox and request views)",
+    "packages/runtime/src/session/runner.ts (failed-task card hook only, after session-engine is merged)",
+    "apps/ui/src/api/client.ts, apps/ui/test/fake-daemon.ts, apps/ui/test/real-daemon.test.ts (inbox and intake routes)",
+    "apps/ui/test/inbox.test.tsx",
+    "docs/user-guide.md (Inbox section)"
+   ],
+   "acceptance": "Bench walk-needs-me journey (FAIL='Write down the scope', ASK='Show a random quote', PERSON=1, RISK2='Check that index.html').\n(a) 'Approve and start' on the plan card starts a session, and the Inbox shows 'Plan approved: N tasks written; working on them'.\n(b) On a second project, 'Change the plan' with 'single index.html only' produces a new, smaller plan card.\n(c) On a third project, Reject is followed by 'Draft a new plan' on the project page, and that works.\n(d) Answering the specialist's ask card resumes the work by itself.\n(e) For the failing task, after the in-session retries there is exactly one card. Its title names the project and task, its body has the specialist's words, and Try again / Mark done anyway / Cancel task each show a consequence line. Try again starts a session by itself. Mark done anyway asks for confirmation and then shows 'Done: accepted without review'. Cancel names the waiting tasks.\n(f) With FAIL_MODE=error, a failed task with dependants produces a card.\n(g) The Docker card names the project, and 'Run with a light review' makes the task run in the next session.\n(h) The Inbox count, the header badge and Home's waiting count agree at every step.\n(i) Five Tasks-tab moves and five chat commands add 0 Inbox messages. Six sessions add at most 6 one-line Updates.\n(j) No card shows Change-card JSON or an unusable reply box. The Answered list shows what was answered.\n(k) A task made with New task 'Me' appears at once as a question card, and no run is made.",
+   "depends_on": [
+    "session-engine",
+    "tasks-screen"
+   ]
+  },
+  {
+   "key": "chat",
+   "title": "Chat: one conversation per project that remembers, sees the tasks and results, and changes them by plain phrases",
+   "problems": [
+    "[blocker] Chat forgets everything: every model turn has messages.length = 1 (the facts plus the current line). A 'yes' after a dropped card reaches the model as the bare word. Judged from the model-call log. Evidence: /tmp/frbench/walk-chat-steering/steps/11-chat-yes-after-card-dropped.png, 72-quote-chat-what-did-i-undo.png, scripts/out-05.json; /tmp/frbench/smoke/steps/30-chat-reply.png",
+    "[blocker] Chat cannot answer 'what is going on / what failed and why / what is next'. It gets no task list, no failures and no session results. The project line is a 160-character cut of a stale summary that ends at 'Wait'. Open requests are cut at 80 characters. 'Next' is empty after the first session. All 20 tools change things and none reads. Evidence: /tmp/frbench/walk-chat-steering/scripts/out-07.json, out-09.json, out-17.json; /tmp/frbench/walk-chain-and-failure/steps/160-d-chat-what-is-blocking.png; /tmp/frbench/walk-words-and-structure/steps/71-chat-reply.txt; /tmp/frbench/walk-needs-me/steps/75-chat-what-needs-me.png",
+    "[major] A chat 'stop' sets the kill switch. A chat 'start a session' then replies 'Started a session \u2026 Undo.' while nothing starts, and 'resume' has neither a command nor a tool. Evidence: /tmp/frbench/walk-chat-steering/steps/47,51,52,54-*.png",
+    "[major] Lines typed during a session are pasted into the next specialist's brief as data or dropped ('skip the README for now' was marked read, and that same session wrote the README), while the reply promises 'Your agent sees this at its next step boundary.' Evidence: /tmp/frbench/walk-chat-steering/steps/14,45,46,64-*.png",
+    "[major] Typing anything other than Yes/No drops the Yes/No card silently, and a daemon restart expires it with no word in the chat. Evidence: /tmp/frbench/walk-chat-steering/steps/09,10,11,43-*.png",
+    "[major] The Chat tab and the Talk panel are two chats that disagree and share one hidden transcript. 'make this a task' used the Talk panel's reply, 'undo' in one project cancelled a task in another, and Talk acts on the header's 'active' project. Evidence: /tmp/frbench/walk-chat-steering/steps/34,42,66,71,74-*.png",
+    "[major] Steering works only with exact phrases: 'start working now', 'summarise the last session', 'skip X' and 'make X depend on Y' all fail. Asked three ways, one change made three tasks (draft, ready, done). Evidence: /tmp/frbench/walk-chat-steering/steps/08,25,27,30-*.png; /tmp/frbench/walk-first-project/steps/64,65-*.png",
+    "[major] Typing 'summary' prints a voice-install error with Python module and secret names, twice, with two spend figures that disagree. Evidence: /tmp/frbench/walk-chat-steering/steps/17-after-s1-summary.png",
+    "[minor] Read-backs appear twice and offer 'reply yes to the email' with no email set up. Commands show a 'first token 0 ms' badge, raw 'task.create:' chips and 'Make this a task' under every bubble. Talk without voice shows Python internals. Evidence: /tmp/frbench/walk-chat-steering/steps/09,15,28,73-*.png",
+    "[minor] Retrieved docs are noise or out of order. An open request is marked 'already mentioned' after any completed turn. Evidence: /tmp/frbench/walk-chat-steering/scripts/out-03.json, out-05.json, out-17.json"
+   ],
+   "u_entries": [
+    "U-038",
+    "U-047",
+    "U-056",
+    "U-071",
+    "U-074",
+    "U-075",
+    "U-084"
+   ],
+   "root_causes": [
+    "One message (verified): agent.ts:581-583 builds messages = [{user: `${context.volatile}\\n\\n${req.text}`}]. The stored chat transcript is never read back into the call.",
+    "Context (verified): agent.ts:959-1003 context() puts each project's goal.slice(0,160), last_session.summary.slice(0,160) and next_steps (empty after sessions because runner.ts:1767 writes skipped) into the system prompt, and only counts into the facts. openRequestsFact (agent.ts:318) writes `${id.slice(0,8)}: ${why.slice(0,80)}`. There is no task list, and the tools are only the mutating registry commands.",
+    "Mention marking (verified): agent.ts:685-686 marks every shown request as mentioned whenever a turn completes.",
+    "Pending card (verified): agent.ts:462-466 drops the pending card on any other line. The pending map is in memory only (agent.ts:340; unconfirmed line).",
+    "Transcript scope (verified): agent.ts:922-951 keys the conversation session by agentId only (`const key = agentId`). undo(null) (agent.ts:470-473) undoes the latest change anywhere. ConversationPanel.tsx:139 keeps its lines in useState, and the Chat tab's history is in local storage only (store/chat-history.ts:75).",
+    "Stop and start (verified): the session.stop command calls ports.kill without freeze:false, and killswitch.ts:145 freezes unless freeze is false. The session.start sentence is fixed text, written before the run is known to have started.",
+    "Forwarding (verified): agent.ts:515-522 forwards the line with FORWARDED_SENTENCE (live-chat.ts:41). The runner marks it read at startup (runner.ts:785-791) and only a later task's brief quotes it.",
+    "Phrases (unconfirmed lines): intent.ts:767 (the start regex has no 'now') and :555 (only 'summary'). There are no dependency, resume or postpone commands. commands/task.ts:35 defaults task_create to draft (fixed by tasks-screen). summary.ts:108-123 tries text-to-speech unless the source is voice and puts the provider's raw reason in the reply."
+   ],
+   "fix_scope": "1. One conversation per (agent, project), stored by the daemon: GET /projects/:id/conversation (and a no-project one) returns the turns and any pending card. ChatTab and ConversationPanel render one shared component from it, so the local-only history goes. Talk follows the project on screen. undo and 'make this a task' are scoped to that project, and replies name the project.\n2. History: the last N turns (about 12, within a token budget) as alternating user/assistant messages; the volatile facts stay in the last user message for caching.\n3. Context: a '# Tasks' block for the turn's project (title, display status from tasks-screen's taskView.display, what it waits on, last reason, critic result); the engine's structured last-session outcome; open cards in full (project, task, questions, options); a files summary. Drop docs/status.md excerpts as status. Make conversation-agent.md say what is really provided.\n4. Read-only tools in a new commands/read.ts: tasks.list, task.get (runs, report, review), session.last, files.list.\n5. Commands: intent synonyms (now, summarise, skip, postpone, resume, 'depend on', 'stop after this task'). Chat 'stop' stops the running session without freezing; 'stop everything' is the kill switch with a read-back; 'resume' / 'allow sessions' lifts it. session.start replies started, queued or refused with the reason, waiting on the scheduler as POST /sessions does. The task.dependencies, task.reopen and pause/resume commands from tasks-screen become tools automatically.\n6. A pending card survives other lines and restarts. When it is dropped or expires, the chat says so. 'yes' with no card gets 'Yes to what?'.\n7. During a session, questions are answered from the live state (current task, plan, progress) and never forwarded. Instructions go through the parser or the tools as real changes with a read-back. Anything kept for later becomes a next-session note, and the reply says so.\n8. A request is marked mentioned only when the reply names it.\n9. summary: no voice attempt from text; built from the structured outcome; one spend figure.\n10. Clutter: no timing badge on commands; the action shown as a plain sentence with one Undo; 'Make this a task' only under the person's own lines; plain voice-unavailable text (U-075).",
+   "files": [
+    "packages/runtime/src/conversation/agent.ts",
+    "packages/runtime/src/session/live-chat.ts",
+    "packages/runtime/src/daemon/conversation-session.ts",
+    "packages/runtime/src/loop/commands.ts",
+    "packages/commands/src/intent.ts",
+    "packages/commands/src/commands/session.ts",
+    "packages/commands/src/commands/summary.ts",
+    "packages/commands/src/commands/read.ts (new)",
+    "packages/commands/src/commands/index.ts (registration lines only; owned by tasks-screen)",
+    "apps/ui/src/pages/project/ChatTab.tsx",
+    "apps/ui/src/shell/ConversationPanel.tsx",
+    "apps/ui/src/store/chat-history.ts",
+    "evals/registry/principals/conversation-agent.md",
+    "packages/runtime/src/daemon/server.ts (conversation routes only)",
+    "packages/runtime/src/daemon/api-types.ts (conversation view)",
+    "apps/ui/src/api/client.ts, apps/ui/test/fake-daemon.ts, apps/ui/test/real-daemon.test.ts (conversation routes)",
+    "apps/ui/test/chat.test.tsx",
+    "docs/user-guide.md (Chat section)"
+   ],
+   "acceptance": "Bench walk-chat-steering journey (FAIL=Style), with the model-call log read after each step.\n(a) In project Chat ask 'what is going on?', then 'what did I just ask?'. The second call carries the earlier turns.\n(b) After a session in which Style was sent back or failed, 'what failed and why?' sends a '# Tasks' block that names Style with its status and reason, and the open card in full (not cut at 80 characters).\n(c) 'make the FAQ task depend on the README task' gives a one-line read-back. After Yes, the Tasks tab shows the dependency and the FAQ runs after the README.\n(d) 'skip the LICENSE task' is read back as a pause or a cancel.\n(e) 'stop' during a session stops it without freezing. 'start a session' afterwards starts one, or says plainly why not. 'resume' lifts a Stop all.\n(f) A Yes/No card survives a question typed in between, and a daemon restart.\n(g) Talk shows the same conversation as the Chat tab of the project on screen. 'undo' in project A never touches project B.\n(h) Typed 'summary' shows no voice error. A task_create tool call makes a READY task. 'Make this a task' appears only under your own lines. Chat actions add no Inbox messages.",
+   "depends_on": [
+    "session-engine",
+    "tasks-screen"
+   ]
+  },
+  {
+   "key": "progress-navigation",
+   "title": "See progress and results: Home, project Overview, Files, session page, header, navigation (More), Settings basics",
+   "problems": [
+    "[blocker] The finished work cannot be found or opened. No screen shows the project folder. Docs lists only the 8 template docs and refuses index.html and the decision record. A task title cannot be clicked. Evidence: /tmp/frbench/walk-first-project/steps/alldone-Docs-vp.png, 46-after-clicking-a-done-task-title.png; /tmp/frbench/walk-words-and-structure/steps/56-tab-docs.png, 73-docs-decisions-doc-open.txt",
+    "[major] A running session cannot be found. The header, Home and the project page show nothing, there is no Sessions list, Start session stays enabled, and Start takes the person away from the Tasks tab. Evidence: /tmp/frbench/walk-lifecycle/steps/14,15-*.png; /tmp/frbench/walk-chain-and-failure/steps/102-q-home-while-one-runs-and-one-waits.png; /tmp/frbench/walk-tasks-tab/steps/13-after-start-pressed.png",
+    "[major] The project never says it is done: 'Stage planning', the milestone 'planned \u00b7 next \u00b7 5/5 tasks done', and 'Next steps: Nothing planned' while tasks are left. Evidence: /tmp/frbench/walk-first-project/steps/alldone-Plan-vp.png, summary-after-s1-vp.png, 66-home-at-the-end.png; /tmp/frbench/walk-words-and-structure/steps/23,53-*.txt",
+    "[major] Home shows settings data (stage, critic grade, autonomy, spend) instead of the work. There are four contradicting header badges ('planning \u00b7 idle \u00b7 active \u00b7 autonomy'), and 'blocked' is red just because a plan waits for approval. Evidence: /tmp/frbench/walk-words-and-structure/steps/44-nav-home.png, 82-final-home-1100.txt; /tmp/frbench/walk-first-project/steps/09,15-*.png",
+    "[major] Home cards and the project header are stale after a session: 'good, Waiting on you 0' while a question waits, and an old 'needs you' until reload. Evidence: /tmp/frbench/walk-needs-me/steps/25,26-*; /tmp/frbench/walk-tasks-tab/steps/54-*.png",
+    "[major] Navigation gives 8 equal top screens and 8 project tabs, and Summary is full of internals (the next-session queue form with type and priority, Peers, raw Decisions). The same fact lives in five places. Evidence: /tmp/frbench/walk-words-and-structure/steps/45-60 nav and tab screenshots, 09-project-planning-3s.png, 64-talk-panel-open.png",
+    "[major] The session page is titled with a UUID, says 'no task running' while a task runs, shows 'Steps 0 / 200', and has one unconfirmed Stop. Evidence: /tmp/frbench/walk-lifecycle/steps/11,13-*.png; /tmp/frbench/walk-tasks-tab/steps/13-after-start-pressed.png",
+    "[major] Settings refuses ordinary money amounts, including the default monthly cap it shows (150.40): the project budget allows only multiples of 0.50, and 0 is refused. Evidence: /tmp/frbench/walk-lifecycle/shots/project-budget-2.png, monthly-cap-prefilled-preview.png",
+    "[minor] Closing a high-risk setting preview with x leaves an 'approval needed' card. Settings that change how work runs are at the bottom of the page, next to dead rows and raw errors. Evidence: /tmp/frbench/walk-lifecycle/scripts/26 output, steps/35-settings-page-full.txt",
+    "[minor] Stop all is always red, and Resume resumes nothing. After 'Set up later' nothing says Claude is not connected. Setup shows '\u2713 Claude \u2713 GitHub' for skipped steps. The header switcher names a different project than the one on screen. Evidence: /tmp/frbench/walk-lifecycle/steps/16,21,62,68,70-*.png; /tmp/frbench/walk-first-project/steps/04-setup-done-step.png; /tmp/frbench/walk-chain-and-failure/steps/15-a-s1-session-ended.png"
+   ],
+   "u_entries": [
+    "U-030",
+    "U-041",
+    "U-047",
+    "U-056",
+    "U-059",
+    "U-060",
+    "U-071",
+    "U-074",
+    "U-077"
+   ],
+   "root_causes": [
+    "No workspace path (verified): the project view (views.ts:120-156) carries repos but no workspace path. docs-routes.ts:86 lists only STANDARD_DOCS, and :112 refuses any other path. projectWorkspaceDir (compose.ts:2084-2092; unconfirmed line) is not exposed.",
+    "Nav and tabs (verified): Shell.tsx:20-29 NAV lists all 8 routes. ProjectPage.tsx:20-29 has 8 tabs. The header (ProjectPage.tsx:64-90) renders the stage, health, status and autonomy badges and an always-enabled Start session. There is no running state in the header.",
+    "Stale views (verified): ProjectPage.tsx:56 uses `project.data ?? cached`, preferring its own one-off fetch. context.tsx:117-121 only upserts the store on project.changed. refreshProjects (context.tsx:401) runs only after create and on reconnect (:181), never on inbox or session events.",
+    "Done never said (verified): create-project.ts:45 sets stage 'planning' once, no runtime code closes milestones, and runner.ts:1767 writes next_steps = skipped (the data side is fixed in session-engine).",
+    "Home content (verified): HomePage.tsx renders the stage, waiting count, grade, autonomy and spend per card.",
+    "Session page (verified): SessionPage.tsx:194 renders `Session {session.id}`. The current-task card (:252) is not fed by task events. Steps come from the session row, which is written at the end.",
+    "Settings (unconfirmed lines, from the lifecycle walk): SettingsPage.tsx:229 (step 0.5) and :243 (step 1) on number inputs. finish() (:422-431) never answers the pending command. SetupPage.tsx:49 marks every earlier step with \u2713. Shell.tsx:96-111 toggleKill has no confirmation and is always shown."
+   ],
+   "fix_scope": "1. Shell: navigation Home, Inbox, More \u25be (Memory, Extensions, Changes, Performance, Updates; routes unchanged), and a Settings gear. A running chip fed by GET /sessions and the session events. Stop all only while something runs, with the count and one confirmation. 'Allow sessions again' plus 'Continue where it stopped'. A no-key bar when /me.provider has no working credential. The switcher shows the route's project.\n2. Home: Needs you (open cards from all projects, one line each with its main button), Working now, then one row per project: the status sentence, 'N of M done' and one action. Stage, grade, autonomy and spend leave the card.\n3. Project page: one status sentence (the daemon-derived statusLine in projectView). Tabs Overview / Tasks / Chat / Files plus More (Plan, Docs, Reviews, Costs, Data). Start becomes 'Open running session' while a session runs.\n4. Overview (rename of SummaryTab): status, this project's cards, Working now, Last result (the engine's structured outcome), Next (computed on read in projectView: ready tasks in run order, then the blockers), Your files (path and Open folder), Decisions (system-text's component), and one 'Note for the next session' box replacing the typed and prioritised queue form. Peers is hidden in solo mode.\n5. Files: new read-only routes GET /projects/:id/files and /projects/:id/files/:path (path-checked under the workspace or repository root) and a FilesTab. Open folder / Open use the shell opener in the desktop app and a copyable path in a browser. docs/decisions/*.md is allowed in Docs.\n6. Session page: title 'Project \u00b7 session at HH:MM'; status words; the current task from task.started and task.step events; live steps and spend; person-level lines by default, with Details for the rest; 'Stop after this task' (the engine's pause route) and 'Stop now' (confirmed).\n7. Store: refresh the project cards on inbox.changed, session.* and project.changed; ProjectPage prefers the live store copy.\n8. Settings: a Basics view (names, Claude, GitHub, budget per session, monthly cap, default autonomy by name, quiet hours, Docker status) and a collapsed Advanced. Money inputs take step='any' and a comma, with plain validation and '0 means no cap'. Closing a pending preview answers 'no'. One named autonomy control. Rows that do nothing are hidden.\n9. Setup: skipped steps are marked 'skipped'.",
+   "files": [
+    "apps/ui/src/shell/Shell.tsx",
+    "apps/ui/src/pages/HomePage.tsx",
+    "apps/ui/src/pages/ProjectPage.tsx",
+    "apps/ui/src/pages/project/SummaryTab.tsx",
+    "apps/ui/src/pages/project/QueueSection.tsx",
+    "apps/ui/src/pages/project/PeersSection.tsx (owner; the link line is changed by tasks-screen)",
+    "apps/ui/src/pages/project/FilesTab.tsx (new)",
+    "apps/ui/src/pages/SessionPage.tsx",
+    "apps/ui/src/components/ProjectState.tsx",
+    "apps/ui/src/store/context.tsx",
+    "apps/ui/src/pages/SettingsPage.tsx",
+    "apps/ui/src/pages/SettingsFields.tsx",
+    "apps/ui/src/pages/SetupPage.tsx",
+    "apps/ui/src/routes.tsx",
+    "packages/runtime/src/daemon/docs-routes.ts",
+    "packages/runtime/src/daemon/queue-routes.ts",
+    "packages/runtime/src/daemon/views.ts (projectView and project card only)",
+    "packages/runtime/src/daemon/api-types.ts (project view)",
+    "apps/desktop/src-tauri (folder opener command, if the existing opener does not cover it)",
+    "apps/ui/src/api/client.ts, apps/ui/test/fake-daemon.ts, apps/ui/test/real-daemon.test.ts (files and project routes)",
+    "apps/ui/test/home.test.tsx, apps/ui/test/project-tabs.test.tsx",
+    "docs/user-guide.md (structure; owner)"
+   ],
+   "acceptance": "Bench walk-first-project journey (fresh home), plus a second home with --provider none.\n(a) With no key, after 'Set up later' a bar says Claude is not connected. With the stand-in it does not appear.\n(b) After New project, the Overview reads 'Drafting the plan\u2026', then 'Waiting for you: approve the plan'.\n(c) After 'Approve and start', the header chip 'Alice is working on \u2026' appears, Home shows Working now, and the project button reads 'Open running session'.\n(d) With DELAY_MS=3000, the session page title is 'Quote page \u00b7 session at HH:MM', and the current task, step lines and spend move during the run.\n(e) At the end the Overview reads 'Done: all 5 tasks. Your files: <path>' with Open folder. Files lists index.html, script.js and styles.css and opens index.html inline. The milestone shows done.\n(f) Home and the header update without a reload at every step.\n(g) The top nav shows Home, Inbox, More and Settings. Project tabs are Overview, Tasks, Chat and Files, and Plan, Docs, Reviews, Costs and Data are still reachable under More.\n(h) Settings Basics accepts 12.30, 150.40 and '1,50'. Closing a monthly-cap raise preview with x leaves no Inbox card.\n(i) Stop all is hidden while idle. After Stop all, 'Allow sessions again' and 'Continue where it stopped' restart the stopped work.",
+   "depends_on": [
+    "session-engine",
+    "tasks-screen",
+    "needs-me"
+   ]
+  },
+  {
+   "key": "system-text",
+   "title": "Everything else the system writes: session log lines, decisions, notifications, Reviews, Costs, change cards, and a writing-rules check",
+   "problems": [
+    "[major] The session log is a developer event log: event type names (session.brief, queue.consumed, peers.feed), internal steps, raw markdown cut mid-word at 200 characters, 'Finished task: done' for a run that reported it could not do the work, 'Session ended: completed (completed)', and 'Notified you: \u2026 telegram skipped \u2026' at the end of every session. Evidence: /tmp/frbench/walk-words-and-structure/steps/19-s1-session-page-ended-reloaded.png, 43-*.txt; /tmp/frbench/walk-lifecycle/steps/13,52-*",
+    "[major] Decisions show the card's instructions as the question, raw JSON as the answer and a UUID as the author. The same text becomes a memory lesson that is pasted into every specialist's brief. Evidence: /tmp/frbench/walk-words-and-structure/steps/23-summary-after-s1-and-decision.txt, final-summary-decisions-viewport.png, 46-nav-memory.png; /tmp/frbench/walk-needs-me/scripts/crop20.png; walk-words model-calls.jsonl seq 178",
+    "[minor] Notifications name the wrong kind of thing and no project or task: 'An approval is needed (work is blocked)', 'Critic: revise (grade 35)', ids in the body. Evidence: /tmp/frbench/walk-words-and-structure/steps/38,43-*.txt",
+    "[minor] The Reviews tab shows debug evidence ('honesty: \u2026 claims {\u2026}', 'prompt:critic@1.1.0+\u2026'), USD, a green 85 for 'sent back', 17 open findings that are the same 3 counted 4 times, and session-review findings nobody can act on. The ?review= link is ignored. Evidence: /tmp/frbench/walk-words-and-structure/steps/57-tab-reviews.png; /tmp/frbench/walk-tasks-tab/steps/34-review-link-target.png; /tmp/frbench/walk-first-project/steps/review-link-vp.png; /tmp/frbench/walk-needs-me/steps/80-b-reviews-tab.txt",
+    "[minor] The Costs tab lists tasks by UUID, every specialist as '(none)', Accepted '\u2014' and the period '\u2014 \u2192 \u2014'. Evidence: /tmp/frbench/walk-first-project/steps/alldone-Costs-vp.png; /tmp/frbench/walk-words-and-structure/steps/58-tab-costs.png",
+    "[minor] A session that did nothing (stopped after seconds, or nothing planned) gets 'Session review: accepted (grade 100)'. Evidence: /tmp/frbench/walk-lifecycle/steps/13,49-*",
+    "[polish] Change cards show raw JSON ('unset \u2192 {\"start\":\"12:00\",\u2026}'), call the per-session cap 'Scope: this session', and accept no-op changes ('from 3 to 3'). Evidence: /tmp/frbench/walk-lifecycle/scripts/20, 15 outputs, shots/session-budget-2.png",
+    "[major] Nothing enforces the writing rules: each earlier fix added a sentence, which is how the walls of text grew (handoff, owner complaint 7)."
+   ],
+   "u_entries": [
+    "U-072",
+    "U-073",
+    "U-074",
+    "U-086"
+   ],
+   "root_causes": [
+    "Event lines (verified at views.ts:360; others from the walks): views.ts:346-410 turn every session event into a line. 'Finished task: ${outcome}' adds summary.slice(0,200) (:360), and 'Session ended: ${status} (${stopReason})' is at :374. event-lines.ts:177 adds the notification delivery words, and :260 cuts its fallback at 200 characters. Nothing marks a line as person-level or detail.",
+    "Decisions (verified): state-ports.ts:263-280 recordAnswer stores question = request.why (the card text), chosen = JSON.stringify(request.answer) and decided_by = the human id. DecisionsSection.tsx:41-55 renders them verbatim. runner.ts:1664 builds the lesson from d.question and d.chosen, so fixing the row fixes the lesson too.",
+    "Costs (verified): views.ts:489-498 sets label = key (the task id) and accepted: null, and the ledger rows have no specialist.",
+    "Reviews: ReviewsTab never reads search params (verified: no useSearchParams in apps/ui/src/pages). The evidence strings come from critic/session-review.ts:382 and critic/critic.ts:531, and findings are not closed when their task is accepted or done (unconfirmed lines).",
+    "Notifications and change cards (unconfirmed lines, from the walks): notifications/producers.ts:20-35, 63-71, 109 and 111; commands/change-card.ts:47; commands/budget.ts:327-357."
+   ],
+   "fix_scope": "1. Give every session event a level (person or detail) in views.ts. Rewrite the person-level lines to design \u00a75: one line, names, no markdown, cut at a word, 'could not' instead of 'done' for a run that failed its report. Delivery problems are detail-only. Add lines for the engine's new events (task.step, interrupted, stopped by you, handed to another specialist).\n2. Decisions: one row per question, holding the question text from the card's steps and the plain answer. Render the author as the person's name and the date. DecisionsSection shows 'Q? A. (Robin, 1 Nov)'. The intake approval and the decision docs are listed.\n3. Notifications: title '<Project>: <task> <what happened>' (60 characters at most); body one sentence plus the action; never ids.\n4. Reviews: read ?review=, then scroll to and highlight that review. Evidence goes under Details. CHF only. The badge colour follows the verdict. Findings are counted per task and resolved when the task is done or cancelled. Session-review findings are not shown as open work, and there is no grade for a session with no work.\n5. Costs: join task titles and run specialists, count accepted runs, and show the period in words.\n6. Change cards: formatted values (12:00\u201318:00), the project scope label for the per-session cap, no-op changes refused with 'already \u2026', and one read-back sentence.\n7. A writing-rules unit test that renders the person-level lines, session results, card texts and notifications from fixtures and asserts the rules mechanically: no UUIDs, no raw state names, no 'USD' or '$', no '(s)', no '**' or JSON, within the length limits. It must fail on a planted violation.",
+   "files": [
+    "packages/runtime/src/daemon/views.ts (owner; session event lines and costView)",
+    "packages/runtime/src/daemon/event-lines.ts",
+    "packages/runtime/src/notifications/producers.ts",
+    "packages/runtime/src/wiring/state-ports.ts",
+    "apps/ui/src/pages/project/DecisionsSection.tsx",
+    "apps/ui/src/pages/project/ReviewsTab.tsx",
+    "apps/ui/src/pages/project/CostsTab.tsx",
+    "packages/critic/src/session-review.ts",
+    "packages/critic/src/critic.ts (evidence strings only)",
+    "packages/commands/src/change-card.ts",
+    "packages/commands/src/commands/budget.ts",
+    "packages/commands/src/commands/settings.ts",
+    "packages/runtime/test/writing-rules.test.ts (new)",
+    "docs/maintainers (runtime and critic docs)"
+   ],
+   "acceptance": "Bench walk-words-and-structure journey (FAIL='Style the page', CRITIC_REJECT='random quote', PERSON=1).\n(a) The session page shows at most about 8 person-level lines per task, with no event type names, no '**', no UUIDs, no line cut mid-word and no 'Notified you: \u2026 telegram skipped'. Details shows the internals.\n(b) After the questions are answered, Overview \u2192 Decisions reads 'Where is the page published? Only as a local file \u2026 (Robin, 1 Nov)'. The next specialist brief's lessons carry that sentence, not JSON.\n(c) Each entry in /notifications/recent names the project and the task.\n(d) The Tasks 'review' link opens the review highlighted. Reviews shows CHF, accepted reviews in green and sent-back ones never green, and the findings of a done task are not counted as open.\n(e) Costs lists task titles and specialists.\n(f) The quiet-hours preview reads 'Quiet hours: 12:00\u201318:00'. Setting default autonomy to its current value is refused with 'already \u2026'.\n(g) writing-rules.test.ts passes, and it fails when a UUID is planted in a fixture.",
+   "depends_on": [
+    "session-engine"
+   ]
+  }
+ ],
+ "parallel_groups": [
+  [
+   "session-engine",
+   "tasks-screen"
+  ],
+  [
+   "needs-me",
+   "chat"
+  ],
+  [
+   "progress-navigation",
+   "system-text"
+  ]
+ ],
+ "shared_files": [
+  "packages/runtime/src/daemon/server.ts: owned by session-engine (POST /sessions, /sessions/:id/stop|pause, /shutdown, /kill, /projects/:id/start-check). tasks-screen edits only the /tasks/* handlers, needs-me only /inbox, /requests/:id/answer and /projects/:id/intake/*, and chat only adds the conversation routes. progress-navigation puts its files routes in docs-routes.ts, not here.",
+  "packages/runtime/src/daemon/views.ts: owned by system-text (session event lines, costView). tasks-screen edits only taskView (wave 1), needs-me only requestView (wave 2), progress-navigation only projectView and the project card (wave 3, alongside system-text, in different functions).",
+  "packages/runtime/src/daemon/api-types.ts: owned by session-engine. Every other area only adds fields to its own view and body types.",
+  "apps/ui/src/api/client.ts, apps/ui/test/fake-daemon.ts, apps/ui/test/real-daemon.test.ts: owned by tasks-screen. AGENTS.md requires every route change to update all three in the same commit, so each later area appends its own route cases. The mobile screens share client.ts and must keep compiling.",
+  "packages/runtime/src/session/runner.ts: owned by session-engine. needs-me may add only the failed-task card call, after session-engine is merged.",
+  "packages/runtime/src/daemon/compose.ts: owned by session-engine (startup recovery, calibration wiring, the session-start reason). chat wires its read-tool ports in loop/commands.ts instead. progress-navigation only exports the existing projectWorkspaceDir.",
+  "packages/commands/src/commands/task.ts and packages/commands/src/commands/index.ts: owned by tasks-screen (task.update, task.reopen, task.dependencies, pause/resume, ready default). chat adds only the registration lines for commands/read.ts and session.resume.",
+  "packages/state/src/repos/task.ts: owned by tasks-screen (reopen from done). session-engine only uses the readiness helpers.",
+  "apps/ui/src/pages/project/PeersSection.tsx, apps/ui/src/pages/SandboxSettingsCard.tsx, apps/ui/src/pages/UpdatesPage.tsx: tasks-screen changes only the target=_blank link line. PeersSection is otherwise owned by progress-navigation.",
+  "apps/ui/src/pages/ProjectPage.tsx: owned by progress-navigation (including the `cached ?? project.data` fix); tasks-screen does not touch it.",
+  "apps/ui/src/pages/project/SummaryTab.tsx: owned by progress-navigation. The DecisionsSection.tsx it embeds is owned by system-text.",
+  "docs/user-guide.md: owned by progress-navigation (structure). Each area edits only its own section (sessions, tasks, Inbox, Chat)."
+ ],
+ "design_doc": "/home/user/Forerunner/docs/design/core-experience.md",
+ "unconfirmed": [
+  "Never observed in a real desktop shell: that the Tauri 2.12 webview drops an unhandled target=_blank new-window request. It is inferred because windows.rs has only on_navigation and no new-window handler, and it matches the owner's report.",
+  "The line numbers compose.ts:1542-1547 (Quit releases claims with the reason 'kill switch'; a session-scoped stop releases nothing), compose.ts:2771-2781 (the start Reason is not passed to the runner) and wiring/session-ports.ts:53-85 (pause exists only as a command) come from the lifecycle walk. I did not read them.",
+  "Not read: registry/alternates.ts (how the alternate specialist is ranked), notifications/producers.ts, commands/change-card.ts and commands/budget.ts line numbers, and the paired-device policy for a high-risk chat answer (commands/request.ts:43). These come from the walks.",
+  "Not traced in code: whether running the calibration as the critic agent is enough to free Start. The critic agent may hold its own active-session rows during reviews; check this before choosing a dedicated system agent.",
+  "Not tested (the bench has no fake GitHub): whether a dependant's worktree in a repository project contains the previous step's unmerged PR. U-087 (one docs PR per session) was not observed for the same reason.",
+  "Not run on Windows: the orphan-session lock after a crash, though the code is shared, so it is expected there too. The Windows wording of the Docker steps was not seen either.",
+  "Not observed live: anything about model quality (plans, chat answers, specialist work). Every such statement is a judgment from the model-call log; no live model was used.",
+  "Owner decision needed: the design offers 'Run with a light review' as a way past a missing Docker (it lowers the task's review level). That is a choice next to U-079's 'Docker is required for full review', and the owner should confirm it.",
+  "Owner decision needed: the design removes Mark failed, Send to review and Mark done from the Tasks tab; 'Mark done anyway' stays only on the Inbox card.",
+  "Owner decision needed: 'Stop now' keeps what a task wrote so far in the folder instead of rolling it back.",
+  "Owner decision needed: the calibration never runs on the day an install first sees its schedule.",
+  "Out of scope, not diagnosed: approving an extension from a URL fails with a 503 and leaves the panel and the Inbox disagreeing (walk-needs-me steps 71-74, 82). It is not part of the core loop; log it as a U-entry."
+ ]
+}

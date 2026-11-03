@@ -1,0 +1,109 @@
+{
+ "smoke": "The journey ran end to end through the UI on a fresh home (bench \"smoke\", ports 47310/47311, --provider bench). The bench worked: 19 of 19 checks passed, with 3 product findings and 2 recorded HTTP problems (the 409 below). Steps are in /tmp/frbench/smoke/steps/ and the result is in /tmp/frbench/smoke/steps/smoke-result.json.\n\n1. Setup assistant, as a person without keys would get past it (01-first-screen, 02-setup-claude-step, 03-setup-github-step, 04-setup-done-step).\n   - Welcome: name, then Continue. Claude: \"Skip for now\". GitHub: \"Skip for now\". Done: \"Start using Forerunner\".\n   - The Done step says \"Until Claude is connected your agent cannot start work.\" That is true for a real install with no key; here the stand-in was serving, and the page does not know about it.\n2. Empty Home with \"New project\" (05-home-empty).\n3. New project \"Quote page\" with the given brief (06-new-project-dialog-filled, 07-project-created). The intake ran within about a second; the project page said \"The plan from your brief waits for your approval in the Inbox\" (08-project-plan-waiting).\n4. Inbox (09-inbox-with-the-plan): the intake card showed 5 tasks with dependencies, the decision doc 0001-plain-static-page.md, and a first-session plan of all 5 tasks at about CHF 0.80, plus a raw \"Change card\" JSON disclosure. Clicking \"approve\" wrote 5 tasks, but the Inbox only said \"Nothing waits on you.\" (10-inbox-after-approve, finding).\n5. Home, then the project, then Summary and Tasks (11, 12, 13-tasks-after-approval). All 5 tasks showed \"ready\", including the 4 that wait on others. Each row has \"Needs me / Mark failed / Cancel / Depends on\u2026\" with no explanation.\n6. Session 1 (14-session-1-start-dialog, 15, 16-session-1-ended). The dialog listed 4 tasks under \"Not in this session\" and did not say what would run. Only \"Create the page skeleton in index.html\" ran. Coder: list_dir, then write_file index.html, then report; critic accepted. The session ended `completed` in under a second, with a long summary listing every waiting task (17-tasks-after-session-1, 18-summary-after-session-1).\n7. Session 2. The first Start was refused: \"agent Alice already has an active session 01a196cc-9df2-\u2026\" (19-session-2-start-dialog, 20-session-2-did-not-open; POST /sessions answered 409). The session holding the agent was the monthly critic calibration, which made about 170 critic calls (finding). After it ended, a retry worked (21, 22, 23): script.js and styles.css were written; `node --check script.js` exited 0 in the process sandbox.\n8. Session 3 (24, 25, 26): the tester wrote checks/\u2026md after running node --check, and the writer read index.html and script.js and wrote README.md.\n   - All 5 of 5 tasks were done, but it took 3 manual Start clicks for 5 tasks (finding).\n9. Tasks tab final (27-tasks-final): all done and accepted. The Links column shows only \"review\", and the project stage still says \"planning\".\n   - Summary final (28-summary-final): \"Session completed. Done: 2. Failed: 0. Needs you: 0. Sent back by the critic: 0. In review: 0. Not started: 0 of 2 planned. Spent CHF 0.02.\" It does not say what was built or where the files are.\n10. Files on disk in /tmp/frbench/smoke/home/data/projects/01a196cc-4d91-71e3-a7ba-280c0079e436/workspace: index.html, script.js (10 quotes), styles.css, README.md, checks/check-that-index-html-styles-css-and-scr.md and docs/*. Opened in Chromium, index.html shows a random quote with no errors (steps/quote-page-written-by-stand-in.png).\n11. Chat tab (29, 30-chat-reply): the stand-in replied that it was given 0 earlier turns, 1 project, no task list, no doc excerpts and no lessons. The model-call log matches: one user message, fake-haiku at low effort with thinking off, max_tokens 1024, 20 command tools.\n\nModel calls in the run: intake 1, specialist 21, critic 170 (162 of them the calibration), chat 1.\n\nExtra checks on separate benches, all done through the bench:\n- restart-daemon (graceful) keeps the projects; reconnect() works, and a page that is not reconnected gets 401s while showing \"connected\".\n- CRITIC_REJECT: rework, then accepted on the next session.\n- FAIL (report mode): 4 attempts, then \"retry ladder exhausted\", needs_human and an Inbox approval card.\n- ASK: needs_human, Inbox questions; answering started a session by itself and the task ran with the answers in its brief.\n- FAIL_MODE=error: the task goes `failed` (/tmp/frbench/inject/steps/01-04).\n- RISK2: the tier 2 task waits for Docker. A person sees \"Docker is installed but not running. Next: start Docker, then Check again in Settings \u2192 Sandbox (Docker)\" in the Start dialog, the session summary and an Inbox info card, while the Tasks tab shows it as plain \"ready\" (/tmp/frbench/inject/steps/01, 03, 04).\n- --provider none: /me reports provider null and the intake fails with \"Planning from the brief needs a Claude key or subscription\u2026\".\n\nEvery bench process has been stopped.",
+ "findings": [
+  {
+   "title": "A session runs only the tasks that were ready when it started; the approved first-session plan is not followed",
+   "severity": "major",
+   "steps": "Create a project from the brief, approve the intake (its card says the first session runs tasks 1-5, about CHF 0.80), then press Start session.",
+   "expected": "The first session works through the approved plan, taking tasks as their dependencies finish, and stops clearly only at a real blocker.",
+   "actual": "Session 1 ran 1 task and ended `completed` in under a second, with the 4 other tasks listed as waiting on a task that was already done or 'ready'. 5 tasks needed 3 separate manual starts (sessions changed 1, 2 and 2 tasks). A task the critic sends back is retried only in the next manually started session.",
+   "root_cause": "The session plans once, at its start, from the tasks whose dependencies are already done (packages/runtime/src/session/runner.ts around :808, per the handoff), then runs that fixed list. The intake's firstSession items are filtered the same way (log line 'session.planned Plan: 1 item(s) ... the first session you approved with the project plan: 1 task(s) in its order').",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/09-inbox-with-the-plan.png",
+    "/tmp/frbench/smoke/steps/14-session-1-start-dialog.png",
+    "/tmp/frbench/smoke/steps/16-session-1-ended.png",
+    "/tmp/frbench/smoke/steps/24-session-3-start-dialog.png",
+    "/tmp/frbench/smoke/steps/smoke-result.json (sessions[])"
+   ]
+  },
+  {
+   "title": "The monthly critic calibration takes the person's agent; Start session is refused with 'agent Alice already has an active session <uuid>'",
+   "severity": "major",
+   "steps": "Start a fresh install on the 1st of a month after 06:00 (today, 2026-11-01). Within about 30 s, create a project, approve it, run one session and press Start session again.",
+   "expected": "Background jobs never block the person's own work, or the dialog says what is running and when it ends.",
+   "actual": "The Start dialog shows the red error 'agent Alice already has an active session 01a196cc-9df2-733b-8ce3-af508b20813e' (POST /sessions 409). There is no explanation and no hint to wait. The holder was a 'schedule' session titled 'critic calibration 2026-11-01 tier 1 ... defects caught 40/40'. With the stand-in it lasted seconds and made about 160 critic calls. With a real key it would run about 80 tier 1 reviews, up to USD 10 (DEFAULT_CALIBRATION_SETTINGS.budgetUsdMicro), on the install's first day, blocking sessions for its whole duration.",
+   "root_cause": "packages/runtime/src/jobs/calibration.ts:263-264 inserts the calibration session with agent_id = the principal agent (compose.ts:2679 passes agentId: agent.id). runner.ts:508-512 allows one active session per agent. triggers.ts:310-333 fires a monthly schedule seen for the first time on or before its day as soon as its time has passed (day 1, 06:00), so a new install started on the 1st runs it at once.",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/20-session-2-did-not-open.png",
+    "/tmp/frbench/smoke/steps/problems.jsonl (409 POST /sessions)",
+    "/tmp/frbench/smoke/steps/smoke-result.json (findings[1])"
+   ]
+  },
+  {
+   "title": "A failed specialist run shows the model's first remark as the reason; the error is only in the daemon log, and dependants wait silently",
+   "severity": "major",
+   "steps": "Start a bench with --env FORERUNNER_BENCH_FAIL=script.js --env FORERUNNER_BENCH_FAIL_MODE=error (the model call errors mid-run), approve a plan and run sessions.",
+   "expected": "The task says what went wrong (the model call failed), whether it will be retried, and what the person can do.",
+   "actual": "The task is `failed`, attempt 0, and its only explanation on the Tasks tab is 'I'll look at what is already in the folder first.' (the model's text before the error). The error appears only in daemon.log ('ERROR [agent-loop] run failed ... model call failed'). Nothing retries it. Its dependants show 'Waits on a task that will not be done by itself' until the person presses 'Mark ready'.",
+   "root_cause": "packages/runtime/src/session/executor.ts:1018-1020: summary = finalText.slice(0, 2000) || error message || outcome. Any text before the failure wins over result.error. Related to the open U-086.",
+   "evidence": [
+    "/tmp/frbench/inject/steps/01-failed-task-and-docker-wait-on-the-tasks-tab.png",
+    "/tmp/frbench/inject/daemon.log line 32",
+    "/tmp/frbench/inject/steps/03-start-dialog-when-nothing-can-run.png"
+   ]
+  },
+  {
+   "title": "The chat model is given almost nothing about the project (judged from the model-call log, not a live model)",
+   "severity": "major",
+   "steps": "After the 3 sessions, open the project Chat tab and ask 'What is the state of my project and what is left to do?'.",
+   "expected": "The chat sees the conversation so far, the project's tasks with their states, recent results and failures, and where the work is.",
+   "actual": "The model gets 1 user message (no earlier turns) holding '# Now' facts (counts of unread messages, open requests and running sessions). The system prompt has one project line: the goal plus the last session's summary cut at 160 characters. There is no task list, no list of files, and no failures. Doc excerpts were not retrieved for this question. 20 command tools are offered. Model fake-haiku (Haiku rung) at effort low, thinking off, max_tokens 1024. From this context a capable model could report the last session's counts but could not say which tasks remain or what was built.",
+   "root_cause": "packages/runtime/src/conversation/agent.ts:581 sends one message ({volatile}\\n\\n{text}); context() (:959) puts project names, goal and last-session text into the system prompt with counts only. Matches the handoff's root cause and the open U-084.",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/30-chat-reply.png",
+    "/tmp/frbench/smoke/steps/smoke-result.json (chatContext)",
+    "/tmp/frbench/smoke/home/bench/model-calls.jsonl (role chat)"
+   ]
+  },
+  {
+   "title": "Approving the plan gives no confirmation and no next step",
+   "severity": "minor",
+   "steps": "Inbox, intake card, click 'approve'.",
+   "expected": "A confirmation that the plan was written (5 tasks), with the next step: Start session on the project.",
+   "actual": "The card disappears and the Inbox reads 'Nothing waits on you.' Nothing says what happened or what to do next. The person has to find the project again through Home.",
+   "root_cause": "apps/ui/src/pages/InboxPage.tsx: send() only refreshes the list after the answer; there is no outcome view for an intake answer.",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/10-inbox-after-approve.png"
+   ]
+  },
+  {
+   "title": "System-written texts are walls of text, and task statuses mislead",
+   "severity": "minor",
+   "steps": "Look at the Tasks tab after approval, the Start session dialog, the session page and Summary 'Last session'.",
+   "expected": "Short text saying what ran, what is next and why. A task that cannot run yet does not say 'ready'.",
+   "actual": "Tasks that wait on dependencies, or on Docker (tier 2), show status 'ready' with 'Needs me / Mark failed / Cancel / Depends on\u2026' and no explanation. The Start dialog lists only 'Not in this session' (4 items), not what will run. 'Last session' repeats every waiting task with '(ready)' plus a 7-counter line. The session page title is the UUID. The session log ends with 'Notified you: \u2026 telegram skipped \u2026, signal skipped \u2026, email skipped \u2026'. The project stage stays 'planning' after every task is done.",
+   "root_cause": "summarize()/summarizeWaiting in packages/runtime/src/session/runner.ts (~:2397, :2490), apps/ui/src/pages/project/StartSessionDialog.tsx:263, and apps/ui/src/lib/task-transitions.ts, as described in the handoff. Not re-diagnosed here.",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/13-tasks-after-approval.png",
+    "/tmp/frbench/smoke/steps/14-session-1-start-dialog.png",
+    "/tmp/frbench/smoke/steps/16-session-1-ended.png",
+    "/tmp/frbench/smoke/steps/18-summary-after-session-1.png",
+    "/tmp/frbench/inject/steps/01-failed-task-and-docker-wait-on-the-tasks-tab.png"
+   ]
+  },
+  {
+   "title": "The app never shows where the work is",
+   "severity": "minor",
+   "steps": "After all tasks are done, open the Summary and Tasks tabs.",
+   "expected": "A link or path to the project's folder, or the changed files per task.",
+   "actual": "The files are in <home>/data/projects/<id>/workspace, but neither tab names this folder. The Tasks tab's Links column shows only 'review', and Summary says only counts and CHF.",
+   "root_cause": "For a project without a repository, the workspace path (compose.ts:2084-2092, projectWorkspaceDir) is not exposed in the project or task views.",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/27-tasks-final.png",
+    "/tmp/frbench/smoke/steps/28-summary-final.png"
+   ]
+  },
+  {
+   "title": "The intake card shows a raw 'Change card' JSON disclosure",
+   "severity": "polish",
+   "steps": "Inbox, intake card.",
+   "expected": "Only the readable plan.",
+   "actual": "Under the readable plan there is a 'Change card' disclosure with the full proposal JSON.",
+   "root_cause": "apps/ui/src/pages/InboxPage.tsx ~:683-692 renders <details>Change card</details> for every non-question card.",
+   "evidence": [
+    "/tmp/frbench/smoke/steps/09-inbox-with-the-plan.txt"
+   ]
+  }
+ ],
+ "limits": "- The stand-in proves mechanics only. Plans, reports, reviews and chat replies are scripted. Nothing here measures model quality. Anything about what a real model would do is a judgment from the model-call log.\n- Live mode (`--provider bench-live`) is unproven against the real Anthropic API: there was no key this session. Only its logging wrapper is covered, by a unit test with a stubbed provider. It uses ANTHROPIC_API_KEY or FORERUNNER_ANTHROPIC_KEY with an explicit base URL (https://api.anthropic.com, or FORERUNNER_BENCH_LIVE_API), bypassing the vault and billing router. Live runs therefore do not exercise the RoutedProvider, subscription routing or the headroom proxy.\n- With --provider bench, the setup assistant and Settings still say Claude is not connected. The billing source is the 'fake' row, so CHF amounts are 1 micro-USD per token, not real prices.\n- Not covered: the Tauri desktop shell (target=_blank links, OS notifications, how the shell re-injects a new daemon token after its own restart) and the production UI build. The bench uses the Vite dev server in Chromium with the token injected the way inject.rs does it.\n- No Docker here: tier 2+ tasks only show the 'waiting for Docker' path. At tier 1, run_command runs on the host through the process sandbox.\n- Windows: start/stop/restart use node:path, detached processes and taskkill, but were only run on Linux.\n- Failure-injection counters (FAIL_TIMES, CRITIC_REJECT_TIMES, critic title matching) live in the daemon process and reset on restart.\n- The calibration finding depends on the date: it hits a new install on the 1st of a month (today), and existing installs on every 1st at 06:00 local time.\n- Each openApp uses a persistent profile, so one browser per bench at a time (profile:false for a second window).\n- No GitHub or pull-request flow: projects have no repository. testenv/src/githost is not wired into the bench.\n- Not committed (the session lead commits).\n- Checks run on my files: biome (clean), check-paths (ok), tsc (ok), the two new unit tests (22 pass), plus the existing CLI and scripts tests (253 pass). The full `pnpm check`, integration, e2e and docs:check were not run."
+}

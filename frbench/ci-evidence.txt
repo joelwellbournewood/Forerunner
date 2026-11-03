@@ -1,0 +1,3 @@
+2026-11-01 f36511e (wave 1 merge): CI 41332846123 success (Windows+Linux); Desktop app 41332846127 FAILED windows (real-daemon Stop test timing) -> fixed 5b1fb2b
+2026-11-01 5b1fb2b: Desktop app 41336518823 success; CI 41336518876 FAILED windows (session-recovery timing) -> fixed 9140369
+2026-11-01 9140369: CI 41339376213 success; Desktop app 41339376222 success (Windows + Linux, tauri build, installed check, bundled runtime smoke)

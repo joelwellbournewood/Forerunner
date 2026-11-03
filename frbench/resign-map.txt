@@ -1,0 +1,6 @@
+Wave-2 commits re-signed (same trees) before push; the merge agent's report may cite the old SHAs:
+649faff -> 8d1136d  Merge fix/needs-me
+841325c -> 5895331  Merge fix/chat
+5e3e746 -> c04fb1c
+c88807d -> d34f331
+0e4e40e -> 3455a24

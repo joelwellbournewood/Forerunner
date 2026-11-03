@@ -1,0 +1,1016 @@
+{
+ "headline": "Phase E of the owner-approved plan (docs/status/handoff/NEXT-SESSION.md): the leftovers sweep, real problems first, polish batched. Input: the 102 items of /tmp/frbench/handoffs.json 'later', each checked against claude/nifty-knuth-f9udt0 at f64d7e9 (the 'triage' array: 12 real, 44 polish, 21 already fixed, 11 owned by phase C, 8 duplicates, 6 out of scope). Sources: the fix waves' reports, the wave 3 reviews, the live reports (docs/status/handoff/round-2026-11-01/live-reports/live1 to live4). Phase C's four areas (/tmp/frbench/phaseC.json) own their items and are not repeated here. Phase E starts only after phase C is merged: its areas touch files phase C changes (person-questions.ts, request-answers.ts, runner.ts, executor.ts, StartSessionDialog.tsx, TaskDrawer.tsx, task-words.ts, role-player.ts, fake-daemon.ts); each fixer rebases its worktree on the branch after that merge. Same pipeline as phase C: failing test first at the boundary the person uses, the full suite at every stage, an independent reviewer who walks the acceptance on the bench, one merge at a time.",
+ "areas": [
+  {
+   "key": "answers",
+   "title": "Chat and Inbox answers do what the person said: one card per question, no task closed by a word its card does not offer, a start that is true, a chat that reads real docs and adds tasks with real titles",
+   "problems": [
+    "[real, major] later #3: 'A free-text 'go ahead' on a planned person card closes the task although the card offers no Go ahead without.' Still so on f64d7e9: personQuestionsAnswer (packages/runtime/src/wiring/request-answers.ts:206) reads a typed 'go ahead' as {kind: 'without'} for every questions card; person-questions.ts:652-668 then walks a planned card's task (on_answer 'done') through CLOSE_PATH with no answers and resumeWork starts what waited on it. The planned card ('\"X\" needs your answers', request-words.ts:287-311) offers only the form and Cancel task. A chat 'go ahead' (request_answer tool), the phone or the web approvals close e.g. 'Owner supplies the bakery's real content' empty, and the coder after it builds on nothing: live2 #3's symptom by another road.",
+    "[real, minor] later #1: 'Chat 'yes' on a medium-risk card may still file the executor's pending yes/no card beside the original (needs_yes path).' Still so: the executor's gate (packages/commands/src/executor.ts:345-357) short-circuits request.answer only for needs_device ('Answer it on its card in the Inbox…', wave 2). request.answer takes the card's own risk (commands/request.ts:42); the plan card (session/intake.ts:1208), the failed-run card (session/runner.ts:1058) and the review/findings cards (session/findings.ts:304, :374) are medium, so 'approve the plan' or 'try it again' in chat gets needs_yes and createPending (executor.ts:362-395) inserts a second Inbox request (kind approval, yes/no) about the first. Two cards for one question (design §3.8; U-029).",
+    "[real, minor] later #34 (live2 part 3 C2) with #25 (live2 #8): 'chat-added task title keeps 'to …', no criteria, 'Agent's choice''; 'title = raw sentence cut at 80 chars'. Live: 'Added \"to write a README that explains…\"'; 'make a 404.html 'page not found' page in the same style as the others, with a l…'. matchAddTask (packages/commands/src/intent.ts:601-617) takes the rest of the line as title (sliced at 120) and as outcome; Make this a task (:634-636) the same. (The generic criterion 'The outcome described in the goal is achieved and verified.' that the critic marks met is phase C verification's, session/executor.ts:577-579.)",
+    "[real, minor] later #9: 'Doc search returns template text ('- first task', 'To be written.') (packages/memory).' loadDocs keeps every chunk (packages/memory/src/docs-search.ts:319-325) and selectDocHits ranks by BM25 > 0 (:356-357); the scaffolded docs (memory/src/docs.ts:45-80: 'To be written.', '## Next' '- first task', '- nothing yet') match 'what is next?' and reach the chat's context as project facts (owner complaint 8: the chat never seems to know anything).",
+    "[real, minor] later #7: 'session.start does not wait for the run to begin.' commands/session.ts:189-227 returns as soon as the scheduler accepted the start (the port in loop/commands.ts:632-652: 'the session id is never known synchronously'), so the chat's 'Started a session' cannot link the session and is said also for a run that fails before its session begins; POST /sessions waits for session.started, the run's error or SESSION_START_WAIT_MS (daemon/server.ts:1346-1396).",
+    "[polish] later #76: the chat model's context still carries ids and raw words: '[id <uuid>]' on every project line (conversation/agent.ts:1213), request references 'xxxxxxxx: …' (agent.ts:448; the request_answer tool needs them, but nothing tells the model never to show them: live2 #10 'request 01a19958'), 'Ended because: plan awaiting approval' (conversation/project-facts.ts:146). The prompt (evals/registry/principals/conversation-agent.md:40) forbids task ids only.",
+    "[polish] later #14: live-chat.test.ts:348 and :373 were loosened from toEqual([{ scope: { agentId }, reason }]) to toHaveLength(1) in 715f3eb; restore the precise scope ({ sessionId } now) and the completed status (quality rule: never a weakened test).",
+    "[polish] later #13: chat 'resume' is not tested across a daemon restart (validation rule 4): chat-steering.test.ts:180-205 covers it in one process; kill-resume-restart.test.ts covers the header, the phone and Stop all, not the chat.",
+    "[polish] later #15: 'stop everything' in chat acts at once while design §3.1 says Stop all asks once. Spec O.9 'stopping is immediate' (agent.ts:595-600) is the safe direction: write that rule into design §3.9 so the two agree; no code change unless the owner says otherwise.",
+    "[polish] later #93: DecisionLog.ask (wiring/state-ports.ts:344-360) looks a decision up by the card's whole why while recordAnswer stores the first sentence or the step; only tests use ask today, but 'never asked again' would not hold for a question of several sentences. Key both the same way.",
+    "[polish] later #10: the runner's heard-line path (session/live-chat.ts; runner.ts:1224, :1331-1391, :2833 recheckInbox/heardLineOf) reads inbox lines nothing writes any more (heardMessageBody is used only by tests since wave 2 removed forwarding). Remove it after phase C merged runner.ts, or leave it and say why; no behaviour change."
+   ],
+   "u_entries": [
+    "U-022",
+    "U-029",
+    "U-047",
+    "U-074",
+    "U-084"
+   ],
+   "root_causes": [
+    "packages/runtime/src/wiring/request-answers.ts:206: the typed-answer reader maps 'go ahead' to 'without' without knowing whether the card offers it; person-questions.ts:652-668 acts on it for planned cards (on_answer 'done').",
+    "packages/commands/src/executor.ts:345-357: gate() only refuses request.answer for needs_device; for needs_yes it falls through to createPending (:362-395), which files an Inbox request of its own.",
+    "packages/commands/src/intent.ts:601-617, :634-636: the intent parser's title is the raw remainder of the line, sliced at 120 characters.",
+    "packages/memory/src/docs-search.ts:319-325: no filter for the scaffold's placeholder sections (packages/memory/src/docs.ts:45-80).",
+    "packages/commands/src/commands/session.ts:189-227 and packages/runtime/src/loop/commands.ts:632-652: the command port reports the scheduler's outcome only; nothing waits for the run like POST /sessions does (daemon/server.ts:1383-1396).",
+    "packages/runtime/src/conversation/agent.ts:1213, :448 and project-facts.ts:146: ids and raw stop reasons in the model's context; evals/registry/principals/conversation-agent.md:40 has no rule for request references."
+   ],
+   "fix_scope": "1. A typed answer to a card is read against the card's own choices: on a planned person card 'go ahead' is not Go ahead without; it is refused in words ('This card needs your answers: type them, or Cancel task') and the card stays open; the chat's request_answer gets the same refusal and says it. The specialist card keeps Go ahead without. 2. request.answer from chat or voice never files a second card: either the chat's own read-back and yes confirm it (nothing goes to the Inbox), or it is refused like needs_device with 'Answer it on its card in the Inbox'. Decide by design §3.8/§3.9, say which in the commit, test the plan card ('approve the plan') and a failed-task card ('try it again') with the option strings the Inbox shows. 3. matchAddTask/matchTask: drop a leading 'to', 'please', 'can you'; a title is cut at a word under 80 characters and the full line stays the outcome; the read-back shows the title. With a model available, a line that is more than a title goes to the model's task_create tool (title, outcome, criteria); the parser stays for installs without a model (U-047). 4. Doc search skips scaffold sections (export the placeholders from memory/src/docs.ts and test both sides). 5. The chat's session.start waits like POST /sessions (session.started, the run's error, or the same timeout), links the session, and says a run that failed before its session began as the failure. 6. Polish 6-11 above; #15 is a design-doc sentence only.",
+   "files": [
+    "packages/runtime/src/wiring/request-answers.ts (typed answers)",
+    "packages/runtime/src/session/person-questions.ts (the answer path only)",
+    "packages/runtime/src/daemon/request-words.ts (only if the refusal needs a sentence there)",
+    "packages/commands/src/executor.ts (gate for request.answer)",
+    "packages/commands/src/intent.ts (matchAddTask, matchTask)",
+    "packages/commands/src/commands/session.ts (session.start run wait; not undoBlocked, which is 'screens')",
+    "packages/runtime/src/loop/commands.ts (the start port's wait)",
+    "packages/runtime/src/conversation/ (agent.ts, project-facts.ts)",
+    "evals/registry/principals/conversation-agent.md",
+    "packages/memory/src/docs-search.ts, packages/memory/src/docs.ts (placeholder export only)",
+    "packages/runtime/src/wiring/state-ports.ts (DecisionLog only)",
+    "packages/runtime/src/session/live-chat.ts and runner.ts (heard path only, after phase C)",
+    "packages/runtime/test/ (live-chat, chat-steering, closeout-conversation, a restart case), apps/ui/test/real-daemon.test.ts and fake-daemon.ts (own describe block)",
+    "docs/design/core-experience.md §3.9 (the stop sentence only), docs/maintainers/*.md for touched modules"
+   ],
+   "acceptance": "Fresh bench (--provider bench --env FORERUNNER_BENCH_PERSON=1). The stand-in chat calls a command tool when told 'tool: <name> {json}' (testenv/src/bench/role-player.ts:812-833); the card's short reference is in the chat call's context (model-calls.jsonl) or GET /inbox. (a) Approve and start the plan; in Chat send 'tool: request_answer {\"request\": \"<ref>\", \"answer\": \"go ahead\"}' for the person task's card, and POST /requests/<id>/answer with the text 'go ahead' as the phone and the web approvals do: the card stays in Needs you, the reply says it needs answers or Cancel task, the task still reads 'Needs your answer'; answer through the form: it closes and the next task's brief (model-calls.jsonl) carries the answers. (b) Before approving, answer the plan card from chat (tool: request_answer with 'Approve and start'): the Inbox holds exactly one card about the plan (no 'approval' card), and after the chat's yes (or the refusal, per the decision) the plan is approved from its own card; same with a failed task (--env FORERUNNER_BENCH_FAIL=<title> FORERUNNER_BENCH_FAIL_TIMES=always) and answer its card from chat with 'Try again'. (c) Chat 'Add a task to write a README that explains how to open the page': Tasks shows a title without 'to', under 80 characters, cut at a word. (d) On a fresh small project chat 'what is next?': the chat call in model-calls.jsonl contains neither 'To be written' nor '- first task'. (e) Chat 'start a session': the reply links the running session. (f) Failing tests first; unit, real-daemon and restart cases; the full suite (pnpm check, test:integration, test:e2e, UI vitest, Playwright).",
+   "depends_on": [
+    "phase C merged (continuity and verification change request-answers.ts, person-questions.ts and runner.ts)"
+   ]
+  },
+  {
+   "key": "screens",
+   "title": "Screens that lead somewhere: a task's changed files open from its drawer, Changes says what Undo can do, Continue where it stopped continues only what stopped, no Continue without Claude, an ended session never 'waiting'",
+   "problems": [
+    "[real, major] later #46 (wave 3 not done; owner complaint 4): 'Task drawer live step lines and openable changed files.' The drawer lists 'Changed: index.html, script.js' as plain text (apps/ui/src/pages/project/TaskDrawer.tsx:213-241) and shows no step lines while the task runs. The Files tab already opens ?path=<file>, and the session page already reads task.step lines (SessionPage.tsx:49-72 currentFromLog). A person who opens a task cannot open what it wrote.",
+    "[real, minor] later #36 (live2 part 3 D3): 'Changes page: every row tagged 'undoable' incl. 'Cannot be undone now' rows; Undo on a start whose session ended.' The badge shows the stored undo_state (ChangesPage.tsx:210-212) while the button and 'Cannot be undone now: …' come from the view (:253-268; server.ts:2190-2197). session.start has no undoBlocked (commands/session.ts:230-254; session.pause has one at :440-447), so a 'Started a session…' row offers Undo after its session ended and the click then says it cannot (U-061: Undo is offered only when it would work).",
+    "[real, minor] later #60 (wave 3 review): 'Continue where it stopped starts a session on every project with runnable work, not only the ones that were stopped.' ShellBars.tsx:157-177 starts every project whose start check has runnable work: stopping one project and pressing it starts (and spends on) others.",
+    "[real, minor] later #62 (wave 3 review): 'Without a key, a project with ready tasks reads 'Ready to continue: 1 task ready [Continue]', yet Continue leads to a disabled Start.' project-status.ts:207-214 ignores hasModel (only the plan-failed and rejected lines read it, :218-230). Not true now on a key-less install (design §5 rule 4).",
+    "[real, minor] later #86 (wave 3 review): 'SessionPage shows 'Waiting for the first event…' for an ended session that has only detail events, e.g. the planning session.' SessionPage.tsx:445-448 does not look at ENDED.",
+    "[polish] later #90 (with #81 and #36's 'Said:'): Changes shows 'Set quiet hours from off to 12:00–18:00. Undo.' next to the Undo button, a 'Said:' line for clicks ('Said: \"Resume\"', 'Settings: Quiet hours to from 12:00 to 18:00'; ChangesPage.tsx:216-226 shows every wordsUsed, SettingsPage.tsx:407 and store/context.tsx:407 write button words), and 'Refused (validation):'. 'Said:' only for chat, voice, email and phone; never 'Undo.' as text (design §5 rule 6).",
+    "[polish] later #38 (sub-point): 'POST /sessions starts a session when nothing can run.' daemon/server.ts:1349-1381 checks only the month's money; the Start button is disabled by the start check, but Continue where it stopped, the phone and the API are not. Refuse with start-blocked.ts's sentence, as the chat's session.start already does (commands/session.ts:129-132).",
+    "[polish] later #65: 'no unit test of fileUnder/listProjectFiles with spaces, non-ASCII names or links (validation rule 5); Windows forms such as drive-relative paths and ADS colons are untested.' daemon/docs-routes.ts:138-155; the drawer's new file links go through them.",
+    "[polish] later #71: 'GET /projects now reads tasks, cards, the intake status and up to 10 000 events of a running session per project, and the UI re-reads it on every inbox.changed.' Measure with 20 projects on the bench; cap the event read only if it is slow."
+   ],
+   "u_entries": [
+    "U-041",
+    "U-047",
+    "U-059",
+    "U-061",
+    "U-071",
+    "U-074"
+   ],
+   "root_causes": [
+    "apps/ui/src/pages/project/TaskDrawer.tsx:213-241: the runs section renders r.files as joined text; no live task.step reader outside SessionPage.tsx:49-72.",
+    "apps/ui/src/pages/ChangesPage.tsx:210-212 badges row.undo_state; packages/commands/src/commands/session.ts:230-254 session.start defines undo but no undoBlocked.",
+    "apps/ui/src/shell/ShellBars.tsx:157-177: 'continue' is computed from runnable work, not from what the stop stopped.",
+    "packages/runtime/src/daemon/project-status.ts:207-214: the ready line has no no-model variant.",
+    "apps/ui/src/pages/SessionPage.tsx:445-448: the empty-log text is the live one for every status.",
+    "packages/runtime/src/daemon/server.ts:1349-1381: POST /sessions has no startBlocked check."
+   ],
+   "fix_scope": "1. Drawer: each changed file is a link to /projects/:id/files?path=<file> (encoded; a skipped or vanished file stays text, Files says why); while the task runs the drawer shows its last few step lines from the live session (move currentFromLog to apps/ui/src/lib and use it on both screens) with Open the session. 2. Changes: the badge comes from the view (Can be undone / Undone / Reverted / Cannot be undone), session.start gets undoBlocked (its session ended, from startUndoState), no Undo on rows that cannot be undone; 'Said:' only for words a person said. 3. Continue where it stopped starts only the projects whose sessions the stop stopped (record them with the kill, or read each project's last session stopped by Stop all since the kill); its explanation line says so. 4. Ready without a model: 'Ready: N tasks. Claude is not connected.' with Connect Claude (the CONNECT_CLAUDE action the plan-failed line uses). 5. An ended session with no person line says so ('Nothing to show here. Details has the internal steps.'), never 'Waiting'. 6. POST /sessions refuses with startBlocked's words (fake daemon and real-daemon case in the same commit). 7. Unit tests for fileUnder/listProjectFiles (spaces, non-ASCII, a link, 'C:x', 'a.txt:stream', a reserved name); measure GET /projects.",
+   "files": [
+    "apps/ui/src/pages/project/TaskDrawer.tsx (the runs section only; phase C owns review, cancel, budget and PR words there)",
+    "apps/ui/src/pages/SessionPage.tsx (the empty-log line and moving currentFromLog only)",
+    "apps/ui/src/lib/ (a shared step-line reader)",
+    "apps/ui/src/pages/ChangesPage.tsx",
+    "packages/runtime/src/daemon/views.ts (changeLogView only)",
+    "packages/runtime/src/daemon/server.ts (GET /changes and POST /sessions only)",
+    "packages/commands/src/commands/session.ts (session.start undoBlocked only)",
+    "packages/runtime/src/loop/commands.ts (startUndoState, only if undoBlocked needs it)",
+    "apps/ui/src/shell/ShellBars.tsx (StoppedBar only)",
+    "packages/runtime/src/enforcement/killswitch.ts, killfile.ts and POST /kill (daemon/server.ts:1578), only to remember which projects Stop all stopped",
+    "packages/runtime/src/daemon/project-status.ts (the ready line only)",
+    "apps/ui/src/pages/SettingsPage.tsx and apps/ui/src/store/context.tsx (wordsUsed only)",
+    "packages/runtime/src/daemon/docs-routes.ts (tests; a fix only if a test fails)",
+    "apps/ui/test/ (tasks, changes, session-page, shell tests), apps/ui/test/real-daemon.test.ts and fake-daemon.ts (own describe block)",
+    "docs/maintainers/apps.md rows for the drawer, Changes and the stopped bar; docs/user-guide.md"
+   ],
+   "acceptance": "Fresh bench (--provider bench). (a) Approve and start the smoke brief; open a Done task's drawer: each changed file is a link that opens the Files tab on that file; with --env FORERUNNER_BENCH_DELAY_MS=4000 open a running task's drawer: step lines appear and move on. (b) Changes: no 'undoable' badge on a row that cannot be undone; after its session ended the 'Started a session' row has no Undo button and says why; a Settings click shows no 'Said:'. (c) Two projects with ready tasks; start one; Stop all; Continue where it stopped: only that project gets a session (Home and the session list show it). (d) --provider none: a project with a ready task reads 'Claude is not connected' with Connect Claude, no Continue. (e) The planning session's page shows no 'Waiting for the first event…'. (f) POST /sessions on a project with nothing runnable answers the start check's sentence. Failing tests first; before/after screenshots; the full suite.",
+   "depends_on": [
+    "phase C merged (verification, continuity and github-result change TaskDrawer.tsx and server.ts)"
+   ]
+  },
+  {
+   "key": "noise",
+   "title": "Hear once, and find only your work in your folder: one notification per outcome, none for your own stop, no 'Lesson:' lines or scratch files in deliverables, the tester's and reviewer's outputs where they belong",
+   "problems": [
+    "[real, minor] later #95 (live4): ''Lesson:' lines leak into deliverables (report.md, evaluation.md); a scratch notes.md lands at the project root.' Every brief says 'End the report with one line per lesson worth keeping, as 'Lesson: ...'.' (packages/runtime/src/session/executor.ts:572); for a data-analyst or science-evaluator whose deliverable is a report file, 'the report' reads as that file; nothing says scratch notes stay out of the project.",
+    "[real, minor] later #87 (wave 3 review): 'The person hears three notifications about one failing task: the critic sent it back (attempt 3), failed 4 times, and needs your decision.' Design core-experience.md:270-271: 'The person hears once, not once per attempt.' compose.ts:2611-2616 notifies every critic escalation without a request of its own (each retry one rung up), :2560 the failed-task card (requestOpened), :2829-2850 the session end ('… failed 4 times and needs your decision').",
+    "[polish] later #88: 'The person's own stop still sends the notification 'Quote page: stopped by you' (§5.11, no echo).' kill.onStop skips by === 'you' (compose.ts:2571-2573, 31e2608) but the session-end notification goes for every end (compose.ts:2829-2850; producers.ts:169-190).",
+    "[polish] later #89: 'The notification body after a session can repeat the title's sentence when the result has one line' (producers.ts:176-184: the body is lines.slice(1) or lines[0], which the title already says).",
+    "[polish] later #80: 'The injection_flagged notification body (rule names, can exceed 140 characters) and session-review internal strings with '(s)'.' Keep ADR 0047's contract (release scenario 6 asserts it): shorten the rule list, not the facts; plainPlurals on the session-review strings.",
+    "[polish] later #100 (live B2): 'the tester left docs/testing.md as a stub'. The tester's registry entry (evals/registry/specialists/tester/specialist.md) never asks it to fill the Commands section when it adds tests; the stub is the scaffold's (memory/src/docs.ts:80), and the critic then raises doc drift.",
+    "[polish] later #96 (live4): 'the reviewer has no write_file but writes files through run_command (the tool limit means nothing).' Registry: cc:Read, cc:Bash, cc:Grep, cc:Glob, 'You never edit the code'; live4's reviewer wrote review.md with node -e. Decide in an ADR: the reviewer's findings are its report and Forerunner writes the file the task names, or the planner never gives a reviewer a 'write a file' outcome (validation rule 6). Do not pretend run_command is read-only."
+   ],
+   "u_entries": [
+    "U-072",
+    "U-074"
+   ],
+   "root_causes": [
+    "packages/runtime/src/session/executor.ts:572: 'the report' is ambiguous for specialists whose deliverable is a report; runner.ts:564 reads 'Lesson:' lines from the final report.",
+    "packages/runtime/src/daemon/compose.ts:2560, :2611-2616, :2829-2850: three independent notifiers for one outcome (card opened, escalation, session end) with no notion of 'already told'.",
+    "packages/runtime/src/notifications/producers.ts:169-190: sessionEnded has no case for the person's own stop; its body can repeat the title.",
+    "evals/registry/specialists/tester/specialist.md and reviewer/specialist.md: the tester is not asked for docs/testing.md; the reviewer's output contract has no file."
+   ],
+   "fix_scope": "1. The brief's lesson line: 'Lessons go only in your final message, never in a file; scratch notes stay outside the project or are removed before you finish' (that one constraint line; phase C areas own the other brief lines); the runner keeps reading lessons from the final message; a stand-in case writes report.md and shows no 'Lesson:' in it. 2. One notification per outcome: an escalation inside a session is not news; when the session opened a card, the card's notification is the one and the session end does not repeat it (or the reverse; one, by design §4.2 and §5.10); Stop all, Quit and budget stops stay urgent. 3. No session-end notification after the person's own stop (stop reason 'you'). 4. A body never repeats its title. 5. Items 5-7 above (ADR for the reviewer).",
+   "files": [
+    "packages/runtime/src/notifications/producers.ts",
+    "packages/runtime/src/daemon/compose.ts (notification wiring only: requestOpened, kill.onStop, escalate, sessionEnded)",
+    "packages/runtime/src/session/executor.ts (the 'Lesson:' constraint line only)",
+    "packages/runtime/src/session/runner.ts (lesson reading only, if needed)",
+    "evals/registry/specialists/tester/specialist.md, evals/registry/specialists/reviewer/specialist.md (and evals/registry/principals/project-manager.md only if the ADR says the planner changes)",
+    "testenv/src/bench/role-player.ts (a stand-in report file with Lesson lines; coordinate with 'bench', which owns the rest of the file)",
+    "docs/decisions/ (ADR for the reviewer's output, next free number at merge time)",
+    "packages/runtime/test/ (notifications, session-counts, executor brief tests)"
+   ],
+   "acceptance": "Fresh bench (--provider bench). (a) --env FORERUNNER_BENCH_FAIL=<task title> FORERUNNER_BENCH_FAIL_TIMES=always: after the session, GET /notifications/recent holds one notification about that task (not three). (b) Start a session and press Stop now on the session page: no session-end notification. (c) A session with a one-line result: the notification body does not repeat the title. (d) A data-analyst task with the stand-in writing report.md: no 'Lesson:' line in the file and no scratch file at the project root; the lesson still reaches memory. (e) The tester's brief or registry asks for docs/testing.md when it adds tests. Failing tests first; the full suite (release scenario 6 still passes).",
+   "depends_on": [
+    "phase C merged (executor.ts brief lines and runner.ts are phase C's)"
+   ]
+  },
+  {
+   "key": "bench",
+   "title": "The bench and the stand-ins tell the truth, so phase F can walk with them: Change the plan honoured, setup's restart supervised, the fake daemon split like the real one, the missing real-daemon cases, the weakened assertion restored",
+   "problems": [
+    "[polish] later #6: 'Bench stand-in ignores 'Change the plan' words (testenv/src/bench/plans.ts).' parseIntakeRequest (role-player.ts:291-302) reads Project, Goal, Plan size and the brief only; intakeProposal plans the same tasks whatever the person asked to change, so the Change the plan journey cannot be walked with the stand-in.",
+    "[polish] later #37 (gh1, live2 #13): 'finishing setup restarts the daemon (exit 86) and the bench has no supervisor; restart-daemon.mjs; README line.' daemon/restart.ts:14; scripts/bench/README.md:4 names restart-daemon.mjs but not this case.",
+    "[polish] later #101 (live B): 'intake.cjs:38 names every project 'Quote page HH:MM:SS' whatever the brief.'",
+    "[polish] later #85: 'The Reviews tab shows 'Accepted: 1 changed file match the brief.'' The stand-in critic's sentence (testenv/src/bench/role-player.ts:732, 'changed file(s) match').",
+    "[polish] later #39: 'The fake daemon calls eventAudience(type) without the payload' (apps/ui/test/fake-daemon.ts:6049), so the system-text marks (again, handedFrom, review, couldNot) never split the stand-in's log like the real daemon (validation rule 3).",
+    "[polish] later #64 and #84: no real-daemon case for ProjectCard.working while a session runs (only null, real-daemon.test.ts:1172), ProjectSummary.lastSession.changedFiles, GET /sessions/:id statusText 'Ended: N tasks need you', or GET /projects/:id/decisions 'plan' and 'record' entries (:1429 asserts 'answer' only); they are tested only against the fake (rule 3).",
+    "[polish] later #92: 'In the reviews.spec filter step, the assertion changed from toHaveCount(2) to 'the sent-back review is gone'. It no longer checks that the accepted review is shown.' apps/ui/e2e/reviews.spec.ts:24-25 (quality rule: never a weakened test).",
+    "[polish] later #16: 'Load-sensitive tests: real-daemon 'Stop on the running task' and capabilities browser.integration (120 s).' Make them wait on events, not time, if they flake during this phase's full runs."
+   ],
+   "u_entries": [
+    "U-008"
+   ],
+   "root_causes": [
+    "testenv/src/bench/role-player.ts:291-302 and plans.ts: the intake stand-in has no notion of a change request.",
+    "scripts/bench/start.mjs: no supervisor for the daemon's restart exit code 86.",
+    "apps/ui/test/fake-daemon.ts:6049: eventAudience called without its payload.",
+    "apps/ui/test/real-daemon.test.ts: routes covered only against the fake."
+   ],
+   "fix_scope": "1. The stand-in reads the change words the intake sends (the 'Change the plan' text in the request) and plans accordingly in a visible, deterministic way (e.g. a named task added or removed), documented in scripts/bench/README.md. 2. start.mjs restarts the daemon on exit 86 (the way the desktop shell does) and logs it; README line. 3. intake.cjs names the project from --brief when --project is not given. 4. The stand-in critic's sentences pass the writing rules (no '(s)'). 5. fake-daemon passes the payload to eventAudience. 6. Real-daemon cases for working, changedFiles, statusText 'Ended: …' and the decisions 'plan'/'record' entries. 7. reviews.spec asserts the accepted review is shown after the filter. 8. Load-sensitive tests wait on events, only if they flake.",
+   "files": [
+    "testenv/src/bench/ (plans.ts, role-player.ts; 'noise' adds only a stand-in report file there)",
+    "scripts/bench/ (start.mjs, README.md, journeys/intake.cjs)",
+    "apps/ui/test/fake-daemon.ts (the eventAudience call only)",
+    "apps/ui/test/real-daemon.test.ts (own describe block)",
+    "apps/ui/e2e/reviews.spec.ts",
+    "packages/capabilities/test/browser.integration.test.ts (only if flaky)",
+    "docs/maintainers/testing.md (the bench section)"
+   ],
+   "acceptance": "Fresh bench (--provider bench). (a) New project from a brief; on the plan card press Change the plan, type 'drop the check and add a README task': the new plan card shows the change. (b) On a fresh bench whose setup was never finished, go through the setup assistant to Start using Forerunner: the daemon comes back by itself, the UI reconnects, daemon.log says it restarted. (c) node scripts/bench/journeys/intake.cjs <n> --brief 'A todo list' names the project after the brief. (d) The Reviews tab shows no 'file match'. (e) The new real-daemon cases pass and fail when the daemon's field is removed (mutation check by hand). Full suite.",
+   "depends_on": [
+    "phase C merged (verification changes testenv/src/bench/role-player.ts and scripts/bench/README.md)"
+   ]
+  },
+  {
+   "key": "polish",
+   "title": "Small words and layout, batched: one sentence a person reads at a glance (design §5), CHF everywhere, no tier words left in Settings, one button per action",
+   "problems": [
+    "[polish] later #53, #54 (#52): 'The 'Done: all N tasks. Your files: <path>' sentence carries the full workspace path, including the project UUID … about 130 characters'; 'The done state's button is 'Open Files'; the design says [Open folder].' project-status.ts:232-240. Say 'Done: all N tasks.' with the files action, and leave the path to Your files (FolderPath).",
+    "[polish] later #55: 'The status-sentence 'Answer' links to /inbox; Home's Needs you lines link to /inbox#card-<id>.' project-status.ts:153-162: link the oldest card.",
+    "[polish] later #56: 'When tasks are ready the project header has two buttons that open the same Start dialog ('Continue' in the status and 'Start session').' ProjectState.tsx:99 and ProjectPage.tsx:131-138: keep one.",
+    "[polish] later #57: 'Project tab links keep the whole query: /files?path=script.js → Tasks gives /tasks?path=script.js.' ProjectPage.tsx:94: keep only the Tasks filters.",
+    "[polish] later #59: 'The command palette's 'Stop all sessions' still stops without asking once (Shell.tsx toggleKill).' Shell.tsx:100-116; commands.ts:133-138 also lists it while nothing runs and calls the other state 'Resume all sessions' where the header says Allow sessions again (design §3.1).",
+    "[polish] later #61: 'Opening a project from Home now switches the active project, which writes a Changes entry.' store/context.tsx:407 ('Switch project: …'): noise in Changes.",
+    "[polish] later #63: 'The no-key bar also shows on /setup itself, where its Connect points to the same page.' ShellBars.tsx:222-240.",
+    "[polish] later #66: 'The session title uses the browser's locale time ('12:01 AM'); the design example is 24-hour ('14:05').' SessionPage.tsx:33-39.",
+    "[polish] later #48 (second half) and #69: the Start dialog says '… continues with up to N more as they become ready' for tasks ready now (StartSessionDialog.tsx:85-97 counts runnable and later together), and its stuck lines print raw statuses '(ready)', '(draft)', '(failed)', '(cancelled)' (waitsOnText, :41-57). The budget sentence is phase C continuity's (38e6ee6).",
+    "[polish] later #74: ''Who does it' shows \"Agent's choice\" while the cap line says '(coder limit)'.' TasksTab.tsx:79-87 (specialist ?? 'coder'). The drawer's Docker line ('… or edit to a light review', task-words.ts:315) is phase C verification's (owner decision 4).",
+    "[polish] later #94: 'withoutIds … also strips any parenthesis that starts with 'run ', 'task ', 'session ' or 'request ' (e.g. '(run node --check)').' task-words.ts:90-99: match ids only.",
+    "[polish] later #43 (#51, #68; #38): ''0 means no cap' for money fields (design §6)'. budget.set refuses 0 for every scope (packages/commands/src/commands/budget.ts:127-128) and Settings refuses it in words (SettingsPage.tsx:186-193) while core-experience.md:392 says '0 is explained (\"0 means no cap\")'. Accept 0 for a task's and a project's budget (none); the monthly cap is a limit enforced in code: keep it positive and say so, unless the owner decides otherwise (AGENTS.md: a choice about what a person sees goes to the owner).",
+    "[polish] later #30, #99, #38 (Settings): raw JSON 'Set the monthly critic calibration from unset to {\"enabled\":false,…}' (commands/settings.ts:311-326 has no display; show() :396-399 JSON.stringify); the calibration row 'up to USD 10, review tier 1' (SettingsFields.tsx:160; settings-view.ts:123); model rows 'review tier 1' / 'review tiers 2 and 3' (ModelSettingsSection.tsx:66-67); small-project mode 'critic tier 0' (settings-view.ts:196); the monthly cap 'high' risk in the table vs 'medium risk' on its card (settings-view.ts:78 vs riskFor); 'No Claude credential is saved yet' under Claude: which to use first when the key comes from the environment (BillingOrderSection.tsx:133-137). Use the review names phase C verification settles on; CHF, never USD.",
+    "[polish] later #28, #99: the default monthly cap reads CHF 150.40 while setup says 'CHF 150 a month' (daemon/compose.ts:1283 stores round(150/0.8) = 188 USD; settings-view.ts:42-48 converts back at the day's rate: store the CHF figure beside it as budget.set does); reopening setup mid-way restarts at Welcome (SetupPage.tsx:257).",
+    "[polish] later #30: 'intake 42 s with only 'Drafting…''. IntakeBanner.tsx:90: say it usually takes about a minute.",
+    "[polish] later #79: 'Decision questions are kept as the card asked them ('Where should the page be published: GitHub Pages, Netlify, or only as a local file?'), not reworded as in the design's example ('Where is the page published?').' core-experience.md:345-349. Without a model call: drop the options after the colon when the answer names one of them.",
+    "[polish] later #91: 'The specialist names Costs shows ('writer-marketing', 'designer') differ from the log's 'the writer'. By model mixes the critic's runs into 'Accepted 3 / 16'.' CostsTab.tsx:106-107.",
+    "[polish] later #40: 'docs/maintainers/apps.md: the summary tab row … still describes the old typed and prioritised 'Next session' queue form.' apps.md:97 (the project-page row :96 is right)."
+   ],
+   "u_entries": [
+    "U-030",
+    "U-047",
+    "U-074",
+    "U-077"
+   ],
+   "root_causes": [
+    "packages/runtime/src/daemon/project-status.ts:153-162, :232-240: the done and waiting lines (path in the sentence, Open Files, Answer to /inbox).",
+    "apps/ui/src/pages/ProjectPage.tsx:94, :131-138; apps/ui/src/components/ProjectState.tsx:99: two start buttons, tab links with the whole query.",
+    "apps/ui/src/shell/Shell.tsx:100-116, shell/commands.ts:133-138, ShellBars.tsx:222-240: the palette's Stop all and the no-key bar on /setup.",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:41-57, :85-97: raw statuses and 'as they become ready'.",
+    "packages/commands/src/commands/settings.ts:311-326, :396-399; apps/ui/src/pages/SettingsFields.tsx:160; ModelSettingsSection.tsx:66-67; packages/runtime/src/daemon/settings-view.ts:42-48, :78, :123, :196; packages/runtime/src/daemon/compose.ts:1283: Settings words and the default cap.",
+    "packages/runtime/src/daemon/task-words.ts:90-99: the IDS pattern's first branch."
+   ],
+   "fix_scope": "One commit per screen, each wording asserted at the boundary (a UI test of the visible text; a real-daemon case for daemon texts; the fake daemon in the same commit). No new sentences beyond what design §5 allows; every sentence true now, CHF only, no ids, no tier words. Settings review names follow phase C verification's ADR. '0 means no cap': accept 0 for task and project budgets; the monthly cap's 0 only if the owner decides (record the question in the U-entry).",
+   "files": [
+    "packages/runtime/src/daemon/project-status.ts (the done and waiting lines; 'screens' owns the ready line)",
+    "apps/ui/src/pages/ProjectPage.tsx, apps/ui/src/components/ProjectState.tsx",
+    "apps/ui/src/shell/Shell.tsx, apps/ui/src/shell/commands.ts, apps/ui/src/shell/ShellBars.tsx (NoKeyBar only; 'screens' owns StoppedBar)",
+    "apps/ui/src/store/context.tsx (the switch-project words)",
+    "apps/ui/src/pages/SessionPage.tsx (startedAtWords only)",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx (planSentence and waitsOnText only; phase C continuity owns the budget lines)",
+    "apps/ui/src/pages/project/TasksTab.tsx (TaskCap only)",
+    "packages/runtime/src/daemon/task-words.ts (IDS only)",
+    "packages/commands/src/commands/budget.ts, packages/commands/src/commands/settings.ts (display for calibration and model_watch)",
+    "apps/ui/src/pages/SettingsPage.tsx, SettingsFields.tsx, ModelSettingsSection.tsx, BillingOrderSection.tsx, SetupPage.tsx",
+    "packages/runtime/src/daemon/settings-view.ts, packages/runtime/src/daemon/compose.ts (the first human's cap only)",
+    "apps/ui/src/pages/project/IntakeBanner.tsx, apps/ui/src/pages/project/DecisionsSection.tsx and packages/runtime/src/daemon/decision-views.ts, apps/ui/src/pages/project/CostsTab.tsx",
+    "docs/maintainers/apps.md, docs/user-guide.md, CHANGELOG.md [Unreleased]"
+   ],
+   "acceptance": "Fresh bench (--provider bench), before/after screenshots of each screen: a finished project's header fits on one line with no path or UUID and a files action; the status Answer opens the card; one start button; Tasks after Files has no ?path=; the palette lists Stop all only while something runs and asks once; opening a project from Home writes nothing to Changes; /setup has no no-key bar; the session title is 24-hour; the Start dialog with two ready tasks says '… and 1 more' without 'as they become ready' and no raw status in parentheses; Settings shows no JSON, no 'tier', no USD, the default cap CHF 150.00; a task budget of 0 is accepted and reads 'no budget'; the intake banner says how long it takes; a decision reads as a short question; Costs uses the log's names. The writing-rules test (system-text's, 4a8ec47) extended to the new texts; the full suite.",
+   "depends_on": [
+    "screens",
+    "phase C merged (verification's review names; continuity's StartSessionDialog.tsx and task-words.ts)"
+   ]
+  }
+ ],
+ "parallel_groups": [
+  [
+   "answers",
+   "screens"
+  ],
+  [
+   "noise",
+   "bench"
+  ],
+  [
+   "polish"
+  ]
+ ],
+ "shared_files": [
+  "apps/ui/test/fake-daemon.ts and apps/ui/test/real-daemon.test.ts: every area adds its own describe block; 'bench' owns the eventAudience call (fake-daemon.ts:6049) and the missing real-daemon cases for routes no other area changes.",
+  "packages/commands/src/commands/session.ts: 'answers' owns session.start's run (the wait for the session, :189-227); 'screens' owns session.start's new undoBlocked (next to its undo, :230-254). Separate hunks; group 1 runs them in parallel.",
+  "packages/runtime/src/daemon/server.ts: 'screens' owns GET /changes, POST /sessions and POST /kill (only to remember what Stop all stopped); nobody else in E changes server.ts.",
+  "packages/runtime/src/loop/commands.ts: 'answers' owns the start port's wait for the run; 'screens' may read startUndoState for session.start's undoBlocked without changing it.",
+  "packages/runtime/src/daemon/compose.ts: 'answers' owns the conversation agent's startSession port if it changes (:3208); 'noise' owns the notification wiring (:2560, :2571-2616, :2829-2850); 'polish' owns the first human's monthly cap (:1283).",
+  "packages/runtime/src/daemon/project-status.ts: 'screens' owns the ready line (:207-214); 'polish' owns the done and waiting lines (:153-162, :232-240) and runs after 'screens'.",
+  "apps/ui/src/shell/ShellBars.tsx: 'screens' owns StoppedBar (:148-210); 'polish' owns NoKeyBar (:222-240) and Shell.tsx/commands.ts (the palette).",
+  "apps/ui/src/pages/SessionPage.tsx: 'screens' owns the empty-log line and moves currentFromLog to apps/ui/src/lib; 'polish' owns startedAtWords only.",
+  "apps/ui/src/pages/SettingsPage.tsx and apps/ui/src/store/context.tsx: 'screens' changes only the wordsUsed a click sends (for 'Said:'); 'polish' owns the money words and the rest of Settings.",
+  "apps/ui/src/pages/project/TaskDrawer.tsx: phase C owns the review, cancel, budget and PR words; 'screens' owns the runs section (file links, step lines).",
+  "apps/ui/src/pages/project/StartSessionDialog.tsx: phase C continuity owns the budget lines (38e6ee6); 'polish' owns planSentence and waitsOnText.",
+  "packages/runtime/src/session/executor.ts: phase C owns the brief's lines about checking, git and web routing; 'noise' changes only the 'Lesson:' constraint (:572).",
+  "packages/runtime/src/session/runner.ts: phase C owns the review, cancel and budget paths; 'answers' may remove the dead heard-line path (:1224, :1331-1391, :2833) only after phase C is merged; 'noise' touches lesson reading only if needed.",
+  "testenv/src/bench/role-player.ts: 'bench' owns it; 'noise' adds one stand-in report case and says so in notes_for_other_areas.",
+  "docs/decisions: take the next free ADR number at merge time (phase C takes at least one); if two areas take the same number, the merge renumbers one.",
+  "docs/maintainers/apps.md and docs/user-guide.md: each area edits its own rows; 'polish' fixes the stale `summary` row (:97)."
+ ],
+ "triage": [
+  {
+   "n": 0,
+   "item": "One-line brief → small plan of 1-3 tasks (planning prompt; needs a real model to check).",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "c351271 (intake: a short brief asks for a small plan); live3 report: 4 of 4 one-line briefs got a 2-task plan on the first call",
+   "note": "docs/status/handoff/round-2026-11-01/live-reports/live3-phaseB-confirmation.md"
+  },
+  {
+   "n": 1,
+   "item": "Chat 'yes' on a medium-risk card may still file the executor's pending yes/no card beside the original (needs_yes path) — check after the merge.",
+   "decision": "real",
+   "area": "answers",
+   "evidence": "packages/commands/src/executor.ts:345-357 (gate: request.answer is short-circuited only for needs_device), :362-395 (createPending inserts a second Inbox request)",
+   "note": "Still present: a medium-risk card (plan card intake.ts:1208, failed-run card runner.ts:1058, findings.ts:304,374) answered from chat gets needs_yes and a second yes/no card."
+  },
+  {
+   "n": 2,
+   "item": "Mobile Inbox (apps/ui/src/mobile) still uses why/options, blocking count, reply box; phone Reviews 'Approve' maps to Mark done anyway without the ADR 0102 confirmation.",
+   "decision": "out_of_scope",
+   "area": null,
+   "evidence": "phone (phase H, after G2; NEXT-SESSION.md 'H. The phone, last')",
+   "note": "Mobile Inbox and phone Reviews Approve are phase H's known gaps."
+  },
+  {
+   "n": 3,
+   "item": "A free-text 'go ahead' on a planned person card closes the task although the card offers no Go ahead without.",
+   "decision": "real",
+   "area": "answers",
+   "evidence": "packages/runtime/src/wiring/request-answers.ts:206; packages/runtime/src/session/person-questions.ts:652-668; packages/runtime/src/daemon/request-words.ts:287-311",
+   "note": "Still present: typed 'go ahead' is read as Go ahead without for every questions card; on a planned person card (on_answer 'done') the task closes with no answers."
+  },
+  {
+   "n": 4,
+   "item": "Closing a high-risk Settings preview with x leaves an approval card (SettingsPage).",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "c5cbb69 (closing the change dialog while its change waits answers it 'no'; settings-money.test.tsx)",
+   "note": "The restart half (two monthly-cap cards that contradict after a restart) is phase C continuity's re-check."
+  },
+  {
+   "n": 5,
+   "item": "Approving an extension from a URL answers 503 and the panel and Inbox disagree (extensions).",
+   "decision": "out_of_scope",
+   "area": null,
+   "evidence": "extensions (NEXT-SESSION.md out-of-scope list)"
+  },
+  {
+   "n": 6,
+   "item": "Bench stand-in ignores 'Change the plan' words (testenv/src/bench/plans.ts).",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "testenv/src/bench/role-player.ts:291-302 (parseIntakeRequest reads Project, Goal, Plan size, brief only); testenv/src/bench/plans.ts (intakeProposal ignores change words)",
+   "note": "Still present; needed so phase F can walk Change the plan with the stand-in."
+  },
+  {
+   "n": 7,
+   "item": "session.start does not wait for the run to begin.",
+   "decision": "real",
+   "area": "answers",
+   "evidence": "packages/commands/src/commands/session.ts:189-227; packages/runtime/src/loop/commands.ts:632-652 ('the session id is never known synchronously'); contrast packages/runtime/src/daemon/server.ts:1346-1396 (POST /sessions waits)",
+   "note": "Still present: the chat's start answers before its run begins, so it cannot link the session and says 'started' for a run that fails before its session begins."
+  },
+  {
+   "n": 8,
+   "item": "Talk shows 'Reply: Voice' and the Talk button before voice is known to be unavailable (U-075 second half).",
+   "decision": "out_of_scope",
+   "area": null,
+   "evidence": "voice (U-075 second half; NEXT-SESSION.md out-of-scope list)"
+  },
+  {
+   "n": 9,
+   "item": "Doc search returns template text ('- first task', 'To be written.') (packages/memory).",
+   "decision": "real",
+   "area": "answers",
+   "evidence": "packages/memory/src/docs-search.ts:319-325, :356-357; packages/memory/src/docs.ts:45-80 (templates)",
+   "note": "Still present: scaffold sections ('To be written.', '## Next - first task') are searchable and reach the chat's context."
+  },
+  {
+   "n": 10,
+   "item": "Runner's legacy heard-line path unused by chat.",
+   "decision": "polish",
+   "area": "answers",
+   "evidence": "packages/runtime/src/session/live-chat.ts; runner.ts:1224, :1331-1391, :2833 (recheckInbox, heardLineOf); heardMessageBody is used only by tests",
+   "note": "Dead path since wave 2 removed forwarding; remove only after phase C merged runner.ts, no behaviour change."
+  },
+  {
+   "n": 11,
+   "item": "Voice bridge passes the project without projectTab.",
+   "decision": "out_of_scope",
+   "area": null,
+   "evidence": "voice (NEXT-SESSION.md out-of-scope list)"
+  },
+  {
+   "n": 12,
+   "item": "The agent finds its waiting card only within the last 12 turns while GET /conversation shows 100: after a restart an older card shows Yes/No the agent cannot answer.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "4e66881 / 715f3eb: the chat reads TRANSCRIPT_SHOW_LIMIT (100) turns, the same as GET /projects/:id/conversation (conversation/transcript.ts:55, agent.ts:525-527, pendingOf agent.ts:991-1015)"
+  },
+  {
+   "n": 13,
+   "item": "Chat 'resume' not tested across a daemon restart.",
+   "decision": "polish",
+   "area": "answers",
+   "evidence": "packages/runtime/test/chat-steering.test.ts:180-205 (one process only); kill-resume-restart.test.ts has no chat path",
+   "note": "Test gap, validation rule 4 (a Resume is tested after a restart)."
+  },
+  {
+   "n": 14,
+   "item": "live-chat.test.ts: two assertions loosened to toHaveLength(1); restore the precise { sessionId } scope and the completed status.",
+   "decision": "polish",
+   "area": "answers",
+   "evidence": "packages/runtime/test/live-chat.test.ts:348 and :373 (expect(w.kills).toHaveLength(1), loosened in 715f3eb)",
+   "note": "Quality rule: never a weakened test. Restore the precise scope and the completed status."
+  },
+  {
+   "n": 15,
+   "item": "'stop everything' acts at once without a read-back (design §3.1 says ask once; acting at once is the safe direction).",
+   "decision": "polish",
+   "area": "answers",
+   "evidence": "packages/runtime/src/conversation/agent.ts:595-600 (spec O.9 'stopping is immediate'); docs/design/core-experience.md:74 (Stop all asks once)",
+   "note": "Acting at once is the safe direction; write the rule into design §3.9 so the design and the spec agree."
+  },
+  {
+   "n": 16,
+   "item": "Load-sensitive tests: real-daemon 'Stop on the running task' and capabilities browser.integration (120 s).",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "apps/ui/test/real-daemon.test.ts:2019; packages/capabilities/test/browser.integration.test.ts",
+   "note": "CI has been green since (27014b7, 7765efd); fix only if they flake during this phase's full runs."
+  },
+  {
+   "n": 17,
+   "item": "live1 (real model): the critic contradicts itself ('I count 29 entries… which leaves 30') and only reads the diff, runs nothing; its 3 findings show as '0 open' and are not followed up (critic prompt / findings). Needs a live check.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'verification' (problem 'live1 #6: the critic contradicts itself … only reads the diff')"
+  },
+  {
+   "n": 18,
+   "item": "live1: a person task (the plan's 'Human decisions…' questions card) is not counted as needing the person: session summary and session.ended event say '0 need you', the Summary tab says '0 open questions' while 5 questions wait in the Inbox.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "4376331 (the Overview lists this project's open Inbox cards under Needs you; no '0 open questions' anywhere: ProjectSummary.openQuestions is no longer shown); session result per design §5.10 (one place per fact)",
+   "note": "Residual, not shown to a person: summary_cache.open_questions (runner.ts:2239) counts only this session's moves. Counts that disagree with the Inbox are phase C continuity's."
+  },
+  {
+   "n": 19,
+   "item": "live1: Tasks tab shows 'CHF 0.00 of CHF 0.32 budget' on a task, where 0.32 is the project's spend (wrong field).",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "Correct field on current code: apps/ui/src/pages/project/TasksTab.tsx:69-77 shows task.budget = the task's own budget_usd_micro (views.ts:316; U-042, 470a508); the intake's plan may give a task a budget (project-plan.ts:118, :555)",
+   "note": "The live1 helper's 'project spend' reading was not reproduced in the code."
+  },
+  {
+   "n": 20,
+   "item": "live1: setup Done step says 'Until Claude is connected your agent cannot start work' although a key is present (check whether this is bench-only).",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "db4d16a (setup: the Done step says 'cannot start work' only without a Claude key); 7953cf5 (test)"
+  },
+  {
+   "n": 21,
+   "item": "live2 MAJOR (real model): answers to a person task never reach the dependent task's brief; the coder asked the same 7 questions again. task-context.ts:156-168 'Done before this task' uses dep.outcome (the planning-time promise). Put the question→answer pairs (or a pointer to them) in the dependent task's brief. See /tmp/frbench/live2-report.md #3.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'continuity' (live2 #3; commit 887a244 on fix/continuity)"
+  },
+  {
+   "n": 22,
+   "item": "live2 MAJOR (real model): the intake put every coding task at tier 0 ('Checks only'); no checks ran (no test command), so tasks became Done on a self-report 'nothing here has been tested' and the session review said 'accepted (grade 100)'. The coder's prompt says 'the critic checks each' — false at tier 0. Intake guidance or default tier 1 for coder tasks with criteria, or run criteria as checks at tier 0; never tell the specialist a critic checks when none will. #5.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'verification' (live2 #5, owner decision on proportional verification)"
+  },
+  {
+   "n": 23,
+   "item": "live2 MAJOR: no screen says where the project folder is and chat can't say (it said 'the folder you already set up', false). Path + 'Open folder' on the Summary; give chat the workspace path. #7.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'github-result' (live2 #7: the chat's context must carry the folder); the screen half was fixed by 1a112ff/4376331 (FolderPath, Open folder, Files tab)"
+  },
+  {
+   "n": 24,
+   "item": "live2 MINOR: the intake asks the person where files should live and whether to use git; the app decides both. Intake prompt should say so. #14.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'github-result' (live2 #14, the intake's folder/git question)"
+  },
+  {
+   "n": 25,
+   "item": "live2 MINOR: chat 'Please add a task: …' via the intent parser makes a title of the raw sentence cut at 80 chars and a generic criterion the critic marks met. #8.",
+   "decision": "duplicate",
+   "area": "answers",
+   "evidence": "duplicate of #34 (chat-added task title); its generic-criterion half is phase C 'verification' (live2 #8, executor.ts:577-579)"
+  },
+  {
+   "n": 26,
+   "item": "live2 MINOR: the critic gets only the diff and cannot confirm claims about other files; give it read access around the diff. #9.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'verification' (the critic reads the project, not only the diff)"
+  },
+  {
+   "n": 27,
+   "item": "live2 MINOR: Reviews tab mostly mechanical 'Session review' rows with jargon; a session that stopped to ask shows '85 / 100 sent back' with an open finding. #11.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "bb1afc3 (Reviews: the session self-checks folded under 'Session checks (N)', reviews in words; ReviewsTab.tsx:281)"
+  },
+  {
+   "n": 28,
+   "item": "live2 MINOR: setup: 'Until Claude is connected…' under '✓ Claude is connected.'; CHF 150 vs 150.40; reopening mid-setup restarts at Welcome. #13.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "'Until Claude is connected' fixed by db4d16a; still present: CHF 150.40 vs setup's CHF 150 (daemon/compose.ts:1283 stores round(150/0.8) USD; settings-view.ts:42-48 converts back at the day's rate) and setup restarting at Welcome (SetupPage.tsx:257)"
+  },
+  {
+   "n": 29,
+   "item": "live2 MINOR: workspace git: only 'Workspace before <task>' snapshots; the last task's files and docs/status.md stay uncommitted after done. #15.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'github-result' (live2 #15 / live B: the last task's work is never committed)"
+  },
+  {
+   "n": 30,
+   "item": "live2 POLISH: 'Spend vs budget CHF 0.44 of no cap' with a monthly cap set; raw JSON in messages ('Set the monthly critic calibration from unset to {\"enabled\":false,…}'); plan card mixes keys and titles ('after owner-content, site-skeleton'); intake 42 s with only 'Drafting…'. #16-17.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "Fixed: 'Spend vs budget … of no cap' (no longer on the desktop project page, 4376331), plan card dependencies by title (InboxPage.tsx:294-319, 7173244/2191ccb). Still present: raw JSON in the calibration change sentence (packages/commands/src/commands/settings.ts:311-326 has no display, show() :396-399), intake wait with only 'Drafting…' (IntakeBanner.tsx:90)"
+  },
+  {
+   "n": 31,
+   "item": "live2 RE-CHECK on current code (walked pre-wave-2 code): chat without history/tasks (#4), ids in chat (#10), answer→continue inconsistent (#6), duplicate monthly-cap cards contradicting after a restart + Settings table stale until reload (#12), calibration defaulting on for day 1 (check SE2).",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'continuity' re-check (live2 #6 answer→continue, #12 monthly-cap cards and stale Settings table)",
+   "note": "Other parts: #4 chat without history/tasks fixed by 715f3eb; #10 ids in chat is #76 (answers, polish); calibration on day 1 fixed in wave 1 (Scheduler treats a monthly schedule first seen on its due day as fired; ADR 0102)."
+  },
+  {
+   "n": 32,
+   "item": "live2 part3 P-a1 MINOR: Settings → Accounts and keys never says a key is saved or working.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "d052e24 (Settings → Basics → Accounts and keys: 'Claude: connected (API key)', SettingsPage.tsx:835-880)"
+  },
+  {
+   "n": 33,
+   "item": "live2 part3 B3 MINOR: Start dialog budget sentence compares an item's estimate with the work budget although it means the running total; estimates ignore the task's own budget.",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'continuity' (live2 part 3 B3; commit 38e6ee6 on fix/continuity)"
+  },
+  {
+   "n": 34,
+   "item": "live2 part3 C2/C3 MINOR: chat-added task title keeps 'to …', no criteria, 'Agent's choice'; chat start card 'Estimated CHF 5.00' is the budget.",
+   "decision": "real",
+   "area": "answers",
+   "evidence": "packages/commands/src/intent.ts:601-617 (matchAddTask), :634-636 (Make this a task)",
+   "note": "Still present: the title is the raw rest of the line ('to write a README…'), cut at 120 characters, no criteria, no specialist. The chat start card's 'Estimated CHF 5.00' half was fixed by f8135ff (one figure on the card, Conversation.tsx:382-388)."
+  },
+  {
+   "n": 35,
+   "item": "live2 part3 D1 MINOR: session page: raw-id title, [Stop now] on a finished session, raw markdown and event names in the timeline, critic line cut mid-word, jargon 'inbox.message…', 'session.end_inbox…' (check what wave 3 already fixed).",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "4376331 (title 'Quote page · session at 14:05', no Stop now on an ended session, SessionPage.tsx:253-310); bb1afc3 (person lines, event names and jargon under Details, critic line cut at a word); 5b2798a (markdown rendered)"
+  },
+  {
+   "n": 36,
+   "item": "live2 part3 D3 MINOR: Changes page: every row tagged 'undoable' incl. 'Cannot be undone now' rows; Undo on a start whose session ended; invented 'Said:' for UI actions.",
+   "decision": "real",
+   "area": "screens",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:210-212 (badge = undo_state), :253-268; packages/runtime/src/daemon/server.ts:2190-2197; packages/commands/src/commands/session.ts:230-254 (session.start has no undoBlocked; session.pause has one at :440-447)",
+   "note": "The 'Said:' half is #90 (screens, polish)."
+  },
+  {
+   "n": 37,
+   "item": "gh1 bench: finishing setup restarts the daemon (exit 86) and the bench has no supervisor; restart-daemon.mjs; README line (also live2 #13).",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "packages/runtime/src/daemon/restart.ts:14 (exit 86); scripts/bench/README.md:4 (restart-daemon.mjs, nothing about setup's restart)"
+  },
+  {
+   "n": 38,
+   "item": "Nothing is broken on the merged branch. These are leftovers carried from the areas' reports for the leftovers sweep: '0 means no cap' needs budget.set to accept 0; the 'Done: … Your files: <path with UUID>' sentence is long; Settings Advanced model rows still say 'review tier 1' and calibration says 'USD 10, tier 1'; the task drawer still repeats findings and has no live step lines; chat model context still carries ids; U-044 (task.started names the planned specialist, and retry alternates are not chosen by task kind); POST /sessions starts a session when nothing can run; the person hears thre",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "Composite. Duplicates: '0 means no cap' #43, long Done sentence #53, drawer findings #73 (already fixed), drawer step lines #46, chat context ids #76, U-044 #75 (phase C), three notifications #87. Unique and still present: Settings Advanced 'review tier 1' / 'up to USD 10, review tier 1' (ModelSettingsSection.tsx:66-67, SettingsFields.tsx:160, settings-view.ts:123) → polish; POST /sessions starts a session when nothing can run (server.ts:1349-1381) → screens (polish)"
+  },
+  {
+   "n": 39,
+   "item": "The fake daemon calls eventAudience(type) without the payload, so the system-text fixup's payload marks (again, handedFrom, review, couldNot) are not exercised by the stand-in. Its scripted events carry no such marks, so nothing differs today. Making it fully faithful is a one-line change for the leftovers sweep.",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "apps/ui/test/fake-daemon.ts:6049 (eventAudience(type) without the payload)"
+  },
+  {
+   "n": 40,
+   "item": "docs/maintainers/apps.md: the `summary` tab row (system-text's version, unchanged by progress-navigation) still describes the old typed and prioritised 'Next session' queue form. The project-page row above it correctly describes the one 'Note for the next session' box. This is a small stale sentence for the docs sweep.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "docs/maintainers/apps.md:97 (the `summary` tab row still describes the typed, prioritised 'Next session' queue form; :96 is right)"
+  },
+  {
+   "n": 41,
+   "item": "Windows CI has not run on this merge yet. The new tests were written by the areas; the two session tests I changed wait on events and counts, not on real time.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "CI green on Windows and Linux at 27014b7 (wave 3) and 7765efd (live fixes), NEXT-SESSION.md status of 2026-11-02"
+  },
+  {
+   "n": 42,
+   "item": "wave3 progress-navigation not done: Settings Basics view with a collapsed Advanced (design §6, fix_scope 8): names, Claude, GitHub, budget per session, monthly cap, default autonomy by name, quiet hours, Docker status first; one named autonomy control; dead rows hidden. (Scope: the restructure of the 947-line SettingsPage (and its ~10 test files) could not be finished well in this run after the blockers and majors; the money inputs and the preview fix (the walk's conc)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "d052e24 (Settings opens on Basics; the rest under a collapsed Advanced; autonomy by name)"
+  },
+  {
+   "n": 43,
+   "item": "wave3 progress-navigation not done: '0 means no cap' for money fields (design §6). (budget.set (packages/commands/src/commands/budget.ts, owned by system-text this wave) requires amountChf > 0 for every scope; accepting 0 for the project budget needs that schema change. The UI refuse)",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "packages/commands/src/commands/budget.ts:127-128 (amountChf/amountUsdMicro positive); apps/ui/src/pages/SettingsPage.tsx:186-193 (0 refused in words); design core-experience.md:392 ('0 means no cap')"
+  },
+  {
+   "n": 44,
+   "item": "wave3 progress-navigation not done: Session page person-level lines vs Details (design §3.7, §5). (Partially done: event type names, #seq, level chips and raw payloads are behind Details. The per-event level (person or detail) and rewording of the lines themselves are system-text's (views.ts descri)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "bb1afc3 (event-audience.ts: person lines vs Details; SessionPage.tsx:186-199) and 1128f18 (tests)"
+  },
+  {
+   "n": 45,
+   "item": "wave3 progress-navigation not done: Reviews tab honours ?review= (handoff item). (In system-text's fix_scope item 4 (Reviews) this wave; ReviewsTab.tsx is their file.)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "bb1afc3 (ReviewsTab.tsx:193-198: ?review=<id> highlighted and scrolled to)"
+  },
+  {
+   "n": 46,
+   "item": "wave3 progress-navigation not done: Task drawer live step lines and openable changed files (handoff item). (TaskDrawer.tsx is the tasks screen's; not reached in time. The Files tab accepts ?path=<file>, so the drawer can link each changed file to /projects/:id/files?path=<file>.)",
+   "decision": "real",
+   "area": "screens",
+   "evidence": "apps/ui/src/pages/project/TaskDrawer.tsx:213-241 (runs: 'Changed: a, b' as text; no step lines); SessionPage.tsx:49-72 (currentFromLog reads task.step)"
+  },
+  {
+   "n": 47,
+   "item": "wave3 progress-navigation not done: apps/ui/src/mobile/screens/ReviewsScreen.tsx:166 target=_blank (handoff item). (The mobile screens do not run inside the desktop store that ExternalLink reads, and how the Android shell handles a new-window request was not verifiable here (no Android build or device); needs a che)",
+   "decision": "out_of_scope",
+   "area": null,
+   "evidence": "phone (phase H; apps/ui/src/mobile/screens/ReviewsScreen.tsx:166 needs an Android check)"
+  },
+  {
+   "n": 48,
+   "item": "wave3 progress-navigation not done: Start dialog wording leftovers from the wave 1 handoff: 'needs about CHF 1.20, more than this session's work budget of CHF 4.00' and 'continues with up to N more as they become ready' when they are already ready. (Not reached; the dialog's blocker lines and plan sentence are otherwise as session-engine left them.)",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "Budget half ('needs about CHF 1.20, more than…') is phase C continuity's (38e6ee6). Still present: 'continues with up to N more as they become ready' counts tasks ready now (StartSessionDialog.tsx:85-97)"
+  },
+  {
+   "n": 49,
+   "item": "wave3 progress-navigation not done: Home's Continue reusing start-check 'blocked' for the stuck reason (handoff item). (Partly covered differently: the status sentence names the stuck reason with its button (Open Tasks / Set up Docker), and Continue opens the Start dialog which shows start-check's blocked sentence. Not)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "1a112ff (the status sentence names the stuck reason with its button: project-status.ts:182-196 'Stuck: \"X\" failed; N tasks wait on it [Open Tasks]', Docker [Set up Docker]); Continue opens the Start dialog with start-check's blocked sentence"
+  },
+  {
+   "n": 50,
+   "item": "wave3 progress-navigation not done: Before screenshots of my own walk. (`start.mjs --fresh` wiped /tmp/frbench/fix-progress-navigation/steps (including my before shots) when I restarted the bench with the new code. The before texts survive in /tmp/frbench/fix-progress-nav)",
+   "decision": "out_of_scope",
+   "area": null,
+   "evidence": "process note about wave 3's own evidence (screenshots wiped by start.mjs --fresh), not a product problem"
+  },
+  {
+   "n": 51,
+   "item": "wave3 progress-navigation not done: '0 means no cap' for money fields (design §6). (Unchanged from the fixer's report: budget.set (packages/commands/src/commands/budget.ts, owned by system-text) refuses amountChf <= 0 for every scope. The UI refuses 0 in words instead. This needs tha)",
+   "decision": "duplicate",
+   "area": "polish",
+   "evidence": "duplicate of #43"
+  },
+  {
+   "n": 52,
+   "item": "wave3 progress-navigation not done: Reviewer's non-blocking items (the long 'Done: … Your files: <path with UUID>' sentence, 'Open Files' versus 'Open folder', the status Answer linking to /inbox rather than the card, two buttons opening the Start dialog, tab links keeping the whole query, hidden level filters on the session page, the palette's Stop all not asking, Continue where it stopped starting every project with runnable work, Changes noise from opening a project, 'Ready to continue' without a key, the no-key bar on /setup, missing real-daemon cases for working/changedFiles/statusText, n",
+   "decision": "duplicate",
+   "area": "polish",
+   "evidence": "duplicate of #53-#64 (the same reviewer's notes, listed one by one)"
+  },
+  {
+   "n": 53,
+   "item": "wave3 progress-navigation review note: The 'Done: all N tasks. Your files: <path>' sentence carries the full workspace path, including the project UUID. It runs to about 130 characters on Home and in the header and pushes Start session onto a second line (17-f-home-end.png, 18-e-overview-end.png). The design asks for the path, but §5.1 (≤ 80 characters) and §5.3 (no UUIDs) suggest showing the path once, under Your files, and shortening it in the sentence.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:232-240 ('Done: all N tasks. Your files: <path with UUID>')"
+  },
+  {
+   "n": 54,
+   "item": "wave3 progress-navigation review note: The done state's button is 'Open Files'; the design says '[Open folder]'. In the desktop shell Open folder appears only under Your files. In a browser 'Open Files' is reasonable.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:238 ('Open Files'); design says Open folder (FolderPath.tsx has it under Your files)"
+  },
+  {
+   "n": 55,
+   "item": "wave3 progress-navigation review note: The status-sentence 'Answer' links to /inbox; Home's Needs you lines link to /inbox#card-<id>. The status action could link to the oldest card too.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:153-162 (Answer → /inbox)"
+  },
+  {
+   "n": 56,
+   "item": "wave3 progress-navigation review note: When tasks are ready the project header has two buttons that open the same Start dialog ('Continue' in the status and 'Start session').",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/components/ProjectState.tsx:99 (Continue) and apps/ui/src/pages/ProjectPage.tsx:131-138 (Start session)"
+  },
+  {
+   "n": 57,
+   "item": "wave3 progress-navigation review note: Project tab links keep the whole query: /files?path=script.js → Tasks gives /tasks?path=script.js. Harmless, but the intent was only to keep the Tasks filters.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/pages/ProjectPage.tsx:94 (tabTo keeps location.search)"
+  },
+  {
+   "n": 58,
+   "item": "wave3 progress-navigation review note: Session page: once Details is unticked, a level filter switched off under Details keeps hiding rows with no visible control (SessionPage.tsx filters vs the `raw ? LEVELS : []` buttons).",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "cdec446 (merge of fix/system-text): SessionPage.tsx:195-199 applies the level filters only while Details is on"
+  },
+  {
+   "n": 59,
+   "item": "wave3 progress-navigation review note: The command palette's 'Stop all sessions' still stops without asking once (Shell.tsx toggleKill); only the header button confirms.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/shell/Shell.tsx:100-116 (toggleKill without asking); apps/ui/src/shell/commands.ts:133-138 ('Stop all sessions' always listed; 'Resume all sessions')"
+  },
+  {
+   "n": 60,
+   "item": "wave3 progress-navigation review note: Continue where it stopped starts a session on every project with runnable work, not only the ones that were stopped.",
+   "decision": "real",
+   "area": "screens",
+   "evidence": "apps/ui/src/shell/ShellBars.tsx:157-177 (every project whose start check has runnable work gets a session)"
+  },
+  {
+   "n": 61,
+   "item": "wave3 progress-navigation review note: Opening a project from Home now switches the active project, which writes a Changes entry. This is documented in the user guide, but it adds noise to Changes.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/store/context.tsx:407 (wordsUsed 'Switch project: …' writes a Changes row)"
+  },
+  {
+   "n": 62,
+   "item": "wave3 progress-navigation review note: Without a key, a project with ready tasks reads 'Ready to continue: 1 task ready [Continue]', yet Continue leads to a disabled Start. The no-key bar explains why, but the sentence is not 'true now' for a key-less install.",
+   "decision": "real",
+   "area": "screens",
+   "evidence": "packages/runtime/src/daemon/project-status.ts:207-214 (ready → Continue without looking at hasModel; only :218-230 read it)"
+  },
+  {
+   "n": 63,
+   "item": "wave3 progress-navigation review note: The no-key bar also shows on /setup itself, where its Connect points to the same page.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/shell/ShellBars.tsx:222-240 (NoKeyBar does not look at the route)"
+  },
+  {
+   "n": 64,
+   "item": "wave3 progress-navigation review note: There is no real-daemon case for ProjectCard.working while a session runs, for ProjectSummary.lastSession.changedFiles, or for the new GET /sessions/:id statusText 'Ended: N tasks need you'. They are covered by runtime tests with a real store and by the bench walk.",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "apps/ui/test/real-daemon.test.ts:1172 (working only null); no case for lastSession.changedFiles or statusText 'Ended: N tasks need you'"
+  },
+  {
+   "n": 65,
+   "item": "wave3 progress-navigation review note: There is no unit test of fileUnder/listProjectFiles with spaces, non-ASCII names or links (validation rule 5). I checked by hand that they work on Linux; Windows-specific forms such as drive-relative paths and ADS colons are untested.",
+   "decision": "polish",
+   "area": "screens",
+   "evidence": "packages/runtime/src/daemon/docs-routes.ts:138-155 (fileUnder) and listProjectFiles: no unit test at all (validation rule 5)"
+  },
+  {
+   "n": 66,
+   "item": "wave3 progress-navigation review note: The session title uses the browser's locale time ('12:01 AM'); the design example is 24-hour ('14:05').",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/pages/SessionPage.tsx:33-39 (toLocaleTimeString with the browser's locale)"
+  },
+  {
+   "n": 67,
+   "item": "wave3 progress-navigation review note: The session log default view still shows '**Summary**', '(s)' plurals, 'Critic: accepted (grade 86…)' and 'Notified you: … telegram skipped …' (16-d-session-ended.png). system-text owns the line wording and levels this wave; once its level field lands, this page should filter on it.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "bb1afc3 (person lines in words; notifications and session checks are detail lines, event-audience.ts:16-43) and 5b2798a (markdown rendered)"
+  },
+  {
+   "n": 68,
+   "item": "wave3 progress-navigation review note: '0 means no cap' is not done: budget.set (system-text's file) refuses 0. The UI refuses 0 in words instead.",
+   "decision": "duplicate",
+   "area": "polish",
+   "evidence": "duplicate of #43"
+  },
+  {
+   "n": 69,
+   "item": "wave3 progress-navigation review note: Wave 1 handoff item 5's sub-points are only partly accounted for. 'needs about CHF 1.20…' and 'continues with up to N more…' are in not_done. The raw '(ready)'/'(draft)' wording in Start dialog blockers is in neither fixed nor not_done. Start no longer leaves the Tasks tab: no navigate() in StartSessionDialog.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/pages/project/StartSessionDialog.tsx:41-57 (waitsOnText prints raw statuses for ready, draft, failed, cancelled)"
+  },
+  {
+   "n": 70,
+   "item": "wave3 progress-navigation review note: Other not_done items have reasons: the task drawer step lines and openable files, Reviews ?review= (system-text), mobile ReviewsScreen target=_blank (needs an Android check), and Home's Continue reusing start-check 'blocked'.",
+   "decision": "duplicate",
+   "area": null,
+   "evidence": "duplicate of #46 (screens), #45 (already fixed), #47 (out of scope), #49 (already fixed)"
+  },
+  {
+   "n": 71,
+   "item": "wave3 progress-navigation review note: Performance: GET /projects now reads tasks, cards, the intake status and up to 10 000 events of a running session per project, and the UI re-reads it on every inbox.changed in SSE mode. Fine for a few projects (as the fixer noted).",
+   "decision": "polish",
+   "area": "screens",
+   "evidence": "GET /projects reads tasks, cards, intake status and up to 10 000 events of a running session per project; re-read on every inbox.changed",
+   "note": "Measure first; change only if slow."
+  },
+  {
+   "n": 72,
+   "item": "wave3 progress-navigation review note: I did not re-run cargo clippy or cargo test: only 7.9 GB of disk is free and a fresh Tauri build needs about that. cargo fmt --check passes, and folder.rs, build.rs, lib.rs and the capability files read correctly.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "wave 3 merged at 27014b7 with the full suite and the cargo checks; the Desktop app workflow ran clippy/test since (NEXT-SESSION.md status)"
+  },
+  {
+   "n": 73,
+   "item": "wave3 system-text not done: Task drawer lists the same review finding several times (wave 1 handoff, part of 'Raw texts reaching the task drawer') (The drawer (TaskDrawer.tsx, taskView details) is the tasks-screen area's; the Reviews tab and counts now dedupe per task, but I did not change the drawer list in this wave for lack of time.)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "4b734eb (packages/runtime/src/daemon/task-display.ts:228: each open finding once, deduplicated by its words)",
+   "note": "Near-duplicates worded differently by two reviews can still both show; phase F's Tasks-tab walker checks."
+  },
+  {
+   "n": 74,
+   "item": "wave3 system-text not done: Drawer Docker detail line is 116 characters; 'Who does it' shows \"Agent's choice\" while the cap line says '(coder limit)' (wave 1 minor) (Tasks-screen UI words; lower priority than the majors; not reached.)",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/pages/project/TasksTab.tsx:79-87 ('(coder limit)' for Agent's choice). The Docker line ('…or edit to a light review', task-words.ts:315) is phase C verification's (owner decision 4)"
+  },
+  {
+   "n": 75,
+   "item": "wave3 system-text not done: U-044: task.started is emitted before the executor swaps the specialist; retry alternates not chosen by task kind (registry/alternates.ts) (Engine behaviour (session-engine/registry), not text; needs its own design and tests. The person line now names the specialist the run reports in task.finished, but task.started still names the planne)",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'research-web' (u_entries U-044; executor routing)",
+   "note": "research-web must also make task.started name the specialist that runs; if it does not, phase F reports it."
+  },
+  {
+   "n": 76,
+   "item": "wave3 system-text not done: Model-facing chat context still carries ids and raw words (open_requests id prefix, '[id …]', 'Waits for: … (needs_human)', 'Review: revise …', 'Ended because: completed') (Chat area context builders (project-facts.ts, conversation tools) and the conversation tests; not reached in this wave.)",
+   "decision": "polish",
+   "area": "answers",
+   "evidence": "packages/runtime/src/conversation/agent.ts:1213 ('[id <uuid>]' per project), :448 (request reference); project-facts.ts:146 ('Ended because: completed'); evals/registry/principals/conversation-agent.md:40 (forbids task ids only)",
+   "note": "'Waits for: … (needs_human)' and 'Review: revise' are gone (labels in words since 715f3eb/9c1ea90)."
+  },
+  {
+   "n": 77,
+   "item": "wave3 system-text not done: After the retries the task row's reason is only 'tried 4 times'; the specialist's own last words are only in the run report (Needs the task display (tasks-screen task-display.ts) to read the last run's report; not reached.)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "By design §5 'Task row' ('Needs your decision: tried 4 times [Answer]', task-words.ts:233-246); the specialist's last words are on the retry card ('The designer said: \"…\"', request-words.ts:206-213, 7173244) and in the drawer's run reports (4b734eb)"
+  },
+  {
+   "n": 78,
+   "item": "wave3 system-text not done: Session page header still 'Session <uuid>', 'Alice · message · pc', a bare 'project' link (SessionPage header is owned by progress-navigation (wave 3, parallel); I only changed the log (audience filter and Details).)",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "4376331 (SessionPage header: '<project> · session at <time>', the agent's name, 'Open the project'; SessionPage.tsx:253-282)"
+  },
+  {
+   "n": 79,
+   "item": "wave3 system-text not done: Decision questions are kept as the card asked them ('Where should the page be published: GitHub Pages, Netlify, or only as a local file?'), not reworded as in the design's example ('Where is the page published?') (Rewording a question needs a model or the intake to write a short question; the stored question is the person's card text, true and plain.)",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "docs/design/core-experience.md:345-349 (decision example); stored question kept as asked (decision-views.ts / DecisionsSection)"
+  },
+  {
+   "n": 80,
+   "item": "wave3 system-text not done: The injection_flagged notification body (rule names, can exceed 140 characters) and session-review internal strings with '(s)' (under Details / Session checks only) (The injection body is ADR 0047's contract asserted by release scenario 6; the session-review strings are the critic's self-check, folded away; left to avoid churn in those suites.)",
+   "decision": "polish",
+   "area": "noise",
+   "evidence": "packages/runtime/src/notifications/producers.ts:255-290 (summarizeInjection, injectionFlagged); ADR 0047 contract, release scenario 6"
+  },
+  {
+   "n": 81,
+   "item": "wave3 system-text not done: Change sentences still end with 'Undo.' as text (e.g. 'Set quiet hours from off to 12:00–18:00. Undo.') (The UI strips it (withoutUndoWord) and several release scenarios assert it; changing it is the commands/changes area's call.)",
+   "decision": "duplicate",
+   "area": "screens",
+   "evidence": "duplicate of #90 (Changes page 'Undo.' as text)"
+  },
+  {
+   "n": 82,
+   "item": "wave3 system-text not done: Reviewer's non-blocking notes: real-daemon coverage for the decisions route's 'plan' and 'record' entries; '1 changed file match the brief' (the stand-in critic's wording); 'Waiting for the first event…' on a session that has only detail events; three notifications for one failing task; the notification after the person's own stop; a session notification body that repeats its title; the Changes page 'Undo.' and 'Said:' lines; Costs specialist names; the weaker reviews.spec filter assertion; DecisionLog.ask keyed by the whole why; withoutIds removing '(run …)' parent",
+   "decision": "duplicate",
+   "area": null,
+   "evidence": "duplicate of #84-#94 (the same reviewer's notes, listed one by one)"
+  },
+  {
+   "n": 83,
+   "item": "wave3 system-text not done: The person line 'The writer takes over …' comes from the plan item's specialist, but the executor can swap specialists inside a run (U-044), so the line can appear one attempt after the real swap (This is U-044 (engine behaviour, already in the fixer's not_done). The log is consistent with task.started and task.finished, which both name the plan item's specialist.)",
+   "decision": "owned_by_phase_c",
+   "area": null,
+   "evidence": "phase C 'research-web' (U-044); duplicate of #75"
+  },
+  {
+   "n": 84,
+   "item": "wave3 system-text review note: Rule 3 is only partly covered for GET /projects/:id/decisions. real-daemon.test.ts asserts only kind 'answer'. The new 'plan' and 'record' entries are tested only against the fake daemon (client.test, decisions.test). The bench shows the real daemon serves them, but a real-daemon assertion is missing.",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "apps/ui/test/real-daemon.test.ts:1429 (decisions asserted for kind 'answer' only; 'plan' and 'record' only against the fake)"
+  },
+  {
+   "n": 85,
+   "item": "wave3 system-text review note: The Reviews tab shows 'Accepted: 1 changed file match the brief.': plainPlurals turns 'file(s)' into 'file' but leaves the verb 'match'. The source is the stand-in critic's own wording (testenv/src/bench/role-player.ts:634).",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "testenv/src/bench/role-player.ts:732 ('… changed file(s) match the brief' → 'Accepted: 1 changed file match the brief.')"
+  },
+  {
+   "n": 86,
+   "item": "wave3 system-text review note: SessionPage shows 'Waiting for the first event…' for an ended session that has only detail events, e.g. the planning session whose only event is the plan notification.",
+   "decision": "real",
+   "area": "screens",
+   "evidence": "apps/ui/src/pages/SessionPage.tsx:445-448 ('Waiting for the first event…' whenever no person line is shown, ended or not)"
+  },
+  {
+   "n": 87,
+   "item": "wave3 system-text review note: The person hears three notifications about one failing task: the critic sent it back (attempt 3), failed 4 times, and needs your decision. This was already so before; design §4.3 says the person hears once.",
+   "decision": "real",
+   "area": "noise",
+   "evidence": "packages/runtime/src/daemon/compose.ts:2611-2616 (every escalation without its own request is notified), :2560 (requestOpened), :2829-2850 (sessionEnded); design core-experience.md:270-271 ('The person hears once')"
+  },
+  {
+   "n": 88,
+   "item": "wave3 system-text review note: The person's own stop still sends the notification 'Quote page: stopped by you' (§5.11, no echo). This was already so before.",
+   "decision": "polish",
+   "area": "noise",
+   "evidence": "packages/runtime/src/daemon/compose.ts:2829-2850 (sessionEnded sent for a stop by the person; kill.onStop already skips by === 'you' at :2571-2573, 31e2608)"
+  },
+  {
+   "n": 89,
+   "item": "wave3 system-text review note: The notification body after a session (e.g. 'Stopped after the task, as asked. …') can repeat the title's sentence when the result has one line; see the session-counts.test expectation.",
+   "decision": "polish",
+   "area": "noise",
+   "evidence": "packages/runtime/src/notifications/producers.ts:176-184 (body = lines.slice(1) or lines[0], the title's own line)"
+  },
+  {
+   "n": 90,
+   "item": "wave3 system-text review note: The Changes page still shows 'Set quiet hours from off to 12:00–18:00. Undo.' next to the Undo button. Its 'Said:' line reads 'Settings: Quiet hours to from 12:00 to 18:00'. The Settings refusal is prefixed 'Refused (validation):'. All of these are on screens other areas own.",
+   "decision": "polish",
+   "area": "screens",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:216-226 (sentence with 'Undo.', 'Said:' for every wordsUsed); SettingsPage.tsx:407, store/context.tsx:407 (button words as wordsUsed)"
+  },
+  {
+   "n": 91,
+   "item": "wave3 system-text review note: The specialist names Costs shows ('writer-marketing', 'designer') differ from the log's 'the writer'. By model mixes the critic's runs into 'Accepted 3 / 16'.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "apps/ui/src/pages/project/CostsTab.tsx:106-107 (By model mixes the critic's runs; By specialist shows registry names)"
+  },
+  {
+   "n": 92,
+   "item": "wave3 system-text review note: In the reviews.spec filter step, the assertion changed from 'toHaveCount(2)' to 'the sent-back review is gone'. It no longer checks that the accepted review is shown. This is slightly weaker, though the reason (session checks folded) is sound.",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "apps/ui/e2e/reviews.spec.ts:24-25 (after the filter only 'the sent-back review is gone' is asserted)",
+   "note": "Quality rule: never a weakened test."
+  },
+  {
+   "n": 93,
+   "item": "wave3 system-text review note: DecisionLog.ask still looks a decision up by the card's whole `why`, while recordAnswer now stores the first sentence or the step text. Ask is only used in tests (decisions.test.ts passes), but 'never asked again' would not hold for a card whose question has several sentences.",
+   "decision": "polish",
+   "area": "answers",
+   "evidence": "packages/runtime/src/wiring/state-ports.ts:344-360 (DecisionLog.ask keyed by the whole why; recordAnswer by the first sentence or step)"
+  },
+  {
+   "n": 94,
+   "item": "wave3 system-text review note: withoutIds is now applied to every log line. Its IDS pattern also strips any parenthesis that starts with 'run ', 'task ', 'session ' or 'request ' (e.g. '(run node --check)'). No such line was seen on the bench.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "packages/runtime/src/daemon/task-words.ts:90-99 (IDS also strips '(run node --check)', '(task list)')"
+  },
+  {
+   "n": 95,
+   "item": "live D MINOR: 'Lesson:' lines leak into deliverables (report.md, evaluation.md); a scratch notes.md lands at the project root.",
+   "decision": "real",
+   "area": "noise",
+   "evidence": "packages/runtime/src/session/executor.ts:572 ('End the report with one line per lesson worth keeping, as 'Lesson: ...'.'); runner.ts:564 (lessons read from the report)",
+   "note": "live4 report: report.md and evaluation.md carried 'Lesson:' lines; notes.md at the project root."
+  },
+  {
+   "n": 96,
+   "item": "live D MINOR: the reviewer has no write_file but writes files through run_command (the tool limit means nothing).",
+   "decision": "polish",
+   "area": "noise",
+   "evidence": "evals/registry/specialists/reviewer/specialist.md:8-12 (cc:Read, cc:Bash, cc:Grep, cc:Glob; 'You never edit the code'); live4: review.md written with node -e through run_command"
+  },
+  {
+   "n": 97,
+   "item": "live D MINOR: the Start dialog says 'Docker is installed but not running' where Docker is not installed at all.",
+   "decision": "already_fixed",
+   "area": null,
+   "evidence": "Not a bug on current code: packages/runtime/src/sandbox/detect.ts:157-172 says 'not installed' only when docker is not on PATH; the walk's machine has /usr/bin/docker without a daemon, so 'installed but not running' was true there"
+  },
+  {
+   "n": 98,
+   "item": "live D MINOR: a closed Settings 'Preview and apply' left an open monthly-cap approval card for minutes, later gone without an answer.",
+   "decision": "duplicate",
+   "area": null,
+   "evidence": "duplicate of #4 (already fixed by c5cbb69)"
+  },
+  {
+   "n": 99,
+   "item": "live D POLISH (Settings): monthly cap risk 'high' in the table vs 'medium risk' on its card; calibration card shows raw JSON 'unset → {\"enabled\":false,…}'; default cap CHF 150.40; 'No Claude credential is saved yet' while the bench key works (check the bench path); review level list still shows 'Checks only: automatic checks, no critic' (verification area will remove it); a finished session still shows 'Stop now'.",
+   "decision": "polish",
+   "area": "polish",
+   "evidence": "Still present: monthly cap 'high' in the table (settings-view.ts:78) vs 'medium risk' on its card; calibration JSON (#30); CHF 150.40 (#28); 'No Claude credential is saved yet' (BillingOrderSection.tsx:133-137) when the key comes from the environment. 'Checks only' (task-actions.ts:131,144) is phase C verification's; 'Stop now' on a finished session was fixed by 4376331"
+  },
+  {
+   "n": 100,
+   "item": "live B MINOR: the tester left docs/testing.md as a stub (B2).",
+   "decision": "polish",
+   "area": "noise",
+   "evidence": "evals/registry/specialists/tester/specialist.md (never asks for docs/testing.md); the scaffold stub (memory/src/docs.ts:80)"
+  },
+  {
+   "n": 101,
+   "item": "live B bench: intake.cjs:38 names every project 'Quote page HH:MM:SS' whatever the brief.",
+   "decision": "polish",
+   "area": "bench",
+   "evidence": "scripts/bench/journeys/intake.cjs:38 (default --project 'Quote page HH:MM:SS')"
+  }
+ ]
+}

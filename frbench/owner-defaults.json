@@ -1,0 +1,40 @@
+{
+ "C-49": {
+  "question": "In a repository project, a task whose dependency's pull request is not merged yet: base its branch and PR on the dependency's branch (stacked PRs), merge the dependencies' unmerged branches into its branch, or hold it until the dependency's PR is merged?",
+  "default": "Merge the dependencies' unmerged task branches into the dependent task's branch before it starts (its PR still targets the default branch, so the person can merge in any order); the PR body names the PRs whose work it includes until they are merged; the critic's diff and the changed-file list are the task's own commits (against the merge base that includes the dependencies), not the dependencies' work. A merge conflict between dependencies is a card for the person, never a silent drop."
+ },
+ "C-64": {
+  "question": "On a Claude subscription the researcher reads no web page (search only), and tasks use the subscription first until you choose an order: let the subscription's WebFetch read public pages under the same rules as on the API key, send research tasks to the API key whenever one is saved, or keep the subscription search-only and say so?",
+  "default": "A task whose specialist needs the web (researcher, science-evaluator) goes to the API key whenever one is saved, whatever the billing order; with only a subscription it runs search-only and the plan card, brief and user guide say so (no WebFetch opened on the SDK path)."
+ },
+ "C-36": {
+  "question": "When one task uses up a session's whole budget, should the second such stop file a card (raise the session's or the task's budget, or cancel it), or should every session keep re-running it as now?",
+  "default": "The second session-budget stop of the same task files one card: raise the session's budget, raise the task's, or cancel the task (words per design \u00a75); the task waits for the answer instead of being re-run by every session."
+ },
+ "C-57": {
+  "question": "On a repository project, should each session's status update go to GitHub as a status pull request as now, or stay in the app until you ask for it on GitHub?",
+  "default": "A repository project keeps docs/status.md in the app and opens no status pull request by default; a project setting (or command) turns the status PR on; ADR 0106 updated."
+ },
+ "C-63": {
+  "question": "Web search on an API key (you asked for Forerunner's own, within its network rules) needs a search service with its own key and cost: add one now (you pick the service and create its key), or keep page reading only (pages the brief or plan names) for this round?",
+  "default": "No search service this round: page reading only (pages the brief or plan names); every screen, brief and the user guide say so truthfully (no promise of search on the API key)."
+ },
+ "C-66": {
+  "question": "Should the project page get a site list and a block list for web reading this round (with the project's version in its view), or stay API-only?",
+  "default": "No site list or block list control this round; nothing to build. If a screen or doc implies one exists, make it true."
+ },
+ "links-ctrl-click-in-app": {
+  "question": "A Ctrl+click on one of the app's own links (e.g. Inbox) opens nothing (the shell refuses a second window). Open that page in the same window instead?",
+  "default": "Opens nothing (kept as built in fix/f2-links); recorded for the owner."
+ },
+ "U-078-wait": {
+  "question": "When your first credential hits its limit and the second could do the task: wait for the first, or use the other one?",
+  "default": "Wait (a setting 'When my first choice runs out mid-session: use the other one / wait' switches it)."
+ },
+ "U-078-refused": {
+  "question": "When the subscription is refused: move its task work onto the API key (costs money), or wait for you to fix it?",
+  "default": "Card + wait, unless the same setting says 'use the other one'."
+ },
+ "wave56": "See /tmp/frbench/owner-questions-wave56.md (6 questions; defaults: light review for science-evaluator; keep the stand-in tools rule; Archive + Delete for projects; read-only folder for the reviewer; Redo clears Go ahead without; your step does not count in a small plan).",
+ "collab": "See /tmp/frbench/collab/owner-summary.md (9 questions, each with a default)."
+}

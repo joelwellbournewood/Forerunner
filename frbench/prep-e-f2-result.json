@@ -1,0 +1,314 @@
+{
+  "summary": "While phase C runs: triage the leftovers into a phase E spec (read-only), and build the F2 CI checks (real desktop window on Windows, Docker sandbox task on Linux) on their own branch, reviewed; no merge",
+  "agentCount": 4,
+  "logs": [],
+  "result": {
+    "e": {
+      "triage": {
+        "spec_path": "/tmp/frbench/phaseE.json",
+        "counts": {
+          "input": 102,
+          "real": 12,
+          "polish": 44,
+          "already_fixed": 21,
+          "owned_by_phase_c": 11,
+          "duplicates": 8,
+          "out_of_scope": 6
+        },
+        "areas": [
+          {
+            "key": "answers",
+            "title": "Chat and Inbox answers do what the person said: one card per question, no task closed by a word its card does not offer, a start that is true, a chat that reads real docs and adds tasks with real titles (5 real: #3, #1, #34, #9, #7; 6 polish: #76, #14, #13, #15, #93, #10)",
+            "items": 11
+          },
+          {
+            "key": "screens",
+            "title": "Screens that lead somewhere: a task's changed files open from its drawer, Changes says what Undo can do, Continue where it stopped continues only what stopped, no Continue without Claude, an ended session never 'waiting' (5 real: #46, #36, #60, #62, #86; 3 polish: #90, #65, #71, plus #38's POST /sessions sub-point)",
+            "items": 8
+          },
+          {
+            "key": "noise",
+            "title": "Hear once, and find only your work in your folder: one notification per outcome, none for your own stop, no 'Lesson:' lines or scratch files in deliverables, tester and reviewer outputs where they belong (2 real: #95, #87; 5 polish: #88, #89, #80, #100, #96)",
+            "items": 7
+          },
+          {
+            "key": "bench",
+            "title": "The bench and stand-ins tell the truth so phase F can walk with them: Change the plan honoured, setup's restart supervised, fake daemon split like the real one, missing real-daemon cases, weakened assertion restored (9 polish: #6, #37, #101, #85, #39, #64, #84, #92, #16)",
+            "items": 9
+          },
+          {
+            "key": "polish",
+            "title": "Small words and layout, batched: one sentence a person reads at a glance (design §5), CHF everywhere, no tier words left in Settings, one button per action (21 polish items in 18 problems: #53, #54, #55, #56, #57, #59, #61, #63, #66, #48, #69, #74, #94, #43, #30, #99, #38, #28, #79, #91, #40)",
+            "items": 21
+          }
+        ],
+        "notes": [
+          "The spec is at /tmp/frbench/phaseE.json. It uses the format of phaseC.json (headline, areas with key/title/problems/u_entries/root_causes/fix_scope/files/acceptance/depends_on, parallel_groups, shared_files) and adds a top-level 'triage' array. Each of the 102 'later' items is there with its decision, area and evidence (a file:line or commit on claude/nifty-knuth-f9udt0 at f64d7e9).",
+          "Phase E can only start after phase C is merged. Phase C's branches already change files that E's areas need: person-questions.ts, request-answers.ts, runner.ts, executor.ts, StartSessionDialog.tsx, task-words.ts, role-player.ts, fake-daemon.ts and scripts/bench/README.md. TaskDrawer.tsx is shared by area ownership in the phase C spec. Every area's depends_on says this.",
+          "parallel_groups is [[answers, screens], [noise, bench], [polish]], so at most two agents run at once, which fits the 4 CPUs. The polish area depends on 'screens' because they share project-status.ts, ShellBars.tsx and SessionPage.tsx; shared_files gives the owner of each hunk.",
+          "The 12 real problems: a typed 'go ahead' closes a planned person task whose card offers no Go ahead without (#3, major). Answering a medium-risk card from chat files a second yes/no card (#1). A task added from chat keeps 'to …' and a title cut mid-word (#34). Doc search sends scaffold template text into the chat's context (#9). The chat's session.start says it started before the run begins (#7). The task drawer's changed files cannot be opened and it shows no live steps (#46, major). Changes shows an 'undoable' badge on rows that cannot be undone, and Undo on a start whose session ended (#36). Continue where it stopped starts sessions on every project that has runnable work (#60). Without a key, a project says 'Ready to continue' and Continue leads to a disabled Start (#62). An ended session says 'Waiting for the first event…' (#86). One failing task sends three notifications (#87). 'Lesson:' lines and scratch files end up in deliverables (#95).",
+          "Items I judged not bugs on current code, recorded as already_fixed with the reason: #19 (the Tasks row shows the task's own budget field; the live1 helper read it as project spend), #97 (this machine has /usr/bin/docker without a daemon, so 'installed but not running' was true) and #77 (the row text 'tried 4 times' is what design §5 asks for; the specialist's words are on the retry card).",
+          "Split items: #48 and #74 are part phase C (the Start dialog budget sentence is continuity's, the 'edit to a light review' Docker line is verification's) and part polish. #99's 'Checks only' line is phase C verification's. #38 is a composite: its unique Settings tier/USD words go to polish, its POST /sessions point goes to screens, and the rest duplicate other items.",
+          "Two items in the polish area need an owner decision under AGENTS.md: whether the monthly cap may take 0 for 'no cap' (#43), and #15, which is resolved by writing spec O.9 ('stopping is immediate') into design §3.9 instead of adding a read-back. #96 (the reviewer writes files through run_command) needs an ADR.",
+          "Writes stayed under /tmp/frbench plus the scratchpad. I used a detached worktree at /tmp/frbench/phaseE-spec-wt for reading and removed it afterwards. The main checkout is clean at f64d7e9; nothing was pushed or committed. The builder script is /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/build_phaseE.py. It checks that every real and polish item is cited in its area's problems and that real problems come before polish in each area."
+        ]
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "blocking": [
+          {
+            "issue": "The first half of U-044 (#75, and #83 with it) is marked owned_by_phase_c, but no phase C area owns it. The session log names the plan's specialist when the retry ladder has handed the run to another specialist.",
+            "evidence": "runner.ts:1308-1315 writes task.started with specialist: item.specialist, and runner.ts:1472-1478 writes task.finished the same way. executor.ts:456-483 then swaps the specialist inside run() using a local `item`, after task.started has been written, and reports the swap only as a detail 'warning'. The again/handedFrom marks compare plan items, so no 'takes over' line ever appears. Result: the session page says 'The coder started/finished X' for a run another specialist made (design §5 rule 4: every sentence true now). In phaseC.json, research-web cites U-044 only for web routing (problem 1: 'executor.ts ~604-625, U-044'). No phase C problem, fix_scope or acceptance mentions the log or how the ladder picks the stand-in. The triage's own note admits this: 'if it does not, phase F reports it'. alternates.ts:111-145 ranks stand-ins by tool coverage and description words only, so a coder's page task goes to the migration-specialist.",
+            "expected": "Decision 'real' (minor) in an E area with a walkable acceptance. Applied: #75 is now real in 'screens', #83 is a duplicate of #75. Screens gained a problem, U-044, a root cause, fix_scope item 7 (task.started and task.finished name the specialist that runs, a handedFrom line, alternates also ranked by the task's words, with an ADR if the ladder changes), files, acceptance (g) using FORERUNNER_BENCH_FAIL_TIMES=2, and the runner/executor/alternates shared_files hunks. Counts are now 13 real, 9 owned_by_phase_c, 9 duplicates."
+          },
+          {
+            "issue": "Noise acceptance (d) for #95 ('Lesson:' lines and scratch files in deliverables) cannot show the fix on the bench. The fix is a line in the brief; whether it works depends on how the real model reads it.",
+            "evidence": "The stand-in specialist writes its 'Lesson:' line only in its final message (testenv/src/bench/role-player.ts:657) and writes files from a script. A stand-in report.md added by the noise area would pass by construction. The live D finding (report.md and evaluation.md carrying 'Lesson:' lines, notes.md at the root) came from the real model. The quality rules say 'the real model for anything that depends on how it behaves'. Phase C's own acceptances add a live confirmation by a helper for this reason.",
+            "expected": "Applied: (d) now checks on the bench that the brief carries the new line and that a stand-in report.md stays clean while the lesson still reaches memory. It then requires a helper's real-model confirmation after the merge: a data-analyst task whose deliverable is report.md plus a writer-marketing task, about USD 0.20, with no 'Lesson:' line in a deliverable and no scratch file at the root."
+          },
+          {
+            "issue": "Answers acceptance (c) for #34 cannot be walked if the fix takes the model path its own fix_scope proposes.",
+            "evidence": "fix_scope 3 sends a line that is more than a title to the model's task_create tool when a model is available. On --provider bench the stand-in chat only calls a tool when told 'tool: <name> {json}' (role-player.ts:812-833), so 'Add a task to write a README…' would add no task. The parser path (intent.ts:601-617) runs before the model (agent.ts:654) and also runs without a model.",
+            "expected": "Applied: (c) is walked with --provider none for the parser path. With --provider bench the line must still add the task: the stand-in learns task_create through 'bench', which owns role-player.ts, and a helper confirms the model path live."
+          }
+        ],
+        "non_blocking": [
+          "Applied while editing screens (same hunk as #62): fix_scope 4 and acceptance (d) now also cover the other start-check blocker that is not about the tasks (Stop all on, daemon/start-blocked.ts firstBlocker). Without it the ready line keeps offering a Continue that the Start dialog refuses. This is what #49 asked for; #49 stays already_fixed for the stuck reason it named.",
+          "#80's 'plainPlurals on the session-review strings': the '0 finding(s)' text is in packages/critic/src/session-review.ts:573, a package phase C verification owns. That area also has 'session review says accepted (grade 100, 0 finding(s))'. The noise fixer should do this after the merge, and only if verification left the string. Noise's files list does not name packages/critic/.",
+          "Polish's 'no tier words left in Settings' overlaps phase C verification acceptance (c) ('no person screen says checks only or tier'). Verification's files and WIP do not touch Settings (no diff in ModelSettingsSection/SettingsFields on fix/verification or wip/verification), so E keeps it. After the merge the polish fixer should check what verification already changed.",
+          "#69/#48: owner complaint 6 (the raw '(ready)' chain) is mostly addressed. BlockerLines lists only stuck waiters, at most 3. Raw statuses such as '(failed)' and '(cancelled)' remain in waitsOnText, so polish is the right place.",
+          "#28 and #99 (CHF 150.40 against setup's CHF 150; the monthly cap 'high' in the table against 'medium risk' on its card) are untrue small words. Polish is acceptable, but the polish reviewer should check them as 'true now' (design §5 rule 4), not only as style.",
+          "The /tmp/frbench/phaseE.json headline now carries the new counts and a 'reviewed 2026-11-02' note. A backup is kept as /tmp/frbench/phaseE.before-review.json. The script that made the edits is /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/review_phaseE.py. The file keeps the original indent=1 (73-line diff). The main checkout is unchanged at f64d7e9 with a clean status."
+        ],
+        "what_i_checked": "I checked more than 40 triage decisions against the code at f64d7e9 in /home/user/Forerunner (read-only). I also checked every phase C ownership claim against /tmp/frbench/phaseC.json and the fix/continuity, fix/verification and wip/* diffs.\n\n**already_fixed** (cited commits are all ancestors of HEAD):\n- #4: SettingChangeDialog.finish answers 'no' on close.\n- #98 duplicate of #4: live D ran on pre-wave-3 code, before c5cbb69.\n- #12: pendingOf reads TRANSCRIPT_SHOW_LIMIT = 100, the same as GET /conversation.\n- #18: the session.ended person line drops zero counts, so it never says '0 need you'.\n- #19: TaskCap shows the task's own budget_usd_micro, and the plan can set budgetUsdMicro.\n- #20: setup Done step.\n- #27/#45: Reviews 'Session checks', ?review=.\n- #32: Accounts 'connected (API key)'.\n- #35/#78: SessionPage title and no Stop now on an ended session.\n- #58: level filters only under Details.\n- #67: critic.verdict person line and event-audience.\n- #73: findings de-duplicated in task-display.ts.\n- #77: design §5 task row; the retry card says what the specialist said.\n- #97: /usr/bin/docker exists here, and detect.ts says 'not installed' only when docker is not on PATH.\n\n**real**, all confirmed still present:\n- #3: personQuestionsAnswer maps 'go ahead' to without, and the planned card goes through CLOSE_PATH. Phase C continuity does not change this (its request-answers diff only adds the budget card).\n- #1: gate() short-circuits only needs_device; the plan card is medium.\n- #7: session.start returns only the scheduler outcome.\n- #9: scaffold 'To be written' and '- first task' are searchable.\n- #36: the badge uses the stored undo_state.\n- #46: the drawer shows 'Changed:' as plain text.\n- #60: StoppedBar starts every runnable project.\n- #62: the ready line ignores hasModel.\n- #86: the empty-log text is the same for every status.\n- #87/#88: notification wiring.\n- #95: the brief's lesson line.\n\n**polish** (none blocks or misleads enough to be real): #53/#54/#55 project-status lines, #56/#57 ProjectPage, #59 palette toggleKill, #61 switch-project wordsUsed, #69/#48 waitsOnText and planSentence, #30/#38 SettingsFields calibration 'review tier', #99 BillingOrderSection, #43 budget.set, #15 (spec O.9 'stopping is immediate' outranks the design, AGENTS.md precedence).\n\n**out_of_scope** (#2, #5, #8, #11, #47, #50): each matches the NEXT-SESSION.md out-of-scope list, is a phase H known gap, or is a process note.\n\n**owned_by_phase_c**:\n- #17, #21, #22, #23, #24, #26, #29, #31 and #33 each match a named problem in phaseC.json.\n- #75 and #83 do not (first blocking finding).\n\n**Duplicates**: no phase C item is duplicated into E. #25, #51, #52, #68, #70, #81 and #82 point at items that exist.\n\n**Walkability**: the bench knobs exist (FAIL, FAIL_TIMES, DELAY_MS, PERSON; --provider none; the 'tool:' hook), and so do the routes (POST /requests/:id/answer, GET /notifications/recent, POST /sessions). The registry has stand-ins for the coder (e.g. migration-specialist), so acceptance (g) can be walked.\n\nAfter the edits, every real and polish item is still cited in its area, and real problems still come before polish in each area."
+      }
+    },
+    "f2": {
+      "f2": {
+        "branch": "fix/f2-ci-checks",
+        "head_sha": "3ae158cd6da6a4f822e081380485250a48099314",
+        "commits": [
+          {
+            "sha": "ea132f583dd97f20b63e30b192c8a1894b9e4655",
+            "subject": "desktop: the shell logs every hand-off to the browser and the file manager, and can start its daemon on a stand-in model"
+          },
+          {
+            "sha": "933e3d4f9a13194fa8b350f2cc3ca7a16dc7f338",
+            "subject": "ci: drive the installed app's own window on Windows (scripts/desktop-window-check.mjs)"
+          },
+          {
+            "sha": "3ae158cd6da6a4f822e081380485250a48099314",
+            "subject": "ci: run a full-review task in the real Docker sandbox on Linux (scripts/sandbox-full-review.mjs)"
+          }
+        ],
+        "windows_job": "This is the new job `window` (\"desktop window check (windows-latest)\") in .github/workflows/desktop.yml. It runs after `build`, on every run of the Desktop app workflow. The workflow's path filters now also include testenv/src/bench/**, testenv/src/provider/** and scripts/desktop-window-check.*. The job has a 40-minute timeout and should take about 6 to 10 minutes after the build.\n\nHow it runs, step by step:\n1. Checks out the repo and sets up Node 22. It needs no pnpm install, because the driver uses only Node built-ins and apps/mobile/e2e/cdp.mjs and webview-console.mjs.\n2. Downloads the build job's artifact `desktop-windows-latest`.\n3. Installs the MSI into Program Files with msiexec /qn, logging to RUNNER_TEMP. It fails on a non-zero exit and prints the end of the log. It then puts the installed exe's path in FR_APP_EXE.\n4. Runs `node scripts/desktop-window-check.mjs --exe $FR_APP_EXE --home \"$RUNNER_TEMP\\fr window\\Zürich home\" --out $RUNNER_TEMP\\window-check`. The ü is built with [char]0x00FC, so the YAML stays ASCII.\n5. Uploads the out folder as the artifact `desktop-window-check`, also when the step fails.\n\nWhat the script does:\n(a) installStandIn copies testenv/package.json, testenv/src/bench and testenv/src/provider into <install>\\runtime\\testenv. That is where `fr daemon --provider bench` looks (BENCH_ENTRY in packages/runtime/src/cli/main.ts). Without these files the installed app refuses the stand-in. I checked this against a locally built payload: its daemon started with --provider bench and planned a brief.\n(b) It starts a link page on 127.0.0.1 that records every request.\n(c) It spawns the installed exe with no arguments. windowEnv sets: FORERUNNER_HOME (fresh); FORERUNNER_DAEMON_PROVIDER=bench (new shell switch); WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333; FORERUNNER_VAULT_BACKEND=file; FORERUNNER_SANDBOX_ENGINE=podman (so Settings shows \"Get Docker Desktop\"); FORERUNNER_BENCH_DELAY_MS=100. It removes model credentials, GH/GitHub tokens and every other FORERUNNER_* variable.\n(d) Waits for <home>\\runtime\\daemon.json and /health.\n   - Assert: the daemon starts.\n   - Assert: daemon-shell.log contains `[shell] the daemon runs on the stand-in model \"bench\"`.\n(e) Waits for a page target on the DevTools endpoint whose URL is on an app origin (tauri://localhost or http(s)://tauri.localhost, not the splash), connects with cdp.mjs connectPage, and forwards the page console as `webview:` lines.\n(f) Walks the journey and screenshots every step with Page.captureScreenshot, saving each step's text too.\n   - Set up later, when the assistant is shown. Assert: it goes away.\n   - Home, then New project with a name and the one-line brief \"A page that shows a random quote\", then Create project. Assert, required: the URL becomes /projects/<id>.\n   - Polls GET /projects/:id/intake. Assert, required: state is pending.\n   - Inbox link, then the card data-testid=request with `Plan for \"<name>\"`. Assert, required: exactly 1 card with at least 1 intake-task line.\n   - Approve and start. Assert: the text \"Plan approved: N tasks written\" appears.\n   - Assert, required: a session for the project exists within 60 s, from GET /sessions.\n   - Home, then the project card, and waits for the session's end. Assert: status completed.\n   - Assert: every task from GET /projects/:id/tasks is done.\n   - Overview tab, then Tasks tab. Assert: every done title is in the page text.\n(g) Shell hand-offs. Each one is read from <home>\\logs\\desktop-shell.log after the log's byte offset, parsed by parseHandoffs.\n   - PR link. seedPrUrl writes task.pr_url into <home>\\data\\state.sqlite (node:sqlite) as http://127.0.0.1:<port>/acme/window-check/pull/1. Then Overview, then Tasks to refetch. Required: exactly one data-testid=pr-link. Clicking it must produce `handed to the system browser (link): <that URL>`. The window URL must be unchanged and on the app origin. Whether the link page received a GET is a non-required note.\n   - A target=_blank anchor injected via Runtime.evaluate and clicked with CDP mouse events. Must produce a hand-off with via \"new window\" to the link page URL. The window must stay put.\n   - An injected file:///C:/Windows/win.ini link. Nothing but a refusal may be logged, and the window must stay put.\n   - Overview, then data-testid=folder-open. Must produce `handed to the file manager: <folder>`. That folder must equal the Overview's folder-path text (sameFolder ignores case and slash direction on Windows). folder-note must not say \"did not open\", and the window must stay put.\n   - Settings link (aria-label Settings), then data-testid=sandbox-docker-link. Must produce a hand-off of https://www.docker.com/products/docker-desktop/ and the window must stay put. If the link is missing, the check is required only when GET /sandbox says not_installed.\n   - Note only: no uncaught page exception.\n   - When a hand-off line is missing, the failure detail quotes the shell's own lines about browser, refused or could not.\n(h) Teardown:\n   - POST /shutdown, then wait for /health to stop answering.\n   - `taskkill /PID <app pid> /T /F`, only the PID the script started.\n   - Copy desktop-shell.log, daemon-shell.log and model-calls.jsonl.\n   - Write result.json, append the step summary, and exit 1 if any required check failed.\n\nThe shell changes this relies on (commit ea132f5):\n- windows.rs logs info `handed to the system browser (link|new window): <origin+path>`, never the query, fragment or credentials, and logs refusals with how the link came.\n- folder.rs logs `handed to the file manager: <folder>`.\n- supervisor.rs `daemon_flags` turns FORERUNNER_DAEMON_PROVIDER into `daemon --provider <name>`, only for fake, bench and bench-live. Unset or empty adds nothing. Any other value is refused with a warning and never forwarded.\n- spawn_daemon now takes the environment (`&impl Env`). Its callers in actions.rs and selftest.rs pass ProcessEnv.",
+        "linux_docker_job": "This is the new job `sandbox-full-review` (\"full-review task in the Docker sandbox\") in .github/workflows/ci.yml. It runs on ubuntu-latest, on every push, PR and dispatch that triggers CI, beside the other jobs. It has a 30-minute timeout and should take a few minutes.\n\nHow it runs, step by step:\n1. Checks out the repo, sets up pnpm and Node 22, and runs `pnpm install --frozen-lockfile`. The daemon runs from the checkout under tsx.\n2. Sets up docker/setup-buildx-action@v3.\n3. Builds services/cloud-runner/Dockerfile with docker/build-push-action@v6 (load: true, tag forerunner-runner:local). That is the daemon's DEFAULT_RUNNER_IMAGE in a checkout. It uses cache-from type=gha only, read only, so it does not race the sandbox-image job, which writes the cache.\n4. Runs `node scripts/sandbox-full-review.mjs --home $RUNNER_TEMP/sandbox-home --out $RUNNER_TEMP/sandbox-check`.\n5. Uploads the out folder as the artifact `sandbox-full-review`, also on failure.\n\nWhat the script does:\n(a) Runs `docker info`. Required: OSType is linux.\n(b) Runs `docker image inspect <image>`. Required: the image exists; when it does not, the error message says how to build it.\n(c) Starts `docker events --filter label=forerunner.sandbox=1 --format {{json .}}` into docker-events.jsonl.\n(d) Starts the daemon with scripts/bench/lib.mjs startDaemon: provider bench, a free port, a fresh home, and the extra variables FORERUNNER_SANDBOX_ENGINE=docker, FORERUNNER_RUNNER_IMAGE=<image> and FORERUNNER_BENCH_DELAY_MS=50. daemonEnv strips credentials and FORERUNNER_*.\n(e) Polls POST /sandbox/check for up to 60 s. Required: state ready. Assert: /health sandbox kind is container and available is true.\n(f) POST /projects {name, goal}, a project with no repository. Then POST /projects/:id/tasks with FULL_REVIEW_TASK: \"Write src/greet.js\", riskTier 2, specialist coder, two criteria. Assert: the answer says riskTier 2.\n(g) POST /sessions {agentId from /me, projectId, trigger manual}, then waits for the session's end. Assert: status completed.\n(h) Checks the task through GET /tasks/:id. Asserts:\n   - the task status is done;\n   - the coder's work run lists src/greet.js;\n   - a review run by the critic exists;\n   - the review verdict says accepted;\n   - criticTiers on <home>/bench/model-calls.jsonl (labels `critic tier N on task <id>`) gives only tiers of 2 or more.\n(i) Checks the engine's side with taskSandboxEvidence on the recorded events, filtered by the label forerunner.task=<id>. Asserts:\n   - a container started;\n   - its image is exactly the given image;\n   - an exec_start whose command has `node` and src/greet.js; in the local run it was `timeout -s KILL 60 node --check src/greet.js`;\n   - every exec_die exitCode is 0;\n   - every task container reached destroy;\n   - `docker ps -a` and `docker network ls` filtered on the task label are both empty.\n(j) Checks the file. Asserts:\n   - <home>/data/projects/<id>/workspace/src/greet.js exists and is not empty;\n   - stat uid equals process.getuid(); on CI that is the runner's user, because rootful Docker runs the container as the host uid;\n   - `node --check` passes on the host.\n(k) Stops the daemon (POST /shutdown and kill of the process group it started) and stops docker events. Copies daemon.log and model-calls.jsonl, writes result.json and the step summary, and exits 1 if any check failed.\n\nLocal run on 2026-11-02, against my own dockerd (separate socket, vfs, no bridge, no iptables) with node:22-bookworm-slim tagged forerunner-runner:local: 20 of 20 checks passed. With no reachable engine it stops at its first check with exit 1.",
+        "validated_here": [
+          {
+            "command": "cd apps/desktop/src-tauri && cargo fmt --check",
+            "result": "clean"
+          },
+          {
+            "command": "CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo clippy --all-targets -- -D warnings (apps/desktop/src-tauri)",
+            "result": "exit 0, no warnings"
+          },
+          {
+            "command": "CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo test (apps/desktop/src-tauri)",
+            "result": "135 passed, 0 failed. New tests: the switch forwards only a known stand-in; a real /bin/sh spawn gets `daemon --provider bench`, or `daemon` alone without the variable and with a refused value, and the log says which; the browser hand-off line drops query, fragment and credentials; the folder hand-off line names the folder."
+          },
+          {
+            "command": "npx vitest run --project unit scripts/desktop-window-check.test.ts scripts/sandbox-full-review.test.ts",
+            "result": "25 passed (14 + 11)"
+          },
+          {
+            "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 pnpm check",
+            "result": "exit 0. lint: 60 existing warnings, none in the new files. lint:paths ok, typecheck ok. Unit tests: 421 files, 4287 passed, 6 skipped. docs-check ok (14 files), link-check ok, secret-scan clean."
+          },
+          {
+            "command": "python3 yaml.safe_load on .github/workflows/desktop.yml and ci.yml, plus a structure check",
+            "result": "Both parse. Every step has exactly one of uses or run. desktop.yml jobs: build, window (needs build, windows-latest). ci.yml has the new job sandbox-full-review. actionlint was not run: downloading its binary was refused."
+          },
+          {
+            "command": "DOCKER_HOST=<own dockerd socket> node scripts/sandbox-full-review.mjs --out /tmp/frbench/f2/sandbox-run2 --home /tmp/frbench/f2/sandbox-home2",
+            "result": "20/20 checks passed, against a real Docker 29.9.2 engine with node:22-bookworm-slim tagged forerunner-runner:local, running as root. Container created, started, exec of `timeout -s KILL 60 node --check src/greet.js` exiting 0, then killed, died and destroyed. Critic at tier 2, accepted. File in the workspace. No container or network left."
+          },
+          {
+            "command": "DOCKER_HOST=unix:///nonexistent node scripts/sandbox-full-review.mjs ...",
+            "result": "Stops at the first check (Docker not reachable), still writes result.json, exits 1."
+          },
+          {
+            "command": "node scripts/desktop-window-check.mjs --attach http://127.0.0.1:9341 --app-origin http://127.0.0.1:1871 --home /tmp/frbench/f2win/home --out /tmp/frbench/f2/window-dry4 (bench on --provider bench, headless Chromium)",
+            "result": "Every required check passed through the Tasks tab, the seeded PR link visible, and the Overview folder. 14 screenshots were saved and render. The shell hand-off checks were skipped (no shell). The Docker-link check could not run: on Linux the card never shows the link."
+          },
+          {
+            "command": "build-runtime-payload.mjs --out /tmp/frbench/f2/payload; installStandIn; start the payload's own node + tsx + main.ts `daemon --provider bench` as the shell does; POST /projects with a brief",
+            "result": "The daemon started from the installed payload layout on the stand-in and the intake reached `pending` (a plan). The copied testenv loads inside an installed runtime."
+          }
+        ],
+        "not_validated": [
+          "Whether WebView2 honours WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 for the Tauri/wry window, which sets its own browser arguments. In the window job log, look for the check 'the window's page is reachable over DevTools' with an http://tauri.localhost URL. If it fails after 180 s, the variable was overridden; the shell would then need to pass the port itself in a debug-only way.",
+          "Whether the hosted Windows runner gives the window a desktop that renders. Look at the uploaded screenshots in the desktop-window-check artifact (01-first-screen.png onward). Black or empty images with passing checks would mean layout works but painting does not.",
+          "That the installed app actually starts its daemon on the stand-in. Look for 'ok the shell started it on the stand-in model' and the line `[shell] the daemon runs on the stand-in model \"bench\"` in daemon-shell.log. It is not proven until Windows runs it: the cargo test of the real argv is #[cfg(unix)].",
+          "That the copied testenv loads under the bundled Node on Windows: path separators, TSX_TSCONFIG_PATH paths resolution for testenv files, CRLF. Look for 'planning ends in a plan' passing. On failure, daemon-shell.log shows the `--provider bench ... needs the repository checkout's testenv/` refusal or an import error.",
+          "The journey's selectors and timings inside WebView2: Set up later, the New project dialog, the Inbox card, Approve and start, the session ending (up to 15 min). Each step's .txt in the artifact shows what the page said.",
+          "The hand-off lines themselves, which only the shell writes. Need 'ok' on: clicking PR hands the pull request to the system browser (via link); a target=\"_blank\" link via new window; a file: link handed to no program; Open folder with the same folder as shown; Get Docker Desktop; and every 'the window stays on the app's page after ...'. Read desktop-shell.log in the artifact. A 'could not open ... in the browser' line would mean the runner has no default http handler.",
+          "Whether the system browser really loaded the PR page. This is a non-required note: see linkPageRequests in result.json.",
+          "Whether tauri-plugin-log flushes each line promptly enough for the 15 s hand-off wait. A missing line that appears later in the copied desktop-shell.log would mean buffering.",
+          "Whether the FORERUNNER_HOME path with a space and ü works end to end in the shell, the daemon and Open folder. Compare the folder hand-off target with the Overview's path.",
+          "The job's real duration. It is estimated at 6 to 10 minutes after build; check the window job's time in the run.",
+          "The Linux sandbox job on a hosted runner: buildx loading forerunner-runner:local from the real Dockerfile (COPY . . invalidates the pnpm install layer on every commit, about 1 to 3 minutes); the daemon as uid 1001 with rootful Docker (--user 1001:gid, so files are owned by the runner); docker events on the hosted engine. Look at the step summary 'Full-review task in the Docker sandbox (Linux)'. Expect 20 ok lines, in particular 'the file belongs to this user, not to root' with uid 1001 (here it ran as root, uid 0) and 'the task's command ran inside the container'.",
+          "The real runner image (built from the Dockerfile with build-essential and the full repo) was not used here. A stand-in node:22-bookworm-slim image was tagged forerunner-runner:local, so the full image's runtime behaviour in the sandbox shows only in CI."
+        ],
+        "risks": [
+          "The PR link's pr_url is written straight into the daemon's SQLite store (seedPrUrl), not set by the PR flow, because no daemon route sets it. This proves the Tasks tab link and the shell's hand-off, not the PR executor. A follow-up could use testenv/src/githost with a linked repository instead.",
+          "FORERUNNER_SANDBOX_ENGINE=podman is set only so that Settings shows the 'Get Docker Desktop' link. If podman is installed on the Windows runner, the state is not not_installed, the link does not show, and the check is reported as not required. It does not fail.",
+          "FORERUNNER_DAEMON_PROVIDER is a new switch in a shipped binary. It only forwards fake, bench or bench-live, and bench and bench-live refuse without testenv/. `fake`, though, would start an installed app on the echo provider if a person set the variable. It is documented as development and CI only in apps.md.",
+          "The window job needs the whole build matrix (`needs: build`), so a Linux build failure skips it.",
+          "The cdp.mjs driver was written for the Android WebView. Its click guard and the fallback ladder are untested on WebView2.",
+          "If WebView2 ignores the environment variable, the whole window check fails at attach. Nothing else in the workflow is affected.",
+          "The sandbox job builds the image a second time, in parallel with the sandbox-image job, reading the gha cache only. On a cold cache it can take several minutes.",
+          "I could not run actionlint (its download was refused). The workflows were only YAML-parsed and structure-checked.",
+          "The scratchpad is shared with another agent: msg2.txt was overwritten after my commit. The commits themselves are not affected."
+        ]
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "blocking": [
+          {
+            "issue": "FIXED in f6f9bb0. The Docker sandbox check had a step that could never fail: \"the file belongs to this user, not to root\" (scripts/sandbox-full-review.mjs). testing.md presented it as proof that the container runs as the host uid on rootful Docker.",
+            "evidence": "ContainerSandbox.writeFile (packages/runtime/src/sandbox/container.ts:587) calls writeWorktreeFile on the host. So the daemon writes src/greet.js as the daemon's own user, whatever user the container ran as. The script compares that to its own uid, which is the same user. Inside the container the stand-in coder only runs `node --check src/greet.js` (testenv/src/bench/role-player.ts:596), and that writes nothing. The builder's run had uid 0 vs 0, and mine was the same.",
+            "expected": "No check that cannot fail, and docs that say what is really proven. I removed the check, rewrote the header comment and testing.md step 6, and added the container's user to \"Not covered\". The --user default is pinned by packages/runtime/test/sandbox-factory.test.ts:66 and the adapter's integration test."
+          },
+          {
+            "issue": "FIXED in f6f9bb0. The window check did not always save a screenshot of the failure. A journey that stopped (a must() or a CDP click/timeout error) left no picture of the state where it stopped, only the step before. A stop before the window's page answered on DevTools (no daemon, no page target) left no screenshot at all. That is exactly the case the first, never-run Windows job is most likely to hit.",
+            "evidence": "In the original main(), `shot` existed only after connectPage. The catch block only recorded a check, and the finally block copied logs but took no screenshot. The task's criterion: \"always saves screenshots and logs as artifacts\".",
+            "expected": "A screenshot where the journey stopped. Now `shot` is hoisted and the catch block captures the page at the stop. With --exe it also captures the whole screen through a new exported desktopScreenshot (Windows PowerShell CopyFromScreen, path passed only through the FR_SHOT env var), so a shell dialog or a window that never appeared is in the artifact. Unit tests added. I verified it with an --attach run that had a planted stop: 06-stopped-the-inbox-shows-the-plan-card-...png was saved."
+          }
+        ],
+        "non_blocking": [
+          "Committed with --ignore-other-worktrees: fix/f2-ci-checks was also checked out in the builder's worktree .claude/worktrees/wf_a9db00a9-443-2, so the branch is now at f6f9bb0 there while that worktree's files are still at 3ae158c. Git there will show my changes reversed as uncommitted edits. Do not commit or stash from that worktree; merge the branch ref f6f9bb0. Nothing was pushed.",
+          "Hardening in the same commit: WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS now also carries wry's own --disable-features list (msWebOOUI, msPdfOOUI, msSmartScreenProtection; WebView2 may use the variable instead of the app's arguments) plus CalculateNativeWinOcclusion. Reason: once the PR click opens the system browser over the window, occlusion tracking may stop painting the page, and cdp.mjs clicks wait for requestAnimationFrame. This is speculative but harmless.",
+          "The window job has never run on a Windows runner (no push was allowed), so its first CI run is the real test. Some evidence it can work: Desktop app run 41339376222 (windows-latest) shows installed-check.ps1 starting the installed exe in the runner session itself (\"running before the uninstall (the app): forerunner-desktop, node, node\"), and the MSI is the only file in the desktop-windows-latest artifact. Still unproven: that WebView2 opens --remote-debugging-port in this release build, and how the runner's first-run system browser behaves.",
+          "The file: link check probably never reaches the shell: WebView2/Chromium blocks a file: navigation from an http origin before NavigationStarting fires. So it checks the outcome (nothing is opened, the window stays put), not windows.rs's refusal path. It can still fail if anything is handed off. Its detail now says when no refusal was logged either.",
+          "The PR-link check accepts either via (link or new window). In the shell, ExternalLink has no target, so it should always be \"link\". It could be tightened to require via === \"link\".",
+          "\"Open folder shows no error\" reads folder-note right after the hand-off line appears. That is weak but can fail (the UI showing an error although the shell succeeded).",
+          "The window job's `needs: build` waits for both matrix legs, so a failing Linux build skips the Windows window check.",
+          "sandbox-full-review.mjs: if startDaemon fails, bench lib's fail() calls process.exit(1), so there is no result.json and no step summary. The daemon log is still in the uploaded <out>/bench/daemon.log and its tail is printed.",
+          "The shell change is safe. FORERUNNER_DAEMON_PROVIDER is read only from the process environment (ProcessEnv), which a web page cannot set. It is limited to an allowlist (fake, bench, bench-live) and forwarded as an argv entry, never through a shell. bench and bench-live still need testenv/ copied into the install. windows.rs and folder.rs only add logging: the navigation and new-window decisions are unchanged, and the log drops query, fragment and credentials (loggable_url). The self-test forwards the variable too (documented).",
+          "No secrets in logs or artifacts. windowEnv and bench daemonEnv strip model credentials, GH/GitHub tokens and every FORERUNNER_* variable. result.json files carry the daemon URL and pid, never the token. The token is a redacted Secret in the shell log.",
+          "Flake seen once in pnpm check under load 11+ on 4 CPUs: packages/runtime/test/monthly-jobs-wiring.test.ts (calibration notification not raised within settle()). It is unrelated to this branch: it passed alone and in the other two full runs."
+        ],
+        "what_i_checked": "Reviewed fix/f2-ci-checks (3ae158c: ea132f5, 933e3d4, 3ae158c), then added review fix f6f9bb0 (signed, with the trailers, not pushed).\n\nWorkflow YAML. actionlint was blocked here, so instead I parsed both files with PyYAML and read them closely:\n- Job `window` (desktop.yml) runs on windows-latest after build; `desktop-windows-latest` is the build job's artifact name; GITHUB_ENV is written as UTF-8 without BOM in pwsh; the ü comes from [char]0x00FC; path filters were widened.\n- Job `sandbox-full-review` (ci.yml) runs on ubuntu-latest; env.PNPM_VERSION is defined; build-push-action loads the image and only reads the GHA cache; .dockerignore keeps node_modules out of the context; the upload runs if: always().\n\nAssertions. Every check in both scripts was read for whether it can fail. Two problems turned up, both listed under blocking above.\n\nDocker job, run for real. I ran it twice against a private dockerd 29.9.2 (vfs, no bridge, mirror.gcr.io node:22-bookworm-slim tagged forerunner-runner:local), stopped by its own PID afterwards:\n- Before the fix: 20/20.\n- After the fix: 19/19.\n- docker events show the container created from the image with the task's label, `timeout -s KILL 60 node --check src/greet.js` run by docker exec with exit 0, and the container destroyed.\n- The model-call log shows critic calls labelled \"critic tier 2 on task <id>\" (from packages/critic/src/critic.ts:478).\n- A tier-2 task without a container engine is refused (factory.ts, U-079), so this is not the process sandbox.\n\nWindow check:\n- Read in full against apps/mobile/e2e/cdp.mjs (timeouts come back as \"X: not within N s\" or as CdpError messages), windows.rs, folder.rs, FolderPath.tsx, ExternalLink.tsx and SandboxSettingsCard.tsx. The Docker link appears when the state is not_installed on a non-Linux platform, which the podman override produces.\n- The log goes to <home>/logs/desktop-shell.log at Info level (lib.rs), and app_dirs honours FORERUNNER_HOME.\n- --attach dry runs on a bench (daemon + vite) in headless Chrome: every required check passed, and with a planted stop the stop screenshot was saved.\n\nShell (Rust): cargo fmt --check, clippy --all-targets -D warnings, and cargo test (135 passed, including the 4 new tests), with CARGO_TARGET_DIR=/tmp/frbench/cargo-target.\n\nDocs: apps.md, testing.md and validation.md were updated; docs-check --base f64d7e9 passes.\n\npnpm check:\n- Green on the reviewed head (4287 passed).\n- One run on the fix hit the load flake noted under non-blocking.\n- Green on the committed fix f6f9bb0: 421 files, 4289 tests, lint, paths, typecheck, link-check and secret-scan.\n\nEvidence left on disk: /tmp/frbench/review-f2/sandbox-before, /tmp/frbench/review-f2/sandbox-after, /tmp/frbench/rvf2/window-ok and /tmp/frbench/rvf2/window-stop. Files changed: /home/user/Forerunner/.claude/worktrees/wf_a9db00a9-443-4/scripts/sandbox-full-review.mjs, scripts/desktop-window-check.mjs, scripts/desktop-window-check.test.ts and docs/maintainers/testing.md in the same worktree."
+      }
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Triage E"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Build F2"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "triage:E",
+      "phaseIndex": 1,
+      "phaseTitle": "Triage E",
+      "agentId": "ad77e67f2a0a75086",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793605377017,
+      "queuedAt": 1793605376971,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "/tmp/frbench/phaseE.json",
+      "promptPreview": "Context: Forerunner (repo /home/user/Forerunner, branch claude/nifty-knuth-f9udt0) is a desktop app (Tauri shell in apps/desktop/src-tauri, React UI in apps/ui, daemon in packages/runtime): a persistent AI project manager. The owner-approved plan for this round is docs/status/handoff/NEXT-SESSION.md (read it first: phases A to H, the quality rules, the owner's decisions). Phases A, B and D are don…",
+      "promptFramed": true,
+      "lastProgressAt": 1793606781046,
+      "tokens": 438401,
+      "toolCalls": 232,
+      "durationMs": 1404029,
+      "resultPreview": "{\"spec_path\":\"/tmp/frbench/phaseE.json\",\"counts\":{\"input\":102,\"real\":12,\"polish\":44,\"already_fixed\":21,\"owned_by_phase_c\":11,\"duplicates\":8,\"out_of_scope\":6},\"areas\":[{\"key\":\"answers\",\"title\":\"Chat and Inbox answers do what the person said: one card per question, no task closed by a word its card does not offer, a start that is true, a chat that reads real docs and adds tasks with real titles (5 r…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:F2",
+      "phaseIndex": 2,
+      "phaseTitle": "Build F2",
+      "agentId": "aa25bb13b58355bcb",
+      "isolation": "worktree",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793605378328,
+      "queuedAt": 1793605376971,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "fix/f2-ci-checks",
+      "promptPreview": "Context: Forerunner (repo /home/user/Forerunner, branch claude/nifty-knuth-f9udt0) is a desktop app (Tauri shell in apps/desktop/src-tauri, React UI in apps/ui, daemon in packages/runtime): a persistent AI project manager. The owner-approved plan for this round is docs/status/handoff/NEXT-SESSION.md (read it first: phases A to H, the quality rules, the owner's decisions). Phases A, B and D are don…",
+      "promptFramed": true,
+      "lastProgressAt": 1793608399124,
+      "tokens": 527373,
+      "toolCalls": 259,
+      "durationMs": 3020796,
+      "resultPreview": "{\"branch\":\"fix/f2-ci-checks\",\"head_sha\":\"3ae158cd6da6a4f822e081380485250a48099314\",\"commits\":[{\"sha\":\"ea132f583dd97f20b63e30b192c8a1894b9e4655\",\"subject\":\"desktop: the shell logs every hand-off to the browser and the file manager, and can start its daemon on a stand-in model\"},{\"sha\":\"933e3d4f9a13194fa8b350f2cc3ca7a16dc7f338\",\"subject\":\"ci: drive the installed app's own window on Windows (scripts/…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:triage",
+      "phaseIndex": 3,
+      "phaseTitle": "Review",
+      "agentId": "a23480c797e25ccc0",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793606790098,
+      "queuedAt": 1793606790033,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "fix-needed",
+      "promptPreview": "Context: Forerunner (repo /home/user/Forerunner, branch claude/nifty-knuth-f9udt0) is a desktop app (Tauri shell in apps/desktop/src-tauri, React UI in apps/ui, daemon in packages/runtime): a persistent AI project manager. The owner-approved plan for this round is docs/status/handoff/NEXT-SESSION.md (read it first: phases A to H, the quality rules, the owner's decisions). Phases A, B and D are don…",
+      "promptFramed": true,
+      "lastProgressAt": 1793607393059,
+      "tokens": 252274,
+      "toolCalls": 92,
+      "durationMs": 602960,
+      "resultPreview": "{\"verdict\":\"fix-needed\",\"blocking\":[{\"issue\":\"The first half of U-044 (#75, and #83 with it) is marked owned_by_phase_c, but no phase C area owns it. The session log names the plan's specialist when the retry ladder has handed the run to another specialist.\",\"evidence\":\"runner.ts:1308-1315 writes task.started with specialist: item.specialist, and runner.ts:1472-1478 writes task.finished the same w…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "review:F2",
+      "phaseIndex": 3,
+      "phaseTitle": "Review",
+      "agentId": "a996643b7dd62d342",
+      "isolation": "worktree",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793608403964,
+      "queuedAt": 1793608403301,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "fix-needed",
+      "promptPreview": "Context: Forerunner (repo /home/user/Forerunner, branch claude/nifty-knuth-f9udt0) is a desktop app (Tauri shell in apps/desktop/src-tauri, React UI in apps/ui, daemon in packages/runtime): a persistent AI project manager. The owner-approved plan for this round is docs/status/handoff/NEXT-SESSION.md (read it first: phases A to H, the quality rules, the owner's decisions). Phases A, B and D are don…",
+      "promptFramed": true,
+      "lastProgressAt": 1793611409305,
+      "tokens": 345303,
+      "toolCalls": 166,
+      "durationMs": 3005339,
+      "resultPreview": "{\"verdict\":\"fix-needed\",\"blocking\":[{\"issue\":\"FIXED in f6f9bb0. The Docker sandbox check had a step that could never fail: \\\"the file belongs to this user, not to root\\\" (scripts/sandbox-full-review.mjs). testing.md presented it as proof that the container runs as the host uid on rootful Docker.\",\"evidence\":\"ContainerSandbox.writeFile (packages/runtime/src/sandbox/container.ts:587) calls writeWork…"
+    }
+  ],
+  "totalTokens": 1563351,
+  "totalToolCalls": 749
+}

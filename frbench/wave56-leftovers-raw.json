@@ -1,0 +1,2060 @@
+[
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "not_done",
+  "{\"problem\": \"later #34 part: with a model available, a chat line that is more than a title should go to the model's task_create (title, outcome, criteria)\", \"why\": \"The intent parser runs before the model for every install; routing longer lines to the model would need the stand-in chat (testenv/src/bench/role-player.ts, owned by 'bench') to play task_create from free text, else the bench path stops adding the task. The parser now gives a proper title; chat-added tasks still have no criteria (the critic uses outcomeCriterion). Left for a follow-up with 'bench'.\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "not_done",
+  "{\"problem\": \"phase C C-68: the plan card does not flag a task naming a specialist this install does not have\", \"why\": \"Not reached in time. It needs the daemon to give each plan task its canonical specialist (or unknown) on the intake card (session/intake.ts files change_card.proposal with the model's raw names; registry/specialist-names.ts canonicalises only when the plan is written) and InboxPage.tsx cannotRunHere (:276) to say 'No specialist here is named \\\"X\\\": this task will wait for you; change who does it after you approve' for an unknown name, with a real-daemon and an Inbox test.\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "not_done",
+  "{\"problem\": \"later #10: remove the runner's dead heard-line path (session/live-chat.ts, runner.ts recheckInbox/heardLineOf)\", \"why\": \"No behaviour change and runner.ts is shared by several phase E areas (screens, noise, decisions); left to avoid merge churn. live-chat.test.ts still covers the path for inboxes with old lines.\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Deploy/migration tasks already stored at tier 1 by an older daemon still run in the process sandbox (sandbox-gate reads the stored tier)\", \"why\": \"Rows read the full review now (reviewLevelValue with the specialist) and every new write stores the floor; the owner's old install is not kept this round, so no migration of old rows was written.\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "new_problems",
+  "KillFileWatcher.start (packages/runtime/src/enforcement/killfile.ts:88-95) checks kill.json only after its first 500 ms tick, so a start in the daemon's first half second can run despite a persisted Stop all; chat-resume-restart.test.ts had to advance the clock to see the freeze. Owned by 'screens' (killfile.ts)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "new_problems",
+  "science-evaluator has registry risk_tier_floor 2 but is not in SIGNOFF_SPECIALISTS/FULL_REVIEW_SPECIALISTS: the critic reviews it at the full review while its stored tier (and sandbox) stays light, the same class as C-2. Needs a decision (Docker for research tasks?) before adding it to riskTierFor."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "new_problems",
+  "The base branch moved to 0cf1a40 after this worktree's merge (desktop and apps.md edits in 42cb46e): expect a small conflict in docs/maintainers/apps.md at merge."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "new_problems",
+  "Another area ('asking', L-3 'Go ahead without reaches the next brief') touches the person-questions answer path; its merge must keep personQuestionsAnswerFor (no Go ahead without on the person's own card)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "isChatOnlyCard(row) (packages/runtime/src/wiring/request-answers.ts): the chat's read-back of an answer to another card. Any new list or count of open human requests shown to the person must leave it out (GET /inbox, inbox.changed and the chat's open_requests already do)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "cardReference(id, openIds) (conversation/agent.ts): use it for any card id given to a model; never a fixed 8-character prefix (ids are time-ordered)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "CommandPorts.cardWords (packages/commands/src/types.ts), wired in compose to requestViews: a card's title, choices with explain, and outcome."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "riskTierFor(specialist, tier) (session/project-plan.ts, exported from @forerunner/runtime): call it on every new path that writes a task's tier or specialist."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "ConversationView turn actions carry optional sessionId (api-types); sessionCommandPorts takes an optional wait {events, clock, timeoutMs} and START_WAIT_MS (loop/commands.ts)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "offersGoAheadWithout(card), personQuestionsAnswerFor(card, answer), NEEDS_YOUR_ANSWERS (request-answers.ts): read a person's-questions answer against its card."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "isScaffoldPlaceholder(body) (packages/memory/src/docs.ts): add any new template placeholder line there."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "bench (role-player.ts): the pending command tool result the stand-in echoes is now 'Needs confirmation. The person is asked: <read-back>'. A stand-in task_create from free text is still needed if chat lines longer than a title should go to the model."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fix",
+  "notes_for_other_areas",
+  "screens (killfile.ts): compose's command-port kill now writes kill.json for a stop_all from chat or voice, as POST /kill does."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Non-blocking (older than this branch): read-backs of other chat commands (session.start, task.pause, cancel with no card) are still filed as Inbox approval cards and counted. 'Start a session on X (up to CHF 5)?' makes the header read 'Waiting for you: 1 question'.\", \"why\": \"This was decided on purpose in wave 2 (d34f331: 'a change asked for in Chat waits in the Inbox as the question the chat read back'), so the person can answer it elsewhere. Changing it reverses that decision and is not part of this review's blocking set. It needs an owner decision: should every chat read-back be chat_only?\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Non-blocking (older): the plan banner (IntakeBanner.tsx:45-49) still reads 'Waiting for you: approve the plan [Open]' after the plan is approved from Chat on the same page (seen again in bench step 04-b-chat-after-yes). 'Plan approved\\u2026' is also echoed under Updates.\", \"why\": \"These are UI and Updates problems outside the answers path, and outside the blocking findings. Listed in new_problems.\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Non-blocking: the failure and timeout branches of the chat's start wait (loop/commands.ts) have no test of what the person reads. details.options says 'Cancel the task' while the button says 'Cancel task'. The open_requests line uses '(s)' plurals. New task for ops-deploy preselects 'Full review'. The drawer's outcome keeps a leading 'to'.\", \"why\": \"Polish outside the blocking findings; time went to the five blocking items and a full validation under a heavily loaded machine. (The refusal's doubled quotes and mid-word cut are fixed in 766dba0.)\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"The ladder's 'tries again' and 'hands this task to' lines do not show in the session log.\", \"why\": \"Older than this branch. The executor's run warnings go to events.emit('run') in compose.ts (about line 2125) and are never stored as session events, so the existing hand-over line was never visible there either. Found on the bench; listed in new_problems.\"}"
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "new_problems",
+  "The assigned bench UI port 1720 is on the Fetch spec's blocked-port list (H.323). start.mjs's readiness fetch fails with 'bad port', so the start always times out after 90 s. Chromium blocks the port too. Assign UI ports outside the list (1719/1720/1723 are blocked)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "new_problems",
+  "Older than this branch: executor run warnings (the retry ladder's 'hands this task to \u2026' and the new 'the coder tries again: \u2026') are emitted only as events.emit('run') in compose.ts (about line 2125) and never become session events, so the person and the session log never see why a specialist changed or stayed. Evidence: the bench session had 4 task.started events and no warning events."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "new_problems",
+  "Older than this branch (reviewer non-blocking, seen again): after the plan is approved from Chat, IntakeBanner (apps/ui/src/pages/project/IntakeBanner.tsx:45-49) still shows 'Waiting for you: approve the plan [Open]' beside the header's next card (bench step /tmp/frbench/fixup-answers/steps/04-b-chat-after-yes.png). The Updates list also echoes 'Plan approved\u2026' (commands executor posts the agent-actor sentence as an Update)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "new_problems",
+  "Design question for the owner, not fixed: every non-card chat read-back (session.start, pause, cancel with no card) still becomes a counted Inbox card (wave-2 decision d34f331). While 'Start a session \u2026?' waits, the header reads 'Waiting for you: 1 question'."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "new_problems",
+  "Merge note: 'screens' rewrites the ladder hand-over in session/executor.ts (decideSpecialist/ladderStandIn) and the ranking in registry/alternates.ts. fe30e91 changes the same ladder block and alternateSpecialist's opts and filter. When merging: keep keepsSignoff in alternateSpecialist's filter, and in ladderStandIn, where no stand-in fits but alternateSpecialist(..., { acrossSignoff: true }) does, return null (the specialist keeps the task) instead of 'none', with the warning and retryConstraints(..., { kept: true })."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "notes_for_other_areas",
+  "CommandDef.redirect (packages/commands/src/types.ts): a command can name the call it is said as instead. The executor plans that call (never redirecting twice), stores it in the pending card's calls, and keeps a read-back from chat when the original was askFromChat (Step.askedAs). task.transition and task.resume use it through moveAsCardAnswer (commands/task.ts) to answer the task's open card from chat or voice."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "notes_for_other_areas",
+  "Every person-facing list or count of open cards must leave out isChatOnlyCard rows. Now done in GET /inbox, inbox.changed, the chat's open_requests, projectCard (statusLine, waitingOnYou) and projectHealth (health, needsYou), and compose's insert hook sends them no notification. session/checklist.ts (the principal's brief) still lists them; that is agent-facing."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "notes_for_other_areas",
+  "keepsSignoff(from, to) and alternateSpecialist({ acrossSignoff }) (registry/alternates.ts): a stand-in never crosses the sign-off line (signoffReasonOf). 'screens' must carry this into ladderStandIn/decideSpecialist at merge (see new_problems). retryConstraints(attempt, findings, { kept }) gives the brief line for a specialist kept at the second rung."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "notes_for_other_areas",
+  "The executor's refusal for a high-risk card answered from chat now reads 'Answer it on its card in the Inbox: <card title as the Inbox shows it>. Nothing else was filed.' (details.reason answer_on_card). The bench stand-in echoes it as the tool result."
+ ],
+ [
+  "wave5",
+  "answers",
+  "fixup",
+  "notes_for_other_areas",
+  "fake-daemon.ts: beginSession({agent, projectId, trigger, budgetUsdMicro, note}) is the one way the fake begins a session (POST /sessions and the chat's yes). startedSessions maps a chat action id to its session for the conversation's sessionId."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "Older than this branch, same class as the area's two-cards problem: every other chat command's read-back (session.start, task.pause, cancel) is filed as an Inbox approval card and counted. While 'Start a session on Bakery (up to CHF 5)?' waited, the header said 'Waiting for you: 1 question' and Inbox showed 1 (steps-bench1/16-e-start.png). The 'Pause \"Write the FAQ\u2026\"?' read-back appeared in Needs you. Neither fixed nor logged (rule 8: siblings)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "Older than this branch: the plan banner only re-reads while drafting (apps/ui/src/pages/project/IntakeBanner.tsx:45-49). After the plan is approved from chat on the same page, 'Waiting for you: approve the plan [Open]' stays next to the header's 'Waiting for you: \"Decide where the page is published\"' (steps-bench1/07-b-chat-after-yes.png)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "Older than this branch: a command the chat model calls has the agent as actor, so the executor posts its sentence as an Update (packages/commands/src/executor.ts:656-671). 'Plan approved: 3 tasks written; working on them.' appears under Updates, echoing the person's own answer."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "The start wait's failure branch (a run that fails before its session begins) and its timeout branch (packages/runtime/src/loop/commands.ts:722-735) have no test of what the person reads (rule 9)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "The refusal's details.options say 'Cancel the task' while the button says 'Cancel task'. The model-facing refusal 'Answer it on its card in the Inbox (\"\"Build\u2026\" failed 4 t\u2026\")' has doubled quotes and is cut mid-word (executor.ts:355). The open_requests line still uses the raw why, 'Intake for \"X\": 1 milestone(s), 3 task(s)\u2026' (project-facts.ts:261): '(s)' plurals in the model's context (#76 class)."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "New task for ops-deploy preselects 'Full review' (tier 2), and the note says 'keeps the full review and your sign-off'. Sign-off is decided by specialist (loop/verification.ts:38), so the two full levels differ in nothing for these specialists."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "docs/maintainers/commands.md calls 'a failed task' card medium. The card a run files after its retries (findings.ts fileFailedTaskCard) is high on the bench, so chat answers to it are refused."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "The drawer's 'What done looks like' keeps the leading 'to' ('to write a README\u2026'). That follows 'the words as said', but reads oddly."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "The live check should expect references like '01a19d7b-9' (shortest unique start, can include the hyphen); the real model must never say them."
+ ],
+ [
+  "wave5",
+  "answers",
+  "review",
+  "non_blocking",
+  "Merge note: the 'asking' branch also touches the person-questions answer path; keep personQuestionsAnswerFor."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "not_done",
+  "{\"problem\": \"The triage's example 'a page task from the coder goes to the designer' cannot happen with the registry as shipped.\", \"why\": \"Which stand-ins fit is still decided by tool coverage (validation rule 6). The shipped designer lacks the coder's cc:Bash and cc:MultiEdit, so it never qualifies for a coder task; relaxing that would hand work to a specialist that cannot run its commands. That is an owner decision, recorded in ADR 0108 under Alternatives. The ranking by task words is in, and its unit test uses profiles with equal tools.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "not_done",
+  "{\"problem\": \"For a web routing hand-over (ADR 0107: a runtime with no web reader passes a researcher task to a specialist with web access), task.started still names the original specialist.\", \"why\": \"The routing depends on the run's driver choice, which is made inside run(). task.finished now names the routed specialist (TaskExecutionResult.specialist). Naming it on task.started would mean moving the driver choice into chooseSpecialist; this is rare (only an install with FORERUNNER_WEB_FETCH=off) and the research-web part is phase C's.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Phone screens (apps/ui/src/mobile, e.g. the mobile Changes view) were not changed.\", \"why\": \"The phone round is phase H, last in the plan.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "new_problems",
+  "The planning session's page shows its raw summary 'intake: Alpha after (completed: 2 docs)' under the title, against writing rules 3 and 6. Evidence: /tmp/frbench/fix-screens-after-steps/06-after-e-planning-session.txt. The text comes from session/intake.ts (system text area)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "new_problems",
+  "The critic reviews a ladder stand-in's work with the plan item's specialist: its review floor and the sign-off rule are the plan's. Using the stand-in's floor would make a coder task taken over by the migration-specialist a full review with sign-off, which waits for Docker. I left it unchanged so runner.ts stayed in scope; ADR 0108 records it. This is an owner question."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "new_problems",
+  "A review stopped before the critic's model call began (during the project checks or the try) writes no critic Run row, so the drawer shows no trace that a review started. Found while writing the C-41 test: the row exists only when the model call was in flight."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "new_problems",
+  "Without a key and under Stop all at the same time, the ready line names the missing key first ('Claude is not connected'), while the Start dialog's startBlocked names Stop all first. Both refuse; only the order of the reasons differs."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "new_problems",
+  "packages/runtime/test/monthly-jobs-wiring.test.ts 'fires the calibration once on day 1' takes about 27\u201337 s and fails under machine load (load average near 20). It may need an event-based wait for Windows CI (cf. 5b1fb2b, 9140369)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "new_problems",
+  "The shared scratchpad is used by several agents at once: another agent overwrote a walk script named walk-a.cjs that this area had written (now named screens-walk-*.cjs). Workflow scripts should give scratch files unique names."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "apps/ui/src/lib/session-steps.ts: currentFromLog (moved out of SessionPage, which still re-exports ENDED), taskStepsFromLog(events, taskId, max), useSessionLog(client, sessionId, streamOptions) and ENDED_SESSION. 'polish' owns startedAtWords in SessionPage, which is untouched."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "GET /tasks/:id runs (TaskDetailView) now carry optional sessionId, fullReport and webSources [{url, title, refused}]. A stopped critic run reads outcome 'Stopped before a verdict' with a report sentence (reviewStopWords in task-display.ts). The fake daemon's runs accept files, webSources, fullReport, report and stoppedBecause."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "POST /sessions now answers 409 conflict, with the start check's sentence and details.blocked, when startBlocked says nothing_runnable. Any caller that starts a session on an empty project (bench scripts' R.startSession, tests, the phone) must give it a ready task first."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "POST /kill/resume answers stoppedProjects: string[]. KillSwitch.stoppedSessions() and KillRequest.sessions persist which sessions Stop all ended. Only the stopped bar's Continue reads it."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "ProjectCardFacts.stopped and the ready line variants ('Ready: N tasks. Claude is not connected.' with Connect Claude; 'Ready: N tasks. Sessions are stopped.' with no action) are in project-status.ts. 'polish' owns the done and waiting lines in the same file. New helpers there: blockedTaskIds and sinceLines."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "ProjectSummary.lastSession.since: string[] is shown under Last result on the Overview (SummaryTab.tsx)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "TaskExecutor.chooseSpecialist and TaskExecutionResult.specialist (ADR 0108; the number may need renumbering at merge). Any new executor wrapper must forward chooseSpecialist, as PrTaskExecutor, compose's inner executor and tests/e2e scenario-world.ts and scenario-capabilities.ts do. personLine renders '\u2026 takes over \u2026 from \u2026' whenever handedFrom differs from specialist, not only on a retry in the same session."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "alternateSpecialist(from, candidates, { exclude, requireWeb, task }): the task's title and outcome words rank the stand-ins that fit. research-web's requireWeb is unchanged."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "CommandLoop.startUndoRefusal (read only) answers the session.start undo for both undoBlocked (GET /changes) and undo. ChangesPage has undoBadge and SAID_SOURCES; ChangeCardDialog exports refusedWords ('Not done: <reason>.')."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "fileUnder refuses, on Windows only, segments with a colon (alternate data streams) and device names (CON, NUL, COM1\u2026). On Linux a colon is a valid letter."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fix",
+  "notes_for_other_areas",
+  "Live checks for the session lead (real model): (1) open a running task's drawer during the smoke brief and confirm the step lines move and the file links open the Files tab; (2) a coder task that fails twice should show '\u2026 takes over \u2026 from the coder' and the stand-in's name on its finished line; (3) a researcher task naming a public page should list 'Read: \u2026' in its drawer."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer non-blocking: Changes still shows raw source and scope badges ('ui', 'chat', 'global', 'session', 'project').\", \"why\": \"This was already there before this branch and the page is behind More. Words for these badges belong with the polish batch. Changing them would also touch e2e and unit assertions that key on data-source.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer non-blocking: Connect Claude goes to /setup from the ready and plan-failed lines but to /settings from the Start dialog (start-blocked.ts).\", \"why\": \"An existing U-047 real-daemon assertion (real-daemon.test.ts:3903) pins '/settings' for the start check. Which target is right is a polish or owner call, so I left it rather than change another area's assertion.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer non-blocking: the drawer links every changed file, even one deleted since. The Files tab then says '<file> is not a file of this project'.\", \"why\": \"Telling a deleted file apart needs the folder listing or a stat in GET /tasks/:id. That is a polish-level change in the drawer; nothing here makes it worse.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer non-blocking: kill.json keeps only the sessions stopped since the last resume, read from memory. A second Stop all after a restart, while still stopped, rewrites it without the sessions stopped before the restart.\", \"why\": \"An edge case (Stop all, restart, Stop all again before any resume). It is left as is and recorded here.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer non-blocking / fixer new_problems: after a hand-over the next attempt's plan item is the stand-in's (executor.ts patches task.specialist), so a light-review coder task can end in 'needs your sign-off'.\", \"why\": \"Owner question (ADR 0108), already known before this branch. The task list shows another fixup (fixup-answers B3, 'ladder handoff to sign-off specialist keeps full review') working on it, so I did not touch it.\"}"
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "new_problems",
+  "packages/runtime/src/daemon/task-display.ts:152 reviewSentence's default branch still writes \"The critic's verdict: <words>.\" for an unknown verdict value. This predates this branch (1186413, phase C/polish words in the drawer). It is rare, but it uses the same banned word."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "new_problems",
+  "The reviewer's walk scripts and this round's scratchpad share one folder (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad) with other agents. I named my files fixup-screens-*.cjs to avoid clashes."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "notes_for_other_areas",
+  "start-blocked.ts exports busyHere(activeStart, projectId). Any new caller of startBlocked must pass busy: busyHere(scheduler.activeStart(agentId), projectId), not scheduler.isActive: another project's session never makes a start with nothing to run wait. StartCheckView.busy stays agent-wide (the queued notice)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "notes_for_other_areas",
+  "The fake daemon has a new harness option busyProjectId (with startOutcome: 'queued'). A start on that project with nothing ready waits; on any other project it is refused, as on the daemon."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "notes_for_other_areas",
+  "KillSwitch.stoppedSessions() now holds only sessions stopped by by: 'stop_all'. A new Stop all path must pass by: 'stop_all' or Continue where it stopped will not restart its sessions."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "notes_for_other_areas",
+  "runner.ts reviewTask takes ranBy (the specialist that ran the attempt) for critic.verdict's specialist. fixup-answers (B3, the ladder hand-over and the review level) touches nearby runner/executor code, so expect a small merge there. The review still gets the plan item."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "notes_for_other_areas",
+  "ChangesPage.undoBadge(c) now returns null for an Undo's own row and accepts commands; callers must handle null."
+ ],
+ [
+  "wave5",
+  "screens",
+  "fixup",
+  "notes_for_other_areas",
+  "Stopped review words are now 'Review stopped' and 'The review stopped before the critic decided: <who>.' (task-display.ts, fake-tasks.ts)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "Changes: an undo row ('Undone: quiet hours is back to off.') is badged 'Cannot be undone' and has no reason line, so it reads like a refusal. A row that is an undo might carry no badge."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "Changes still shows raw source and scope badges ('ui', 'chat', 'global', 'session', 'project'). This was there before and the page is behind More, but the words are internal names."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "The fake's session.start undoBlocked keys on after.session_id. The real daemon never writes it for a local start (the start port returns sessionId undefined), and when it is set the real daemon leaves the decision to the executor. The UI test seeds a row shape the real daemon does not produce; the real-daemon case covers the real path."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "packages/capabilities/src/githost/pr-executor.ts: chooseSpecialist was inserted between setAside's doc comment and setAside, so that comment now sits above chooseSpecialist."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "Connect Claude points to two places: the ready and plan-failed lines go to /setup, the Start dialog's (start-blocked.ts) to /settings."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "The drawer links every changed file. The fix scope said a skipped or vanished file stays plain text. The Files tab then says '<file> is not a file of this project', which misleads for a file deleted since."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "This was there before (executor.ts:943 patches task.specialist to the stand-in). The attempt after a hand-over becomes the migration specialist's plan item, so a light-review coder task ended in 'needs your sign-off' on the bench (Third ladder walk). This ties in with the fixer's new_problems item 2 (an owner question)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "kill.json gets the sessions stopped since the last resume, read from memory. A second Stop all after a restart, while still stopped, rewrites it without the sessions stopped before the restart. This is an edge case."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "On base the U-044 real-daemon case fails first because run.sessionId is missing (404 on sessionEvents('')). With only that field added it fails as it should (task.started names the coder), so the test is meaningful, but its first failure on base hides the cause."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "packages/runtime/test/docs-routes-files.test.ts leaves its temporary folders behind."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "The planning session's raw summary 'intake: <name> (completed: 2 docs)' still shows (the fixer reported it; system-text area)."
+ ],
+ [
+  "wave5",
+  "screens",
+  "review",
+  "non_blocking",
+  "Live checks for the session lead are as the fixer wrote them, plus one: on the real model, a coder task whose third attempt by the stand-in also fails must name the stand-in on its 'could not do' line once blocking 1 is fixed."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "not_done",
+  "{\"problem\": \"C-20 part: 'a project's evidence goes when the project is deleted' (and a real-daemon case that deletes a project).\", \"why\": \"Forerunner has no project deletion at all (no daemon route, no UI control, no command), so there is nothing to hook into; a project's evidence lives as long as its tasks, now one review's worth per task. Uninstall treats <data> as the person's data as before.\"}"
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Real-model confirmation of #95 (and #96/#100 behaviour of the live model).\", \"why\": \"Forbidden here (stand-in only); precise live_check steps are in the fix's check_in_the_app for the session lead (about USD 0.20 + 0.15).\"}"
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Code enforcement that a specialist without a write tool cannot write files through run_command.\", \"why\": \"ADR 0108 records it as the follow-up (a read-only folder for such runs in the Docker sandbox and the process stand-in); a sandbox change for both runners is out of proportion to a minor finding.\"}"
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "not_done",
+  "{\"problem\": \"scripts/bench/README.md does not mention the stand-in's new briefAsRead behaviour.\", \"why\": \"The README is the bench area's file; documented in docs/maintainers/testing.md instead (note for the bench area).\"}"
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "new_problems",
+  "The brief's 'Questions for the person' line has the same ambiguity as the old lesson line: '\u2026 else end the report with \"Questions for the person:\" and one question per line' (packages/runtime/src/session/executor.ts, the constraint right after LESSONS_CONSTRAINT). A data-analyst or science-evaluator whose deliverable is a report may put its questions into report.md, where the critic and askPersonInstead (which read the run's final report) never see them, so no card is filed. Not changed: the area spec limits my executor change to the lesson line."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "new_problems",
+  "Notification titles with several long task names: fit() shortens each name to its first word(s) and then cuts, e.g. 'Quote page after: did 3 tasks: \"Create the\u2026\", \"Show a\u2026\"\u2026' (packages/runtime/src/notifications/producers.ts fit/cut; pre-existing). Naming the first task and 'and 2 more' would read better."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "new_problems",
+  "The injection_flagged title still carries the raw source name: 'Instructions found in web_page content were ignored' (design \u00a75.6, no raw names); scenario 6 and capabilities-wiring assert that exact title, left as is."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "new_problems",
+  "Forerunner has no way to delete a project (no route, UI or command); C-20 assumed one."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "runner.ts: SessionResult.news (string[]) = the result's lines without what an open Inbox card says; use it for any 'news' surface (Home, phone push) instead of the full summary."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "session/result.ts: sessionResultLines(facts, told?: ToldByCards {tasks, docker, plan}) and isNewsLine(line) are exported; sessionUpdateLine returns null for a card-only session (no 'the session ended without finishing a task.')."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "notifications: SessionEndFacts.news and sessionEndIsNews(facts) (exported from notifications/index.ts); compose sends the session end only when it is true (never after you/stop_all/quit, always for budget_exceeded)."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "Bus/event payloads: session.ended carries stopSaid: true after a person's stop (event line 'Session over[: counts]. CHF x.'); critic.session_review carries humanRequestId when the session review filed a card; compose notifies a critic.verdict escalation only for decision/verdict 'human' without a request."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "executor.ts: the one lesson brief line is the exported LESSONS_CONSTRAINT; the other brief lines are untouched."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "testenv/src/bench/role-player.ts (bench area): my part is the write step (briefAsRead, isReportFile, lessonLine): with the old lesson line a report deliverable gets a Lesson line, and a writer whose brief does not mention scratch notes leaves notes.md. scripts/bench/README.md could say so (documented in docs/maintainers/testing.md)."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "loop/try-it.ts (verification area): keepOnlyThisTry(dirs, taskId, reviewKey) appended at the end of the file; compose wraps whichever try port it has (including test stubs) so it runs before every try."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "daemon/views.ts findingView: descriptions and required actions now go through plainPlurals/withoutIds (rows and fingerprints unchanged)."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "ADR 0108 (reviewer's findings are its report) takes the next free number at the time of writing; renumber at merge if another area took 0108. Registry versions bumped: tester, reviewer, writer-marketing 1.1.0; principals/project-manager 1.1.0 (gains one delegation rule): merge any other PM-prompt change on top."
+ ],
+ [
+  "wave5",
+  "noise",
+  "fix",
+  "notes_for_other_areas",
+  "apps/ui/test/real-daemon.test.ts: the ADR 0104 describe now captures `bench` from composeWithRolePlayer (bench.reject used by the new C-20 case)."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "Docker wait: the news drops 'Waiting for Docker: \"X\"' but keeps the result's leftOver sentence. The session-end body therefore says '\"Style the page in styles.css\" is ready to continue.' for a task that is waiting for Docker. The leftOver wording was already there before this change, but the title no longer carries the Docker fact. Seen on the bench with FORERUNNER_BENCH_RISK2=Style."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "Session-end titles now usually lead with the 'did N tasks' list. fit() shortens it to 'Quote page: did 3 tasks: \"Create the\u2026\", \"Show a\u2026\" and\u2026', which carries little information. fit() itself was already like this (the fixer lists it too); naming the first task plus 'and 2 more' would read better."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "A session that ends 'failed' with an internal error and has nothing in its result but money now sends no notification: sessionEndIsNews only reads the lines, and stopWords('internal') is empty. Before, it sent the uninformative 'Project: CHF 0.00'. Treating status 'failed' as news, with words for the error, would close this."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "The injection body keeps raw rule ids and the tool name as origin ('Ignored 4 passages from email_read (approval_bypass, exfiltrate, \u2026)'), and the title says 'web_page content'. That is what ADR 0047 asks for, but it is jargon under design \u00a75.3 and \u00a75.6."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "The body is cut mid-sentence when the rest is long ('\u2026 2 tasks wait on\u2026 Open the session for the details.'). bodyOf already did this before the change."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "The executor's 'Questions for the person' line has the same 'report' ambiguity as the old lesson line (fixer's new problem). A report-deliverable specialist may put its questions into report.md, where no card is filed from them."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "The stand-in's briefAsRead decides from the literal brief text, so the bench confirms the new brief line rather than model behaviour. The session lead's live check (data-analyst plus writer-marketing, about USD 0.20; reviewer plus tester, about USD 0.15) is still needed."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "#96 is enforced only by the prompt and the critic. ADR 0108 names a read-only command folder as the follow-up. ADR 0108 may also need a new number at merge if another area takes it."
+ ],
+ [
+  "wave5",
+  "noise",
+  "review",
+  "non_blocking",
+  "Not this area: the critic stand-in's summary 'Accepted: 1 changed file match the brief.' has a grammar slip. The header's project selector kept showing 'Quote page' on another project's session page."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Leftover 16, the second half: real-daemon 'Stop on the running task' and capabilities browser.integration (120 s) were to be made event-driven 'only if they flake during this phase's full runs'.\", \"why\": \"Neither flaked in any full run this phase: the full real-daemon file ran 4 times and pnpm test:integration once, all green. The spec says to change them only if they flake.\"}"
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "not_done",
+  "{\"problem\": \"For setup's supervised restart, the page shows one 401 (GET /inbox) between the daemon answering /health and the recorder reloading the page with the new token.\", \"why\": \"The SetupPage polls the token-free /health, then navigates before the bench's stand-in for the shell reloads the window. The desktop shell has the same window of time. This is a transient problems.jsonl line, not a stuck state, and it is outside the bench's files (apps/ui SetupPage).\"}"
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "new_problems",
+  "The project header's status sentence shows a raw internal path: 'Done: all 2 tasks. Your files: /tmp/frbench/fix-bench/home/data/projects/<uuid>/workspace' (/tmp/frbench/fix-bench-after/walk1/09-reviews-tab.png). It is long, and it shows a project id. Design \u00a75 rule 3 says no ids and no internal paths. This belongs to whoever owns the project header and Files."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "new_problems",
+  "POST /setup/finish runs runSetup({}) again. daemon.log then shows a second 'setup written' line with stored [] and skipped [github, anthropic, subscription] right after the GitHub token was stored (/tmp/frbench/fix-bench-after/walk-setup/daemon.log). It is harmless but misleading in the log. Owner: setup routes."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "new_problems",
+  "After a supervised restart, the SetupPage goes to Home on /health before a token-bearing call works, so one GET /inbox answers 401 (problems.jsonl of the after walk). The desktop shell may show the same moment."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "notes_for_other_areas",
+  "Bench (scripts/bench/README.md):\n- The daemon now runs under scripts/bench/supervise.mjs: pids.daemon is the supervisor (its process group holds the daemon), and daemonNodePid is the daemon itself. A setup or update restart (exit 86) brings the daemon back by itself with a new token in bench.json, and restarts[] gets {by: 'supervisor', reason}.\n- Pages from recorder.openApp reload with a new token by themselves; pass {reconnect:false} to keep the old one.\n- start.mjs --githost <port> --githost-in-setup leaves the stand-in's GitHub token (bench.json githost.token) to be pasted in the setup assistant."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "notes_for_other_areas",
+  "Stand-in (testenv/src/bench):\n- Change the plan words are read: drop/remove/delete/skip/cut/omit/leave out <name> and add/include/insert <name>. What it did is in plan.reason, which the model-call log shows.\n- FORERUNNER_BENCH_PLAN accepts research and chain,research.\n- The critic now sends back a task when a criterion names a file that is missing, or says '<A> links <B>' and A does not name B. A walk script that plants its own tasks with such criteria now sees rework, not an accept.\n- Testers write the test file their title names.\n- judgeCriterion and splitChanges/applyChanges are exported from testenv/src/bench."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "notes_for_other_areas",
+  "apps/ui/test/fake-daemon.ts exports fakeEventAudience(type, payload). Use it if another fake route pushes session events."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "notes_for_other_areas",
+  "apps/ui/test/real-daemon.test.ts has two new describe blocks at the end:\n- 'what the bench walks (phase E, bench)': a gated stand-in that holds the first specialist call so a running session can be observed. Reuse the pattern for any 'while it runs' field.\n- 'a session on a repository opens the pull request the Overview lists (C-62)'."
+ ],
+ [
+  "wave5",
+  "bench",
+  "fix",
+  "notes_for_other_areas",
+  "Session lead live check (real model): none of these changes touch the real-model path, except that intake.cjs now names projects after the brief. Running node scripts/bench/journeys/intake.cjs <n> --brief '<brief>' on --provider bench-live names the project '<brief's first words> HH:MM:SS'. On a bench-live fresh home, finishing setup with the key stored through the assistant should now restart and come back by itself (daemon.log '=== bench supervisor ...')."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "C-10 is only partly closed. judgeCriterion marks a criterion 'met' as soon as it has read the named file, whatever the claim. The walk's evidence reads '[met] README.md has a 'How to run' section \u2014 read README.md', but that README.md has '## How to open it' and is about a random quote page, for a todo list project. '[met] node src/main.js exits 0 \u2014 read src/main.js' is also 'met' without running anything. Only a missing file and '<A> links <B>' are really checked. More honest evidence would be 'not checked by the stand-in: read README.md, the section was not looked for', or the stand-in could look for the quoted words."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "apps/ui/test/fake-daemon-audience.test.ts tests the helper fakeEventAudience against eventAudience. Nothing tests that the fake's pushEvent and its GET /sessions/:id/events use it: putting the old eventAudience(type) call back in pushEvent would still pass. No screen test pushes a marked event, so the marks are still not used on any screen test."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "recorder.cjs followDaemon and an explicit reconnect(page, name) now both reload the page after restart-daemon.mjs. session-engine.cjs and session-engine-failures.cjs do this, and reconnect's page.reload has no guard. My 3-round probe (two plain restarts and one --hard) raised no error, but it is a possible race. reconnect could tell followDaemon the token it saw, or journeys could drop the explicit reconnect."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "The fixer's live note for the setup restart is imprecise. start.mjs --provider bench-live stores the Anthropic key in the vault before the daemon starts, so finishing setup restarts only when a credential is saved in the assistant itself. Precise live_check: a fresh bench-live bench, then in the setup assistant paste a GitHub token on the GitHub step, Check and save, Continue, Start using Forerunner. Within seconds the page should be connected on Home, and daemon.log should show both '=== bench supervisor' lines."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "One of the fixer's new problems, the raw folder path in the project header ('Done: all 2 tasks. Your files: /tmp/.../projects/<uuid>/workspace'), is what design \u00a72 item 6 asks for ('Done: all 7 tasks. Your files: <path>'). Whether that path counts as an internal path under \u00a75 rule 3 is the owner's call, not a bench defect."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "After the supervised restart, problems.jsonl shows 2 refused GET /health and 3 transient 401s (GET /events, GET /inbox) before the recorder reloads the page (the fixer's not_done item, confirmed). Nothing stays stuck."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "supervise.mjs treats only exit 86 as a restart and ignores the request's exitCode. The shell's is_restart_exit honours request.exitCode and also 75. It is harmless today, since restart.ts writes 86."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "filesNamed now skips every capitalised single-segment *.js name ('Node.js', but also an 'App.js' at the root). That is fine for the stand-in's own plans, but a planted criterion naming such a file would not be judged."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "scripts/bench-scripts.test.ts: the new supervisor describe was inserted between the smoke-checks describe and its doc comment, so that comment now sits above the supervisor block. Cosmetic."
+ ],
+ [
+  "wave5",
+  "bench",
+  "review",
+  "non_blocking",
+  "I did not re-run pnpm test:integration: no integration test imports the bench stand-in, and the fixer reported it green. I ran each C-8 test once, not 5 times under load."
+ ],
+ [
+  "wave5",
+  "merge",
+  "merge",
+  "problems_left",
+  "The merge broke nothing that is still open: every suite above is green on 3cbf6cc."
+ ],
+ [
+  "wave5",
+  "merge",
+  "merge",
+  "problems_left",
+  "Not covered by a UI test: the fake daemon's chat 'stop everything' now stops running sessions and records their projects, as its POST /kill does (676ec3a). It is exercised only by the existing UI and Playwright suites, which pass; no new case asserts it directly."
+ ],
+ [
+  "wave5",
+  "merge",
+  "merge",
+  "problems_left",
+  "Older than this merge, seen while fixing 676ec3a: the phone's Stop all (packages/runtime/src/remote/watcher.ts runKill, by 'stop_all') never writes kill.json. writeKillRequest is called only from server.ts POST /kill, compose's chat wrapper and the CLI. So the phone's Stop all may not survive a daemon restart, and Continue where it stopped would not see its sessions after one. Not changed here."
+ ],
+ [
+  "wave5",
+  "merge",
+  "merge",
+  "problems_left",
+  "The areas' own not_done and non_blocking items are as their reports say. Answers: C-68, the model task_create for long chat lines, the runner's dead heard-line path, old tier-1 rows, the plan banner going stale after a chat approval. Screens: raw source and scope badges in Changes, Connect Claude going to /setup or /settings. Noise: the 'Questions for the person' report ambiguity, the injection title's raw source name. Bench: one transient 401 after the supervised restart. None was touched by the merge."
+ ],
+ [
+  "wave5",
+  "merge",
+  "merge",
+  "problems_left",
+  "The live checks named in the reports still need the real model, run by the session lead: the answers checks, screens' takes-over line (now expected on a tester task; a coder keeps its own task under the sign-off rule), and noise's #95/#96/#100 checks."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Quit (POST /shutdown) does not wait for the running session to write its own end: it stops the runs, waits 100 ms and closes the store, so whether the session reads 'Stopped: Forerunner was closed' or is ended at the next start as 'Interrupted' depends on how fast the runner reacts (a page being tried in a browser takes ~1-2 s).\", \"why\": \"Both outcomes now end with the task Ready and a true sentence (L-1 recovery plus the L-8 signal); a bounded wait belongs in server.ts /shutdown or cli/main.ts shutdown, which this area does not own (server.ts is 'screens' territory in phase E). Left as a suggestion for the session lead.\"}"
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Bench BEFORE walks for L-6 (Undo) and L-10 (chat skip) on the old code.\", \"why\": \"Their before-evidence is the live run's screenshots (/tmp/frbench/livec-a/steps/79-bakery2-08-after-undo, 112..114-c5chat-*) and the failing-first tests; the bench was already on the fixed code when those walks were written. After walks d and e were done on the bench.\"}"
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "new_problems",
+  "Project status reads 'No tasks yet' for a project whose only task is cancelled (header and Overview): /tmp/frbench/fix-stops/steps/23-after-e-03-tasks.png (row 'Credits page in credits.html \u00b7 Cancelled', header 'No tasks yet'). packages/runtime/src/daemon/project-status.ts (screens/polish)."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "new_problems",
+  "Try-it (packages/capabilities/src/browser/try-page.ts, 'verification') checks the abort signal only between pages, so a Cancel while a page is opened waits for that page's two widths (~1.7 s on the bench: kill 15:29:30.930, session end 15:29:32.6) before the review ends and the files leave the folder. No model call is made any more after the Cancel."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "new_problems",
+  "The flaky-under-load tests seen this run, both passing alone: packages/runtime/test/monthly-jobs-wiring.test.ts (30 s real-time settle for ~160 calibration calls; 21.5 s alone at load 15) and apps/ui/test/session.test.tsx 'while it runs\u2026' (waitFor). Both rely on how long real work takes, the pattern the Windows CI note warns about."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "new_problems",
+  "Multi-computer (out of scope this round): a Cancel of a task running on another computer says 'Cancelled \"X\".' (stopTask stopped nothing here) while that computer's runner watch stops the run and sets its work aside, as before phase E."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "new_problems",
+  "While a page was being tried in-process, the Cancel dialog showed 'Saving\u2026' for more than 0.5 s before the line appeared (/tmp/frbench/fix-stops/steps/13-after-b-03-after-cancel.png); the line was true once shown. Observation only."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "new_problems",
+  "Disk dropped to 7.3 GB free during this run from other agents' work (this area's bench home is deleted; /tmp/frbench/fix-stops is 3 MB of screenshots)."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "TaskDisplay.live (api-types.ts, optional): only on a task being reviewed, true while its review goes on in this daemon (KillSwitch.hasTask). UI cancelWorkLine omits the work line when it is false. Fake daemon: state.taskMeta.notLive (Set of task ids) makes a reviewed task read live=false."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "KillSwitch.hasTask(taskId): whether a non-stopped registration of the task exists (what stopTask would stop)."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "CommandPorts.liveWork?(taskId) (packages/commands/src/types.ts), wired in compose.ts to kill.hasTask; moveAsk(task, from, to, stuck, live?) takes it: a task in review's cancel read-back says 'its review stops now and what it changed is removed' only when live is true; a running task's read-back always says its run stops."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "packages/commands exports CANCEL_UNDO_WORDS ('Undo reopens it, and its changes come back unless the same files changed since.') and UNDO_CONFLICT_WORDS ('What it changed could not be put back: the same files changed since. Its next run does the work again.'); the UI dialog and fake-tasks.ts use the same words literally."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "Intent: 'skip X' / '\u00fcberspringe X' is task.transition {cancelled}; 'skip X for now|for later|until later|for the moment|vorerst|erst mal' stays task.pause (packages/commands/src/intent.ts matchTaskMove, the skip/cancel part only). Conversation-agent prompt is 1.1.1."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "Critic: CriticService.review() throws ForerunnerError 'killed' when ctx.signal is already aborted (nothing run or recorded); the critic's driver.run gets ctx.signal. The runtime critic port (loop/critic.ts) throws 'killed' after the try step when aborted (one guard; verification's try/check evidence code is unchanged)."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "Runner (review start only): the review's controller is registered before the task moves to in_review (endReviewHold() unregisters it); a refused in_review transition after the run is recorded as a person's move during the run (recordMove 'run', stopped = the hold was aborted by the move) instead of failing the session. 'decisions' owns budget_exceeded and dependency branches; nothing there was touched."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "session/recovery.ts endDeadSession: also returns tasks the dead session's runs left in_review (claimed or not) to ready, unless a holding card exists; the Update and the session result name them."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fix",
+  "notes_for_other_areas",
+  "ADR 0105 has an 'Amendment (2026-11-02, phase E, area stops: L-6, L-7, L-8)' section; maintainer docs touched: runtime.md, commands.md, critic.md, apps.md, adding-a-specialist.md; user-guide.md Tasks-tab Cancel paragraph and Chat 'skip' bullet."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Writing rule \\u00a75.1 (the reviewer's non-blocking item): the Cancel dialog's consequence line for a running task or a review is 139 to 142 characters before the 'X waits on it' names ('Drops it. Its run stops now and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.'). The limit is 100. The line after the action grew by the same 55 characters.\", \"why\": \"Not changed in this fixup. The wording is CANCEL_UNDO_WORDS, documented in ADR 0105's amendment. It appears in about 40 places: commands, the UI dialog, fake-tasks.ts, continuity-cancel/real-daemon/tasks tests and four docs. fix/answers (C-38) also rewrote the same moveAsk branch with its own wording ('Its run stops now and what it changed is removed'), so the lead reconciles these words at merge anyway; a third version now would only add to that. A true wording at \\u2264100 characters with 'Drops it.': 'Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.' (97 characters, or 100 with 'review'), or the reviewer's 'Its run stops and its changes are removed; Undo may not bring them back.'\"}"
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Overview 'Last result' reads 'No session yet.' after a quit or crash recovery, though the session ended 'Interrupted: Forerunner closed\\u2026'. endDeadSession (session/recovery.ts) does not write summary_cache.last_session, which the runner's end path writes (runner.ts ~2420 with an outcome object). This was so before the branch.\", \"why\": \"Non-blocking and older than this branch. A fix means building a LastSessionOutcome in recovery and touching what the Overview reads (SummaryTab), which is screens/polish territory. Left for the lead.\"}"
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"A graceful Quit during a review ends as 'Interrupted: Forerunner closed while this session ran.' (recovered at the next start), not 'Stopped: Forerunner was closed' (\\u00a74.9), because POST /shutdown does not wait for the runner. Seen again in walk (a): both Quit and crash gave the 'interrupted' Update.\", \"why\": \"server.ts /shutdown belongs to 'screens' (shared_files). Both outcomes leave the task Ready with a true sentence. Same as the fixer's not_done.\"}"
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Other non-blocking review items: (1) the session result after a Cancel says 'N tasks wait on other tasks.' while the rows read 'Stuck: \\u2026 was cancelled' (seen again: '4 tasks wait on other tasks. CHF 0.00.'); (2) the real-daemon L-1 test's first runtime keeps a tryPages promise that never resolves after rt.close(); (3) the Changes page shows 'task.transition \\u00b7 before / after' under the sentence.\", \"why\": \"(1) and (3) are older than this branch and outside this area's files (result.ts wording, ChangesPage). (2) is deliberate: the test models a browser step that does not end when the process is asked to stop, and resolving it after close would run the old runner against a closed store. It is harmless and leaves nothing queued for the next test.\"}"
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "new_problems",
+  "Bird club walk (an attempt that was not kept): a Cancel pressed on a row the UI still showed as Running, after the task had already moved to in_review, got 409 'This task changed: it is now Being reviewed.' (/tmp/frbench/fixup-stops/steps/problems.jsonl, 19:52:44). This is correct optimistic-version behaviour. Whether the dialog then showed the person that sentence and the new row was not checked (20-abc-error.png shows the row refreshed to 'Being reviewed' with Cancel). Observation only."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "notes_for_other_areas",
+  "moveAsk(task, from, to, stuck, live) in packages/commands/src/commands/task.ts now takes Pick<TaskRow,'title'> & Partial<Pick<TaskRow,'pr_url'>>. A cancel's read-back of a task with a pull request says '; its run (or review) stops now; its pull request stays open', the same words as cancelWorkLine and the moveSentence 'pull_request' branch."
+ ],
+ [
+  "wave6",
+  "stops",
+  "fixup",
+  "notes_for_other_areas",
+  "Merge with fix/answers (C-38): both branches rewrote moveAsk's cancel branch, and git merge-tree reports a conflict in task.ts. answers' version ('Its run stops now and what it changed is removed' / 'It is dropped') has neither the pr_url case nor the live-review case (liveWork). Whichever wording wins, the merged moveAsk must keep three cases: (1) a running task, or a task in review with liveWork true, that has pr_url says its pull request stays open; (2) the same without pr_url says what it changed is removed; (3) a task in review with no review going on is only dropped. answers' assertMove before plan and run is separate and merges cleanly beside it. Keep the new tests: commands.test.ts 'pull request stays open' and the real-daemon L-7 case."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "Writing rule \u00a75.1 (consequence line \u2264 100 characters): the Cancel dialog's line grew from 80 characters ('Drops it. Its run stops now and what it changed is removed; Undo brings it back.') to 139 for a running task and 142 for a review, before any 'X waits on it' names. The line after the action also grew by about 55 characters. On screen the dialog wraps to 4 lines (steps-1/15) and the Tasks-tab line to 2 lines at 1400 px (16). A shorter wording that is still true would be something like 'Its run stops and its changes are removed; Undo may not bring them back.'"
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "Overview 'Last result' reads 'No session yet.' after a quit or crash recovery, though the session ended 'Interrupted: Forerunner closed\u2026' (steps-1/07, 12). Recovery does not write the project's summary_cache.last_session. This was already so before the branch, but it breaks \u00a75.10 and true-now in this area's journey."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "Graceful Quit during a review ended as 'Interrupted: Forerunner closed while this session ran.' (recovery at the next start), not 'Stopped: Forerunner was closed' (\u00a74.9). /shutdown does not wait for the runner. The fixer listed this in not_done (server.ts belongs to another area); both outcomes leave the task Ready with a true sentence."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "The session result after a Cancel says '1 task waits on other tasks. CHF 0.01.' for a task that is 'Stuck: \"\u2026\" was cancelled'. The words differ from the row. Pre-existing."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "shared_files says 'nobody else in E changes server.ts' (screens owns it) and 'verification' owns the try evidence in loop/critic.ts. This branch adds 4 lines to server.ts projectTaskViews and a 4-line abort guard after the try block. Test merges show no conflict in those two files with fix/screens or fix/verification. There are conflicts in apps/ui/test/real-daemon.test.ts (end-of-file describes: screens, decisions, answers, bench), docs/maintainers/apps.md (screens, verification, asking) and packages/commands/src/commands/task.ts moveAsk (answers C-38): the lead must reconcile the two moveAsk versions and both branches' read-back assertions."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "The real-daemon L-1 test's first runtime has a tryPages that never resolves. It is closed with rt.close() while the session's promise stays pending in the worker. That is harmless for its own describe, but it is a pending promise left behind."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "On the Changes page the cancel entry shows 'task.transition \u00b7 before / after' (a raw command name) under the sentence. Pre-existing and outside this area."
+ ],
+ [
+  "wave6",
+  "stops",
+  "review",
+  "non_blocking",
+  "Live check for the lead (bench-live): repeat the PR read-back case on a GitHub project once it is fixed. With a task 'Being reviewed', chat 'skip the <task> task' should read back that its pull request stays open."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "not_done",
+  "{\"problem\": \"A note queued while a session runs never reaches a task that the same session runs next. This is the general sibling of L-3: Try again or Redo with a note, a task action's note, findings.ts notes at :205 and :652, and the Tasks tab's Go ahead without note.\", \"why\": \"The cause is in runner.ts:1428 (notesForTask(brief.queue.items, \\u2026) reads the queue once, at session start), and the wave-6 shared_files say only 'stops' and 'decisions' change runner.ts. For L-3 I avoided it by reading the choice from the card or change when the run starts. The general fix (re-read queued items between tasks) belongs to the runner's owner.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "not_done",
+  "{\"problem\": \"After the second card (go_ahead false), the daemon route POST /tasks/:id/action with action go_ahead and the Inbox answer reader still accept 'Go ahead without' if a client sends it (for example the phone or chat).\", \"why\": \"The desktop UI no longer offers it on either surface. Refusing it in commands task.resume or the answer reader would change other areas' files ('answers' owns the answer path in person-questions.ts and request-answers.ts). One extra press now costs one run of the person's own choosing, not an automatic loop.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "new_problems",
+  "Notes queued during a running session are lost to that session. runner.ts:1428 reads brief.queue.items once, at session start. A Try again or Redo note, a task action's note (commands/task.ts:329, :1030, :1180) or findings.ts noteAboutTask (:205, :652) queued while the session runs does not reach the same task when that session runs it next, and the note stays queued. L-3 was this bug for Go ahead without (bench before-walk: the brief of the second 'Members chart' run had no note)."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "new_problems",
+  "packages/runtime/test/monthly-jobs-wiring.test.ts 'the composed scheduler fires the calibration once on day 1\u2026' waits at most 30 s of real time for the ~160-call calibration (settle loop 600 \u00d7 50 ms). It failed in both full unit runs under load (~37 s, load average ~19 on 4 CPUs) and passes alone. This is the slow-CI pattern of 5b1fb2b and 9140369; it should wait for the event, or allow at least that long with a message saying what it saw."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "new_problems",
+  "request-words.ts intakeOutcome still says '; press Start on the project to work on them' when the approve start is nothing_to_run for reasons other than a person task, for example every task waits for Docker. Pressing Start then runs nothing (design \u00a75.9). I fixed only the person-task case."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "new_problems",
+  "Updates noise seen on the bench: a session whose only task asked the person posts 'Garden club \u2026: the session ended without finishing a task.' beside its questions card (/tmp/frbench/fix-asking-after/steps/10-after-without-inbox-after-session.txt). That belongs to the 'noise' area."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "new_problems",
+  "Apps/ui Playwright e2e/session.spec.ts 'Stop now asks once\u2026' and setup-assistant.test.tsx 'Skip for now' time out under heavy machine load and pass alone. Probably flaky on slow CI."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "new_problems",
+  "My scratchpad directory is shared with another agent ('fix-noise'): it overwrote my walk-a.cjs and walk-b.cjs after my walks had finished. The evidence in /tmp/frbench/fix-asking-before and fix-asking-after is unaffected."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "person-questions.ts (the 'answers' area owns the answer path): applyAnswers' 'without' branch no longer queues WITHOUT_ANSWERS_NOTE. The brief reads the choice from the card when the run starts. Keep this when merging wave-5 changes to that function. New exports: listedQuestions (any list style), questionsReason(report, questions), withoutAnswersOn(store, taskId), wentAheadWithout(store, taskId), ASK_REFUSED_AFTER_WITHOUT. answersBlockFor now takes a store with optional task and changeLog, and renders the without choice. PersonQuestionsCard has go_ahead (false = no Go ahead without), and filePersonQuestions takes goAhead."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "API: TaskView.display.blocker.goAhead?: boolean (false on a questions card filed after Go ahead without) in api-types.ts and task-words.ts. apps/ui/src/lib/task-actions.ts actionsFor returns ['answer','cancel'] for it. The fake daemon gets it through the runtime's taskDisplay (fake-tasks.ts), so fake-daemon.ts needed no change."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "resume-work.ts resumeWork no longer counts a person task (specialist 'person') as runnable. Every answer's start line can now be nothing_to_run where it used to start an empty session."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "critic.ts (verification and decisions own other parts): askPersonInstead's context now comes from questionsReason first, and it passes goAhead: !wentAheadWithout(...). Those are the only two edits."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "executor.ts: answersBlockFor is now computed before the queue notes, and the queue notes leave out a note ending in WITHOUT_ANSWERS_NOTE when the block says it. Nothing else changed."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "request-words.ts: questionsCard strips leading punctuation from the context and omits Go ahead without when card.go_ahead === false; intakeOutcome has the person-task Done line."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "@forerunner/critic quotedWords drops a heading's punctuation ('**Summary**:'). The retry card's 'The <specialist> said:' benefits too."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "intake.ts: withOwnersContent(called.proposal, briefText + goal) runs before the card is filed, and the prompt has the content rule (Intake rules and SMALL_PLAN_RULES). New module: session/intake-content.ts. The PM prompt evals/registry/principals/project-manager.md has one added sentence; if the registry is re-synced from forerunner-registry, carry it over."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "Bench (the 'bench' area owns role-player.ts): I added FORERUNNER_BENCH_ASK_STYLE=plain|bullets (askStyle, reportQuestions) and updated the 'Go ahead without' comment. Documented in scripts/bench/README.md and docs/maintainers/testing.md."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fix",
+  "notes_for_other_areas",
+  "Fixtures: packages/runtime/test/fixtures/asking-live.json holds the live Home page and Contact reports and the Members chart ask_person inputs. intake-live-bakery.json holds the live bakery intake reply. intake-live1.json is unchanged."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Review non-blocking: after the person answers a go_ahead:false card, the next brief says both 'The person answered the questions\\u2026' and WITHOUT_ANSWERS_NOTE ('chose to go ahead without answering'), with the old questions listed as left open.\", \"why\": \"Only the model reads this text. The order is true: the without choice came first. Rewording WITHOUT_ANSWERS_NOTE when answers follow would also need executor.ts:896 changed, because it drops the duplicate queued note by matching the exact note text. It would also change what the bench stand-in reads ('bench' owns role-player.ts). That is too much risk for a wording problem.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Review non-blocking: once Go ahead without is chosen, ask_person stays refused on the task for good, and every later brief, Redo included, says 'Do not ask the person again'.\", \"why\": \"Whether a Redo may ask again is a design choice (design \\u00a74.6 and ADR 0102 do not settle it). It is left for the session lead or owner to decide.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Review non-blocking: the person's step can make a 'Plan size: small' plan four tasks, against the design's 'one to three tasks'.\", \"why\": \"The person's step is not work for an agent, and dropping work to make room would break L-11. The design text needs the owner's reading.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Review non-blocking items outside this area's files: the Start dialog's 'try the failed task again' while the work waits on the content step (start-check.ts), resumeWork's 'it runs after the current session' (answers area), the session summary's 'needs your decision (Inbox)' for a questions card, the person-task row's 'Light review \\u00b7 High priority', the bench's FORERUNNER_BENCH_MISSING still saying the file is missing after it is added ('bench'), and the 'session ended without finishing a task' update ('noise').\", \"why\": \"These are not in this area's files (shared_files), or wave-5 areas own them. They are listed in new_problems for the session lead.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Limits of the narrowed promise reader. 'we will provide catering menus for events' (a 'we' promise naming no one else, with a content head) still gets a step. 'I'll send the photos the day before' is missed, because its head noun is 'day'.\", \"why\": \"This is a heuristic, kept on the cautious side. A missed promise is still covered by the intake prompt's rule, and a wrong step can now be dropped with Change the plan.\"}"
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "new_problems",
+  "start-check.ts: the Start dialog for a project whose work waits on the person's content step says '\u2026 waits on \"Give the opening hours and the photos\" (needs you): that will not be done by itself. Change what it waits for on the Tasks tab, or try the failed task again.' Nothing failed and the step is done once answered (reviewer's d2 steps in /tmp/frbench/review-asking/steps/52-d2-start-dialog.txt). Not in this area's files."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "new_problems",
+  "The bench Updates list shows 'Garden club: the session ended without finishing a task.' next to the questions card (/tmp/frbench/fixup-asking/steps/17-plain-questions-inbox.png). This belongs to the 'noise' area, as the fixer reported."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "new_problems",
+  "Lint reports 64 warnings across the repo (pnpm lint exits 0). None are in this commit's files."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "notes_for_other_areas",
+  "intake-content.ts: withOwnersContent(proposal, brief, changes = []) now takes the person's Change the plan words. New export: dropsOwnersContent(change, items). promisedContent counts only promises to Forerunner (handedToForerunner) and judges an item by its head noun. 'members' and 'team' are no longer CONTENT_WORDs."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "notes_for_other_areas",
+  "intake.ts: IntakeDraftOptions has a new optional field 'read' (one line per task of the plan the person read). The Change the plan answer handler and retry() fill it from the answered card (planRead). briefWithChanges now writes 'The plan the person read[ last], in order:\\n1. \u2026' before the existing 'The person read the first plan and asked for this change: \u2026' line, which is unchanged. The intake prompt's content rule has two more sentences, and its existing first sentence is unchanged. The prompt version marker was not bumped, as with the first L-11 change."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "notes_for_other_areas",
+  "request-words.ts: new helpers planTasks, isPersonTask and workWaitsOnPerson. Approve and start's explanation is 'Writes these N tasks; the work starts once you answer its questions in the Inbox.' when every non-person task waits on another. Otherwise it is the design's 'Writes these N tasks and starts working on them now.' A wave-5 change to that choice block should keep both branches."
+ ],
+ [
+  "wave6",
+  "asking",
+  "fixup",
+  "notes_for_other_areas",
+  "Before screenshots for this fix are the reviewer's: /tmp/frbench/review-asking/steps/44-fp-newsletter-plan-card.png, 47-fp-newsletter-after-change.png, 57-fp-newsletter2-after-change.png, 59-fp-newsletter3-after-approve.png, and 37-d-bakery-plan-card.png (Approve says 'starts working on them now')."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "The plan card's 'Approve and start' explanation still says 'Writes these 3 tasks and starts working on them now.' on plans whose work waits for the person task (steps 37, 58). Nothing starts; only the Done line afterwards says so (request-words.ts:382, design \u00a75.9)."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "The Start dialog for a project waiting on the content task adds: '\"Build the page\u2026\" waits on \"Give the opening hours and the photos\" (needs you): that will not be done by itself. Change what it waits for on the Tasks tab, or try the failed task again.' That is misleading: the task is done once answered and nothing failed. This is in start-check.ts, not changed here, but the branch makes the situation common."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "After Go ahead without pressed while the session ran, the Done line read '\"Members chart\" goes on without your answers: it runs after the current session.' The same session actually ran it ('did 3 tasks'). These are resumeWork's queued start words (answers area)."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "After the person answers a go_ahead:false card, the next brief says both 'The person answered the questions\u2026' and 'The person chose to go ahead without answering the questions asked about this task', with the old questions as 'left open' (log call 41). The blanket wording of WITHOUT_ANSWERS_NOTE contradicts the answers above it."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "ask_person stays refused on the task for good, and every later brief, including after Redo, repeats 'Do not ask the person again'. A Redo that needs a new question cannot ask it."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "go-ahead-without.test.ts 'after a restart the choice still holds: the brief carries it\u2026' only asserts the ask_person refusal after the restart, not the brief."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "resumeWork filters person tasks by specialist only; isPersonTask also counts legacy person titles."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "The added person task can make a 'Plan size: small' plan four tasks (design: one to three)."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "A person-task row shows 'Light review \u00b7 High priority'. After the Tasks-tab Go ahead without, a Ready row keeps the Critic column 'needs you'."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "The session summary says '\"Home page in index.html\" needs your decision (Inbox).' for a questions card."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "The bench stand-in's FORERUNNER_BENCH_MISSING still reports data/members.csv missing after the file is added to the folder, so the missing-input path cannot be walked to Done ('bench' area)."
+ ],
+ [
+  "wave6",
+  "asking",
+  "review",
+  "non_blocking",
+  "Updates noise: 'the session ended without finishing a task.' beside each questions card (the 'noise' area, as the fixer noted)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Acceptance (b) and (c) were not walked on the bench.\", \"why\": \"The bench stand-in's runs cost a few cents, so no session budget can be exhausted without a new stand-in knob (bench area's role-player); the bench has no subscription path, so the both-credentials routing cannot be shown there. Both are covered by composed tests (session-budget-card.test.ts, subscription-path.test.ts) and real-daemon cases, with live_check steps above.\"}"
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "not_done",
+  "{\"problem\": \"The dependent-branch conflict card was asserted at the executor (exact words), not through the Inbox in a composed session.\", \"why\": \"The runner's existing could-not-run card carries the executor's summary (plainStopReason, 2 sentences); a composed case for two conflicting dependencies was left out for time. The words are within the card's 300-character, two-sentence limit.\"}"
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "new_problems",
+  "A task whose estimate alone exceeds the session's work budget is left out by every session ('Left for next time: \"Long report\" (about CHF 1.20); this session's CHF 0.40 was used.') with no card, and the same result begins 'Nothing could run: no task is ready.' although a ready task was left out for budget (seen while writing session-budget-card.test.ts with a USD 0.50 session). Sibling of C-36, not fixed: it is the planner's/result's words (session engine/polish)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "new_problems",
+  "A run that ends failed leaves its uncommitted files in the task worktree; the next attempt's checkout carries them (pre-existing; now a dependency merge that git refuses for that reason fails with git's words instead of a misleading conflict card)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "new_problems",
+  "apps/ui/test/fake-daemon.ts's GET /settings fixture has no project.status_pull_request row (the UI handles it generically; the real daemon's row is covered in real-daemon.test.ts)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "new_problems",
+  "At autonomy 3 a dependent task whose dependency's merge was left open (checks failing) carries merge commits; ReviewedPrMerge rebases before merging, which copies the dependency's commits into the branch (consistent with 'merging it merges them too', but not walked)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "new_problems",
+  "The bench stand-in cannot exhaust a session budget, so C-36 cannot be walked on the bench: a knob such as FORERUNNER_BENCH_USAGE=<title>:<tokens> in testenv/src/bench/role-player.ts would make it walkable (bench area)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "capabilities githost (new API): DEPS_BASE_REF ('refs/forerunner/deps-base' in a task worktree), UnmergedDependency, pullRequestsText, buildsOnText, dependencyConflictWords, withoutLessons, plainReport; GitOps.setRef, hasMergesSince, filesBetween, mergeFrom(ref, message?). PrTaskExecutor.execute's repo path was rewritten (screens' chooseSpecialist hunk sits outside it)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "verification: loop/critic.ts GitDiffPort now diffs from DEPS_BASE_REF when the worktree has it (diff base only); keep it if the evidence assembly is rebuilt."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "runtime billing: TaskBillingRequest.firstKinds / firstWhy (applied in RouterTaskBilling.pick ahead of the person's order); RuntimeApp.webSearchOnly(); SEARCH_ONLY_LIMITATION is exported from daemon/api-types.ts (re-exported by model-settings-view.ts); executor SEARCH_ONLY_LINE (search-line hunk only)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "session budget card: budget-card.ts gained SESSION_BUDGET_STOP_OPTIONS, SESSION_BUDGET_SOURCE ('session_budget' on the task:budget_stop card), sessionBudgetStops, fileSessionBudgetCard, raisedSessionBudgetUsdMicro, budgetPerSessionOf; budgetStopAnswer returns 'raise_session' too; request-words.ts has sessionBudgetCard and outcomes raise_session / raise for that source; task-words.ts budget label differs for that source (stops/polish: small hunk). resumeWork accepts budgetUsdMicro."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "docs: STATUS_PR_SETTING 'status_pull_request', statusPullRequestOn, STATUS_IN_APP_DIR, ProjectDocs.statusInAppDir/statusDocRoot, isProjectDocsPr, scaffoldProjectLine (the scaffold PR body now ends 'Forerunner project <id>.'); SessionStatusOutcome.location may be 'app'; DocsRoutesDeps.statusDocRoot."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "polish: BillingOrderSection.tsx's two sentences were changed for C-64 (research exception); SettingsPage SETTING_KEYS and SettingsFields gained status_pull_request; settings-view.ts gained a project.status_pull_request row (repository projects only). Keep these when rewording Settings."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "answers: conversation/agent.ts gained ConversationDeps.openPullRequests and project-facts.ts repositoryFacts(store, project, open) / filesBlock split waiting vs merged (L-17); separate hunks from yours, merge carefully."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fix",
+  "notes_for_other_areas",
+  "bench: consider a stand-in knob to inflate a run's usage so a session budget can be used up (C-36 walk)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Refreshing this computer's copy of the repository on each Docs/Files/chat read (the reviewer offered this as an alternative to refreshing at session end)\", \"why\": \"The copy is refreshed at every session end that changed a task, as on base. A reset inside a GET could race a status-PR write (checkout of fr/status, commit) on the same clone. So a merge made on GitHub shows after the next session, not at once. An intake project still has no copy until its first session ends, which is also how base behaved.\"}"
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Other non-blocking review items: a second project on the same repository gets no doc set (shared fr/docs-scaffold branch); the session-budget card says 'Two sessions of <this session's cap>' even when the two stopped sessions had different caps; 'Raise its budget' runs other ready tasks first by priority; the cancel reason's '(request <id>)'; openPullRequests (L-17) reads only the first 100 open PRs; withoutLessons vs LESSON_LINE regexes differ slightly\", \"why\": \"Not regressions and not blocking. Each needs its own design choice (one scaffold branch per project, budget-card wording, pagination). Listed in new_problems for a later area.\"}"
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Acceptance (b) C-36 and (c) C-64 walked on the bench\", \"why\": \"Unchanged from the fixer and the reviewer, who accepted it: the stand-in costs 1 \\u00b5USD per token, so a session budget cannot be used up, and the bench has no subscription path. Composed tests and real-daemon cases cover them.\"}"
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "new_problems",
+  "A second project on the same repository gets no doc set at all. Its scaffold finds fr/docs-scaffold already full of the first project's files, writes nothing and records no PR, so its Docs tab says 'not written yet' for good and nothing says why. One scaffold branch per project would fix it (reviewer's finding, still open)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "new_problems",
+  "Until its first session ends, a project made from a brief has no copy of its repository: the Docs tab reads README.md as 'not written yet' while the plan waits or the first session runs. Same as base. Refreshing the copy when the intake writes its docs PR would close the gap."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "new_problems",
+  "A merge on GitHub reaches the Docs and Files tabs only at the next session's end (as on base). The tabs say 'This computer's copy of <repo> as merged', which can be stale in between."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "new_problems",
+  "openPullRequests (L-17) reads only the first 100 open PRs. With more, a done task's PR beyond them would be called merged."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "new_problems",
+  "Session-budget card wording: 'Two sessions of <this session's cap>' even when the two stopped sessions had different caps. 'Raise its budget' says 'Starts one session of CHF X for it now', but that session runs other ready tasks first by priority."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "new_problems",
+  "check_in_the_app for C-49 (fixer's report): 'Merge B's PR first: A's PR shows merged too' holds only for a merge commit, not for a squash or rebase merge. The live check on forerunner-sandbox should merge with 'Create a merge commit'."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "notes_for_other_areas",
+  "docs: ProjectDocs.refreshCopy(project, target) (private) clones, fetches and resets <worktreeRoot>/<project id> to origin/<default> on the in-app status path. Any later change to writeSessionStatus or the status location must keep a refresh of that copy: docsDirsFor, the Docs and Files routes and the chat's docs search read it."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "notes_for_other_areas",
+  "settings: settings-view.ts lists project.status_pull_request only for a project on a host repository (parseRepoRef of repos[0], not an absolute path). The fake daemon mirrors this, with the daemon's card words for settings.set status_pull_request. Settings row counts in the UI tests include that row for Atlas."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "fixup",
+  "notes_for_other_areas",
+  "fake daemon: the session-budget card's 'Raise its budget' now sets budget = max(budget, actual + raise_to) and the reason 'you gave it one session of CHF X in the Inbox', as budget-card.ts does."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "Validation rule 3 drift: commit 627b306 changes what GET /settings (a project.status_pull_request row) and GET /projects/:id/docs (the 'kept in the app' note) return, but apps/ui/test/fake-daemon.ts was not updated, so no UI vitest test renders or clicks the Status pull request row (rule 1). The real-daemon case and my bench walk cover the effect."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "The Settings row appears for any project with repos.length > 0, including a project linked to a local folder (absolute path), where it changes nothing (rule 7 / U-023 class). It should appear only when parseRepoRef finds a host repository."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "A second project on the same repository now gets no doc set at all: its scaffold finds fr/docs-scaffold already full of the first project's files, writes nothing and records no PR, so its Docs tab says every doc is 'not written yet' for good, and nothing says why. This is a consequence of the shared fixed branch name; worth a follow-up (one scaffold branch per project)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "The session-budget card body says 'Two sessions of <this session's cap>' even when the two stopped sessions had different budgets. 'Raise its budget' explains 'Starts one session of CHF X for it now', but that session runs other ready tasks first by priority."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "The fake daemon's 'Raise its budget' on a session_budget card sets budget to max(budget, raise_to), while the daemon sets max(budget, actual + raise_to). A small drift."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "The cancel transition reason on the session-budget card copies the existing '(request <id>)' pattern; it is not shown on the task screens today."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "openPullRequests (L-17) reads only the first 100 open PRs; with more, a done task's open PR beyond them would be called merged."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "User guide names the env var FORERUNNER_WEB_FETCH=off to the person (internal name in person-facing text)."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "Bench acceptance (b) and (c) cannot be walked with the stand-in (fake provider = 1 \u00b5USD per token; no subscription path). A bench knob (bench area) would make C-36 walkable."
+ ],
+ [
+  "wave6",
+  "decisions",
+  "review",
+  "non_blocking",
+  "'Merge B's PR first: A's PR shows merged too' (check_in_the_app) holds only for a merge commit, not a squash merge; say so in the live check."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"A page of a full-review task is not opened inside the Docker container.\", \"why\": \"This is a design choice, recorded in ADR 0110 point 4. The runner image has no browser: adding Playwright's Chromium and its libraries would add about 500 MB to every person's download, and Chromium inside the container would still run with --no-sandbox. A review container is --network none, so it cannot publish a port for the host browser. The page's files are the bind-mounted task folder. Instead the page is opened on the host with the network off and Chromium's own sandbox required for a full review.\"}"
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Proving the try inside the real Docker container on this machine.\", \"why\": \"About 4.7 to 5 GB of disk was free, already below the 8 GB guideline, and a vfs dockerd with node:22-bookworm-slim would need roughly 1.5 GB more. The container path is instead proven by a real-daemon case with the FakeContainerEngine: the exec argv is 'docker exec \\u2026 timeout -s KILL 30 node src/greet.js Ada', the review container is --network none, and the evidence says 'in the task's Docker container'. scripts/sandbox-full-review.mjs (CI's sandbox-full-review job) was extended to check the real thing. Its pure parts are unit-tested, but the job itself has not run yet.\"}"
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "not_done",
+  "{\"problem\": \"Sibling of C-17: the agent browser (packages/capabilities/src/browser/profile.ts launchAgentBrowser) still launches Chromium with Playwright's default (no Chromium sandbox).\", \"why\": \"Out of this item's evidence and there is no test seam for the persistent-context launch. Changing it untested would break the 'failing test first' rule, so it is reported in browser.md and new_problems.\"}"
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "new_problems",
+  "The agent browser (packages/capabilities/src/browser/profile.ts:298, chromium.launchPersistentContext) launches without Chromium's own sandbox (Playwright's default chromiumSandbox: false), and it browses the open web on its allowlist. This is the same class as C-17 and is not fixed; noted in docs/maintainers/browser.md."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "new_problems",
+  "packages/runtime/test/monthly-jobs-wiring.test.ts 'fires the calibration once' failed twice while the whole unit suite ran on this 4-CPU machine: it waited only 30 s of real time for the calibration's eval sets, which take about 20 s alone. Raised to 90 s with a message in 685037f. Windows CI may still be slower: watch it."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "new_problems",
+  "Disk was at 4.7 to 5 GB free during this area's work (other agents), below the 8 GB guideline. That is why no local dockerd was started."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "new_problems",
+  "`.forerunner-try/` (the try's samples, its server driver and a cargo build folder) is removed after every try and every review, but it is not in WORKSPACE_GITIGNORE (packages/capabilities/src/githost/pr-executor.ts:134). If the daemon dies mid-review, the next 'Workspace before' commit could pick it up. Adding `.forerunner-try/` there would close that gap (github-result's file)."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "GET /tasks/:id review.evidence.tried[] now has a required `kind`: \"page\" | \"command\" | \"server\" (api-types TaskReviewEvidence). verificationIn reads a stored try without kind as \"page\". Fake-daemon seeds of reviewEvidence must carry kind (apps/ui/test/tasks.test.tsx was updated)."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "@forerunner/critic TriedEvidence gained an optional `kind`, and TRIED_TRUST_LINE now names commands and servers. PageTry from capabilities has kind: \"page\"."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "New runtime modules: loop/try-plan.ts (planTries, commandsIn, TRY_FOLDER = .forerunner-try) and loop/try-run.ts (runTries, SERVER_DRIVER, whereWords). project-checks.ts gained markerChecks, untestedFiles, scriptsBefore, CHANGED_SCRIPT_SUFFIX, ProjectChecks.notes and projectChecks(root, before). critic.ts exports runMarkerCheck. The review's sandbox lease now opens for checks, marker checks or tries."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "TryPagesRequest has `fullReview`; compose maps it to tryPages' `requireBrowserSandbox`."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "session/executor.ts retryConstraints splits orders from notes; isReviewNote is exported. The brief text HOW_WORK_IS_CHECKED changed: assert it through the constant, not a copy."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "bench area: testenv/src/bench/role-player.ts toolContent (exported, plus BriefParts). A JS file the brief runs as `node <file> \u2026` becomes a working word or line counter or a greeter ('Hello, Ada!'). A JS file of a brief naming an HTTP API, a server or `GET /route` becomes a server on PORT (3000 when unset) answering the named routes with JSON. Anything else still goes to plans.ts contentFor."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "ADR number: this area wrote docs/decisions/0110-work-is-tried-in-its-own-environment.md, because 0108 is already taken twice (fix/decisions: the ladder's stand-in; fix/screens: a reviewer's findings). The merge needs to renumber those two; 0109 is free for that."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fix",
+  "notes_for_other_areas",
+  "scripts/sandbox-full-review.mjs: FULL_REVIEW_TASK gained the criterion '`node src/greet.js Ada` prints Hello, Ada!' and new exports TRY_COMMAND, TRY_OUTPUT, commandTryOf and triedInContainer. CI's sandbox-full-review job now also checks the try ran in the container and the task reads 'Reviewed and tried'. The session lead should watch its first run."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"The process sandbox kills only the direct child of every command (packages/platform/src/shell.ts run never detaches, so killTree's process.kill(-pid) falls back to child.kill). A command try, an npm check or a worker's command that starts children leaves those children running when it is stopped or times out.\", \"why\": \"This is a sibling of blocking 3 found under rule 8, but it is a platform-wide change to how every sandboxed and host command is spawned (git, npm, the workers' commands), outside this area's files. The server try, the only try that starts long-lived processes by design, is fixed with the guard. Logged in new_problems.\"}"
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "not_done",
+  "{\"problem\": \"Reviewer non-blocking items not fixed: `npx wc <file>` is not recognised; a try that changes an existing file of the task (todos.json) only names the change; a Python project that mixes unittest and pytest-style files runs nothing when pytest is missing; `.forerunner-try/` is not in WORKSPACE_GITIGNORE; the New task label 'Light review: ... nothing runs in isolation'; the raw '(Chromium sandboxing failed!)' in the page evidence; ADR renumbering at merge; CI's sandbox-full-review job has not run.\", \"why\": \"WORKSPACE_GITIGNORE (packages/capabilities/src/githost/pr-executor.ts) and the New task label belong to other areas (github-result, screens/polish). The rest would be design changes beyond the blocking items: restoring every file a try touched needs content snapshots of the whole folder, and pytest-style tests need pytest. The ADR number and the CI job are the session lead's merge steps.\"}"
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "new_problems",
+  "Sibling of blocking 3 (rule 8): packages/platform/src/shell.ts run() spawns without detached, so killTree's process.kill(-pid) fails with ESRCH and only the direct child is killed (child.kill). Every command the process sandbox stops or times out leaves its grandchildren running on Linux and macOS: `npm test` with its node test runner, a CLI try that spawns a child, a worker's long command. Windows is not affected (taskkill /T). Evidence: the reviewer's probe-abort and this fixup's try-run.test.ts 'out of time' case on the fixer's head ('still running 10 s after the try ran out of time: <pids>'). Fixing it needs detached process groups for sandboxed runs (or a guard like the server driver's), with tests for git and npm."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "new_problems",
+  "The process sandbox's 'network off' is only HTTP(S)_PROXY pointing at a deny-all EgressProxy (sandbox/process.ts, egress-proxy.ts envFor). Node 22's http and fetch ignore those variables, so a tool or a worker's command can reach the network. The try evidence, the user guide and ADR 0110 now say so. Other texts that promise the process sandbox has no network (if any outside this area) should be checked."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "new_problems",
+  "/tmp/frbench/fixup-verification-phaseC is the earlier phase-C fixup bench folder (no home, only steps and scripts), moved aside so this bench started fresh. It can be deleted."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "try-plan.ts: ServerTry.routes is now ServerRoute[] with optional expect ({ status } | { error: true }) and withCredentials. CommandTry has a required keepsRunning. Test fixtures that build a ServerTry or CommandTry by hand need these fields."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "try-run.ts exports COMMAND_KEEPS_RUNNING_MS (5 s) and holdFolder(root). holdFolder returns a function that removes the files created meanwhile, puts back go.mod, go.sum, Cargo.toml and Cargo.lock, and returns a note line or null. runMarkerCheck in loop/critic.ts uses it. whereWords(sandbox) now includes the network clause: container 'in the task's Docker container, the network off'; process 'on this computer, not in a container (a program that ignores proxy settings can still reach the network)'. Do not append ', the network off' to it."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "runTries throws the abort signal's reason (or ForerunnerError 'killed') when the review is stopped, instead of returning a 'did not finish' line."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "@forerunner/critic measured.ts exports triedAction(t), the required action of a try's finding by kind. Page: 'Make <page> work when it is opened as a person would use it' (unchanged). Command: 'Make <command> work when it is run as a person would run it'. Server: 'Make <server> start and answer as a person would use it'."
+ ],
+ [
+  "wave6",
+  "verification",
+  "fixup",
+  "notes_for_other_areas",
+  "SERVER_DRIVER has a --guard mode and reads FR_TRY_ARGV; its report line marker is @@FR-GUARD@@. CI's sandbox-full-review job does not drive a server, so it is unaffected. The session lead should still watch its first run, as the fixer noted."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "`node ./wc.js <file>` (and `npx wc <file>`) is not recognised: SCRIPT at try-plan.ts:94 needs a word character first. The drawer then says 'wc.js reads its command line, but neither the brief nor a README says how to run it, so it was not tried', which is untrue when the brief says exactly how (try-plan.ts:179). Probe: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe-plan.ts."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "The required action for a failed command or server try still uses page words: 'Make node server.js work when it is opened as a person would use it' (packages/critic/src/critic.ts:760). It is shown in the drawer and in the retry brief."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "'in the process sandbox on this computer, the network off' overstates the process sandbox: it only sets proxy variables (see claims). Say 'outside connections go through Forerunner's blocking proxy', or similar, there."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "Windows without Docker: a `python3 x.py` command try where only the Microsoft Store alias exists exits 9009 with 'Python was not found\u2026'. notInstalled (try-run.ts:323) only knows 126/127, so it would be a blocking 'exited with code 9009' instead of 'not installed'. Marker checks are safe because of their probes."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "A long-running CLI (a watcher, `node watch.js <dir>`) is planned as a command and would be 'it did not finish within 30 s', a blocking finding the worker cannot remove."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "A try that changes an existing file of the task (`node todo.js add milk` writes todos.json) leaves the change in the folder and only names it. The next 'Workspace before' commit or a retry's PR commit picks it up."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "Marker checks run outside runTries' leftover cleanup: `cargo test` can create Cargo.lock and `go test` with GOFLAGS=-mod=mod can rewrite go.mod/go.sum in the person's folder."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "A Python project mixing unittest and plain pytest-style files on a machine without pytest runs nothing ('pytest is not installed'), although unittest could run the TestCase files."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "`.forerunner-try/` is not in WORKSPACE_GITIGNORE (fixer's own note; pr-executor.ts, github-result's file)."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "New task's review label 'Light review: the critic reads the work, nothing runs in isolation' is now further from the truth: a light review's tries run in the process sandbox, or in the container when Docker is ready. The label predates this branch (design text)."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "'process sandbox' and the raw '(Chromium sandboxing failed!)' are jargon in person-facing evidence, though only under 'See what was checked'."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "After an aborted server try, runTries reports 'the try did not finish (exit null)' instead of treating it as a stop (tryServer only rethrows when sandbox.run throws)."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "ADR numbering: 0110 is used here; fix/decisions and fix/screens both used 0108. The lead must renumber at merge, as the fixer noted."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "CI's sandbox-full-review job has new checks that have not run yet; the lead should watch its first run."
+ ],
+ [
+  "wave6",
+  "verification",
+  "review",
+  "non_blocking",
+  "role-player.ts toolContent is in the bench area's file (allowed by fix_scope); expect a merge touch-point near specialistAnswer with fix/bench."
+ ],
+ [
+  "wave6",
+  "merge",
+  "merge",
+  "problems_left",
+  "Nothing is broken after the merge. Every validation passed on this machine. CI (Windows and Linux, including the sandbox-full-review Docker job with verification's new container-try checks) has not run on c8c16fb yet. The session lead should watch the first run."
+ ],
+ [
+  "wave6",
+  "merge",
+  "merge",
+  "problems_left",
+  "Gap between asking and answers (not fixed, behaviour change outside a merge fix): the questions card asking files after Go ahead without (go_ahead: false) offers no second Go ahead without on screen. But answers' offersGoAheadWithout (packages/runtime/src/wiring/request-answers.ts) looks only at card.source. So a 'go ahead' typed on the phone or in chat, or POST /tasks/:id/action go_ahead, is still accepted on that card. A fix needs its own predicate: reusing offersGoAheadWithout would also flip questionsCard's 'planned' body text. It needs a real-daemon test."
+ ],
+ [
+  "wave6",
+  "merge",
+  "merge",
+  "problems_left",
+  "Wording choice the lead should confirm: the chat cancel read-back now uses stops' form 'Cancel \"X\"? It is dropped; its run stops now and what it changed is removed.' instead of answers' 'Cancel \"X\"? Its run stops now and what it changed is removed.' The reviewer's non-blocking item still stands: the Cancel dialog's consequence line (CANCEL_UNDO_WORDS) is 139-142 characters against design \u00a75.1's 100."
+ ],
+ [
+  "wave6",
+  "merge",
+  "merge",
+  "problems_left",
+  "The live checks listed in each area's check_in_the_app (bench-live: L-1/L-8/L-10/L-7 PR read-back, L-2/L-3/L-11, C-49/C-57/C-64/L-17, C-1/C-3/C-17) are still for the session lead."
+ ],
+ [
+  "wave6",
+  "merge",
+  "merge",
+  "problems_left",
+  "Non-blocking leftovers reported by the areas are unchanged by this merge and are for wave 7/8 triage. Examples: /shutdown does not wait for the runner; the Overview shows 'No session yet.' after recovery; the process sandbox kills only its direct child; queued notes are read once per session; a second project on the same repository gets no doc set."
+ ]
+]

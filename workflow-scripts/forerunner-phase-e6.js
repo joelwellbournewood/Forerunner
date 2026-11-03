@@ -1,0 +1,193 @@
+export const meta = {
+  name: 'forerunner-phase-e6',
+  description: 'Phase E: the leftovers sweep (answers, screens, noise, bench, then polish); fix, review on the bench, fix up, merge, validate',
+  phases: [
+    { title: 'Fix', detail: 'one owner per area, in its own git worktree' },
+    { title: 'Review', detail: 'an independent reviewer walks the acceptance journey on the fix branch' },
+    { title: 'Fixup', detail: 'blocking review findings fixed on the area branch' },
+    { title: 'Merge', detail: 'merge the wave, full validation, smoke journey, push' },
+  ],
+}
+
+const REPO = '/home/user/Forerunner'
+const BRANCH = 'claude/nifty-knuth-f9udt0'
+const wave = args.wave
+const keys = args.keys
+const portBase = 47900 + wave * 40
+const uiBase = 1500 + wave * 40
+
+const TRAILER = `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RnhAjh3NRzs8pWu1az7fYz`
+
+const COMMON = `
+Context: Forerunner (main checkout ${REPO}, branch ${BRANCH}) is a desktop app: a persistent AI project manager that plans work, delegates tasks to specialist agents and has a critic review them; React UI in apps/ui, local daemon in packages/runtime. The owner says the app "does not work for a person and is not intuitive". Three fix waves (session engine, Tasks screen, Inbox, chat, progress and navigation, system text) and the live-model fixes (the plan from a brief, the chat told about planning) are merged into ${BRANCH}. Phase C (the real-model fixes: checking work properly under the owner's verification rule, keeping work moving, GitHub and the result, web access for research) is merged too; its areas, reports and leftovers are in /tmp/frbench/phaseC.json and /tmp/frbench/phaseC-result.json. This is phase E of the owner-approved plan in docs/status/handoff/NEXT-SESSION.md (read its 'Owner decisions of 2026-11-01' section first): the leftovers sweep. Every item the earlier waves, reviews and live runs left behind was checked against the current code and sorted into areas (real problems first, polish batched); the result is /tmp/frbench/phaseE.json. The live reports are in docs/status/handoff/round-2026-11-01/live-reports/; the real intake replies are fixtures in packages/runtime/test/fixtures/intake-live1.json.
+
+Read before you start (all are in the repo or /tmp/frbench):
+- docs/design/core-experience.md: THE design target. Your work is judged against it (screens, actions and their one-line explanations, states, the session behaviour in §4, the writing rules in §5).
+- docs/decisions/0102-core-experience-round-decisions.md: decisions for this round (per-status task actions; Mark failed / Send to review / Mark done / Needs me are no longer person buttons; Stop now keeps files; calibration runs as the critic agent; NO "Run with a light review" Docker bypass: ADR 0101 is the owner's decision).
+- AGENTS.md (conventions) and docs/maintainers/validation.md (binding: test what the person sees and sends at the boundary they use; a new or changed daemon route gets a case in apps/ui/test/real-daemon.test.ts AND apps/ui/test/fake-daemon.ts changes in the same commit; persisted state is tested across a restart; failing test first, then the fix, then the siblings; never weaken a test).
+- /tmp/frbench/phaseE.json: the phase E areas. Each area object has key, problems (with evidence), u_entries, root_causes (file:line), fix_scope, files, acceptance, depends_on. "shared_files" says which area owns which part of a file several areas touch: only change your parts of files another area owns. Its "triage" array has every leftover item with its decision, area and evidence. Phase C's spec (/tmp/frbench/phaseC.json) shows what phase C owned; do not redo it.
+- /tmp/frbench/walk-findings-by-area.json: the raw walk findings by walk area (sessions-engine, tasks-ui, links-shell, chat, inbox-needs-me, project-setup-intake, system-text, navigation-structure, lifecycle-settings, other), with steps, expected/actual, evidence and suggested fixes. Screenshots and texts are under /tmp/frbench/<walk>/steps/.
+- scripts/bench/README.md: the bench (real daemon + real UI + role-playing stand-in model with failure injection and a model-call log).
+
+Environment facts:
+- Use only the stand-in (--provider bench) and the fixtures. Never start a bench with --provider bench-live, and never use FORERUNNER_ANTHROPIC_API_KEY or FORERUNNER_TEST_GITHUB_TOKEN (they are for the session lead's live checks): the session lead confirms your fix with the real model after the merge, so write precise live_check steps into your report's check_in_the_app. No Docker daemon runs here. If your area needs the real container (the 'verification' area does), you may start a private one as root in the background: \`dockerd --host unix://<dir>/docker.sock --data-root <dir>/data --exec-root <dir>/exec --pidfile <dir>/docker.pid --iptables=false --ip6tables=false --bridge=none --storage-driver=vfs\` with <dir> under /tmp/frbench/<your name>/, then DOCKER_HOST=unix://<dir>/docker.sock; get the base image as mirror.gcr.io/library/node:22-bookworm-slim and build or tag the runner image as scripts/sandbox-full-review.mjs and docs/maintainers/testing.md describe; stop it by its PID and delete <dir> when done (vfs copies every layer: watch the disk). CI's sandbox-full-review job runs the real Docker path on GitHub. Postgres-backed integration tests skip without FORERUNNER_TEST_PG; that is expected.
+- 4 CPUs: at most one bench per agent at a time; stop it when done. Never kill processes by name pattern (pkill -f kills your own shell and other agents' benches); stop only PIDs you started, or use scripts/bench/stop.mjs.
+- Playwright: the UI pins @playwright/test 1.64.1 but this machine's browsers match 1.63. Run the UI browser suite with a local config: \`cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)\`. That file is excluded from git (never commit it). Do not run "playwright install".
+- Baseline on ${BRANCH} at the start of this round, this machine: pnpm test, pnpm test:integration, pnpm test:e2e, the UI vitest suite, Playwright (31 tests) and cargo fmt --check all pass (logs in /tmp/frbench/baseline/). So any failure you see after your change is yours to explain.
+- The desktop shell (apps/desktop/src-tauri) builds here; Linux packages are installed.
+- Disk is limited (about 9 GB free for everyone; keep it above 8 GB: delete what you create): for any cargo command use the shared build directory \`CARGO_TARGET_DIR=/tmp/frbench/cargo-target\` (cargo serialises access itself); never build Rust into your worktree. Stop your bench and delete its home (/tmp/frbench/<name>/home) when you are done with it.
+- Windows CI is several times slower than this machine and failed twice this round on tests that waited a few seconds of real time for a session or run to finish on its own (5b1fb2b, 9140369). In new tests, do not rely on how long real work takes: stop what you started, wait for the event, or give a real-time wait at least 10 s with a message that says what it saw; and leave nothing queued or running for the next test in a shared describe.
+- Do not edit docs/status/UPDATE-LOG.md, CHANGELOG.md or docs/requirements.md: the session lead writes those from your report, so parallel areas do not conflict. DO update the maintainer doc of every module you change (docs/maintainers/*, the docs check requires it) and your section of docs/user-guide.md.
+- Commit messages: \`area: what changed (U-xxx, ...)\` with a body saying why, the root cause, and the tests that failed before. End every commit message with these two lines:
+${TRAILER}
+- Never push. Never create pull requests.
+${args.note ? '- ' + args.note + '\n' : ''}`
+
+const FIX_SCHEMA = {
+  type: 'object',
+  properties: {
+    area: { type: 'string' },
+    branch: { type: 'string', description: 'fix/<area key>, pointing at your last commit' },
+    head_sha: { type: 'string' },
+    commits: { type: 'array', items: { type: 'object', properties: { sha: { type: 'string' }, subject: { type: 'string' } }, required: ['sha', 'subject'] } },
+    fixed: { type: 'array', items: { type: 'object', properties: {
+      problem: { type: 'string' }, u_ids: { type: 'array', items: { type: 'string' } },
+      failing_test_before: { type: 'string', description: 'test file and name that failed before the fix and passes now' },
+      how: { type: 'string' },
+      check_in_the_app: { type: 'string', description: 'the steps a person takes in the app to see the fix' },
+    }, required: ['problem', 'u_ids', 'failing_test_before', 'how', 'check_in_the_app'] } },
+    not_done: { type: 'array', items: { type: 'object', properties: { problem: { type: 'string' }, why: { type: 'string' } }, required: ['problem', 'why'] } },
+    tests_changed_for_design: { type: 'array', items: { type: 'object', properties: { test: { type: 'string' }, why: { type: 'string' } }, required: ['test', 'why'] }, description: 'existing tests changed because the design intentionally changed behaviour' },
+    validation: { type: 'array', items: { type: 'object', properties: { command: { type: 'string' }, result: { type: 'string' } }, required: ['command', 'result'] } },
+    screenshots: { type: 'object', properties: { before: { type: 'array', items: { type: 'string' } }, after: { type: 'array', items: { type: 'string' } } } },
+    new_problems: { type: 'array', items: { type: 'string' }, description: 'problems found that are outside your area or not fixed, with evidence' },
+    notes_for_other_areas: { type: 'array', items: { type: 'string' }, description: 'APIs, fields or events you added that later areas should use (e.g. task display map, last_session.outcome, task.step events)' },
+  },
+  required: ['area', 'branch', 'head_sha', 'commits', 'fixed', 'not_done', 'validation'],
+}
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['pass', 'fix-needed'] },
+    acceptance_walk: { type: 'string', description: 'what you did on the bench and what you saw, with step paths' },
+    blocking: { type: 'array', items: { type: 'object', properties: {
+      issue: { type: 'string' }, evidence: { type: 'string' }, where: { type: 'string', description: 'file:line' }, expected: { type: 'string' },
+    }, required: ['issue', 'evidence', 'expected'] } },
+    non_blocking: { type: 'array', items: { type: 'string' } },
+    claims_checked: { type: 'array', items: { type: 'object', properties: { claim: { type: 'string' }, holds: { type: 'boolean' }, note: { type: 'string' } }, required: ['claim', 'holds'] } },
+  },
+  required: ['verdict', 'acceptance_walk', 'blocking'],
+}
+
+const MERGE_SCHEMA = {
+  type: 'object',
+  properties: {
+    merged: { type: 'array', items: { type: 'string' } },
+    head_sha: { type: 'string' },
+    pushed: { type: 'boolean' },
+    conflicts_resolved: { type: 'array', items: { type: 'string' } },
+    integration_fixes: { type: 'array', items: { type: 'string' } },
+    validation: { type: 'array', items: { type: 'object', properties: { command: { type: 'string' }, result: { type: 'string' } }, required: ['command', 'result'] } },
+    smoke: { type: 'string' },
+    problems_left: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['merged', 'head_sha', 'pushed', 'validation', 'problems_left'],
+}
+
+const fixPrompt = (key, i) => `${COMMON}
+You own the fix area "${key}" end to end. Your area spec: \`python3 -c "import json;print(json.dumps([a for a in json.load(open('/tmp/frbench/phaseE.json'))['areas'] if a['key']=='${key}'][0],indent=1))"\`. Read it fully, then the design sections it touches, then the walk findings and screenshots it cites, then the code.
+
+The triage items assigned to your area (each has its decision, evidence and note; the area's problems are built from them): \`python3 -c "import json;print(json.dumps([t for t in json.load(open('/tmp/frbench/phaseE.json'))['triage'] if t.get('area')=='${key}'],indent=1))"\`. Phase C may have left items for your area too (read "_about" first): \`python3 -c "import json;d=json.load(open('/tmp/frbench/handoffs.json'));print(d['_about']);print(json.dumps(d.get('${key}',[]),indent=1))"\`. For each item, fix it (with its test) or put it in not_done with the reason. Check first that phase C did not already fix it on the current branch.
+
+${(args.fixNotes && args.fixNotes[key]) ? args.fixNotes[key] + '\n\n' : ''}You run in a fresh git worktree (your current directory). Set it up first:
+1. \`git merge-base --is-ancestor ${BRANCH} HEAD || git merge --no-edit ${BRANCH}\` (build on everything merged so far), then \`git log --oneline -3\`.
+   Then create \`fix/${key}\` from your worktree's HEAD (if a branch of that name already exists from an earlier wave, it is stale: \`git branch -f fix/${key} HEAD\`).
+2. \`pnpm install --frozen-lockfile\`; copy the Playwright local config as described.
+3. Bench: name "fix-${key}", daemon port ${portBase + i}, UI port ${uiBase + i}; start it from YOUR worktree (\`node scripts/bench/start.mjs ...\`) so it runs your code.
+
+How to work:
+- Reproduce first. For each problem you fix, write the test that fails on the current code at the boundary the person uses: a UI test that clicks the control and asserts what appears and what is sent (apps/ui/test, with the fake daemon updated in step with the real one), a route case in apps/ui/test/real-daemon.test.ts for every new or changed route, a composed-runtime test for engine behaviour (compose the runtime twice on one home for anything that must survive a restart). See it fail, fix, see it pass. Keep the tests.
+- Walk your acceptance journey on the bench BEFORE (screenshots of the problem) and AFTER (screenshots of the fix), with the recorder's step(); look at the screenshots with your Read tool.
+- Fix root causes, not symptoms; then search for siblings of the same bug class and fix them or report them.
+- Match the design's words exactly where it gives them (labels, one-line explanations, status words, the writing rules). Where the design and the code's existing behaviour disagree, the design wins for what a person sees; enforcement, budgets and security stay as they are.
+- Existing tests that assert behaviour the design intentionally removes or changes: update them to the new behaviour and list each under tests_changed_for_design with the reason. Never weaken a test to make it pass, never skip one.
+- Prioritise: blockers, then majors, then the rest. Commit after each coherent piece with its tests green, and after EVERY commit run \`git branch -f fix/${key} HEAD\`, so your work survives if you are interrupted. If the scope is too large to finish well, finish the most important items completely and list the rest under not_done with the reason; do not leave half-done changes.
+- Keep to your area's files and ownership (shared_files in the synthesis). If you need something another area owns, make the smallest change, say so in notes_for_other_areas, and keep it compatible.
+
+Before you report, in your worktree: \`pnpm check\` (lint, path lint, typecheck, unit tests, docs check with \`--base ${BRANCH}\` if needed, links, secret scan), \`pnpm test:integration\`, \`pnpm test:e2e\`, the UI suite (\`cd apps/ui && pnpm vitest run --config vitest.config.ts\`) and Playwright with the local config when you touched the UI, and \`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\` in apps/desktop/src-tauri when you touched the desktop shell. All green, or explain each failure (and whether the baseline had it). \`git grep -n "^<<<<<<< "\` must find nothing. Commit everything (nothing uncommitted left), \`git branch -f fix/${key} HEAD\`, stop your bench.
+
+Return the report: branch fix/${key}, head sha, commits, what you fixed (each with the failing-before test and the "Check in the app" steps), what you did not do and why, tests changed for the design, the validation commands and results, before/after screenshot paths, new problems, and notes for the areas that come after you.`
+
+const reviewPrompt = (key, i, fix) => `${COMMON}
+You are an independent reviewer for fix area "${key}". You did not write this fix; be skeptical and verify everything yourself. Your area spec: \`python3 -c "import json;print(json.dumps([a for a in json.load(open('/tmp/frbench/phaseE.json'))['areas'] if a['key']=='${key}'][0],indent=1))"\`.
+
+The triage items for this area are in scope: \`python3 -c "import json;print(json.dumps([t for t in json.load(open('/tmp/frbench/phaseE.json'))['triage'] if t.get('area')=='${key}'],indent=1))"\`, and any phase C leftovers: \`python3 -c "import json;print(json.dumps(json.load(open('/tmp/frbench/handoffs.json')).get('${key}',[]),indent=1))"\`. Check each one the fixer claims as fixed, and that the rest are in not_done with a reason.
+
+The fixer's report (claims to verify, not facts):
+${JSON.stringify(fix)}
+
+You run in a fresh git worktree. Set it up: \`git checkout --detach fix/${key}\`, \`pnpm install --frozen-lockfile\`, copy the Playwright local config. Bench: name "review-${key}", daemon port ${portBase + 10 + i}, UI port ${uiBase + 10 + i}, started from your worktree.
+
+Do all of these:
+1. Walk the area's acceptance journey (the "acceptance" field) through the UI on the bench like a person, with failure injection where it calls for it, and look at your screenshots. Does every screen the journey passes match docs/design/core-experience.md for this area (the one job, actions with their explanations, states, writing rules)? Does the work continue by itself where the design says it must?
+2. Read the diff: \`git diff ${BRANCH}...fix/${key}\`. Check against docs/maintainers/validation.md: tests at the person's boundary (clicks and wire, not internal shapes only); every new or changed route has a real-daemon.test.ts case and the fake daemon changed in the same commit; persisted state tested across a restart; no test weakened, skipped or deleted without a design reason (look at every removed or changed assertion); AGENTS.md conventions (paths via platform, Clock, ForerunnerError, no hardcoded org/host/user paths, argv not shell strings); the writing rules (no ids, raw states, USD, jargon, "(s)") in every new person-facing text.
+3. Verify the fixer's claims: run the tests it names (they pass now; for at least the two most important ones, check they fail on ${BRANCH} by running them against that code, e.g. by checking out the test file onto a detached ${BRANCH} worktree or reverting the fix locally), and the validation commands that matter for this area.
+4. Look for regressions in neighbouring behaviour the area touches (other journeys that go through the same screens or engine paths).
+
+Verdict "fix-needed" only for real, evidenced problems: the acceptance journey fails, a design requirement for this area is violated on screen, a validation rule is broken, a test was weakened, or something regressed. Everything else goes to non_blocking. Do not modify the branch. Stop your bench before you finish.`
+
+const fixupPrompt = (key, i, fix, review) => `${COMMON}
+You finish fix area "${key}". The fixer's work is on branch fix/${key}; an independent reviewer found blocking problems. Your area spec: \`python3 -c "import json;print(json.dumps([a for a in json.load(open('/tmp/frbench/phaseE.json'))['areas'] if a['key']=='${key}'][0],indent=1))"\`.
+
+Fixer's report: ${JSON.stringify(fix)}
+
+Reviewer's findings: ${JSON.stringify(review)}
+
+${(args.fixupNotes && args.fixupNotes[key]) ? args.fixupNotes[key] + '\n\n' : ''}You run in a fresh git worktree: \`git checkout -B fixup-${key} fix/${key}\`, \`pnpm install --frozen-lockfile\`, copy the Playwright local config. Bench: name "fixup-${key}", daemon port ${portBase + 20 + i}, UI port ${uiBase + 20 + i}.
+
+Fix every blocking finding (failing test first where it applies), re-walk the acceptance journey on the bench, run the same validation as the fixer (pnpm check, test:integration, test:e2e, UI suite and Playwright if UI changed, cargo checks if the desktop shell changed). If you judge a finding wrong, say why with evidence instead of changing code. Commit (same message rules), then \`git branch -f fix/${key} HEAD\`. Stop your bench. Return the same report shape as the fixer, covering only your changes plus the final branch head.`
+
+phase('Fix')
+const results = await pipeline(
+  keys,
+  // args.existingFixes[key]: a finished fixer's saved report (its branch fix/<key> restored locally), used instead of running the fixer again.
+  (key, _o, i) => (args.existingFixes && args.existingFixes[key])
+    ? Promise.resolve(args.existingFixes[key])
+    : agent(fixPrompt(key, i), { label: `fix:${key}`, phase: 'Fix', isolation: 'worktree', schema: FIX_SCHEMA }),
+  (fix, key, i) => {
+    if (!fix) return null
+    return agent(reviewPrompt(key, i, fix), { label: `review:${key}`, phase: 'Review', isolation: 'worktree', schema: REVIEW_SCHEMA })
+      .then((review) => ({ key, fix, review }))
+  },
+  (r, key, i) => {
+    if (!r) return null
+    if (!r.review || r.review.verdict !== 'fix-needed') return { ...r, fixup: null }
+    return agent(fixupPrompt(key, i, r.fix, r.review), { label: `fixup:${key}`, phase: 'Fixup', isolation: 'worktree', schema: FIX_SCHEMA })
+      .then((fixup) => ({ ...r, fixup }))
+  },
+)
+
+const ok = results.filter(Boolean)
+const missing = keys.filter((k) => !ok.find((r) => r.key === k))
+if (missing.length) log(`No result for: ${missing.join(', ')} (the branch fix/<key> may still hold partial commits)`)
+log(`Wave ${wave}: ${ok.map((r) => `${r.key} review=${r.review ? r.review.verdict : 'none'} fixup=${r.fixup ? 'yes' : 'no'}`).join('; ')}`)
+
+if (args.noMerge) return { wave, areas: ok, missing }
+
+phase('Merge')
+const merge = await agent(`${COMMON}
+You merge fix wave ${wave} into ${BRANCH} in the MAIN checkout ${REPO} (not a worktree). The areas and their reports:
+${JSON.stringify(ok.map((r) => ({ key: r.key, fix: r.fix, review: r.review, fixup: r.fixup })))}
+${missing.length ? `Areas with no report (inspect their fix/<key> branches; merge only if they hold complete, green work, and say what you found): ${missing.join(', ')}` : ''}
+
+Steps:
+1. \`cd ${REPO} && git status\` (must be on ${BRANCH}; the only untracked file allowed is apps/ui/playwright.local.config.ts). \`git merge --no-edit --no-ff fix/<key>\` for each area in this order: ${keys.join(', ')}. Resolve conflicts by the ownership in /tmp/frbench/phaseE.json shared_files, keeping both areas' intent; then \`git grep -n "^<<<<<<< "\` must find nothing.
+2. \`pnpm install --frozen-lockfile\`. Run the full validation: \`pnpm check\` (docs check with \`--base origin/${BRANCH}\`), \`pnpm test:integration\`, \`pnpm test:e2e\`, the live harness dry runs \`pnpm --filter @forerunner/live test\` and \`pnpm test:injection\` (CI runs both; they failed on CI after phase C because no merge ran them), then the unit suite and the UI suite once more the way CI runs them (FORCE_COLOR=1 in the environment, and HOME pointing at an empty folder so git has no identity: CI has none; c8c16fb went red on CI on exactly these two differences), \`cd apps/ui && pnpm vitest run --config vitest.config.ts\`, Playwright with the local config, and \`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\` in apps/desktop/src-tauri if any area touched the desktop shell. The baseline passed all of these. Fix what the merge broke with the smallest correct change (a failing test first if the break is a behaviour bug), committed separately with a message naming the areas; never weaken a test.
+3. Bench smoke on the merged result: \`node scripts/bench/start.mjs --name merge-w${wave} --daemon-port ${portBase + 30} --ui-port ${uiBase + 30} --fresh && node scripts/bench/journeys/smoke.cjs merge-w${wave}; node scripts/bench/stop.mjs --name merge-w${wave}\`. If the smoke journey's own expectations are now outdated by the design (e.g. one Start runs the whole plan), update the journey script to the new behaviour and say so; a real product failure must be fixed or reported.
+4. Before pushing, check every commit you are about to push carries a signature: \`for c in $(git rev-list origin/${BRANCH}..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo "unsigned $c"; done\` must print nothing (GitHub shows an unsigned commit as Unverified; a merge commit once came out unsigned). If one is unsigned, re-create it and every commit after it with \`git commit-tree -S\`, keeping each tree, author and message, and move the branch with \`git update-ref\` only after checking the new tip's tree equals the old tip's. When everything is green and signed: \`git push -u origin ${BRANCH}\` (on a network error retry up to 4 times, waiting 2, 4, 8, 16 s). Never force-push.
+
+Report what was merged, conflicts and how you resolved them, fixes you made after the merge, every validation command with its result, the smoke result, whether you pushed, and anything left broken.`, { label: `merge:wave${wave}`, phase: 'Merge', schema: MERGE_SCHEMA })
+
+return { wave, areas: ok, missing, merge }

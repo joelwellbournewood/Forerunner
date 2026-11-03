@@ -1,0 +1,811 @@
+{
+ "results": [
+  {
+   "key": "intake-live",
+   "fix": {
+    "area": "intake-live",
+    "branch": "fix/intake-live",
+    "head_sha": "43540678e3f896e773ee13adeb1c4264d0a1bedc",
+    "commits": [
+     {
+      "sha": "1075ca3",
+      "subject": "intake: a live reply becomes a plan card; a refused one is asked for once more; a short brief gets a small plan"
+     },
+     {
+      "sha": "71a2d14",
+      "subject": "executor: a specialist's brief says Forerunner records its changes, never asks it to commit"
+     },
+     {
+      "sha": "087670d",
+      "subject": "ui: the plan card gives every task a cost or says it is not known, separates Needs Docker, and shows the decision in a line"
+     },
+     {
+      "sha": "1f7984c",
+      "subject": "ui: New project takes a one-line brief without a Goal and says what a short brief gets"
+     },
+     {
+      "sha": "7d6afd9",
+      "subject": "bench: the intake journey reads the decision line and the whole failure banner"
+     },
+     {
+      "sha": "4354067",
+      "subject": "bench: the smoke journey checks the small plan its short brief now gets"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "BLOCKER 1: a plan was refused when plan.reason (or any prose field) was longer than the schema allowed (live lines 1, 22, 24, 25: 603/754/557/592 characters against 500). 'A long explanation must never cost the person their plan.'",
+      "failing_test_before": "packages/runtime/test/intake-live.test.ts on the six live replies copied to packages/runtime/test/fixtures/intake-live1.json: 'every live reply parses...' and 'live reply 1/22/24/25 (refused live) becomes a plan card on the first call' failed with 409 'intake: the model's proposal is malformed: plan.reason: Too big: expected string to have <=500 characters'; 'an approved live plan whose reason was too long writes its tasks with the shortened reason'; 'prose is shortened at a sentence or a word...'. All 14 cases of the file failed against the base sources (log /tmp/frbench/fix-intake-live/before-unit.log).",
+      "how": "project-plan.ts: shortenProse/planProse cut prose at the last whole sentence that fits (' \u2026') or the last word ('\u2026'); applied to plan.reason (500), task titles (200), milestone names (200); intake.ts: firstSession.summary (1000) and rationale (500) via planProse, doc bodies via shortenDoc (40,000, cut at a paragraph, a code fence it cut inside closed, a 'Shortened to fit' line). Identifiers and counts (keys > 80, > 50 criteria or dependsOn, > 200 tasks, > 20 milestones) are still refused because shortening a key could merge two tasks. The intake prompt now states every limit (reason, title, key, counts, questions 500 chars/10 per task, summary, rationale, doc size). What was shortened is logged ('intake: long texts of the plan were shortened to fit' with 'plan.reason (754 -> 498)') and stored on the card (change_card.shortened). ADR 0103.",
+      "check_in_the_app": "New project, Brief 'A page that shows a random quote', Create project. The project page says 'Drafting the plan\u2026' and then 'Waiting for you: approve the plan [Open]'. It must never say 'Planning failed' because a field was too long. On the bench: start with --env FORERUNNER_BENCH_INTAKE_BAD=reason-too-long. The plan card arrives on the first call, and the daemon log says 'plan.reason (826 -> 484)'."
+     },
+     {
+      "problem": "BLOCKER 2: parseIntakeReply took the first ``` fence anywhere in the reply. The docs inside the JSON hold code fences, so the reader parsed a doc snippet ('[ { \"text\": \"string, non-empty, under 280 characters\" \u2026 } ]') and refused a valid plan as 'not JSON' (live lines 23, 25).",
+      "failing_test_before": "intake-live.test.ts 'every live reply parses...' (lines 23 and 25: 'intake: the model's reply is not a JSON object'), 'live reply 25 becomes a plan card' (409 'not a JSON object'), 'a fenced reply with a prose line around it, and a reply in braces after a prose line, are read'; testenv/test/bench-role-player.test.ts FORERUNNER_BENCH_INTAKE_BAD=fenced-docs case.",
+      "how": "readIntakeReply first parses the whole reply as JSON and takes it if it is an object. Only if that fails does it try each block between two line-start fences, longest first. A fence inside a JSON string never starts a line. After that it tries the span from the first '{' to the last '}', which drops a leading or trailing prose line. It takes the first candidate that parses to an object with a plan. A fenced doc snippet is never taken for the reply.",
+      "check_in_the_app": "Same as above: the plan card arrives. On the bench, --env FORERUNNER_BENCH_INTAKE_BAD=fenced-docs gives a README with ```json and ```bash blocks. The plan card arrives on the first call, and the Inbox card shows the plan."
+     },
+     {
+      "problem": "3: a reply that did not validate went straight to 'Planning failed'. There was no automatic retry carrying the errors.",
+      "failing_test_before": "intake-live.test.ts 'a reply that does not validate is asked for once more, with the problems in words, and its plan lands as the card' and 'a dependency cycle is a reply problem too: asked for once more' (both 409 before); bench-role-player.test.ts 'FORERUNNER_BENCH_INTAKE_BAD plants the live model's bad first replies; the retry gets a plan'; apps/ui/test/real-daemon.test.ts 'a one-line brief without a Goal: ... a first reply without tasks asked for once more, one card'.",
+      "how": "IntakeService.callModel makes up to INTAKE_CALLS=2 calls in the same intake session. It retries when the first reply is not JSON, is cut off at max_tokens, has a missing part or no task (a new intake check: 'the plan has no task'), or has a dependency cycle (checkPlanShape). The retry carries the brief, the model's own reply and retryPrompt: 'Forerunner could not use your reply:' with one line per problem, e.g. '- plan.milestones[0].tasks[1] (key \"build\").outcome: \u2026', then 'Reply again with the whole JSON object\u2026'. Both calls share the session budget; the deadline is 2 planning timeouts plus the margin. Each call has its own token, Run row (intake_<session>, intake_<session>_2) and ledger rows. change_card.cost_usd_micro is the sum, and change_card.model_calls is 2. A call that did not complete (provider error, timeout, budget, stop) is not repeated. Bench: FORERUNNER_BENCH_INTAKE_BAD=reason-too-long|fenced-docs|missing-tasks|not-json plants a bad first reply, and the retry, whose request carries the refused reply, gets the plan. Documented in scripts/bench/README.md.",
+      "check_in_the_app": "Bench: node scripts/bench/start.mjs --name fix-intake-live --daemon-port 48210 --ui-port 1810 --fresh --env FORERUNNER_BENCH_INTAKE_BAD=missing-tasks, then node scripts/bench/journeys/intake.cjs fix-intake-live. Walked: the person sees 'Drafting the plan\u2026' and then the plan card, never 'Planning failed'. The model-call log shows 2 intake calls (injected intake-bad=missing-tasks, then 3 messages), and the result was 11/11 checks."
+     },
+     {
+      "problem": "MAJOR 4: the failure words were untrue. 'Claude's plan was missing parts Forerunner needs' was shown for a field that was too long.",
+      "failing_test_before": "intake-live.test.ts 'the person reads the real cause after the second try: not readable, missing its tasks, cut off' and 'a call that did not answer is not repeated and says so; the usage limit says to wait for the reset'; apps/ui/test/real-daemon.test.ts 'a reply that cannot be read, twice: the project page says so in words'.",
+      "how": "The reader attaches the cause in words (details.words), and intakeFailureWords uses it. The causes are: \"Claude's plan could not be read.\", \"Claude's plan was cut off before it ended.\", \"Claude's plan was missing its tasks.\", \"Claude's plan was missing a task's outcome.\", \"Claude's plan had a task waiting for a task that is not in the plan.\", \"Claude's plan had tasks waiting for each other in a circle.\", \"Claude's answer had no plan in it.\". After a refused retry the words add ' Forerunner asked Claude twice.'. Calls that did not complete give \"Claude did not answer (model call failed).\", \"Your Claude usage limit is reached. Try again once it resets.\" (provider_usage_limit) or \"Claude did not finish the plan in time.\". Try again is unchanged. The IntakeBanner layout is left to wave 3.",
+      "check_in_the_app": "Bench with --env FORERUNNER_BENCH_INTAKE=malformed. After New project, the project page reads 'Planning failed. Nothing was written.' and then \"Claude's plan could not be read. Forerunner asked Claude twice.\" with [Try again]. Screenshot: /tmp/frbench/fix-intake-live/after-failed/11-planning-failed.png."
+     },
+     {
+      "problem": "MAJOR 5: a one-line brief got a plan that was too big: 6 tasks over 3 milestones, including reviewer, Docker deploy and writer-marketing tasks, about 5,600 output tokens and 9 full docs. The request sent 'Small-project mode: off'.",
+      "failing_test_before": "intake-live.test.ts 'the request for a one-line brief says small-project mode is on and what a small plan is; a long brief's says off' (the request had 'Small-project mode: off' and no Size rules or limits) and 'a short brief asks for a small plan; a long brief or a list does not'; bench-role-player.test.ts 'in small-project mode plans one to three tasks, a README and the decision only'.",
+      "how": "Small-project mode was always false at creation (daemon/create-project.ts). Now a new project with no repository whose brief is short starts in small-project mode. Short means isShortBrief: under 200 characters, at most two lines, no bulleted or numbered list. The user message then says 'Small-project mode: on (a small plan: see Size in your instructions)'. The system prompt gets SMALL_PLAN_RULES: one milestone of one to three tasks that build and check; no reviewer, deploy, marketing or research task unless asked; no person task unless the work cannot start; docs only README.md and the decision record, each under 1500 characters. Forerunner writes the other standard docs from its templates (scaffoldDocs, unchanged). The stand-in follows the same rules (2 tasks). Recorded in ADR 0103. Existing tests that relied on a short brief giving two milestones (intake.test.ts Gamma and Twin) now use a brief with a feature list.",
+      "check_in_the_app": "New project with only Name and Brief 'A page that shows a random quote'. Settings \u2192 the project's 'Small-project mode' is on. The plan card shows 1 to 3 tasks under one milestone. On the bench (stand-in) the card read 'Plan for \"Quote page\": 2 tasks'. The real model's size must be confirmed live (see live_check_steps)."
+     },
+     {
+      "problem": "MINOR 6: the coder's brief asked for 'committed in the project working tree', but the coder makes no commits (the executor does).",
+      "failing_test_before": "packages/runtime/test/executor-brief.test.ts 'a brief never asks for a commit: it says Forerunner records the changes after the run' (the constraint was missing); the prompt side is asserted in intake-live.test.ts ('never asks a specialist to commit, push or open a pull request').",
+      "how": "The coder's tools (cc:Bash/run_command) could commit, but the executor records each run's changes itself. For a workspace project they are staged after the run and committed as the next run's baseline; for a repository project the executor commits, pushes and opens the PR. So: the delegation brief's constraints now say 'Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).' The intake prompt says that an outcome or criterion never asks a specialist to commit, push or open a pull request, and must instead say what the files contain and which check passes.",
+      "check_in_the_app": "After Approve and start, the model-call log (<home>/bench/model-calls.jsonl, role specialist) shows the brief's '## Constraints' containing the line above. The plan card's tasks and criteria contain no 'commit'."
+     },
+     {
+      "problem": "POLISH 7, plan card: (a) no separator before 'Needs Docker' (the text read '\u2026rendering\"Needs Docker'); (b) a task without an estimate showed no cost and the total left it out silently; (c) the decision record was pasted in full ('Status: proposed\u2026', 'Answers: _pending_').",
+      "failing_test_before": "apps/ui/test/inbox.test.tsx: 'the plan card shows the plan once\u2026' (it had locked in the missing separator), 'the plan card shows the drafted decision as text\u2026', and the new 'the live plan card: every task has its cost or says it is not known, the total says what it covers, the decision in a line'. Also apps/ui/test/plan-card.test.ts (new; decisionLine on the six live decision records).",
+      "how": "IntakeCard (apps/ui/src/pages/InboxPage.tsx) and apps/ui/src/lib/plan-card.ts. (a) ' \u00b7 Needs Docker' is now part of the line's text. (b) Every agent task shows 'about CHF x' or 'cost not known'; a person task shows 'you: answer its questions' and no cost. planTotalWords produces 'About CHF 1.04 for the 3 tasks.', 'About CHF 1.04 for 2 of the 3 tasks the agent does; the other one has no estimate yet.' or 'The cost of the 2 tasks is not known yet.'. The prompt now asks for an estimate for every task a specialist does, in run order. (c) decisionLine shows 'Decision: <one or two sentences>'. It takes the record's own 'Decision:' line (the prompt asks for one), else the first item under its first decision or choice heading, else its first non-status paragraph. The full record sits behind a closed 'The full decision record'; markdownAsText now also strips single emphasis ('_pending_' becomes 'pending').",
+      "check_in_the_app": "Inbox \u2192 the plan card. Each task line ends with '\u00b7 about CHF x' or '\u00b7 cost not known', and '\u00b7 Needs Docker' is separated when Docker is not running. The total sentence says what it covers, and one 'Decision: \u2026' line shows. Click 'The full decision record' to read the whole record as text. Screenshots: before /tmp/frbench/fix-intake-live/before/06-inbox-with-the-plan-card.png, after /tmp/frbench/fix-intake-live/after/05-inbox-with-the-plan-card.png."
+     },
+     {
+      "problem": "POLISH 8: the New project dialog refused a one-line brief without a Goal.",
+      "failing_test_before": "apps/ui/test/home.test.tsx 'a one-line brief without a Goal creates the project: the brief's first sentence is the goal, and the dialog says so' and 'New project without a Goal or a Brief says what is missing and sends nothing'; the bench journey's first check (before: 'new project dialog refused', screenshot /tmp/frbench/fix-intake-live/before/03-new-project-dialog-refused.png).",
+      "how": "The Goal is optional. When it is left empty, goalFromBrief sends the brief's first sentence without its full stop, cut at 160 characters at a word. The Goal's hint says so: 'One sentence: what done looks like. Optional: left empty, the first sentence you write below is the goal.' The hint avoids the word 'brief', because the hint is part of the label and Playwright's getByLabel('Brief') matched both fields; a test now guards this. The Brief's hint: 'What you want, in your words. A sentence or two gets a small plan (up to three tasks); a list of features gets a full one.' With neither a goal nor a brief the dialog says 'Give a goal or a brief: the agent plans from them.' and sends nothing. The route is unchanged. The fake daemon's POST /projects now answers smallProjectMode and defaultRiskTier like the real daemon, and real-daemon.test.ts covers the path.",
+      "check_in_the_app": "Home \u2192 New project, Name 'Quote page', Brief 'A page that shows a random quote', Goal left empty \u2192 Create project. The project opens with goal 'A page that shows a random quote'. Screenshot: /tmp/frbench/fix-intake-live/after/02-new-project-dialog-filled.png."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "The live report's MAJOR 4: the chat is not told that planning failed (it answered 'no tasks yet\u2026 I can add tasks', no Try again).",
+      "why": "This is the chat context builder (conversation/agent.ts), not my area. The words it should use are now on project.summary_cache.intake.error and GET /projects/:id/intake (state failed, error in words). See notes_for_other_areas."
+     },
+     {
+      "problem": "Confirming the real model's plan size and the retry on the live API.",
+      "why": "This machine has no Claude API key. The prompt, the mode flag and the request are tested; the size has to be confirmed live (live_check_steps)."
+     },
+     {
+      "problem": "The live report's other items (critic self-contradiction, person task not counted as needing the person, Summary tab '0 open questions', raw ** in chat, Tasks tab budget field, smoke.cjs stand-in-specific checks on a real model, setup Done-step note).",
+      "why": "Outside the intake. Only the smoke journey's two checks that my small-plan change broke on the stand-in were adapted (commit 4354067). Its other stand-in-specific checks (script.js, const QUOTES) still fail on a real model, as the live report says."
+     },
+     {
+      "problem": "A person task on the plan card shows no cost words (neither 'about CHF' nor 'cost not known').",
+      "why": "Deliberate: a person task costs nothing and reads 'you: answer its questions'. The total counts only 'the tasks the agent does'."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0: 409 test files, 4192 passed / 6 skipped; check-paths ok; link-check ok; secret-scan clean. docs:check cannot diff origin/main in this worktree, so it was run as node scripts/docs-check.mjs --base c316eba: ok (30 files)."
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "75 files, 710 passed, on the final head."
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "First run: 1 failure in packages/capabilities/test/browser.integration.test.ts ('Navigation \u2026 is interrupted by another navigation', then an afterEach hook timeout). That is a sandboxed-browser race unrelated to this branch: the file alone passed 16/16, and the full rerun passed 25 / 71 skipped, exit 0."
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "13 files, 25 passed / 1 skipped, exit 0."
+     },
+     {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+      "result": "32 passed (1.5 min). The local config is ignored via .git/info/exclude and not committed."
+     },
+     {
+      "command": "npx vitest run --project unit packages/runtime/test/intake-live.test.ts testenv/test/bench-role-player.test.ts packages/runtime/test/intake.test.ts packages/runtime/test/effort-offset.test.ts packages/runtime/test/executor-brief.test.ts",
+      "result": "All pass. Against the base sources intake-live.test.ts failed 14/14 (409 'plan.reason: Too big', 'not a JSON object' on line 25, no retry, untrue words, 'Small-project mode: off')."
+     },
+     {
+      "command": "Bench walk: start.mjs --name fix-intake-live --daemon-port 48210 --ui-port 1810 --fresh --env FORERUNNER_BENCH_INTAKE_BAD=missing-tasks --env FORERUNNER_BENCH_RISK2=Check; node scripts/bench/journeys/intake.cjs fix-intake-live",
+      "result": "11/11 checks. New project without a Goal \u2192 2 intake calls (the first refused, the retry carries it) \u2192 'Plan for \"Quote page\": 2 tasks' with costs, ' \u00b7 Needs Docker', 'About CHF 0.26 for the 2 tasks.', a Decision line \u2192 Approve and start: 'Plan approved: 2 tasks written; working on them.' and a session started. Before (base code): 7/11; the dialog refused without a Goal, 5 tasks, '\u2026\"Needs Docker', and the whole decision record open. Screenshots in /tmp/frbench/fix-intake-live/before and /after."
+     },
+     {
+      "command": "Bench: restart-daemon.mjs --env FORERUNNER_BENCH_INTAKE=malformed; intake.cjs --project 'Unreadable plan'",
+      "result": "Project page: 'Planning failed. Nothing was written.' and \"Claude's plan could not be read. Forerunner asked Claude twice.\" with Try again. Try again pressed twice; each try made 2 calls. Screenshots: /tmp/frbench/fix-intake-live/after-failed."
+     },
+     {
+      "command": "Bench: restart-daemon.mjs --env FORERUNNER_BENCH_INTAKE_BAD=reason-too-long; intake.cjs --project 'Long reason'",
+      "result": "11/11 checks: one call, a plan card, daemon log 'shortened: [\"plan.reason (826 -> 484)\"]'."
+     },
+     {
+      "command": "Bench: fresh, node scripts/bench/journeys/smoke.cjs fix-intake-live",
+      "result": "20/20 checks. The small plan's 2 tasks were done in one session; index.html, script.js (with quotes), styles.css and README.md were written; model calls intake 1, specialist 9, critic 0 (small-project mode means tier 0). Bench stopped."
+     }
+    ],
+    "live_check_steps": "After the branch is merged, on the machine with ANTHROPIC_API_KEY:\n1. Start: `node scripts/bench/start.mjs --name live2 --daemon-port <p> --ui-port <u> --fresh --provider bench-live`.\n2. One-line brief with no Goal: `node scripts/bench/journeys/intake.cjs live2` (Brief 'A page that shows a random quote', Goal left empty). Then read `/tmp/frbench/live2/steps/intake-result.json`. Expect:\n   - 'a one-line brief without a Goal creates the project' ok; goal 'A page that shows a random quote'; smallProjectMode true.\n   - intakeCalls[0].smallProjectLine = 'Small-project mode: on (a small plan: see Size in your instructions)'.\n   - 'planning ends in a plan card' ok with NO failures listed.\n   - The plan card has 1 to 3 tasks under one milestone, with no reviewer / ops-deploy / writer-marketing task. Look at planCard.tasks: each line reads 'title \u00b7 <specialist> \u00b7 about CHF x' or '\u00b7 cost not known'; a person task reads 'you: answer its questions'; ' \u00b7 Needs Docker' is separated.\n   - The total starts 'About CHF' and says what it covers ('for the N tasks.' or 'for K of the N tasks\u2026; the other \u2026 no estimate yet.').\n   - A line 'Decision: \u2026' of at most 2 sentences. The card shows no 'Status: proposed' and no '_pending_'.\n   - outputTokens per intake call well under the old ~5,600: expect roughly 1,500-3,000 (only README.md and the decision record are drafted). Record the actual number.\n   - Approve and start gives 'Plan approved: N tasks written; working on them.' and a session starts.\n3. Run step 2 at least 4 more times (new projects: add `--project \"Quote page N\"`). Every run must end in a plan card. Count how often the daemon log has 'intake reply refused; asking the model once more' (the retry) and 'intake: long texts of the plan were shortened to fit' (with 'plan.reason (X -> Y)'). On a refused first reply, change_card.model_calls is 2 and the card's cost is the sum of both Run rows (GET /inbox \u2192 the card's changeCard). If 'Planning failed' appears at all, the banner must name the cause, e.g. \"Claude's plan could not be read. Forerunner asked Claude twice.\", \"Claude's plan was missing its tasks. Forerunner asked Claude twice.\", \"Claude's plan was cut off before it ended. \u2026\", \"Claude did not answer (model call failed).\", \"Your Claude usage limit is reached. Try again once it resets.\". Never \"missing parts Forerunner needs\". Save every intake reply (model-calls.jsonl, role intake) as new fixtures and run `npx vitest run --project unit packages/runtime/test/intake-live.test.ts` after adding them to packages/runtime/test/fixtures/intake-live1.json; each must parse.\n4. Long brief: `node scripts/bench/journeys/intake.cjs live2 --project \"Book club\" --goal \"A quotes site for our book club\" --brief \"$(printf 'A quotes website for our book club.\\n- a page that shows a random quote\\n- a form to add quotes\\n- a list of all quotes with search')\"`. Expect smallProjectLine 'Small-project mode: off', a full plan (more tasks or milestones allowed), and every agent task with a cost or 'cost not known'. The '1 to 3 tasks' check is expected to FAIL here; it is written for one-line briefs.\n5. Coder brief: after an Approve and start, open `<home>/bench/model-calls.jsonl` and find the first specialist request (role specialist, coder). Its first user message's '## Constraints' must contain 'Do not commit, push or open a pull request: Forerunner records your changes after the run (it commits them in the project's folder, or opens the pull request).' The plan's outcomes and acceptance criteria (the card, or GET /projects/:id/tasks) should contain no 'commit'. The coder's report should not say it could not commit, and the critic should not flag a commit criterion.\n6. Decision record: in the project's folder (`<home>/data/projects/<id>/workspace/docs/decisions/0001-*.md`) the line under the title should start 'Decision: ', with no 'Status:' line and no answer placeholder.\n7. Stop: `node scripts/bench/stop.mjs --name live2`.\nNote: scripts/bench/journeys/smoke.cjs still has stand-in-specific file checks (script.js, const QUOTES). They fail on a real model; that is a bench limit, not a regression.",
+    "new_problems": [
+     "Small-project mode now starts on for every new project without a repository whose brief is short (under 200 characters, at most 2 lines, no list). Spec B.6 gives such projects tier 0 by default: their planned tasks close when the specialist finishes cleanly, with no critic review. On the stand-in smoke walk the critic made 0 calls. This follows the task's instruction and the spec, and is recorded in ADR 0103 (with the option of turning the mode off in Settings). The owner/lead should confirm they want no critic review on one-line-brief projects. If not, the planner could set riskTier 1 on the build task, or small-project mode could stop implying tier 0.",
+     "packages/capabilities/test/browser.integration.test.ts is flaky: 'Navigation \u2026 is interrupted by another navigation' on /chain, then an afterEach timeout. It failed once in a full pnpm test:integration and passed alone (16/16) and on the full rerun. It is unrelated to this branch.",
+     "The intake now asks firstSession.items to list every task a specialist does, in run order, not only the ready ones. The engine's firstSessionPlan still filters to ready tasks and the session keeps going, so behaviour is unchanged. But the first-session queue note and summary_cache.first_session.items now usually list every task.",
+     "On the stand-in, 'Spent CHF 0.00' shows on the project page after intake calls; the stand-in's pricing is zero. This is cosmetic, bench only."
+    ],
+    "notes_for_other_areas": [
+     "wave 3 system-text (IntakeBanner): I did not touch IntakeBanner.tsx. The cause words in GET /projects/:id/intake .error are now full sentences ending with a period, e.g. \"Claude's plan could not be read. Forerunner asked Claude twice.\" or 'Your Claude usage limit is reached. Try again once it resets.' If you join them into one line, 'Planning failed: <words>' reads fine; keep Try again.",
+     "chat: the live report's MAJOR 4 (the chat is not told the plan failed) belongs to the chat context builder. The words are on project.summary_cache.intake.error (with failed_at) and on IntakeService.status(projectId) ({state:'failed', error}). The chat could say 'Planning failed: <error>. Press Try again on the project page.'",
+     "Shared files touched, with small changes: packages/runtime/src/daemon/create-project.ts (small_project_mode from isShortBrief when there is no repository), packages/runtime/src/session/executor.ts (one brief constraint line), packages/runtime/src/session/person-questions.ts (MAX_QUESTION_CHARS exported), apps/ui/test/fake-daemon.ts (POST /projects answers smallProjectMode/defaultRiskTier like the daemon; imports isShortBrief), apps/ui/test/real-daemon.test.ts (two cases in the plan-card block), scripts/bench/journeys/smoke.cjs (two checks accept the small plan).",
+     "Bench users (session engine, needs-me, etc.): a project created with a brief under 200 characters and no repository is now in small-project mode. The stand-in plans 2 tasks for it, and its tasks run at tier 0 with no critic, so FORERUNNER_BENCH_CRITIC_REJECT never fires for those tasks. Journeys that need the critic, or a 5-task web plan, should use a brief with a feature list (a bulleted line), or FORERUNNER_BENCH_PLAN=chain. Chain still plans 7 tasks, but they also default to tier 0 under a short brief.",
+     "ADR number: I added docs/decisions/0103-a-short-brief-gets-a-small-plan.md and its README index row. If wave 3 also added an 0103, renumber one at merge.",
+     "Merge-order conflicts to expect: docs/maintainers/runtime.md (intake section and the task-brief paragraph), docs/maintainers/apps.md (the /inbox and / rows), docs/maintainers/testing.md (bench section), docs/user-guide.md (New project, Planning failed, the plan card), scripts/bench/README.md.",
+     "I did not edit docs/status/UPDATE-LOG.md, CHANGELOG.md or docs/requirements.md. Candidate U-entry text for the lead: 'Planning from a brief failed on the real model (long reason, fenced docs); untrue failure words; a one-line brief got a 6-task plan; New project required a Goal; plan card polish.' Check in the app: steps 1-4 of live_check_steps."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "what_i_did": "I reviewed fix/intake-live at 4354067, detached in my worktree. The base is claude/nifty-knuth-f9udt0 at e20c0b2.\n\n1. **Diff read in full:** intake.ts, project-plan.ts, create-project.ts, executor.ts, plan-card.ts, InboxPage.tsx, NewProjectDialog.tsx, fake-daemon.ts, the testenv role-player and plans, intake.cjs, smoke.cjs, ADR 0103, and the maintainer docs and user guide.\n\n2. **Fixtures:** /tmp/frbench/live1-fixtures.json was present. The repo copy (packages/runtime/test/fixtures/intake-live1.json) is identical, reply text included, and contains no key. I wrote my own script (/tmp/frbench/review-intake-live-logs/scripts/fixtures-check.mts) and ran all six replies through it:\n   - Every reply parses. readIntakeReply shortened the reasons: line 1 603 -> 457, line 22 754 -> 384, line 24 557 -> 437, line 25 592 -> 460.\n   - Every reply shapes with shapeProjectPlan in both small and full mode.\n   - Lines 23 and 25 are read whole. The old regex picked a doc snippet out of them.\n   - decisionLine gives a 1-2 sentence decision with no status line or markdown for all six.\n   - Further edge probes are in edge.mts: fenced reply followed by a bash block, pretty-printed reply, unknown keys, too-short title, duplicate key, wrong priority, float estimate, unknown doc path, empty reply, array reply, emoji cut, and isShortBrief cases.\n\n3. **Failing test first:** I put the base sources back for intake.ts, project-plan.ts, create-project.ts, executor.ts and person-questions.ts. All 14 intake-live tests and the new executor-brief test failed with the live errors: 409 'plan.reason: Too big', 'not a JSON object' on line 25, and 'missing parts' words. I then restored HEAD.\n\n4. **Validation, all on this head:**\n   - pnpm check equivalent (docs-check with --base claude/nifty-knuth-f9udt0): exit 0; 409 files, 4192 passed / 6 skipped; docs-check ok (30 files); link-check ok; secret-scan clean. The changed files lint clean.\n   - UI vitest: 75 files, 710 passed.\n   - pnpm test:integration: 25 passed / 71 skipped.\n   - pnpm test:e2e: 25 passed / 1 skipped.\n   - Playwright with the local config: 32 passed. I removed the config afterwards and the tree is clean.\n   - All 6 commits carry a gpgsig and both trailers.\n\n5. **Bench walk** (review-intake-live, daemon 48215, UI 1815, stand-in, stopped afterwards with stop.mjs). Screenshots are in /tmp/frbench/review-intake-live/steps; my logs and scripts are in /tmp/frbench/review-intake-live-logs.\n   - **not-json:** INTAKE_BAD=not-json with RISK2=Check, then intake.cjs: 11/11 checks. There were 2 intake calls; the retry carried 'Forerunner could not use your reply: - Your reply is not one JSON object\u2026'. The plan card (05-inbox-with-the-plan-card.png) shows 2 tasks with costs, ' \u00b7 Needs Docker' separated, 'About CHF 0.26 for the 2 tasks.' and a single 'Decision:' line. Approve and start gave 'Plan approved: 2 tasks written; working on them.'\n   - **Dialog:** with neither Goal nor Brief it says 'Give a goal or a brief: the agent plans from them.' and sends nothing.\n   - **malformed:** after a daemon restart with INTAKE=malformed, the project page reads 'Planning failed. Nothing was written. / Claude's plan could not be read. Forerunner asked Claude twice.' with [Try again]. Try again also made 2 calls and gave the same words.\n   - **Across a restart:** I restarted with fenced-docs and pressed Try again on the persisted failed project. The plan card arrived on the first call, and 'The full decision record' opened on click as text.\n   - **Change the plan** with missing-tasks: it retried once; the person's words were in both requests and one new card arrived.\n   - **reason-too-long:** one call, a plan card, and the daemon log line 'plan.reason (826 -> 484)'.\n   - **Specialist side:** the coder's brief carries the 'Do not commit\u2026' constraint. The critic made 0 calls. In the Tasks tab the coder task read 'Checks only', with the Critic column '\u2014'.",
+    "blocking": [
+     {
+      "issue": "A one-line brief now switches off critic review of its code tasks. Small-project mode is now on for every short brief without a repository, and in that mode a task that names no tier runs at tier 0 ('Checks only: automatic checks, no critic'). This contradicts the owner's decision recorded on the base branch: docs/status/handoff/NEXT-SESSION.md, commit 4a69e9b, says '(2) The critic always reviews code tasks' and '(5) \u2026 no \"checks only\" or tier words'. Before this fix, the same brief's tasks defaulted to tier 1 (Light review). The fixer listed it under new_problems, but the branch ships the regression. ADR 0103 records it as accepted, and the user guide now says one-line briefs get no separate critic review.",
+      "where": "packages/runtime/src/daemon/create-project.ts:69 (small_project_mode from isShortBrief); packages/runtime/src/session/project-plan.ts defaultRiskTier/SMALL_PROJECT_RISK_TIER; SMALL_PLAN_RULES in intake.ts never asks for a riskTier; docs/decisions/0103-a-short-brief-gets-a-small-plan.md Consequences; docs/user-guide.md New project paragraph",
+      "evidence": "Bench review-intake-live, brief 'A page that shows a random quote', Goal empty. GET /projects reports smallProjectMode true and defaultRiskTier 0. The task 'Build the random quote page in index.html, styles.css and script.js' has riskTier 0 and status done. The model-call log has 0 critic calls. The Tasks tab shows 'Checks only \u00b7 High priority' with the Critic column '\u2014', and the Home card shows 'Latest critic grade: no review yet'. The coder's brief still says '## Acceptance criteria (the critic checks each)', which is untrue at tier 0. The fixer's own smoke walk also reported critic 0.",
+      "expected": "Keep the small plan (1 to 3 tasks, short docs) without dropping the critic on code tasks. For example, keep the default tier at 1 for short-brief projects, or have the small-plan rules set riskTier 1 on the build or coder task; the other option is for the lead to get the owner's explicit approval first. Add a test that a one-line brief's coder task is reviewed by the critic: tier at least 1, and a critic call after the specialist on the stand-in. Update ADR 0103 and the user guide to match."
+     },
+     {
+      "issue": "Validation rule 3 (binding in the task) is broken at commit level. POST /projects changed in 1075ca3: it now answers smallProjectMode true for a short brief. That commit also changed the POST /projects/:id/intake retry and the failure words. But apps/ui/test/fake-daemon.ts and the real-daemon.test.ts cases only arrive in the later commit 1f7984c. At 1075ca3 the fake still answers smallProjectMode false and defaultRiskTier 1 for the same body.",
+      "where": "commits 1075ca3 (packages/runtime/src/daemon/create-project.ts) vs 1f7984c (apps/ui/test/fake-daemon.ts, apps/ui/test/real-daemon.test.ts)",
+      "evidence": "git log --name-only claude/nifty-knuth-f9udt0..fix/intake-live shows create-project.ts only in 1075ca3, and fake-daemon.ts plus real-daemon.test.ts only in 1f7984c. docs/maintainers/validation.md rule 3 says 'The fake \u2026 is updated in the same commit.' The final tree is consistent; this is commit structure only.",
+      "expected": "Move the fake-daemon.ts POST /projects change and the two real-daemon.test.ts intake cases into the commit that changes the daemon (1075ca3), and keep every commit signed with the trailers."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "BLOCKER 1: live lines 1, 22, 24 and 25 (reason over 500 characters) become plan cards on the first call; prose is shortened at a sentence or word, and identifiers and counts are still refused",
+      "holds": true,
+      "note": "Holds in the unit tests, in my fixture script (shortened 603->457, 754->384, 557->437, 592->460), and on the bench with reason-too-long ('plan.reason (826 -> 484)', 1 call, plan card). A key over 80 characters is still refused."
+     },
+     {
+      "claim": "BLOCKER 2: the whole reply is parsed first, then line-start fences longest first, then the brace span; lines 23 and 25 parse",
+      "holds": true,
+      "note": "My edge probes also passed: a fenced reply followed by a bash block, a pretty-printed fenced reply, and prose around the JSON. On the bench, fenced-docs gave a plan card on the first call."
+     },
+     {
+      "claim": "3: a reply that does not validate is asked for once more in the same session with the problems in words; cost summed; 2 Run rows; calls that did not complete are not repeated",
+      "holds": true,
+      "note": "Bench, not-json: 2 calls, the retry carries the refused reply and 'Forerunner could not use your reply:'. Change the plan with missing-tasks also retried, and the person's change was in both requests. Run rows and cost sum are asserted in intake-live.test.ts."
+     },
+     {
+      "claim": "MAJOR 4: failure words name the real cause and keep Try again",
+      "holds": true,
+      "note": "Bench, malformed: \"Claude's plan could not be read. Forerunner asked Claude twice.\" with [Try again]. It is the same after a second Try again and after a daemon restart. The usage-limit and provider-error words are tested."
+     },
+     {
+      "claim": "MAJOR 5: a one-line brief gets small-project mode and the prompt says what a small plan is; a long brief or a list gets 'off'",
+      "holds": true,
+      "note": "The request carries 'Small-project mode: on (a small plan: see Size in your instructions)'. Side effect: tier 0 and no critic (blocking finding 1). The size is only asked of the model, never enforced; that needs the live check."
+     },
+     {
+      "claim": "MINOR 6: the coder's brief says Forerunner records the changes; the prompt never asks a specialist to commit",
+      "holds": true,
+      "note": "I verified that the executor commits a workspace baseline per run and that pr-executor commits and opens the PR. On the bench, the coder brief's ## Constraints contains the line."
+     },
+     {
+      "claim": "POLISH 7: ' \u00b7 Needs Docker' separator; every agent task shows 'about CHF x' or 'cost not known'; the total says what it covers; one Decision line with the full record one click away",
+      "holds": true,
+      "note": "Screenshot 05-inbox-with-the-plan-card.png. decisionLine gives sensible results on all six live records."
+     },
+     {
+      "claim": "POLISH 8: New project takes a one-line brief without a Goal; the brief's first sentence becomes the goal and the dialog says so",
+      "holds": true,
+      "note": "On the bench the goal was 'A page that shows a random quote'. With neither field filled the dialog says 'Give a goal or a brief: the agent plans from them.'"
+     },
+     {
+      "claim": "Tests failed before the fix",
+      "holds": true,
+      "note": "With the base sources restored, all 14 intake-live tests and the executor-brief test failed with the live errors."
+     },
+     {
+      "claim": "No test weakened",
+      "holds": true,
+      "note": "Existing assertions changed only to match the new behaviour. 'toContain(\"JSON\")' became the exact words. Run-row counts became INTAKE_CALLS. Gamma and Twin moved to a list brief to keep their milestones. The inbox test that had locked in the missing separator now asserts the separator. smoke.cjs (a bench script, not CI) relaxes to at least 1 task, to fit the small plan."
+     },
+     {
+      "claim": "pnpm check, UI vitest, integration, e2e and Playwright are green",
+      "holds": true,
+      "note": "All re-run by me on 4354067."
+     },
+     {
+      "claim": "Maintainer docs, user guide, bench README and ADR updated; nothing logs or shows a key",
+      "holds": true,
+      "note": "docs-check is ok. The new log lines carry model problems and paths only."
+     },
+     {
+      "claim": "route change carries real-daemon case and fake update in the same commit (rule 3)",
+      "holds": false,
+      "note": "Split across 1075ca3 and 1f7984c (blocking finding 2)."
+     }
+    ],
+    "non_blocking": [
+     "The Brief hint 'A sentence or two gets a small plan (up to three tasks)' promises something the code does not always keep (design \u00a75.9). With a repository link the mode stays off. The 1-to-3 size is only asked of the model, and nothing checks it or retries when a small-project plan has more tasks. Either name the condition and soften the promise, or enforce the size (for example, one retry when a small plan has more than 3 tasks).",
+     "Some new failure words break the \u00a75.6 writing rules. \"Claude's plan had parts Forerunner does not know (notes).\" shows raw JSON key names. \"Claude's plan gave two tasks the same key.\" uses an internal word. fieldWords combined with too_small can produce odd sentences such as \"a task's review level that was too short\".",
+     "Question texts are only half handled. The prompt now states 500 characters and 10 per task, but person-questions.ts still cuts a question hard at 500 characters mid-word with no ellipsis, and silently drops the 11th question onwards. This is pre-existing, but item 1 asked for a per-field decision.",
+     "POST /projects/:id/plan now also accepts a reason over 500 characters (shortened instead of 409) because ProjectPlanBody is shared. That changes route behaviour without a real-daemon case; the UI does not call this route.",
+     "The intake deadline is now two planning timeouts plus the margin (about 11 minutes, was about 6). After a daemon crash mid-intake the project page shows 'Drafting the plan\u2026' up to twice as long before closeExpired fails it.",
+     "The intake session summary now reads '\u2026 (completed: 2 doc(s), on call 2)'. The '(s)' plural is banned by \u00a75.6, if this summary appears anywhere the person reads.",
+     "decisionLine's fallback picks the first item under a 'decision' or 'choice' heading. For live line 3 that gives 'Quotes are bundled in quotes.js as a global array.' rather than the stack choice. This is acceptable now that the prompt asks for a 'Decision:' line; the live check should confirm the real model writes one.",
+     "The fixer marked the live report's MAJOR 4 (the chat is not told that planning failed) as not done, correctly out of scope. It still needs an owner: the words are on summary_cache.intake.error."
+    ]
+   },
+   "fixup": {
+    "area": "intake-live (fixup after review)",
+    "branch": "fix/intake-live",
+    "head_sha": "c2f6fac2e77e0627c1b4991855ddfde278a16934",
+    "commits": [
+     {
+      "sha": "56cce5a",
+      "subject": "intake: a live reply becomes a plan card; a refused one is asked for once more; a short brief gets a small plan (rebuilt from 1075ca3: now also carries the fake-daemon.ts POST /projects change and the two real-daemon.test.ts intake cases)"
+     },
+     {
+      "sha": "5d5b66b",
+      "subject": "executor: a specialist's brief says Forerunner records its changes, never asks it to commit (cherry-pick of 71a2d14)"
+     },
+     {
+      "sha": "2191ccb",
+      "subject": "ui: the plan card gives every task a cost or says it is not known, separates Needs Docker, and shows the decision in a line (cherry-pick of 087670d)"
+     },
+     {
+      "sha": "3abf41a",
+      "subject": "ui: New project takes a one-line brief without a Goal and says what a short brief gets (rebuilt from 1f7984c, without the fake and real-daemon parts that moved)"
+     },
+     {
+      "sha": "ec9ea8f",
+      "subject": "bench: the intake journey reads the decision line and the whole failure banner (cherry-pick of 7d6afd9)"
+     },
+     {
+      "sha": "b7d615d",
+      "subject": "bench: the smoke journey checks the small plan its short brief now gets (cherry-pick of 4354067)"
+     },
+     {
+      "sha": "c351271",
+      "subject": "intake: a short brief asks for a small plan without small-project mode, so the critic reviews its code tasks; a plan too big is asked for once more"
+     },
+     {
+      "sha": "713bed5",
+      "subject": "intake: the planning failure words are plain: no JSON key names, no plan-internal words, a number never \"too short\""
+     },
+     {
+      "sha": "510d3b8",
+      "subject": "person questions: a question over 500 characters is cut at a word and stays a question"
+     },
+     {
+      "sha": "c2f6fac",
+      "subject": "runtime tests: POST /projects/:id/plan takes a long reason, shortened at a sentence; the route says so"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "BLOCKING 1: a one-line brief turned off the critic review of its code tasks. The fixer put every short brief without a repository into small-project mode. Spec B.6 gives a task in that mode that names no tier tier 0 ('Checks only', no critic). That broke the owner's decision of 2026-11-01: the critic always reviews code tasks, and no 'checks only' level is ever shown.",
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts, new block 'a one-line brief's work is reviewed by the critic'. It was smallProjectMode true; with that assertion taken out, the build task's runs were [work coder] only, with no critic review (log /tmp/frbench/fixup-intake-live/logs/before-real-daemon-critic-only.log). real-daemon 'a one-line brief without a Goal ...' sent smallProjectMode true and 'Small-project mode: on'. packages/runtime/test/intake-live.test.ts 'a one-line brief asks for a small plan and keeps the critic ...' failed: the project was in small-project mode and the approved build task was tier 0. testenv/test/bench-role-player.test.ts: the stand-in read the old line and planned 5 tasks. Logs: /tmp/frbench/fixup-intake-live/logs/before-unit.log and before-real-daemon.log.",
+      "how": "The root cause was one flag doing two jobs: 'plan small' was stored as small-project mode, and that mode also sets every new task's review level. createProjectRecord now creates every project outside small-project mode again (POST /projects answers smallProjectMode false, defaultRiskTier 1), and apps/ui/test/fake-daemon.ts answers the same in the same commit. A new intakePlanSize (intake.ts) decides the size for each draft. It is small when the project has no repository and the brief the project keeps is short (isShortBrief), or when the person turned small-project mode on; otherwise the plan is what the brief needs. Because the size comes from the stored brief, Try again after a restart asks for the same size; intake.test.ts asserts this. The request now says 'Plan size: small (a short brief: see Size in your instructions)' or 'Plan size: what the brief needs' instead of 'Small-project mode: on/off'. SMALL_PLAN_RULES add 'Leave riskTier out: Forerunner's critic reviews every task that builds or changes files.' ADR 0103 is revised and says why the mode was dropped. The user guide, runtime.md, testing.md and the bench README are updated. On the stand-in, the small plan's coder and tester tasks are tier 1, and each gets a critic review after its run.",
+      "check_in_the_app": "Home, New project. Name 'Quote page', Brief 'A page that shows a random quote', Goal left empty. Create project, then Inbox: the plan card has 1 to 3 tasks. Press Approve and start. After the session, the Tasks tab shows 'Light review \u00b7 High priority', never 'Checks only', and the Critic column has a grade. Each task's drawer lists the critic's review above the specialist's run. Settings: the project's Small-project mode is off. On the bench, the before walk (fixer head b7d615d) had both tasks at 'Checks only', runs [work:coder] and [work:tester], and model calls {intake 2, specialist 9}; screenshots are in /tmp/frbench/fixup-intake-live/before. After the fix: 'Light review', runs [review:critic, work:coder] and [review:critic, work:tester], and model calls {intake 2, specialist 9, critic 4}; screenshots are in /tmp/frbench/fixup-intake-live/after (08-tasks-after-the-session.png)."
+     },
+     {
+      "problem": "BLOCKING 2 (validation rule 3): commit 1075ca3 changed POST /projects and the intake routes, but the fake-daemon.ts change and the two real-daemon.test.ts intake cases only arrived in the later commit 1f7984c.",
+      "failing_test_before": "This was commit structure, not behaviour: git log --name-only showed create-project.ts only in 1075ca3, and fake-daemon.ts plus real-daemon.test.ts only in 1f7984c.",
+      "how": "I rebuilt the branch on c316eba. The new 56cce5a is 1075ca3 plus the fake-daemon.ts POST /projects change and both real-daemon cases. In that commit the one-line-brief case sends the brief as the goal, because goalFromBrief does not exist yet; its message names the route changes. 71a2d14, 087670d, 7d6afd9 and 4354067 are cherry-picked unchanged. The new 3abf41a is 1f7984c without the moved parts: it switches that case to goalFromBrief, and its message is corrected. The rebuilt tip's tree is byte-identical to 4354067 (git diff --quiet). At 56cce5a the real-daemon plan card block passed 8/8 and the full UI vitest suite passed 704/704. My own route change (c351271) carries its fake-daemon.ts and real-daemon.test.ts changes in the same commit. Every commit is signed (gpgsig) and has both trailers.",
+      "check_in_the_app": "No change for the person. Check with: git log --name-only c316eba..fix/intake-live. packages/runtime/src/daemon/create-project.ts appears only together with apps/ui/test/fake-daemon.ts and apps/ui/test/real-daemon.test.ts, in 56cce5a and in c351271."
+     },
+     {
+      "problem": "Non-blocking 1: the Brief hint promised a small plan that nothing enforced. A repository link left the size off, and the 1-to-3 task size was only asked of the model.",
+      "failing_test_before": "intake-live.test.ts 'a short brief's plan that comes back bigger than a small plan is asked for once more; the second reply stands whatever its size' made one call where two were expected. 'a plan the person asked to change is never cut down for its size' is new. bench-role-player.test.ts had no too-big injection. apps/ui/test/home.test.tsx: the hint did not name the repository condition.",
+      "how": "When a draft from the brief alone asked for a small plan and the first reply has more than SMALL_PLAN_MAX_TASKS (3) tasks, the intake asks once more with the size in words (smallPlanProblem). For live reply 23 the words are: 'Your plan has 6 tasks in 3 milestones, but \"Plan size: small\" asks for one milestone with one to three tasks. ...'. The second plan stands whatever its size. If the second reply cannot be used, or its call fails for any reason except a stop, the first plan is filed, so size never costs the person their plan. A draft that carries the person's changes is never checked for size. A second milestone alone does not trigger the retry. The Brief hint now reads 'Without a repository, a sentence or two gets a small plan (up to three tasks); a list of features gets a full one.' Bench: FORERUNNER_BENCH_INTAKE_BAD=too-big sends the full plan first. intake.cjs records the Plan size line and what the second call was told; with --watch it also checks that the critic reviewed every task an agent finished. smoke.cjs checks that the critic made calls. The intake session summary says '2 docs', not '2 doc(s)'.",
+      "check_in_the_app": "Bench: restart-daemon.mjs --env FORERUNNER_BENCH_INTAKE_BAD=too-big, then intake.cjs --project 'Too big quote'. Result: 11/11 checks and 2 intake calls. The second call was told 'Your plan has 5 tasks, but \"Plan size: small\" asks for ...', and the plan card shows 2 tasks. The daemon log has 'intake: the plan is bigger than a small plan; asking once more'. Screenshots: /tmp/frbench/fixup-intake-live/after-too-big. A brief with a list made one call with 'Plan size: what the brief needs' and got 5 tasks (after-long-brief)."
+     },
+     {
+      "problem": "Non-blocking 2: some failure words broke the \u00a75.6 writing rules. 'Claude's plan had parts Forerunner does not know (notes).' showed raw keys, 'gave two tasks the same key' used an internal word, and a negative review level read 'that was too short'.",
+      "failing_test_before": "intake-live.test.ts 'the person reads the real cause after the second try ...' got 'Claude's plan had parts Forerunner does not know (notes). Forerunner asked Claude twice.' where the plain sentence was expected. The duplicate key, negative review level and empty check cases are new in the same test.",
+      "how": "issueWords and fieldWords now use plain words. Unknown parts read 'Claude's plan had parts Forerunner does not know.'; the keys still go to the model in the retry. A duplicate key reads 'Claude's plan listed the same task twice.' The kind of value picks the words: an empty text 'left \u2026 empty', a long one 'that was too long', a number 'out of range', a list 'was missing \u2026' or 'too many entries in \u2026'. A list entry reads 'one of a task's checks', and a key reads 'a task's short name'.",
+      "check_in_the_app": "On the project page after 'Planning failed. Nothing was written.', the reason never contains JSON key names or the word 'key'. Example: \"Claude's plan listed the same task twice. Forerunner asked Claude twice.\" Try again is unchanged."
+     },
+     {
+      "problem": "Non-blocking 3: a question for the person over 500 characters was cut hard, mid-word. The cut removed its '?', so the card no longer asked it.",
+      "failing_test_before": "packages/runtime/test/person-questions.test.ts 'a question over 500 characters is shortened at a word and stays a question (ADR 0103)': the long question was dropped and only 'Which domain?' was asked.",
+      "how": "clean (person-questions.ts) now cuts at the last word that fits, adds '\u2026', and keeps the '?' when there was one. runtime.md describes this and the 10-question cap.",
+      "check_in_the_app": "If a plan has a person task whose question is very long, its Inbox card shows the question ending in '\u2026?'. It is still asked, not dropped."
+     },
+     {
+      "problem": "Non-blocking 4: POST /projects/:id/plan changed behaviour without a test. Because it shares ProjectPlanBody, a reason over 500 characters is now shortened instead of refused with 409.",
+      "failing_test_before": "None. This is coverage for an existing change: the base schema had reason z.string().max(500), a 409 on this route. The new case passes on this branch.",
+      "how": "packages/runtime/test/small-project.test.ts covers the route. A 700-character reason gets 201, and every task and milestone row carries it cut at a whole sentence with ' \u2026'. The route description in api-types.ts and runtime.md now say so. There is no real-daemon or fake case because the UI never calls this route and the fake does not serve it.",
+      "check_in_the_app": "Nothing the person sees; the UI does not use this route."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Confirming the real model's plan size, how often it passes on the first call, and the critic reviews, on the live API.",
+      "why": "This machine has no Claude API key. The request text, the plan-size flag, the size retry and the critic path are tested with fixtures and the stand-in; live_check_steps says how the helper confirms them."
+     },
+     {
+      "problem": "Non-blocking 5: the intake deadline is two planning timeouts plus the margin (about 11 minutes). After a daemon crash mid-intake, 'Drafting the plan\u2026' can show twice as long before closeExpired fails it.",
+      "why": "Left as it is. The deadline covers both calls of one draft, and shortening it would need the session's stored plan and the token expiry updated between calls. I judged that a bigger change than this review needed, and nothing is lost: Try again works once the draft fails."
+     },
+     {
+      "problem": "Non-blocking 7: decisionLine's fallback picks the first item under a decision heading (live line 3 gives 'Quotes are bundled in quotes.js as a global array.').",
+      "why": "Acceptable, as the reviewer said: the prompt asks for a 'Decision:' line. The live check should confirm the real model writes one (live_check_steps)."
+     },
+     {
+      "problem": "Non-blocking 8 / live report MAJOR 4: the chat is not told that planning failed.",
+      "why": "That belongs to the chat context builder (conversation/agent.ts), not the intake. The words it should use are on project.summary_cache.intake.error and GET /projects/:id/intake (state failed, error in words)."
+     },
+     {
+      "problem": "More than 10 questions on one person task: the card asks the first 10 and the rest are not shown.",
+      "why": "The prompt states the cap of 10. Showing the dropped ones belongs to the Inbox card layout, which wave 3 owns, so I left it."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan) on c2f6fac",
+      "result": "Exit 0. 409 test files, 4196 passed / 6 skipped; link-check ok (191 files); secret-scan clean (1891 files). docs:check cannot diff origin/main in a worktree, so I ran node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 (ok, 33 files) and --base b7d615d (ok, 25 files). Log: /tmp/frbench/fixup-intake-live/logs/pnpm-check.log"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts (on c2f6fac)",
+      "result": "75 files, 711 passed."
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "Exit 0: 4 files passed / 6 skipped; 25 tests passed / 71 skipped."
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "Exit 0: 13 files, 25 passed / 1 skipped."
+     },
+     {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+      "result": "32 passed (58.5 s). The config is ignored through .git/info/exclude and not committed."
+     },
+     {
+      "command": "Failing tests first: npx vitest run --project unit packages/runtime/test/intake-live.test.ts testenv/test/bench-role-player.test.ts (before the fix), and apps/ui real-daemon -t 'one-line brief'",
+      "result": "Before the fix: 6 unit failures (smallProjectMode true; 1 call where 2 were expected; words '(notes)'; stand-in 5 tasks for a small plan) and 2 real-daemon failures. With the smallProjectMode assertion removed, the critic case failed with runs [[work, coder]] where [[review, critic], [work, coder]] was expected. After the fix, all of them pass. Logs: /tmp/frbench/fixup-intake-live/logs/before-*.log and after-*.log"
+     },
+     {
+      "command": "History check: git diff --quiet 4354067 <rebuilt b7d615d>; at 56cce5a: real-daemon -t 'plan card' and the full UI vitest suite",
+      "result": "Trees identical. At 56cce5a: 8/8 real-daemon plan card cases and 704/704 UI tests passed. All 10 commits are signed and carry both trailers."
+     },
+     {
+      "command": "Bench before (detached at b7d615d, with the new intake.cjs overlaid): start.mjs --name fixup-intake-live --daemon-port 48220 --ui-port 1820 --fresh --env FORERUNNER_BENCH_INTAKE_BAD=missing-tasks; intake.cjs fixup-intake-live --watch",
+      "result": "12/13 checks. FAIL 'the critic reviewed every task an agent finished': runs [work:coder], [work:tester]. GET /projects: smallProjectMode=true, defaultRiskTier=0. Tasks tab 'Checks only \u00b7 High priority'. Model calls {intake 2, specialist 9}. Screenshots: /tmp/frbench/fixup-intake-live/before"
+     },
+     {
+      "command": "Bench after (fix/intake-live at c2f6fac), same flags: intake.cjs fixup-intake-live --watch",
+      "result": "13/13 checks. New project without a Goal, 2 intake calls (missing-tasks refused, then the retry), plan card 'Plan for \"Quote page\": 2 tasks' with costs, ' \u00b7 Needs Docker' separated, the total and the Decision line. Approve and start: 'Plan approved: 2 tasks written; working on them.' The session completed, and runs were [review:critic, work:coder] and [review:critic, work:tester]. smallProjectMode=false, defaultRiskTier=1; Tasks tab 'Light review'. Model calls {intake 2, specialist 9, critic 4}. The coder's brief has 'Acceptance criteria (the critic checks each)' and 'Do not commit, push or open a pull request'. Screenshots: /tmp/frbench/fixup-intake-live/after"
+     },
+     {
+      "command": "Bench: restart-daemon.mjs --env FORERUNNER_BENCH_INTAKE_BAD=too-big; intake.cjs --project 'Too big quote'",
+      "result": "11/11 checks. 2 calls: the second was told 'Your plan has 5 tasks, but \"Plan size: small\" asks for one milestone with one to three tasks\u2026'. The card shows 2 tasks, and the daemon log line is present. Screenshots: after-too-big"
+     },
+     {
+      "command": "Bench: intake.cjs with a brief that has a list ('A quotes website for our book club:' plus 3 bullets)",
+      "result": "1 call, 'Plan size: what the brief needs', a 5-task plan card. The journey's '1 to 3 tasks for a one-line brief' check fails there, which is expected for a list brief. Screenshots: after-long-brief"
+     },
+     {
+      "command": "Bench: fresh, node scripts/bench/journeys/smoke.cjs fixup-intake-live; then stop.mjs",
+      "result": "21/21 checks, 0 findings, 0 problems, including the new 'the critic reviewed the work'. Model calls {intake 1, specialist 9, critic 4, chat 1}. Bench stopped. Screenshots: after-smoke"
+     }
+    ],
+    "live_check_steps": "On the merged branch, on the machine with ANTHROPIC_API_KEY (each one-line-brief walk costs about USD 0.10-0.40):\n1. node scripts/bench/start.mjs --name live-intake --daemon-port <p> --ui-port <u> --fresh --provider bench-live\n2. node scripts/bench/journeys/intake.cjs live-intake --watch. This uses the default brief 'A page that shows a random quote' with the Goal empty. Then open /tmp/frbench/live-intake/steps/intake-result.json and confirm:\n   (a) Every check is ok, and 'planning ends in a plan card' has no failures.\n   (b) intakeCalls[0].planSizeLine is exactly 'Plan size: small (a short brief: see Size in your instructions)'.\n   (c) Count the intake calls. 1 is the target. 2 means read intakeCalls[1].retryAsked: 'Your plan has N tasks\u2026' means the model planned too big on the first try; any other text means the reply was refused.\n   (d) 'the plan has one to three tasks for a one-line brief' is ok; the model was asked for one milestone, no reviewer, deploy or marketing task, and riskTier left out.\n   (e) outputTokens is well under the live 5,600 (expect about 1,000-2,500), because only README.md and the decision record are drafted.\n   (f) The plan card's Decision line comes from a real 'Decision:' line, not the fallback. See planCard.text and steps/*inbox-with-the-plan-card.png.\n   (g) After --watch: 'the critic reviewed every task an agent finished' is ok, and result.reviews shows 'review:critic' in every finished task's runs.\n   (h) GET /projects shows the project with smallProjectMode false and defaultRiskTier 1. The Tasks tab screenshot (steps/*tasks-after-the-session.png) shows 'Light review', never 'Checks only'.\n3. Repeat step 2 two more times with --project 'Quote page 2' and --project 'Quote page 3' (without --watch, to save cost). Record the first-call pass rate, the task counts and outputTokens. The owner's exit criterion is that plans pass first time and are the right size.\n4. Long brief: node scripts/bench/journeys/intake.cjs live-intake --project 'Club quotes' --goal 'A quotes site for our club' --brief \"$(printf 'A quotes website for our book club:\\n- a page that shows a random quote\\n- a form to add quotes\\n- a list of all quotes with search')\". Expect planSizeLine 'Plan size: what the brief needs', a plan card on the first call, and no size retry. The '1 to 3 tasks' check is expected to fail for a list brief.\n5. Optional: node scripts/bench/journeys/smoke.cjs on a fresh bench-live bench. Only its 'the critic reviewed the work' and 'every planned task is done' checks matter on a real model; its stand-in file-name checks (script.js, const QUOTES) still fail there, as the live report said.\n6. Stop with node scripts/bench/stop.mjs --name live-intake.",
+    "new_problems": [
+     "The size check counts every task, person tasks included, so a needed person question plus three build tasks triggers one retry. The second plan always stands.",
+     "The first walk on a real model may show the size retry firing often if the model ignores the Size rules. Each retry costs one more planning call (about USD 0.06) and about 40 s. The live check will show how often."
+    ],
+    "notes_for_other_areas": [
+     "History was rewritten on fix/intake-live (never pushed): the fixer's 6 commits now have new SHAs (56cce5a\u2026b7d615d), with a tree identical to 4354067. The fixer's worktree .claude/worktrees/wf_6861daad-471-1 still has fix/intake-live checked out at the old 4354067; it is stale, so do not commit from it.",
+     "Shared files I touched, in small changes: apps/ui/test/fake-daemon.ts (POST /projects answers smallProjectMoe false and defaultRiskTier 1 again, the same as the base); apps/ui/test/real-daemon.test.ts (a new describe block 'a one-line brief's work is reviewed by the critic' and the one-line-brief case's expectations); docs/user-guide.md (the Home paragraph on small plans); docs/maintainers/runtime.md, testing.md and apps.md; scripts/bench/journeys/smoke.cjs (one new check: 'the critic reviewed the work').",
+     "Wave 3 system-text (IntakeBanner): the intake's failure cause words changed again, to plain words. Examples: 'Claude's plan had parts Forerunner does not know.', 'Claude's plan listed the same task twice.', '\u2026 out of range', 'left \u2026 empty'. All still end with ' Forerunner asked Claude twice.' after a refused retry. The banner layout is untouched.",
+     "Phase C (verifying code tasks): a short brief no longer turns small-project mode on, but a person who switches the mode on in Settings still gets tier 0 for new tasks (spec B.6, ADR 0051). A full plan can also still name riskTier 0 for a code task. The owner's 'the critic always reviews code tasks' needs enforcing there; ADR 0103 names that as phase C work.",
+     "Chat area: the chat is still not told that planning failed. Use project.summary_cache.intake.error or GET /projects/:id/intake (state failed, error in words).",
+     "The intake session summary now reads '\u2026 (completed: 2 docs, on call 2)' and adds ', the first plan kept' when the size retry fell back to the first plan."
+    ]
+   }
+  },
+  {
+   "key": "live-context",
+   "fix": {
+    "area": "live-context: what the chat is told about planning, model markdown in chat and session lines, the bench's live mode (smoke journey, model-call log prices, setup Done step)",
+    "branch": "fix/live-context",
+    "head_sha": "cf06df905365a7de8cc4c782b2310fa656bec9bc",
+    "commits": [
+     {
+      "sha": "6720c7dc85ac9fa699f5cf35f73754daf02713ec",
+      "subject": "chat: the chat is told where the plan from the brief stands (drafting, waiting, failed and why, rejected)"
+     },
+     {
+      "sha": "5b2798a8ce13e9c23db2c2a0e0b6fac366186b59",
+      "subject": "ui: chat replies and session lines show model markdown as formatting, never as asterisks"
+     },
+     {
+      "sha": "db4d16aec3269b7fbe3873cee5492db1ea9e7fcf",
+      "subject": "setup: the Done step says \"cannot start work\" only without a Claude key; without GitHub it says work stays in the project's folder"
+     },
+     {
+      "sha": "c6ed7e355ce0607a220ea9e95723389fd3fe6ec5",
+      "subject": "bench: live mode: each model call priced from the app's table, calls.mjs sums USD by kind, the key in the home's vault, no part of a key in the log, a live start that fails at once"
+     },
+     {
+      "sha": "cf06df905365a7de8cc4c782b2310fa656bec9bc",
+      "subject": "bench: the smoke journey checks structure and states, so it runs on the real model; a failed plan is asked about in chat and tried again"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "MAJOR (live1 problem 4): the chat was never told where the plan from the brief stood. Asked while planning had failed, it answered \"The Quote page project has no tasks yet\u2026 I can add tasks\u2026\", with nothing about the failure or Try again. Root cause: context() in conversation/agent.ts only sent \"# Tasks of <project>\\n(no tasks yet)\". The intake state lived behind GET /projects/:id/intake, which the chat never read, and no reply rule covered it.",
+      "failing_test_before": "packages/runtime/test/chat-plan-state.test.ts (each intake state's line, the block's order before the task list, CHAT_PLAN_RULES in the system prompt) and apps/ui/test/real-daemon.test.ts \"planning failed: a chat turn is told why and that Try again drafts the plan again\". The second test runs the UI client against the real daemon with the stand-in: a malformed plan is planted, then the Chat tab's line is sent. The request the model receives must carry the failure line. I confirmed it fails with the compose wiring taken out.",
+      "how": "New ConversationDeps.intakeStatus, which compose.ts wires to IntakeService.status. planBlock() in project-facts.ts adds a \"# Plan from the brief\" block before the task list: drafting \"The plan from your brief is being drafted.\"; waiting \"The plan from your brief waits for your approval in the Inbox.\"; failed \"Planning failed: <cause>. The person can press Try again on the project page.\"; rejected \"...They can press Draft a new plan on the project page.\"; nothing once the plan is approved. New CHAT_PLAN_RULES in the stable system part: say where the plan stands first, never say \"no tasks yet\" or offer to add tasks meanwhile, give the cause and point to Try again, write plain sentences without markdown. There is no command to retry the plan and I added none. The bench stand-in now quotes the plan line and the first task line back in its reply (chatFacts in testenv/src/bench/role-player.ts).",
+      "check_in_the_app": "Create a project with a brief. While the banner says \"Drafting the plan\u2026\", ask the project's Chat \"what is going on?\": it says the plan is being drafted. Once the plan waits, it says the plan waits for your approval in the Inbox. If planning fails (banner \"Planning failed\" with Try again), ask \"what is left to do?\": the reply names the cause and says to press Try again on the project page. It never says \"no tasks yet, I can add tasks\"."
+     },
+     {
+      "problem": "POLISH (live1 problem 9): raw markdown (\"**\u2026**\", \"**Summary**:\") showed in chat replies and session event lines. Root cause: Conversation.tsx and SessionPage.tsx put the model's text into a whitespace-pre-wrap span exactly as it came.",
+      "failing_test_before": "apps/ui/test/rich-text.test.tsx: \"a chat reply with markdown shows bold, italics, lists and code, and no asterisks\" (the reply comes through the fake daemon's nextChatReply, as the Chat tab shows it) and \"a session line with a specialist's markdown reads as text with the heading in bold\". Both failed before the wiring.",
+      "how": "New apps/ui/src/components/RichText.tsx renders a safe subset: bold, italics (not inside words, so snake_case stays), inline code, \"- \" and \"1. \" lists, a heading as a bold line, a rule dropped, line breaks kept. A link shows its text and address and is not clickable. Output is only text nodes and fixed elements, so raw HTML in a reply shows as text. Text without markers comes out unchanged, so existing assertions still hold. The pattern uses no regex lookbehind, for older WebKitGTK. It is used for chat bubbles (Chat tab and Talk, the streaming reply too) and session event lines. CHAT_PLAN_RULES also tells the chat model to write plain sentences.",
+      "check_in_the_app": "Ask the Chat something whose reply has bold or a list (on the real model, \"what happened in the last session and what is left?\"): bold shows as bold and lists as bullets, no asterisks. Open a session page: lines like \"Finished task\u2026 Summary: \u2026\" show Summary in bold with no \"**\"."
+     },
+     {
+      "problem": "The setup's Done step said \"Until Claude is connected your agent cannot start work\" on a bench-live install that had a key. This is partly a real bug, not only the bench's. The sentence showed whenever Claude OR GitHub was missing, so a real install with a Claude key and no GitHub token read \"\u2713 Claude is connected\" and then that the agent cannot start work. The bench half: the bench passed the key only in the environment, but the app's setup status reads the vault.",
+      "failing_test_before": "apps/ui/test/setup-assistant.test.tsx \"with a Claude key and no GitHub token, the Done step says what is true: work starts, in the project's folder\". It walks the assistant to Done as a person does and failed showing the untrue sentence. A sibling test covers the case without a Claude key.",
+      "how": "SetupPage now shows each sentence only when it is true: the Claude sentence without a Claude key, and \"Without GitHub your agent works in each project's own folder on this computer.\" without a GitHub token. Bench half: start.mjs --provider bench-live now stores the key in the bench home's vault with the app's own `fr setup --non-interactive`, which checks the key with Anthropic first. Every bench's vault is now forced to a file in its home (FORERUNNER_VAULT_BACKEND=file), never the OS keyring.",
+      "check_in_the_app": "Run the setup assistant with a Claude key and press Skip on GitHub. Done shows \"\u2713 Claude is connected. \u2717 GitHub is not connected yet.\" and \"Without GitHub your agent works in each project's own folder on this computer.\", with no \"cannot start work\". With no Claude key it still says \"Until Claude is connected your agent cannot start work.\""
+     },
+     {
+      "problem": "The model-call log had no cost, so the live helper priced 25 calls by hand to keep to its spend cap. Root cause: testenv/src/bench/call-log.ts recorded usage but no price, and testenv cannot depend on billing. Separately, a key fragment quoted by an API error would have been written to the log, because only the whole key was replaced.",
+      "failing_test_before": "packages/runtime/test/cli-daemon-provider.test.ts \"prices each line from the app's table, sums to what the live run cost, and writes no part of the key\". It runs the real --provider bench-live path with a key in the environment against a local stub of the Messages API, which answers with the usage of the live run's six intake calls (packages/runtime/test/fixtures/live1-intake-usage.json; they sum to USD 0.353, matching the report). The API echoes the key and quotes part of it. Also \"the stand-in's lines say why they have no price\" and the calls.mjs cases in scripts/bench-scripts.test.ts. With only whole-key replacement the test fails on the quoted fragment.",
+      "how": "daemonProvider (packages/runtime/src/cli/main.ts) builds benchPriceOf(env) from the app's own table (loadPricing: built-ins plus <config>/pricing.json) and passes it to both bench providers. Every log line now carries usd and the price row used (the -fast row for speed fast; usd null with priceError for a model without a row, such as the stand-in's fake-* rungs). The log replaces a secret whole and in any run of 8 or more of its characters (withoutSecretParts). New scripts/bench/calls.mjs --name <n> [--cap <usd>] [--json] prints calls and USD by kind (intake, specialist, critic, chat) and the calls without a price; with --cap it says what is left and exits 3 at the cap. callSummary/formatCallSummary in recorder.cjs feed the smoke result's new cost field.",
+      "check_in_the_app": "Bench only. After a live run, `node scripts/bench/calls.mjs --name <bench> --cap 2` prints calls and USD per kind. Each line of <home>/bench/model-calls.jsonl has usd and price. `grep -c sk-ant <home>/bench/model-calls.jsonl` finds no key."
+     },
+     {
+      "problem": "The bench with a real model: smoke.cjs assumed the stand-in's texts (task titles, \"[stand-in model]\", script.js/styles.css, `const QUOTES = [`). It never pressed Try again after a failed plan. \"Every planned task is done\" passed on 0 of 0. \"Plan card missing\" claimed the plan waited in the Inbox when the page said planning failed. A live start without a key waited out the 120 s daemon timeout before saying why: startDaemon's wait swallowed the daemon's exit.",
+      "failing_test_before": "scripts/bench-scripts.test.ts: \"the smoke journey's checks on structure and states\" (0 of 0 is not done; the live run's plan, file names and reply shape), \"start.mjs --provider bench-live without a key ends at once\", and \"a daemon that exits during its start ends the wait at once\". The last one ran 110 s with no exit before the fix.",
+      "how": "The checks moved to scripts/bench/journeys/smoke-checks.cjs and look at structure and states:\n- the plan card says N >= 1 tasks and names every task it writes\n- Approve and start, and a session that ends\n- files written outside the doc set: an .html page, a stylesheet and a script under any names, with the page linking ones that exist\n- a chat reply that is not empty, names a task and shows no `**`\n- \"every planned task is done\" fails on 0 of 0; a new check, \"every task the agents can do is done\", lets the rest wait on the person or Docker\n\nWhen the banner's data-state says failed, the journey asks the chat (it must say failed and Try again), presses Try again up to twice, and records each failure as a finding with what the project page said. \"Plan card missing\" now quotes the project page and the Inbox. Live mode comes from bench.json \"live\" or --live: it waits longer and expects the key saved on the setup's Claude step and a true Done step. start.mjs refuses bench-live at once without a key, and startDaemon returns as soon as the daemon process exits. FORERUNNER_ANTHROPIC_KEY now reaches the live daemon as ANTHROPIC_API_KEY.",
+      "check_in_the_app": "Bench only. `node scripts/bench/journeys/smoke.cjs <bench>` passes 22/22 on --provider bench (before: 20/20 of the old checks). With --env FORERUNNER_BENCH_INTAKE=malformed it walks the failed-planning path: 3 tries, 3 findings with the page's words, and the chat check passes. `start.mjs --provider bench-live` without a key prints \"--provider bench-live needs ANTHROPIC_API_KEY\u2026 Nothing was started.\" and exits at once. With an invalid key it exits within a second with \"fr setup refused the key\u2026 Anthropic key rejected: The key is invalid or revoked.\""
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "The chat cannot retry the plan itself.",
+      "why": "No existing command retries the intake (the registry has project.create/switch, session.*, task.* and others, but nothing for the plan). Adding one means a new registry command with a port, risk level, undo and its own tests. The brief said to add one only if small, and it is not. The chat now points to the project page's Try again button (POST /projects/:id/intake/retry) instead."
+     },
+     {
+      "problem": "The registry's conversation-agent prompt (evals/registry/principals/conversation-agent.md) does not list \"# Plan from the brief\".",
+      "why": "The rules are in the runtime (CHAT_PLAN_RULES), which is appended whatever the registry prompt is. The registry copy is synced with the forerunner-registry repository, and changing it touches prompt versions and evals. It can be added in a registry sync."
+     },
+     {
+      "problem": "The phone screens (apps/ui/src/mobile chat and SessionScreen) still show model text as plain text, so raw markdown remains there.",
+      "why": "Outside the files I was given (desktop chat bubbles and session lines). RichText can be reused there in a small follow-up."
+     },
+     {
+      "problem": "Live check with the real model.",
+      "why": "No API key on this machine. I ran a bench-live dry run without a key and with an invalid key; both fail fast and clearly. The helper should run the live_check_steps below."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, check-paths, typecheck, unit tests, docs check, link check, secret scan)",
+      "result": "exit 0: 410 test files, 4193 passed, 6 skipped; secret-scan clean. Its docs:check step printed \"cannot diff against origin/main\" (there is no origin/main here) but did not fail, so I ran it separately (next line)."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base c316eba",
+      "result": "docs-check: ok (30 files)"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "75 files, 709 tests passed"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "1 failure: packages/capabilities/test/browser.integration.test.ts (\"Navigation \u2026 interrupted by another navigation\", a Chromium timing race in a file this branch does not touch; the wave 2 runs passed it). Rerunning that file alone: 16/16 passed. Everything else passed or skipped (Postgres-only tests skip without FORERUNNER_TEST_PG)."
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+      "result": "31 passed, 1 failed: e2e/mobile-pairing.spec.ts:48 (m-sync-status still \"idle\" at 5 s on a loaded machine; the run took 2.1 min against about 53 s normally; mobile screens untouched). Rerunning that spec: 2/2 passed. The local config was removed and not committed."
+     },
+     {
+      "command": "focused runs: npx vitest run --project unit packages/runtime/test/chat-plan-state.test.ts packages/runtime/test/cli-daemon-provider.test.ts testenv/test/bench-role-player.test.ts scripts/bench-scripts.test.ts; apps/ui real-daemon -t \"planning failed: a chat turn\"; rich-text and setup-assistant tests",
+      "result": "all pass; each new test confirmed failing without its fix (compose wiring taken out, whole-key-only scrub, the old swallowed-exit wait, the old SetupPage condition, the old Conversation/SessionPage spans)"
+     },
+     {
+      "command": "bench before: node scripts/bench/start.mjs --name fix-live-context --daemon-port 48230 --ui-port 1830 --fresh && node scripts/bench/journeys/smoke.cjs fix-live-context",
+      "result": "20/20 checks of the old journey, 0 findings (/tmp/frbench/fix-live-context-smoke-before.json)"
+     },
+     {
+      "command": "bench after, at the branch tip: same, new journey",
+      "result": "22/22 checks, 0 findings, 0 problems; model calls intake 1, specialist 21, critic 10, chat 1 (stand-in calls have no price: fake-* rungs). The chat reply names \"Create the page skeleton in index.html\"."
+     },
+     {
+      "command": "bench failure path: start.mjs ... --fresh --env FORERUNNER_BENCH_INTAKE=malformed; smoke.cjs fix-live-context",
+      "result": "exit 0. 3 plan tries, each a finding with the page's words (\"Planning failed. Nothing was written. Claude's answer was not the JSON plan Forerunner asks for. Try again\"). The check \"while planning failed, the chat says so and points to Try again\" passes. \"every planned task is done\" fails on 0/0 and \"plan card missing\" quotes the project page, as intended. (/tmp/frbench/fix-live-context-smoke-planfail.json)"
+     },
+     {
+      "command": "bench-live dry run: node scripts/bench/start.mjs --name fix-live-context --daemon-port 48230 --ui-port 1830 --provider bench-live (no key; then ANTHROPIC_API_KEY=<invalid>)",
+      "result": "No key: refused at once with \"needs ANTHROPIC_API_KEY\u2026 Nothing was started.\" Invalid key: fr setup refused it in under 1 s (\"Anthropic key rejected: The key is invalid or revoked.\"); setup.log has no key. The bench was stopped afterwards with stop.mjs."
+     }
+    ],
+    "live_check_steps": "The live run needs this branch merged and ANTHROPIC_API_KEY set. Use your own ports and name; one smoke run costs about USD 0.6 to 0.8.\n\n1. Start the bench: `node scripts/bench/start.mjs --name live2 --daemon-port <p> --ui-port <u> --fresh --provider bench-live`.\n   - Expect \"storing the key in the home's vault (fr setup checks it first) ...\" then \"ready\".\n   - /tmp/frbench/live2/bench.json has \"live\": true.\n   - /tmp/frbench/live2/setup.log does not contain the key.\n\n2. Run the smoke journey: `node scripts/bench/journeys/smoke.cjs live2` (live mode is detected; result in /tmp/frbench/live2/steps/smoke-result.json). Expect these checks:\n   - \"the Claude step says the key is saved\".\n   - \"the Done step says Claude is connected and nothing that is untrue\". The Done text should read \"\u2713 Claude is connected. \u2717 GitHub is not connected yet. You can finish this any time from Settings \u2192 Accounts and keys. Without GitHub your agent works in each project's own folder on this computer.\" It must not contain \"cannot start work\".\n   - If planning fails (likely until the intake-parsing fix is merged): a finding \"planning failed (try 1 of 3): the project page said: \u2026\", then \"while planning failed, the chat says so and points to Try again\". Look at steps/NN-chat-while-planning-failed.png: the reply should give the cause and mention Try again, never \"no tasks yet\u2026 I can add tasks\". The journey then presses Try again up to twice.\n   - Once a plan lands: \"the plan card says how many tasks it plans (at least one)\", \"the plan card named every task it wrote\", \"Approve and start starts a session\", \"session 1 ends\", \"every task the agents can do is done (the rest wait on you)\". \"every planned task is done\" may fail if the plan holds a person task; its detail names it.\n   - Files: \"the work wrote files to the project's folder\", \"the brief's page is there\u2026\", \"the page links a stylesheet and a script that were written\".\n   - Chat: \"the project Chat answers\", \"the chat reply names a task\", \"the chat reply shows no markdown asterisks\". In steps/NN-chat-reply.png, any bold or list in the reply shows as formatting, not asterisks.\n\n3. Open a session page from the run in the UI (steps/NN-session-1-ended.png): specialist lines like \"Finished task \u2026 Summary: \u2026\" show Summary in bold, with no \"**\".\n\n4. Check the spend: `node scripts/bench/calls.mjs --name live2 --cap 2`.\n   - It prints \"model calls of bench live2: N calls, USD x.xxx\" and per kind, e.g. \"  intake  1 call  USD 0.06x  (claude-sonnet-5-5)\", then \"cap USD 2.000: USD \u2026 left\".\n   - Each line of /tmp/frbench/live2/home/bench/model-calls.jsonl has \"usd\" and a \"price\" row: for claude-sonnet-5-5 that is input 2, output 10, cache_read 0.2, cache_write 2.5 USD per million tokens.\n   - `grep -c \"sk-ant-\" /tmp/frbench/live2/home/bench/model-calls.jsonl` gives 0.\n\n5. Manual plan-state check: in the UI, create a project with a brief. While \"Drafting the plan\u2026\" shows, ask its Chat \"what is going on?\": expect that the plan from your brief is being drafted. Once the plan waits, ask again: expect that it waits for your approval in the Inbox. You can confirm in model-calls.jsonl that the chat line's last user message carries \"# Plan from the brief\" with that sentence.\n\n6. Stop the bench: `node scripts/bench/stop.mjs --name live2`.",
+    "new_problems": [
+     "Sibling of fix 1, not fixed: the spoken or typed project \"summary\" (the speak route, e.g. \"Gamma: no tasks yet.\" in speak-route.test.ts) does not know about the intake either. It would say \"no tasks yet\" while the plan is being drafted or has failed. This is system-written text, so it belongs to fix/system-text or the summary owner.",
+     "Mobile chat and SessionScreen still show raw markdown from the model (RichText is desktop-only for now).",
+     "In live mode, \"every planned task is done\" will fail whenever the plan holds a task for the person (the live plan had \"Human decisions: \u2026\"). That is a true product state; the new \"every task the agents can do is done\" check covers the agents' part."
+    ],
+    "notes_for_other_areas": [
+     "Shared files I touched, kept small. apps/ui/test/real-daemon.test.ts: composeWithRolePlayer now also returns chatCalls (copies, because the loop appends the reply to the same messages array), plus one new case at the end of \"the plan card (design \u00a73.3)\" block. packages/runtime/src/daemon/compose.ts: one line in the ConversationAgent deps (intakeStatus). apps/ui/src/pages/SessionPage.tsx: one line (event text through RichText). apps/ui/src/pages/SetupPage.tsx: the Done-step paragraph only.",
+     "fix/system-text: the smoke journey reads the IntakeBanner by data-testid=\"intake-banner\", its data-state attribute and data-testid=\"intake-retry\", not by its words. Keep those test ids and data-state values (drafting, pending, failed, rejected) when you change the failed-state layout. The text it quotes is only for findings.",
+     "Intake owner (fix/intake-live): planBlock quotes IntakeStatus.error, the words the banner shows. When you correct \"Claude's plan was missing parts Forerunner needs\", the chat's \"Planning failed: <cause>\" follows automatically. Use packages/runtime/test/fixtures/live1-intake-usage.json if you need the real usage rows. The full fixtures, with reply texts, are still at /tmp/frbench/live1-fixtures.json; I did not copy the 14 KB reply texts.",
+     "Every bench daemon now runs with FORERUNNER_VAULT_BACKEND=file (a vault file in the bench home, never the OS keyring). Journeys that relied on the developer's own keyring entries would change, though I know of none.",
+     "Session lead: the U-entries to write are the chat being blind to planning (live1 problem 4), raw markdown in chat and session lines (part of problem 9), and the Done-step sentence (a real install with a key and no GitHub token was affected). The \"Check in the app\" lines are in the fixed list above."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "what_i_did": "I worked in my own worktree on a detached fix/live-context (cf06df9, all 5 commits signed with the required trailers). I read the whole diff against the merge base c316eba. Since then the base has gained only docs commits.\n\n1. Mutation checks: I put the old code back while keeping the new tests, and every new test failed as claimed:\n   - Without the compose.ts intakeStatus line, the real-daemon test fails ('# Tasks of Quote failed\\n(no tasks yet)', with no plan line).\n   - With whole-key-only scrubbing, cli-daemon-provider fails on a key fragment.\n   - With the base SetupPage, Conversation and SessionPage, three UI tests fail, one of them showing the untrue Done sentence.\n   - The swallowed daemon exit in lib.mjs is visible in the old waitFor; I did not re-run that one.\n\n2. Every real intake reply in /tmp/frbench/live1-fixtures.json went through this branch's parseIntakeReply, intakeFailureWords and planBlock (scratch: /tmp/frbench/review-live-context-scratch/fixtures-chat-lines.mts):\n   - Lines 1, 22, 24: 'Planning failed: Claude's plan was missing parts Forerunner needs. The person can press Try again on the project page.'\n   - Lines 23, 25: 'Planning failed: Claude's answer was not the JSON plan Forerunner asks for. ...'\n   - Line 3: '...waits for your approval in the Inbox.'\n   - Drafting, rejected and none/approved/skipped give the right line or nothing.\n   - The cause words belong to fix/intake-live. The committed usage fixture matches the six live rows.\n\n3. Bench (stand-in), ports 48235/1835, clicked through with recorder.cjs:\n   - The smoke journey passed 22/22 with 0 findings. The session page shows \"Summary\" and the report headings as bold, with lists.\n   - The failure path (FORERUNNER_BENCH_INTAKE=malformed) gave 3 tries and 4 findings quoting the page. The chat-while-failed check passed and 0/0 fails as intended.\n\n4. Bench in live mode with no key:\n   - I wrote a local stub of the Messages API on port 48236. It answers /v1/models and serves the real intake replies (line 1, then line 3).\n   - To point fr setup at it I made a one-line review-only edit to lib.mjs (passing FORERUNNER_ANTHROPIC_API through), then reverted it; the worktree is clean.\n   - Live start stored the key in the bench home's file vault, bench.json has \"live\": true, and setup.log names no key.\n   - Smoke (live detected) passed the Claude step ('An API key is saved'), the true Done step, planning failed on try 1, the chat-while-failed check, Try again, the 4-task plan card, Approve and start, and session 1 ending. It then aborted (blocking 2).\n   - A second recorder walk asked the Chat in each state. The request carried the right line each time: drafting, failed, drafting again, pending.\n   - Each model-call line carries usd and the price row (sonnet 2/10/0.2/2.5); calls.mjs --cap works.\n   - No 8-character run of the key appears in any file under the bench directory.\n   - start.mjs --provider bench-live without a key exits at once.\n\n5. Validation:\n   - pnpm check: exit 0 (410 files, 4193 passed, 6 skipped; secret scan clean).\n   - docs-check --base c316eba: ok.\n   - UI vitest: 75 files, 709 passed.\n   - pnpm test:integration: all passed (4 files passed, 6 skipped).\n   - pnpm test:e2e: 25 passed, 1 skipped.\n   - Playwright (local config, removed afterwards): 32 passed.\n   - Biome on the changed files: clean.\n\n6. Other checks: I rendered RichText edge cases with renderToStaticMarkup, and searched for the chat and markdown siblings.\n\nAll my benches, the stub and the UI servers are stopped. Scratch files are in /tmp/frbench/review-live-context-scratch, and the step copies are in /tmp/frbench/review-live-context-steps-{standin,planfail,stublive}.",
+    "blocking": [
+     {
+      "issue": "RichText is applied to every session event line, including system-written step lines that hold raw file paths and commands. A dunder name or two globs are now shown wrongly: the underscores or asterisks vanish and part of the path turns bold. This is a new defect the person sees on the session page. The doc and test claim that \"text without markers comes out unchanged\" and that \"snake_case stays\" does not hold for these common names.",
+      "evidence": "stepLine (packages/runtime/src/session/runner.ts:477) emits task.step lines like \"wrote <path>\" and \"ran <cmd>: ok\". SessionPage.tsx:400 now renders every e.text through RichText. Rendered output (scratch /tmp/frbench/review-live-context-scratch/richtext-steps.mts):\n- \"wrote __tests__/quote.test.js\" becomes \"wrote <strong>tests</strong>/quote.test.js\".\n- \"wrote app/__init__.py\" becomes \"wrote app/<strong>init</strong>.py\".\n- \"ran npx jest __tests__: ok\" becomes \"ran npx jest <strong>tests</strong>: ok\".\n- \"ran node --test test/**/*.test.js spec/**/*.js: ok\" becomes \"test/<strong>/*.test.js spec/</strong>/*.js\".\n__tests__ (Jest) and __init__.py (Python) are ordinary names that specialists write.",
+      "expected": "Keep system-written lines plain. Render markdown only in model-written text: for example, not for task.step or other runtime-worded events, or only the summary part of task.finished. Alternatively, tighten the delimiter rules so that __x__ and ** next to '/', '.' or path characters stay literal. Add a failing-first test in apps/ui/test/rich-text.test.tsx: a task.step event \"wrote __tests__/quote.test.js\" and one with \"app/__init__.py\" keep their text exactly, with no <strong>.",
+      "where": "apps/ui/src/pages/SessionPage.tsx:400, apps/ui/src/components/RichText.tsx (INLINE)"
+     },
+     {
+      "issue": "The smoke journey stops with an unexpected error when the tasks still open all wait on the person and none is done. The files and chat checks never run, so the claim that the same checks run on the real model does not fully hold.",
+      "evidence": "The loop in smoke.cjs uses agentsDone(states).ok to decide whether to press Start. agentsDone (smoke-checks.cjs) is ok only when tasks.some(done). With nothing done and everything held, it presses Start. The Start dialog's Start is disabled ('Nothing can run: \"Build the quote page\" needs your answer.'). pressStart calls clickButton(page, \"Start\", scope) outside its try, so the click throws after 30 s and the whole try block ends. The result is 'FINDING journey stopped on an unexpected error: locator.click: Timeout 30000ms exceeded ... confirm-start-session ... element is not enabled' at step 22 of my live-mode walk against the stub. That walk used the real intake replies (line 1, then line 3; plan of 4 tasks; the first task ended needing a decision, 'Human decisions' is the person's, the other two wait on those). A real plan whose agent tasks all wait on the person's questions reaches the same state; the live run's line 23 plan put the person's questions first. Steps are in /tmp/frbench/review-live-context-steps-stublive (21-session-2-start-dialog.png, 22-journey-error.png).",
+      "expected": "Stop the session loop when nothing the agents can run is left, whether or not a task is done: split \"nothing runnable\" from the check's \"some task done\" condition. In pressStart, treat a disabled Start as a finding that quotes the dialog's reason and return, not throw, so the files and chat checks still run. Add a scripts/bench-scripts.test.ts case for no task done with everything held.",
+      "where": "scripts/bench/journeys/smoke.cjs (main loop `if (agentsDone(states).ok) break;`, pressStart), scripts/bench/journeys/smoke-checks.cjs agentsDone"
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "The chat is told where the plan from the brief stands (drafting, pending, failed with cause and Try again, rejected), placed before the task list, with CHAT_PLAN_RULES in the system prompt",
+      "holds": true,
+      "note": "Unit test, real-daemon test, a mutation (wiring removed: the real-daemon test fails), and a bench walk through the real Messages API wire (stub) asking the Chat in drafting, failed, drafting again and pending; the request carried the right line each time"
+     },
+     {
+      "claim": "No existing command retries the plan; none was added",
+      "holds": true,
+      "note": "The registry (packages/commands) has no intake or plan command; retry is only POST /projects/:id/intake/retry"
+     },
+     {
+      "claim": "Chat replies and session lines render bold, italics, code and lists, never raw HTML, and text without markers is unchanged",
+      "holds": false,
+      "note": "Rendering and HTML safety hold (tests plus my renders). 'Unchanged' fails for system step lines with __tests__, __init__.py or two globs (blocking 1)"
+     },
+     {
+      "claim": "The setup Done step says 'cannot start work' only without a Claude key, and adds the GitHub sentence without a token",
+      "holds": true,
+      "note": "The test fails on the base SetupPage; the live-mode bench walk (stub) showed the true Done text"
+     },
+     {
+      "claim": "Each model-call log line has usd and the price row from the app's table; six live intakes sum to USD 0.353; stand-in lines say why they have no price",
+      "holds": true,
+      "note": "Checked in the test, the committed usage fixture (equal to the live fixtures) and my stub-live log (sonnet, haiku and opus rows; first intake 0.063592)"
+     },
+     {
+      "claim": "No part of a key reaches the log",
+      "holds": true,
+      "note": "The fragment test fails with whole-key-only scrubbing. No 8-character run of my fake key appears in any file under the bench directory: log, setup.log, daemon.log, steps, encrypted vault"
+     },
+     {
+      "claim": "calls.mjs prints calls and USD by kind, says what is left, and exits 3 at the cap",
+      "holds": true,
+      "note": "Tested, and run on both benches"
+     },
+     {
+      "claim": "start.mjs --provider bench-live without a key refuses at once; a daemon that exits during its start ends the wait at once",
+      "holds": true,
+      "note": "Ran the dry run (exit 1, 'Nothing was started.'); the old waitFor swallowed the throw"
+     },
+     {
+      "claim": "With a key, the bench-live start stores it in the home's vault via fr setup, so setup shows Claude connected",
+      "holds": true,
+      "note": "Stub-backed run: setup.log 'anthropic: ok', file vault in the bench home, the Claude step said 'An API key is saved'"
+     },
+     {
+      "claim": "The smoke journey passes 100% on --provider bench and walks the planning-failed path",
+      "holds": true,
+      "note": "22/22 with 0 findings; the malformed run gave 3 tries with findings quoting the page, the chat check passed, 0/0 fails"
+     },
+     {
+      "claim": "The smoke journey runs on the real model (structure and states, not stand-in texts)",
+      "holds": false,
+      "note": "Setup, plan failure, Try again, plan card, approve and session all worked in live mode against the stub; the journey aborts when everything left waits on the person (blocking 2)"
+     },
+     {
+      "claim": "No test was weakened",
+      "holds": true,
+      "note": "Every test change adds cases. The smoke journey's stand-in-text checks were replaced by structure checks, as the brief asked"
+     },
+     {
+      "claim": "Docs check passes; maintainer docs and the user guide are updated",
+      "holds": true,
+      "note": "docs-check --base c316eba ok; apps.md, runtime.md, testing.md, scripts/bench/README.md and user-guide.md updated; setup-guide.md not updated (still true)"
+     },
+     {
+      "claim": "Validation green: pnpm check, UI vitest, integration, e2e, Playwright",
+      "holds": true,
+      "note": "All green on my rerun, including the two the fixer saw flake (browser.integration, mobile-pairing)"
+     }
+    ],
+    "non_blocking": [
+     "A sibling in the same Chat tab: typing \"summary\" goes through the summary.speak intent (packages/commands/src/intent.ts:575) to chatProjectSummary (packages/commands/src/commands/summary.ts:81). That replies \"<project>: no tasks yet.\" while the plan is drafting or has failed. The fixer logged it as a new problem; it needs an owner and a U-entry.",
+     "A sibling that was not listed: the Tasks drawer shows each run's report as typed (apps/ui/src/pages/project/TaskDrawer.tsx:232), so a specialist's raw markdown still shows there. The fixer named only the mobile screens.",
+     "The task block still says \"(no tasks yet)\" next to the new plan block, so the model relies on CHAT_PLAN_RULES alone to avoid saying 'no tasks'. Wording the empty list by the plan's state would make it robust.",
+     "The failed line for a 'Change the plan' draft that was lost repeats itself: '...Try again drafts it with your changes. The person can press Try again on the project page.'",
+     "RichText in model text: '2*3 and 4*5' becomes italic, and two glob paths in a reply get bolded. This is CommonMark-consistent, but worth knowing.",
+     "The test name 'without a Claude key the Done step says work cannot start; with both it says neither' does not cover the 'with both' case.",
+     "The comment on MODEL_CREDENTIALS in scripts/bench/lib.mjs ('passed only to bench-live') is stale: all of them are now removed and only the key is re-added as ANTHROPIC_API_KEY.",
+     "The smoke check 'the brief's page is there: an .html page, a stylesheet and a script' needs separate .css and .js files. A real coder that inlines them in index.html would fail a check that is not a product problem.",
+     "The smoke Try-again loop reads the banner 1.5 s after the click; a slow retry POST could make the old failed banner count as the next try. I did not see this in my runs.",
+     "On this branch the chat's failure cause is the intake's untrue 'Claude's plan was missing parts Forerunner needs.' for 3 of the 6 real replies. That is expected until fix/intake-live lands; planBlock quotes whatever IntakeStatus.error says.",
+     "The live helper can reuse my stub approach to dry-run live mode without spending: /tmp/frbench/review-live-context-scratch/stub-api.mjs and plan-states.cjs. fr setup needs FORERUNNER_ANTHROPIC_API to reach a stub, which storeLiveKey currently strips."
+    ]
+   },
+   "fixup": {
+    "area": "live-context fixup: the reviewer's two blocking findings (markdown rendering on system-written session lines; the smoke journey crashing when every open task waits on the person) and the small, in-scope non-blocking ones (empty task list wording, a repeated Try again sentence, the Task drawer sibling, the Try again race, inline page assets, a live dry run against a local API stand-in, a setup test that skipped a case, a stale comment)",
+    "branch": "fix/live-context",
+    "head_sha": "4ae848f00fb581d0fc545a74a85da07be4888011",
+    "commits": [
+     {
+      "sha": "fdc9194",
+      "subject": "ui: the session log formats only a model's words; file names, paths and globs show as typed"
+     },
+     {
+      "sha": "7600352",
+      "subject": "bench: the smoke journey presses Start only while a session has a task to run; a disabled Start is a finding, not a crash"
+     },
+     {
+      "sha": "12c063b",
+      "subject": "chat: an empty task list says why in the plan's terms; a failure cause that says Try again is not repeated"
+     },
+     {
+      "sha": "7953cf5",
+      "subject": "ui tests: the setup Done step with a Claude key and a GitHub token says neither missing-credential sentence"
+     },
+     {
+      "sha": "4ae848f",
+      "subject": "bench: a live start's key check goes where the daemon will call, so live mode can be dry-run against a local stand-in of the API"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "BLOCKING 1: every session line went through RichText, including the runtime's own step lines. So \"wrote __tests__/quote.test.js\" lost its underscores and bolded \"tests\", \"app/__init__.py\" did the same, and \"test/**/*.test.js spec/**/*.js\" bolded the path between the two globs. Root cause: SessionPage rendered every e.text as markdown, and RichText's markers matched wherever a pair stood, also inside names and paths. A third bug of the same pattern: the bold group was greedy, so \"**2** of **3**\" became one bold run \"2** of **3\".",
+      "failing_test_before": "In apps/ui/test/rich-text.test.tsx:\n- \"a step line the runtime wrote keeps its file names and commands exactly as typed\" (got \"wrote tests/quote.test.js\")\n- \"a specialist's summary with file names and globs keeps them; only its markers format\" (got \"app/init.py\", \"test/*/.test.js\")\n- \"names and arithmetic in model text stay as typed: __init__, __tests__/, 2*3 and 4*5, a*b\"\n- \"two bold parts on one line are two bold parts\" (got \"2** tasks. **Left\")\n\nIn apps/ui/test/tasks.test.tsx, for the sibling: \"a run's report with a specialist's markdown reads as text, its file names as typed\".",
+      "how": "- New EventText in apps/ui/src/components/RichText.tsx renders RichText only for event types whose line ends in a model's words: session.planned, task.finished, critic.verdict, critic.session_review and chat.reply (MODEL_TEXT_EVENTS). Every other line, task.step included, shows exactly as typed. SessionPage changes one line.\n- RichText's markers now format only where a person reads them as markers (delimited()). On the outside, no letter, digit, path separator or marker of the same kind touches them, and no dot joins them to a name. Right inside, no path separator. A lower-case __name__ is a dunder name and stays as typed.\n- The bold group is lazy, so the nearest closing marker ends it.\n- Sibling (rule 8): the Task drawer's run reports and review summary go through RichText too (TaskDrawer.tsx). The fake serves a run's own report when a test sets one (fake-tasks.ts).",
+      "check_in_the_app": "Run a session where a specialist writes a test folder such as __tests__/quote.test.js, or a Python app/__init__.py, or runs \"node --test test/**/*.test.js\". On the session page, the step lines read exactly \"Task step: wrote __tests__/quote.test.js\" and \"ran node --test test/**/*.test.js: ok\", with nothing bold. A \"Finished task \u2026 **Summary**: \u2026\" line shows Summary in bold, with no asterisks, and keeps any file names in it as typed. In the Tasks tab, open the task: the run's report shows bold and lists as formatting."
+     },
+     {
+      "problem": "BLOCKING 2: the smoke journey ended with an unexpected error when no task was done and every open task waited on the person. It pressed Start, the dialog kept Start disabled, the click timed out after 30 s, and the files and chat checks never ran. Root cause: the session loop stopped only when agentsDone(...).ok, which needs some task done. Also, pressStart clicked Start without checking whether the dialog allowed it.",
+      "failing_test_before": "In scripts/bench-scripts.test.ts:\n- \"nothing is left for a session when every open task waits on the person, also with none done\" (runnableTasks did not exist; agentsDone was not ok there, so the loop pressed Start)\n- \"the page's stylesheet and script: written files it links, or inline; a link to a file not written shows\"\n\nReproduced first on the stand-in bench with --env \"FORERUNNER_BENCH_ASK=page skeleton\": after 13 checks, \"journey stopped on an unexpected error: locator.click: Timeout 30000ms \u2026 element is not enabled\" (/tmp/frbench/fixup-live-context-smoke-held-before.log).",
+      "how": "- runnableTasks (smoke-checks.cjs) returns the tasks a session could still run: ready or running, not held by the person, by Docker or by such a task, and not stuck. The loop stops when it is empty, whether or not a task is done, and leaves a note.\n- pressStart waits up to 15 s for the dialog's answer. If Start stays disabled, it returns the dialog's reason (start-session-blocked) and closes the dialog. runSession records that as a finding and the loop ends, so the files and chat checks still run.\n- A plan try is now read from the daemon first, and only after the Try again POST has been answered, so the previous try's failed banner never counts as the next try.\n- The page check accepts a stylesheet and a script in their own files or inline. It fails on a link to a file that was not written (pageParts).\n- smoke.cjs runs main() only as a script and exports its steps, so a scratch walk can call pressStart directly.",
+      "check_in_the_app": "Bench only. Start a stand-in bench with --env \"FORERUNNER_BENCH_ASK=page skeleton\" and run node scripts/bench/journeys/smoke.cjs <bench>.\n- The journey runs to the end: 22 checks, no \"journey stopped\" finding, and a note \"no more Start: nothing left that a session can run (0/5 done; waiting on you or Docker: \u2026)\".\n- The checks on done work, files and the page fail, as they should.\n- The chat checks run and pass.\n\nOn a normal --fresh stand-in bench the journey passes 22/22."
+     },
+     {
+      "problem": "Non-blocking: next to the new plan block, the empty task list still said \"(no tasks yet)\", the words the live reply echoed. And the failed line repeated itself when the cause already named Try again (\"\u2026 Try again drafts it with your changes. The person can press Try again on the project page.\").",
+      "failing_test_before": "In packages/runtime/test/chat-plan-state.test.ts:\n- \"a cause that already names Try again is not followed by the same sentence again\"\n- \"planning failed: the turn carries the cause and Try again, before the empty task list\"\n- \"drafting and waiting are said in words, and so is why the task list is empty\"\n\nAlso extended: apps/ui/test/real-daemon.test.ts \"planning failed: a chat turn \u2026\". The request the stand-in model receives carries the new empty-list line after the failure and while the plan waits.",
+      "how": "The context builder reads the plan's state once and passes emptyTasksLine(plan) to tasksBlock:\n- drafted or waiting: \"(none yet: the plan from the brief writes them once it is approved)\"\n- failed: \"(none yet: planning failed, so nothing was written)\"\n- rejected: \"(none yet: the plan was rejected, so nothing was written)\"\n- \"(no tasks yet)\" only when no plan was asked for.\n\nA failure cause that names Try again ends \"The Try again button is on the project page.\" instead of repeating the sentence.",
+      "check_in_the_app": "Create a project from a brief and ask its Chat \"what is left to do?\" while the plan is drafted, waits in the Inbox, or has failed. The reply never says the project has no tasks or offers to add tasks. With the real model, model-calls.jsonl shows the chat line's last user message with \"# Tasks of <project>\" followed by \"(none yet: \u2026)\"."
+     },
+     {
+      "problem": "Non-blocking: a live start could not be dry-run against a local stand-in of the Messages API. fr setup (storeLiveKey) got no --env, so it checked the key with the real Anthropic API; the reviewer had to edit lib.mjs. The comment on MODEL_CREDENTIALS was also stale.",
+      "failing_test_before": "scripts/bench-scripts.test.ts \"fr setup gets the key and the --env API base, so a live start can be dry-run against a local stand-in of the API\" (setupEnv did not exist).",
+      "how": "setupEnv({home, extra}) builds fr setup's environment: the daemon's environment without a provider, plus the key as FORERUNNER_ANTHROPIC_KEY, plus FORERUNNER_ANTHROPIC_API from the start's --env (or FORERUNNER_BENCH_LIVE_API). With neither, setup checks the key with Anthropic as before. start.mjs passes its --env to storeLiveKey. The comment on MODEL_CREDENTIALS now says what really happens.",
+      "check_in_the_app": "Bench only. Run ANTHROPIC_API_KEY=<any key-shaped value> node scripts/bench/start.mjs \u2026 --provider bench-live --env FORERUNNER_BENCH_LIVE_API=http://127.0.0.1:<stub port>. setup.log says \"anthropic: ok - Key works; 2 models visible.\" and bench.json has \"live\": true, with no file edited."
+     },
+     {
+      "problem": "Non-blocking: the setup-assistant test named \"\u2026 with both it says neither\" never walked the case with both credentials.",
+      "failing_test_before": "None; this is coverage only (SetupPage already behaved so). New test in apps/ui/test/setup-assistant.test.tsx: \"with a Claude key and a GitHub token the Done step says neither sentence\". The other test was renamed to what it checks.",
+      "how": "Walks the assistant to Done with both credentials and asserts both \u2713 lines, neither missing-credential sentence, and no setup-done-missing paragraph.",
+      "check_in_the_app": "Finish the setup assistant with a Claude key and a GitHub token. The Done step says both are connected and nothing about \"cannot start work\" or \"Without GitHub\"."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Sibling in the same Chat tab: typing \"summary\" (summary.speak, packages/commands/src/commands/summary.ts:81, chatProjectSummary) answers \"<project>: no tasks yet.\" while the plan is drafted or has failed.",
+      "why": "It is in packages/commands, outside my files, and fix/system-text changes that package. A fix needs the intake state there: either a new port or a re-derivation from summary_cache.intake and open intake requests, which duplicates IntakeService.status. It needs an owner and a U-entry."
+     },
+     {
+      "problem": "The phone screens (apps/ui/src/mobile chat and SessionScreen) still show model text as plain text.",
+      "why": "Outside the desktop chat and session files in scope. RichText and EventText can be reused there."
+     },
+     {
+      "problem": "The registry's conversation-agent prompt (evals/registry/principals/conversation-agent.md) does not mention \"# Plan from the brief\".",
+      "why": "Unchanged from the fixer's report. CHAT_PLAN_RULES is appended in the runtime whatever the registry prompt says; the registry copy is synced from forerunner-registry."
+     },
+     {
+      "problem": "Live check with the real model.",
+      "why": "No API key on this machine. I ran live mode end to end against a local stand-in of the Messages API instead, serving the live run's real intake replies (lines 1 then 3). It covered setup, the true Done step, the planning failure, the chat while failed, Try again, the 4-task plan, Approve and start and session 1. Then nothing was left to run, the journey stopped pressing Start and went on through files and chat to the end: 24 checks, no crash, USD figures in calls.mjs. No 8-character run of the fake key beyond the public prefix appears in any of the bench's 484 files."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, check-paths, typecheck, unit, docs, links, secret scan)",
+      "result": "exit 0: 410 files, 4197 passed, 6 skipped; secret-scan clean (1892 files). Its docs:check step cannot diff against origin/main here, so I ran it separately (next line)."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base c316eba",
+      "result": "docs-check: ok (33 files)"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "75 files, 715 passed"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 4 files passed, 6 skipped (Postgres-only tests skip without FORERUNNER_TEST_PG); 25 passed, 71 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "Playwright with the local config (cp the template to apps/ui/playwright.local.config.ts; npx playwright test --config playwright.local.config.ts; file removed afterwards)",
+      "result": "32 passed (1.0 min)"
+     },
+     {
+      "command": "failing-first runs: apps/ui rich-text.test.tsx and tasks.test.tsx; packages/runtime/test/chat-plan-state.test.ts; scripts/bench-scripts.test.ts",
+      "result": "Each new test failed before its fix with the defect's own output (e.g. \"wrote tests/quote.test.js\", \"2** tasks. **Left\", \"runnableTasks is not a function\", \"setupEnv is not a function\"), then passed."
+     },
+     {
+      "command": "bench before (stand-in, --fresh, --env \"FORERUNNER_BENCH_ASK=page skeleton\"): smoke.cjs fixup-live-context",
+      "result": "Reproduced blocking 2: 13/13 checks, then \"journey stopped on an unexpected error: locator.click: Timeout 30000ms \u2026 element is not enabled\" (/tmp/frbench/fixup-live-context-smoke-held-before.{log,json})"
+     },
+     {
+      "command": "bench after, same injection",
+      "result": "22 checks run to the end, no error finding, note \"no more Start: nothing left that a session can run\". The scratch call of the exported pressStart on that project returned \"Nothing can run: \\\"Create the page skeleton in index.html\\\" needs your answer.\" in 5 s and closed the dialog (/tmp/frbench/fixup-live-context-smoke-held-after.{log,json})"
+     },
+     {
+      "command": "bench after, stand-in, --fresh, no injection",
+      "result": "22/22 checks, 0 findings, 0 problems. The session page shows step lines as typed and task.finished summaries with bold and lists (steps/15-session-1-ended.png) (/tmp/frbench/fixup-live-context-smoke-after.{log,json})"
+     },
+     {
+      "command": "bench after, --env FORERUNNER_BENCH_INTAKE=malformed",
+      "result": "3 plan tries, each a real new intake call (intake 3), with findings that quote the page. The chat-while-failed check passes and 0/0 fails as intended (/tmp/frbench/fixup-live-context-smoke-planfail.{log,json})"
+     },
+     {
+      "command": "live-mode dry run: local stand-in of the Messages API on an OS-assigned port (copy of the reviewer's stub; live1 intake lines 1 then 3); ANTHROPIC_API_KEY=<fake> start.mjs --provider bench-live --env FORERUNNER_BENCH_LIVE_API=<stub>; smoke.cjs",
+      "result": "Setup stored the key with no lib.mjs edit, and the live Claude step and the true Done step passed. Planning failed on try 1, the chat said so, Try again worked, and session 1 ended. Then no more Start: 20/24 checks with no crash (the 4 failures are the stub's do-nothing specialists). calls.mjs --cap 2: 12 calls, USD 0.129, USD 1.871 left. Key scan: 0 files with an 8-character run of the key beyond the public prefix. Bench and stub stopped."
+     }
+    ],
+    "live_check_steps": "You need this branch merged (and fix/intake-live, for plans that are accepted) and ANTHROPIC_API_KEY set. Use your own name and ports. One smoke run costs about USD 0.6 to 0.8.\n\n0. Optional dry run that spends nothing: point the bench at any local stand-in of the Messages API (it must answer GET /v1/models and stream POST /v1/messages) with --env FORERUNNER_BENCH_LIVE_API=http://127.0.0.1:<port> and a key-shaped value in ANTHROPIC_API_KEY. fr setup's key check and the daemon's calls both go there.\n\n1. Start the bench:\n   node scripts/bench/start.mjs --name live2 --daemon-port <p> --ui-port <u> --fresh --provider bench-live\n   - Expect \"storing the key in the home's vault (fr setup checks it first) ...\" then \"ready\".\n   - bench.json has \"live\": true.\n   - setup.log says \"anthropic: ok\".\n\n2. Run the journey:\n   node scripts/bench/journeys/smoke.cjs live2\n   It must run to its last line, \"result: \u2026/steps/smoke-result.json\", with no finding \"journey stopped on an unexpected error\". Expect:\n   - \"the Claude step says the key is saved\"\n   - \"the Done step says Claude is connected and nothing that is untrue\"\n   - If planning fails: findings \"planning failed (try N of 3): the project page said: \u2026\" and the check \"while planning failed, the chat says so and points to Try again\". Each try is a new intake line in model-calls.jsonl.\n   - Once a plan lands: plan card checks, \"Approve and start starts a session\", \"session 1 ends\".\n   - If the plan's agent tasks wait on the person's answers: a note \"no more Start: nothing left that a session can run (\u2026)\" and no click on a disabled Start. A finding \"the Start dialog says nothing can run\" means the dialog disagreed with the journey; read its quote.\n   - Files: \"the brief's page is there: an .html page with a stylesheet and a script (files or inline)\" and \"the page has its stylesheet and script: written files it links, or inline\". The second fails and names any link to a file that was not written.\n   - Chat: \"the project Chat answers\", \"names a task\", \"shows no markdown asterisks\".\n\n3. Open the session page from steps/NN-session-1-ended.png, or live in the UI. Step lines read exactly as typed, e.g. \"Task step: wrote __tests__/\u2026\" with underscores and no bold, and \"ran \u2026 test/**/*.test.js: ok\". Finished-task and critic lines show bold and lists as formatting, with no \"**\". Open a task in the Tasks tab: the run report shows bold and lists as formatting.\n\n4. Check the chat's context in /tmp/frbench/live2/home/bench/model-calls.jsonl, on a chat line made while the plan was drafted, waiting or failed. The last user message has \"# Plan from the brief\" and, under \"# Tasks of Quote page\", \"(none yet: \u2026)\", never \"(no tasks yet)\".\n\n5. Spend: node scripts/bench/calls.mjs --name live2 --cap 2 prints calls and USD by kind. grep -c \"sk-ant-api03-[A-Za-z0-9]\" over model-calls.jsonl and setup.log gives 0.\n\n6. Stop: node scripts/bench/stop.mjs --name live2.",
+    "new_problems": [
+     "The session page renders a task.finished summary as a block (RichText is a div), so a multi-line summary breaks the row's inline layout: the summary heading sits inline and its lists and headings below. It reads fine (steps/15-session-1-ended.png), but wave 3's session-log redesign may want a block layout for those rows.",
+     "No test covers the smoke journey's disabled-Start branch itself, because it needs a browser. It was verified by calling the exported pressStart and runSession against a stand-in bench whose Start is disabled (scratch: /tmp/frbench/fixup-live-context-scratch/press-start.cjs)."
+    ],
+    "notes_for_other_areas": [
+     "Shared files touched, kept small:\n- apps/ui/src/pages/SessionPage.tsx: one import and one line, RichText becomes EventText on the event row's text. fix/progress-navigation and fix/system-text both edit that file; only that line changes.\n- apps/ui/src/pages/project/TaskDrawer.tsx: RichText for the run report and review summary. No wave-3 branch touches it.\n- apps/ui/test/fake-tasks.ts: optional run report.\n- apps/ui/test/real-daemon.test.ts: three more assertions inside this branch's own planning-failed test.\n- apps/ui/test/setup-assistant.test.tsx: one new test at the end. fix/progress-navigation also edits this file.",
+     "fix/system-text adds an `audience` field to events and hides non-person events unless Details is on. After merging, the rich-text.test.tsx session tests that push events without `audience` (task.step and task.finished rows) need `audience: \"person\"` on those events, or the test must tick Details. task.step lines then show only under Details, still exactly as typed (EventText).",
+     "fix/intake-live also edits scripts/bench/journeys/smoke.cjs (old plan-card and task-count checks that this branch had already rewritten). Keep this branch's version. Its intake.cjs journey is separate.",
+     "The project page's Start dialog test id start-session-blocked is now read by the smoke journey (pressStart). fix/progress-navigation keeps it; please keep it if the dialog is reworked.",
+     "The fixer's worktree (.claude/worktrees/wf_6861daad-471-2) still has fix/live-context checked out at cf06df9. Its working tree is behind the branch tip 4ae848f; I checked the branch out here with --ignore-other-worktrees, as the brief asked.",
+     "Live helper: the cause the chat quotes for 3 of the 6 real live1 replies stays the intake's untrue \"Claude's plan was missing parts Forerunner needs.\" until fix/intake-live is merged; planBlock quotes whatever IntakeStatus.error says."
+    ]
+   }
+  }
+ ]
+}

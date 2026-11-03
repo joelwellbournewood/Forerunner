@@ -1,0 +1,454 @@
+{
+ "results": [
+  {
+   "checks": [
+    {
+     "area": "verification",
+     "check": "V1: New project from 'A page that shows a random quote', Approve and start: every specialist run of a task is followed by a role=critic call; no row says 'Checks only' (Quote page project)",
+     "result": "held",
+     "evidence": "model-calls.jsonl lines 2-5 coder then 6-7 critic; 8-11 tester then 12-14 critic; 15-17 tester retry then 18-21 critic; the same pattern holds in every later project. Tasks tab (steps/08-tasks-after-the-session.txt): 'Light review \u00b7 High priority \u2026 Done \u2026 Reviewed and tried'; no 'Checks only' anywhere. intake.cjs 13/13."
+    },
+    {
+     "area": "verification",
+     "check": "V2: 'Members chart' by data-analyst without data/members.csv; Go ahead without on the first card; expected not Done, a card asking for data/members.csv, Needs you (Club tools project)",
+     "result": "held",
+     "evidence": "First card (91): 'data/members.csv does not exist\u2026 Where is it, or can you add it'. After Go ahead without, the task reads 'Needs your answer' with the card 'data/members.csv does not exist in the worktree or in git history. Where is it? Please add it, or give me the member counts per year' (98-verif-09-inbox). No charts/members.svg. Needs you (3) counts cards from other projects too. Caveat: the second card is the same question again (see the Go ahead without finding)."
+    },
+    {
+     "area": "verification",
+     "check": "V3: a page task with two pages: the critic's calls include read_file of about.html and the review no longer says 'not in the request' (Garden club About)",
+     "result": "held",
+     "evidence": "Call 42 (critic for About) read_file(about.html), read_file(index.html). Review (64-club4-06-drawer-about): 'I read both files. about.html has two short paragraphs and a link back to index.html\u2026 Both criteria are met'. No 'not in the request' in any critic reply. Note: this About run changed nothing (Undo had restored its files), so about.html was read from the project, not the diff."
+    },
+    {
+     "area": "verification",
+     "check": "V4a: package.json test script and a coder clamp task: 'See what was checked' lists 'test: passed' with the end of the npm output",
+     "result": "held",
+     "evidence": "Clamp lib drawer (85-clamp-03-drawer.txt): 'The project's checks / test: passed / npm run --silent test -> exit 0 in 223 ms / TAP \u2026 # pass 3 # fail 0'. Also on the quote tester task (10-quote-drawer-2)."
+    },
+    {
+     "area": "verification",
+     "check": "V4b: plant a failing test: the task is sent back ('Check failed: test'), not Done",
+     "result": "held",
+     "evidence": "Money lib (110-clamp2-02-drawer): 'The critic sent it back for changes\u2026 Make the check \"test\" pass\u2026 test: failed / npm run --silent test -> exit 1 \u2026 not ok 4 - round2 rounds 1.006 to 1.01'. Retry brief line 136: '[high] Check failed: test'. The task was never Done (it ended at its budget card). First try (Clamp lib): the real coder rewrote the planted always-failing test script, so the check passed."
+    },
+    {
+     "area": "verification",
+     "check": "V5: the build task's drawer shows screenshots of the real page; the critic request has 'Tried as a person would use it (by the runtime: verified)'",
+     "result": "held",
+     "evidence": "Call 6 first message contains '## Tried as a person would use it (by the runtime: verified) \u2026 [worked] opened index.html \u2026 1280 and 390 pixels'. Drawer: 2 screenshots (1280x800, 390x844) in steps/quote2-drawer-1-screenshots-view.png, 'Reviewed and tried The critic read the work and it was opened as you would open it.'"
+    },
+    {
+     "area": "verification",
+     "check": "V6a: deploy (ops-deploy, Light review chosen): Edit offers no Light review; the review is never below the full review",
+     "result": "held",
+     "evidence": "89-verif-03-edit-deploy: Edit offers only 'Full review\u2026' and 'Full review and your sign-off\u2026' and says 'A deploy keeps the full review and your sign-off: saving moves this task to the full review.' The critic reviewed at tier 2 (calls 111-113, 'critic tier 2', opus). Not Done."
+    },
+    {
+     "area": "verification",
+     "check": "V6b: after the critic accepts, Inbox '\"Deploy the site\" needs your sign-off', not Done until Accept the work",
+     "result": "could-not-check",
+     "evidence": "The live critic did not accept: it sent the work back (no Dockerfile; 97-verif-08-drawer-deploy) and the specialist's questions made it 'Needs your answer' (98). Another round with the opus critic (about USD 0.11 per review) did not fit the cap."
+    },
+    {
+     "area": "verification",
+     "check": "V7: a critic reply with doc_drift 'none (...)' and accept leaves the task Done; Reviews shows no 'Doc drift: none'; no retry brief contains '-> Fix: '",
+     "result": "held",
+     "evidence": "Call 95: verdict accept, doc_drift \"none (tier 1; docs/testing.md is still a 'to be written' stub)\", and the task is Done \u00b7 Reviewed (84). The Reviews tab (93-reviews-clamp) has no 'Doc drift'. Retry briefs at lines 15 and 136 use '-> Resolve it and show the evidence' / '-> Bring the maintainer doc\u2026', with no '-> Fix: '."
+    },
+    {
+     "area": "verification",
+     "check": "V8 walk C (fixup blocking 1): not Done; every critic request carries the failing test output; if the specialist says the test failed before its change, the Inbox has one question card",
+     "result": "did-not-hold",
+     "evidence": "Not Done: held. Critic request 133 has '## Check results (run by the runtime: verified)' with 'not ok 4 - round2'. But the first report (call 132) said 'npm test still exits 1 because of an existing round2 failure that I did not touch' and no question card came; the critic sent it back. The retry brief (136) told it to 'Resolve' info notes, including the unrelated round2 failure. The retry rewrote src/round.js (Math.floor to Math.round), outside the task, then stopped at its budget unreviewed (111-clamp2-03-inbox: only the budget card)."
+    },
+    {
+     "area": "verification",
+     "check": "V8 walk D: a styling task is not sent back for a page error it did not cause; the drawer says so",
+     "result": "held",
+     "evidence": "95-verif-08-drawer-style: Done \u00b7 'Reviewed and tried'; 'index.html: had a problem \u2026 problem: error on the page: Cannot set properties of null (setting 'textContent') | not caused by this task: it changed none of the files that run on this page (index.html)'."
+    },
+    {
+     "area": "continuity",
+     "check": "C1: brief needing the owner's content; answer the person card with Send answers; the dependent coder's first message contains '## Answers from the person to' with the answers; no new questions card; files use the answers",
+     "result": "held",
+     "evidence": "The real plan had no person task (66-bakery-01-plan-card), so I added one with New task (Who does it = Me) and a coder task waiting on it (72-73). Call 72 first message: '## Answers from the person to \"Give the bakery's real menu, hours and address\"' with all three answers and 'do not ask the person these questions again'. No new card for it (80). index.html contains Kramgasse 12, Nussgipfel, 07:00 and Sonnenkorn, with 0 PLACEHOLDER."
+    },
+    {
+     "area": "continuity",
+     "check": "C2: 3 ready tasks, one budget CHF 0.80; Start dialog with a budget where not all fit: every number in the left-out sentence is true; the CHF 0.80 task is never estimated above CHF 0.80",
+     "result": "held",
+     "evidence": "30/31/32-club-05-start-dialog-*: '\"About page in about.html\" (about CHF 0.80) may be left for next time: the tasks that run first take about CHF 0.87 of this session's work budget of CHF 1.20' (also 0.96 and 1.60), with 0.86+0.01=0.87. Single-task overflow reads '\u2026needs about CHF 0.86, more than this session's work budget of CHF 0.48' (true). The About estimate is CHF 0.80 everywhere."
+    },
+    {
+     "area": "continuity",
+     "check": "C3: New task with Budget CHF 0.01: card with Raise the budget (CHF amount) and Cancel task; Overview, Home and Tasks row agree; no $/USD; Raise the budget starts a session and the task runs",
+     "result": "held",
+     "evidence": "40-club2-08-inbox: '\"Contact page in contact.html\" stopped at its budget of CHF 0.01 / So far it spent CHF 0.00; its next step would have gone over the budget. / Raise the budget: Sets its budget to CHF 0.40\u2026' / Cancel task. Overview (41) 'need your decision (Inbox)'; Home Needs you (42); row 'Needs your decision: its budget is used' with Answer and Cancel. No $ or USD in Tasks, drawer, Inbox or Overview. Raise gave 'Done: Raised the budget of \"Contact page\u2026\" to CHF 0.40: a session started.' and the task ran to review. My C7 steps then stopped it, so 'runs to Done' was not seen in that run."
+    },
+    {
+     "area": "continuity",
+     "check": "C4: refusal that still exists (task naming specialist 'illustrator'): '\"X\" could not run' card with the reason, no cc:, Try again and Cancel task; Home counts it; row Answer and Cancel, no Resume; Try again gives one card; Cancel task cancels",
+     "result": "held",
+     "evidence": "15-c4-04-inbox: 'No specialist is named \"illustrator\", so nothing ran. The specialists are: coder, \u2026' with Try again and Cancel task, no cc:. Home (16): Needs you shows the card and 'Inbox1'. Row (18): 'Needs your decision: it could not run', Answer and Cancel. After Try again there is 1 open card (20). Cancel task gives 'cancelled' (21-22). No model call was made (still 21 calls). The task was created through the API, as a plan writes it."
+    },
+    {
+     "area": "continuity",
+     "check": "C5: Cancel on the running row: dialog and line; the file leaves Files and index.html has no link; the next task does not mention it; Critic column '\u2014'; quit and restart, Undo in Changes brings the files back",
+     "result": "held",
+     "evidence": "Dialog (35): 'Drops it. Its run stops now and what it changed is removed; Undo brings it back.' Line (36): 'Cancelled \"About page in about.html\": its run stopped and what it changed is removed; Undo brings it back.' about.html is gone and index.html has no link (37). The Contact briefs (calls 31, 36) do not mention about.html. The row's Critic column is '\u2014'. After restart-daemon, Undo in Changes gave 'Undone: reopened \u2026 What it changed is back in the folder.' and about.html is in Files with the link back (57-58)."
+    },
+    {
+     "area": "continuity",
+     "check": "C5 (chat variant): 'Skip the \u2026 task', Yes, while it runs: the same cancel",
+     "result": "did-not-hold",
+     "evidence": "112-c5chat-01-confirm: 'Stop \"Credits page in credits.html\"? Its run stops now and it is paused; the session goes on with the rest.' After Yes (113): 'Stopped \u2026 its run ended and it is paused until you press Resume.' The row reads 'Paused by you' with Resume and Cancel (114). It was a pause, not a cancel."
+    },
+    {
+     "area": "continuity",
+     "check": "C6: session budget CHF 0.10 used mid-task: 'The session's budget is used \u2026 ready to continue', no card, row Ready, next Start continues",
+     "result": "could-not-check",
+     "evidence": "The start check leaves out any task whose estimate is above the work budget (26-29: 'needs about CHF 0.86, more than this session's work budget'). Live page tasks cost CHF 0.02-0.05 against estimates of CHF 0.36-0.86, so no task can start and then run out of session budget. With a task budget under the session's, the task's own budget card comes first (C3)."
+    },
+    {
+     "area": "continuity",
+     "check": "C7a: Stop now while 'Being reviewed': 'Stopped by you', log line, row Ready, no card, file kept, no verdict",
+     "result": "held",
+     "evidence": "46-47: 'Stopped by you. \"Contact page in contact.html\" is ready to continue.' and the log 'Stopped by you during \"Contact page in contact.html\". It is ready again.' Row Ready, attempt 0 (48); 0 open cards (50); contact.html in Files (51); the drawer shows runs only, no verdict (49). Start again ran it back to 'Being reviewed'."
+    },
+    {
+     "area": "continuity",
+     "check": "C7b: Quit Forerunner during 'Being reviewed' and reopen: the task reads Ready and the Update says it is ready again",
+     "result": "did-not-hold",
+     "evidence": "52-club3b-01, 60-club4-02: after the reopen the task reads 'Being reviewed \u00b7 The critic is checking the work.' with only Cancel, for good. The Start dialog does not list it (59). The Update reads 'Your last session was interrupted when Forerunner closed. Nothing was left half done.' (53). daemon.log 14:08:20 '[session-recovery] interrupted sessions ended at start {\"tasks\":[]}'."
+    },
+    {
+     "area": "continuity",
+     "check": "C8a: answer the person card while a coder task runs, Cancel the running row: the files leave; the decision record keeps the answers",
+     "result": "held",
+     "evidence": "bakery2-log: answers sent while 'Add a print stylesheet' was in_progress. After the cancel, print.css is gone and index.html no longer links it (78). docs/decisions/0001-static-html-page.md still has 'Answers for' x1 and Kramgasse x1. Git has 'Answers recorded in docs/decisions/0001-static-html-page.md' on top of the baseline."
+    },
+    {
+     "area": "continuity",
+     "check": "C8b: Undo brings the files back and the answers appear once",
+     "result": "did-not-hold",
+     "evidence": "79-bakery2-08-after-undo: 'Undone: reopened the task \u2026; it is ready again and a session picks it up. What it changed could not be put back: the folder changed in the same places since.' print.css did not come back. The session's next task had already rewritten index.html (call 73). The answers still appear once."
+    },
+    {
+     "area": "continuity",
+     "check": "C9: a review that fails ('could not be reviewed' card): row, dialog 'Drops it.', line, files stay",
+     "result": "could-not-check",
+     "evidence": "No live review failed in 45 critic calls."
+    },
+    {
+     "area": "continuity",
+     "check": "C9: Cancel on a task in review that no session reviews (Forerunner closed during the review): dialog says only 'Drops it.', line 'Cancelled \"X\".', files stay",
+     "result": "did-not-hold",
+     "evidence": "61-club4-03-cancel-dialog: 'Drops it. Its review stops now and what it changed is removed; Undo brings it back.' Line (62) 'Cancelled \"Contact page in contact.html\".' and contact.html stayed, so the line and files were right but the dialog was not."
+    },
+    {
+     "area": "continuity",
+     "check": "C9/C5: Cancel while 'Being reviewed' (live review): '\u2026its review stopped and what it changed is removed; Undo brings it back.' and the file leaves Files",
+     "result": "held",
+     "evidence": "Second try, about 3 s into the review: dialog and line as expected (104-105). credits.html is gone from the folder and Files (106). The review run reads 'Stopped' (108) and call 128 was aborted. First try (about 0.1 s in) did not stop the review: see the race finding."
+    }
+   ],
+   "findings": [
+    {
+     "area": "continuity",
+     "severity": "major",
+     "problem": "Quitting Forerunner while the critic reviews a task leaves the task 'Being reviewed' for good after reopening.",
+     "evidence": "Garden club Contact: quit at 14:08:16 during 'Being reviewed'; after the restart the row and drawer read 'Being reviewed \u00b7 The critic is checking the work.' with Cancel only (52, 60). The Start dialog does not list it (59). The Update says 'Your last session was interrupted when Forerunner closed. Nothing was left half done.' (53). daemon.log: '[session-recovery] interrupted sessions ended at start {\"tasks\":[]}'. Likely cause: recovery.ts releases only tasks the agent still claims, and the graceful quit had released the claim with the status left at in_review.",
+     "expected": "After reopening, the task reads Ready and the Update says it is ready again, as in the fixup's bench walk; the next Start runs and reviews it."
+    },
+    {
+     "area": "verification",
+     "severity": "major",
+     "problem": "Questions a specialist writes one per line without bullets (the brief's own 'one question per line') are not read, so the person gets a sign-off card instead of the questions.",
+     "evidence": "Garden club 'Home page' report (call 24) ends '**Questions for the person:**' then 'What is the club's official name?' and 'Is there a description\u2026' as plain lines. The critic chose human (call 26). The Inbox shows '\"Home page in index.html\" needs your sign-off' with only Accept the work, Send it back or Cancel task, and no questions (40, 83). person-questions.ts ITEM requires '-', '*', '\u2022' or '1.'. The same flow with '- ' bullets (Contact, call 47) gave the questions card.",
+     "expected": "The specialist's questions become one questions card the person can answer, whatever list style the report uses; Accept should not close work that waits on the person."
+    },
+    {
+     "area": "continuity",
+     "severity": "major",
+     "problem": "'Go ahead without' is not passed to the specialist: its next run asks the same question again and offers Go ahead without again, which can loop and costs a run each time.",
+     "evidence": "Members chart: first ask_person (call 106), Go ahead without pressed (92: 'goes on without your answers'). The next brief (call 114) has no mention of the choice ('## The previous attempt' only). call 116 asks the same question again, and 98 shows a new card with Go ahead without.",
+     "expected": "The next brief says the person chose to go ahead without answers, so the specialist decides, says what it assumed, or reports why it cannot (a missing input file) without re-asking."
+    },
+    {
+     "area": "verification",
+     "severity": "minor",
+     "problem": "A retry brief turns every critic note into an instruction, including notes the critic called unrelated or not asked for, so the retry edits code outside its task.",
+     "evidence": "Money lib retry brief (call 136): '[info] The existing round2 test fails \u2026 It is unrelated to this change \u2026 -> Resolve it and show the evidence' and '[info] clamp does not handle lo > hi or NaN. The brief did not ask for either. -> Resolve it\u2026'. The clamp retry rewrote src/round.js (Math.floor to Math.round) and stopped at its budget unreviewed. The first report's plain 'an existing round2 failure that I did not touch' (call 132) made no question card.",
+     "expected": "Info notes, and failures the task did not cause, are not retry orders; a check that failed before the task leads to one question card (the fixup's expectation)."
+    },
+    {
+     "area": "verification",
+     "severity": "minor",
+     "problem": "A worker can redefine the project's test script in the same change, and the runtime then runs the worker's version as the project's check.",
+     "evidence": "Clamp lib: the coder replaced the person's 'test' script with 'node --test test/clamp.test.js', its own file only (clamp-log). The check then read 'test: passed', and the critic accepted with 'The only gap is that the test script names a single file' (85, call 95).",
+     "expected": "A change to the scripts that judge the work is flagged or checked against the scripts before the change, so 'test: passed' means the project's tests passed."
+    },
+    {
+     "area": "continuity",
+     "severity": "minor",
+     "problem": "Undo of a cancel made during a running session usually fails, because the session's next task changes the same files within seconds, though the dialog and line promise 'Undo brings it back'.",
+     "evidence": "Bakery: print task cancelled at 14:14:23; the next task wrote index.html at 14:14:29 (call 73). Undo then said 'What it changed could not be put back: the folder changed in the same places since.' (79), and print.css never came back.",
+     "expected": "Either the promise is worded for this case (Undo may fail if other work changes the same files), or the cancelled work can still be brought back, for example as a reopened task that redoes it."
+    },
+    {
+     "area": "continuity",
+     "severity": "minor",
+     "problem": "The Cancel dialog for a task left 'Being reviewed' by a quit promises that what it changed is removed, but nothing is removed.",
+     "evidence": "61-club4-03-cancel-dialog: 'Drops it. Its review stops now and what it changed is removed; Undo brings it back.' Line (62): 'Cancelled \"Contact page in contact.html\".' and contact.html stayed.",
+     "expected": "Dialog says only 'Drops it.' when no live run or review would be stopped (fixup blocking 3)."
+    },
+    {
+     "area": "continuity",
+     "severity": "minor",
+     "problem": "Cancel pressed in the first moment of 'Being reviewed' does not stop the review, while the line says it did.",
+     "evidence": "c9b: kill switch 'task stopped' at 14:25:13.550 (stoppedRuns 1). Critic calls 122 and 123 ran after it, to an accept, spending CHF 0.03; the drawer shows 'Review by the critic \u00b7 Finished'. The line said 'its review stopped and what it changed is removed'. credits.html stayed in Files about 6 s longer and was removed only after the review. Pressed 3 s into the review instead, it worked (104-108).",
+     "expected": "A cancel at any point of 'Being reviewed' stops the review at once and removes the work, as the line says."
+    },
+    {
+     "area": "verification",
+     "severity": "minor",
+     "problem": "The Tasks row and drawer describe a retry card while the card in the Inbox is a sign-off.",
+     "evidence": "83-gchome-drawer-1: 'Needs your decision \u00b7 Its card is in the Inbox: try again, mark it done anyway, or cancel it.' with a Try again button. The card is '\"Home page in index.html\" needs your sign-off' with Accept the work, Send it back, Cancel task.",
+     "expected": "Row and drawer words match the card's choices."
+    },
+    {
+     "area": "continuity",
+     "severity": "minor",
+     "problem": "In Chat, 'Skip the <task> task' pauses the task instead of cancelling it.",
+     "evidence": "112-c5chat-01-confirm: 'Stop \"Credits page in credits.html\"? Its run stops now and it is paused\u2026'; after Yes: 'paused until you press Resume' (113), row 'Paused by you' (114).",
+     "expected": "Per the C5 live check, 'Skip the \u2026 task' plus Yes cancels it with the same line as the row's Cancel, or the chat asks which the person means."
+    },
+    {
+     "area": "intake",
+     "severity": "minor",
+     "problem": "A brief that promises the owner's content gets a plan with no step that asks for it; the page is accepted full of placeholders and the person is never asked.",
+     "evidence": "Brief 'A one-page website for a small bakery in Bern; I will give you the real menu, hours and address' produced plan (66, intake call 51) of coder 'Build the one-page bakery site' and tester 'Check the site', with 'All shop facts are placeholders'. Build was accepted at 90 with PLACEHOLDER markers; there was no card for the menu, hours or address.",
+     "expected": "The plan includes a person task (or a question) for the content the brief says the owner will give, and the build waits on it."
+    },
+    {
+     "area": "continuity",
+     "severity": "polish",
+     "problem": "The questions card quotes the wrong words, with a stray leading colon.",
+     "evidence": "Contact card body: 'The specialist said: \": I made no edits this run. Both pages were already in the worktree\u2026\"'. The reason it asks (the email is a placeholder) is not quoted.",
+     "expected": "The card quotes why the specialist asks."
+    },
+    {
+     "area": "verification",
+     "severity": "polish",
+     "problem": "Smaller wording issues on the screens.",
+     "evidence": "Home project card 'Waiting for you: 2 questions' for one sign-off and one budget card (42). Deploy row 'Light review \u00b7 Low priority' while it is reviewed at the full review with sign-off (94). New task offers Light review for ops-deploy with no note (87). Start dialog 'continues with up to 1 more as they become ready' (30). Reviews shows 'To fix: Resolve it and show the evidence' under an accepted info note (93).",
+     "expected": "Counts name the card kinds; the deploy row shows the level it actually gets; the wording is grammatical; accepted notes have no 'To fix'."
+    }
+   ],
+   "usd_spent": 1.463,
+   "report_file": "/tmp/frbench/live-reports/phaseC-verification-continuity.md",
+   "not_checked": [
+    "V6b: the deploy's '\"Deploy the site\" needs your sign-off' card after the critic accepts. The live critic sent the work back, and another full-review round with the opus critic did not fit the cap.",
+    "C6: the session's own budget running out mid-task. The start check leaves out over-estimate tasks and live costs are about 10x below the estimates, so it cannot happen live.",
+    "C9: the '\"X\" could not be reviewed' card path. No live review failed.",
+    "C3: 'the task runs to Done' after Raise the budget. It ran to review, then my C7 Stop now and Quit interrupted it; after the reopen it waited on the person's questions.",
+    "C7a: 'Start again: the task is Done' was merged with C7b. The restarted task reached review again and was then used for the quit check.",
+    "GitHub: none of my checks needed it."
+   ]
+  },
+  {
+   "checks": [
+    {
+     "area": "github-result",
+     "check": "Empty linked repository: main gets Forerunner's first commit with the docs; tasks open PRs; no 'is not a commit' text",
+     "result": "could-not-check",
+     "evidence": "Needs a new empty repository; the task rules forbid creating repositories (only forerunner-sandbox, which already has commits)."
+    },
+    {
+     "area": "github-result",
+     "check": "After a session each task PR has no docs/status.md; PR 'docs: project status' (fr/status) holds it; a second session adds a commit and a comment to that same PR",
+     "result": "held",
+     "evidence": "Project 'Sandbox hello page' on forerunner-sandbox. PR files: #4 README.md+index.html, #6 scripts/check-hello-page.sh, #7 index.html (no docs/status.md). PR #5 'docs: project status' head fr/status holds only docs/status.md. Session 2 added commit 7135fea 'docs: status after session 01a19c93\u2026' and comment 6579150293; session 3 added a third commit (head 6759c4b) and comment 6579227409 on the same PR #5. No second status PR."
+    },
+    {
+     "area": "github-result",
+     "check": "Machine with GIT_CONFIG_* set: run_command 'git status' exits 0; PR body and commit message have no \"git doesn't work\"/\"can't commit\"",
+     "result": "held",
+     "evidence": "The machine sets GIT_CONFIG_COUNT with KEY_0..2, which the daemon inherited. Call log /tmp/frbench/livec-b/evidence/model-calls.jsonl line 5 'git diff --stat' exit 0; line 10 sh -c 'git status --short; git log\u2026' exit 0; line 20 'git status' exit 0 ('On branch fr/01a19c97-add-a-footer-to-the-hello-page \u2026 nothing to commit'). PR #4/#6/#7 bodies and commits have no such text; the coder's brief says 'Forerunner commits your changes on the branch \u2026'."
+    },
+    {
+     "area": "github-result",
+     "check": "Photo-rename (Python) brief: folder has .gitignore with __pycache__/ and no .pyc in git ls-files",
+     "result": "could-not-check",
+     "evidence": "Cap reached before this brief ran. Partial, on the research folder project: .gitignore 'Written by Forerunner' with __pycache__/, *.pyc, node_modules/\u2026; git status --short empty; last commit 'Did \"Compare static site generators\u2026\"'. No Python ran, so the .pyc part is unchecked."
+    },
+    {
+     "area": "github-result",
+     "check": "Overview lists each task PR with its number; Open opens it in the system browser; merging on GitHub and reloading removes it",
+     "result": "held",
+     "evidence": "steps/13-sbx-s1-overview.png: '\"Add index.html and README section\" \u00b7 pull request #4 Open', href \u2026/forerunner-sandbox/pull/4. Merged #4 with the GitHub tools, reloaded: steps/18-sbx-overview-after-merging-pr-4-on-github.png no longer lists #4. The system-browser part could not be checked: the bench is a browser, not the desktop window (in shell mode the link has no target and relies on the shell)."
+    },
+    {
+     "area": "github-result",
+     "check": "Docs tab shows the docs waiting in the PR after the plan is approved",
+     "result": "held",
+     "evidence": "steps/14-sbx-s1-docs-tab.png: Overview/Architecture/Decisions/Runbook/Data/Testing 'in a pull request \u00b7 waiting in pull request #3: merge it to add it \u00b7 Open pull request #3'; Status '\u2026 pull request #5'; README current."
+    },
+    {
+     "area": "github-result",
+     "check": "Session page: Pull requests block with PR, branch, Open; log 'Changed \u2026, in pull request #N.' and 'Pull request #N waits for you to merge it: Forerunner merges only at Trusted.'",
+     "result": "held",
+     "evidence": "steps/16-sbx-s1-session-page.png and 41-sbx-s1-session-page-plain.png: 'Pull requests: \"Add index.html and README section\" \u00b7 pull request #4 \u00b7 branch fr/01a19c90-add-index.html-and-readme-section Open'; 'Changed README.md and index.html, in pull request #4.'; 'Pull request #4 waits for you to merge it: Forerunner merges only at Trusted.'"
+    },
+    {
+     "area": "github-result",
+     "check": "Chat 'where are my files?' on a forerunner-sandbox project names the repository and the PRs",
+     "result": "held",
+     "evidence": "steps/22-sbx-s2-chat-reply.png: 'Your files are in the GitHub repository joelwellbournewood/forerunner-sandbox. The two finished tasks each left a pull request there: \u2026 (pull request 4) and \u2026 (pull request 6)\u2026' (call log line 18 has the # Your files block). Inaccuracy about the already merged #4 is reported as a finding."
+    },
+    {
+     "area": "github-result",
+     "check": "New project with the live2 small-website brief: the plan card has no person question about where files live or git",
+     "result": "could-not-check",
+     "evidence": "Cap reached. The two plan cards I saw (steps 11, 30) had no such question, but neither came from that brief."
+    },
+    {
+     "area": "github-result",
+     "check": "Dummy credential added to the GIT_CONFIG key set never appears in tool results; git status exits 0",
+     "result": "could-not-check",
+     "evidence": "This session's permission layer refused both steps: a daemon restart whose command names the extra GIT_CONFIG entries (worktree guard), and a task asking the model to run git config -l / env | grep GIT_CONFIG ('credential materialization'). The 'git status exits 0' part held (call log line 20)."
+    },
+    {
+     "area": "github-result",
+     "check": "Empty repository the token can read but not write: the task's reason is the first-push-refused sentence",
+     "result": "could-not-check",
+     "evidence": "No such repository or token exists, and creating one is forbidden."
+    },
+    {
+     "area": "github-result",
+     "check": "Overview: task PRs under 'Reviewed by the critic', status PR only under 'Forerunner's docs\u2026', and 'Left N reviewed pull requests' equals this session's PRs in the critic group",
+     "result": "held",
+     "evidence": "Session 1 (step 13): critic group #4; docs group #1, #3, #5; 'Left 1 reviewed pull request for you to merge.' Session 2 (step 21): critic #6; 'Left 1'. Session 3 (step 40): critic #6, #7; 'Left 1' (#7 is this session's). #5 appears only in the docs group."
+    },
+    {
+     "area": "research-web",
+     "check": "Steps 1-3 in the UI: researcher task 'Compare Hugo and Eleventy' citing gohugo.io/about and 11ty.dev/docs; second task naming http://192.168.1.1/ refused in words",
+     "result": "could-not-check",
+     "evidence": "Cap reached: the brief project's single research task cost USD 1.32, which took the total to USD 1.545 and made calls.mjs exit 3."
+    },
+    {
+     "area": "research-web",
+     "check": "Plan card from the brief 'Research which static site generator fits a 50-page docs site\u2026' has a researcher task without the 'Cannot read the web' chip",
+     "result": "held",
+     "evidence": "steps/30-rsx-inbox-plan-card.png: 'Compare static site generators for a 50-page docs site \u00b7 researcher \u00b7 about CHF 0.96', no chip."
+    },
+    {
+     "area": "research-web",
+     "check": "Approve and start; the research task finishes Done",
+     "result": "held",
+     "evidence": "Session 01a19c98-51bc\u2026 14:09-14:12: task Done; critic accepted, grade 80 (steps/33-rsx-task-drawer.png)."
+    },
+    {
+     "area": "research-web",
+     "check": "Specialist calls' tools include web_fetch",
+     "result": "held",
+     "evidence": "Call log lines 25-35: tools ask_person, list_dir, read_file, web_fetch, write_file; 25 pages fetched (all HTTP 200). The brief carries 'Web search is not available on this run: read web pages by their address with web_fetch\u2026'."
+    },
+    {
+     "area": "research-web",
+     "check": "Critic calls' messages include '### web page https://\u2026'",
+     "result": "held",
+     "evidence": "Lines 36-37: 12 '### web page https://\u2026' sections; the other 13 listed as 'web page read (text not included, over 12 pages): <url>'."
+    },
+    {
+     "area": "research-web",
+     "check": "Session Details show 'read the web page <host><path>'",
+     "result": "held",
+     "evidence": "steps/37-rsx-session-page-details.png: 25 lines, for example 'read the web page gohugo.io/about/introduction/'."
+    },
+    {
+     "area": "research-web",
+     "check": "Research file on the Files tab cites pages by address; critic review under Runs in the drawer",
+     "result": "held",
+     "evidence": "steps/35-rsx-research-file-open.png: docs/research/ssg-comparison.md with 68 URLs and a 'Sources read' list (copy in /tmp/frbench/livec-b/evidence/ssg-comparison.md). steps/33: Runs 'Review by the critic \u00b7 Finished \u00b7 CHF 0.16'."
+    },
+    {
+     "area": "research-web",
+     "check": "New task \u2192 Who does it: researcher shows no 'Cannot read the web' note on a normal install",
+     "result": "held",
+     "evidence": "steps/39-rsx-new-task-researcher-chosen.png: no note under the fields."
+    }
+   ],
+   "findings": [
+    {
+     "area": "github-result",
+     "severity": "major",
+     "problem": "In a repository project the dependent check task fails because its branch lacks the unmerged work of the task it depends on.",
+     "evidence": "Approve and start on the 2-task plan (coder, then tester) on forerunner-sandbox: 'Check the page and README section' failed with 'The worktree has neither `index.html` nor a \"Hello page\" section\u2026' (steps 13, 17; call log line 10: git log shows only f6aa072). PR #4 was open and unmerged, and the tester branched from origin/main. It passed only after I merged #4 on GitHub and pressed Try again. This is the open item from the fix's new_problems, now confirmed with the real model.",
+     "expected": "A dependent task sees its dependency's unmerged work (a stacked branch or a merge into the task branch), or the plan or Start says it waits for the person's merge, instead of a failed-task card on the first run."
+    },
+    {
+     "area": "research-web",
+     "severity": "minor",
+     "problem": "One research task costs USD 1.32 (CHF 1.06), about 40 times a coder task, mostly because the growing conversation (with the fetched page text) is re-sent each turn without a cache.",
+     "evidence": "Call log lines 25-35: input_tokens grow from 1.3k to 77.7k with no cache, while cache_read stays at 2,053 (only the system prompt). The page text includes extractor noise ('[html_comment <!-->] \"[\"'). Line 32 ended at max_tokens 4,096 with nothing usable (USD 0.17) before a 16,384 retry. Line 34 rewrote the 17 KB file to move one section (USD 0.22). The plan estimate was CHF 0.96.",
+     "expected": "A cache breakpoint on the message history (or dropping page text once used), and enough max_tokens for the first long write, so a research task costs a fraction of this."
+    },
+    {
+     "area": "github-result",
+     "severity": "minor",
+     "problem": "The Overview lists another project's stale docs PR as this project's docs.",
+     "evidence": "'Forerunner's docs, merge them when you like' shows '\"The project's standard docs\" \u00b7 pull request #1' (steps 13, 40). That PR is fr/docs-scaffold from 2026-11-01, by an earlier project. Its .forerunner/project.json names project 01a19979\u2026 'Sandbox hello', and it adds the same docs/overview.md and docs/status.md as #3 and #5, so merging every docs PR conflicts.",
+     "expected": "Only this project's docs PRs are listed, or a left-over one is marked as from an earlier project."
+    },
+    {
+     "area": "github-result",
+     "severity": "minor",
+     "problem": "The chat calls an already merged PR unmerged.",
+     "evidence": "steps/22: 'where are my files?' answered that PRs 4 and 6 wait and 'Until you merge them on GitHub, the work is not on the default branch'. #4 had been merged five minutes earlier, and the Overview no longer listed it. The chat's '# Your files' block (call log line 18) lists done tasks' PR links without their merge state.",
+     "expected": "The chat names only PRs still open, or says which are already merged."
+    },
+    {
+     "area": "system-text",
+     "severity": "minor",
+     "problem": "Person-facing failure text shows raw markdown and is cut mid-word.",
+     "evidence": "Overview Last result, Inbox card, Updates line and session summary (steps 13, 16, 17): 'failed: **Result: the check fails. \u2026 `README.md`.** \u2026 but this branch doesn't h.'",
+     "expected": "Markdown stripped, and the text cut at a word or sentence boundary."
+    },
+    {
+     "area": "github-result",
+     "severity": "polish",
+     "problem": "PR texts carry model leftovers.",
+     "evidence": "PR #7 (a New-task task without criteria) has an empty 'Acceptance criteria:' heading. Commit messages carry the report's '**Summary**' markdown, and PR bodies end with the model's 'Lesson:' lines (PRs #4, #6, #7).",
+     "expected": "No empty criteria heading; commit messages in plain text; internal lessons left out of the PR."
+    },
+    {
+     "area": "needs-me",
+     "severity": "polish",
+     "problem": "Plan card wording and a silent wait after Approve and start.",
+     "evidence": "A 1-task plan card says 'Writes this task and starts working on them now.' (step 30). On the repository project the card stayed unchanged for about 7 s after Approve and start while the docs PR was pushed: the buttons were disabled and no words were shown (step 12).",
+     "expected": "'starts working on it now'; a short 'Writing the plan and its docs pull request\u2026' while it works."
+    },
+    {
+     "area": "sessions",
+     "severity": "polish",
+     "problem": "An old session's page reads as if it were current after the person acted (already known).",
+     "evidence": "After the retry and the merge, session 1's page still says 'Ended: 1 task needs you' and lists the merged PR #4 with Open (step 41).",
+     "expected": "Text that is still true, or clearly framed as what the session left at its end."
+    }
+   ],
+   "usd_spent": 1.545,
+   "report_file": "/tmp/frbench/live-reports/phaseC-github-research.md",
+   "not_checked": [
+    "github-result: empty repository first commit (creating a repository is forbidden)",
+    "github-result: refused first commit on an empty read-only repository (no such repository or token)",
+    "github-result: dummy credential in a GIT_CONFIG key (the session's permission layer refused the daemon env change and the model listing git config or the environment); only 'git status exits 0' was checked",
+    "github-result: Python photo-rename brief .gitignore/.pyc (cap reached; .gitignore checked on the research folder project only)",
+    "github-result: live2 website brief plan card without a files/git question (cap reached)",
+    "github-result: Open opens in the system browser (bench is a browser, not the desktop shell)",
+    "research-web: UI steps 1-3, the Hugo/Eleventy researcher task and the http://192.168.1.1/ refusal (cap reached)"
+   ]
+  }
+ ]
+}

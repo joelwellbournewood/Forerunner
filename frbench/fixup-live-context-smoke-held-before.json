@@ -1,0 +1,231 @@
+{
+  "bench": "fixup-live-context",
+  "live": false,
+  "startedAt": "2026-11-02T00:29:24.814Z",
+  "checks": [
+    {
+      "name": "the setup assistant opens first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the Claude step offers a way past it without a key",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Home shows an empty project list with New project",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan from the brief reaches the Inbox",
+      "ok": true,
+      "detail": "Waiting for you: approve the plan. Open"
+    },
+    {
+      "name": "the Inbox shows the plan card",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan card says how many tasks it plans (at least one)",
+      "ok": true,
+      "detail": "5 task(s)"
+    },
+    {
+      "name": "the plan card has no change-card JSON or risk badges",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the plan card offers Approve and start",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "approving says what happened",
+      "ok": true,
+      "detail": "Done: Plan approved: 5 tasks written; working on them."
+    },
+    {
+      "name": "approving writes the plan's tasks, as many as the card said",
+      "ok": true,
+      "detail": "5 task(s) written; the card said 5"
+    },
+    {
+      "name": "the plan card named every task it wrote",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Approve and start starts a session",
+      "ok": true,
+      "detail": "01a199a9-6051-776c-911a-737e54bc2103"
+    },
+    {
+      "name": "session 1 ends",
+      "ok": true,
+      "detail": "completed; the page shows \"Done\""
+    }
+  ],
+  "findings": [
+    {
+      "title": "journey stopped on an unexpected error",
+      "detail": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('dialog').getByRole('button', { name: 'Start', exact: true }).first()\u001b[22m\n\u001b[2m    - locator resolved to <button disabled type=\"submit\" data-testid=\"confirm-start-session\" class=\"inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-900 \">Start</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not enabled\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    58 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is not enabled\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n\n    at clickButton (/home/user/Forerunner/.claude/worktrees/wf_6861daad-471-5/scripts/bench/journeys/smoke.cjs:92:76)\n    at pressStart (/home/user/Forerunner/.claude/worktrees/wf_6861daad-471-5/scripts/bench/journeys/smoke.cjs:347:9)\n    at async runSession (/home/user/Forerunner/.claude/worktrees/wf_6861daad-471-5/scripts/bench/journeys/smoke.cjs:371:17)\n    at async /home/user/Forerunner/.claude/worktrees/wf_6861daad-471-5/scripts/bench/journeys/smoke.cjs:640:19",
+      "evidence": [
+        "/tmp/frbench/fixup-live-context/steps/19-journey-error.png"
+      ]
+    }
+  ],
+  "sessions": [
+    {
+      "n": 1,
+      "sessionId": "01a199a9-6051-776c-911a-737e54bc2103",
+      "status": "completed",
+      "statusShown": "Done",
+      "trigger": "Approve and start",
+      "changed": [
+        "Create the page skeleton in index.html: new -> needs_human",
+        "Show a random quote on every load in script.js: new -> ready",
+        "Style the page in styles.css: new -> ready",
+        "Check that index.html, styles.css and script.js work together: new -> ready",
+        "Write the README: what the page does and how to open it: new -> ready"
+      ],
+      "endedPageChars": 2657
+    }
+  ],
+  "planTries": [
+    {
+      "state": "pending",
+      "said": "Waiting for you: approve the plan. Open"
+    }
+  ],
+  "notes": [
+    "the Done step says \"Until Claude is connected your agent cannot start work\" (true here: --provider bench serves a stand-in model and no key is saved)"
+  ],
+  "projectId": "01a199a9-500c-77e4-9812-35ef0d74c7d6",
+  "projectPageSaid": "Waiting for you: approve the plan. Open",
+  "tasksAfterApproval": [
+    {
+      "id": "01a199a9-6033-7090-a06c-cb26735a57c6",
+      "title": "Create the page skeleton in index.html",
+      "status": "needs_human",
+      "specialist": "coder",
+      "dependsOn": [],
+      "display": {
+        "key": "answer",
+        "label": "Needs your answer"
+      },
+      "prUrl": null
+    },
+    {
+      "id": "01a199a9-6034-75ce-b128-2c61107191f7",
+      "title": "Show a random quote on every load in script.js",
+      "status": "ready",
+      "specialist": "coder",
+      "dependsOn": [
+        "01a199a9-6033-7090-a06c-cb26735a57c6"
+      ],
+      "display": {
+        "key": "waiting",
+        "label": "Waiting for \"Create the page skeleton in index.html\""
+      },
+      "prUrl": null
+    },
+    {
+      "id": "01a199a9-6034-75cf-8b15-cecf08b02171",
+      "title": "Style the page in styles.css",
+      "status": "ready",
+      "specialist": "designer",
+      "dependsOn": [
+        "01a199a9-6033-7090-a06c-cb26735a57c6"
+      ],
+      "display": {
+        "key": "waiting",
+        "label": "Waiting for \"Create the page skeleton in index.html\""
+      },
+      "prUrl": null
+    },
+    {
+      "id": "01a199a9-6034-75d0-ba19-83eca63a5b96",
+      "title": "Check that index.html, styles.css and script.js work together",
+      "status": "ready",
+      "specialist": "tester",
+      "dependsOn": [
+        "01a199a9-6034-75ce-b128-2c61107191f7",
+        "01a199a9-6034-75cf-8b15-cecf08b02171"
+      ],
+      "display": {
+        "key": "waiting",
+        "label": "Waiting for \"Show a random quote on every load in…\" and 1 more"
+      },
+      "prUrl": null
+    },
+    {
+      "id": "01a199a9-6035-77b1-a4f7-719dab28fb06",
+      "title": "Write the README: what the page does and how to open it",
+      "status": "ready",
+      "specialist": "writer-marketing",
+      "dependsOn": [
+        "01a199a9-6034-75ce-b128-2c61107191f7"
+      ],
+      "display": {
+        "key": "waiting",
+        "label": "Waiting for \"Show a random quote on every load in…\""
+      },
+      "prUrl": null
+    }
+  ],
+  "taskButtonsAfterApproval": [
+    "Quote page\n▾",
+    "Talk",
+    "Ctrl+K",
+    "Stop all",
+    "Create a repository",
+    "Start session",
+    "Refresh",
+    "New task",
+    "Create the page skeleton in index.html",
+    "Answer",
+    "Go ahead without",
+    "Cancel",
+    "Show a random quote on every load in script.js",
+    "Pause",
+    "Style the page in styles.css",
+    "Check that index.html, styles.css and script.js work together",
+    "Write the README: what the page does and how to open it"
+  ],
+  "lastSessionText": "\"Create the page skeleton in index.html\" needs your decision (Inbox). 4 tasks wait on it. CHF 0.00.\n\nended Nov 02, 2026, 12:29 AM · completed · open the log",
+  "modelCalls": {
+    "intake": 1,
+    "specialist": 2
+  },
+  "cost": {
+    "calls": 3,
+    "usd": 0,
+    "priced": 0,
+    "unpriced": {
+      "fake-sonnet": 3
+    },
+    "byKind": {
+      "intake": {
+        "calls": 1,
+        "usd": 0,
+        "models": [
+          "fake-sonnet"
+        ]
+      },
+      "specialist": {
+        "calls": 2,
+        "usd": 0,
+        "models": [
+          "fake-sonnet"
+        ]
+      }
+    }
+  },
+  "problems": [],
+  "daemonErrors": [],
+  "finishedAt": "2026-11-02T00:30:26.740Z"
+}

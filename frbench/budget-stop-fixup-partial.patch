@@ -1,0 +1,1718 @@
+diff --git a/apps/ui/test/real-daemon.test.ts b/apps/ui/test/real-daemon.test.ts
+index cd9a91c..67fb64f 100644
+--- a/apps/ui/test/real-daemon.test.ts
++++ b/apps/ui/test/real-daemon.test.ts
+@@ -7431,3 +7431,73 @@ describe("the UI client against the real daemon: a budget stop is a clean pause
+     expect(report).toContain("Left to do:");
+   }, 60_000);
+ });
++
++describe("the UI client against the real daemon: a session ended at this month's cap names it (review of budget-stop)", () => {
++  let rt: RuntimeApp;
++  let client: DaemonClient;
++
++  beforeAll(async () => {
++    // The stand-in writes the guide one part per call until it hears the wrap-up, so the
++    // month's cap stops it long before its own budget's line.
++    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_LONG: "Write the guide" }));
++  }, 120_000);
++  afterAll(async () => {
++    await rt?.close();
++  });
++
++  it("the session page, its result, its log and the Inbox Update say this month's cap, not the session's budget", async () => {
++    // As Settings sends a lowered monthly cap (it applies at once).
++    const lowered = await client.executeCommands({
++      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 0.02 } }],
++      source: "ui",
++      confirm: "tap",
++    });
++    expect(lowered.status, JSON.stringify(lowered)).toBe("done");
++    const project = await client.createProject({ name: "Month cap", goal: "A guide" });
++    // What New task sends with a budget of CHF 1.00: far above what is left this month.
++    await client.createTask(project.id, {
++      title: "Write the guide",
++      outcome: "guide.md explains the club",
++      acceptanceCriteria: ["guide.md exists"],
++      priority: "medium",
++      status: "ready",
++      dependsOn: [],
++      budgetUsdMicro: 1_250_000,
++      specialist: "coder",
++      riskTier: 1,
++    });
++    const me = await client.me();
++    const agentId = (await client.agents())[0]?.id ?? "";
++    // A start without a typed budget (a budget card's Raise, the chat, a schedule).
++    const started = await client.startSession({ agentId, projectId: project.id });
++    const sessionId = started.session?.id ?? "";
++    expect(sessionId, JSON.stringify(started)).toBeTruthy();
++    await eventually(
++      async () =>
++        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
++      "the session to end",
++      async () => {
++        const s = await client.session(sessionId);
++        return `${s.status}: ${s.summary ?? ""}`;
++      },
++      20_000,
++    );
++    const session = await client.session(sessionId);
++    // Before: "Stopped: the budget is used" and "The session's budget is used." at 1% of the
++    // session's own CHF 5.00.
++    expect(session.statusText).toBe("Stopped at this month's cap");
++    expect(session.summary ?? "").toContain("Stopped at this month's cap of CHF 0.02.");
++    expect(session.summary ?? "").not.toMatch(/budget is used/);
++    const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
++    expect(
++      lines.some((l) => /^Stopped at this month's cap: /.test(l)),
++      lines.join(" | "),
++    ).toBe(true);
++    expect(lines.join(" | ")).not.toMatch(/budget is used/);
++    const updates = (await client.inbox(me.id)).messages
++      .filter((m) => m.projectId === project.id)
++      .map((m) => m.body);
++    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.02.");
++    expect(updates.join(" | ")).not.toMatch(/budget is used/);
++  }, 60_000);
++});
+diff --git a/docs/decisions/0111-a-budget-stop-is-a-clean-pause.md b/docs/decisions/0111-a-budget-stop-is-a-clean-pause.md
+index b75cb51..2b41505 100644
+--- a/docs/decisions/0111-a-budget-stop-is-a-clean-pause.md
++++ b/docs/decisions/0111-a-budget-stop-is-a-clean-pause.md
+@@ -43,7 +43,8 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
+    refused and audited. The kill switch's own stop still returns at once, as its 2 s promise
+    says. Claude Code's own spending limit (`maxBudgetUsd`) sits at the run's cap plus 10% and
+    USD 0.01, so Forerunner's stop comes first, and its `error_max_budget_usd` result is a stop at
+-   the run's budget, never a passing error.
++   the run's budget, never a passing error. While Claude Code winds down, a late result only
++   books its usage: an aborted query's own error result does not turn the stop into a failure.
+ 2. **Usage is counted once per API message**, and the result's totals (`modelUsage`, else
+    `usage`) book what the messages did not count (the real output, subagents' calls).
+ 3. **Each work run has one wrap-up line**, fixed at its first call: its cap less a reserve, the
+@@ -61,8 +62,14 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
+    call), no wrap-up is sent and the run pauses at its budget with the code-side save only. The
+    run's log line at its start says which applies and names the reserve: "This run may spend CHF
+    0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish." or "This
+-   run may spend CHF 0.01, too little to wrap up (a reserve of CHF 0.02 is two calls): save only,
+-   it pauses at its budget with its work kept."
++   run may spend CHF 0.01, too little to wrap up (two steps may cost CHF 0.02): save only, it
++   pauses at its budget with its work kept." A budget below even its first call's worst case is
++   refused before that call and still says its line: "This run may spend CHF 0.02, less than its
++   first step may cost (CHF 0.05): save only, it pauses at its budget before that step." (On the
++   coder's Sonnet, 4 096 output tokens alone cost USD 0.041, so CHF 0.02 is such a budget.) When
++   the run is told to wrap up, the log says it by the line: "Told the coder to wrap up: it spent
++   CHF 0.30 of CHF 0.40, and its next step could pass CHF 0.32, where CHF 0.08 is kept to
++   finish."
+ 5. **Paused.** A task's run is paused when a budget of any level stopped it, or when it heard the
+    wrap-up in this run and its report's "Left to do:" list has at least one item. A run that
+    ends normally without a wrap-up in this run, or after one with nothing left ("Left to do:
+@@ -78,7 +85,12 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
+    month's cap of CHF 150.00: it spent CHF 0.40, and its next step would have gone over."), and
+    so do the task's status ("Paused at its budget", "Paused at this month's cap") and today's
+    card. A pause at the project's budget, the month's cap or the subscription's share ends the
+-   session: nothing else of it can run there.
++   session: nothing else of it can run there. That session names the limit too, never "the
++   session's budget is used": its stop reason is the limit's (`budget_month`, `budget_project`,
++   `budget_plan`), its badge reads "Stopped at this month's cap", its result "Stopped at this
++   month's cap of CHF 0.23.", and its urgent notification says what helps (raise the monthly
++   spending cap, the project budget, or wait for the subscription's usage to reset), never a
++   larger session budget, which the month's cap refuses. The phone's push names it as well.
+ 7. **A run cannot eat the review share.** A task's run may spend at most what is left of the
+    session's work budget (its cap less the review reserve). With today's reserve of a fifth, a
+    task that fills a whole session gets about 0.8 x 0.8 = 64% of it for work, as the owner was
+@@ -100,6 +112,10 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
+   improves the estimate, and the line follows.
+ - The subscription's stop has no live check in the cloud (no subscription token): it is on the
+   owner's checklist, step 6.
++- On the subscription the wrap-up reaches Claude Code only with a tool result (PostToolUse): a
++  run whose next step is its final answer ends without it and is reviewed as usual.
++- A paused run's lessons are recorded like any other run's (what it learned is true whether or
++  not it finished).
+ 
+ ## Alternatives considered
+ 
+diff --git a/docs/maintainers/apps.md b/docs/maintainers/apps.md
+index ccb9e3d..395d156 100644
+--- a/docs/maintainers/apps.md
++++ b/docs/maintainers/apps.md
+@@ -652,7 +652,7 @@ it does not run through the command registry.
+ 
+ ### Fake daemon
+ 
+-A task paused at a budget (ADR 0111) reads as the daemon words it, "Paused at its budget" (or the limit its card names), since the fake builds every task's `display` with the daemon's own `taskDisplay`; `test/inbox.test.tsx` and `test/real-daemon.test.ts` ("a budget stop is a clean pause": the stand-in's wrap-up, no critic call, the run's report in the drawer) check it on both sides.
++A task paused at a budget (ADR 0111) reads as the daemon words it, "Paused at its budget" (or the limit its card names), since the fake builds every task's `display` with the daemon's own `taskDisplay`; `test/inbox.test.tsx` and `test/real-daemon.test.ts` ("a budget stop is a clean pause": the stand-in's wrap-up, no critic call, the run's report in the drawer) check it on both sides. A session a pause at this month's cap ended reads "Stopped at this month's cap" (the daemon's `statusText`, which the session page shows as it comes) with "Stopped at this month's cap of CHF ..." in its result and Update; the fake simulates no budget stop, so only `test/real-daemon.test.ts` ("a session ended at this month's cap names it") checks it.
+ 
+ Sessions in the fake carry the real view's `stopReason` and `statusText` (design §3.7): a
+ started one reads "Working", `POST /sessions/:id/stop` ends it `stopped` with the stop reason
+diff --git a/docs/maintainers/notifications.md b/docs/maintainers/notifications.md
+index c7db340..470ddf6 100644
+--- a/docs/maintainers/notifications.md
++++ b/docs/maintainers/notifications.md
+@@ -44,7 +44,7 @@ names a session appends a `notification` event to that session's log.
+ | `request_opened` | normal | `producers.requestOpened` for a non-blocking human request | `/inbox` |
+ | `request_blocking` | **urgent** | `producers.requestOpened` when `blocking` is true | `/inbox` |
+ | `session_ended` | normal | `producers.sessionEnded` from the session runner, only when `sessionEndIsNews` says the end is news (see "Hearing once" below); the title is the project and the first point of the result's news ("Quote page: did 2 tasks: …"), the body the rest, never the title's sentence again, and "Open the session for the details." (or "Answer it in the Inbox." when the words ask the person) (design §5); a budget stop's title says the spend in CHF (`spentChfMicro`, the ledger's figure; the default rate without it; U-074), as does the calibration report's cost line | `/sessions/<id>` |
+-| `budget_stop` | **urgent** | `producers.sessionEnded` when `stopReason === "budget_exceeded"` (or `producers.budgetStop`) | `/sessions/<id>` |
++| `budget_stop` | **urgent** | `producers.sessionEnded` when `isBudgetStopReason(stopReason)` (`budget_exceeded`, or an outer limit's `budget_month`, `budget_project`, `budget_plan`; or `producers.budgetStop`) | `/sessions/<id>` |
+ | `critic_verdict` | info (`escalate` and `human` verdicts: normal) | `producers.criticVerdict` | `/projects/<id>/reviews` or `/inbox` |
+ | `injection_flagged` | **urgent** | `producers.injectionFlagged` with an `InjectionReport`; the body (`summarizeInjection`) is one line within 140 characters: the count, the origin (shortened to its host when long) and the rules that fired ("and 2 more" when they do not fit), never the passages (ADR 0047) | `/sessions/<id>` or `/inbox` |
+ | `update_available` | info | `producers.updateAvailable` from the updater | `/settings` (the UI's `/updates` page once the shell lists that root) |
+@@ -232,7 +232,16 @@ not cut): a body never repeats its title (phase E #89: a one-line result was sai
+ and again in the body). `SessionEndFacts.news` is the runner's `SessionResult.news` (the result
+ without what an open card says); without it the summary's lines are used, and
+ `SessionEndFacts.projectName` carries the project. `budgetStop`'s body leaves out "The
+-session's budget is used" and the money, which its title says. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
++session's budget is used" and the money, which its title says. A session a task's pause ended
++at an outer limit (stop reason `budget_month`, `budget_project` or `budget_plan`, ADR 0111;
++`isBudgetStopReason`) is a budget stop too and names it: the title "<Project>: stopped at this
++month's cap" (the limit only: a title has 60 characters), the body the limit's amount
++(`SessionEndFacts.stopCapChfMicro`) and the session's spend first ("This month's cap is CHF
++0.23. The session spent CHF 0.04."), then what the result adds without its stop sentence, then
++what helps ("Raise the monthly spending cap in Settings to go on.", the project budget, or
++"It can go on once your Claude subscription's usage resets."); before (review of budget-stop)
++it read "stopped, the budget is used" and advised "Start a session with a larger budget",
++which the month's cap refuses. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
+ critic sent "X" back'), never "Critic: revise (grade 35)" or "Review <id> of task <id>".
+ `killSwitch(…, by)` says whose stop it was ("Stop all: every session stopped", "Forerunner was
+ closed: its work stopped") and what happens next, without the run, process and token counts.
+diff --git a/docs/maintainers/runtime.md b/docs/maintainers/runtime.md
+index bf7a13b..fad54a5 100644
+--- a/docs/maintainers/runtime.md
++++ b/docs/maintainers/runtime.md
+@@ -1824,17 +1824,26 @@ budget-stop; the owner's decision of 2026-11-02).**
+   on (it outranks `finish_current`) and returns the line (`line`) on the run's first call. A line
+   at or below the first call's worst case is `saveOnly`: a tiny budget never hears a wrap-up and
+   pauses at its budget. A review run has no line; a run first seen with spend booked has none.
++  The line is fixed before the caps are checked, and a refusal of the run's first call (a budget
++  below that call's worst case, `firstCallUsdMicro`; or an outer cap) carries it as
++  `details.line` (`wrapUpLineIn` reads it), so both drivers still emit `budget_line` before the
++  run ends. Before (review of budget-stop), such a run said no line at all: live check 3's
++  CHF 0.02 on the coder's Sonnet is one, since 4 096 output tokens alone cost USD 0.041.
+ - *The message.* Only a run that asks for it hears it (`RunRequest.wrapUp` /
+   `SdkRunRequest.wrapUp`: the executor sets `WRAP_UP_TEXT` for a task's run, never chat,
+   planning or reviews). The loop appends it as one text block after the last tool results of
+   that request (`appendText`, a new message object, never inside a tool result); the SDK path
+   returns it once as PostToolUse's `additionalContext` with the next tool result. Both emit
+-  `budget_line` (cap, reserve, line, `saveOnly`) at the first call and `wrap_up_sent`, and report
+-  `wrapUpSent`. The executor turns both into session-log lines (`TaskStep` `note` → `task.step`,
+-  Details): "This run may spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve
+-  of CHF 0.08 to finish." or "... too little to wrap up (a reserve of CHF 0.02 is two calls):
+-  save only, ...", and "Told the coder to wrap up: ...". The brief says what the two headings
+-  are for (`WRAP_UP_BRIEF_LINE`).
++  `budget_line` (cap, reserve, line, the first call's worst case, `saveOnly`) at the first call
++  and `wrap_up_sent`, and report `wrapUpSent`. The executor turns both into session-log lines
++  (`TaskStep` `note` → `task.step`, Details; `budgetLineWords`, `wrapUpSentWords`): "This run may
++  spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
++  "... too little to wrap up (two steps may cost CHF 0.02): save only, ...", "This run may spend
++  CHF 0.02, less than its first step may cost (CHF 0.05): save only, it pauses at its budget
++  before that step.", and "Told the coder to wrap up: it spent CHF 0.30 of CHF 0.40, and its
++  next step could pass CHF 0.32, where CHF 0.08 is kept to finish." (it said "about a fifth is
++  left" while about 40% was). The brief says what the two headings are for
++  (`WRAP_UP_BRIEF_LINE`).
+ - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
+   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
+   do:", markdown-tolerant, "nothing" is empty, cut) and decides: a run is paused when it stopped
+@@ -1862,9 +1871,21 @@ budget-stop; the owner's decision of 2026-11-02).**
+ - *Routing.* The runner never reviews a `paused` result and counts no try. A pause at the task's
+   own limit, the project's budget, the month's cap or the subscription's share moves the task to
+   `needs_human` with today's budget card (`fileBudgetStopCard`, its title naming the limit); the
+-  last three then end the session (`stopEndsSession`). A pause at the session's budget goes the
+-  session-budget way below (C-36; `sessionBudgetStops` counts `paused` runs too) until the
+-  'budget-resume' area pauses it with the same card at the first stop.
++  last three then end the session (`stopEndsSession`) with the limit's own stop reason
++  (`budgetStopReasonOf` in `session/stop-words.ts`: `budget_month`, `budget_project`,
++  `budget_plan`; `isBudgetStopReason` says whether a reason is a budget stop) and its amount
++  (`LastSessionOutcome.stopCapChfMicro`, `SessionResult.stopCapChfMicro`). The session's words
++  name it: the badge "Stopped at this month's cap" (`sessionStatusText`, also the log's end
++  line), the result's "Stopped at this month's cap of CHF 0.23." (`stopWords`, also the Inbox
++  Update and the chat's facts), a stopped review's "the session stopped at this month's cap"
++  (`reviewStopWords`), and the urgent `budget_stop` notification ("<Project>: stopped at this
++  month's cap", the amounts first in its body and what helps: raise the monthly spending cap,
++  the project budget, or wait for the subscription's usage to reset; never a larger session
++  budget, which the month's cap refuses). Before (review of budget-stop), such a session took
++  `budget_exceeded` and said "Stopped: the budget is used" at 1% of its own budget. A pause at
++  the session's budget goes the session-budget way below (C-36; `sessionBudgetStops` counts
++  `paused` runs too; stop reason `budget_exceeded`) until the 'budget-resume' area pauses it
++  with the same card at the first stop.
+ - *The subscription's stop (`agent/sdk.ts`).* Every stop that is not the kill switch's (a
+   budget, the time limit, an error) aborts the run's controller and waits for Claude Code to
+   exit (`awaitExit`: what it still sends is read and its usage booked; after `SDK_STOP_WAIT_MS`
+@@ -1876,16 +1897,23 @@ budget-stop; the owner's decision of 2026-11-02).**
+   Usage is counted once per message id (parallel tool calls share one), and the result's totals
+   (`modelUsage`, else `usage`) book what the messages did not (the real output). Claude Code's
+   `maxBudgetUsd` is `claudeCodeBudgetUsd`: the run's cap plus 10% and USD 0.01, so Forerunner's
+-  own stop comes first.
+-- Tests: `budget.test.ts` (the line, the two-call reserve, save only, review), `wrap-up.test.ts`
+-  (one block after the tool results, none on a tiny budget or a non-task run, the SDK's
+-  `additionalContext` once), `sdk-driver.test.ts` ("a budget stop really stops Claude Code":
+-  exit before return, no tool after the stop, Stop now during the wait, `close()` after the
+-  wait, one count per message id with the result's output, `error_max_budget_usd`,
+-  `maxBudgetUsd`), `budget-pause.test.ts` (composed runtime: paused with no review and no try,
+-  reviewed after "Left to do: nothing" or with no wrap-up, the tiny budget, the work budget and
+-  its review, across a restart, the month's cap named), `task-budget-cap.test.ts`, and
+-  `real-daemon.test.ts` ("a budget stop is a clean pause") in `apps/ui`.
++  own stop comes first. While Claude Code winds down (`handle(m, false)`), a late result only
++  books its usage: an aborted query's own error result no longer turns the budget pause into a
++  Failed task tried again as a passing glitch (review of budget-stop).
++- Tests: `budget.test.ts` (the line, the two-call reserve, save only, review, the line on a
++  refused first call), `wrap-up.test.ts` (one block after the tool results, none on a tiny
++  budget or a non-task run, the SDK's `additionalContext` once, the save-only line when the
++  first call is refused on both paths), `sdk-driver.test.ts` ("a budget stop really stops Claude
++  Code": exit before return, no tool after the stop, Stop now during the wait, `close()` after
++  the wait, a late error result during the wait, one count per message id with the result's
++  output, `error_max_budget_usd`, `maxBudgetUsd`), `budget-pause.test.ts` (composed runtime:
++  paused with no review and no try, reviewed after "Left to do: nothing" or with no wrap-up, the
++  tiny budget, a budget below its first step, the work budget and its review, across a restart,
++  the month's cap named by the run, the card, the task and the session: its badge, result, log,
++  Update and notification), `session-status-words.test.ts` (the outer limits' stop reasons and
++  words), `notifications-channels.test.ts` (the budget stop at an outer limit),
++  `task-budget-cap.test.ts`, and `real-daemon.test.ts` ("a budget stop is a clean pause", "a
++  session ended at this month's cap names it") in `apps/ui`.
+ 
+ **A task a session's own budget stopped twice asks the person (C-36, ADR 0105, the session
+ lead's default).** A stop at the session's budget (`budget_exceeded`) releases the task to ready
+diff --git a/docs/maintainers/state-service.md b/docs/maintainers/state-service.md
+index f222188..fe8321e 100644
+--- a/docs/maintainers/state-service.md
++++ b/docs/maintainers/state-service.md
+@@ -209,7 +209,7 @@ directly. Four kinds become a push, each once per key:
+ | --- | --- | --- |
+ | `approval` | `human_request.changed` with status `open` and a `human_id` | `request_blocking` urgent, `request_opened` normal |
+ | `session` | `session.changed` to `completed`, `failed` or `stopped` (not a budget stop) | `session_ended` normal |
+-| `budget` | read like the runtime's `sessionEnded` producer (`sessionNotices`): a session that ended with `handoff.stop_reason` `budget_exceeded` (the runner's budget stop, usually below the cap because the hook refuses the crossing call) or stopped / failed at its cap is the stop; `budget_finish_current` (new work stopped at 80 %) or spend at `BUDGET_WARNING_SHARE` of the cap on a row that records spend while running is the warning, sent before the session's end notice | warning normal, stop `budget_stop` urgent |
++| `budget` | read like the runtime's `sessionEnded` producer (`sessionNotices`): a session that ended with `handoff.stop_reason` `budget_exceeded` (the runner's budget stop, usually below the cap because the hook refuses the crossing call), or with an outer limit's `budget_month`, `budget_project` or `budget_plan` (a task's pause there ended it, ADR 0111; the body names the limit: "A session stopped at this month's cap."), or stopped / failed at its cap is the stop; `budget_finish_current` (new work stopped at 80 %) or spend at `BUDGET_WARNING_SHARE` of the cap on a row that records spend while running is the warning, sent before the session's end notice | warning normal, stop `budget_stop` urgent |
+ | `message` | an unread message from another human's agent to the human or the human's agent; from the human's own agent only when it needs them (`question`, `request`, `warning` or `requires_ack`, the attention rule of `peerMessage`), so the plain `info` summary every session ends with does not buzz a second time | `peer_message` info |
+ 
+ Each notice goes to every non-revoked device of the human with a `push_token`
+@@ -407,7 +407,7 @@ Environment:
+ | `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence, TTL and `run()` under overlapping calls; `/sync/outbox` batch, duplicates, two batches in flight with one clientId apply once, scope per action, end to end |
+ | `security-state-api.test.ts` | the security review's attacks, each from a real input: a replayed mutation under another base64 spelling of the same signature (refused), a signature over another body / path / method, skew, pairing and token misuse, ownership on every route (another human's inbox, requests, costs, sessions; a decision of another project cannot be superseded through this project's route), revocation (tokens gone, the key cannot pair again, an open change feed ends instead of streaming on), the change feed never carries another human's private events (messages, requests, remote commands, `session.event` / `session.changed` of another human's agent; `Last-Event-ID` resume filtered the same way), input bounds (body size, batch size, the idempotency store capped per device), per-device rate limits, the remote command flow |
+ | `main.test.ts` | config defaults and validation, admin token by env or reference, `startService` boot / health / stop, refuses a newer schema; mirror wiring from `FORERUNNER_MIRROR_*` with the token by reference (`/health`, a pass on the interval against `MemoryGitHost`, `runOnce`, stops with the service), refuses a missing token reference or a malformed repo |
+-| `push.test.ts` | spec R.6 against a fake OAuth token endpoint (verifies the RS256 JWT, its claims and the grant type) and a fake FCM HTTP v1 endpoint (bearer, project, scripted per token), both real loopback HTTP (`fake-google.ts`): one minted access token reused, 5xx retried with doubling backoff and given up after four attempts, Retry-After on 429, no retry on 400, a stalled connection aborted after the timeout and retried, `UNREGISTERED` reported once, a 404 without the code (wrong URL, proxy page) a failure that keeps the token, token endpoint 5xx retried and a 401 re-minted, the sender built by `resolvePushSender` from the reference and env; the pairing `pushToken` stored and never served; a blank pairing token stored as none and a padded one trimmed; `PUT /devices/:id/push-token` (unsigned 401, another device 403, empty 400, clear, admin, 404, a revoked device 409, audit rows without the token); each of the four kinds sent to every device of the human with a token (not to tokenless devices or other humans), once, data-minimal; budget stop urgent and own-agent notes not pushed; a budget stop as the runner writes it (below the cap, `stop_reason`) urgent through quiet hours and `budget_finish_current` as warning plus end; a session end and its `info` summary buzz once while the own agent's question and another human's message are pushed; quiet hours hold a normal request, an urgent one goes through, the held one goes out at the end of the window (`/health` holding); one token on two rows sent once and cleared from both; the unregistered token cleared with a `push.token_cleared` audit row and push resuming after a refresh; a final failure counted in `/health`; no key, access token or registration token in any log line (debug level), `/health` or audit row; no service account = no request and `mode: polling` with the reason; a bad reference or key leaves push off with the reason, not the content |
++| `push.test.ts` | spec R.6 against a fake OAuth token endpoint (verifies the RS256 JWT, its claims and the grant type) and a fake FCM HTTP v1 endpoint (bearer, project, scripted per token), both real loopback HTTP (`fake-google.ts`): one minted access token reused, 5xx retried with doubling backoff and given up after four attempts, Retry-After on 429, no retry on 400, a stalled connection aborted after the timeout and retried, `UNREGISTERED` reported once, a 404 without the code (wrong URL, proxy page) a failure that keeps the token, token endpoint 5xx retried and a 401 re-minted, the sender built by `resolvePushSender` from the reference and env; the pairing `pushToken` stored and never served; a blank pairing token stored as none and a padded one trimmed; `PUT /devices/:id/push-token` (unsigned 401, another device 403, empty 400, clear, admin, 404, a revoked device 409, audit rows without the token); each of the four kinds sent to every device of the human with a token (not to tokenless devices or other humans), once, data-minimal; budget stop urgent and own-agent notes not pushed; a budget stop as the runner writes it (below the cap, `stop_reason`) urgent through quiet hours, a session ended at this month's cap (`budget_month`) the urgent stop naming the month, and `budget_finish_current` as warning plus end; a session end and its `info` summary buzz once while the own agent's question and another human's message are pushed; quiet hours hold a normal request, an urgent one goes through, the held one goes out at the end of the window (`/health` holding); one token on two rows sent once and cleared from both; the unregistered token cleared with a `push.token_cleared` audit row and push resuming after a refresh; a final failure counted in `/health`; no key, access token or registration token in any log line (debug level), `/health` or audit row; no service account = no request and `mode: polling` with the reason; a bad reference or key leaves push off with the reason, not the content |
+ | `audit-export.test.ts` | spec S.9: a phone's export holds its human's rows and their agents' rows only (JSON lines in time order, the download headers), CSV with the header and the formula guard, filters by agent / session / window (`to` exclusive), another human's agent and an unknown one 404, another human's `humanId` 403 and its own accepted, 401 without a token, the narrowest device (`read` only) may export, bad format / timestamp / window 400, the admin's whole log and one human's rows by `humanId` or `agentId`, 1003 rows streamed through three `list` calls capped at the page size |
+ | `desktop-devices.test.ts` | spec R.2 from the desktop's side: the runtime's `DeviceManager` (what the daemon's `/devices` routes call) against this app's real routes with the admin token, the daemon on its own local store so everything comes from the service: a pairing whose `fr://` link (`u`, `c`, `h`) carries a ten-minute code the phone completes with its own key, the new phone listed and this desktop `current`, another human's phone not listed, the audit row without the code or the token; the revocation immediate (one token dropped, the phone's next `/me` 401, the list shows it revoked); this desktop's own device refused, another human's and an unknown id `not_found` (the other human's phone still works); no admin token makes no call, a wrong one is `unavailable` with the 401 |
+ | `shared-secrets.test.ts` | spec S.13 on two profiles with two humans (Ada's and Bob's installs as `HttpSharedSecretService` clients over `app.request`, their phones as signed devices): wrap targets (installs with a key only, phones 403, unknown agent 404), propose (the grant pending with one blob, Bob's inbox shows the `shared_secret_grant` card, Ada's inbox nothing, both humans list the grant and a third cannot, nothing served while pending), validation (a device cannot propose; a blob for another human's install, a malformed blob, a bad name, an unknown agent, a named agent without a copy), approval (unsigned 401, without biometric 403 `biometric_required`, Ada's phone 403 on Bob's card; Bob's signed biometric yes activates it and the `secret_ref` mirror; the blob served to Bob's install for Bob's agent and refused for Alice, for Ada's install, for Bob's phone id, for another name, and to a device principal; Bob's install resolves the value by reference and caches nothing), refusal (cancelled, blobs dropped, nothing served, a fresh proposal afterwards), revoke (Bob's phone 403, Ada's phone unsigned 401 then signed 200, the runtime too, a pending grant's card withdrawn, idempotent after a re-sign), a revoked install (the desktop's `POST /devices/:id/revoke` of Bob's PC drops its blob from the active grant and writes `secret.blobs_dropped`; the service refuses to serve it, Bob's laptop still resolves, the next proposal does not target it and a blob made for it is 400; a second revoke drops nothing more), a second Bob install re-shared for; every store table and every response body scanned for the value in every encoding |
+diff --git a/docs/maintainers/testing.md b/docs/maintainers/testing.md
+index 6888195..0035e2a 100644
+--- a/docs/maintainers/testing.md
++++ b/docs/maintainers/testing.md
+@@ -2534,7 +2534,7 @@ the runtime's own intake parser, plan writer and critic schema; the live wrapper
+ provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
+ against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`
+ (calls.mjs, the daemon's and setup's environment, a live start without a key, a daemon that exits,
+-the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (so the critic's read path runs on every review), and since phase E (C-10) also the files the criteria name, in the same turn: a criterion is met only when a changed or read file shows it (`judgeCriterion`: a named file not in the folder, or "<A> links <B>" where A does not name B, is not met and sent back; no file named, or one not read, is "not checked by the stand-in"), so a walk's drawer no longer says met where the try said the file was missing; the stand-in's own plans were made to meet their criteria for it (the full web plan's page task no longer promises links to files later tasks write; a tester writes the test file its title names; `filesNamed` sees dotted names such as `main.test.js` and skips technology names such as Node.js), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card. `FORERUNNER_BENCH_ASK_STYLE=plain|bullets` makes a `FORERUNNER_BENCH_ASK` specialist ask in its report instead of through `ask_person`, as the live model did on 2026-11-02: it writes the work with a placeholder name and ends with "**Questions for the person:**" and one question per line, without bullets (`plain`, L-2) or with "- " items (`bullets`), after a "**Summary**:" heading and the placeholder under "Not done / risks" (L-12); after answers, or "Go ahead without" in its brief, it asks nothing. Since ADR 0110 a JavaScript file a brief runs as `node <file> ...` is a working tool (`toolContent` in `role-player.ts`: it counts the words, or the lines, of the file it is given or of standard input, or greets the name it is given: "Hello, Ada!"), and a JavaScript file of a brief that names an HTTP API, a server or a `GET /route` is a server that listens on `PORT` (3000 when unset) and answers each named route with JSON (`/health`: `{"ok":true}`), so the review's tries of a CLI and of an API have something real to run. The stand-in reads two brief lines as the live model did (phase E #95, `briefAsRead`): a brief that still says "End the report with one line per lesson" gets the lesson line at the end of a report deliverable (report.md, evaluation.md, ...), and a writer whose brief does not mention scratch notes leaves a `notes.md` at the root; the brief's `LESSONS_CONSTRAINT` keeps both out, so the bench shows what the brief causes instead of passing by construction (`packages/runtime/test/lessons-out-of-deliverables.test.ts`). Since ADR 0111 the stand-in hears the runtime's wrap-up (`WRAP_UP_MARK`, the start of the runtime's `WRAP_UP_TEXT`, which testenv does not import): told that about a fifth of the budget is left, it ends at once with a report that has "Where I stopped:" and "Left to do:" (a list, or "nothing" when its file is written and its JavaScript checked); and `FORERUNNER_BENCH_LONG=<s>` makes a matching specialist write its file one part per call (up to 30) until it hears the wrap-up or a budget stops it, so a task budget a few times the run's reserve shows the wrap-up and the pause on the bench and in `apps/ui/test/real-daemon.test.ts`, and a tiny one the save-only stop (`scripts/bench/journeys/budget.cjs`).
++the smoke journey's checks). Since ADR 0104 the stand-in critic reads the first changed file with `read_file` before it grades (so the critic's read path runs on every review), and since phase E (C-10) also the files the criteria name, in the same turn: a criterion is met only when a changed or read file shows it (`judgeCriterion`: a named file not in the folder, or "<A> links <B>" where A does not name B, is not met and sent back; no file named, or one not read, is "not checked by the stand-in"), so a walk's drawer no longer says met where the try said the file was missing; the stand-in's own plans were made to meet their criteria for it (the full web plan's page task no longer promises links to files later tasks write; a tester writes the test file its title names; `filesNamed` sees dotted names such as `main.test.js` and skips technology names such as Node.js), a page links styles.css and script.js only when they exist or are written in the same run (the page is tried as a person would open it), and `FORERUNNER_BENCH_MISSING=<s>` plants the live "Members chart" case: the specialist makes no deliverable, writes a note and ends its report with "Questions for the person:" asking for the `data/...` file its brief names; the stand-in critic accepts it, as the live critic did, and the runtime turns it into a card. `FORERUNNER_BENCH_ASK_STYLE=plain|bullets` makes a `FORERUNNER_BENCH_ASK` specialist ask in its report instead of through `ask_person`, as the live model did on 2026-11-02: it writes the work with a placeholder name and ends with "**Questions for the person:**" and one question per line, without bullets (`plain`, L-2) or with "- " items (`bullets`), after a "**Summary**:" heading and the placeholder under "Not done / risks" (L-12); after answers, or "Go ahead without" in its brief, it asks nothing. Since ADR 0110 a JavaScript file a brief runs as `node <file> ...` is a working tool (`toolContent` in `role-player.ts`: it counts the words, or the lines, of the file it is given or of standard input, or greets the name it is given: "Hello, Ada!"), and a JavaScript file of a brief that names an HTTP API, a server or a `GET /route` is a server that listens on `PORT` (3000 when unset) and answers each named route with JSON (`/health`: `{"ok":true}`), so the review's tries of a CLI and of an API have something real to run. The stand-in reads two brief lines as the live model did (phase E #95, `briefAsRead`): a brief that still says "End the report with one line per lesson" gets the lesson line at the end of a report deliverable (report.md, evaluation.md, ...), and a writer whose brief does not mention scratch notes leaves a `notes.md` at the root; the brief's `LESSONS_CONSTRAINT` keeps both out, so the bench shows what the brief causes instead of passing by construction (`packages/runtime/test/lessons-out-of-deliverables.test.ts`). Since ADR 0111 the stand-in hears the runtime's wrap-up (`WRAP_UP_MARK`, the start of the runtime's `WRAP_UP_TEXT`, which testenv does not import): told that about a fifth of the budget is left, it ends at once with a report that has "Where I stopped:" and "Left to do:" (a list, or "nothing" when its file is written and its JavaScript checked); and `FORERUNNER_BENCH_LONG=<s>` makes a matching specialist write its file one part per call (up to 30) until it hears the wrap-up or a budget stops it, so a task budget a few times the run's reserve shows the wrap-up and the pause on the bench and in `apps/ui/test/real-daemon.test.ts`, and a tiny one the save-only stop (`scripts/bench/journeys/budget.cjs`; its `--month` walk lowers the monthly cap and checks that the session the pause ends names this month's cap in its badge, result, log, Inbox Update and notification).
+ 
+ The daemon runs under `scripts/bench/supervise.mjs`, the bench's stand-in for the desktop
+ shell's supervisor (`restart.rs` `decide_after_exit`): an exit 86 with `restart.json` (finishing
+diff --git a/docs/user-guide.md b/docs/user-guide.md
+index b460740..5cc36af 100644
+--- a/docs/user-guide.md
++++ b/docs/user-guide.md
+@@ -598,16 +598,20 @@ working and ends its report with "Where I stopped:" and "Left to do:". The reser
+ fifth of the run's budget, or the cost of two calls when that is more; the session's log
+ (Details) says at the start of each run where its wrap-up comes ("This run may spend CHF 0.40:
+ at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish."). A budget too small
+-for even that is "save only": nothing is said to the agent, and the run pauses at its budget. A
+-run that stopped at a budget, or that wrapped up with work left, is paused: the critic does not
+-review half-done work, it does not count as a failed try, and its report stays in the task (the
+-next run reads it). A run that wraps up with nothing left is reviewed as usual. The card and the
+-task name the limit that stopped it: the task's budget, the specialist's limit, the session's
+-budget, the project's budget, this month's cap or the share of your Claude subscription
+-Forerunner may use; a stop at the project's budget, the month's cap or the subscription's share
+-ends the session. A task's run never spends more than what is left of the session's work budget
+-(the fifth kept for reviews stays for them), so a task that fills a whole session gets about 64%
+-of it for its work. On a Claude subscription a budget stop really stops Claude Code: the run
++for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
++smaller than a single step's cost says so and pauses before that step. A run that stopped at a
++budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
++it does not count as a failed try, and its report stays in the task (the next run reads it). A
++run that wraps up with nothing left is reviewed as usual. The card and the task name the limit
++that stopped it: the task's budget, the specialist's limit, the session's budget, the project's
++budget, this month's cap or the share of your Claude subscription Forerunner may use. A stop at
++the project's budget, the month's cap or the subscription's share ends the session, and the
++session says which ("Stopped at this month's cap" on its page, "Stopped at this month's cap of
++CHF 150.00." in its result and the Inbox). Its notification says what helps: raise the monthly
++spending cap in Settings, raise the project budget, or wait until your Claude subscription's
++usage resets (a larger session budget would not help). A task's run never spends more than what
++is left of the session's work budget (the fifth kept for reviews stays for them), so a task that
++fills a whole session gets about 64% of it for its work. On a Claude subscription a budget stop really stops Claude Code: the run
+ ends only once Claude Code has exited, and Stop now still ends it at once.
+ 
+ When a task fails twice, the third attempt goes to another specialist that can do the same
+diff --git a/packages/runtime/src/agent/loop.ts b/packages/runtime/src/agent/loop.ts
+index a6afa2b..427b1e6 100644
+--- a/packages/runtime/src/agent/loop.ts
++++ b/packages/runtime/src/agent/loop.ts
+@@ -2,7 +2,7 @@ import { fastModeVariantId } from "@forerunner/billing";
+ import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
+ import { z } from "zod";
+ import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
+-import type { SessionBudget } from "../enforcement/budget.ts";
++import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
+ import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
+ import type { KillSwitch } from "../enforcement/killswitch.ts";
+ import type { SignedToken } from "../enforcement/token.ts";
+@@ -191,13 +191,15 @@ export type RunEvent =
+   | { type: "warning"; message: string }
+   /**
+    * The run's wrap-up line, at its first call (ADR 0111): its cap, the reserve and the line;
+-   * `saveOnly` when the budget is too small to wrap up. Both drivers emit it.
++   * `saveOnly` when the budget is too small to wrap up; `firstCallUsdMicro`, that call's worst
++   * case. Both drivers emit it, also when that first call is refused (a budget below it).
+    */
+   | {
+       type: "budget_line";
+       capUsdMicro: number;
+       reserveUsdMicro: number;
+       lineUsdMicro: number;
++      firstCallUsdMicro: number;
+       saveOnly: boolean;
+     }
+   /** The run was told to wrap up (ADR 0111), once; `spentUsdMicro` is what it had spent then. */
+@@ -677,6 +679,10 @@ export class LoopAgentDriver {
+       const code = e instanceof ForerunnerError ? e.code : "internal";
+       outcome = outcomeFor(code, controller.signal);
+       const details = e instanceof ForerunnerError ? e.details : {};
++      // A run refused at its first call (a budget below that call's worst case) still says its
++      // line, "save only" (review of budget-stop): the refusal carries it.
++      const line = modelCalls === 0 ? wrapUpLineIn(details) : undefined;
++      if (line) emit({ type: "budget_line", ...line });
+       error = {
+         code,
+         message: errorMessage(e),
+diff --git a/packages/runtime/src/agent/sdk.ts b/packages/runtime/src/agent/sdk.ts
+index e01a97b..3257ffa 100644
+--- a/packages/runtime/src/agent/sdk.ts
++++ b/packages/runtime/src/agent/sdk.ts
+@@ -1,5 +1,5 @@
+ import { type Clock, errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
+-import type { SessionBudget } from "../enforcement/budget.ts";
++import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
+ import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
+ import type { KillSwitch } from "../enforcement/killswitch.ts";
+ import type { SignedToken } from "../enforcement/token.ts";
+@@ -312,6 +312,10 @@ export class SdkAgentDriver {
+         const total = resultTotals(msg);
+         const rest = total ? usageLeft(total, usage) : null;
+         if (rest) await book(rest, "result");
++        // While Claude Code winds down after a stop (`enforce` false), its late result only
++        // books its usage: the stop's outcome and the run's words stand (an aborted query's
++        // error result would otherwise turn a budget pause into a Failed task tried again).
++        if (!enforce) return;
+         if (msg.subtype === "error_max_budget_usd") {
+           // Claude Code's own spending limit (`maxBudgetUsd`, set above the run's cap): a stop
+           // at the run's budget, never a passing error the runner would try again at once.
+@@ -428,6 +432,10 @@ export class SdkAgentDriver {
+                 ? "killed"
+                 : "error";
+       const details = e instanceof ForerunnerError ? e.details : {};
++      // A run refused at its first call (a budget below that call's worst case: Claude Code is
++      // never started) still says its line, "save only" (review of budget-stop).
++      const line = numTurns === 0 ? wrapUpLineIn(details) : undefined;
++      if (line) emit({ type: "budget_line", ...line });
+       error = {
+         code,
+         message: errorMessage(e),
+diff --git a/packages/runtime/src/conversation/project-facts.ts b/packages/runtime/src/conversation/project-facts.ts
+index ecbddb4..07afc02 100644
+--- a/packages/runtime/src/conversation/project-facts.ts
++++ b/packages/runtime/src/conversation/project-facts.ts
+@@ -147,7 +147,7 @@ export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
+       lines.push(`Waiting for Docker: ${names(out.waitingForDocker).join(", ")}`);
+     // In words (design §5.6; phase E: before, the raw reason, "Ended because: plan awaiting
+     // approval"); a session that simply ran out of work says nothing more.
+-    const ended = out.stopReason ? stopWords(out.stopReason) : "";
++    const ended = out.stopReason ? stopWords(out.stopReason, out.stopCapChfMicro) : "";
+     if (ended) lines.push(`How it ended: ${ended}`);
+     if (typeof out.spentChfMicro === "number" && out.spentChfMicro > 0)
+       lines.push(`Spent: ${formatChf(out.spentChfMicro)}`);
+diff --git a/packages/runtime/src/daemon/compose.ts b/packages/runtime/src/daemon/compose.ts
+index c554c7e..ad93e33 100644
+--- a/packages/runtime/src/daemon/compose.ts
++++ b/packages/runtime/src/daemon/compose.ts
+@@ -2930,6 +2930,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
+         sessionId: result.sessionId,
+         status: result.status,
+         stopReason: result.stopReason,
++        ...(result.stopCapChfMicro !== undefined
++          ? { stopCapChfMicro: result.stopCapChfMicro }
++          : {}),
+         summary: result.summary,
+         news: result.news,
+         spentUsdMicro: result.spentUsdMicro,
+diff --git a/packages/runtime/src/daemon/task-display.ts b/packages/runtime/src/daemon/task-display.ts
+index 707673f..eb7f519 100644
+--- a/packages/runtime/src/daemon/task-display.ts
++++ b/packages/runtime/src/daemon/task-display.ts
+@@ -8,7 +8,7 @@ import type {
+   TaskRow,
+ } from "@forerunner/state";
+ import { TASK_FILES_EVENT } from "../session/peers.ts";
+-import { stopReasonOfHandoff } from "../session/stop-words.ts";
++import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
+ import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
+ import { verdictWords } from "./event-lines.ts";
+ import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
+@@ -302,8 +302,12 @@ export function reviewStopWords(task: Pick<TaskRow, "status">, sessionStop: stri
+       return "the session's budget was used";
+     case "timeout":
+       return "the session ran out of time";
+-    default:
+-      return "it was stopped";
++    default: {
++      // A pause at the month's cap, the project's budget or the subscription's share ended the
++      // session (ADR 0111): the review stopped there, not at the session's own budget.
++      const limit = stopLimitWords(sessionStop);
++      return limit ? `the session stopped at ${limit}` : "it was stopped";
++    }
+   }
+ }
+ 
+diff --git a/packages/runtime/src/enforcement/budget.ts b/packages/runtime/src/enforcement/budget.ts
+index b9bba21..5fc899f 100644
+--- a/packages/runtime/src/enforcement/budget.ts
++++ b/packages/runtime/src/enforcement/budget.ts
+@@ -41,27 +41,55 @@ export const WRAP_UP_CALLS = 2;
+  * the reserve. The call that would take the run past the line brings the wrap-up message, once.
+  * `saveOnly`: the line is at or below the first call's worst case (a tiny budget: the reserve
+  * is at least the cap, or leaves no room for one call), so no wrap-up is sent and the run
+- * pauses at its budget with the code-side save only.
++ * pauses at its budget with the code-side save only. `firstCallUsdMicro`: that first call's
++ * worst case; above the cap, the run is refused before its first call (a save-only line too).
+  */
+ export interface RunWrapUpLine {
+   capUsdMicro: number;
+   reserveUsdMicro: number;
+   lineUsdMicro: number;
++  firstCallUsdMicro: number;
+   saveOnly: boolean;
+ }
+ 
+ /** The wrap-up line of a run with this cap whose first call's worst case is `firstCallUsdMicro`. */
+ export function wrapUpLineOf(capUsdMicro: number, firstCallUsdMicro: number): RunWrapUpLine {
+-  const reserve = Math.max(
+-    Math.ceil(capUsdMicro * WRAP_UP_SHARE),
+-    WRAP_UP_CALLS * Math.max(0, firstCallUsdMicro),
+-  );
++  const first = Math.max(0, firstCallUsdMicro);
++  const reserve = Math.max(Math.ceil(capUsdMicro * WRAP_UP_SHARE), WRAP_UP_CALLS * first);
+   const line = Math.max(0, capUsdMicro - reserve);
+   return {
+     capUsdMicro,
+     reserveUsdMicro: reserve,
+     lineUsdMicro: line,
+-    saveOnly: line <= firstCallUsdMicro,
++    firstCallUsdMicro: first,
++    saveOnly: line <= first,
++  };
++}
++
++/**
++ * The run's line a refusal of its first call carries (`details.line`, review of budget-stop):
++ * a budget below that call's worst case is refused before the call, and the drivers still say
++ * the line ("save only") from it. Undefined when the details hold none.
++ */
++export function wrapUpLineIn(
++  details: Record<string, unknown> | undefined,
++): RunWrapUpLine | undefined {
++  const l = details?.line;
++  if (!l || typeof l !== "object" || Array.isArray(l)) return undefined;
++  const o = l as Record<string, unknown>;
++  const n = (k: string) =>
++    typeof o[k] === "number" && Number.isFinite(o[k]) ? (o[k] as number) : null;
++  const cap = n("capUsdMicro");
++  const reserve = n("reserveUsdMicro");
++  const line = n("lineUsdMicro");
++  const first = n("firstCallUsdMicro");
++  if (cap === null || reserve === null || line === null || first === null) return undefined;
++  return {
++    capUsdMicro: cap,
++    reserveUsdMicro: reserve,
++    lineUsdMicro: line,
++    firstCallUsdMicro: first,
++    saveOnly: o.saveOnly === true,
+   };
+ }
+ 
+@@ -144,7 +172,9 @@ export class SessionBudget {
+    * Decide whether a call with the given estimate may start. Order: run cap, then session cap.
+    * At 80% of the session cap: finish current task, no new work. At 100%: stop. For a work run,
+    * the call that would take it past its wrap-up line (`RunWrapUpLine`, set at its first call)
+-   * answers `wrap_up`, once; a save-only line never does. The run's first call carries its line.
++   * answers `wrap_up`, once; a save-only line never does. The run's first call carries its line,
++   * and so does a refusal of that call (`details.line`): a budget below one call's worst case is
++   * refused before the call, and its line ("save only") is still said.
+    */
+   precheck(
+     runId: string,
+@@ -152,18 +182,27 @@ export class SessionBudget {
+     estimateUsdMicro: number,
+     phase: "work" | "review",
+   ): PrecheckDecision {
+-    const local = this.precheckCaps(runId, runCapUsdMicro, estimateUsdMicro, phase);
+-    if (phase !== "work") return local;
++    checkAmount(estimateUsdMicro, "budget estimate");
+     const runSpent = this.spentByRunId(runId);
+     let first: RunWrapUpLine | undefined;
+-    let line = this.runLines.get(runId);
+-    // The line is fixed at the run's first call, from that call's estimate. A run first seen
+-    // with spend already booked (never in the drivers, which check before every call) has none.
+-    if (!line && runSpent === 0) {
++    let line = phase === "work" ? this.runLines.get(runId) : undefined;
++    // The line is fixed at the run's first call, from that call's estimate, before the caps are
++    // checked (review of budget-stop: a first call refused at the run's cap said no line). A run
++    // first seen with spend already booked (never in the drivers, which check before every
++    // call) has none.
++    if (phase === "work" && !line && runSpent === 0) {
+       first = wrapUpLineOf(runCapUsdMicro, estimateUsdMicro);
+       line = { ...first, wrapped: false };
+       this.runLines.set(runId, line);
+     }
++    let local: { decision: "allow" | "finish_current" };
++    try {
++      local = this.precheckCaps(runId, runCapUsdMicro, estimateUsdMicro, phase);
++    } catch (e) {
++      if (first && e instanceof ForerunnerError) e.details.line = first;
++      throw e;
++    }
++    if (phase !== "work") return local;
+     const wrap =
+       !!line && !line.saveOnly && !line.wrapped && runSpent + estimateUsdMicro > line.lineUsdMicro;
+     if (wrap && line) line.wrapped = true;
+diff --git a/packages/runtime/src/enforcement/hooks.ts b/packages/runtime/src/enforcement/hooks.ts
+index 867ad15..b550c56 100644
+--- a/packages/runtime/src/enforcement/hooks.ts
++++ b/packages/runtime/src/enforcement/hooks.ts
+@@ -168,6 +168,8 @@ export class EnforcementHooks {
+             spentUsdMicro: outer.spentUsdMicro,
+             capUsdMicro: outer.capUsdMicro,
+             runId: claims.runId,
++            // The run's line, when this was its first call: the drivers still say it.
++            ...(local.line ? { line: local.line } : {}),
+           },
+         },
+       );
+diff --git a/packages/runtime/src/notifications/producers.ts b/packages/runtime/src/notifications/producers.ts
+index 983f9e3..8fe12e8 100644
+--- a/packages/runtime/src/notifications/producers.ts
++++ b/packages/runtime/src/notifications/producers.ts
+@@ -11,7 +11,14 @@ import { requestWords } from "../daemon/request-words.ts";
+ import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
+ import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
+ import type { InjectionReport } from "../injection/scan.ts";
+-import { isNewsLine } from "../session/result.ts";
++import { isNewsLine, stopWords } from "../session/result.ts";
++import {
++  isBudgetStopReason,
++  MONTH_CAP_STOP,
++  PLAN_SHARE_STOP,
++  PROJECT_BUDGET_STOP,
++  stopLimitWords,
++} from "../session/stop-words.ts";
+ import type { Notification, NotificationRecord } from "./types.ts";
+ 
+ /*
+@@ -127,6 +134,11 @@ export interface SessionEndFacts {
+   sessionId: string;
+   status: string;
+   stopReason: string;
++  /**
++   * The amount of the outer limit a pause ended the session at (this month's cap, the project's
++   * budget; ADR 0111), in CHF: the budget stop's body says it first.
++   */
++  stopCapChfMicro?: number;
+   summary: string;
+   /**
+    * The result's lines without what an open Inbox card already says (the runner's
+@@ -209,7 +221,7 @@ const PERSON_STOPS = new Set(["you", "stop_all", "quit"]);
+  * now sent "Quote page: stopped by you" back to the person who pressed it.
+  */
+ export function sessionEndIsNews(r: SessionEndFacts): boolean {
+-  if (r.stopReason === "budget_exceeded") return true;
++  if (isBudgetStopReason(r.stopReason)) return true;
+   if (PERSON_STOPS.has(r.stopReason)) return false;
+   return (r.news ?? linesOf(r.summary)).some(isNewsLine);
+ }
+@@ -222,7 +234,7 @@ export function sessionEndIsNews(r: SessionEndFacts): boolean {
+  * send it at all.
+  */
+ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification {
+-  if (r.stopReason === "budget_exceeded") return budgetStop(humanId, r);
++  if (isBudgetStopReason(r.stopReason)) return budgetStop(humanId, r);
+   const lines = r.news ? r.news.map((l) => l.trim()).filter(Boolean) : linesOf(r.summary);
+   const { first, rest } = splitResult(lines);
+   // "Answer it in the Inbox" only when the words name something the person must answer: with
+@@ -243,23 +255,73 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification
+   };
+ }
+ 
++/** The outer limit's amount, as the budget stop's body says it first ("This month's cap is CHF 0.23."). */
++function limitAmount(stopReason: string, capChfMicro: number | undefined): string {
++  if (typeof capChfMicro !== "number" || capChfMicro <= 0) return "";
++  switch (stopReason) {
++    case MONTH_CAP_STOP:
++      return `This month's cap is ${formatChf(capChfMicro)}.`;
++    case PROJECT_BUDGET_STOP:
++      return `The project's budget is ${formatChf(capChfMicro)}.`;
++    default:
++      return "";
++  }
++}
++
++/** What helps after a stop at an outer limit (ADR 0111); a larger session budget does not. */
++function goOnAfter(stopReason: string): string {
++  switch (stopReason) {
++    case MONTH_CAP_STOP:
++      return "Raise the monthly spending cap in Settings to go on.";
++    case PROJECT_BUDGET_STOP:
++      return "Raise the project budget in the project's settings to go on.";
++    case PLAN_SHARE_STOP:
++      return "It can go on once your Claude subscription's usage resets.";
++    default:
++      return "Start a session with a larger budget to go on.";
++  }
++}
++
+ /**
+  * A session hit its cap and stopped with a handoff (scenario 5). The title says the stop and
+  * the spend; the body what the result adds (what was done, what is left), never "The session's
+- * budget is used" or the money again.
++ * budget is used" or the money again. A stop at an outer limit (this month's cap, the project's
++ * budget, the subscription's share: ADR 0111) names it in the title and what helps in the
++ * body, the amounts first (a title has 60 characters): before, it read "stopped, the budget is
++ * used" and advised a larger session budget, which the month's cap refuses (review of
++ * budget-stop).
+  */
+ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
+   const chf = r.spentChfMicro ?? chfMicroOf(r.spentUsdMicro);
+-  const said = (r.news ?? linesOf(r.summary))
++  const limit = stopLimitWords(r.stopReason);
++  let text = (r.news ?? linesOf(r.summary))
+     .join(" ")
+-    .replace(/The session's budget is used\.\s*/g, "")
++    .replace(/The session's budget is used\.\s*/g, "");
++  // The title says the limit: its sentence is not said again.
++  if (limit) text = text.split(stopWords(r.stopReason, r.stopCapChfMicro)).join(" ");
++  const said = text
++    .replace(/\s{2,}/g, " ")
+     .replace(/\s*CHF \d+\.\d{2}\.\s*$/, "")
+     .trim();
+   return {
+     kind: "budget_stop",
+     humanId,
+-    title: titled(r.projectName, `stopped, the budget is used (${formatChf(chf)} spent)`),
+-    body: bodyOf(said, "Start a session with a larger budget to go on."),
++    title: titled(
++      r.projectName,
++      limit ? `stopped at ${limit}` : `stopped, the budget is used (${formatChf(chf)} spent)`,
++    ),
++    body: bodyOf(
++      limit
++        ? [
++            limitAmount(r.stopReason, r.stopCapChfMicro),
++            `The session spent ${formatChf(chf)}.`,
++            said,
++          ]
++            .filter(Boolean)
++            .join(" ")
++        : said,
++      goOnAfter(r.stopReason),
++    ),
+     link: `/sessions/${r.sessionId}`,
+     projectId: r.projectId ?? undefined,
+     sessionId: r.sessionId,
+diff --git a/packages/runtime/src/session/budget-pause.ts b/packages/runtime/src/session/budget-pause.ts
+index 315886c..334dcb5 100644
+--- a/packages/runtime/src/session/budget-pause.ts
++++ b/packages/runtime/src/session/budget-pause.ts
+@@ -191,13 +191,37 @@ export function pauseSentence(
+     : `The run stopped at ${what}, after spending ${chf(spentUsdMicro)}.`;
+ }
+ 
+-/** The run's budget line at its first call, for the session log (ADR 0111). */
++/**
++ * The run's budget line at its first call, for the session log (ADR 0111). A budget below even
++ * its first step's worst case is refused before that step and says so (review of budget-stop:
++ * it said no line at all); "a reserve of CHF 0.01 is two calls" read oddly, so the save-only
++ * line names what two steps may cost.
++ */
+ export function budgetLineWords(line: RunWrapUpLine, chf: (usdMicro: number) => string): string {
++  if (line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro)
++    return `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): save only, it pauses at its budget before that step.`;
+   return line.saveOnly
+-    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (a reserve of ${chf(line.reserveUsdMicro)} is two calls): save only, it pauses at its budget with its work kept.`
++    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): save only, it pauses at its budget with its work kept.`
+     : `This run may spend ${chf(line.capUsdMicro)}: at ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
+ }
+ 
++/**
++ * The session log's line when the run is told to wrap up (ADR 0111), by its line: the call that
++ * would pass the line brings it, so "a fifth is left" was not what was left (review of
++ * budget-stop: "about a fifth ... is left (it spent CHF 0.02 of CHF 0.04)").
++ */
++export function wrapUpSentWords(
++  specialist: string,
++  spentUsdMicro: number,
++  capUsdMicro: number,
++  line: RunWrapUpLine | undefined,
++  chf: (usdMicro: number) => string,
++): string {
++  return line
++    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and its next step could pass ${chf(line.lineUsdMicro)}, where ${chf(line.reserveUsdMicro)} is kept to finish.`
++    : `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
++}
++
+ /** A handoff as the run's artifact stores it: data only, already redacted and cut. */
+ export function handoffArtifact(handoff: RunHandoff): {
+   handoff: { stopped: string; leftToDo: string[]; stoppedBy: string };
+diff --git a/packages/runtime/src/session/executor.ts b/packages/runtime/src/session/executor.ts
+index 8032110..00ce3ac 100644
+--- a/packages/runtime/src/session/executor.ts
++++ b/packages/runtime/src/session/executor.ts
+@@ -34,6 +34,7 @@ import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
+ import { type DelegationBrief, renderBrief, validateBrief } from "../brief.ts";
+ import { headroomHeaders, isProxyable } from "../context/headroom.ts";
+ import type { ContextManager } from "../context/manager.ts";
++import type { RunWrapUpLine } from "../enforcement/budget.ts";
+ import type { RunBilling } from "../enforcement/hooks.ts";
+ import type { TokenIssuer } from "../enforcement/token.ts";
+ import {
+@@ -120,6 +121,7 @@ import {
+   type RunHandoff,
+   stopSourceOf,
+   WRAP_UP_BRIEF_LINE,
++  wrapUpSentWords,
+ } from "./budget-pause.ts";
+ import { screenLessons } from "./lessons.ts";
+ import { renderHeardLines } from "./live-chat.ts";
+@@ -1106,17 +1108,22 @@ export class LoopTaskExecutor implements TaskExecutor {
+     // Live progress (design §4.14, U-086): every model call and tool result is a step the runner
+     // counts and logs while the task runs; the tool call's input names what it touched.
+     const calls = new Map<string, { name: string; input: unknown }>();
++    // The run's wrap-up line (its budget_line), which the wrap-up's own log line names.
++    let runLine: RunWrapUpLine | undefined;
+     const onEvent = (ev: RunEvent) => {
+       this.deps.onEvent?.(task.id, ev);
+       if (!ctx.onStep) return;
+       // ADR 0111: the run's budget line at its start (the reserve, or "save only") and its
+       // wrap-up are lines of the session's log.
+-      if (ev.type === "budget_line")
++      if (ev.type === "budget_line") {
++        runLine = ev;
+         ctx.onStep({ kind: "note", text: budgetLineWords(ev, (n) => this.chfText(n)) });
+-      else if (ev.type === "wrap_up_sent")
++      } else if (ev.type === "wrap_up_sent")
+         ctx.onStep({
+           kind: "note",
+-          text: `Told the ${spec.name} to wrap up: about a fifth of this task's budget is left (it spent ${this.chfText(ev.spentUsdMicro)} of ${this.chfText(ev.capUsdMicro)}).`,
++          text: wrapUpSentWords(spec.name, ev.spentUsdMicro, ev.capUsdMicro, runLine, (n) =>
++            this.chfText(n),
++          ),
+         });
+       else if (ev.type === "model_call_end")
+         ctx.onStep({ kind: "model", costUsdMicro: ev.costUsdMicro });
+diff --git a/packages/runtime/src/session/result.ts b/packages/runtime/src/session/result.ts
+index b183cee..e5fb9df 100644
+--- a/packages/runtime/src/session/result.ts
++++ b/packages/runtime/src/session/result.ts
+@@ -2,6 +2,12 @@ import { formatChf } from "@forerunner/billing";
+ import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
+ import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
+ import { namesOf } from "./recovery.ts";
++import {
++  MONTH_CAP_STOP,
++  PLAN_SHARE_STOP,
++  PROJECT_BUDGET_STOP,
++  stopLimitWords,
++} from "./stop-words.ts";
+ 
+ /**
+  * A session's result in the person's words (core-experience design §5, "Session result"):
+@@ -34,6 +40,11 @@ export interface LastSessionOutcome {
+   /** Full-review tasks waiting for the Docker sandbox. */
+   waitingForDocker: NamedTask[];
+   stopReason: string;
++  /**
++   * The amount of the outer limit a pause ended the session at (`budget_month`,
++   * `budget_project`, ADR 0111), in CHF: the result's "Stopped at this month's cap of CHF 0.23."
++   */
++  stopCapChfMicro?: number;
+   spentChfMicro: number;
+ }
+ 
+@@ -80,9 +91,17 @@ const noDot = (s: string) => s.trim().replace(/[.\s]+$/, "");
+ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+ const titlesOf = (l: readonly NamedTask[]) => l.map((t) => t.title);
+ 
+-/** How the session ended, in words, or "" when it simply ran out of work. */
+-export function stopWords(stopReason: string): string {
++/**
++ * How the session ended, in words, or "" when it simply ran out of work. A pause at an outer
++ * limit names it, with its amount when known (`capChfMicro`, ADR 0111).
++ */
++export function stopWords(stopReason: string, capChfMicro?: number): string {
+   switch (stopReason) {
++    case MONTH_CAP_STOP:
++    case PROJECT_BUDGET_STOP:
++      return `Stopped at ${stopLimitWords(stopReason, capChfMicro)}.`;
++    case PLAN_SHARE_STOP:
++      return "Stopped at the share of your Claude subscription that Forerunner may use.";
+     case "you":
+       return "Stopped by you.";
+     case "quit":
+@@ -169,7 +188,7 @@ export function sessionResultLines(f: ResultFacts, told?: ToldByCards): string[]
+   if (did.length) lines.push(did.join(" "));
+   // 3. What is next, how it ended, the money.
+   const next: string[] = [];
+-  const stop = stopWords(o.stopReason);
++  const stop = stopWords(o.stopReason, o.stopCapChfMicro);
+   if (stop) next.push(stop);
+   if (f.leftOutForBudget.length) {
+     const named = f.leftOutForBudget
+diff --git a/packages/runtime/src/session/runner.ts b/packages/runtime/src/session/runner.ts
+index 783f983..87fa3ab 100644
+--- a/packages/runtime/src/session/runner.ts
++++ b/packages/runtime/src/session/runner.ts
+@@ -106,7 +106,13 @@ import {
+   type SandboxWaitingTask,
+   summarizeSandboxWaiting,
+ } from "./sandbox-gate.ts";
+-import { type PersonStop, personStopOf, taskReasonForStop } from "./stop-words.ts";
++import {
++  budgetStopReasonOf,
++  type PersonStop,
++  personStopOf,
++  stopLimitWords,
++  taskReasonForStop,
++} from "./stop-words.ts";
+ import type { WebSource } from "./web-sources.ts";
+ 
+ /**
+@@ -439,6 +445,11 @@ export interface SessionResult {
+   news: string[];
+   handoff: Record<string, unknown>;
+   stopReason: string;
++  /**
++   * The amount of the outer limit a task's pause ended the session at (this month's cap, the
++   * project's budget: ADR 0111), in CHF; the budget-stop notification names it.
++   */
++  stopCapChfMicro?: number;
+   /** What the human said during the session and the task each line reached (spec O.9). */
+   heard: HeardDelivery[];
+ }
+@@ -828,6 +839,8 @@ export class SessionRunner {
+     let plan: SessionPlan | null = null;
+     let brief: StateBrief | null = null;
+     let stopReason = "completed";
++    /** The amount of the outer limit a task's pause ended the session at (ADR 0111), if any. */
++    let stopCapUsdMicro: number | null = null;
+     let status: SessionRow["status"] = "completed";
+     /** The queue items each task's brief carried (design §4.7: used up by finished work). */
+     const notesGiven = new Map<string, string[]>();
+@@ -2015,7 +2028,10 @@ export class SessionRunner {
+               result.budgetStop &&
+               stopEndsSession(result.budgetStop.source)
+             ) {
+-              stopReason = "budget_exceeded";
++              // The session names the limit that ended it (review of budget-stop): before, it
++              // said "the session's budget is used" at 1% of its own budget.
++              stopReason = budgetStopReasonOf(result.budgetStop.source);
++              stopCapUsdMicro = result.budgetStop.capUsdMicro;
+               skipped.push(...queue.map((i) => i.taskId));
+               queue.length = 0;
+               break;
+@@ -2322,6 +2338,10 @@ export class SessionRunner {
+         .filter((t) => endState.readyNow.some((r) => r.id === t.id))
+         .map((t) => ({ id: t.id, title: t.title })),
+       stopReason,
++      // The outer limit's amount, while the session still ends there (ADR 0111).
++      ...(stopCapUsdMicro !== null && stopLimitWords(stopReason) !== null
++        ? { stopCapChfMicro: usdToChfMicro(stopCapUsdMicro, rate) }
++        : {}),
+       spentChfMicro: spentChf,
+     };
+     const resultFacts = {
+@@ -2805,6 +2825,9 @@ export class SessionRunner {
+       news,
+       handoff,
+       stopReason,
++      ...(outcome.stopCapChfMicro !== undefined
++        ? { stopCapChfMicro: outcome.stopCapChfMicro }
++        : {}),
+       heard,
+     };
+   }
+diff --git a/packages/runtime/src/session/stop-words.ts b/packages/runtime/src/session/stop-words.ts
+index 41ec0e9..d0eb5ee 100644
+--- a/packages/runtime/src/session/stop-words.ts
++++ b/packages/runtime/src/session/stop-words.ts
+@@ -1,4 +1,6 @@
++import { formatChf } from "@forerunner/billing";
+ import { type StopBy, stopByOf } from "../enforcement/killswitch.ts";
++import type { BudgetStopSource } from "./budget-pause.ts";
+ 
+ /**
+  * How a session ended, in the person's words (core-experience design §3.7, §4.9). Stop now,
+@@ -43,6 +45,65 @@ export function taskReasonForStop(stop: PersonStop): string {
+ /** The stop reason a session that stopped after its current task carries. */
+ export const STOPPED_AFTER_TASK = "stopped_after_task";
+ 
++/**
++ * The stop reasons of a session ended by a task's pause at an outer limit (ADR 0111, review of
++ * budget-stop): this month's cap, the project's budget, the subscription's share. Before, the
++ * session took `budget_exceeded` and said "Stopped: the budget is used" and "The session's
++ * budget is used." while its own budget was 1% spent, and the notification advised a larger
++ * session budget, which the month's cap refuses. A stop at the session's own budget keeps
++ * `budget_exceeded`.
++ */
++export const MONTH_CAP_STOP = "budget_month";
++export const PROJECT_BUDGET_STOP = "budget_project";
++export const PLAN_SHARE_STOP = "budget_plan";
++const OUTER_LIMIT_STOPS: ReadonlySet<string> = new Set([
++  MONTH_CAP_STOP,
++  PROJECT_BUDGET_STOP,
++  PLAN_SHARE_STOP,
++]);
++
++/** The session's stop reason for a pause at this limit (`BudgetStop.source`). */
++export function budgetStopReasonOf(source: BudgetStopSource): string {
++  switch (source) {
++    case "month":
++      return MONTH_CAP_STOP;
++    case "project":
++      return PROJECT_BUDGET_STOP;
++    case "plan":
++      return PLAN_SHARE_STOP;
++    default:
++      return "budget_exceeded";
++  }
++}
++
++/** Whether a session ended at a budget: its own (`budget_exceeded`) or an outer limit's. */
++export function isBudgetStopReason(stopReason: string | null | undefined): boolean {
++  return stopReason === "budget_exceeded" || (!!stopReason && OUTER_LIMIT_STOPS.has(stopReason));
++}
++
++/**
++ * The outer limit a session's stop names, short ("this month's cap of CHF 0.23", "your Claude
++ * subscription's share"), or null for any other stop. `capChfMicro`: the limit's amount, when
++ * known (the subscription's share has none in CHF).
++ */
++export function stopLimitWords(
++  stopReason: string | null | undefined,
++  capChfMicro?: number,
++): string | null {
++  const of =
++    typeof capChfMicro === "number" && capChfMicro > 0 ? ` of ${formatChf(capChfMicro)}` : "";
++  switch (stopReason) {
++    case MONTH_CAP_STOP:
++      return `this month's cap${of}`;
++    case PROJECT_BUDGET_STOP:
++      return `the project's budget${of}`;
++    case PLAN_SHARE_STOP:
++      return "your Claude subscription's share";
++    default:
++      return null;
++  }
++}
++
+ /**
+  * The session's status in words (the session page's badge, the header chip): "Working",
+  * "Done", "Stopped by you", "Interrupted: Forerunner closed", ...
+@@ -66,6 +127,10 @@ export function sessionStatusText(status: string, stopReason: string | null | un
+     case "budget_exceeded":
+     case "budget_finish_current":
+       return "Stopped: the budget is used";
++    case MONTH_CAP_STOP:
++    case PROJECT_BUDGET_STOP:
++    case PLAN_SHARE_STOP:
++      return `Stopped at ${stopLimitWords(stopReason)}`;
+     case "timeout":
+       return "Stopped: the time limit was reached";
+     case "plan_awaiting_approval":
+diff --git a/packages/runtime/test/budget-pause.test.ts b/packages/runtime/test/budget-pause.test.ts
+index 87a574e..d644edc 100644
+--- a/packages/runtime/test/budget-pause.test.ts
++++ b/packages/runtime/test/budget-pause.test.ts
+@@ -305,6 +305,26 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0111)", () => {
+     expect(lines(r.events).some((l) => /too little to wrap up .*: save only/.test(l))).toBe(true);
+   }, 60_000);
+ 
++  // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
++  // on Sonnet) was refused before its line was said, so the session log had no budget line.
++  it("a budget below its first step's cost says so (save only) and pauses before that step", async () => {
++    const r = await runOne(req, rt, "Stub page", { budgetUsdMicro: 1_000 });
++    expect(coderCalls("Stub page")).toHaveLength(0);
++    expect(
++      lines(r.events).some((l) =>
++        /^This run may spend CHF [\d.]+, less than its first step may cost \(CHF [\d.]+\): save only, it pauses at its budget before that step\.$/.test(
++          l,
++        ),
++      ),
++      lines(r.events).join(" | "),
++    ).toBe(true);
++    const task = await rt.store.task.mustGet(r.taskId);
++    expect(task.status).toBe("needs_human");
++    expect(task.attempt).toBe(0);
++    expect(await reviewOf(r.taskId)).toBeUndefined();
++    expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
++  }, 60_000);
++
+   it("a run is capped at what is left of the session's work budget, so its review keeps the reserve", async () => {
+     // A session of USD 2 and a task with no budget of its own (the coder's limit is USD 3): the
+     // run may spend the session's work budget, USD 1.60 (CHF 1.28), not the whole USD 2. (The
+@@ -380,4 +400,45 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0111)", ()
+     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
+     expect(r.runs[0]?.outcome).toBe("budget_exceeded");
+   }, 60_000);
++
++  // Review of budget-stop: the run, the card and the task named the month, but the session it
++  // ended said "Stopped: the budget is used" and "The session's budget is used." (at CHF 0.04 of
++  // a CHF 5.00 session), the Inbox Update said the same, and the urgent notification advised
++  // "Start a session with a larger budget to go on", which the month's cap refuses.
++  it("the session it ends names this month's cap too: its status, its result, its log, the Update and the notification", async () => {
++    const r = await runOne(req, rt, "Members page", { budgetUsdMicro: 2_000_000 });
++    expect(r.session.status).toBe("stopped");
++    expect(r.session.statusText).toBe("Stopped at this month's cap");
++    const summary = String(r.session.summary);
++    expect(summary).toContain("Stopped at this month's cap of CHF 0.10.");
++    expect(summary).not.toMatch(/session's budget|budget is used/);
++    const said = lines(r.events);
++    // The session's end line (before: "Stopped: the budget is used: 1 needs you. CHF 0.04.").
++    expect(
++      said.some((l) => /^Stopped at this month's cap: /.test(l)),
++      said.join(" | "),
++    ).toBe(true);
++    expect(said.join(" | ")).not.toMatch(/budget is used/);
++    // The Inbox Update (the card says the task's decision; the Update says how the session ended).
++    const updates = ((await (await req("/inbox")).json()) as { messages: Json[] }).messages
++      .filter((m) => m.projectId === r.projectId)
++      .map((m) => String(m.body));
++    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.10.");
++    expect(updates.join(" | ")).not.toMatch(/budget is used/);
++    // The urgent notification names the month and says what helps.
++    const stop = await waitFor(
++      async () =>
++        (
++          (await (await req("/notifications/recent?limit=200")).json()) as {
++            notifications: Json[];
++          }
++        ).notifications.find((n) => n.kind === "budget_stop" && n.sessionId === r.sessionId),
++      async () => "the session's budget_stop notification",
++    );
++    expect(String(stop.title)).toBe("Members page project: stopped at this month's cap");
++    expect(String(stop.body)).toMatch(
++      /^This month's cap is CHF 0\.10\. The session spent CHF [\d.]+\. .*Raise the monthly spending cap in Settings to go on\.$/,
++    );
++    expect(String(stop.body)).not.toMatch(/larger budget|session's budget/);
++  }, 60_000);
+ });
+diff --git a/packages/runtime/test/budget.test.ts b/packages/runtime/test/budget.test.ts
+index 47d74e0..3430e3b 100644
+--- a/packages/runtime/test/budget.test.ts
++++ b/packages/runtime/test/budget.test.ts
+@@ -129,6 +129,7 @@ describe("session budget", () => {
+         capUsdMicro: 1_000_000,
+         reserveUsdMicro: 200_000,
+         lineUsdMicro: 800_000,
++        firstCallUsdMicro: 100_000,
+         saveOnly: false,
+       },
+     });
+@@ -150,6 +151,7 @@ describe("session budget", () => {
+       capUsdMicro: 1_000_000,
+       reserveUsdMicro: 600_000,
+       lineUsdMicro: 400_000,
++      firstCallUsdMicro: 300_000,
+       saveOnly: false,
+     });
+   });
+@@ -162,6 +164,7 @@ describe("session budget", () => {
+       capUsdMicro: 12_500,
+       reserveUsdMicro: 13_200,
+       lineUsdMicro: 0,
++      firstCallUsdMicro: 6_600,
+       saveOnly: true,
+     });
+     b.record("r1", 3_000);
+@@ -178,6 +181,44 @@ describe("session budget", () => {
+     expect(b.precheck("r2", 12_001, 4_000, "work").line?.saveOnly).toBe(false);
+   });
+ 
++  // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
++  // on the coder's Sonnet: 4 096 output tokens alone cost USD 0.041) was refused before the line
++  // was fixed, so the run said no budget line at all, not even "save only".
++  it("a first call refused at the run's cap still carries the run's save-only line", () => {
++    const b = mk(10_000_000);
++    let refused: unknown;
++    try {
++      b.precheck("r1", 25_000, 41_000, "work");
++    } catch (e) {
++      refused = e;
++    }
++    expect(refused).toMatchObject({
++      code: "budget_exceeded",
++      details: {
++        level: "run",
++        line: {
++          capUsdMicro: 25_000,
++          reserveUsdMicro: 82_000,
++          lineUsdMicro: 0,
++          firstCallUsdMicro: 41_000,
++          saveOnly: true,
++        },
++      },
++    });
++    // Only the run's first call carries it: a later refusal says nothing new.
++    const c = mk(10_000_000);
++    c.precheck("r1", 25_000, 10_000, "work");
++    c.record("r1", 20_000);
++    let later: unknown;
++    try {
++      c.precheck("r1", 25_000, 10_000, "work");
++    } catch (e) {
++      later = e;
++    }
++    expect(later).toMatchObject({ code: "budget_exceeded" });
++    expect((later as { details: Record<string, unknown> }).details.line).toBeUndefined();
++  });
++
+   it("a review run has no wrap-up line", () => {
+     const b = mk(10_000_000);
+     expect(b.precheck("r1", 1_000_000, 900_000, "review")).toEqual({ decision: "allow" });
+diff --git a/packages/runtime/test/notifications-channels.test.ts b/packages/runtime/test/notifications-channels.test.ts
+index 7e720ff..c1f1f45 100644
+--- a/packages/runtime/test/notifications-channels.test.ts
++++ b/packages/runtime/test/notifications-channels.test.ts
+@@ -761,6 +761,55 @@ describe("producers", () => {
+     expect(stop.dedupeKey).toBe("session:s-1:budget");
+   });
+ 
++  // Review of budget-stop (ADR 0111): a session ended by a pause at this month's cap was told as
++  // "stopped, the budget is used" with "Start a session with a larger budget to go on", which the
++  // month's cap refuses. It names the limit and says what helps.
++  it("session end at an outer limit: the urgent budget_stop names it and what helps", () => {
++    const facts = {
++      sessionId: "s-2",
++      status: "stopped",
++      stopReason: "budget_month",
++      stopCapChfMicro: 230_000,
++      summary:
++        '"Write the manual" needs your decision (Inbox).\nStopped at this month\'s cap of CHF 0.23. CHF 0.04.',
++      news: ["Stopped at this month's cap of CHF 0.23. CHF 0.04."],
++      spentUsdMicro: 50_000,
++      spentChfMicro: 40_000,
++      completed: [],
++      needsHuman: ["t-1"],
++      projectId: "p-1",
++      projectName: "Quote page",
++    };
++    expect(producers.sessionEndIsNews(facts)).toBe(true);
++    const month = producers.sessionEnded("h-1", facts);
++    // The title has 60 characters: the limit; the amounts lead the body.
++    expect(month).toMatchObject({
++      kind: "budget_stop",
++      title: "Quote page: stopped at this month's cap",
++      body: "This month's cap is CHF 0.23. The session spent CHF 0.04. Raise the monthly spending cap in Settings to go on.",
++      dedupeKey: "session:s-2:budget",
++    });
++    const project = producers.sessionEnded("h-1", {
++      ...facts,
++      stopReason: "budget_project",
++      stopCapChfMicro: 400_000,
++      news: ["Stopped at the project's budget of CHF 0.40. CHF 0.04."],
++    });
++    expect(project.title).toBe("Quote page: stopped at the project's budget");
++    expect(project.body).toBe(
++      "The project's budget is CHF 0.40. The session spent CHF 0.04. Raise the project budget in the project's settings to go on.",
++    );
++    const plan = producers.sessionEnded("h-1", {
++      ...facts,
++      stopReason: "budget_plan",
++      news: ["Stopped at the share of your Claude subscription that Forerunner may use. CHF 0.04."],
++    });
++    expect(plan.title).toBe("Quote page: stopped at your Claude subscription's share");
++    expect(plan.body).toBe(
++      "The session spent CHF 0.04. It can go on once your Claude subscription's usage resets.",
++    );
++  });
++
+   it("critic verdicts are info unless they need a human; injections quote the ignored passages", () => {
+     const review = {
+       id: "rv-1",
+diff --git a/packages/runtime/test/sdk-driver.test.ts b/packages/runtime/test/sdk-driver.test.ts
+index f11e676..eb41e32 100644
+--- a/packages/runtime/test/sdk-driver.test.ts
++++ b/packages/runtime/test/sdk-driver.test.ts
+@@ -371,7 +371,7 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
+    * fires; then it takes `exitMs` to wind down. With `ignoreAbort` it goes on until `close()`.
+    * From the second message on, each costs more than the run's cap, so the budget stops it.
+    */
+-  function claudeCodeLike(opts: { exitMs: number; ignoreAbort?: boolean }) {
++  function claudeCodeLike(opts: { exitMs: number; ignoreAbort?: boolean; lateResult?: boolean }) {
+     const state = {
+       exited: false,
+       closed: false,
+@@ -386,6 +386,15 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
+         for (let i = 0; ; i++) {
+           if (state.closed || (ac.signal.aborted && !opts.ignoreAbort)) {
+             if (!state.closed) await new Promise((r) => setTimeout(r, opts.exitMs));
++            // An aborted query's own error result, as it winds down.
++            if (opts.lateResult)
++              yield {
++                type: "result",
++                subtype: "error_during_execution",
++                is_error: true,
++                result: "Claude Code process aborted by user",
++                total_cost_usd: 0,
++              };
+             state.exited = true;
+             return;
+           }
+@@ -451,6 +460,18 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
+     expect(h.kill.activeCount()).toBe(0);
+   });
+ 
++  // Review of budget-stop: the drain read a late error result like any other, so an aborted
++  // query's own "error_during_execution" turned the budget pause into a Failed task tried again.
++  it("a late error result while Claude Code winds down leaves the budget stop as it was", async () => {
++    const h = harness();
++    const { q, state } = claudeCodeLike({ exitMs: 10, lateResult: true });
++    const res = await driverOf(h, q).run(req(h));
++    expect(state.exited).toBe(true);
++    expect(res.outcome).toBe("budget_exceeded");
++    expect(res.error?.code).toBe("budget_exceeded");
++    expect(res.finalText).not.toContain("aborted by user");
++  });
++
+   it("the hooks refuse a tool call that arrives after run() returned (its token is ended)", async () => {
+     const h = harness();
+     let pre: Pre | undefined;
+diff --git a/packages/runtime/test/session-status-words.test.ts b/packages/runtime/test/session-status-words.test.ts
+index 5e97c9b..336d7c7 100644
+--- a/packages/runtime/test/session-status-words.test.ts
++++ b/packages/runtime/test/session-status-words.test.ts
+@@ -1,6 +1,13 @@
+ import { describe, expect, it } from "vitest";
++import { reviewStopWords } from "../src/daemon/task-display.ts";
+ import { sessionView } from "../src/daemon/views.ts";
+-import { blockedOfHandoff, endedStatusText } from "../src/session/stop-words.ts";
++import { isNewsLine, sessionResultLines, stopWords } from "../src/session/result.ts";
++import {
++  blockedOfHandoff,
++  budgetStopReasonOf,
++  endedStatusText,
++  isBudgetStopReason,
++} from "../src/session/stop-words.ts";
+ 
+ /**
+  * A session that finished with tasks waiting for the person is not "Done" (wave 1 handoff):
+@@ -42,3 +49,65 @@ describe("session status words", () => {
+     expect(view.statusText).toBe("Ended: 1 task needs you");
+   });
+ });
++
++/**
++ * Review of budget-stop (ADR 0111): a task paused at the month's cap, the project's budget or the
++ * subscription's share ends its session, and the session said "Stopped: the budget is used" and
++ * "The session's budget is used." though its own budget was 1% spent. It names the limit.
++ */
++describe("a session stopped at an outer limit names it (budget-stop)", () => {
++  it("each limit has its stop reason; the session's own budget keeps budget_exceeded", () => {
++    expect(budgetStopReasonOf("month")).toBe("budget_month");
++    expect(budgetStopReasonOf("project")).toBe("budget_project");
++    expect(budgetStopReasonOf("plan")).toBe("budget_plan");
++    expect(budgetStopReasonOf("session")).toBe("budget_exceeded");
++    for (const r of ["budget_exceeded", "budget_month", "budget_project", "budget_plan"])
++      expect(isBudgetStopReason(r), r).toBe(true);
++    expect(isBudgetStopReason("budget_finish_current")).toBe(false);
++    expect(isBudgetStopReason("you")).toBe(false);
++  });
++
++  it("the status, the result's line and a stopped review say the limit", () => {
++    expect(endedStatusText("stopped", "budget_month", 1)).toBe("Stopped at this month's cap");
++    expect(endedStatusText("stopped", "budget_project", 0)).toBe("Stopped at the project's budget");
++    expect(endedStatusText("stopped", "budget_plan", 0)).toBe(
++      "Stopped at your Claude subscription's share",
++    );
++    expect(endedStatusText("stopped", "budget_exceeded", 0)).toBe("Stopped: the budget is used");
++    expect(stopWords("budget_month", 230_000)).toBe("Stopped at this month's cap of CHF 0.23.");
++    expect(stopWords("budget_month")).toBe("Stopped at this month's cap.");
++    expect(stopWords("budget_project", 400_000)).toBe(
++      "Stopped at the project's budget of CHF 0.40.",
++    );
++    expect(stopWords("budget_plan")).toBe(
++      "Stopped at the share of your Claude subscription that Forerunner may use.",
++    );
++    expect(stopWords("budget_exceeded")).toBe("The session's budget is used.");
++    expect(reviewStopWords({ status: "in_review" }, "budget_month")).toBe(
++      "the session stopped at this month's cap",
++    );
++    const lines = sessionResultLines({
++      outcome: {
++        done: [],
++        failed: [],
++        needsYou: [{ id: "t1", title: "Write the manual" }],
++        leftOver: [],
++        waiting: [],
++        waitingForDocker: [],
++        stopReason: "budget_month",
++        stopCapChfMicro: 230_000,
++        spentChfMicro: 40_000,
++      },
++      inReview: [],
++      leftOutForBudget: [],
++      sessionCapChfMicro: 5_000_000,
++      openTasks: 1,
++    });
++    expect(lines).toEqual([
++      '"Write the manual" needs your decision (Inbox).',
++      "Stopped at this month's cap of CHF 0.23. CHF 0.04.",
++    ]);
++    // News: the Update says it (it is not only money and a stop the person made).
++    expect(isNewsLine(lines[1] ?? "")).toBe(true);
++  });
++});
+diff --git a/packages/runtime/test/wrap-up.test.ts b/packages/runtime/test/wrap-up.test.ts
+index 96fd9a7..e0242e6 100644
+--- a/packages/runtime/test/wrap-up.test.ts
++++ b/packages/runtime/test/wrap-up.test.ts
+@@ -94,6 +94,20 @@ describe("the loop's wrap-up message (budget-stop)", () => {
+     expect(events.find((e) => e.type === "budget_line")).toMatchObject({ saveOnly: true });
+   });
+ 
++  // Review of budget-stop: a budget below one call's worst case was refused before its line was
++  // reported, so the session log had no budget line at all (live check 3's CHF 0.02 on Sonnet).
++  it("a budget too small for even its first call still says its save-only line", async () => {
++    const { provider, events, result } = run(500, 3);
++    const res = await result;
++    expect(res.outcome).toBe("budget_exceeded");
++    expect(provider.calls).toHaveLength(0);
++    const line = events.find((e) => e.type === "budget_line");
++    expect(line).toMatchObject({ capUsdMicro: 500, lineUsdMicro: 0, saveOnly: true });
++    expect((line as { firstCallUsdMicro: number }).firstCallUsdMicro).toBeGreaterThan(500);
++    // Said before the run ends, so the session log has it.
++    expect(events.map((e) => e.type)).toEqual(["run_start", "budget_line", "run_end"]);
++  });
++
+   it("a run that is not a task's (no wrap-up text asked for) is never given one", async () => {
+     const { provider, result } = run(30_000, 6, { wrapUp: false });
+     const res = await result;
+@@ -179,4 +193,44 @@ describe("the Agent SDK path's wrap-up message (budget-stop)", () => {
+         ?.additionalContext,
+     ).toBeUndefined();
+   });
++
++  it("a budget too small for even its first call still says its save-only line (review of budget-stop)", async () => {
++    const h = harness();
++    let started = false;
++    const q: QueryLike = () => {
++      started = true;
++      return (async function* () {
++        yield { type: "result", subtype: "success", is_error: false, result: "done" };
++      })();
++    };
++    const events: RunEvent[] = [];
++    const res = await new SdkAgentDriver({
++      hooks: h.hooks,
++      kill: h.kill,
++      clock: h.clock,
++      queryImpl: q,
++    }).run({
++      token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 500 }),
++      budget: budget("sess-1", 50_000_000, h.clock),
++      billingSourceId: "bs",
++      credential: { kind: "oauth_token", value: "oat-value" },
++      model: "claude-sonnet-5-5",
++      systemPrompt: "sys",
++      prompt: "p",
++      cwd: process.cwd(),
++      tools: registry(),
++      pricing: flatPricing,
++      timeoutMs: 60_000,
++      wrapUp: WRAP_UP_TEXT,
++      onEvent: (e) => events.push(e),
++    });
++    expect(res.outcome).toBe("budget_exceeded");
++    // Claude Code was never started.
++    expect(started).toBe(false);
++    expect(events.find((e) => e.type === "budget_line")).toMatchObject({
++      capUsdMicro: 500,
++      saveOnly: true,
++    });
++    expect(events.at(-1)?.type).toBe("run_end");
++  });
+ });
+diff --git a/scripts/bench/README.md b/scripts/bench/README.md
+index 225c84c..61abc4e 100644
+--- a/scripts/bench/README.md
++++ b/scripts/bench/README.md
+@@ -20,6 +20,6 @@
+   - `FORERUNNER_BENCH_INTAKE=malformed|error`: planning fails (every call, so the intake's one retry fails too: "Claude's plan could not be read. Forerunner asked Claude twice."). `FORERUNNER_BENCH_INTAKE_BAD=reason-too-long|fenced-docs|missing-tasks|not-json|too-big`: the first reply of each draft is one the live model sent (a 750-character `plan.reason`, docs holding code fences, a milestone without tasks, prose, the full 4-5 task plan when "Plan size: small" was asked); the intake reads the first two as they are (the reason shortened) and asks once more for the other three (`too-big` only for a draft from a short brief, with the plan's size in words), and the retry (its request carries the refused reply) gets the plan. `FORERUNNER_BENCH_PLAN=chain`: 7 tasks in a chain. `FORERUNNER_BENCH_PLAN=research` (or `chain,research`): adds the researcher's "Research the subject in research/notes.md", whose brief names https://example.com/, so the plan card's "Cannot read the web on this computer" (with `--env FORERUNNER_WEB_FETCH=off`) and the research path (`web_fetch`, ADR 0107) can be walked. `FORERUNNER_BENCH_PERSON=1`: adds a question task for the person. `FORERUNNER_BENCH_RISK2=<s>`: those tasks get risk tier 2 (they wait for Docker). `FORERUNNER_BENCH_DELAY_MS=<ms>` (default 250): wait per reply (not for the critic). `FORERUNNER_BENCH_CRITIC_DELAY_MS=<ms>` (default 0): wait per critic reply, so a task can be stopped or cancelled while it reads "Being reviewed" (leave it at 0 when the monthly calibration may run: some 160 critic calls).
+ - **Live mode** `--provider bench-live` (needs `ANTHROPIC_API_KEY`, or `FORERUNNER_ANTHROPIC_KEY`; kept out of the log): the real Messages API with the same log, first run on 2026-11-01 (bench `live1`). Without a key `start.mjs` refuses at once and starts nothing. With one it first stores the key in the home's vault the way an install gets it (`fr setup --non-interactive`, which checks it with Anthropic; a refused key ends the start with setup's reason, in `<bench>/setup.log`), so the setup assistant and Settings show Claude connected as on a real install. `bench.json` says `"live": true`. A dry run that spends nothing: point it at a local stand-in of the Messages API with `--env FORERUNNER_BENCH_LIVE_API=http://127.0.0.1:<port>` (any key-shaped value in `ANTHROPIC_API_KEY`); the daemon's calls and `fr setup`'s key check both go there (`setupEnv`; `FORERUNNER_ANTHROPIC_API` in `--env` names setup's base on its own). The stand-in must answer `GET /v1/models` and stream `POST /v1/messages`. Every bench's vault is a file in its home (`FORERUNNER_VAULT_BACKEND=file`), never the OS keyring. A daemon that exits during its start ends the start at once with its log. `--provider none`: what an install without a key does.
+ - **Intake journey**: `node scripts/bench/journeys/intake.cjs <n> [--brief "..."] [--goal "..."] [--project "..."] [--watch]`: New project with a one-line brief and no Goal, named after the brief ("A todo list 16:45:30", `journeys/names.cjs`) unless `--project` names it, the plan card (tasks, who, cost, Needs Docker, the decision line), Approve and start; Try again at most twice when planning fails. `--watch` then waits (up to 20 minutes) for the session Approve and start began and checks that the critic reviewed every task an agent finished. Checks, the card's lines, the reviews and each intake call (the Plan size line, what the second call was told, output tokens) in `steps/intake-result.json`. It reads only what a person reads, so it runs on `--provider bench-live` too.
+-- **Budget journey** (ADR 0111): `node scripts/bench/journeys/budget.cjs <n> <label> [--long-chf 0.035] [--tiny-chf 0.01]` on a bench started with `--env "FORERUNNER_BENCH_LONG=Write the"`: a project with a coder task whose budget is a few times its run's reserve (it hears the wrap-up once and pauses with its report) and one of CHF 0.01 (save only: no wrap-up, it pauses at its budget); screenshots of the Tasks tab, both drawers, the Inbox and the session (with Details), and `steps/<label>-budget.json` with the checks, the runs' budget lines, the request that carried the wrap-up (its last message's blocks) and the critic calls per task (none).
++- **Budget journey** (ADR 0111): `node scripts/bench/journeys/budget.cjs <n> <label> [--long-chf 0.035] [--tiny-chf 0.01]` on a bench started with `--env "FORERUNNER_BENCH_LONG=Write the"`: a project with a coder task whose budget is a few times its run's reserve (it hears the wrap-up once and pauses with its report) and one of CHF 0.01 (save only: no wrap-up, it pauses at its budget); screenshots of the Tasks tab, both drawers, the Inbox and the session (with Details), and `steps/<label>-budget.json` with the checks, the runs' budget lines, the request that carried the wrap-up (its last message's blocks) and the critic calls per task (none). With `--month [--month-margin-chf 0.02]` it instead lowers the monthly spending cap (as Settings does) to this month's spend plus the margin and starts a session without a typed budget on a long task with a budget of its own of CHF 1.00: the task, its card, the session's badge, result and log, the Inbox Update and the notification must name this month's cap, never "the budget is used" or a larger session budget (`steps/<label>-month.json`). Run it last: the lowered cap stays.
+ - **Smoke journey**: `node scripts/bench/journeys/smoke.cjs <n> [--live]` on a `--fresh` bench; result in `steps/smoke-result.json` (with `cost`: calls and USD by kind). It approves the plan card with **Approve and start**, which writes the tasks and starts a session at once (design §3.3), watches that session, and presses Start only while a session has a task to run (`runnableTasks`: ready or running, not waiting on the person, on Docker or on such a task), whether or not a task is done; a Start the dialog keeps disabled is a finding with the dialog's reason, and the journey goes on to its files and chat checks. Its checks look at structure and states, never at the stand-in's titles, file names or texts (`journeys/smoke-checks.cjs`): a plan card that says N ≥ 1 tasks and names every task it writes, Approve and start, a session that ends, files written (an .html page with a stylesheet and a script, whatever their names, in their own files or inline; a link to a file that was not written fails), a chat reply that is not empty, names a task and shows no `**`; "every planned task is done" fails on 0 of 0, and "every task the agents can do is done" allows the rest to wait on the person or Docker. When the project says planning failed it asks the chat about it (it must say so and point to Try again), then presses **Try again** up to twice (each try read only after its POST is answered, from the daemon first); each failure is a finding with what the project page said. Live mode (`bench.json` `live`, or `--live`) waits longer and expects the key saved on the setup's Claude step and a Done step that says Claude is connected. It also checks that the Overview shows the project's folder and the Files tab lists the page the work wrote, and that the critic reviewed the work (critic calls in the model-call log). It passes 100% on `--provider bench`; with `--env FORERUNNER_BENCH_INTAKE=malformed` it walks the planning-failed path, and with `--env "FORERUNNER_BENCH_ASK=page skeleton"` the path where every task waits on the person (no Start pressed after the first session; the checks on done work, files and the page fail as they should, the chat checks run).
+ - Rules: never kill by name pattern; one bench per agent; stop it when done. The monthly critic calibration runs as the critic agent, never on the day an install first sees its schedule and not without a model, so it no longer holds the person's agent on the 1st.
+diff --git a/scripts/bench/journeys/budget.cjs b/scripts/bench/journeys/budget.cjs
+index 24b3182..489ca2c 100644
+--- a/scripts/bench/journeys/budget.cjs
++++ b/scripts/bench/journeys/budget.cjs
+@@ -6,6 +6,12 @@
+ // Steps are <bench>/steps/NN-<label>-*.png and .txt; the result (checks, the run's budget line,
+ // the wrap-up requests, the critic calls per task, the next brief's previous-attempt section) is
+ // <bench>/steps/<label>-budget.json.
++//   node scripts/bench/journeys/budget.cjs <bench> <label> --month [--month-margin-chf 0.02]
++// instead lowers the monthly spending cap (as Settings does) to this month's spend plus the
++// margin, starts a session without a typed budget on a long task with a large budget of its own,
++// and checks that the task, its card, the session (badge, result, log), the Inbox Update and the
++// notification name this month's cap (review of budget-stop); <bench>/steps/<label>-month.json.
++// Run it last: the lowered cap stays (a raise waits for the device's OK).
+ "use strict";
+ const fs = require("node:fs");
+ const path = require("node:path");
+@@ -215,7 +221,142 @@ async function main() {
+   out(`result: ${file}`);
+ }
+ 
+-main().catch((e) => {
++/** The month-cap walk (`--month`): the session a pause at this month's cap ends names it. */
++async function monthWalk() {
++  const b = R.bench(NAME);
++  const margin = arg("--month-margin-chf", 0.02);
++  const me = await R.api(NAME, "GET", "/me");
++  const project = await R.api(NAME, "POST", "/projects", {
++    name: `Month cap walk (${LABEL} ${new Date().toISOString().slice(11, 19)})`,
++    goal: "A guide within this month's cap",
++  });
++  // "Write the ..." keeps the stand-in writing (FORERUNNER_BENCH_LONG), so the month's cap stops it.
++  const task = await R.api(NAME, "POST", `/projects/${enc(project.id)}/tasks`, {
++    title: "Write the guide for the month",
++    outcome: "guide.md explains the club",
++    acceptanceCriteria: ["guide.md exists"],
++    priority: "medium",
++    status: "ready",
++    dependsOn: [],
++    budgetUsdMicro: usdMicro(1),
++    specialist: "coder",
++    riskTier: 1,
++  });
++  const now = new Date();
++  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
++  const costs = await R.api(NAME, "GET", `/costs?from=${enc(monthStart)}`);
++  const spentChf = (costs?.totals?.chfMicro ?? 0) / 1_000_000;
++  const capChf = Math.ceil((spentChf + margin) * 100) / 100;
++  const set = await R.api(NAME, "POST", "/commands/execute", {
++    commands: [{ name: "budget.set", params: { scope: "month", amountChf: capChf } }],
++    source: "ui",
++    confirm: "tap",
++  });
++  out(`monthly cap CHF ${capChf.toFixed(2)} (spent CHF ${spentChf.toFixed(4)}): ${set.status}`);
++  const started = await R.api(NAME, "POST", "/sessions", {
++    agentId: me.agent.id,
++    projectId: project.id,
++    trigger: "manual",
++    reason: "month cap walk",
++  });
++  const session = await R.waitForSession(NAME, started.session.id, 300_000);
++  const view = await R.api(NAME, "GET", `/sessions/${enc(session.id)}`);
++  const events = await R.api(NAME, "GET", `/sessions/${enc(session.id)}/events`);
++  const lines = (events?.events ?? events ?? []).map((e) => e.text ?? "");
++  const inbox = await R.api(NAME, "GET", "/inbox");
++  const updates = (inbox.messages ?? [])
++    .filter((m) => m.projectId === project.id)
++    .map((m) => m.body);
++  const card = (inbox.requests ?? []).find((q) => q.taskId === task.id && q.status === "open");
++  const taskView = (await R.api(NAME, "GET", `/projects/${enc(project.id)}/tasks`)).find(
++    (t) => t.id === task.id,
++  );
++  // The notifier records the session's end a moment after the session row ends.
++  await new Promise((r) => setTimeout(r, 1500));
++  const notes = (await R.api(NAME, "GET", "/notifications/recent?limit=200")).notifications ?? [];
++  const stop = notes.find((n) => n.kind === "budget_stop" && n.sessionId === session.id);
++  const { browser, page } = await R.openApp(NAME);
++  try {
++    await R.skipSetup(page).catch(() => undefined);
++    await page.goto(`${b.uiUrl}/projects/${enc(project.id)}/tasks`);
++    await page.waitForTimeout(2000);
++    await R.step(page, `${LABEL} month tasks tab`);
++    await page.goto(`${b.uiUrl}/inbox`);
++    await page.waitForTimeout(2000);
++    await R.step(page, `${LABEL} month inbox`);
++    await page.goto(`${b.uiUrl}/sessions/${enc(session.id)}`);
++    await page.waitForTimeout(2000);
++    await R.step(page, `${LABEL} month session`);
++  } finally {
++    await browser.close();
++  }
++  const cap = `CHF ${capChf.toFixed(2)}`;
++  const month = {
++    label: LABEL,
++    capChf,
++    checks: [],
++    session: { status: view.status, statusText: view.statusText, summary: view.summary },
++    lines: lines.filter((l) => /month|budget|paus|Stopped/i.test(l)),
++    updates,
++    card: card?.title ?? null,
++    task: taskView?.display?.label ?? null,
++    notification: stop ? { title: stop.title, body: stop.body } : null,
++  };
++  const mcheck = (name, ok, detail = "") => {
++    month.checks.push({ name, ok: !!ok, detail });
++    out(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
++  };
++  mcheck(
++    "the task names this month's cap",
++    month.task === "Paused at this month's cap",
++    month.task,
++  );
++  mcheck(
++    "the card names this month's cap",
++    (month.card ?? "").includes(`stopped at this month's cap of ${cap}`),
++    month.card,
++  );
++  mcheck(
++    "the session's badge names this month's cap",
++    view.statusText === "Stopped at this month's cap",
++    view.statusText,
++  );
++  mcheck(
++    "the session's result names this month's cap",
++    (view.summary ?? "").includes(`Stopped at this month's cap of ${cap}.`) &&
++      !/budget is used/.test(view.summary ?? ""),
++    view.summary,
++  );
++  mcheck(
++    "the session's log ends at this month's cap",
++    lines.some((l) => /^Stopped at this month's cap: /.test(l)) &&
++      !lines.some((l) => /budget is used/.test(l)),
++    month.lines.join(" | "),
++  );
++  mcheck(
++    "the Inbox Update names this month's cap",
++    updates.some((u) => u.includes(`Stopped at this month's cap of ${cap}.`)) &&
++      !updates.some((u) => /budget is used/.test(u)),
++    updates.join(" | "),
++  );
++  mcheck(
++    "the notification names it and what helps",
++    !!stop &&
++      /stopped at this month's cap$/.test(stop.title) &&
++      /Raise the monthly spending cap in Settings/.test(stop.body) &&
++      !/larger budget/.test(stop.body),
++    JSON.stringify(month.notification),
++  );
++  const file = path.join(
++    R.bench(NAME).steps ?? path.join(path.dirname(b.home), "steps"),
++    `${LABEL}-month.json`,
++  );
++  fs.mkdirSync(path.dirname(file), { recursive: true });
++  fs.writeFileSync(file, JSON.stringify(month, null, 2));
++  out(`result: ${file}`);
++}
++
++(process.argv.includes("--month") ? monthWalk() : main()).catch((e) => {
+   console.error(e);
+   process.exit(1);
+ });
+diff --git a/services/state-api/src/push/fanout.ts b/services/state-api/src/push/fanout.ts
+index 1f870ea..ccaf14f 100644
+--- a/services/state-api/src/push/fanout.ts
++++ b/services/state-api/src/push/fanout.ts
+@@ -382,8 +382,17 @@ function needsAttention(m: MessageRow): boolean {
+   return m.requires_ack || m.type === "question" || m.type === "request" || m.type === "warning";
+ }
+ 
+-/** Session ends that mean the budget stopped the work (the runner's `handoff.stop_reason`). */
+-const BUDGET_STOP_REASONS: ReadonlySet<string> = new Set(["budget_exceeded"]);
++/**
++ * Session ends that mean the budget stopped the work (the runner's `handoff.stop_reason`): the
++ * session's own budget, or a task's pause at an outer limit that ended it (ADR 0111: this
++ * month's cap, the project's budget, the subscription's share), each with its words.
++ */
++const BUDGET_STOP_BODIES: ReadonlyMap<string, string> = new Map([
++  ["budget_exceeded", "A session stopped at its budget cap."],
++  ["budget_month", "A session stopped at this month's cap."],
++  ["budget_project", "A session stopped at the project's budget."],
++  ["budget_plan", "A session stopped at your Claude subscription's share."],
++]);
+ /** The runner stopped starting new work at the warning share and finished what was running. */
+ const BUDGET_WARNING_REASONS: ReadonlySet<string> = new Set(["budget_finish_current"]);
+ const ENDED: ReadonlySet<SessionRow["status"]> = new Set(["completed", "failed", "stopped"]);
+@@ -401,8 +410,9 @@ function stopReasonOf(row: SessionRow): string | null {
+  * the handoff (with `stop_reason`) and the end status when the session ends, and the budget
+  * hook refuses the call that would cross the cap, so a budget stop usually ends below the cap.
+  *
+- * - budget stop (urgent `budget_stop`): ended with `stop_reason` `budget_exceeded`, or
+- *   stopped / failed with spend at the cap;
++ * - budget stop (urgent `budget_stop`): ended with `stop_reason` `budget_exceeded` (or an outer
++ *   limit's `budget_month`, `budget_project`, `budget_plan`, whose body names it), or stopped /
++ *   failed with spend at the cap;
+  * - budget warning (normal): `stop_reason` `budget_finish_current` (the hook stopped new work
+  *   at 80 %), or spend at `BUDGET_WARNING_SHARE` of the cap on a row that records spend while
+  *   it runs; not sent when the session ended at the budget stop, which says more;
+@@ -414,7 +424,7 @@ export function sessionNotices(row: SessionRow, humanId: string): PushNotice[] {
+   const reason = stopReasonOf(row);
+   const ended = ENDED.has(row.status);
+   const base = { humanId, refId: id, projectId: row.project_id, link: `/sessions/${id}` };
+-  const stopReason = reason !== null && BUDGET_STOP_REASONS.has(reason);
++  const stopReason = reason !== null && BUDGET_STOP_BODIES.has(reason);
+   const budgetStop =
+     ended && (stopReason || (row.status !== "completed" && cap > 0 && row.spent_usd_micro >= cap));
+   // The runner writes the handoff a moment before the end status: a row that already names
+@@ -444,7 +454,9 @@ export function sessionNotices(row: SessionRow, humanId: string): PushNotice[] {
+       urgency: KIND_URGENCY.budget_stop,
+       key: `budget:${id}:stop`,
+       title: "Budget reached: session stopped",
+-      body: "A session stopped at its budget cap.",
++      body:
++        (reason !== null ? BUDGET_STOP_BODIES.get(reason) : undefined) ??
++        "A session stopped at its budget cap.",
+     });
+   } else if (ended) {
+     out.push({
+diff --git a/services/state-api/test/push.test.ts b/services/state-api/test/push.test.ts
+index 6cdca99..10bd600 100644
+--- a/services/state-api/test/push.test.ts
++++ b/services/state-api/test/push.test.ts
+@@ -476,6 +476,36 @@ describe("push fan-out from the state service (spec R.6)", () => {
+     expect(h.api.push.status().holding).toBe(0);
+   });
+ 
++  // Review of budget-stop (ADR 0111): a task paused at this month's cap ends its session with
++  // `budget_month` (likewise `budget_project`, `budget_plan`), far below the session's own cap.
++  // It is the urgent budget stop and names the limit; before, the runner wrote
++  // `budget_exceeded` and the phone said the session stopped at its budget cap.
++  it("a session ended at this month's cap (stop_reason budget_month) is the urgent budget stop and names the month", async () => {
++    await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
++    await h.store.session.patch(h.seed.session.id, {
++      budget_cap_usd_micro: 5_000_000,
++      spent_usd_micro: 50_000,
++      handoff: { stop_reason: "budget_month", spent_usd_micro: 50_000 },
++      status: "stopped",
++    });
++    await h.tick();
++    expect(
++      h.google.sent.map((s) => [
++        s.message.data?.kind,
++        s.message.notification?.title,
++        s.message.notification?.body,
++        s.message.android?.priority,
++      ]),
++    ).toEqual([
++      [
++        "budget",
++        "Budget reached: session stopped",
++        "A session stopped at this month's cap.",
++        "HIGH",
++      ],
++    ]);
++  });
++
+   it("a session that stopped new work at 80 % (budget_finish_current) pushes the budget warning and the end", async () => {
+     await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+     await h.store.session.patch(h.seed.session.id, {
