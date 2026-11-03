@@ -671,6 +671,8 @@ export function createDaemonApp(
       docsInPullRequests: (project) => rt.docs.docsInPullRequests(project),
       // C-57: a repository project's status kept in the app is the Status the tab shows.
       statusDocRoot: (project) => rt.docs.statusDocRoot(project),
+      // merged-copy: when the copy was last brought to what is merged; its Local only folder.
+      copyView: (project) => rt.docs.copyView(project),
       pullRequests: (project) =>
         projectPullRequests(
           { store: rt.store, host: rt.gitHost, apiBase: rt.config?.githubApiBase },

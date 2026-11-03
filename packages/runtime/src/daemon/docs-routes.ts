@@ -12,7 +12,7 @@ import {
 } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { Hono } from "hono";
-import { type DocInPullRequest, WORKSPACE_DIR } from "../loop/docs.ts";
+import { type CopyView, type DocInPullRequest, WORKSPACE_DIR } from "../loop/docs.ts";
 import type {
   DocContentView,
   DocView,
@@ -47,6 +47,11 @@ export interface DocsRoutesDeps {
   statusDocRoot?: (project: ProjectRow) => string | null;
   /** A repository project's pull requests that wait for the person (`projectPullRequests`). */
   pullRequests?: (project: ProjectRow) => Promise<ProjectPullRequestsView>;
+  /**
+   * What the Files tab says about a repository project's copy (`ProjectDocs.copyView`,
+   * merged-copy): when it was last brought to what is merged, and its Local only folder.
+   */
+  copyView?: (project: ProjectRow) => CopyView | null;
   who: () => Who;
 }
 
@@ -302,16 +307,19 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
 
   // The project's files (design §3.10): the folder its work is in, listed read-only, and one
   // file's text. The folder is the first of `docsDirsFor` (the linked folder, this install's
-  // checkout of the repository, the workspace); a path never leaves it.
+  // checkout of the repository, the workspace); a path never leaves it. A repository project's
+  // copy says when it was last brought to what is merged, and names its Local only folder
+  // (merged-copy, ADR 0113).
   app.get("/projects/:id/files", async (c) => {
     const project = await owned(c.req.param("id"));
     if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
     const root = deps.docsDirsFor(project)[0] ?? null;
+    const copy = deps.copyView?.(project) ?? null;
     if (!root) {
-      const view: ProjectFilesView = { folder: null, entries: [], truncated: false };
+      const view: ProjectFilesView = { folder: null, entries: [], truncated: false, copy };
       return c.json(view);
     }
-    const view: ProjectFilesView = { folder: root, ...listProjectFiles(root) };
+    const view: ProjectFilesView = { folder: root, ...listProjectFiles(root), copy };
     return c.json(view);
   });
 

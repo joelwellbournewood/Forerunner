@@ -9,6 +9,7 @@ import {
   redactToken,
   tokenHeaderKey,
 } from "../src/githost/git.ts";
+import { excludeNeverPushed, isNeverPushed, NEVER_PUSHED } from "../src/githost/local-only.ts";
 
 const identity = { name: "Test", email: "test@example.test" };
 
@@ -126,6 +127,50 @@ describe("GitOps", { timeout: 120_000 }, () => {
     expect(await a.refsUnder("refs/forerunner/deps/")).toEqual([
       { ref: "refs/forerunner/deps/t1", sha: marker },
     ]);
+  });
+
+  it("a push never carries Local only or a try folder: excluded from `git add -A`, and a forced add is refused at the push with one sentence (merged-copy, ADR 0113)", async () => {
+    const { url, bare } = await bareRepo();
+    const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
+    const dir = join(root, "a");
+    const a = new GitOps({ cwd: dir, identity, neverPush: NEVER_PUSHED });
+    await a.clone(url);
+    expect(excludeNeverPushed(dir)).toBe(true);
+    // Idempotent: a second call adds no line.
+    excludeNeverPushed(dir);
+    await a.createBranch("fr/task");
+    mkdirSync(join(dir, "Local only"), { recursive: true });
+    mkdirSync(join(dir, ".forerunner-try"), { recursive: true });
+    writeFileSync(join(dir, "Local only", "notes ä.txt"), "mine\n");
+    writeFileSync(join(dir, ".forerunner-try", "sample-1.txt"), "try\n");
+    writeFileSync(join(dir, "page.html"), "<h1>work</h1>\n");
+    await a.commitAll("work");
+    expect(await a.changedFiles("origin/main")).toEqual(["page.html"]);
+    await a.push("fr/task", { defaultBranch: "main" });
+    // An agent's forced add gets past the exclude; the push refuses it, and nothing moves.
+    await run(["git", "add", "-f", "Local only/notes ä.txt"], { cwd: dir });
+    await a.commitAll("forced");
+    const refused = await a.push("fr/task", { defaultBranch: "main" }).catch((e: unknown) => e);
+    expect(isNeverPushed(refused)).toBe(true);
+    expect((refused as Error).message).toBe(
+      'Forerunner did not upload the branch fr/task: it holds "Local only/notes ä.txt", files of Local only, which never leave this computer. Press Try again to redo the work without them.',
+    );
+    const onHost = await run(["git", "--git-dir", bare, "ls-tree", "-r", "--name-only", "fr/task"]);
+    expect(onHost.stdout.trim().split(/\r?\n/)).toEqual(["README.md", "page.html"]);
+    // A repository that already tracks a folder of that name is not refused for it.
+    const tracked = new GitOps({ cwd: join(root, "b"), identity, neverPush: NEVER_PUSHED });
+    const plain = new GitOps({ cwd: join(root, "seed2"), identity });
+    await plain.clone(url);
+    mkdirSync(join(root, "seed2", "Local only"), { recursive: true });
+    writeFileSync(join(root, "seed2", "Local only", "readme.md"), "the repository's own\n");
+    await plain.commitAll("a folder of that name");
+    await plain.push("main");
+    await tracked.clone(url);
+    await tracked.createBranch("fr/other");
+    writeFileSync(join(root, "b", "Local only", "readme.md"), "changed by a task\n");
+    await tracked.commitAll("change it");
+    await tracked.push("fr/other", { defaultBranch: "main" });
+    expect(await tracked.neverPushedIn("fr/other", "main")).toEqual([]);
   });
 
   it("passes the token to git through the environment, never on the command line", async () => {

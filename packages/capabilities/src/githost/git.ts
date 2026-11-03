@@ -9,6 +9,7 @@ import {
   type RunResult,
   run,
 } from "@forerunner/platform";
+import { NEVER_PUSHED_CAUSE, neverPushedWords, underNeverPushed } from "./local-only.ts";
 
 /**
  * Local git operations through argv arrays (never shell strings). Branch and PR flow (spec F):
@@ -141,6 +142,13 @@ export interface GitOpsOptions {
   timeoutMs?: number;
   /** Process runner (tests record argv and env); default the platform's `run`. */
   runner?: (argv: readonly string[], opts?: RunOptions) => Promise<RunResult>;
+  /**
+   * Folders a push never carries to the host (`local-only.ts` `NEVER_PUSHED`: Local only and a
+   * review's try folder, ADR 0113): before every push the branch is checked in code, since
+   * `git add -f` gets past `.git/info/exclude`, and a branch that tracks a path under one that
+   * the remote's default branch does not is refused with one sentence (`neverPushedWords`).
+   */
+  neverPush?: readonly string[];
 }
 
 /**
@@ -558,6 +566,13 @@ export class GitOps {
       throw new ForerunnerError("autonomy_insufficient", `force-pushing ${branch} needs a human`);
     }
     const remote = opts.remote ?? "origin";
+    if (this.opts.neverPush?.length) {
+      const held = await this.neverPushedIn(branch, opts.defaultBranch, remote);
+      if (held.length)
+        throw new ForerunnerError("path_not_allowed", neverPushedWords(branch, held), {
+          details: { cause: NEVER_PUSHED_CAUSE, paths: held.slice(0, 20) },
+        });
+    }
     const args = ["push", "-u", remote, branch];
     if (opts.force) args.splice(1, 0, "--force-with-lease");
     // The push URL as git will use it (pushurl and insteadOf / pushInsteadOf applied).
@@ -567,6 +582,38 @@ export class GitOps {
       url = r.code === 0 ? r.stdout.trim() : null;
     }
     this.must(await this.git(args, {}, url), `push ${branch}`);
+  }
+
+  /**
+   * The paths under the `neverPush` folders that `ref` tracks and the remote's default branch
+   * does not (a repository that already tracks a folder of that name is not refused for it).
+   * Names are read raw (`-z`), so a name with spaces or non-ASCII letters is compared as is.
+   */
+  async neverPushedIn(ref: string, defaultBranch?: string, remote = "origin"): Promise<string[]> {
+    const folders = this.opts.neverPush ?? [];
+    if (!folders.length) return [];
+    const onBranch = await this.trackedUnder(ref, folders);
+    if (onBranch === null) {
+      // A branch that cannot be read is never pushed unchecked.
+      this.must(await this.git(["rev-parse", "--verify", `${ref}^{commit}`]), `ls-tree ${ref}`);
+      return [];
+    }
+    if (!onBranch.length) return [];
+    const base = defaultBranch
+      ? new Set((await this.trackedUnder(`${remote}/${defaultBranch}`, folders)) ?? [])
+      : new Set<string>();
+    return onBranch.filter((p) => !base.has(p));
+  }
+
+  /**
+   * The files `rev` tracks under the folders (relative, forward slashes, read raw with `-z`);
+   * null when `rev` names no commit here.
+   */
+  async trackedUnder(rev: string, folders: readonly string[]): Promise<string[] | null> {
+    if (!folders.length) return [];
+    const r = await this.git(["ls-tree", "-r", "-z", "--name-only", rev, "--", ...folders]);
+    if (r.code !== 0) return null;
+    return underNeverPushed(r.stdout.split("\0").filter(Boolean), folders);
   }
 
   /** True when `ancestor` is reachable from `of` (the base has not moved past the branch). */

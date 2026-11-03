@@ -455,6 +455,12 @@ export interface ProjectDocsPort {
     session: SessionRow;
     update: SessionStatusUpdate;
   }): Promise<SessionStatusOutcome>;
+  /**
+   * This computer's copy of a repository project brought to what is merged (merged-copy, ADR
+   * 0113): cloned when missing, fetched, put on the default branch, nothing pushed. Absent in
+   * compositions without one.
+   */
+  refreshCopy?(project: ProjectRow, opts?: { head?: string }): Promise<{ refreshed: boolean }>;
 }
 
 // ---------------------------------------------------------------------------------------

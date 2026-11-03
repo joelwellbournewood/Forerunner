@@ -20,6 +20,7 @@ import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
+import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import {
   AcceptingCriticProvider,
@@ -32,6 +33,7 @@ import {
   createRolePlayer,
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
+import { FakeGitHost } from "../../../testenv/src/githost/fake-git-host.ts";
 import {
   keyRule,
   messagesApiStandIn,
@@ -7850,5 +7852,148 @@ describe("the UI client against the real daemon: a Claude credential at its limi
     } finally {
       await rt.close();
     }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: this computer's copy follows every merge (merged-copy, ADR 0113)", () => {
+  // The owner's decision of 2026-11-02: a repository project's copy on this computer refreshes
+  // after every merge, in the app or on GitHub, so Files and Open folder show the merged work.
+  // Before (bench, 2026-11-03): a pull request merged on the git host stayed out of Files until
+  // a session ended, and a project made from a brief had no copy at all until then (W6-25).
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let github: GitHubHost;
+  let token = "";
+  let home = "";
+  const identity = { name: "Alice", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), "fr-ui-real-copy-"));
+    host = await FakeGitHost.start({ rootDir: join(home, "host") });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    for (const name of ["copy", "brief"])
+      await host.createRepo({
+        owner: "alice",
+        name,
+        private: true,
+        defaultBranch: "main",
+        initialFiles: { "README.md": `# ${name}\n` },
+      });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+    const vault = new MemoryVault();
+    await vault.set("github_token", token);
+    // The watcher's poll is driven by the case (pollOnce), never by the clock.
+    ({ rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: github,
+        vault,
+        tryIt: false,
+        githostWatch: { enabled: true, pollMs: 86_400_000 },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /** A pull request of the person's own, opened and merged on the host (not through the app). */
+  const mergeOnHost = async (name: string, branch: string, file: string, text: string) => {
+    const dir = join(home, `person-${branch.replace(/\W+/g, "-")}`);
+    const git = new GitOps({ cwd: dir, identity, auth: { token } });
+    await git.clone(host.cloneUrl(`alice/${name}`));
+    await git.createBranch(branch, "origin/main");
+    writeFileSync(join(dir, file), text);
+    await git.commitAll(`Add ${file}`);
+    await git.push(branch);
+    const pr = await github.createPullRequest(
+      { owner: "alice", name },
+      { title: `Add ${file}`, body: "", head: branch, base: "main" },
+    );
+    const merged = await github.mergePullRequest({ owner: "alice", name }, pr.number, {
+      method: "merge",
+    });
+    expect(merged.merged).toBe(true);
+    return pr;
+  };
+  const paths = async (projectId: string) =>
+    (await client.projectFiles(projectId)).entries.map((e) => e.path);
+
+  it("a pull request and a docs PR merged on GitHub: after one watcher poll and no session, Files and Docs show them with when the copy was updated", async () => {
+    const project = await client.createProject({
+      name: "Copy",
+      goal: "A page whose files show once merged",
+      repos: ["alice/copy"],
+    });
+    const before = await client.projectFiles(project.id);
+    expect(before.entries.map((e) => e.path)).toContain("README.md");
+    expect(before.entries.map((e) => e.path)).not.toContain("page.html");
+    const firstUpdate = before.copy?.updatedAt ?? "";
+    expect(firstUpdate, "the scaffold brought the copy to main").not.toBe("");
+
+    // The person merges a pull request of their own and the scaffold's docs PR on GitHub.
+    await mergeOnHost("copy", "person/page", "page.html", "<h1>Page</h1>\n");
+    const scaffold = (await github.listPullRequests({ owner: "alice", name: "copy" })).find(
+      (p) => p.head.ref === "fr/docs-scaffold",
+    );
+    expect(scaffold, "the scaffold's docs pull request").toBeDefined();
+    expect(
+      (
+        await github.mergePullRequest({ owner: "alice", name: "copy" }, scaffold?.number ?? 0, {
+          method: "merge",
+        })
+      ).merged,
+    ).toBe(true);
+    // Not yet: nothing has told this computer.
+    expect(await paths(project.id)).not.toContain("page.html");
+
+    await rt.githostWatcher?.pollOnce();
+    const after = await client.projectFiles(project.id);
+    expect(after.entries.map((e) => e.path)).toEqual(
+      expect.arrayContaining(["README.md", "page.html", "docs/overview.md"]),
+    );
+    expect(after.copy?.updatedAt ?? "").not.toBe("");
+    expect((after.copy?.updatedAt ?? "") >= firstUpdate).toBe(true);
+    expect((await client.projectFile(project.id, "page.html")).content).toContain("<h1>Page</h1>");
+    const overview = (await client.docs(project.id)).find((d) => d.path === "docs/overview.md");
+    expect(overview).toMatchObject({ exists: true, note: "from this PC's copy of the repository" });
+    // No session ran for it.
+    expect(await client.sessions({ projectId: project.id })).toEqual([]);
+
+    // The next poll with main where the copy is: nothing is fetched again, the copy stays.
+    await rt.githostWatcher?.pollOnce();
+    expect(await paths(project.id)).toContain("page.html");
+  }, 120_000);
+
+  it("a project made from a brief has its copy while its plan waits: one watcher poll clones it (W6-25)", async () => {
+    const brief = "A page that greets the visitor";
+    const project = await client.createProject({
+      name: "Brief copy",
+      goal: goalFromBrief(brief),
+      brief,
+      intake: true,
+      repos: ["alice/brief"],
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    expect(
+      (await client.inbox(me.id)).requests.some(
+        (r) => r.projectId === project.id && r.status === "open",
+      ),
+      "the plan waits for the person",
+    ).toBe(true);
+    // Before: no copy, so the Docs tab read README.md as not written yet.
+    expect((await client.projectFiles(project.id)).folder).toBeNull();
+    await rt.githostWatcher?.pollOnce();
+    const files = await client.projectFiles(project.id);
+    expect(files.folder).not.toBeNull();
+    expect(files.entries.map((e) => e.path)).toContain("README.md");
+    expect((await client.docs(project.id)).find((d) => d.path === "README.md")).toMatchObject({
+      exists: true,
+      note: "from this PC's copy of the repository",
+    });
   }, 120_000);
 });

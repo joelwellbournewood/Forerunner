@@ -26,10 +26,13 @@ export function FolderPath({
   path,
   open = folderOpener(),
   testId = "folder",
+  explain = OPEN_FOLDER_EXPLAIN,
 }: {
   path: string;
   open?: ((path: string) => Promise<void>) | null;
   testId?: string;
+  /** Open folder's one line (the Local only row opens that folder, not the project's). */
+  explain?: string;
 }) {
   const [note, setNote] = useState<string | null>(null);
   const copy = async () => {
@@ -55,7 +58,7 @@ export function FolderPath({
               setNote(`The folder did not open: ${e instanceof Error ? e.message : String(e)}`),
             )
           }
-          title={OPEN_FOLDER_EXPLAIN}
+          title={explain}
           data-testid={`${testId}-open`}
         >
           Open folder

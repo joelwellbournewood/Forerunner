@@ -430,9 +430,12 @@ export interface IntakeDeps {
   /**
    * The G.5 scaffold (`ProjectDocs`, ADR 0058): a rejected proposal ends the deferral of a
    * creation with `intake: true` by scaffolding the standard set from the templates. Absent,
-   * a rejection scaffolds nothing.
+   * a rejection scaffolds nothing. After an approval wrote the docs to the repository, this
+   * computer's copy is brought to it at once (`refreshCopy`, merged-copy W6-25): before, a
+   * project made from a brief had no copy until its first session ended, and its Docs tab read
+   * README.md as "not written yet".
    */
-  docs?: Pick<ProjectDocsPort, "scaffoldProject">;
+  docs?: Pick<ProjectDocsPort, "scaffoldProject" | "refreshCopy">;
   /**
    * Whether specialists reach the web on this install (U-044, ADR 0107): true with a Claude
    * subscription, whose runs go through the Agent SDK with `cc:WebFetch` and `cc:WebSearch`, and
@@ -2148,6 +2151,17 @@ export class IntakeService {
     } catch (e) {
       docs = { error: redact(cut(errorMessage(e))) };
       this.logger.warn("intake docs not written", { requestId: row.id, error: errorMessage(e) });
+    }
+    // W6-25: this computer's copy of the repository, so Docs and Files read it at once.
+    if ("target" in docs && docs.target === "repository") {
+      try {
+        await this.deps.docs?.refreshCopy?.(project);
+      } catch (e) {
+        this.logger.warn("this computer's copy not made after the intake", {
+          projectId: project.id,
+          error: errorMessage(e),
+        });
+      }
     }
     const after = await store.humanRequest.mustGet(row.id);
     await store.humanRequest.patch(row.id, {

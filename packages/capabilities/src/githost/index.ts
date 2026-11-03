@@ -3,6 +3,7 @@ export * from "./branch-rules.ts";
 export * from "./git.ts";
 export * from "./github.ts";
 export * from "./github-graphql.ts";
+export * from "./local-only.ts";
 export * from "./memory.ts";
 export * from "./pr-executor.ts";
 export * from "./projects-mirror.ts";

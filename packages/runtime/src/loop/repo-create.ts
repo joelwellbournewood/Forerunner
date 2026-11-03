@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { type GitHost, GitOps, gitAuthFor, type RepoInfo } from "@forerunner/capabilities";
+import { type GitHost, GitOps, gitAuthFor, type RepoInfo, TRY_DIR } from "@forerunner/capabilities";
 import type { RepoCommandPort, RepoPreview } from "@forerunner/commands";
 import {
   basename,
@@ -182,9 +182,10 @@ export class RepoCreator implements RepoCommandPort {
       await git.init(branch);
       const workspace = projectWorkspaceDir(this.deps.projectsRoot, project.id);
       if (existsSync(workspace)) {
+        // Neither the folder's history nor a review's try folder a dead daemon left (W6-26).
         cpSync(workspace, dir, {
           recursive: true,
-          filter: (src) => basename(src) !== ".git",
+          filter: (src) => basename(src) !== ".git" && basename(src) !== TRY_DIR,
         });
       }
       const files = countFiles(dir);

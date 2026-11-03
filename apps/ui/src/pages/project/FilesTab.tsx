@@ -1,10 +1,40 @@
+import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
-import type { ProjectFileEntryView } from "../../api/client.ts";
+import type { ProjectFileEntryView, ProjectFilesView } from "../../api/client.ts";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { EmptyState, ErrorBanner, Loading } from "../../components/ui.tsx";
 import { relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
-import { useClient } from "../../store/context.tsx";
+import { useClient, useUiState } from "../../store/context.tsx";
+
+/** What Open folder does on the Local only row (design §3.10). */
+export const OPEN_LOCAL_ONLY_EXPLAIN = "Opens the Local only folder.";
+
+/**
+ * "14:05" today, "2 Nov, 14:05" another day: when this computer's copy was last brought to what
+ * is merged (merged-copy, ADR 0113). The clock of the person's computer, 24 hours.
+ */
+export function copyUpdatedWords(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return time;
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${time}`;
+}
+
+/**
+ * The line above a repository project's files: whose copy it is, since when it is as merged
+ * on GitHub (once it was brought there), and where the work in pull requests is.
+ */
+export function repositoryLine(
+  fullName: string,
+  updatedAt: string | null | undefined,
+  now = new Date(),
+): string {
+  const where = "Work waiting in a pull request is on the Overview.";
+  if (!updatedAt) return `This computer's copy of ${fullName} as merged. ${where}`;
+  return `This computer's copy of ${fullName}. As merged on GitHub, updated ${copyUpdatedWords(updatedAt, now)}. ${where}`;
+}
 
 /** "1.2 KB": a file's size in words. */
 export function sizeWords(bytes: number): string {
@@ -33,6 +63,16 @@ export function FilesTab({
   const [params, setParams] = useSearchParams();
   const open = params.get("path");
   const files = useAsync((signal) => client.projectFiles(projectId, signal), [client, projectId]);
+  // Live (merged-copy): the store re-reads the project card on every `project.changed`, which
+  // the daemon sends when a merge brought this computer's copy up to date; the list follows.
+  const card = useUiState((s) => s.projects.find((p) => p.id === projectId));
+  const seenCard = useRef(card);
+  const { reload } = files;
+  useEffect(() => {
+    if (seenCard.current === card) return;
+    seenCard.current = card;
+    reload();
+  }, [card, reload]);
 
   if (files.loading && !files.data) return <Loading what="files" />;
   if (files.error && !files.data)
@@ -55,11 +95,11 @@ export function FilesTab({
           className="text-sm text-neutral-600 dark:text-neutral-400"
           data-testid="files-repository"
         >
-          This computer's copy of {repository.fullName} as merged. Work waiting in a pull request is
-          on the Overview.
+          {repositoryLine(repository.fullName, data.copy?.updatedAt)}
         </p>
       ) : null}
       {data.folder ? <FolderPath path={data.folder} /> : null}
+      <LocalOnly copy={data.copy} />
       {data.entries.length === 0 ? (
         <EmptyState testId="files-empty">Nothing written yet.</EmptyState>
       ) : (
@@ -79,6 +119,37 @@ export function FilesTab({
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A repository project's Local only folder (the owner's decision of 2026-11-02, ADR 0113): its
+ * one line, the path and Open folder; or the sentence when the repository already has a folder
+ * of that name. Its files are in the list below like any other.
+ */
+function LocalOnly({ copy }: { copy: ProjectFilesView["copy"] }) {
+  const local = copy?.localOnly;
+  if (!local) return null;
+  return (
+    <div className="space-y-1" data-testid="local-only">
+      <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="local-only-line">
+        {local.folder ? (
+          <>
+            <span className="font-medium text-neutral-800 dark:text-neutral-200">Local only</span>
+            {` · ${local.line}`}
+          </>
+        ) : (
+          local.line
+        )}
+      </p>
+      {local.folder ? (
+        <FolderPath
+          path={local.folder}
+          testId="local-only-folder"
+          explain={OPEN_LOCAL_ONLY_EXPLAIN}
+        />
+      ) : null}
     </div>
   );
 }
