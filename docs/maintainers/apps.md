@@ -822,6 +822,12 @@ them"): `real-daemon.test.ts`'s C-57 case merged on the seed repository with a p
 `git merge` and passed only where the person had a git identity (CI on c8c16fb, both runners);
 its merge now names the seed's identity.
 
+The suite, and the real daemons and git it starts, write their temp files into one folder per
+run, removed when the run ends: `vitest.config.ts`'s `globalSetup` is
+`testenv/src/test-tmp-global-setup.ts` (testing.md, "Where test temp files go"), and
+`test/test-tmp.test.ts` fails when it is not wired. `playwright.config.ts` does the same in the
+runner process (below).
+
 `setup-assistant` covers the setup assistant (ADR 0092): a fresh install opens it instead of
 Home, a set-up install and a daemon without `/setup` stay where the app opened, Settings links
 to it; the walk through name and time zone, a rejected and an accepted API key checked on paste
@@ -1075,7 +1081,15 @@ import, docs reader; performance targets; a settings change → card → yes →
 `playwright.config.ts` picks free ports and random tokens once and pins them in
 `FORERUNNER_UI_FAKE_PORT`, `FORERUNNER_UI_PORT`, `FORERUNNER_UI_FAKE_TOKEN` (and the fake
 state service's for the phone specs) so worker processes agree; the CI desktop workflow runs
-`pnpm --filter @forerunner/ui test:ui` after `playwright install chromium`.
+`pnpm --filter @forerunner/ui test:ui` after `playwright install chromium`. The same file
+makes the run's temp folder (`startTestTmp` from `testenv/src/test-tmp.ts`; testing.md, "Where
+test temp files go") at load in the runner process, because Playwright starts the web servers
+before any `globalSetup`: the fake daemon, the fake state service, Vite, the workers and the
+browsers they launch inherit TMPDIR, TMP and TEMP (workers load the config again and find
+`FORERUNNER_TEST_TMP_RUN` set). The runner removes the folder when it exits, after it has
+stopped the web servers; a file still open then is reported and left for a later run to
+remove once it is a day old. `e2e/temp-folder.spec.ts` checks a worker's temp folder is the
+run's.
 
 ## Known issues
 
@@ -1953,7 +1967,9 @@ signature verification (`node:crypto`, SPKI prefix), the five-minute window and 
 scope checks, version conflicts, the high-risk rule with the `/confirm/challenge` stand-in, a
 scripted PC that picks commands up and answers chat, SSE with `Last-Event-ID` replay, and a
 record of every call. Options `supportsConfirm: false` and `supportsChat: false` make it
-behave like the state service does today.
+behave like the state service does today. `vitest.config.ts`'s `globalSetup` gives the run one
+temp folder, removed at its end (testing.md, "Where test temp files go"); `test-tmp.test.ts`
+fails when it is not wired.
 
 | File | Covers |
 | --- | --- |

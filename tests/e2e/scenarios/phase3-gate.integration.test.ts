@@ -35,6 +35,7 @@ import {
   tierOfModel,
 } from "@forerunner/runtime";
 import type { TaskRow } from "@forerunner/state";
+import { keptTempDir } from "@forerunner/testenv/test-tmp";
 import { afterAll, describe, expect, it } from "vitest";
 import { evalCriticScript, evidenceShowsDefect } from "../src/eval-defects.ts";
 import { CODER_FAMILIES, familyScript } from "../src/four-weeks.ts";
@@ -396,8 +397,9 @@ describe("phase 3 gate: critic calibration on the eval sets (live model, opt-in)
         memory: false,
         critic: { provider, pricing: pricingFor },
       });
-      const outDir =
-        process.env.FORERUNNER_E2E_REPORT_DIR ?? mkdtempSync(join(os.tmpdir(), "fr-phase3-live-"));
+      // Without the variable, beside the run's temp folder, not in it: the report path printed
+      // below must outlive the run (testing.md, "Where test temp files go").
+      const outDir = process.env.FORERUNNER_E2E_REPORT_DIR ?? keptTempDir("fr-phase3-live-");
       try {
         const project = await w.addProject({
           name: "Calibration (live)",

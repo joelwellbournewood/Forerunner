@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
+import { ENV_RUN, startTestTmp } from "../../testenv/src/test-tmp.ts";
 
 /**
  * Browser tests drive the real UI against the fake daemon (test/fake-daemon.ts). Two web
@@ -14,6 +16,17 @@ function freePort(): number {
   const script =
     "const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>{process.stdout.write(String(s.address().port));s.close()})";
   return Number(execFileSync(process.execPath, ["-e", script], { encoding: "utf8" }).trim());
+}
+
+// One temp folder per run, as for every vitest run (testenv/src/test-tmp.ts; testing.md, "Where
+// test temp files go"). Made here, in the runner process, because Playwright starts the web
+// servers before any globalSetup; the web servers, the workers and the browsers they launch
+// inherit TMPDIR, TMP and TEMP. Workers load this file again and find it set. The runner removes
+// it when it exits, after it has stopped the web servers.
+const runTmp = process.env[ENV_RUN];
+if (!runTmp || !existsSync(runTmp)) {
+  const run = startTestTmp();
+  process.once("exit", () => run.stop({ lastTry: false }));
 }
 
 process.env.FORERUNNER_UI_FAKE_PORT ||= String(freePort());

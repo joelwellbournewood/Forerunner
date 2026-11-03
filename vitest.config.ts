@@ -11,6 +11,11 @@ const setupFiles = ["testenv/src/ci-env.ts"];
 export default defineConfig({
   test: {
     passWithNoTests: true,
+    // One temp folder per run for all three projects (testenv/src/test-tmp.ts; testing.md,
+    // "Where test temp files go"): TMPDIR, TMP and TEMP point into it before any worker starts,
+    // and the run removes it at its end. Named here, at the root, it runs once per vitest run
+    // whatever `--project` picks (vitest runs the root's global setup for every project).
+    globalSetup: ["testenv/src/test-tmp-global-setup.ts"],
     projects: [
       {
         test: {
