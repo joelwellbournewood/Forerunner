@@ -1068,8 +1068,8 @@ describe("Ctrl- and Shift-clicked links, and what the page threw", () => {
     });
     expect(noSecondWindow(unread, one)).toMatchObject({ ok: false });
 
-    // The Ctrl-, Shift- and in-app Ctrl+click checks count with these, and no read of the
-    // window's list turns a failure into an empty one.
+    // The Ctrl+ and Shift+click checks, on a link that leaves the app and on the app's own
+    // Inbox, count with these, and no read of the window's list turns a failure into an empty one.
     const script = readFileSync(join(REPO, "scripts", "desktop-window-check.mjs"), "utf8");
     expect(script.match(/noSecondWindow\(windowsBefore, await pageTargets\(\)\)/g)).toHaveLength(2);
     expect(script).not.toMatch(/listTargets\([^)]*\)\s*\.catch\(\s*\(\)\s*=>\s*\[\]\s*\)/);
