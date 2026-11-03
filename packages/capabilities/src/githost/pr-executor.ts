@@ -1482,7 +1482,10 @@ export class PrTaskExecutor implements TaskExecutor {
       } catch (e) {
         return {
           outcome: "failed",
-          summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
+          // merged-copy: a branch that carries Local only files is refused in its own words.
+          summary: isNeverPushed(e)
+            ? errorMessage(e)
+            : pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
           costUsdMicro: 0,
           branch,
         };
