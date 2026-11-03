@@ -16,6 +16,7 @@ import {
   WITHOUT_ANSWERS_NOTE,
 } from "../src/session/person-questions.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * "Go ahead without" reaches the specialist (live L-3, 2026-11-02). The data analyst of the
@@ -113,24 +114,10 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
         ...(init.headers ?? {}),
       },
     });
-  return { rt, req };
-}
-
-/** Polls until `probe` gives a value; the message says what it last saw (Windows CI is slow). */
-async function waitFor<T>(
-  what: string,
-  probe: () => Promise<T | undefined>,
-  seen: () => Promise<unknown> = async () => undefined,
-  ms = 60_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline)
-      throw new Error(`timed out waiting for ${what}; saw ${JSON.stringify(await seen())}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  // What the cases start, watched (runtime-watch.ts): a wait goes on while the runtime moves
+  // (Windows CI is slow) and stops what runs (Stop now) before it gives up with what it saw;
+  // `settle` before the runtime closes.
+  return { rt, req, watch: watchRuntime(rt, { request: req }) };
 }
 
 describe("Go ahead without reaches the specialist and is not asked again (live L-3)", () => {
@@ -139,12 +126,13 @@ describe("Go ahead without reaches the specialist and is not asked again (live L
   const fake = provider(clock);
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
   let projectId = "";
   let chart: TaskRow;
   const inbox = async () => (await (await req("/inbox")).json()) as { requests: Json[] };
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
     projectId = (
       await rt.store.project.insert({
         name: "Club tools",
@@ -183,6 +171,7 @@ describe("Go ahead without reaches the specialist and is not asked again (live L
     });
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -212,10 +201,11 @@ describe("Go ahead without reaches the specialist and is not asked again (live L
       body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: 3_000_000 }),
     });
     expect(started.status).toBe(202);
+    watch.track(String((((await started.json()) as Json).session as Json).id));
     // Wait for the work to settle: the chart ran twice and no session runs.
     const chartRuns = async () =>
       (await rt.store.run.forTask(chart.id)).filter((r) => r.specialist !== "critic");
-    await waitFor(
+    await watch.waitFor(
       "the chart's second run to end and no session to run",
       async () => {
         const t = await rt.store.task.mustGet(chart.id);
@@ -223,12 +213,14 @@ describe("Go ahead without reaches the specialist and is not asked again (live L
         const settled = !["claimed", "in_progress", "in_review"].includes(t.status);
         return settled && active.length === 0 && (await chartRuns()).length >= 2 ? t : undefined;
       },
-      async () => ({
-        chart: (await rt.store.task.mustGet(chart.id)).status,
-        runs: (await chartRuns()).length,
-        active: (await rt.store.session.active(rt.agent.id)).length,
-        calls: fake.calls.length,
-      }),
+      {
+        seen: async () => ({
+          chart: (await rt.store.task.mustGet(chart.id)).status,
+          runs: (await chartRuns()).length,
+          active: (await rt.store.session.active(rt.agent.id)).length,
+          calls: fake.calls.length,
+        }),
+      },
     );
     fake.hook = null;
     expect(pressed).toBe(true);
@@ -256,8 +248,9 @@ describe("Go ahead without reaches the specialist and is not asked again (live L
   }, 120_000);
 
   it("after a restart the choice still holds: the brief carries it and ask_person is refused", async () => {
+    await watch.settle();
     await rt.close();
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
     const tool = askPersonTool({ store: rt.store });
     const refused = await tool.execute({ questions: ["Where is data/members.csv?"] }, {
       taskId: chart.id,

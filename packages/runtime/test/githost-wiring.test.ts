@@ -15,6 +15,7 @@ import {
   GITHOST_TRIGGER_AUDIT_TOOL,
 } from "../src/session/githost-watcher.ts";
 import { ScriptedProvider } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * The git host poller in the composed daemon (spec E.1; ADR 0075): `composeRuntime` builds
@@ -26,14 +27,6 @@ import { ScriptedProvider } from "./helpers.ts";
  * comments the memory host writes as `reviewer` are someone else's).
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
-
-async function until(fn: () => Promise<boolean> | boolean, ms = 5_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!(await fn())) {
-    if (Date.now() > deadline) throw new Error(`until: still false after ${ms} ms`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
 
 describe("githostWatchEnabled", () => {
   it("is off without services, follows the override, the env flag, then the real host", () => {
@@ -54,6 +47,16 @@ describe("the git host poller in the composed daemon", () => {
   host.whoAmI = async () => ({ login: "forerunner-bot" });
   const repo = { owner: "reviewer", name: "app" };
   let projectId: string;
+  /**
+   * What the triggers start, watched (runtime-watch.ts): a wait goes on while the runtime moves
+   * and stops what runs before it gives up with what it saw; `settle` before the runtime closes.
+   */
+  let watch: RuntimeWatch;
+  /** What a wait saw: the scheduler's triggers and starts, and the trigger audits. */
+  const seen = async () =>
+    `scheduler log: ${rt.scheduler.log.map((e) => `${e.req.trigger} ${e.result}`).join(", ") || "empty"}; ${
+      (await triggerAudits()).length
+    } trigger audit(s)`;
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), "fr-githost-wiring-"));
@@ -73,6 +76,7 @@ describe("the git host poller in the composed daemon", () => {
       gitHost: host,
       githostWatch: { pollMs: 1_000 },
     });
+    watch = watchRuntime(rt);
     await host.createRepo({ name: "app", private: false });
     const pr = await host.createPullRequest(repo, {
       title: "feature",
@@ -101,6 +105,7 @@ describe("the git host poller in the composed daemon", () => {
     });
   }, 120_000);
   afterAll(async () => {
+    if (rt) await watch.settle();
     await rt?.close();
   });
 
@@ -117,7 +122,9 @@ describe("the git host poller in the composed daemon", () => {
   it("polls on the clock: the baseline, then a failed check fires ci through the scheduler", async () => {
     const cursor = join(home, "data", "githost", `cursor-${rt.agent.id}.json`);
     await clock.advance(1_000);
-    await until(() => existsSync(cursor));
+    await watch.until("the watcher's baseline (its cursor file)", () => existsSync(cursor), {
+      seen: () => `no ${cursor}`,
+    });
     host.setCheckRuns(repo, "sha-feature", [
       {
         id: 41,
@@ -127,10 +134,14 @@ describe("the git host poller in the composed daemon", () => {
         detailsUrl: null,
       },
     ]);
-    await until(async () => {
-      await clock.advance(1_000);
-      return (await triggerAudits()).length > 0;
-    });
+    await watch.until(
+      "the failed check to fire ci",
+      async () => {
+        await clock.advance(1_000);
+        return (await triggerAudits()).length > 0;
+      },
+      { seen },
+    );
     const fired = rt.scheduler.log.filter((e) => e.req.trigger === "ci");
     expect(fired).toHaveLength(1);
     expect(fired[0]?.req).toMatchObject({
@@ -159,10 +170,14 @@ describe("the git host poller in the composed daemon", () => {
     expect(rt.scheduler.log.filter((e) => e.req.trigger === "pr_comment")).toEqual([]);
 
     await rt.store.human.patch(rt.human.id, { notify_prefs: {} });
-    await until(async () => {
-      await clock.advance(1_000);
-      return rt.scheduler.log.some((e) => e.req.trigger === "pr_comment");
-    });
+    await watch.until(
+      "the flagged comment to fire pr_comment",
+      async () => {
+        await clock.advance(1_000);
+        return rt.scheduler.log.some((e) => e.req.trigger === "pr_comment");
+      },
+      { seen },
+    );
     const entry = rt.scheduler.log.find((e) => e.req.trigger === "pr_comment");
     expect(entry?.req.reason).toBe("reviewer/app#1 comment by @reviewer (flagged)");
     const flaggedRows = await rt.store.auditLog.list({ tool: INJECTION_FLAGGED_AUDIT } as never);
@@ -177,10 +192,15 @@ describe("the git host poller in the composed daemon", () => {
   it("stops on close", async () => {
     const w = rt.githostWatcher;
     // The sessions the triggers started end first (the scripted reply), then the daemon closes.
-    await until(async () => {
-      await clock.advance(1_000);
-      return !rt.scheduler.isActive(rt.agent.id) && !rt.scheduler.pendingFor(rt.agent.id);
-    });
+    await watch.until(
+      "the sessions the triggers started to end",
+      async () => {
+        await clock.advance(1_000);
+        return !rt.scheduler.isActive(rt.agent.id) && !rt.scheduler.pendingFor(rt.agent.id);
+      },
+      { seen },
+    );
+    await watch.settle();
     await rt.close();
     expect(w?.started).toBe(false);
     rt = undefined as unknown as RuntimeApp;

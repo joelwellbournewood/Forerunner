@@ -5500,7 +5500,13 @@ the shared `until` too, with a `progress` and `seen` per call site (model calls,
 task's runs) and `stopRuns(h, runs, release?)` as its stop for runs a case started on the
 harness directly: the kill switch ends them (nothing frozen), then it waits until each run's
 promise has settled, releasing a gate and moving the simulated clock on each poll, so nothing of
-them writes to the store the case then closes.
+them writes to the store the case then closes. Work the kill switch does not hold needs its own
+`stop` beside the watch's: the scheduled mirror run waiting on its card has no registration, so
+`mirror-deny-daemon.test.ts`'s `endMirrorWaits` withdraws the mirror's open cards and wakes the
+run (`syncApprovals`), which then ends unanswered; without it `settle` would wait 15 s and fail
+naming the start still running. A watch over other agents' work names them
+(`watchRuntime(rt, { agents })`: the calibration and handover agents in
+`monthly-jobs-wiring.test.ts`, the mirror agents in `mirror-deny-daemon.test.ts`).
 
 `fast-mode.test.ts` (spec D.20, ADR 0057; `sqlite::memory:`, a stub provider named
 `anthropic` with `fastMode`, a stub billing port, a fake Agent SDK `query`): flag on, the Opus

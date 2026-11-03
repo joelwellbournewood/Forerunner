@@ -16,28 +16,10 @@ import { CALIBRATION_AGENT_ID, CALIBRATION_SCHEDULE_ID } from "../src/jobs/calib
 import { handoverAgentId, handoverScheduleId } from "../src/jobs/handover.ts";
 import type { NotificationRecord } from "../src/notifications/types.ts";
 import { ScriptedProvider } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 const REGISTRY = join(process.cwd(), "evals", "registry");
 
-/**
- * Waits until `cond` holds, at most `ms` of real time (at least 10 s, so a slow machine is not a
- * failure); a timeout says what it waited for and what it saw.
- */
-async function until(
-  cond: () => boolean,
-  what: string,
-  seen: () => string,
-  ms = 120_000,
-): Promise<void> {
-  const end = Date.now() + Math.max(ms, 10_000);
-  while (!cond()) {
-    if (Date.now() > end)
-      throw new Error(
-        `timed out after ${Math.round(ms / 1000)} s waiting for ${what}; saw ${seen()}`,
-      );
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
 const LESSON =
   "Before touching the clamp module always run the zebra checklist from the team wiki first.";
 const SEED = {
@@ -56,6 +38,12 @@ describe("monthly jobs in the composed daemon", () => {
   const records: NotificationRecord[] = [];
   /** The handover's agent for the project the first test makes. */
   let handoverAgent = "";
+  /**
+   * The runs the cases start, under the install's agent, the calibration's and the handover's,
+   * watched (runtime-watch.ts): a wait goes on while the runtime moves and stops what runs
+   * before it gives up with what it saw; `settle` before the runtime closes.
+   */
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), "fr-monthly-jobs-"));
@@ -82,19 +70,27 @@ describe("monthly jobs in the composed daemon", () => {
       },
     });
     rt.notifier.emitter.on("record", (r) => void records.push(r));
+    watch = watchRuntime(rt, {
+      agents: () => [rt.agent.id, CALIBRATION_AGENT_ID, ...(handoverAgent ? [handoverAgent] : [])],
+    });
   }, 120_000);
   afterAll(async () => {
     // The last tick (15 November) also starts the project's monthly handover, missed on
     // 1 November: a session that runs git in the project's workspace. Closing the runtime does
     // not wait for a scheduled run, and on Windows a folder a running git works in cannot be
     // removed (Windows CI: EBUSY on every retry). Wait for that run to end first.
+    // It is waited for while it moves (within this hook's 120 s, less the stop's 15 s and some),
+    // and stopped if it stops moving.
     if (handoverAgent && rt)
-      await until(
-        () => !rt.scheduler.isActive(handoverAgent),
+      await watch.until(
         "the monthly handover's run to end",
-        () => `the handover still runs: ${rt.scheduler.isActive(handoverAgent)}`,
-        90_000,
+        () => !rt.scheduler.isActive(handoverAgent),
+        {
+          seen: () => `the handover still runs: ${rt.scheduler.isActive(handoverAgent)}`,
+          limitMs: 90_000,
+        },
       );
+    await watch?.settle();
     await rt?.close();
     // A process that has just ended (git) can still hold the folder for a moment on Windows.
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
@@ -175,7 +171,13 @@ describe("monthly jobs in the composed daemon", () => {
     const seen = () =>
       `calibration running: ${rt.scheduler.isActive(CALIBRATION_AGENT_ID)}; starts: ${JSON.stringify(calibrationStarts().map((l) => l.result))}; notifications: ${records.map((r) => r.notification.kind).join(", ") || "none"}`;
     const settle = () =>
-      until(() => !rt.scheduler.isActive(CALIBRATION_AGENT_ID), "the calibration run to end", seen);
+      watch.until(
+        "the calibration run to end",
+        () => !rt.scheduler.isActive(CALIBRATION_AGENT_ID),
+        {
+          seen,
+        },
+      );
     // 23 October: first sight after the day, nothing runs this month.
     await rt.scheduler.tick();
     expect(rt.scheduler.list().find((s) => s.id === CALIBRATION_SCHEDULE_ID)).toMatchObject({
@@ -193,12 +195,12 @@ describe("monthly jobs in the composed daemon", () => {
     await clock.set("2026-11-01T05:01:00Z");
     await rt.scheduler.tick();
     expect(calibrationStarts().map((l) => l.result)).toEqual(["started"]);
-    await until(
+    await watch.until(
+      "the calibration run to end and raise its notification",
       () =>
         !rt.scheduler.isActive(CALIBRATION_AGENT_ID) &&
         records.some((r) => r.notification.kind === "critic_calibration"),
-      "the calibration run to end and raise its notification",
-      seen,
+      { seen },
     );
     const rec = records.find((r) => r.notification.kind === "critic_calibration");
     expect(rec?.notification).toMatchObject({ humanId: rt.human.id });

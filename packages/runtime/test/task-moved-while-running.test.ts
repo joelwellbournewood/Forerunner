@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type TaskRow } from "@forerunner/state";
+import { storeProgress, waitFor } from "@forerunner/testenv/wait";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
@@ -17,6 +18,7 @@ import {
 } from "../src/session/runner.ts";
 import { seedWorld } from "./context-helpers.ts";
 import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * U-039: Cancel, Mark failed or Needs me on a task that is running ended the whole session as
@@ -33,26 +35,27 @@ import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 const REGISTRY = join(process.cwd(), "evals", "registry");
 const grant = { allowedTools: ["echo"], allowedPaths: [], allowedDomains: [], grantedSecrets: [] };
 
-/** Real time to wait for something the fix makes happen at once (no simulated clock moves). */
-async function within<T>(p: Promise<T>, ms: number): Promise<T | "still running"> {
-  let timer: NodeJS.Timeout | undefined;
-  const late = new Promise<"still running">((resolve) => {
-    timer = setTimeout(() => resolve("still running"), ms);
-  });
-  try {
-    return await Promise.race([p, late]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Polls `cond` in real time; the error says what was seen last (`what`). */
-async function until(cond: () => Promise<boolean>, what: () => Promise<string>): Promise<void> {
-  for (let i = 0; i < 400; i++) {
-    if (await cond()) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error(`timed out waiting for ${await what()}`);
+/**
+ * A promise as something a wait can poll: its value once it has settled (a rejection is thrown
+ * by the poll). The fix makes the session end at once; without it the session waits on the
+ * cancelled task's run, which never answers, so nothing moves and the wait gives up (shared
+ * wait, testing.md "Waiting on work a case started"), stops the session and says what it saw.
+ */
+function settledOf<T>(p: Promise<T>): () => T | undefined {
+  let done: { ok: true; value: T } | { ok: false; error: unknown } | undefined;
+  p.then(
+    (value) => {
+      done = { ok: true, value };
+    },
+    (error: unknown) => {
+      done = { ok: false, error };
+    },
+  );
+  return () => {
+    if (!done) return undefined;
+    if (done.ok) return done.value;
+    throw done.error;
+  };
 }
 
 describe("a person's move on a running task stops that task's run; the session goes on (U-039)", () => {
@@ -60,6 +63,7 @@ describe("a person's move on a running task stops that task's run; the session g
   let app: ReturnType<typeof createDaemonApp>["app"];
   let token: string;
   let provider: ScriptedProvider;
+  let watch: RuntimeWatch;
   const clock = new SimulatedClock("2026-03-05T08:00:00Z");
 
   beforeAll(async () => {
@@ -92,8 +96,18 @@ describe("a person's move on a running task stops that task's run; the session g
       },
     });
     ({ app, token } = createDaemonApp(rt));
+    // A wait goes on while the runtime moves and stops what runs (Stop now) before it gives up;
+    // `settle` before the runtime closes.
+    watch = watchRuntime(rt, {
+      request: (path, init = {}) =>
+        app.request(path, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+        }),
+    });
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -132,17 +146,21 @@ describe("a person's move on a running task stops that task's run; the session g
       },
       onEvent: (type, payload) => events.push({ type, payload }),
     });
-    await until(
+    const ended = settledOf(run);
+    await watch.until(
+      "the first task to run",
       async () =>
         (await rt.store.task.mustGet(first.id)).status === "in_progress" &&
         provider.calls.length === 1,
-      async () =>
-        `the first task to run (task ${(await rt.store.task.mustGet(first.id)).status}, ${
-          provider.calls.length
-        } model calls, events: ${events.map((e) => e.type).join(" ")}; finished: ${events
-          .filter((e) => e.type === "task.finished")
-          .map((e) => String(e.payload.summary ?? e.payload.text ?? JSON.stringify(e.payload)))
-          .join(" | ")})`,
+      {
+        seen: async () =>
+          `task ${(await rt.store.task.mustGet(first.id)).status}, ${
+            provider.calls.length
+          } model calls, events: ${events.map((e) => e.type).join(" ")}; finished: ${events
+            .filter((e) => e.type === "task.finished")
+            .map((e) => String(e.payload.summary ?? e.payload.text ?? JSON.stringify(e.payload)))
+            .join(" | ")}`,
+      },
     );
     // What the Tasks tab's Cancel sends: the version it loaded, the target and a reason.
     const loaded = await rt.store.task.mustGet(first.id);
@@ -154,11 +172,14 @@ describe("a person's move on a running task stops that task's run; the session g
     expect(res.status).toBe(200);
     expect(((await res.json()) as { status: string }).status).toBe("cancelled");
 
-    const result = await within(run, 5_000);
-    expect(result, "the session must not wait on a task the person cancelled").not.toBe(
-      "still running",
+    const r: SessionResult = await watch.waitFor(
+      "the session to end (it must not wait on a task the person cancelled)",
+      ended,
+      {
+        seen: async () =>
+          `task ${(await rt.store.task.mustGet(first.id)).status}, ${provider.calls.length} model calls, events: ${events.map((e) => e.type).join(" ")}`,
+      },
     );
-    const r = result as SessionResult;
     expect(r.status).toBe("completed");
     // The person's move stands; the runner never moved the task from it.
     const cancelled = await rt.store.task.mustGet(first.id);
@@ -182,7 +203,7 @@ describe("a person's move on a running task stops that task's run; the session g
       completed: 1,
       cancelled: 1,
     });
-  });
+  }, 120_000);
 });
 
 describe("the session runner after a person's move on a running task (U-039)", () => {
@@ -323,11 +344,12 @@ describe("the session runner after a person's move on a running task (U-039)", (
         return { outcome: "killed", summary: "stopped", costUsdMicro: 0 };
       },
     };
+    const kill = new KillSwitch();
     const runner = new SessionRunner({
       store,
       clock,
       tokens: new TokenIssuer({ now: () => clock.now() }),
-      kill: new KillSwitch(),
+      kill,
       planner: new StaticPlanner(),
       executor,
     });
@@ -338,6 +360,7 @@ describe("the session runner after a person's move on a running task (U-039)", (
       budgetCapUsdMicro: 5_000_000,
       grant,
     });
+    const ended = settledOf(run);
     await running;
     // The store write the state service makes for the phone's "Mark failed": no route of this
     // process is called, so nothing but the runner's watch can see it.
@@ -346,14 +369,26 @@ describe("the session runner after a person's move on a running task (U-039)", (
       humanId: w.human,
     });
     await clock.advance(5_000);
-    const result = await within(run, 5_000);
-    expect(result).not.toBe("still running");
-    const r = result as SessionResult;
+    // The session ends once the runner's watch has seen the move. If it does not, the wait
+    // gives up while the store is still, stops the session's runs and waits for it to end, so
+    // nothing writes to the store after the case closes it.
+    const r: SessionResult = await waitFor(
+      "the session to end (the runner's watch must stop the task a person failed elsewhere)",
+      ended,
+      {
+        progress: () => storeProgress(store),
+        seen: async () => `task ${(await store.task.mustGet(first.id)).status}`,
+        stop: async (why) => {
+          await kill.stop("all", `stopped by the test: ${why}`, { freeze: false, by: "you" });
+          await run.catch(() => undefined);
+        },
+      },
+    );
     expect(r.status).toBe("completed");
     expect((await store.task.mustGet(first.id)).status).toBe("failed");
     expect(r.failed).toEqual([first.id]);
     expect(r.completed).toEqual([second.id]);
     expect(r.summary.split("\n")[0]).toBe('"Long one" failed: wrong approach.');
     await store.close();
-  });
+  }, 120_000);
 });

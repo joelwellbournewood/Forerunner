@@ -20,6 +20,7 @@ import {
 import { personStopOf } from "../src/session/stop-words.ts";
 import { seedWorld } from "./context-helpers.ts";
 import { ScriptedProvider } from "./helpers.ts";
+import { watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Whose stop it was is decided where the stop is asked for, never from its words (design §4.9).
@@ -221,6 +222,15 @@ describe("Quit while a task runs (the desktop shell's POST /shutdown)", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
+    // A wait goes on while the runtime moves and stops what runs (Stop now) before it gives up;
+    // `settle` before the runtime closes.
+    const watch = watchRuntime(rt, {
+      request: (path, init = {}) =>
+        app.request(path, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+        }),
+    });
     try {
       const project = await rt.store.project.insert({
         name: "Quit page",
@@ -246,26 +256,26 @@ describe("Quit while a task runs (the desktop shell's POST /shutdown)", () => {
       expect(started.status).toBeLessThan(300);
       const sessionId = String((started.body.session as { id?: string } | null)?.id ?? "");
       expect(sessionId).not.toBe("");
-      const until = async (cond: () => Promise<boolean>, what: string) => {
-        for (let i = 0; i < 600; i++) {
-          if (await cond()) return;
-          await new Promise((r) => setTimeout(r, 5));
-        }
-        throw new Error(`timed out waiting for ${what}`);
-      };
-      await until(
+      watch.track(sessionId);
+      const seen = async () =>
+        `task ${(await rt.store.task.mustGet(task.id)).status}, session ${
+          (await rt.store.session.mustGet(sessionId)).status
+        }, ${provider.calls.length} model call(s)`;
+      await watch.until(
+        "the task's model call",
         async () =>
           (await rt.store.task.mustGet(task.id)).status === "in_progress" &&
           provider.calls.length === 1,
-        "the task's model call",
+        { seen },
       );
 
       // Quit, as the desktop shell sends it.
       expect((await call("POST", "/shutdown", {})).status).toBe(202);
-      await until(
+      await watch.until(
+        "the session to end",
         async () =>
           !["running", "paused"].includes((await rt.store.session.mustGet(sessionId)).status),
-        "the session to end",
+        { seen },
       );
       const view = (await call("GET", `/sessions/${sessionId}`)).body;
       expect(view).toMatchObject({
@@ -285,6 +295,7 @@ describe("Quit while a task runs (the desktop shell's POST /shutdown)", () => {
         by: "quit",
       });
     } finally {
+      await watch.settle();
       await rt.close();
       rmSync(home, { recursive: true, force: true });
     }

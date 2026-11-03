@@ -9,6 +9,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ModelRequest, StreamEvent } from "../src/provider/types.ts";
 import { REMOTE_AUDIT_TOOL } from "../src/remote/index.ts";
 import { ScriptedProvider } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Remote control of the PC through the composed daemon (spec R.4, R.8; ADR 0041): the daemon
@@ -41,20 +42,19 @@ class HoldingProvider extends ScriptedProvider {
   }
 }
 
-async function until(fn: () => Promise<boolean> | boolean, ms = 5_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!(await fn())) {
-    if (Date.now() > deadline) throw new Error(`until: still false after ${ms} ms`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 describe("remote control of the PC through the daemon", () => {
   let rt: RuntimeApp;
   let app: ReturnType<typeof createDaemonApp>["app"];
   let token: string;
   let provider: HoldingProvider;
   let phone: DeviceRow;
+  /**
+   * The cases' work, watched (runtime-watch.ts): a wait goes on while the runtime moves and stops
+   * what runs (Stop now) before it gives up with what it saw; `settle` before the runtime closes.
+   */
+  let watch: RuntimeWatch;
+  /** The last case closes the daemon itself; then there is nothing left to settle. */
+  let closed = false;
   const clock = new SimulatedClock("2026-10-20T08:00:00Z");
   const req = (path: string, init: RequestInit = {}) =>
     app.request(path, {
@@ -85,6 +85,7 @@ describe("remote control of the PC through the daemon", () => {
       remote: { enabled: true, pollMs: 500, heartbeatMs: 60_000, deviceName: "J's PC" },
     });
     ({ app, token } = createDaemonApp(rt));
+    watch = watchRuntime(rt, { request: req });
     phone = await rt.store.device.register({
       owner_human_id: rt.human.id,
       name: "J's phone",
@@ -94,6 +95,7 @@ describe("remote control of the PC through the daemon", () => {
     });
   }, 120_000);
   afterAll(async () => {
+    if (!closed) await watch?.settle();
     await rt?.close();
   });
 
@@ -126,12 +128,18 @@ describe("remote control of the PC through the daemon", () => {
       }),
     });
     expect(started.status).toBe(202);
-    await until(async () => {
-      const rows = (
-        await rt.store.session.list({ project_id: project.id } as never, { limit: 10 })
-      ).filter((s) => s.summary !== "conversation");
-      return rows.length > 0 && rows.every((s) => ENDED.has(s.status));
-    });
+    const rows = async () =>
+      (await rt.store.session.list({ project_id: project.id } as never, { limit: 10 })).filter(
+        (s) => s.summary !== "conversation",
+      );
+    await watch.until(
+      `the ${name} session to end`,
+      async () => {
+        const all = await rows();
+        return all.length > 0 && all.every((s) => ENDED.has(s.status));
+      },
+      { seen: async () => (await rows()).map((s) => `${s.id} ${s.status}`).join(", ") || "none" },
+    );
     return { project, task };
   }
 
@@ -142,7 +150,11 @@ describe("remote control of the PC through the daemon", () => {
     expect(rt.remote.presence?.stats.running).toBe(true);
     expect(rt.remote.watcher?.stats).toMatchObject({ running: true, pollMs: 500 });
     const id = (device as DeviceRow).id;
-    await until(async () => (await rt.store.device.mustGet(id)).last_seen !== null);
+    await watch.until(
+      "the first heartbeat",
+      async () => (await rt.store.device.mustGet(id)).last_seen !== null,
+      { seen: async () => (await rt.store.device.mustGet(id)).last_seen ?? "never seen" },
+    );
     expect((await rt.store.device.mustGet(id)).last_seen).toBe("2026-10-20T08:00:00.000Z");
     await clock.advance(60_000);
     expect((await rt.store.device.mustGet(id)).last_seen).toBe("2026-10-20T08:01:00.000Z");
@@ -186,7 +198,7 @@ describe("remote control of the PC through the daemon", () => {
     );
     expect(freeRuns.length).toBeGreaterThanOrEqual(1);
     expect(freeRuns[0]?.model).toBe("fake-opus");
-  });
+  }, 120_000);
 
   it("a kill from the phone stops the running session within 2 s", async () => {
     const project = await rt.store.project.insert({
@@ -212,11 +224,17 @@ describe("remote control of the PC through the daemon", () => {
     });
     expect(started.status).toBe(202);
     // The coder's model call is waiting on the clock: a run is registered with the kill switch.
-    await until(() => rt.kill.activeCount({ agentId: rt.agent.id }) > 0);
     const sessions = () =>
       rt.store.session
         .list({ project_id: project.id } as never, { limit: 10 })
         .then((rows) => rows.filter((s) => s.summary !== "conversation"));
+    const sessionSeen = async () =>
+      (await sessions()).map((s) => `${s.id} ${s.status}`).join(", ") || "no session";
+    await watch.until(
+      "a run registered with the kill switch",
+      () => rt.kill.activeCount({ agentId: rt.agent.id }) > 0,
+      { seen: sessionSeen },
+    );
     expect((await sessions())[0]?.status).toBe("running");
 
     // The phone's "stop everything" (ADR 0032 item 4): verb kill, one session.stop step.
@@ -237,11 +255,19 @@ describe("remote control of the PC through the daemon", () => {
     const t0 = Date.now();
     const simulated0 = clock.now();
     await clock.advance(500);
-    await until(async () => (await sessions())[0]?.status === "killed");
+    await watch.until(
+      "the phone's kill to stop the session",
+      async () => (await sessions())[0]?.status === "killed",
+      { seen: sessionSeen },
+    );
     expect(Date.now() - t0).toBeLessThan(2_000);
     expect(clock.now() - simulated0).toBe(500);
     expect(rt.kill.activeCount({ agentId: rt.agent.id })).toBe(0);
-    await until(async () => (await rt.store.remoteCommand.mustGet(row.id)).status === "done");
+    await watch.until(
+      "the kill command to be done",
+      async () => (await rt.store.remoteCommand.mustGet(row.id)).status === "done",
+      { seen: async () => (await rt.store.remoteCommand.mustGet(row.id)).status },
+    );
     const done = await rt.store.remoteCommand.mustGet(row.id);
     expect(done.result).toMatchObject({
       kind: "plan",
@@ -255,7 +281,7 @@ describe("remote control of the PC through the daemon", () => {
     expect(rt.remote.watcher?.stats.handled).toBe(1);
     provider.hold = false;
     rt.kill.resume();
-  });
+  }, 120_000);
 
   it("a pause from the phone ends the running session at the next task boundary: the task in flight finishes, the next never starts", async () => {
     const project = await rt.store.project.insert({
@@ -293,8 +319,24 @@ describe("remote control of the PC through the daemon", () => {
         .list({ project_id: project.id } as never, { limit: 10 })
         .then((rows) => rows.filter((s) => s.summary !== "conversation"));
     // The first task is in flight: its run row exists and the coder's model call waits on the clock.
-    await until(async () => (await rt.store.run.forTask(first.id)).length > 0);
-    await until(() => provider.held >= 1);
+    const firstSeen = async () =>
+      `${(await rt.store.run.forTask(first.id)).length} run(s) of the first task, ${
+        provider.held
+      } held model call(s); sessions ${
+        (await sessions()).map((s) => `${s.id} ${s.status}`).join(", ") || "none"
+      }`;
+    await watch.until(
+      "the first task's run",
+      async () => (await rt.store.run.forTask(first.id)).length > 0,
+      { seen: firstSeen },
+    );
+    await watch.until(
+      "the first task's model call to wait on the clock",
+      () => provider.held >= 1,
+      {
+        seen: firstSeen,
+      },
+    );
     const session = (await sessions())[0];
     expect(session?.status).toBe("running");
     const sessionId = (session as { id: string }).id;
@@ -307,7 +349,11 @@ describe("remote control of the PC through the daemon", () => {
       params: { reason: "lunch" },
     });
     await clock.advance(500);
-    await until(async () => (await rt.store.remoteCommand.mustGet(row.id)).status === "done");
+    await watch.until(
+      "the pause command to be done",
+      async () => (await rt.store.remoteCommand.mustGet(row.id)).status === "done",
+      { seen: async () => (await rt.store.remoteCommand.mustGet(row.id)).status },
+    );
     expect((await rt.store.remoteCommand.mustGet(row.id)).result).toMatchObject({
       kind: "pause",
       status: "done",
@@ -324,7 +370,7 @@ describe("remote control of the PC through the daemon", () => {
     // session with its handoff instead of starting the second task.
     provider.hold = false;
     await clock.advance(2_000);
-    await until(async () => ENDED.has((await rt.store.session.mustGet(sessionId)).status));
+    await watch.sessionOver(sessionId);
     const ended = await rt.store.session.mustGet(sessionId);
     expect(ended.status).toBe("stopped");
     expect(ended.handoff).toMatchObject({ stop_reason: "stopped_by_message" });
@@ -344,11 +390,13 @@ describe("remote control of the PC through the daemon", () => {
       true,
     );
     provider.holdMs = 600_000;
-  });
+  }, 120_000);
 
   it("the watcher and the heartbeat stop with the daemon", async () => {
     const beats = rt.remote.presence?.stats.beats ?? 0;
     const handled = rt.remote.watcher?.stats.handled ?? 0;
+    await watch.settle();
+    closed = true;
     await rt.close();
     expect(rt.remote.watcher?.stats.running).toBe(false);
     expect(rt.remote.presence?.stats.running).toBe(false);

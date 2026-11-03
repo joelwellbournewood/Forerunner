@@ -15,6 +15,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { AcceptingCriticProvider, ScriptedProvider, type ScriptReply } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * U-078 (ADR 0100 amended 2026-11-03, the owner's decision of 2026-11-02): a refused key is named
@@ -30,15 +31,22 @@ const REFUSED = ["sk-ant-api03-", "cred-refused-", "1".repeat(40)].join(""); // 
 const LIMITED = ["sk-ant-api03-", "cred-limited-", "2".repeat(40)].join(""); // not-a-secret
 const GOOD = ["sk-ant-api03-", "cred-good-", "3".repeat(40)].join(""); // not-a-secret
 
-const runtimes: RuntimeApp[] = [];
+const opened: World[] = [];
 afterEach(async () => {
-  for (const rt of runtimes.splice(0)) await rt.close().catch(() => undefined);
+  for (const w of opened.splice(0)) await w.close();
 });
 
 interface World {
   rt: RuntimeApp;
   req: (path: string, body?: unknown) => Promise<Response>;
   messages: () => number;
+  /**
+   * The case's work, watched (runtime-watch.ts): a wait goes on while the runtime moves and
+   * stops what runs (Stop now) before it gives up with what it saw.
+   */
+  watch: RuntimeWatch;
+  /** Quit: whatever still runs is stopped and waited for, then the runtime closes. Once. */
+  close: () => Promise<void>;
 }
 
 /**
@@ -126,7 +134,6 @@ function world(clock: SimulatedClock, opts: { limitMs?: number; replies?: Script
       sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
       startServices: false,
     });
-    runtimes.push(rt);
     const { app, token } = createDaemonApp(rt);
     const req = (path: string, body?: unknown) =>
       Promise.resolve(
@@ -136,11 +143,31 @@ function world(clock: SimulatedClock, opts: { limitMs?: number; replies?: Script
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }),
       );
-    return {
+    const watch = watchRuntime(rt, {
+      request: (path, init = {}) =>
+        app.request(path, {
+          ...init,
+          headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+        }),
+    });
+    let closed = false;
+    const w: World = {
       rt,
       req,
       messages: () => standIn.requests.filter((r) => r.path === "/v1/messages").length,
+      watch,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        try {
+          await watch.settle();
+        } finally {
+          await rt.close().catch(() => undefined);
+        }
+      },
     };
+    opened.push(w);
+    return w;
   };
   return { vault, standIn, start };
 }
@@ -184,17 +211,20 @@ async function json<T>(r: Promise<Response>): Promise<T> {
   return (await (await r).json()) as T;
 }
 
-/** Waits (polls, at most `ms` of real time) until `check` holds; says what it saw otherwise. */
-async function until(what: string, check: () => Promise<string | null>, ms = 20_000) {
-  const end = Date.now() + ms;
-  let seen = "";
-  while (Date.now() < end) {
-    const r = await check();
-    if (r === null) return;
-    seen = r;
-    await new Promise((res) => setTimeout(res, 100));
-  }
-  throw new Error(`${what} did not happen within ${ms / 1000} s; last seen: ${seen}`);
+/** The tasks' statuses, for a wait's condition and what it saw. */
+async function statusesOf(rt: RuntimeApp, tasks: { id: string }[]): Promise<string[]> {
+  return (await Promise.all(tasks.map((t) => rt.store.task.mustGet(t.id)))).map((t) => t.status);
+}
+
+/** Wait until the project's plan is drafted (pending approval), saying the state it saw. */
+async function planDrafted(w: World, projectId: string, what: string): Promise<void> {
+  const intake = () => json<IntakeView>(w.req(`/projects/${projectId}/intake`));
+  await w.watch.until(what, async () => (await intake()).state === "pending", {
+    seen: async () => {
+      const s = await intake();
+      return `${s.state} ${s.error ?? ""}`;
+    },
+  });
 }
 
 describe("a refused API key (U-078)", () => {
@@ -202,7 +232,7 @@ describe("a refused API key (U-078)", () => {
     const clock = new SimulatedClock("2026-11-03T14:00:00Z");
     const w = world(clock);
     await w.vault.set(SECRET_NAMES.anthropic, REFUSED);
-    const { rt, req, messages } = await w.start();
+    const { rt, req, messages, close } = await w.start();
     const { project, a, b } = await twoTasks(rt);
 
     const result = await run(rt, project.id);
@@ -251,7 +281,7 @@ describe("a refused API key (U-078)", () => {
     // Quit and start again on the same home and vault (the mark is persisted state): the card,
     // the rows and Settings still say so, the scheduler's ticks start nothing on the refused
     // key, and nothing calls the API.
-    await rt.close();
+    await close();
     const later = await w.start();
     await later.rt.scheduler.tick();
     expect(messages()).toBe(1);
@@ -286,10 +316,11 @@ describe("a refused API key (U-078)", () => {
     expect(closed.requests.find((r) => r.title === "Anthropic refused your API key")?.outcome).toBe(
       "A new one is saved; the work that waited for it goes on.",
     );
-    await until("the waiting tasks to finish after the new key", async () => {
-      const now = await Promise.all([a, b].map((t) => later.rt.store.task.mustGet(t.id)));
-      return now.every((t) => t.status === "done") ? null : now.map((t) => t.status).join(", ");
-    });
+    await later.watch.until(
+      "the waiting tasks to finish after the new key",
+      async () => (await statusesOf(later.rt, [a, b])).every((s) => s === "done"),
+      { seen: async () => (await statusesOf(later.rt, [a, b])).join(", ") },
+    );
     const audit = await later.rt.store.auditLog.list({ tool: "billing.refused" } as never, {
       limit: 10,
     });
@@ -331,7 +362,7 @@ describe("planning that meets a refused API key (U-078)", () => {
     ]);
 
     // Quit and start again: the plan still waits, and nothing calls the refused key.
-    await first.rt.close();
+    await first.close();
     const second = await w.start();
     await second.rt.scheduler.tick();
     expect(second.messages()).toBe(1);
@@ -342,10 +373,7 @@ describe("planning that meets a refused API key (U-078)", () => {
     // waits in the Inbox for approval; the refused card is answered.
     const saved = await json<{ ok: boolean }>(second.req("/setup/anthropic", { value: GOOD }));
     expect(saved.ok).toBe(true);
-    await until("the plan to be drafted after the new key", async () => {
-      const s = await json<IntakeView>(second.req(`/projects/${created.id}/intake`));
-      return s.state === "pending" ? null : `${s.state} ${s.error ?? ""}`;
-    });
+    await planDrafted(second, created.id, "the plan to be drafted after the new key");
     const now = await json<{ statusLine: StatusLine }>(second.req(`/projects/${created.id}`));
     expect(now.statusLine.text).toBe("Waiting for you: approve the plan");
     const after = await json<InboxView>(second.req("/inbox"));
@@ -362,7 +390,8 @@ describe("planning that meets a refused API key (U-078)", () => {
     const clock = new SimulatedClock("2026-11-03T14:00:00Z");
     const w = world(clock, { limitMs: 100 * 60_000, replies: [{ text: SMALL_PLAN }] });
     await w.vault.set(SECRET_NAMES.anthropic, LIMITED);
-    const { rt, req, messages } = await w.start();
+    const limited = await w.start();
+    const { rt, req, messages } = limited;
 
     const created = await json<{ id: string }>(req("/projects", QUOTES));
     await rt.intake.inFlight(created.id)?.catch(() => undefined);
@@ -390,10 +419,7 @@ describe("planning that meets a refused API key (U-078)", () => {
     expect(messages()).toBe(1);
     clock.set(Date.parse("2026-11-03T15:41:00Z"));
     await rt.scheduler.tick();
-    await until("the plan to be drafted at the reset", async () => {
-      const s = await json<IntakeView>(req(`/projects/${created.id}/intake`));
-      return s.state === "pending" ? null : `${s.state} ${s.error ?? ""}`;
-    });
+    await planDrafted(limited, created.id, "the plan to be drafted at the reset");
   }, 120_000);
 });
 
@@ -445,17 +471,18 @@ describe("a key at its usage limit (U-078)", () => {
     expect(inbox.requests.filter((r) => r.status === "open")).toHaveLength(0);
 
     // Quit and start again: the wait is kept. Before the reset nothing starts.
-    await first.rt.close();
+    await first.close();
     const second = await w.start();
     await second.rt.scheduler.tick();
     expect(second.messages()).toBe(1);
     // At the reset the next tick starts the project's session, which finishes both tasks.
     clock.set(Date.parse("2026-11-03T15:41:00Z"));
     await second.rt.scheduler.tick();
-    await until("the session started at the reset to finish both tasks", async () => {
-      const now = await Promise.all([a, b].map((t) => second.rt.store.task.mustGet(t.id)));
-      return now.every((t) => t.status === "done") ? null : now.map((t) => t.status).join(", ");
-    });
+    await second.watch.until(
+      "the session started at the reset to finish both tasks",
+      async () => (await statusesOf(second.rt, [a, b])).every((s) => s === "done"),
+      { seen: async () => (await statusesOf(second.rt, [a, b])).join(", ") },
+    );
     const sessions = await second.rt.store.session.list({ project_id: project.id } as never, {
       limit: 10,
     });

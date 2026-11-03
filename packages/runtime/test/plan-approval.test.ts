@@ -1,5 +1,6 @@
 import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { type HumanRequestRow, openStore, type StateStore } from "@forerunner/state";
+import { asLine, storeProgress, until } from "@forerunner/testenv/wait";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
@@ -123,12 +124,12 @@ function fakeExecutor(): TaskExecutor & { executed: string[] } {
 
 const grant = { allowedTools: ["echo"], allowedPaths: [], allowedDomains: [], grantedSecrets: [] };
 
-function runner(w: World, executor: TaskExecutor) {
+function runner(w: World, executor: TaskExecutor, kill = new KillSwitch()) {
   return new SessionRunner({
     store: w.store,
     clock: w.clock,
     tokens: new TokenIssuer({ now: () => w.clock.now() }),
-    kill: new KillSwitch(),
+    kill,
     planner: new StaticPlanner(),
     executor,
   });
@@ -180,12 +181,42 @@ async function auditRows(w: World) {
   return (await w.store.auditLog.list()).filter((r) => r.tool === PLAN_APPROVAL_AUDIT_TOOL);
 }
 
-async function settle(until: () => Promise<boolean>, ms = 5_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!(await until())) {
-    if (Date.now() > deadline) throw new Error("condition not reached");
-    await new Promise((r) => setTimeout(r, 5));
-  }
+/** A start the case made in the background: the scheduler, and the kill switch of its sessions. */
+interface Background {
+  w: World;
+  scheduler: Scheduler;
+  kill?: KillSwitch;
+}
+
+/**
+ * Wait for what a background start leads to (shared wait, testing.md "Waiting on work a case
+ * started"): while the store or the scheduler still moves. When it gives up, the waiting starts
+ * are dropped, the sessions' runs stopped and the scheduler's start waited for, so nothing
+ * writes to the store the case closes; the error says what it saw.
+ */
+async function settle(
+  what: string,
+  cond: () => Promise<boolean>,
+  bg: Background,
+  seen: () => unknown = () => "",
+): Promise<void> {
+  const scheduler = () =>
+    `the scheduler: ${bg.scheduler.isActive(bg.w.alice) ? "a start running" : "no start running"}, log [${bg.scheduler.log.map((e) => e.result).join(", ")}]`;
+  await until(what, cond, {
+    progress: async () => `${await storeProgress(bg.w.store)} ${scheduler()}`,
+    seen: async () => `${asLine(await seen())}; ${scheduler()}`,
+    stop: async (why) => {
+      while (bg.scheduler.cancelPending(bg.w.alice, why)) {
+        /* every waiting start */
+      }
+      await bg.kill?.stop("all", `stopped by the test: ${why}`, { freeze: false, by: "you" });
+      await until("the scheduler's start to end", () => !bg.scheduler.isActive(bg.w.alice), {
+        limitMs: 15_000,
+        reserveMs: 500,
+        forceable: false,
+      });
+    },
+  });
 }
 
 describe("the plan's identity", () => {
@@ -449,9 +480,17 @@ describe("syncPlanApprovals", () => {
     });
     const deps = { ...report, start: (r: StartRequest) => scheduler.requestStart(r) };
     expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 0 });
-    await settle(async () => scheduler.log.some((e) => e.result === "error"));
+    const bg = { w, scheduler };
     await settle(
+      "the scheduler to log the failed start",
+      async () => scheduler.log.some((e) => e.result === "error"),
+      bg,
+    );
+    await settle(
+      "the card to say the start failed",
       async () => card(await w.store.humanRequest.mustGet(req.id)).outcome === "start_failed",
+      bg,
+      async () => card(await w.store.humanRequest.mustGet(req.id)),
     );
     expect(card(await w.store.humanRequest.mustGet(req.id))).toMatchObject({
       outcome: "start_failed",
@@ -606,7 +645,8 @@ describe("syncPlanApprovals", () => {
     const req = await filePlan(w, exec, 600_000);
     expect((card(req).plan as { items: unknown[] }).items).toHaveLength(1);
     await answer(w, req, "approve");
-    const sessions = runner(w, exec);
+    const kill = new KillSwitch();
+    const sessions = runner(w, exec, kill);
     const scheduler = new Scheduler({
       clock: w.clock,
       start: (r) =>
@@ -628,8 +668,20 @@ describe("syncPlanApprovals", () => {
       start: (r: StartRequest) => scheduler.requestStart(r),
     };
     expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 0 });
-    await settle(async () => (await w.store.task.mustGet(t1.id)).status === "done");
-    await settle(async () => !scheduler.isActive(w.alice));
+    const bg = { w, scheduler, kill };
+    const t1Seen = async () => `T1 is ${(await w.store.task.mustGet(t1.id)).status}`;
+    await settle(
+      "T1 to be done",
+      async () => (await w.store.task.mustGet(t1.id)).status === "done",
+      bg,
+      t1Seen,
+    );
+    await settle(
+      "the scheduler's start to end",
+      async () => !scheduler.isActive(w.alice),
+      bg,
+      t1Seen,
+    );
     expect(exec.executed).toEqual([t1.id]);
     expect((await w.store.task.mustGet(t2.id)).status).toBe("ready");
     expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
@@ -728,7 +780,8 @@ describe("syncPlanApprovals", () => {
     const req = await filePlan(w, exec);
     const planId = approvedPlanIdOf(req);
     await answer(w, req, "approve");
-    const sessions = runner(w, exec);
+    const kill = new KillSwitch();
+    const sessions = runner(w, exec, kill);
     const scheduler = new Scheduler({
       clock: w.clock,
       start: (r) =>
@@ -750,8 +803,20 @@ describe("syncPlanApprovals", () => {
     };
     expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 0 });
     expect(await syncPlanApprovals(deps)).toEqual({ started: 0, rejected: 0, skipped: 0 });
-    await settle(async () => (await w.store.task.mustGet(t1.id)).status === "done");
-    await settle(async () => !scheduler.isActive(w.alice));
+    const bg = { w, scheduler, kill };
+    const t1Seen = async () => `T1 is ${(await w.store.task.mustGet(t1.id)).status}`;
+    await settle(
+      "T1 to be done",
+      async () => (await w.store.task.mustGet(t1.id)).status === "done",
+      bg,
+      t1Seen,
+    );
+    await settle(
+      "the scheduler's start to end",
+      async () => !scheduler.isActive(w.alice),
+      bg,
+      t1Seen,
+    );
     expect(exec.executed).toEqual([t1.id]);
     const rows = await w.store.session.list({ agent_id: w.alice }, { orderBy: "created_at" });
     expect(rows.map((s) => [s.trigger, s.status])).toEqual([

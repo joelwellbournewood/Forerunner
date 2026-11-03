@@ -13,6 +13,7 @@ import {
   DEFAULT_DECISION_DOC,
 } from "../src/session/person-questions.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * U-022 on the desktop daemon, as the person meets it. A project's plan holds a task only the
@@ -79,17 +80,9 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
         ...(init.headers ?? {}),
       },
     });
-  return { rt, req };
-}
-
-async function waitFor<T>(probe: () => Promise<T | undefined>, ms = 30_000): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error("timed out waiting");
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  // What the cases start, watched (runtime-watch.ts): a wait goes on while the runtime moves
+  // and stops what runs (Stop now) before it gives up; `settle` before the runtime closes.
+  return { rt, req, watch: watchRuntime(rt, { request: req }) };
 }
 
 describe("questions only the person can answer, on the daemon (U-022)", () => {
@@ -98,6 +91,7 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
   const fake = provider(clock);
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
   let projectId = "";
   let planned: TaskRow;
   let legacy: TaskRow;
@@ -108,7 +102,7 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     (await inbox()).requests.find((r) => r.taskId === taskId && r.status === "open");
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
     projectId = (
       await rt.store.project.insert({
         name: "Site",
@@ -143,6 +137,7 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     });
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -176,8 +171,9 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
   });
 
   it("the cards and their tasks survive a restart, with no second copy", async () => {
+    await watch.settle();
     await rt.close();
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
     expect((await rt.syncApprovals()).personQuestions.filed).toBe(0);
     expect((await inbox()).requests.filter((r) => r.taskId === planned.id)).toHaveLength(1);
     expect((await rt.store.task.mustGet(planned.id)).status).toBe("needs_human");
@@ -327,10 +323,19 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
       body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: 2_000_000 }),
     });
     expect(started.status).toBe(202);
-    const card = await waitFor(async () => {
-      const c = await cardFor(task.id);
-      return c && (await rt.store.task.mustGet(task.id)).status === "needs_human" ? c : undefined;
-    });
+    watch.track(String((((await started.json()) as Json).session as Json).id));
+    const taskStatus = async () => (await rt.store.task.mustGet(task.id)).status;
+    const card = await watch.waitFor(
+      'the card asking the person about "Deploy the site"',
+      async () => {
+        const c = await cardFor(task.id);
+        return c && (await taskStatus()) === "needs_human" ? c : undefined;
+      },
+      {
+        seen: async () =>
+          `the task is ${await taskStatus()}, its open card: ${JSON.stringify((await cardFor(task.id)) ?? null)}`,
+      },
+    );
     expect(card).toMatchObject({
       kind: "decision",
       steps: [ANSWER_ME],
@@ -348,8 +353,9 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     expect((await rt.store.task.mustGet(task.id)).attempt).toBe(0);
 
     // The person answers in their own words (the free-text answer the phone sends).
-    await waitFor(async () =>
-      (await rt.store.session.active(rt.agent.id)).length === 0 ? true : undefined,
+    await watch.until(
+      "the session to end",
+      async () => (await rt.store.session.active(rt.agent.id)).length === 0,
     );
     const answered = await req(`/requests/${card.id}/answer`, {
       method: "POST",
@@ -357,13 +363,18 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     });
     expect(answered.status).toBe(200);
     // The answer starts the task's next run, and its brief carries the answer.
-    const second = await waitFor(async () =>
-      fake.calls.find((c) =>
-        JSON.stringify(c.request.messages).includes("Answers from the person"),
-      ),
+    const second = await watch.waitFor(
+      "the next run's model call with the answers",
+      async () =>
+        fake.calls.find((c) =>
+          JSON.stringify(c.request.messages).includes("Answers from the person"),
+        ),
+      {
+        seen: async () => `${fake.calls.length} model call(s); the task is ${await taskStatus()}`,
+      },
     );
     const sent = JSON.stringify(second.request.messages);
     expect(sent).toContain(ANSWER_ME);
     expect(sent).toContain("Cloudflare Pages");
-  }, 60_000);
+  }, 120_000);
 });
