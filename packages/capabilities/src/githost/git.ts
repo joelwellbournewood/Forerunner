@@ -606,6 +606,15 @@ export class GitOps {
       .sort((a, b) => a.ref.localeCompare(b.ref));
   }
 
+  /** How many commits `to` has that `from` has not, merge commits left out (`rev-list --count`). */
+  async commitCount(from: string, to = "HEAD"): Promise<number> {
+    const r = this.must(
+      await this.git(["rev-list", "--count", "--no-merges", `${from}..${to}`]),
+      "rev-list --count",
+    );
+    return Number(r.stdout.trim()) || 0;
+  }
+
   /** Whether `base..head` holds a merge commit (a branch that brought other work in by merging). */
   async hasMergesSince(base: string, head = "HEAD"): Promise<boolean> {
     const r = this.must(

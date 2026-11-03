@@ -20,7 +20,7 @@ import { ensureBaseBranch } from "./base-branch.ts";
 import { holdsMergedWork, ownChangeId } from "./branch-rules.ts";
 import { GitOps, type GitTokenSource, gitAuthFor, resolveGitToken } from "./git.ts";
 import { pushFailedWords } from "./push-words.ts";
-import type { GitHost, RepoRef } from "./types.ts";
+import type { GitHost, MergeMethod, RepoRef } from "./types.ts";
 
 /**
  * Branch-and-PR flow around a task executor (spec F: code changes only via branches and PRs,
@@ -1069,6 +1069,45 @@ export class PrTaskExecutor implements TaskExecutor {
       dropped: r.dropped.map((d) => d.number),
     });
     return { ...found, result: "rebuilt", rebuild: r };
+  }
+
+  /**
+   * How a task's pull request was merged on the host, read from git in its worktree (ADR 0111):
+   * a merge commit with two parents is "merge"; one parent is "rebase" when the pull request
+   * had several commits and the merge commit repeats its last one, else "squash". Null when it
+   * cannot be told (no worktree, the commit not fetched).
+   */
+  async mergeMethodOf(
+    task: TaskRow,
+    mergeSha: string | null,
+    headSha?: string | null,
+  ): Promise<MergeMethod | null> {
+    if (!mergeSha) return null;
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    const target = existsSync(join(dir, ".git")) ? await this.deps.repoFor(task) : null;
+    if (!target) return null;
+    try {
+      const git = await this.gitFor(target, dir);
+      await git.fetch();
+      if (!(await git.hasRef(mergeSha))) return null;
+      const parents = await git.parentsOf(mergeSha);
+      if (parents.length >= 2) return "merge";
+      const head =
+        (headSha && (await git.hasRef(headSha)) ? headSha : null) ??
+        (task.branch ? await git.resolveRef(`origin/${task.branch}`) : null);
+      const parent = parents[0];
+      if (!head || !parent) return "squash";
+      const forked = await git.mergeBase(head, parent);
+      const own = forked ? await git.commitCount(forked, head) : 0;
+      if (own <= 1) return "squash";
+      const last = (await git.parentsOf(head))[0];
+      const same =
+        last && (await git.patchId(last, head)) === (await git.patchId(parent, mergeSha));
+      return same ? "rebase" : "squash";
+    } catch (e) {
+      this.logger.warn("merge method not read", { taskId: task.id, error: errorMessage(e) });
+      return null;
+    }
   }
 
   /** The pull request's "Builds on" line as it is now (`withBuildsOn`); a failure is logged. */

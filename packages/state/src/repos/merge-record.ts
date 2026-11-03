@@ -33,8 +33,10 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
   ): Promise<MergeRecordRow> {
     const current = await this.forTask(input.task_id);
     if (!current) return this.insert({ ...input, state: "queued" });
-    if (current.state === "merged") return current;
-    if (current.state !== "queued")
+    // A merged pull request stays merged; a redo's new pull request (a fresh branch after the
+    // old one was merged, dependent-branches) is a new merge, so the record starts again.
+    if (current.state === "merged" && current.pr_url === input.pr_url) return current;
+    if (current.state !== "queued" && current.state !== "merged")
       assertTransition(MERGE_RECORD_TRANSITIONS, "merge_record", current.state, "queued");
     return this.patch(current.id, {
       agent_id: input.agent_id,
@@ -49,6 +51,7 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
       approved_by: null,
       sentence: "",
       last_outcome: null,
+      ...(current.state === "merged" ? { merge_sha: null, method: null, attempts: 0 } : {}),
       author_agent: input.author_agent ?? input.agent_id,
     });
   }

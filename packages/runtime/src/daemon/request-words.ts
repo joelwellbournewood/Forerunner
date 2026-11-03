@@ -789,6 +789,29 @@ function prOfCard(card: JsonObject): string {
 }
 
 /**
+ * The title of a left-open card a dependent branch's rebuild filed (ADR 0111,
+ * dependent-branches): the task and the pull requests it was rebuilt without, '"Add footer"
+ * was rebuilt without pull request #4' or '"Fix the page" could not be rebuilt without pull
+ * request #4'. Null for any other left-open card.
+ */
+function rebuildTitle(card: JsonObject, taskTitle: string): string | null {
+  const rebuild = str(card.rebuild);
+  if (!rebuild) return null;
+  const numbers = Array.isArray(card.without)
+    ? card.without.filter((n): n is number => typeof n === "number")
+    : [];
+  const prs =
+    numbers.length === 0
+      ? "what it built on"
+      : `pull request${numbers.length === 1 ? "" : "s"} ${numbers
+          .map((n) => `#${n}`)
+          .join(numbers.length === 2 ? " and " : ", ")}`;
+  if (rebuild === "conflict") return `${q(taskTitle)} could not be rebuilt without ${prs}`;
+  if (rebuild === "rebuilt_changed") return `${q(taskTitle)} was rebuilt onto main`;
+  return `${q(taskTitle)} was rebuilt without ${prs}`;
+}
+
+/**
  * A reviewed pull request the merge step left to the person (U-028, ADR 0111,
  * `fileLeftOpenRequest` in `loop/merge.ts`): titled by its task, the merge record's sentence
  * as the body (what happened and what to do, no commit ids), each answer with what it does.
@@ -812,7 +835,8 @@ function mergeLeftOpenCard(
   }));
   return {
     title: ctx.taskTitle
-      ? `The critic accepted ${q(ctx.taskTitle)}, but ${prOfCard(card)} was not merged`
+      ? (rebuildTitle(card, ctx.taskTitle) ??
+        `The critic accepted ${q(ctx.taskTitle)}, but ${prOfCard(card)} was not merged`)
       : firstSentence(r.why),
     body: str(card.sentence) ?? afterFirstSentence(r.why),
     choices,
