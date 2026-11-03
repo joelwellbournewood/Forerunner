@@ -493,9 +493,51 @@ task as not started and releases its claim, which puts it back to `ready` withou
 `failed` (the only edge that counts an attempt, `TaskRepo.transition`), so the retry ladder,
 the critic follow-up and `task.attempt` are untouched. A loop pick runs on the picked source's
 own provider (`LoopTaskExecutorDeps.providerFor`), never re-routed. Tests:
-`test/task-usage-limit.test.ts` (a task on the subscription meets the limit: back to ready with
-attempt 0, no critic, the sentence, the rest on the row and in the audit; the next session runs
-it on the API key to done), `test/billing-order.test.ts`.
+`test/task-usage-limit.test.ts`, `test/billing-order.test.ts`.
+
+**A refused credential, waiting at a limit, and the mid-session setting (U-078, ADR 0100
+amended 2026-11-03; `src/session/credential-wait.ts`).** What changed since the paragraph
+above: (1) `provider_auth` survives the loop's failed-call mapping (`agent/loop.ts`, with
+`USAGE_LIMIT_CODE` and `unavailable`) and the SDK path (`isClaudeCodeRefusal` in
+`provider/usage-limit.ts`: an `authentication_failed` assistant error or a 401 / expired-sign-in
+result); the executor then calls `TaskBillingPort.refuse(sourceId, why)`
+(`RouterTaskBilling.refuse`: `limits.refusedAt`, `refusedKey` = `credentialFingerprint`, the
+first 16 hex characters of the refused credential's SHA-256, `refusedWhy`; a `billing.refused`
+audit row; one Inbox card per source, `CREDENTIAL_REFUSED_KEY` "credential:refused", filed by
+`fileRefusedCard` only when none is open), and `RoutedProvider` does the same for chat,
+planning and reviews and makes the call once more on the next source. `VaultLedgerProbe`
+reports `refused` while the vault holds the refused credential (`refusedSince`), so the router
+skips it (`refused`). (2) Both a usage limit and a refusal return outcome `usage_limit` with
+`stoppedRunSentence` (what is really scheduled) and, when no credential may take the task now
+(`nextCredential`: the same pick, which only reads the sources), `credentialWait`; the runner
+releases the claim (no try counted, never a passing error), and either ends the session on
+the wait (`CREDENTIAL_WAIT_STOP`, the rest of the queue left ready) or puts the task back at
+the head of the queue for the credential that takes over (at most `MAX_CREDENTIAL_MOVES`).
+(3) The router's "no source" no longer fails a task: `executor.pickBilling` turns an
+`unavailable` that `credentialWaitOf` reads as a wait (the 'wait' rule's `waitFor`, a resting
+source's `until`, a refused source) into `ForerunnerError("unavailable")` with `details.wait`
+and the wait's sentence, which the runner's catch makes the same `usage_limit` result. (4) Each
+wait is kept on the source it waits for (`noteWait`: `limits.waiting`, one entry per project,
+after a restart too); `RuntimeApp.billing.waits.wake()` (before every scheduler tick, and at
+once from `credentialSaved(kind)`, which the setup assistant's `POST /setup/anthropic` calls
+through `onClaudeCredentialSaved`) takes the projects whose source serves again
+(`RouterTaskBilling.takeReady`: the rest ended, no refusal stands; a refusal a new credential
+ended is cleared with its card) and requests one session start each (`budget_reset`) while
+the project has ready work. (5) The words: the session result's first builder
+(`RESULT_LINE_BUILDERS` in `session/result.ts`, `LastSessionOutcome.credentialWait`: "Waits
+until 15:40 (your subscription's limit) and starts by itself." / "Waits for a new API key: save
+one in Settings."), the task row (`TaskDisplayContext.credentialWait` from `credentialWaitRow`:
+"Waits until 15:40, your subscription's limit", key `waiting`, detail "It starts by itself
+then."), the log (`billing.fallback`; `task.finished` with `usage_limit` is a detail), times in
+the person's zone (`clockTime`). (6) "When my first choice runs out mid-session"
+(`human.notify_prefs.mid_session_limit`, `midSessionLimitOf`, default `wait`): the executor's
+`billingRequest` sets `waitOnRest` for task runs under `wait`; the non-task calls never set it.
+Tests: `test/credential-limits.test.ts` (a refused key on the stand-in: one call, one card,
+rows, Settings Refused, a new key starts the work; a key at its limit: the sentence, the rows,
+the start at the reset after a restart), `test/task-usage-limit.test.ts` ('Wait' and 'Use the
+other one' with two credentials), `test/subscription-path.test.ts` (the SDK's
+`authentication_failed` and 401), `test/billing-order.test.ts` (chat meets a refused key),
+`test/routed-provider.test.ts`, `test/messages-api-stand-in.test.ts`.
 
 **Opus fast mode per project (`src/models/fast-mode.ts`; spec D.20, [ADR 0057](../decisions/0057-opus-fast-mode.md)).**
 A project's `settings.fast_mode` (off by default; `settings.set` key `fast_mode`, medium risk)

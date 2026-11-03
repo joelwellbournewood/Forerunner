@@ -47,6 +47,55 @@ describe("Inbox", () => {
     expect(screen.getByTestId("needs-you-heading")).toHaveTextContent("Needs you (2)");
   });
 
+  it("a refused API key is one card with no answer to give: its title names the key, its link opens the setup assistant (U-078)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift({
+      id: "req_refused",
+      projectId: null,
+      projectName: null,
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "info",
+      why: "Anthropic refused your API key. Save a new one in Settings.",
+      steps: [],
+      options: [],
+      blocking: true,
+      risk: "low",
+      changeCard: {
+        key: "credential:refused",
+        source_id: "bs_api_key_1",
+        credential_kind: "api_key",
+        title: "Anthropic refused your API key",
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-03T14:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const requests = await screen.findAllByTestId("request");
+    const card = requests.find(
+      (r) => r.getAttribute("data-request-id") === "req_refused",
+    ) as HTMLElement;
+    expect(within(card).getByTestId("request-title")).toHaveTextContent(
+      "Anthropic refused your API key",
+    );
+    expect(within(card).getByTestId("request-body")).toHaveTextContent(
+      "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+    );
+    // Nothing to answer: no options and no text box, one link to where a new key is pasted.
+    expect(within(card).queryAllByTestId("option")).toHaveLength(0);
+    expect(within(card).queryByTestId("free-text")).toBeNull();
+    const link = within(card).getByTestId("option-link");
+    expect(link).toHaveTextContent("Save a new key");
+    expect(link).toHaveAttribute("href", "/setup");
+    expect(card).toHaveTextContent("The setup assistant checks it with Anthropic and saves it.");
+    await user.click(link);
+    expect(await screen.findByTestId("setup-page")).toBeInTheDocument();
+  });
+
   it("a text box only where free text is accepted: a question takes words, an approval only its options (design §3.8)", async () => {
     renderApp("/inbox");
     const requests = await screen.findAllByTestId("request");

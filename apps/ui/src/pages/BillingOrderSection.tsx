@@ -29,8 +29,14 @@ export function usableNow(s: BillingOrderSourceView): string {
       return "Not now: this month's allowance is reached";
     case "monthly_cap":
       return "Not now: its monthly cap is reached";
+    // U-078: the work that waits for it starts by itself at the reset.
     case "resting":
-      return `Resting until ${formatDateTime(s.restingUntil)} after a usage limit`;
+      return `Resting until ${formatDateTime(s.restingUntil)} (its usage limit); waiting work starts by itself then`;
+    // U-078: Anthropic refused it; a new one saved under Accounts and keys starts the work.
+    case "refused":
+      return s.kind === "subscription"
+        ? "Refused: Anthropic did not accept this sign-in. Save a new one under Accounts and keys"
+        : "Refused: Anthropic did not accept this key. Save a new one under Accounts and keys";
     case "no_credential":
       return s.kind === "subscription"
         ? "Not now: no subscription token is saved"

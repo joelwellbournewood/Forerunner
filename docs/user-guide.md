@@ -589,14 +589,31 @@ Changes, where you can undo it. Each row says:
   **straight to the API**, which is where promotional API credits apply (they do not apply to
   use through Claude Code, so Forerunner never sends an API key there);
 - whether it can be used now, and why not: this month's allowance is reached, its monthly cap
-  is reached, it rests after a usage limit (until the time shown), or no key is saved;
+  is reached, it rests after a usage limit (until the time shown; waiting work starts by itself
+  then), Anthropic refused it (**Refused**: save a new one under Accounts and keys), or no key
+  is saved;
 - what it has spent this month: the subscription as a share of its allowance, an API key in CHF.
 
-When the first one cannot be used, the next one is. If Claude says the subscription's usage
-limit is reached, the subscription rests until the time Claude gives (an hour when it gives
-none), the call is made again with the API key, and the session log says so; a task stopped
-that way goes back to ready and runs on the next credential, without counting as a failed
-attempt. Until you choose an order, tasks use the subscription first and Chat, project setup
+When the first one cannot be used, the next one is, for Chat, project setup and reviews. If
+Claude says a credential's usage limit is reached, it rests until the time Claude gives (an
+hour when it gives none), and the session log says so in one sentence. For tasks, the setting
+**When my first choice runs out mid-session** (Settings → Advanced, Other settings) decides:
+
+- **Wait** (the default): nothing moves onto your other credential. The task goes back to
+  Ready without counting as a failed attempt, the session ends with "Waits until 15:40 (your
+  subscription's limit) and starts by itself.", each task's row reads "Waits until 15:40, your
+  subscription's limit", and at that time a session of the project starts by itself, also
+  after Forerunner was closed and opened again.
+- **Use the other one**: the task goes on at once, in the same session, on your other
+  credential ("continues on your API key now"). This moves work from your plan's limits onto
+  money, so Forerunner asks you to confirm the change.
+
+If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expired sign-in),
+one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),
+Settings shows the credential as **Refused**, and Forerunner stops using it: your other
+credential takes over, or the work waits ("Waits for a new API key"). No task fails because of
+it. Save a new key with **Save a new key** on the card (the setup assistant): the card closes,
+the mark goes, and the waiting work starts by itself. Until you choose an order, tasks use the subscription first and Chat, project setup
 and reviews use the API key first. Whatever the order, a research task (the researcher, the
 science evaluator) uses the API key first when one is saved: only there can it open web pages.
 

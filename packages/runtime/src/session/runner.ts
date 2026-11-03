@@ -59,6 +59,7 @@ import {
 import { type BudgetStopSource, type RunHandoff, stopEndsSession } from "./budget-pause.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
+import { CREDENTIAL_WAIT_STOP, type CredentialWait, waitSentence } from "./credential-wait.ts";
 import {
   fileBlockedByFindingsRequest,
   fileFailedTaskCard,
@@ -212,8 +213,11 @@ export interface TaskExecutionResult {
     | "timeout"
     | "killed"
     /**
-     * The credential's usage limit stopped the run (U-078, ADR 0100): the runner puts the task
-     * back to ready (its claim released, no attempt counted) for the next credential; `summary`
+     * A Claude credential stopped the run or kept it from starting (U-078, ADR 0100 amended):
+     * its usage limit, a refusal (a 401 or 403 key, an expired sign-in), or no credential that
+     * may serve it can now. The runner puts the task back to ready (its claim released, no
+     * attempt counted, never retried as a passing error); with `credentialWait` the session ends
+     * on that wait, else the task goes on at once on the credential that takes over. `summary`
      * is the session log's sentence.
      */
     | "usage_limit"
@@ -225,6 +229,11 @@ export interface TaskExecutionResult {
     | "paused";
   summary: string;
   costUsdMicro: number;
+  /**
+   * `usage_limit` only (U-078): no credential that may serve the task can now, so it waits for
+   * this one (its reset, or a new credential); the session ends with the wait's sentence.
+   */
+  credentialWait?: CredentialWait;
   /**
    * The error's stable code when the run ended on one (the driver's `error.code`, or the code of
    * the exception the executor threw): the runner tries a transient one again at once.
@@ -612,6 +621,12 @@ const TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
   "overloaded_error",
 ]);
 
+/**
+ * How often one task may move on to the next credential in a session after its credential
+ * stopped it (U-078): one per credential a person can have, so a task never goes round them.
+ */
+const MAX_CREDENTIAL_MOVES = 3;
+
 /** Whether a run's error is transient (the model call failed, the network, a rate limit). */
 export function isTransientError(code: string | undefined): boolean {
   return code !== undefined && TRANSIENT_ERROR_CODES.has(code);
@@ -836,6 +851,8 @@ export class SessionRunner {
     /** Ready tasks at tier 2+ that wait for the container sandbox (U-079). */
     const waitingForSandbox: SandboxWaitingTask[] = [];
     let sandboxAnswer: SandboxGateAnswer | null = null;
+    /** The Claude credential the session's work waits for, when it ended on one (U-078). */
+    let credentialWait: CredentialWait | null = null;
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
@@ -1246,6 +1263,8 @@ export class SessionRunner {
         const onlyThese = autonomy < 2 ? new Set(plan.items.map((i) => i.taskId)) : null;
         /** Tasks whose run failed with a transient error and were tried again at once. */
         const transientRetried = new Set<string>();
+        /** How often a credential stopped each task and the next one took over (U-078). */
+        const movedOnCredential = new Map<string, number>();
         const replan = async (): Promise<PlanItem[]> => {
           if (!project || !brief) return [];
           const queued = new Set(queue.map((i) => i.taskId));
@@ -1586,19 +1605,34 @@ export class SessionRunner {
               continue;
             }
             const code = e instanceof ForerunnerError ? e.code : "internal";
-            result = {
-              outcome:
-                code === "budget_exceeded"
-                  ? "budget_exceeded"
-                  : code === "timeout"
-                    ? "timeout"
-                    : code === "killed"
-                      ? "killed"
-                      : "failed",
-              summary: errorMessage(e),
-              costUsdMicro: 0,
-              errorCode: code,
-            };
+            // U-078: no credential that may serve the task can now (each rests or was refused,
+            // or 'wait' holds to a first choice that rests). Before, the router's "no billing
+            // source available ..." made it a failed task with that raw sentence on its card,
+            // task after task. Now it waits, and the session ends on that one sentence.
+            const wait =
+              code === "unavailable" && e instanceof ForerunnerError
+                ? (e.details.wait as unknown as CredentialWait | undefined)
+                : undefined;
+            result = wait
+              ? {
+                  outcome: "usage_limit",
+                  summary: errorMessage(e),
+                  costUsdMicro: 0,
+                  credentialWait: wait,
+                }
+              : {
+                  outcome:
+                    code === "budget_exceeded"
+                      ? "budget_exceeded"
+                      : code === "timeout"
+                        ? "timeout"
+                        : code === "killed"
+                          ? "killed"
+                          : "failed",
+                  summary: errorMessage(e),
+                  costUsdMicro: 0,
+                  errorCode: code,
+                };
           } finally {
             await steps;
             renew();
@@ -1689,18 +1723,34 @@ export class SessionRunner {
             continue;
           }
           if (result.outcome === "usage_limit") {
-            // U-078, ADR 0100: the credential's usage limit stopped the run. The source rests
-            // (the executor did that); the task goes back to ready by its claim's release, not
-            // through `failed`, so the retry ladder's attempt stays as it was and no critic
-            // reviews it. The session log says what happened in a plain sentence.
+            // U-078, ADR 0100 amended: a credential stopped the run (its usage limit, or
+            // Anthropic refused it) or no credential may serve it now. The executor rested or
+            // marked the source; the task goes back to ready by its claim's release, not
+            // through `failed`, so the retry ladder's attempt stays as it was, no critic
+            // reviews it and it is never tried again as a passing error. The session log says
+            // what happened and what comes next in one plain sentence.
             await emit(BILLING_FALLBACK_EVENT, {
               taskId: task.id,
               title: task.title,
               sentence: result.summary,
             });
-            skipped.push(task.id);
-            notAgain.add(task.id);
-            await releaseIfHeld(task.id, "usage limit: back to ready for the next credential");
+            await releaseIfHeld(task.id, "a Claude credential could not serve: back to ready");
+            const tries = (movedOnCredential.get(task.id) ?? 0) + 1;
+            movedOnCredential.set(task.id, tries);
+            if (result.credentialWait || tries > MAX_CREDENTIAL_MOVES) {
+              // Nothing it may run can be billed now: the session ends on the wait (one
+              // sentence, no row of failed tasks); the rest stays ready and starts by itself
+              // at the reset, or once a new credential is saved (the executor noted the wait).
+              credentialWait ??= result.credentialWait ?? null;
+              skipped.push(task.id, ...queue.map((i) => i.taskId));
+              notAgain.add(task.id);
+              queue.length = 0;
+              stopReason = CREDENTIAL_WAIT_STOP;
+              break;
+            }
+            // Another credential takes over now ("Use the other one", or after a refusal): the
+            // task goes on at once in this session.
+            queue.unshift(item);
             continue;
           }
           lessonCandidates.push(...(result.lessons ?? []));
@@ -2323,6 +2373,10 @@ export class SessionRunner {
       (id) => endState.rows.get(id)?.status === "in_review" && !needsYouNow.includes(id),
     );
     const leftOutIds = new Set((plan?.leftOutForBudget ?? []).map((i) => i.taskId));
+    // U-078: the wait's one sentence, its reset in the person's time zone, true when written.
+    const waitOwner = credentialWait
+      ? await store.human.get(agent.owner_human_id).catch(() => undefined)
+      : undefined;
     const outcome: LastSessionOutcome = {
       done: doneNow.map(named),
       failed: failedNow.map((id) => ({
@@ -2341,6 +2395,14 @@ export class SessionRunner {
       // The outer limit's amount, while the session still ends there (ADR 0112).
       ...(stopCapUsdMicro !== null && stopLimitWords(stopReason) !== null
         ? { stopCapChfMicro: usdToChfMicro(stopCapUsdMicro, rate) }
+        : {}),
+      ...(credentialWait
+        ? {
+            credentialWait: waitSentence(credentialWait, {
+              ...(waitOwner?.timezone ? { timezone: waitOwner.timezone } : {}),
+              nowMs: clock.now(),
+            }),
+          }
         : {}),
       spentChfMicro: spentChf,
     };

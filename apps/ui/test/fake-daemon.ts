@@ -4375,6 +4375,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     handover: "medium",
     voice_alerts: "low",
     model_watch: "medium",
+    // U-078: medium, as SETTING_SPECS.mid_session_limit (use_other moves work onto money).
+    mid_session_limit: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>

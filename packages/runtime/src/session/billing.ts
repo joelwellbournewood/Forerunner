@@ -40,6 +40,12 @@ export interface TaskBillingRequest {
    */
   firstKinds?: readonly BillingSourceKind[];
   firstWhy?: string;
+  /**
+   * "When my first choice runs out mid-session: Wait" (U-078, the default): a first choice that
+   * rests after a usage limit makes the pick wait for it (`unavailable` with `waitFor`) rather
+   * than move the task onto the next credential. Task runs only; the non-task calls never set it.
+   */
+  waitOnRest?: boolean;
 }
 
 /** Plan usage of a subscription source as the pick saw it, and what moves it. */
@@ -73,6 +79,25 @@ export interface TaskBillingPort {
    * a source.
    */
   rest?(sourceId: string, resetAt: string | undefined, why: string): Promise<string>;
+  /**
+   * Anthropic refused the source's credential (`provider_auth`, U-078): it is marked refused, the
+   * next picks skip it until a new one is saved, and one Inbox card names it. Optional.
+   */
+  refuse?(sourceId: string, why: string): Promise<void>;
+  /** The project's work waits for the source (its reset, a new credential; U-078). Optional. */
+  noteWait?(sourceId: string, projectId: string, agentId: string): Promise<void>;
+}
+
+/** The person's setting "When my first choice runs out mid-session" (U-078). */
+export type MidSessionLimit = "wait" | "use_other";
+
+/** The setting's key in `human.notify_prefs`, and its default (owner-answers.md section 2). */
+export const MID_SESSION_LIMIT_SETTING = "mid_session_limit";
+export const MID_SESSION_LIMIT_DEFAULT: MidSessionLimit = "wait";
+
+/** The stored setting, or the default for anything else. */
+export function midSessionLimitOf(value: unknown): MidSessionLimit {
+  return value === "use_other" ? "use_other" : MID_SESSION_LIMIT_DEFAULT;
 }
 
 /**

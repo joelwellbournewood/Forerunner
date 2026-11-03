@@ -106,6 +106,8 @@ describe("which Claude credential is used first (U-078)", () => {
   /** Every Claude Code turn, with its environment. */
   const sdkCalls: { prompt: string; env: Record<string, string | undefined> }[] = [];
   let claudeCode: "reply" | "limit" = "reply";
+  /** U-078: the Messages API refuses the key (401), as Anthropic does a revoked one. */
+  let apiRefuses = false;
   const resetAt = "2026-10-31T11:00:00.000Z";
 
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -114,8 +116,22 @@ describe("which Claude credential is used first (U-078)", () => {
     const headers = new Headers(init?.headers ?? r?.headers);
     if (url.pathname === "/v1/messages") {
       apiCalls.push(headers.get("x-api-key") ?? "");
+      if (apiRefuses)
+        return new Response(
+          JSON.stringify({
+            type: "error",
+            error: { type: "authentication_error", message: "invalid x-api-key" },
+          }),
+          { status: 401, headers: { "content-type": "application/json" } },
+        );
       return sse("From the API.");
     }
+    // The setup assistant's key check lists the models (U-078: a new key saved in Settings).
+    if (url.pathname === "/v1/models" && url.searchParams.has("limit") && !init?.signal)
+      return new Response(
+        JSON.stringify({ data: [{ id: "claude-haiku-5-5" }, { id: "claude-sonnet-5-5" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
     return new Response(JSON.stringify({ data: [] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -299,6 +315,41 @@ describe("which Claude credential is used first (U-078)", () => {
     expect((await view()).sources.find((s) => s.kind === "subscription")?.usable).toBe(true);
     expect(await chat("later")).toBe("From Claude Code.");
     expect(sdkCalls.length).toBe(sdkBefore + 1);
+  });
+
+  it("a refused key in a chat call: the next credential answers, the key reads Refused with one card, and a new key ends it (U-078)", async () => {
+    await setOrder(["api_key", "subscription"]);
+    apiRefuses = true;
+    const apiBefore = apiCalls.length;
+    const sdkBefore = sdkCalls.length;
+    // The call is made once more on the next source, as at a usage limit.
+    expect(await chat("is the key all right?")).toBe("From Claude Code.");
+    expect(apiCalls.length).toBe(apiBefore + 1);
+    expect(sdkCalls.length).toBe(sdkBefore + 1);
+    expect((await view()).sources.find((s) => s.kind === "api_key")).toMatchObject({
+      usable: false,
+      blocked: "refused",
+    });
+    const cards = async () =>
+      (
+        (await (await call("/inbox")).json()) as { requests: { title: string; status: string }[] }
+      ).requests.filter((r) => r.status === "open" && /refused your API key/.test(r.title));
+    expect((await cards()).map((c) => c.title)).toEqual(["Anthropic refused your API key"]);
+    // The next call skips the refused key: no request to the API, and no second card.
+    expect(await chat("and now?")).toBe("From Claude Code.");
+    expect(apiCalls.length).toBe(apiBefore + 1);
+    expect(await cards()).toHaveLength(1);
+    // A new key saved in the setup assistant ends the mark and closes the card.
+    apiRefuses = false;
+    const saved = await call("/setup/anthropic", {
+      method: "POST",
+      body: JSON.stringify({ value: ["sk-ant-api03-", "newkey", "7".repeat(40)].join("") }),
+    });
+    expect(((await saved.json()) as { ok: boolean }).ok).toBe(true);
+    expect((await view()).sources.find((s) => s.kind === "api_key")?.blocked).toBeNull();
+    expect(await cards()).toHaveLength(0);
+    expect(await chat("back on the key")).toBe("From the API.");
+    await setOrder(["subscription", "api_key"]);
   });
 
   it("refuses an order that names a credential twice or an unknown one", async () => {

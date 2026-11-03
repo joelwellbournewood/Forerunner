@@ -277,6 +277,26 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     effect: () =>
       "every model call uses them in this order, and when one cannot be used the next one is",
   },
+  // U-078 (the owner's decision of 2026-11-02, owner-answers.md section 2): when the first
+  // credential reaches its usage limit during a session, its tasks wait for the reset and start
+  // by themselves (the default), or go on at once on the next credential, which moves work from
+  // plan limits onto money (a yes first). Task runs only: chat, planning and reviews always use
+  // the next one (ADR 0100 point 4).
+  mid_session_limit: {
+    key: "mid_session_limit",
+    label: "what tasks do when your first Claude credential runs out mid-session",
+    scope: "global",
+    risk: "medium",
+    schema: z.enum(["wait", "use_other"]),
+    narrows: (to) => to !== "use_other",
+    description:
+      "When the first Claude credential reaches its usage limit during a session: wait (its tasks wait for the reset and start by themselves) or use_other (they go on at once on the next one, which may cost money). Task runs only; chat, planning and reviews always use the next one.",
+    display: (value) => (value === "use_other" ? "use the other one" : "wait"),
+    effect: (value) =>
+      value === "use_other"
+        ? "a task whose first credential runs out goes on at once on the next one, which may cost money"
+        : "a task whose first credential runs out waits for its reset and starts by itself",
+  },
   quiet_hours: {
     key: "quiet_hours",
     label: "quiet hours",

@@ -68,6 +68,7 @@ export const SETTING_LABELS: Record<string, string> = {
   fast_mode: "Opus fast mode",
   status_pull_request: "Status pull request",
   speed_quality_offset: "Speed or quality",
+  mid_session_limit: "When my first choice runs out mid-session",
 };
 
 export function leafOf(key: string): string {
@@ -100,6 +101,15 @@ export const NOTIFY_CHANNELS = [
   { value: "telegram", label: "Telegram" },
   { value: "signal", label: "Signal" },
   { value: "push", label: "The phone app (push)" },
+] as const;
+
+/**
+ * "When my first choice runs out mid-session" (U-078, the owner's decision of 2026-11-02): wait
+ * (the default) or go on at once on the other credential, which moves plan-limit work onto money.
+ */
+export const MID_SESSION_LIMITS = [
+  { value: "wait", label: "Wait for its reset; the tasks start by themselves" },
+  { value: "use_other", label: "Use the other one at once (may cost money)" },
 ] as const;
 
 export const LANGUAGES = [
@@ -149,6 +159,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v === true ? "on" : "off";
     case "notify_channel":
       return option(NOTIFY_CHANNELS);
+    case "mid_session_limit":
+      return v === "use_other" ? MID_SESSION_LIMITS[1].label : MID_SESSION_LIMITS[0].label;
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":
@@ -283,6 +295,14 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
       );
     case "voice_alerts":
       return select(leaf, ON_OFF, asBool, boolInitial, {});
+    case "mid_session_limit":
+      return select(
+        leaf,
+        MID_SESSION_LIMITS,
+        (v) => v,
+        (c) => (c === "use_other" ? "use_other" : "wait"),
+        {},
+      );
     case "small_project_mode":
     case "fast_mode":
     case "status_pull_request":

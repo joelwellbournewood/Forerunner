@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Start a test bench: the real daemon on an isolated home plus the real UI dev server.
 //   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
-//        [--provider bench|fake|bench-live|none] [--home <dir>] [--fresh] [--env KEY=VAL ...]
+//        [--provider bench|fake|bench-live|bench-api|none] [--api-key refused|limited|ok] [--home <dir>] [--fresh] [--env KEY=VAL ...]
 //        [--githost <port> [--githost-in-setup]]
 // Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
 // See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs. The daemon

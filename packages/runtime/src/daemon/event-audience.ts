@@ -54,6 +54,9 @@ export function eventAudience(type: string, p: Record<string, unknown> = {}): Ev
   // A run the person's own stop ended is told once, by the stop's line ("Stopped by you
   // during ..."), not again as a finished task.
   if (type === "task.finished" && p.outcome === "killed") return "detail";
+  // A credential stopped the run (U-078): its `billing.fallback` line says what happened and
+  // what comes next ("... waits until 15:40 ... and starts by itself."), once.
+  if (type === "task.finished" && p.outcome === "usage_limit") return "detail";
   // A retry in the same session is told by what came of it (design §3.7: about eight lines per
   // task; the walk's failing task had twelve): the same specialist starting again is a detail,
   // another one taking over is not.

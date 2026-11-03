@@ -10,13 +10,14 @@ import {
   type LogRecord,
   SimulatedClock,
 } from "@forerunner/platform";
-import { openStore } from "@forerunner/state";
+import { type HumanRequestRow, openStore } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { claudeCodeToolNames } from "../src/agent/cc-tools.ts";
 import type { QueryLike } from "../src/agent/sdk.ts";
 import { billingSourcesLine, buildProgram } from "../src/cli/main.ts";
 import { composeRuntime, type RuntimeApp, TOOL_UNMAPPED_AUDIT } from "../src/daemon/compose.ts";
+import { requestView } from "../src/daemon/views.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { BILLING_PICK_AUDIT_TOOL, planShareAfter } from "../src/session/billing.ts";
@@ -506,6 +507,85 @@ describe("the subscription path (ADR 0044)", () => {
       });
     }
   });
+
+  // U-078: Claude Code's refusal of the sign-in, as an assistant error and as a 401 result: the
+  // task is no failure and is never tried again at once; the sign-in is marked refused, one card
+  // names it, and the next credential takes over. Before, both were "model call failed".
+  for (const [label, script] of [
+    [
+      "an authentication_failed assistant error",
+      async function* () {
+        yield init;
+        yield {
+          type: "assistant",
+          error: "authentication_failed",
+          message: { content: [{ type: "text", text: "OAuth token has expired" }] },
+        };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          result: "OAuth token has expired",
+        };
+      },
+    ],
+    [
+      "a 401 result",
+      async function* () {
+        yield init;
+        yield {
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          result: 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+        };
+      },
+    ],
+  ] as const) {
+    it(`${label} marks the sign-in refused, files one card, and the API key takes over`, async () => {
+      const w = await seedTask(`Refused sign-in (${label})`);
+      sdk.set(script as SdkScript);
+      try {
+        const res = await execute(w);
+        expect(res.outcome).toBe("usage_limit");
+        expect(res.credentialWait).toBeUndefined();
+        expect(res.summary).toBe(
+          `Anthropic refused your Claude sign-in; "Refused sign-in (${label})" continues on your API key now.`,
+        );
+        const sub = (
+          await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+        ).find((s) => s.kind === "subscription");
+        expect(typeof sub?.limits.refusedAt).toBe("string");
+        const cards = (await rt.store.humanRequest.open({ humanId: rt.human.id })).filter(
+          (r) => (r.change_card as { key?: string } | null)?.key === "credential:refused",
+        );
+        expect(cards).toHaveLength(1);
+        const view = requestView(cards[0] as HumanRequestRow, null);
+        expect(view.title).toBe("Anthropic refused your Claude sign-in");
+        expect(view.links?.[0]?.label).toBe("Save a new sign-in");
+        // The next pick skips the refused sign-in: the API key, on the loop driver.
+        const pick = await rt.billing.pick.pick({
+          agentId: rt.agent.id,
+          agentOwnerHumanId: rt.human.id,
+          runner: "pc",
+          modelTier: "sonnet",
+        });
+        expect(pick.source.kind).toBe("api_key");
+      } finally {
+        // A new sign-in saved (the setup assistant): the mark and the card go.
+        await rt.billing.waits.credentialSaved("subscription");
+        sdk.set(async function* () {
+          yield init;
+          yield assistant("Implemented the change. Lesson: none.");
+          yield done("Implemented the change. Lesson: none.");
+        });
+      }
+      const cleared = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((s) => s.kind === "subscription");
+      expect(cleared?.limits.refusedAt).toBeUndefined();
+    });
+  }
 
   it("another human's agent never runs on the subscription: the API key through the loop driver", async () => {
     const other = await rt.store.human.insert({

@@ -747,6 +747,16 @@ export interface RuntimeApp {
     hostCommands: boolean;
     /** The plan allowance the subscription row was seeded with, and where it came from. */
     planAllowance: PlanAllowance;
+    /**
+     * Work waiting for a Claude credential (U-078): `wake()` starts a session of every project
+     * whose wait is over (the credential's rest ended, or a new one was saved), as the scheduler
+     * does before every tick; `credentialSaved(kind)` ends a refusal of that kind at once and
+     * wakes its waiting work (the setup assistant calls it when a key or sign-in is stored).
+     */
+    waits: {
+      wake(): Promise<number>;
+      credentialSaved(kind: "api_key" | "subscription"): Promise<number>;
+    };
   };
   chfPerUsd: () => number;
   /** Context layer per session: policy, Headroom probe, pipeline, savings (ADR 0003). */
@@ -3011,8 +3021,47 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     fired: fileFiredKeys(join(dirs.data, "scheduler-fired.json")),
     refresh: async (target) => {
       await refreshJobSchedules(target);
+      // U-078: work that waited for a Claude credential starts by itself once it can serve
+      // (its rest ended, a new key was saved), within a tick, after a restart too.
+      await credentialWaits
+        .wake()
+        .catch((e: unknown) =>
+          logger.warn("work waiting for a credential not started", { error: errorMessage(e) }),
+        );
     },
   });
+  /**
+   * Work waiting for a Claude credential (U-078, ADR 0100 amended): the waits are kept on the
+   * billing sources (`limits.waiting`), so they survive a restart; each project whose wait is
+   * over gets one session start through the scheduler (`budget_reset`: a limit reset), and only
+   * while it still has ready work.
+   */
+  const credentialWaits: RuntimeApp["billing"]["waits"] = {
+    wake: async () => {
+      const ready = await taskBilling.takeReady();
+      let started = 0;
+      for (const projectId of [...new Set(ready.map((w) => w.projectId))]) {
+        const entry = ready.find((w) => w.projectId === projectId);
+        const project = await store.project.get(projectId).catch(() => undefined);
+        if (!entry || !project) continue;
+        const work = await store.task.readyTasks(projectId, { limit: 1 }).catch(() => []);
+        if (!work.length) continue;
+        await scheduler.request({
+          agentId: entry.agentId,
+          projectId,
+          trigger: "budget_reset",
+          reason: "a Claude credential it waited for can serve again",
+        });
+        started++;
+      }
+      if (started) logger.info("work that waited for a credential starts again", { started });
+      return started;
+    },
+    credentialSaved: async (kind) => {
+      await taskBilling.credentialSaved(kind);
+      return credentialWaits.wake();
+    },
+  };
   scheduleModelWatch(scheduler, { timezone: human.timezone });
   // A model watch report the human put off ("remind me") is asked again when due (U-035).
   scheduleModelWatchReminders(scheduler, { timezone: human.timezone });
@@ -3934,6 +3983,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       sdk: sdkDriver,
       hostCommands: sdkHostCommands,
       planAllowance,
+      waits: credentialWaits,
     },
     chfPerUsd,
     context,

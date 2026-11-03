@@ -74,8 +74,19 @@ credential's limit is reached (a Claude subscription's usage limit, an API key's
 or spend limit; the runtime's `provider_usage_limit`) gets `limits.restingUntil` (ISO): the
 reset time the error named, else one hour from then. A probe reports
 `BillingSourceStatus.restingUntil` while that time is ahead, and the router skips the source
-with code `cooldown` ("resting after a usage limit until ..."); the router itself reads no
-clock.
+with code `cooldown` ("resting after a usage limit until ..."; the skip carries `until`); the
+router itself reads no clock.
+
+**A refused credential and 'Wait' (U-078, ADR 0100 amended 2026-11-03).** A source whose
+credential Anthropic refused carries `limits.refusedAt` (with `refusedKey`, a fingerprint of the
+refused credential, never its value, and `refusedWhy`); a probe reports
+`BillingSourceStatus.refused` while it stands and the router skips the source with code
+`refused`. `limits.waiting` lists the projects whose work waits for the source (its reset, or a
+new credential); the runtime starts their sessions when it serves again. `RouteContext.waitOnRest`
+("When my first choice runs out mid-session: Wait", task runs only): a resting source that
+ranks ahead of every source that could serve makes `pick` throw `unavailable` with
+`details.waitFor` ({ sourceId, kind, until }) instead of moving on; without it the next source
+serves, as before. Tests: `test/router.test.ts` ("skips a refused source", "'Wait'").
 
 **The pick from the daemon (ADR 0044).** The daemon calls `pick` once per task, from
 `LoopTaskExecutor` through `RouterTaskBilling` (`packages/runtime/src/wiring/billing-pick.ts`),

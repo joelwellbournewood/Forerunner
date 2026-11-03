@@ -58,6 +58,11 @@ export interface SetupRoutesDeps {
   appVersion: string;
   restarter: Restarter;
   fetchImpl?: typeof fetch;
+  /**
+   * A Claude key or sign-in was stored (U-078): its refused mark ends and the work that waited
+   * for it starts by itself (`RuntimeApp.billing.waits.credentialSaved`).
+   */
+  onClaudeCredentialSaved?: (kind: "api_key" | "subscription") => Promise<unknown>;
   /** Restart delay after `finish` answered (tests pass 0). */
   restartDelayMs?: number;
 }
@@ -238,6 +243,12 @@ export function createSetupRoutes(deps: SetupRoutesDeps): Hono {
     const name = subscription ? SECRET_NAMES.anthropicOauth : SECRET_NAMES.anthropic;
     const stored = report.stored.includes(name);
     await audit(name, result, stored);
+    if (stored && deps.onClaudeCredentialSaved)
+      await deps
+        .onClaudeCredentialSaved(subscription ? "subscription" : "api_key")
+        .catch((e: unknown) =>
+          logger.warn("work waiting for the credential not started", { error: errorMessage(e) }),
+        );
     const view: SetupCheckView = {
       ok: stored,
       kind: subscription ? "subscription" : "api_key",

@@ -311,6 +311,8 @@ describe("BillingRouter: the person's order and the rest after a usage limit (U-
         kind: "subscription",
         code: "cooldown",
         reason: "resting after a usage limit until 2026-11-01T15:00:00Z",
+        // U-078: the time, for the wait's sentence and the start at the reset.
+        until: "2026-11-01T15:00:00Z",
       },
     ]);
     // Resting alone: nothing can serve, and the error names the rest.
@@ -321,6 +323,50 @@ describe("BillingRouter: the person's order and the rest after a usage limit (U-
     // Once the probe no longer reports it, the source serves again.
     probe.set("alice-sub", { available: true, planUsageShare: 0.1 });
     expect((await router([aliceSub, aliceApi], probe).pick(ctx())).source.id).toBe("alice-sub");
+  });
+
+  it("skips a refused source with code refused and uses the next one (U-078)", async () => {
+    const probe = new FakeProbe({
+      "alice-api": { available: true, refused: "2026-11-01T14:00:00Z" },
+    });
+    const d = await router([aliceSub, aliceApi], probe).pick(
+      ctx({ purpose: "chat", order: ["api_key", "subscription"] }),
+    );
+    expect(d.source.id).toBe("alice-sub");
+    expect(d.skipped.map((s) => [s.sourceId, s.code])).toEqual([["alice-api", "refused"]]);
+    await expect(router([aliceApi], probe).pick(ctx())).rejects.toMatchObject({
+      code: "unavailable",
+      details: { skipped: [{ sourceId: "alice-api", code: "refused" }] },
+    });
+  });
+
+  it("'Wait' (U-078): a first choice that rests holds the pick instead of moving on; off, the next one serves", async () => {
+    const probe = new FakeProbe({
+      "alice-sub": { available: true, planUsageShare: 0.1, restingUntil: "2026-11-01T15:00:00Z" },
+    });
+    await expect(
+      router([aliceSub, aliceApi], probe).pick(
+        ctx({ order: ["subscription", "api_key"], waitOnRest: true }),
+      ),
+    ).rejects.toMatchObject({
+      code: "unavailable",
+      details: {
+        waitFor: { sourceId: "alice-sub", kind: "subscription", until: "2026-11-01T15:00:00Z" },
+      },
+    });
+    // Off: the API key serves, as before.
+    expect(
+      (await router([aliceSub, aliceApi], probe).pick(ctx({ order: ["subscription", "api_key"] })))
+        .source.id,
+    ).toBe("alice-api");
+    // A resting source that is not the first choice holds nothing: the first choice serves.
+    expect(
+      (
+        await router([aliceSub, aliceApi], probe).pick(
+          ctx({ order: ["api_key", "subscription"], waitOnRest: true }),
+        )
+      ).source.id,
+    ).toBe("alice-api");
   });
 
   it("reads a stored order: distinct orderable kinds, anything else is no order", () => {

@@ -199,6 +199,9 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
           ? `${capital(taskName(p))} ${summary.replace(/^The run /, "")}`
           : `${capital(taskName(p))} paused at a budget.`;
       if (outcome === "killed") return `${capital(taskName(p))} was stopped.`;
+      // U-078: under Details; the person's line is the credential's own sentence.
+      if (outcome === "usage_limit")
+        return `${capital(taskName(p))} stopped: a Claude credential could not serve it.`;
       if (outcome === "needs_human")
         return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;
       const said = couldNotWords(summary);

@@ -88,6 +88,12 @@ export interface TaskDisplayContext {
    * move (the runner's watch of the task), so a Cancel takes its work out there too.
    */
   live?: (taskId: string) => boolean;
+  /**
+   * The project's work waits for a Claude credential (U-078): its reset ("Waits until 15:40,
+   * your subscription's limit") or a new key ("Waits for a new API key"), as the row says it,
+   * with the line under it. Absent or null: no wait.
+   */
+  credentialWait?: { label: string; detail: string } | null;
 }
 
 /** A title as a status names it: whole when short, else cut at a word. */
@@ -413,6 +419,12 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
             ? "A deploy or a migration keeps the full review, which needs Docker. Set it up in Settings."
             : "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
           blocker: { kind: "docker", taskId: null, requestId: null, title: null },
+        });
+      // U-078: no Claude credential that may run it can now; it starts by itself at the
+      // credential's reset, or once a new key is saved (never "Failed: no billing source").
+      if (ctx.credentialWait)
+        return display("waiting", ctx.credentialWait.label, "warn", {
+          detail: ctx.credentialWait.detail,
         });
       return display("ready", "Ready", "neutral");
     }

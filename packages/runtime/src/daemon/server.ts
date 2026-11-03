@@ -734,6 +734,8 @@ export function createDaemonApp(
       appVersion: rt.appVersion,
       restarter: rt.restarter,
       ...(rt.fetchImpl ? { fetchImpl: rt.fetchImpl } : {}),
+      // U-078: a new key or sign-in ends its refusal and starts the work that waited for it.
+      onClaudeCredentialSaved: (kind) => rt.billing.waits.credentialSaved(kind),
     }),
   );
   // Settings -> Claude subscription allowance (U-052): CHF in, USD stored as the runtime reads it.

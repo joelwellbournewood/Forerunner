@@ -53,6 +53,8 @@ export interface RoutedProviderDeps {
   billing: {
     pick(req: TaskBillingRequest): Promise<TaskBillingPick>;
     rest?(sourceId: string, resetAt: string | undefined, why: string): Promise<string>;
+    /** Anthropic refused the source's credential (U-078): marked, skipped, one card. */
+    refuse?(sourceId: string, why: string): Promise<void>;
   };
   /** The provider a source's calls run on; null when none can (no credential, the fake row). */
   providerFor: (source: BillingSource) => Promise<ModelProvider | null>;
@@ -145,6 +147,8 @@ export class RoutedProvider implements ModelProvider {
   async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
     const tried: string[] = [];
     let last: { source: BillingSource; event: StreamEvent & { type: "error" } } | null = null;
+    /** The refusal a fallback met (U-078): the call's error when no other source can serve. */
+    let refusedLast: (StreamEvent & { type: "error" }) | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       let pick: TaskBillingPick;
       try {
@@ -154,6 +158,10 @@ export class RoutedProvider implements ModelProvider {
           // The fallback found nothing: the limit is the call's error, and the log says so.
           await this.recordFallback(req, last.source, null, last.event);
           yield { ...last.event, sourceId: last.source.id };
+          return;
+        }
+        if (refusedLast) {
+          yield refusedLast;
           return;
         }
         yield {
@@ -198,11 +206,25 @@ export class RoutedProvider implements ModelProvider {
         yield ev;
       }
       if (!failed) return;
-      if (failed.code !== USAGE_LIMIT_CODE) {
+      // U-078: a credential Anthropic refused (a 401 or 403 key, an expired sign-in) is marked
+      // refused like a task run's (one card, skipped until a new one is saved), and the call is
+      // made once more on the next source, as at a usage limit.
+      const refused = failed.code === "provider_auth";
+      if (failed.code !== USAGE_LIMIT_CODE && !refused) {
         yield { ...failed, sourceId: source.id };
         return;
       }
       tried.push(source.id);
+      if (refused) {
+        await this.refuse(source, failed);
+        if (streamed) {
+          yield { ...failed, sourceId: source.id };
+          return;
+        }
+        last = null;
+        refusedLast = { ...failed, sourceId: source.id };
+        continue;
+      }
       const until = await this.rest(source, failed);
       last = { source, event: { ...failed, ...(until ? { resetAt: until } : {}) } };
       // A reply that already began is not made twice: the limit is the call's error.
@@ -216,7 +238,9 @@ export class RoutedProvider implements ModelProvider {
     if (last) {
       await this.recordFallback(req, last.source, null, last.event);
       yield { ...last.event, sourceId: last.source.id };
+      return;
     }
+    if (refusedLast) yield refusedLast;
   }
 
   async complete(req: ModelRequest): Promise<ModelResponse> {
@@ -253,6 +277,19 @@ export class RoutedProvider implements ModelProvider {
         error: errorMessage(e),
       });
       return failed.resetAt;
+    }
+  }
+
+  /** Marks the source refused (U-078), best effort: a mark not saved never fails the call. */
+  private async refuse(source: BillingSource, failed: StreamEvent & { type: "error" }) {
+    if (!this.deps.billing.refuse) return;
+    try {
+      await this.deps.billing.refuse(source.id, failed.message);
+    } catch (e) {
+      this.logger.warn("the refused credential was not marked", {
+        sourceId: source.id,
+        error: errorMessage(e),
+      });
     }
   }
 
@@ -388,6 +425,8 @@ function skipWords(code: string | undefined, reason: string | undefined): string
   switch (code) {
     case "cooldown":
       return "resting after a usage limit";
+    case "refused":
+      return "Anthropic refused it; save a new one in Settings";
     case "plan_share":
       return "its allowance is reached";
     case "monthly_limit":

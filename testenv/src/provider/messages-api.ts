@@ -209,7 +209,7 @@ export function standInFetch(
   const fallback = opts.fallback ?? globalThis.fetch.bind(globalThis);
   const base = opts.base?.replace(/\/+$/, "");
   return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-    const request = new Request(input as RequestInfo, init);
+    const request = new Request(input, init);
     const url = new URL(request.url);
     const ours =
       url.hostname === "api.anthropic.com" || (base !== undefined && request.url.startsWith(base));

@@ -34,6 +34,12 @@ export interface FakeTaskMeta {
    * adds them; every other task in review has its review going.
    */
   notLive: Set<string>;
+  /**
+   * Projects whose work waits for a Claude credential (U-078), with the row's words as the
+   * daemon's `credentialWaitRow` gives them ("Waits until 16:40, your API key's limit"). A test
+   * sets them; the daemon reads them from the billing sources' `limits.waiting`.
+   */
+  credentialWaits: Map<string, { label: string; detail: string }>;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
@@ -41,6 +47,7 @@ export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
     pausedByPerson: new Set(),
     added: new Map(tasks.map((t, i) => [t.id, i])),
     notLive: new Set(),
+    credentialWaits: new Map(),
   };
 }
 
@@ -100,6 +107,7 @@ export function projectTaskViews(
     runs: new Map(),
     agentNames: new Map([["agent_alice", "Alice"]]),
     live: (taskId: string) => !meta.notLive.has(taskId),
+    credentialWait: meta.credentialWaits.get(projectId) ?? null,
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
   return runOrder(rows).map((row, i) => ({
