@@ -43,12 +43,14 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
       within(section).getByRole("heading", { name: "Claude: which to use first" }),
     ).toBeInTheDocument();
     expect(section).toHaveTextContent("When one cannot be used, the next one is.");
-    // C-64: research goes to the API key first whatever the order, and the screen says so.
+    // U-078 (the owner's decision of 2026-11-02, which replaced C-64's "research on the API key
+    // first"): the person's order decides; another one only when the first cannot do a task.
     expect(section).toHaveTextContent(
-      "a research task uses the API key first when one is saved, since only there can it read web pages.",
+      "A task goes to another one only when the first cannot do it properly (research that must read web pages, a task that must ask you while it works); the plan card and New task say so.",
     );
+    expect(section).not.toHaveTextContent("research task uses the API key first");
     expect(await within(section).findByTestId("billing-order-default")).toHaveTextContent(
-      "You have not chosen an order yet: tasks use the subscription first (research tasks the API key), and Chat, project setup and reviews use the API key first. Moving one sets this order for everything but research tasks.",
+      "You have not chosen an order yet: tasks use the subscription first, and Chat, project setup and reviews use the API key first. Moving one sets this order for everything.",
     );
     const sub = within(section).getByTestId("billing-order-row-subscription");
     expect(sub).toHaveTextContent("1. Claude subscription");
@@ -166,6 +168,80 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
       "billing-order-row-subscription",
       "billing-order-row-plan_credits",
     ]);
+  });
+
+  it("What each can do here: one row per need, one column per credential, the daemon's words (U-078)", async () => {
+    renderApp("/settings", createHarness());
+    const section = await screen.findByTestId("billing-order-section");
+    const table = await within(section).findByTestId("credential-table");
+    expect(
+      within(table).getByRole("heading", { name: "What each can do here", hidden: true }),
+    ).toBeInTheDocument();
+    expect(within(table).getByTestId("credential-table-api_key")).toHaveTextContent("API key");
+    expect(within(table).getByTestId("credential-table-subscription")).toHaveTextContent(
+      "Claude subscription",
+    );
+    const rows = within(table)
+      .getAllByTestId("credential-table-row")
+      .map((r) => [...r.querySelectorAll("th, td")].map((c) => c.textContent));
+    expect(rows).toEqual([
+      ["Read web pages", "Yes", "Not yet"],
+      ["Search the web", "Not yet", "Yes"],
+      ["Run commands (its tests)", "Yes, in the sandbox", "No"],
+      ["Ask you while it works", "Yes", "No: it lists its questions in its report"],
+      ["What it costs", "Money per use", "Your plan's limits, no money per use"],
+    ]);
+  });
+
+  it("with only the API key saved the table says the subscription is not saved", async () => {
+    renderApp("/settings", createHarness({ billingOrder: { sources: [{ kind: "api_key" }] } }));
+    const table = await screen.findByTestId("credential-table");
+    expect(within(table).getByTestId("credential-table-subscription")).toHaveTextContent(
+      "Claude subscription (not saved)",
+    );
+    expect(within(table).getByTestId("credential-table-api_key")).toHaveTextContent(/^API key$/);
+  });
+
+  it("no credential saved while the app answers with the model it was started with: it says so, not only 'none saved' (U-078)", async () => {
+    renderApp("/settings", createHarness({ billingOrder: { sources: [] }, startedWith: "bench" }));
+    const section = await screen.findByTestId("billing-order-section");
+    expect(await within(section).findByTestId("billing-order-empty")).toHaveTextContent(
+      "No Claude credential is saved here. This app was started with its own model (bench), which answers for now, so there is no order to choose. To use your own, add your subscription token or an API key under Accounts and keys.",
+    );
+  });
+
+  it("Accounts and keys does not say 'connected' for a key Anthropic refused, and offers Save a new key (U-078)", async () => {
+    const harness = createHarness({
+      billingOrder: { sources: [{ kind: "api_key", usable: false, blocked: "refused" }] },
+      setup: { credentials: { github: false, anthropicApiKey: true, subscription: false } },
+    });
+    renderApp("/settings", harness);
+    const accounts = await screen.findByTestId("settings-accounts");
+    const refused = await within(accounts).findByTestId("account-claude-refused");
+    expect(refused).toHaveTextContent("Anthropic refused your API key.");
+    expect(within(refused).getByRole("link", { name: "Save a new key" })).toHaveAttribute(
+      "href",
+      "/setup",
+    );
+    expect(within(accounts).getByTestId("account-claude")).toHaveTextContent(
+      "Claude: not connected",
+    );
+    expect(within(accounts).getByTestId("account-claude")).not.toHaveTextContent("connected (");
+  });
+
+  it("a refused API key beside a working subscription: connected through the subscription, the key refused", async () => {
+    const harness = createHarness({
+      billingOrder: {
+        sources: [{ kind: "subscription" }, { kind: "api_key", usable: false, blocked: "refused" }],
+      },
+      setup: { credentials: { github: true, anthropicApiKey: true, subscription: true } },
+    });
+    renderApp("/settings", harness);
+    const accounts = await screen.findByTestId("settings-accounts");
+    await within(accounts).findByTestId("account-claude-refused");
+    expect(within(accounts).getByTestId("account-claude")).toHaveTextContent(
+      "Claude: connected (subscription)",
+    );
   });
 
   it("a daemon without the route shows what is missing, not an empty section", async () => {

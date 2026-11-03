@@ -213,6 +213,41 @@ Decision, amending point 4 for task runs and adding three points:
     a new API key: 2 tasks [Save a new key]", "Waiting until 15:40 (your subscription's limit):
     2 tasks"); before, it fell through to "0 of 2 done".
 
+13. **The credential chooser (credential-chooser, 2026-11-03; the owner's decision of 2026-11-02:
+    "the person's order decides; another credential only when the first cannot do the task
+    properly (plan card says why)").** What a task needs of its credential is compared with what
+    each credential can do on this install. `capabilitiesOf(kind, facts)`
+    (`wiring/billing-pick.ts`, the one place later areas change for their kind): the API key reads
+    web pages when the page reader is on, does not search yet ('web-search' turns it on), runs
+    commands in the sandbox and can ask the person; the subscription searches, opens no page yet
+    ('sites'), runs commands only with host commands and cannot ask the person while it works.
+    `needsOf` (`session/credential-choice.ts`): research's hard needs are page reading and
+    search; asking the person is a hard need of a task whose own words need their answers (until
+    they answered or went ahead without); running commands only makes the work better. The pick
+    keeps the credentials that meet every hard need and the person's order decides among them;
+    when none meets them all (research today), the ones that meet the most, page reading before
+    search, in the person's order. 'Wait' (point 10) holds to the first choice that can do the
+    task; the next group serves only when none of the first can now. The plan card (each plan
+    task's `runsOn` in `GET /inbox`), New task and Settings say the result in one set of
+    sentences ("Runs on your API key: only it can read web pages here.", "Runs on your API key:
+    only it can ask you questions while it works here.", "On your subscription its tests will
+    not run: it cannot run commands there."), and Settings shows "What each can do here", the
+    capability function's output. This replaced ADR 0107 point 7's "research on the API key
+    first", a session-lead default the owner's decision superseded.
+14. **"Code tasks that need commands" (`human.notify_prefs.code_commands`).** `first_choice`,
+    the default (the owner's): such a task runs on the first credential in the order; on a
+    subscription it cannot run commands, so its own tests do not run, and the project's checks
+    run before the critic only when the task's folder has its dependencies installed
+    (`project-checks.ts`), which a run without commands cannot do. So for a project whose
+    `package.json` names dependencies the plan card says "On your subscription its tests will not
+    run: it cannot run commands there." `api_key`: running commands becomes a hard need, so the
+    task goes to the API key (money; medium risk, a yes first). **Owner question (U-078):** should
+    running commands become a hard need for code tasks on a project with dependencies to install?
+    (a) keep the default as built; (b) make it a hard need for such projects, which sends most
+    code work to the API key (money); (c) a third value, "the API key when the project has
+    dependencies". Changing the answer changes `needsOf` and the setting's values, not the
+    chooser.
+
 Consequences: a refused key costs one call and one card, not two failed tasks and four calls; a
 limit never fails a task, and the work starts by itself at the reset, after a restart too; with
 the default, plan-limit work never becomes API spend without the person's choice. A task held

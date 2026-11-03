@@ -107,12 +107,15 @@ import type { Sandbox } from "../sandbox/types.ts";
 import { pricingFor as tablePricingFor } from "../wiring/billing-ports.ts";
 import {
   BILLING_PICK_AUDIT_TOOL,
+  CODE_COMMANDS_SETTING,
+  codeCommandsOf,
   MID_SESSION_LIMIT_SETTING,
   midSessionLimitOf,
   planShareAfter,
   type TaskBillingPick,
   type TaskBillingPort,
   type TaskBillingRequest,
+  type TaskNeeds,
 } from "./billing.ts";
 import {
   budgetLineWords,
@@ -125,6 +128,7 @@ import {
   WRAP_UP_BRIEF_LINE,
   wrapUpSentWords,
 } from "./budget-pause.ts";
+import { needsOf } from "./credential-choice.ts";
 import {
   type CredentialWait,
   credentialWaitOf,
@@ -139,8 +143,10 @@ import {
   answersBlockFor,
   filePersonQuestions,
   isPersonTask,
+  needsPersonsAnswers,
   questionsAskedByRun,
   WITHOUT_ANSWERS_NOTE,
+  wentAheadWithout,
 } from "./person-questions.ts";
 import {
   lessonsFromReport,
@@ -861,12 +867,13 @@ export class LoopTaskExecutor implements TaskExecutor {
     // Billing (ADR 0044): the source for this task, then the driver that goes with it. The
     // specialist's tools are re-read in that driver's form (the registry's `cc:` names as
     // written for the SDK, the built-in equivalents for the loop).
-    // C-64 (ADR 0107): a specialist that reads the web goes to the API key whenever one is saved,
-    // whatever the order, when this runtime's page reader serves the loop driver: a subscription
-    // run's page reading is refused (its domain list is empty), so there it could only search.
-    const loopProfile = profileOf(defaultSpec);
-    const webFirst = needsWeb(loopProfile) && hasWeb(loopProfile);
-    const choice = await this.pickBilling(ctx, tier, runId, webFirst);
+    // The chooser (U-078, the owner's decision of 2026-11-02, ADR 0100 amended): what this task
+    // needs (reading pages and searching for research, asking the person when its words need
+    // their answers, commands as the person's setting says) against what each credential can do
+    // here; the person's order decides among the ones that can. It replaced C-64's "research on
+    // the API key first" (ADR 0107 points 7 to 9 amended).
+    const needs = await this.taskNeeds(ctx, defaultSpec);
+    const choice = await this.pickBilling(ctx, tier, runId, needs);
     const spec =
       choice.driver === "sdk"
         ? (this.deps.specialists(item.specialist, "sdk") ?? defaultSpec)
@@ -913,8 +920,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       (spec.allowedDomains ?? []).length === 0
     ) {
       // C-64: on a subscription the hooks refuse every page of an entry with no domains (ADR
-      // 0044, the token's domain check); only search works, and the brief says so up front.
-      webLines.push(SEARCH_ONLY_LINE);
+      // 0044, the token's domain check); only search works, and the brief says so up front. An
+      // entry without web search (the science-evaluator) has no web at all there (U-078): it is
+      // told so, never that it searches.
+      webLines.push(
+        profile.registryTools.includes(WEB_SEARCH_CC) ? SEARCH_ONLY_LINE : NO_WEB_ACCESS_LINE,
+      );
     }
     // A run with no worktree on the SDK path still needs a working directory: its own,
     // under the executor's work root, and that is the only path the token allows.
@@ -1383,7 +1394,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           .catch((e: unknown) =>
             this.logger.warn("the refused credential was not marked", { error: errorMessage(e) }),
           );
-      const found = await this.nextCredential(ctx, tier, webFirst);
+      const found = await this.nextCredential(ctx, tier, needs);
       // A pick that could not say (no billing port): the task waits for this credential.
       const next =
         found.wait || found.continuesOn
@@ -1527,7 +1538,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     ctx: Parameters<TaskExecutor["execute"]>[0],
     tier: ModelTier,
     runId: string,
-    webFirst = false,
+    needs?: TaskNeeds,
   ): Promise<RunBillingChoice> {
     if (!this.deps.billing) {
       return {
@@ -1538,7 +1549,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       };
     }
     const { budget } = ctx;
-    const request = await this.billingRequest(ctx, tier, webFirst);
+    const request = await this.billingRequest(ctx, tier, needs);
     let pick: TaskBillingPick;
     try {
       pick = await this.deps.billing.pick(request);
@@ -1572,14 +1583,15 @@ export class LoopTaskExecutor implements TaskExecutor {
   }
 
   /**
-   * The billing pick of this task: its runner, the agent's owner, its tier, research's first
-   * kind (C-64), and the person's "When my first choice runs out mid-session" (U-078: `wait`,
-   * the default, holds to a first choice that rests; `use_other` moves on).
+   * The billing pick of this task: its runner, the agent's owner, its tier, what it needs of its
+   * credential (U-078, the chooser), and the person's "When my first choice runs out
+   * mid-session" (U-078: `wait`, the default, holds to a first choice that rests; `use_other`
+   * moves on).
    */
   private async billingRequest(
     ctx: Parameters<TaskExecutor["execute"]>[0],
     tier: ModelTier,
-    webFirst: boolean,
+    needs: TaskNeeds | undefined,
   ): Promise<TaskBillingRequest> {
     const { session, token } = ctx;
     const agent = await this.deps.store.agent.get(session.agent_id);
@@ -1592,14 +1604,35 @@ export class LoopTaskExecutor implements TaskExecutor {
       runner: session.runner === "cloud" ? "cloud" : "pc",
       modelTier: tier,
       purpose: "session",
-      ...(webFirst
-        ? {
-            firstKinds: ["api_key"] as const,
-            firstWhy: "research reads web pages on the API key first",
-          }
-        : {}),
+      ...(needs ? { needs } : {}),
       ...(mode === "wait" ? { waitOnRest: true } : {}),
     };
+  }
+
+  /**
+   * What this task needs of its credential (U-078, `needsOf`): its specialist's registry entry
+   * (pages and search for research, commands for code), its own words (the person's answers,
+   * unless they answered or went ahead without), and the person's "Code tasks that need
+   * commands" (`code_commands`).
+   */
+  private async taskNeeds(
+    ctx: Parameters<TaskExecutor["execute"]>[0],
+    spec: SpecialistSpec,
+  ): Promise<TaskNeeds> {
+    const { store } = this.deps;
+    const { task, token } = ctx;
+    const human = await store.human.get(token.claims.ownerHumanId).catch(() => undefined);
+    const wouldAsk = needsPersonsAnswers(task);
+    const answered = wouldAsk
+      ? (await wentAheadWithout(store, task.id).catch(() => false)) ||
+        (await answersBlockFor(store, task.id).catch(() => "")) !== ""
+      : false;
+    return needsOf({
+      registryTools: spec.registryTools ?? spec.allowedTools,
+      task,
+      answered,
+      codeCommands: codeCommandsOf(human?.notify_prefs?.[CODE_COMMANDS_SETTING]),
+    });
   }
 
   /**
@@ -1610,11 +1643,11 @@ export class LoopTaskExecutor implements TaskExecutor {
   private async nextCredential(
     ctx: Parameters<TaskExecutor["execute"]>[0],
     tier: ModelTier,
-    webFirst: boolean,
+    needs: TaskNeeds | undefined,
   ): Promise<{ continuesOn?: string; wait?: CredentialWait }> {
     if (!this.deps.billing) return {};
     try {
-      const pick = await this.deps.billing.pick(await this.billingRequest(ctx, tier, webFirst));
+      const pick = await this.deps.billing.pick(await this.billingRequest(ctx, tier, needs));
       return { continuesOn: pick.source.kind };
     } catch (e) {
       const wait = credentialWaitOf(e);

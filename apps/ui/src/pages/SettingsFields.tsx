@@ -69,6 +69,7 @@ export const SETTING_LABELS: Record<string, string> = {
   status_pull_request: "Status pull request",
   speed_quality_offset: "Speed or quality",
   mid_session_limit: "When my first choice runs out mid-session",
+  code_commands: "Code tasks that need commands",
 };
 
 export function leafOf(key: string): string {
@@ -110,6 +111,18 @@ export const NOTIFY_CHANNELS = [
 export const MID_SESSION_LIMITS = [
   { value: "wait", label: "Wait for its reset; the tasks start by themselves" },
   { value: "use_other", label: "Use the other one at once (may cost money)" },
+] as const;
+
+/**
+ * "Code tasks that need commands" (U-078, the owner's decision of 2026-11-02): the first choice
+ * anyway (the default; on a subscription their tests do not run) or the API key (money).
+ */
+export const CODE_COMMANDS = [
+  {
+    value: "first_choice",
+    label: "My first choice anyway (on a subscription their tests do not run)",
+  },
+  { value: "api_key", label: "The API key (runs their tests; costs money)" },
 ] as const;
 
 export const LANGUAGES = [
@@ -161,6 +174,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return option(NOTIFY_CHANNELS);
     case "mid_session_limit":
       return v === "use_other" ? MID_SESSION_LIMITS[1].label : MID_SESSION_LIMITS[0].label;
+    case "code_commands":
+      return v === "api_key" ? CODE_COMMANDS[1].label : CODE_COMMANDS[0].label;
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":
@@ -301,6 +316,14 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         MID_SESSION_LIMITS,
         (v) => v,
         (c) => (c === "use_other" ? "use_other" : "wait"),
+        {},
+      );
+    case "code_commands":
+      return select(
+        leaf,
+        CODE_COMMANDS,
+        (v) => v,
+        (c) => (c === "api_key" ? "api_key" : "first_choice"),
         {},
       );
     case "small_project_mode":

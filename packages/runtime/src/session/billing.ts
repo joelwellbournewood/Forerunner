@@ -34,12 +34,12 @@ export interface TaskBillingRequest {
    */
   fallbackOrder?: readonly BillingSourceKind[];
   /**
-   * Kinds tried first whatever the order (C-64, ADR 0107): a task whose specialist reads the web
-   * goes to the API key whenever one is saved and usable, since only the loop driver's page reader
-   * opens pages; the rest of the order follows. `firstWhy` is said in the pick's reason.
+   * What the task needs of its credential (U-078, the owner's decision of 2026-11-02, ADR 0100
+   * amended): the pick keeps the credentials that meet every hard need and lets the person's
+   * order decide among them; when none meets them all, the ones that meet the most (page reading
+   * before search), in the person's order. Absent: the order alone (non-task calls).
    */
-  firstKinds?: readonly BillingSourceKind[];
-  firstWhy?: string;
+  needs?: TaskNeeds;
   /**
    * "When my first choice runs out mid-session: Wait" (U-078, the default): a first choice that
    * rests after a usage limit makes the pick wait for it (`unavailable` with `waitFor`) rather
@@ -98,6 +98,40 @@ export const MID_SESSION_LIMIT_DEFAULT: MidSessionLimit = "wait";
 /** The stored setting, or the default for anything else. */
 export function midSessionLimitOf(value: unknown): MidSessionLimit {
   return value === "use_other" ? "use_other" : MID_SESSION_LIMIT_DEFAULT;
+}
+
+/**
+ * What a task needs of the credential it runs on (U-078, ADR 0100 amended): reading web pages,
+ * searching the web, running commands, asking the person while it works.
+ */
+export type TaskNeed = "webRead" | "webSearch" | "commands" | "askPerson";
+
+/** The needs in the order the chooser weighs them when none meets them all. */
+export const TASK_NEEDS: readonly TaskNeed[] = ["webRead", "webSearch", "askPerson", "commands"];
+
+export interface TaskNeeds {
+  /** What the task cannot be done properly without: the chooser keeps credentials that meet it. */
+  hard: readonly TaskNeed[];
+  /** What only makes the work better: the person's order decides; the words say what is lost. */
+  better: readonly TaskNeed[];
+}
+
+/** What one credential can do on this install (`capabilitiesOf`, `wiring/billing-pick.ts`). */
+export type CredentialAbilities = Readonly<Record<TaskNeed, boolean>>;
+
+/**
+ * The person's setting "Code tasks that need commands" (U-078, the owner's decision of
+ * 2026-11-02): `first_choice` (the default) keeps such a task on the first credential in the
+ * person's order, which on a subscription cannot run commands; `api_key` makes running commands
+ * a hard need, so the task goes to the API key (which costs money).
+ */
+export type CodeCommands = "first_choice" | "api_key";
+export const CODE_COMMANDS_SETTING = "code_commands";
+export const CODE_COMMANDS_DEFAULT: CodeCommands = "first_choice";
+
+/** The stored setting, or the default for anything else. */
+export function codeCommandsOf(value: unknown): CodeCommands {
+  return value === "api_key" ? "api_key" : CODE_COMMANDS_DEFAULT;
 }
 
 /**

@@ -167,6 +167,46 @@ describe("every setting is visible in Settings (U-060)", () => {
     );
   });
 
+  it("code tasks that need commands: my first choice by default; the API key asks a yes and is sent as settings.set (U-078, the chooser)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const row = await rowFor("human.code_commands");
+    expect(within(row).getByTestId("setting-label")).toHaveTextContent(
+      "Code tasks that need commands",
+    );
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent(
+      "My first choice anyway (on a subscription their tests do not run)",
+    );
+    // The row says what each value costs: no tests on a subscription, money on the key.
+    expect(row).toHaveTextContent("so their own tests do not run");
+    expect(row).toHaveTextContent("costs money");
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    expect(dialog).not.toHaveTextContent("..");
+    await user.selectOptions(within(dialog).getByTestId("setting-value"), "api_key");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    expect(postedCalls(harness, "/commands/execute")[0]?.body).toEqual({
+      commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+      wordsUsed:
+        "Settings: Code tasks that need commands to The API key (runs their tests; costs money)",
+      source: "ui",
+    });
+    // Moving code work onto money is a yes first (medium risk).
+    const pending = await within(dialog).findByTestId("command-pending");
+    expect(pending).toHaveAttribute("data-decision", "needs_yes");
+    await user.click(within(pending).getByTestId("command-yes"));
+    await within(dialog).findByTestId("command-done");
+    expect(harness.daemon.state.settingValues.code_commands).toBe("api_key");
+    await user.click(within(dialog).getByTestId("command-close"));
+    await waitFor(async () =>
+      expect(
+        within(await rowFor("human.code_commands")).getByTestId("setting-value-cell"),
+      ).toHaveTextContent("The API key (runs their tests; costs money)"),
+    );
+  });
+
   it("the model watch: run the paid evaluations without asking, confirmed with a yes", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

@@ -29,10 +29,11 @@ test("keyboard shortcuts navigate and the theme override applies", async ({ page
   await page.keyboard.press("g");
   await page.keyboard.press("s");
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  // The fixture's 17 (U-078 added "When my first choice runs out mid-session"), Beacon's
-  // autonomy (the daemon lists every project's rows) and Atlas's Status pull request (a project
-  // on a host repository, C-57), less the three that change nothing (design §6: not listed).
-  await expect(page.getByTestId("setting-row")).toHaveCount(16);
+  // The fixture's 18 (U-078 added "When my first choice runs out mid-session" and "Code tasks
+  // that need commands"), Beacon's autonomy (the daemon lists every project's rows) and Atlas's
+  // Status pull request (a project on a host repository, C-57), less the three that change
+  // nothing (design §6: not listed).
+  await expect(page.getByTestId("setting-row")).toHaveCount(17);
   // Settings opens on Basics; the theme is under Advanced (design §6).
   await expect(page.getByTestId("settings-basics")).toBeVisible();
   await expect(page.getByTestId("theme-select")).toBeHidden();

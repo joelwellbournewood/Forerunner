@@ -682,6 +682,15 @@ export const MessageView = z.object({
 });
 export type MessageView = z.infer<typeof MessageView>;
 
+/** Where a task runs and why (U-078, the credential chooser; `session/credential-choice.ts`). */
+export const CredentialRunsOn = z.object({
+  /** The credential kind: `api_key`, `subscription`, `plan_credits`. */
+  kind: z.string(),
+  /** The sentence the plan card, New task and Settings show; null when there is nothing to say. */
+  line: z.string().nullable(),
+});
+export type CredentialRunsOn = z.infer<typeof CredentialRunsOn>;
+
 export const HumanRequestView = z.object({
   id: z.string(),
   projectId: z.string().nullable(),
@@ -739,6 +748,25 @@ export const HumanRequestView = z.object({
       explain: z.string(),
       action: z.enum(["redo", "reopen", "try_again"]),
     })
+    .nullable()
+    .optional(),
+  /**
+   * An open plan card's tasks as this install would run them now (U-078, the credential
+   * chooser; C-68), by the plan's key (the title when it has none): `specialist` the registry's
+   * name for who the plan names (null for the person and for "the agent chooses"), `unknown` the
+   * name as planned when this install has no specialist of that name (the task would wait for
+   * the person), `runsOn` where it runs and why. Absent on other cards and from an older daemon.
+   */
+  planTasks: z
+    .array(
+      z.object({
+        key: z.string().nullable(),
+        title: z.string(),
+        specialist: z.string().nullable(),
+        unknown: z.string().nullable(),
+        runsOn: CredentialRunsOn.nullable(),
+      }),
+    )
     .nullable()
     .optional(),
 });
@@ -1643,6 +1671,28 @@ export type RunSettingsView = z.infer<typeof RunSettingsView>;
  */
 export const SEARCH_ONLY_LIMITATION = "Searches the web but opens no page on a Claude subscription";
 
+/**
+ * What a specialist that reads web pages but has no web search (the science-evaluator) cannot do
+ * on a Claude subscription without an API key (U-078): it reads no page there and has no search,
+ * so it has no web at all. Before, it was told it "searches the web", which is not true.
+ */
+export const NO_PAGES_LIMITATION = "Reads no web page on a Claude subscription";
+
+/** Settings' "What each can do here" (U-078): `abilityTable` in `session/credential-choice.ts`. */
+export const CredentialTableView = z.object({
+  columns: z.array(
+    z.object({ kind: z.enum(["api_key", "subscription"]), name: z.string(), saved: z.boolean() }),
+  ),
+  rows: z.array(
+    z.object({
+      need: z.string(),
+      label: z.string(),
+      cells: z.array(z.object({ can: z.boolean(), words: z.string() })),
+    }),
+  ),
+});
+export type CredentialTableView = z.infer<typeof CredentialTableView>;
+
 export const ModelSettingsView = z.object({
   provider: z.object({
     name: z.string().nullable(),
@@ -1687,10 +1737,24 @@ export const ModelSettingsView = z.object({
        */
       limitation: z.string().nullable().default(null),
       settings: RunSettingsView,
+      /**
+       * Where a task of this specialist runs here and why (U-078, the credential chooser): the
+       * credential kind and the sentence the plan card and New task show ("Runs on your API key:
+       * only it can read web pages here."), for the project `?project=` names (whose
+       * dependencies the words read); `line` null when there is nothing to say. Null without a
+       * saved credential; an older daemon leaves it out.
+       */
+      runsOn: CredentialRunsOn.nullable().optional(),
     }),
   ),
   /** Why the principal's `model_config` was ignored, when it does not validate. */
   configError: z.string().nullable(),
+  /**
+   * Settings' "What each can do here" (U-078): one row per need, one column per credential (the
+   * API key, the Claude subscription), from the chooser's `capabilitiesOf`. An older daemon
+   * leaves it out.
+   */
+  credentials: CredentialTableView.nullable().optional(),
 });
 export type ModelSettingsView = z.infer<typeof ModelSettingsView>;
 
@@ -2794,7 +2858,8 @@ export const DAEMON_ROUTES = {
   resume: "POST /kill/resume",
   shutdown:
     "POST /shutdown (202 { stopping, stoppedRuns, killedProcesses, revokedTokens, durationMs, scope }; stops every run, then the daemon exits 0; 409 when it cannot end its process; the desktop shell's Quit, ADR 0094)",
-  inbox: "GET /inbox?humanId=",
+  inbox:
+    "GET /inbox?humanId= (requests with the card's words, an open plan card's planTasks: who does each task here and where it runs, U-078; messages; counts)",
   answerRequest: "POST /requests/:id/answer",
   decisions: "GET /projects/:id/decisions",
   peers: "GET /projects/:id/peers (what the other agents on the project are doing)",
@@ -2808,7 +2873,7 @@ export const DAEMON_ROUTES = {
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
   modelSettings:
-    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; per specialist its limitation on this install in words, e.g. Cannot read the web on this computer when it works from the web and the install has no web access, ADR 0107, else null; changed through POST /commands/execute with model.settings.set)",
+    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; per specialist its limitation on this install in words, e.g. Cannot read the web on this computer when it works from the web and the install has no web access, ADR 0107, else null, and runsOn: where a task of it runs here and why, U-078, for the project ?project= names; credentials: the What each can do here table; changed through POST /commands/execute with model.settings.set)",
   updateProjectSettings:
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
   mirrorSync:

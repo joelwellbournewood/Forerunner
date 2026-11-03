@@ -202,9 +202,16 @@ import {
   StoreSharedSecretService,
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
-import type { TaskBillingPort } from "../session/billing.ts";
+import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
 import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
+import {
+  type AbilityTable,
+  abilityTable,
+  credentialChoiceFor,
+  hasDependenciesToInstall,
+  needsOf,
+} from "../session/credential-choice.ts";
 import type { CredentialWait } from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
@@ -284,6 +291,7 @@ import {
 } from "../voice/pkg.ts";
 import {
   CALL_FALLBACK_ORDER,
+  type ChooserFacts,
   planUsageOf,
   RouterTaskBilling,
   sdkHostCommandsEnabled,
@@ -544,6 +552,12 @@ export interface ComposeOptions {
     hostCommands?: boolean;
     /** The subscription's plan allowance in USD per month, ahead of the environment and `config.json`. */
     planUsdMonthly?: number;
+    /**
+     * Test seam (U-078, the chooser): what this install offers each credential, over what the
+     * composition reads (`chooserFacts`), e.g. search on the API key and pages on the
+     * subscription before 'web-search' and 'sites' land.
+     */
+    facts?: Partial<ChooserFacts>;
   };
   sdkQuery?: QueryLike;
   /**
@@ -674,6 +688,13 @@ export interface RuntimeApp {
   driver: LoopAgentDriver;
   providers: ProviderRegistry;
   provider: ModelProvider | null;
+  /**
+   * The provider this runtime was started with when its calls do not go through the person's
+   * saved credentials (an injected one: the bench's stand-in, `--provider fake`, a test); null on
+   * a normal install, whose calls the router bills to the saved credentials. Settings says so
+   * instead of "no Claude credential is saved" while the model answers (U-078).
+   */
+  startedWith: string | null;
   registry: Registry;
   /**
    * The driver specialists run on by default; decides how the registry's `cc:` tool names
@@ -699,6 +720,23 @@ export interface RuntimeApp {
    * and New task then say the researcher searches but opens no page.
    */
   webSearchOnly: () => boolean;
+  /**
+   * The credential chooser here (U-078, the owner's decision of 2026-11-02, ADR 0100 amended):
+   * `facts()` what this install offers each credential (`capabilitiesOf`'s inputs); `forTask`
+   * where a task of the specialist would run now (for the project, whose dependencies the words
+   * read, and with the task's own words when there is one) and the sentence the plan card and New
+   * task show, null for a specialist this install does not have; `table()` Settings' "What each
+   * can do here".
+   */
+  chooser: {
+    facts: () => ChooserFacts;
+    forTask(input: {
+      specialist: string;
+      projectId?: string | null;
+      task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+    }): Promise<{ kind: string; line: string | null } | null>;
+    table(): Promise<AbilityTable>;
+  };
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
@@ -1459,6 +1497,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     "";
   const personalRunner =
     opts.billing?.personalRunner ?? env.FORERUNNER_RUNNER_PERSONAL?.trim() !== "0";
+  // What this install offers each credential (U-078, the chooser's `capabilitiesOf` inputs): the
+  // page reader, host commands and Docker, read at every pick (the three are declared below and
+  // read only once a pick is made); 'web-search' and 'sites' add theirs here.
+  const chooserFacts = (): ChooserFacts => ({
+    webFetch: webFetchOn,
+    keySearch: false,
+    subscriptionPages: false,
+    hostCommands: sdkHostCommands,
+    dockerReady: (() => {
+      try {
+        const r = sandbox.readiness.current();
+        return r ? r.state === "ready" : null;
+      } catch {
+        return null;
+      }
+    })(),
+    ...(opts.billing?.facts ?? {}),
+  });
   const taskBilling = new RouterTaskBilling({
     store,
     vault,
@@ -1466,6 +1522,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     humanId: human.id,
     personalRunner,
     ...(opts.billing?.probe ? { probe: opts.billing.probe } : {}),
+    facts: chooserFacts,
   });
 
   // Model provider: injected (tests), else the routed provider over the person's credentials,
@@ -4034,11 +4091,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     driver,
     providers,
     provider,
+    startedWith: opts.provider ? opts.provider.name : null,
     registry,
     specialistDriver,
     specialists,
     webAccess: () => hasOauth || webFetchOn,
     webSearchOnly: () => hasOauth && !(hasKey && webFetchOn),
+    chooser: {
+      facts: chooserFacts,
+      forTask: async ({ specialist, projectId, task }) => {
+        const name = canonicalSpecialistName(specialist);
+        const spec = specialists(name);
+        if (!spec) return null;
+        const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
+        const project = projectId ? await store.project.get(projectId).catch(() => null) : null;
+        return credentialChoiceFor({
+          kindsInOrder: await taskBilling.savedKinds(),
+          needs: needsOf({
+            registryTools: spec.registryTools ?? spec.allowedTools,
+            task: task ?? null,
+            codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+          }),
+          facts: chooserFacts(),
+          specialist: name,
+          dependencies: project ? hasDependenciesToInstall(docs.docsDirsFor(project)[0]) : false,
+        });
+      },
+      table: async () => abilityTable(chooserFacts(), await taskBilling.savedKinds()),
+    },
     tools,
     executor,
     runner,

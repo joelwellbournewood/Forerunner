@@ -508,9 +508,12 @@ The cards you meet most:
 
 - **The plan** from a new project's brief: the tasks in order, who does each, about what each
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
-  needs a full review while Docker is not running, "Cannot read the web on this computer"
-  beside a research task on an install that has turned page reading off (New task says the same
-  when you pick the researcher), the total and what it covers ("About CHF 1.04
+  needs a full review while Docker is not running, under a task where it runs and why when
+  that is worth knowing ("Runs on your API key: it can read web pages here but not search yet,
+  so the researcher reads pages whose address it knows.", "On your subscription its tests will
+  not run: it cannot run commands there."; New task says the same when you pick who does it),
+  "No specialist here is named ..." beside a task whose specialist this install does not have
+  (it would wait for you: change who does it after you approve), the total and what it covers ("About CHF 1.04
   for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
   records in one or two sentences, with **The full decision record** one click away. When your
   brief says you will give Forerunner something yourself ("I will give you the real menu, hours
@@ -608,8 +611,9 @@ what your plan covers, or a Max plan's work stops early.
 
 With both a Claude subscription and an API key saved, Settings → **Claude: which to use first**
 lists them in the order Forerunner uses them for tasks, Chat, project setup, reviews and the
-model watch (research tasks excepted: they use the API key first, see below). **Move up** and **Move down** change the order; the change is in
-Changes, where you can undo it. Each row says:
+model watch. **Move up** and **Move down** change the order; the change is in Changes, where
+you can undo it. A task goes to the other credential only when the first cannot do it properly
+(see "Where a task runs" below). Each row says:
 
 - how it is used: the subscription always runs **through Claude Code**; an API key always goes
   **straight to the API**, which is where promotional API credits apply (they do not apply to
@@ -636,7 +640,8 @@ hour when it gives none), and the session log says so in one sentence. For tasks
 
 If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expired sign-in),
 one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),
-Settings shows the credential as **Refused**, and Forerunner stops using it: your other
+Settings shows the credential as **Refused** (Accounts and keys says "Anthropic refused your
+API key." with **Save a new key**, never "connected" through it), and Forerunner stops using it: your other
 credential takes over, or the work waits ("Waits for a new API key"). No task fails because of
 it, and neither does the plan of a new project: its page says "Planning waits for a new API
 key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
@@ -648,8 +653,39 @@ drafted at that time. Home and the project page say what a project waits for ("W
 new API key: 2 tasks").
 
 Until you choose an order, tasks use the subscription first and Chat, project setup
-and reviews use the API key first. Whatever the order, a research task (the researcher, the
-science evaluator) uses the API key first when one is saved: only there can it open web pages.
+and reviews use the API key first.
+
+### Where a task runs
+
+Your order decides, and a task goes to another credential only when the first cannot do it
+properly. The two do not do the same things here; Settings → **Claude: which to use first**
+ends with a small table, **What each can do here**:
+
+| | API key | Claude subscription |
+|---|---|---|
+| Read web pages | Yes | Not yet |
+| Search the web | Not yet | Yes |
+| Run commands (its tests) | Yes, in the sandbox | No |
+| Ask you while it works | Yes | No: it lists its questions in its report |
+| What it costs | Money per use | Your plan's limits, no money per use |
+
+- **Research** (the researcher) needs to read pages and to search. Neither credential can do
+  both yet, so it runs where it can read pages: on your API key when one is saved, and the plan
+  card says so ("Runs on your API key: it can read web pages here but not search yet, so the
+  researcher reads pages whose address it knows."). The science evaluator reads pages and has no
+  search: with only a subscription it is told it has no web access and works from the project's
+  files.
+- **A task that needs your answers** (its words say it needs your decision) runs where it can
+  ask you while it works: the API key ("Runs on your API key: only it can ask you questions
+  while it works here.").
+- **Code tasks** stay on your first choice. On a subscription they cannot run commands, so
+  their own tests do not run, and on a project whose dependencies must be installed the
+  project's own checks cannot run before the review either; the plan card then says "On your
+  subscription its tests will not run: it cannot run commands there." The setting **Code tasks
+  that need commands** (Settings → Advanced, Other settings) sends them to the API key instead
+  ("The API key (runs their tests; costs money)"; Forerunner asks you to confirm).
+
+New task says the same sentence when you pick who does it.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
@@ -702,12 +738,11 @@ and no passwords or cookies, at most 2 MB per page, and nothing on the project's
 There is no web search on an API key (none is set up this round: research reads the pages the
 brief or the plan names, the official sites of what it researches and the pages those link
 to), so a research task does best when it names the sources or sites to read. With an API key
-saved, research tasks always run on it, whatever order you chose for your credentials, because
-only there can they open pages. With only a Claude subscription, the researcher and the science
-evaluator can search the web through Claude Code but cannot open the pages themselves (Forerunner
-refuses their page reading there); the plan card and New task say "Searches the web but opens no
-page on a Claude subscription", and their brief tells them to cite the results they used and say
-what they could not check. There is no screen for a project's site list or block list yet; a
+saved, research tasks run on it (see "Where a task runs"). With only a Claude subscription, the
+researcher can search the web through Claude Code but cannot open the pages itself (Forerunner
+refuses its page reading there); the plan card and New task say so, and its brief tells it to
+cite the results it used and say what it could not check. The science evaluator has no web
+search: on a subscription alone it is told it has no web access. There is no screen for a project's site list or block list yet; a
 project that must stay closed can only be closed for the whole install (page reading off, as
 said below). The session log
 names each page read ("read the web page gohugo.io/about/"), the research file cites each page

@@ -12,6 +12,7 @@ import {
   type RuntimeApp,
 } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
@@ -7030,16 +7031,25 @@ describe("the UI client against the real daemon: research on a Claude subscripti
       const models = await sub.client.modelSettings();
       const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
       expect(limits.researcher).toBe("Searches the web but opens no page on a Claude subscription");
-      expect(limits["science-evaluator"]).toBe(
-        "Searches the web but opens no page on a Claude subscription",
-      );
+      // U-078: the science-evaluator has no web search; before, it was said to search there.
+      expect(limits["science-evaluator"]).toBe("Reads no web page on a Claude subscription");
       expect(limits.coder).toBeNull();
+      // Where each runs and why, the chooser's words (the plan card's and New task's).
+      const runsOn = Object.fromEntries(models.specialists.map((x) => [x.name, x.runsOn]));
+      expect(runsOn.researcher).toEqual({
+        kind: "subscription",
+        line: "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
+      });
+      expect(runsOn["science-evaluator"]).toEqual({
+        kind: "subscription",
+        line: "Runs on your Claude subscription, where it cannot read web pages: the science-evaluator works from the project's files and the sources the brief gives.",
+      });
     } finally {
       await sub.rt.close();
     }
   }, 120_000);
 
-  it("with an API key saved beside it, research reads pages there: nothing is said", async () => {
+  it("with an API key saved beside it, research reads pages there: no limitation (where it runs is the chooser's, below)", async () => {
     const both = await composeWithRolePlayer(
       {},
       {
@@ -7054,6 +7064,203 @@ describe("the UI client against the real daemon: research on a Claude subscripti
       expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
     } finally {
       await both.rt.close();
+    }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: the credential chooser says where each task runs and why (U-078)", () => {
+  // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
+  const oauth = ["sk-ant-oat01-", "chooser", "0".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "chooser", "0".repeat(40)].join(""); // not-a-secret
+  const RESEARCH_LINE =
+    "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.";
+
+  it("both credentials, the subscription first: the plan card, New task and Settings say the same words", async () => {
+    const both = await composeWithRolePlayer(
+      { FORERUNNER_BENCH_PLAN: "research" },
+      {
+        vault: new MemoryVault({
+          anthropic_subscription_token: oauth,
+          anthropic_api_key: apiKey,
+        }),
+      },
+    );
+    const { rt, client } = both;
+    try {
+      const brief =
+        "Compare two static site generators and write a page that summarises them for a club website.";
+      const project = await client.createProject({
+        name: "Club research",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      if (!card?.planTasks) throw new Error(`no plan card with planTasks: ${JSON.stringify(card)}`);
+      // The plan card's tasks, as the Inbox reads them, each with the daemon's view.
+      const research = card.planTasks.find((t) => t.specialist === "researcher");
+      expect(research?.runsOn).toEqual({ kind: "api_key", line: RESEARCH_LINE });
+      // A new project has no dependencies to install yet: the coder stays on the subscription,
+      // with nothing to say.
+      const coder = card.planTasks.find((t) => t.specialist === "coder");
+      expect(coder?.runsOn).toEqual({ kind: "subscription", line: null });
+      expect(card.planTasks.every((t) => t.unknown === null)).toBe(true);
+      // New task and Settings: the same words, from GET /settings/models.
+      const models = await client.modelSettings(undefined, project.id);
+      const runsOn = Object.fromEntries(models.specialists.map((s) => [s.name, s.runsOn]));
+      expect(runsOn.researcher).toEqual({ kind: "api_key", line: RESEARCH_LINE });
+      expect(runsOn["science-evaluator"]).toEqual({
+        kind: "api_key",
+        line: "Runs on your API key: only it can read web pages here.",
+      });
+      // Settings' "What each can do here": the capability function's output.
+      expect(models.credentials?.columns).toEqual([
+        { kind: "api_key", name: "API key", saved: true },
+        { kind: "subscription", name: "Claude subscription", saved: true },
+      ]);
+      expect(
+        models.credentials?.rows.map((r) => [r.label, ...r.cells.map((c) => c.words)]),
+      ).toEqual([
+        ["Read web pages", "Yes", "Not yet"],
+        ["Search the web", "Not yet", "Yes"],
+        [
+          "Run commands (its tests)",
+          "Yes, in a separate folder; a full review waits for Docker",
+          "No",
+        ],
+        ["Ask you while it works", "Yes", "No: it lists its questions in its report"],
+        ["What it costs", "Money per use", "Your plan's limits, no money per use"],
+      ]);
+      // The project gets dependencies to install: the coder's tests will not run on the
+      // subscription, and New task says so for this project.
+      // (Nothing is written before the plan is approved: the project's workspace folder.)
+      const folder = projectWorkspaceDir(rt.data.assets.projectsRoot, project.id);
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(
+        join(folder, "package.json"),
+        JSON.stringify({ scripts: { test: "vitest run" }, devDependencies: { vitest: "^3.0.0" } }),
+      );
+      const withDeps = await client.modelSettings(undefined, project.id);
+      expect(withDeps.specialists.find((s) => s.name === "coder")?.runsOn).toEqual({
+        kind: "subscription",
+        line: "On your subscription its tests will not run: it cannot run commands there.",
+      });
+      const plan = (await client.inbox(me.id)).requests.find((r) => r.id === card.id);
+      expect(plan?.planTasks?.find((t) => t.specialist === "coder")?.runsOn?.line).toBe(
+        "On your subscription its tests will not run: it cannot run commands there.",
+      );
+      // "Code tasks that need commands: the API key", as the Settings dialog sends it (a yes).
+      const asked = await client.executeCommands({
+        commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+        wordsUsed:
+          "Settings: Code tasks that need commands to The API key (runs their tests; costs money)",
+        source: "ui",
+      });
+      expect(asked.status, JSON.stringify(asked)).toBe("pending");
+      const yes = await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
+      expect(yes.status, JSON.stringify(yes)).toBe("done");
+      expect((await client.settings()).find((s) => s.key === "human.code_commands")?.value).toBe(
+        "api_key",
+      );
+      const moved = await client.modelSettings(undefined, project.id);
+      expect(moved.specialists.find((s) => s.name === "coder")?.runsOn).toEqual({
+        kind: "api_key",
+        line: "Runs on your API key: only it can run commands here.",
+      });
+      // Nothing is left open for another case.
+      await client.answerRequest(card.id, { version: card.version, answer: "Reject" });
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("a plan naming a specialist this install does not have: the card says the task will wait (C-68)", async () => {
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      { vault: new MemoryVault({ anthropic_api_key: apiKey }) },
+    );
+    try {
+      const project = await client.createProject({ name: "Logo", goal: "A logo" });
+      const me = await client.me();
+      // A plan card as the intake files it, with a specialist the registry does not have.
+      await rt.store.humanRequest.insert({
+        human_id: me.id,
+        project_id: project.id,
+        task_id: null,
+        session_id: null,
+        kind: "approval",
+        why: 'Intake for "Logo": 1 task.',
+        steps: [],
+        options: ["approve", "reject"],
+        blocking: true,
+        risk: "medium",
+        change_card: {
+          key: `intake:${project.id}`,
+          project_id: project.id,
+          proposal: {
+            plan: {
+              reason: "planned",
+              milestones: [],
+              tasks: [
+                {
+                  key: "logo",
+                  title: "Draw the logo",
+                  outcome: "logo.svg",
+                  acceptanceCriteria: [],
+                  specialist: "illustrator",
+                },
+                {
+                  key: "page",
+                  title: "Build the page",
+                  outcome: "index.html",
+                  acceptanceCriteria: [],
+                  specialist: "Coder",
+                },
+              ],
+            },
+            docs: {},
+            firstSession: { summary: "", items: [] },
+          },
+        },
+        status: "open",
+        answer: null,
+      } as never);
+      const card = (await client.inbox(me.id)).requests.find((r) => r.projectId === project.id);
+      expect(card?.planTasks).toEqual([
+        {
+          key: "logo",
+          title: "Draw the logo",
+          specialist: null,
+          unknown: "illustrator",
+          runsOn: null,
+        },
+        // The plan's "Coder" is the registry's coder; on the API key alone nothing is said.
+        {
+          key: "page",
+          title: "Build the page",
+          specialist: "coder",
+          unknown: null,
+          runsOn: { kind: "api_key", line: null },
+        },
+      ]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("no credential saved while the daemon answers with the model it was started with: Settings is told so", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const view = await client.billingOrder();
+      expect(view.sources).toEqual([]);
+      expect(view.startedWith).toBe(rt.provider?.name);
+      expect(view.startedWith).toBeTruthy();
+    } finally {
+      await rt.close();
     }
   }, 120_000);
 });

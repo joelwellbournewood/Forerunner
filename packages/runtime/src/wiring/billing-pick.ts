@@ -12,15 +12,19 @@ import {
   type RoutingPolicy,
 } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
-import { errorMessage, log, redact } from "@forerunner/platform";
+import { errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
 import type { BillingSourceRow, StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { restUntil } from "../provider/usage-limit.ts";
-import type {
-  PlanUsage,
-  TaskBillingPick,
-  TaskBillingPort,
-  TaskBillingRequest,
+import {
+  type CredentialAbilities,
+  type PlanUsage,
+  TASK_NEEDS,
+  type TaskBillingPick,
+  type TaskBillingPort,
+  type TaskBillingRequest,
+  type TaskNeed,
+  type TaskNeeds,
 } from "../session/billing.ts";
 import {
   BILLING_REFUSED_AUDIT_TOOL,
@@ -269,6 +273,149 @@ export const CALL_FALLBACK_ORDER: readonly BillingSourceKind[] = Object.freeze([
 /** The audit row a rest after a usage limit writes (ADR 0100). */
 export const BILLING_REST_AUDIT_TOOL = "billing.rest";
 
+/**
+ * What this install offers each credential (U-078, the chooser; ADR 0100 amended): the inputs of
+ * `capabilitiesOf`, read by the composition (`RuntimeApp.chooserFacts`).
+ */
+export interface ChooserFacts {
+  /** The loop driver's page reader is registered (`web_fetch`, unless `FORERUNNER_WEB_FETCH=off`). */
+  webFetch: boolean;
+  /** Web search on the API key: not offered yet ('web-search' turns it on for the API key). */
+  keySearch: boolean;
+  /** Forerunner's page reader on the subscription: not yet ('sites' turns it on there). */
+  subscriptionPages: boolean;
+  /** `cc:Bash` on the SDK path (`FORERUNNER_SDK_HOST_COMMANDS`): commands outside the sandbox. */
+  hostCommands: boolean;
+  /** Whether the Docker sandbox is ready (null: not known); only the words read it. */
+  dockerReady?: boolean | null;
+}
+
+/** The facts of an install with nothing switched (the page reader on, no host commands). */
+export const DEFAULT_CHOOSER_FACTS: ChooserFacts = Object.freeze({
+  webFetch: true,
+  keySearch: false,
+  subscriptionPages: false,
+  hostCommands: false,
+  dockerReady: null,
+});
+
+/**
+ * What a credential can do for a task on this install (U-078, the owner's decision of
+ * 2026-11-02): the one place 'web-search' and 'sites' change for their kind.
+ *
+ * - **API key** (and plan credits; the loop driver): reads web pages when the page reader is on,
+ *   searches only once 'web-search' lands, runs commands in the sandbox (Docker for a full
+ *   review, which waits for it; ADR 0101), and can ask the person (`ask_person`, ADR 0095).
+ * - **Claude subscription** (Claude Code through the Agent SDK): searches the web, opens no page
+ *   until 'sites' lands (the hooks refuse every page: an entry's domain list is empty), runs no
+ *   command unless host commands are on (no sandbox lease covers the subprocess), and cannot ask
+ *   the person while it works (it lists its questions in its report).
+ * - **fake** (an install without credentials): the loop driver, as the API key.
+ */
+export function capabilitiesOf(kind: BillingSourceKind, facts: ChooserFacts): CredentialAbilities {
+  if (kind === "subscription")
+    return {
+      webRead: facts.subscriptionPages,
+      webSearch: true,
+      commands: facts.hostCommands,
+      askPerson: false,
+    };
+  return { webRead: facts.webFetch, webSearch: facts.keySearch, commands: true, askPerson: true };
+}
+
+/**
+ * How well a credential meets a task's hard needs, as a list compared item by item (higher is
+ * better): how many it meets, then page reading, then search, then asking, then commands (the
+ * owner's rule: "ranked by what it can do when none can do everything").
+ */
+export function needsScore(abilities: CredentialAbilities, needs: TaskNeeds): number[] {
+  const met = (n: TaskNeed) => (needs.hard.includes(n) && abilities[n] ? 1 : 0);
+  return [needs.hard.filter((n) => abilities[n]).length, ...TASK_NEEDS.map(met)];
+}
+
+function compareScores(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (b[i] ?? 0) - (a[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * The items grouped by how well their credential meets the task's hard needs, best first (U-078):
+ * the first group meets every hard need when any credential does. The person's order decides
+ * inside a group; a later group is used only when no credential of the earlier ones can serve.
+ * Without hard needs: one group, the order alone.
+ */
+export function groupByNeeds<T>(
+  items: readonly T[],
+  kindOf: (item: T) => BillingSourceKind,
+  needs: TaskNeeds | undefined,
+  facts: ChooserFacts,
+): T[][] {
+  if (!needs || needs.hard.length === 0 || items.length === 0) return [[...items]];
+  const scored = items.map((item) => ({
+    item,
+    score: needsScore(capabilitiesOf(kindOf(item), facts), needs),
+  }));
+  const scores = [...new Set(scored.map((s) => s.score.join(",")))]
+    .map((k) => k.split(",").map(Number))
+    .sort(compareScores);
+  return scores.map((score) =>
+    scored.filter((s) => s.score.join(",") === score.join(",")).map((s) => s.item),
+  );
+}
+
+/**
+ * The credential a task runs on among the saved kinds (in the person's order, first used first),
+ * and what that means (U-078): the first kind of the best group, the person's first choice, the
+ * hard needs only the chosen one meets (`onlyIt`, said when it is not the first choice), the hard
+ * needs it lacks (`lacks`: none meets them all) and the needs that only make the work better
+ * that it lacks (`lost`). Null without a saved kind. Availability (a rest, a refusal, a cap) is
+ * the router's; this is what each can do.
+ */
+export interface CredentialChoice {
+  kind: BillingSourceKind;
+  first: BillingSourceKind;
+  /** What the chosen credential can do here, and the task's hard needs. */
+  can: CredentialAbilities;
+  hard: readonly TaskNeed[];
+  onlyIt: TaskNeed[];
+  lacks: TaskNeed[];
+  lost: TaskNeed[];
+}
+
+export function chooseAmong(
+  kindsInOrder: readonly BillingSourceKind[],
+  needs: TaskNeeds,
+  facts: ChooserFacts,
+): CredentialChoice | null {
+  const first = kindsInOrder[0];
+  if (!first) return null;
+  const kind = groupByNeeds(kindsInOrder, (k) => k, needs, facts)[0]?.[0] ?? first;
+  return describeChoice(kind, first, needs, facts);
+}
+
+/** `CredentialChoice` for a credential the router picked (its reason in the audit row). */
+export function describeChoice(
+  kind: BillingSourceKind,
+  first: BillingSourceKind,
+  needs: TaskNeeds,
+  facts: ChooserFacts,
+): CredentialChoice {
+  const can = capabilitiesOf(kind, facts);
+  const firstCan = capabilitiesOf(first, facts);
+  return {
+    kind,
+    first,
+    can,
+    hard: needs.hard,
+    onlyIt: kind === first ? [] : needs.hard.filter((n) => can[n] && !firstCan[n]),
+    lacks: needs.hard.filter((n) => !can[n]),
+    lost: needs.better.filter((n) => !can[n]),
+  };
+}
+
 /** This month's ledger facts for a source (see `VaultLedgerProbe`). */
 export async function planUsageOf(
   store: Pick<StateStore, "costLedger">,
@@ -327,6 +474,11 @@ export interface RouterTaskBillingOptions {
   probe?: BillingSourceProbe;
   /** Test seam: the policy in place of `pcRoutingPolicy`. */
   policy?: RoutingPolicy;
+  /**
+   * What this install offers each credential (U-078, `capabilitiesOf`), read at every pick; the
+   * composition passes its page reader and host-commands flags. Absent: `DEFAULT_CHOOSER_FACTS`.
+   */
+  facts?: () => ChooserFacts;
 }
 
 /**
@@ -342,8 +494,11 @@ export class RouterTaskBilling implements TaskBillingPort {
   private readonly policy: RoutingPolicy;
   private readonly probe: BillingSourceProbe;
   private readonly sources: (humanId: string) => Promise<BillingSource[]>;
+  /** What this install offers each credential now (U-078). */
+  readonly facts: () => ChooserFacts;
 
   constructor(private readonly opts: RouterTaskBillingOptions) {
+    this.facts = opts.facts ?? (() => DEFAULT_CHOOSER_FACTS);
     this.policy = opts.policy ?? pcRoutingPolicy(opts.personalRunner ?? true);
     this.probe =
       opts.probe ??
@@ -392,34 +547,62 @@ export class RouterTaskBilling implements TaskBillingPort {
       }
       return true;
     });
-    const router = new BillingRouter({
-      probe: this.probe,
-      sources: candidates,
-      policy: this.policy,
-    });
     // The person's order (U-078, ADR 0100), read at every pick so a change in Settings applies
     // to the next call; without one, the caller's fallback order, else the purpose's own.
-    const chosen = (await personOrderOf(this.opts.store, this.opts.humanId)) ?? req.fallbackOrder;
-    // C-64: kinds the task needs first (web work on the API key) go ahead of the order; the
-    // order still decides the rest, and the next one is used when the first cannot be.
-    const first = (req.firstKinds ?? []).filter((k) => candidates.some((s) => s.kind === k));
-    const order = first.length
-      ? [...first, ...(chosen ?? []).filter((k) => !first.includes(k))]
-      : chosen;
-    const decision = await router.pick({
-      humanId: this.opts.humanId,
-      agentId: req.agentId,
-      runner: req.runner,
-      purpose: req.purpose ?? "session",
-      modelTier: req.modelTier,
-      ...(order?.length ? { order } : {}),
-      ...(req.waitOnRest ? { waitOnRest: true } : {}),
-    });
-    const skipped = [...withheld, ...decision.skipped];
+    const order = (await personOrderOf(this.opts.store, this.opts.humanId)) ?? req.fallbackOrder;
+    const purpose = req.purpose ?? "session";
+    // The chooser (U-078, the owner's decision of 2026-11-02): what the task needs against what
+    // each credential can do here. The credentials that meet every hard need come first and the
+    // person's order decides among them; another group only when none of the first can serve now
+    // (a 'wait' for a first choice that rests holds, as in one group). This replaced C-64's
+    // "research on the API key first" (`firstKinds`), a default the owner's decision superseded.
+    const facts = this.facts();
+    const groups = groupByNeeds(candidates, (s) => s.kind, req.needs, facts);
+    const passed: RouteSkip[] = [];
+    let decision: Awaited<ReturnType<BillingRouter["pick"]>> | null = null;
+    let failed: ForerunnerError | null = null;
+    for (const group of groups) {
+      const router = new BillingRouter({ probe: this.probe, sources: group, policy: this.policy });
+      try {
+        decision = await router.pick({
+          humanId: this.opts.humanId,
+          agentId: req.agentId,
+          runner: req.runner,
+          purpose,
+          modelTier: req.modelTier,
+          ...(order?.length ? { order } : {}),
+          ...(req.waitOnRest ? { waitOnRest: true } : {}),
+        });
+        break;
+      } catch (e) {
+        if (!(e instanceof ForerunnerError) || e.code !== "unavailable") throw e;
+        const details = (e.details ?? {}) as { waitFor?: unknown; skipped?: RouteSkip[] };
+        // 'Wait' holds to the first choice that can do the task: nothing moves to a group that
+        // can do less of it.
+        if (details.waitFor) throw withSkipped(e, [...passed, ...(details.skipped ?? [])]);
+        passed.push(...(details.skipped ?? []));
+        failed = e;
+      }
+    }
+    if (!decision) {
+      throw failed
+        ? withSkipped(failed, passed)
+        : new ForerunnerError("unavailable", `no billing source available for ${purpose} work`, {
+            details: { skipped: passed as never },
+          });
+    }
+    const skipped = [...withheld, ...passed, ...decision.skipped];
     let reason = decision.reason;
-    // An order made only of the task's first kinds is no order of the person's: not said as one.
-    if (first.length && !chosen) reason = reason.replace(/ \(your order: [^)]*\)/, "");
-    if (first.includes(decision.source.kind) && req.firstWhy) reason += `; ${req.firstWhy}`;
+    if (req.needs && (req.needs.hard.length || req.needs.better.length)) {
+      const kinds = [...new Set(candidates.map((s) => s.kind))].sort(
+        (a, b) =>
+          kindRank(a, order, this.policy, purpose) - kindRank(b, order, this.policy, purpose),
+      );
+      const said = choiceReason(
+        describeChoice(decision.source.kind, kinds[0] ?? decision.source.kind, req.needs, facts),
+      );
+      if (said) reason += `; ${said}`;
+    }
     if (withheld.length) {
       reason += `; withheld ${withheld.map((s) => `${s.kind} ${s.sourceId}: ${s.reason}`).join(", ")}`;
     }
@@ -437,6 +620,26 @@ export class RouterTaskBilling implements TaskBillingPort {
       ...(plan?.share !== null && plan !== null ? { planUsageShare: plan.share } : {}),
     });
     return { source: decision.source, driver, reason, skipped, plan };
+  }
+
+  /**
+   * The credential kinds a task of the human's own agent could run on here, in the order a task
+   * pick uses (the person's, else the session policy's), first used first (U-078: the plan card,
+   * New task and Settings say where work runs from this): enabled sources whose credential the
+   * vault holds; never the fake stand-in. A rest or a refusal does not take a kind out: what each
+   * can do is the chooser's question, whether it can serve now the router's.
+   */
+  async savedKinds(): Promise<BillingSourceKind[]> {
+    const kinds: BillingSourceKind[] = [];
+    for (const s of await this.sources(this.opts.humanId)) {
+      if (s.kind === "fake" || kinds.includes(s.kind) || !s.credentialRef) continue;
+      if (await this.opts.vault.has(s.credentialRef).catch(() => false)) kinds.push(s.kind);
+    }
+    const order = await personOrderOf(this.opts.store, this.opts.humanId);
+    return kinds.sort(
+      (a, b) =>
+        kindRank(a, order, this.policy, "session") - kindRank(b, order, this.policy, "session"),
+    );
   }
 
   /**
@@ -611,6 +814,41 @@ export class RouterTaskBilling implements TaskBillingPort {
         ).catch(() => undefined);
     }
   }
+}
+
+/** The router's "no source" again, with every group's skipped sources (the wait words read them). */
+function withSkipped(e: ForerunnerError, skipped: readonly RouteSkip[]): ForerunnerError {
+  return new ForerunnerError(e.code, e.message, {
+    details: { ...((e.details ?? {}) as object), skipped: skipped as never },
+  });
+}
+
+/** A kind's place in the order a pick uses: the person's (or the caller's), else the purpose's. */
+function kindRank(
+  kind: BillingSourceKind,
+  order: readonly BillingSourceKind[] | null | undefined,
+  policy: RoutingPolicy,
+  purpose: NonNullable<TaskBillingRequest["purpose"]>,
+): number {
+  const pref = policy.preference[purpose] ?? [];
+  const p = pref.indexOf(kind);
+  const own = p >= 0 ? p : pref.length;
+  if (!order?.length) return own;
+  const i = order.indexOf(kind);
+  return i >= 0 ? i : order.length + own;
+}
+
+/** What the needs did to a pick, for its audit row (the person reads `choiceLine`'s words). */
+function choiceReason(c: CredentialChoice): string | null {
+  const words = (ns: readonly TaskNeed[]) => ns.join(", ");
+  const parts: string[] = [];
+  if (c.onlyIt.length)
+    parts.push(`only ${c.kind} meets ${words(c.onlyIt)} (first choice ${c.first})`);
+  if (c.lacks.length)
+    parts.push(`no credential meets every hard need; ${c.kind} lacks ${words(c.lacks)}`);
+  if (c.lost.length)
+    parts.push(`${c.kind} lacks ${words(c.lost)}, which only makes the work better`);
+  return parts.length ? `chooser: ${parts.join("; ")}` : null;
 }
 
 /** The projects that wait for a source (`limits.waiting`, U-078), well-formed entries only. */
