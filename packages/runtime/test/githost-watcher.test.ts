@@ -723,6 +723,99 @@ describe("GitHostWatcher against the fake git host", () => {
     expect(order).toEqual(["retry", "retry"]);
   });
 
+  it("(g) reports what it reads: an open PR with its mergeable and head each poll, a merged one once with its merge commit, a closed one once (dependent-branches)", async () => {
+    const seen: { number: number; state: string; merged: boolean; sha: string | null }[] = [];
+    const heads: { projectId: string; repo: string; branch: string; sha: string }[] = [];
+    const onPullRequestState: GitHostWatcherDeps["onPullRequestState"] = (pr, info) => {
+      expect(pr.taskId).toBeTruthy();
+      seen.push({
+        number: info.number,
+        state: info.state,
+        merged: info.merged,
+        sha: info.merged ? (info.mergeCommitSha ?? null) : info.head.sha,
+      });
+    };
+    // A second task's PR, closed without a merge later.
+    const other = await host.seedCommit(
+      `${OWNER}/app`,
+      { [`g${branchNo}`]: "x\n" },
+      "g",
+      `g/t${branchNo}`,
+    );
+    const closing = await agentGh.createPullRequest(REPO, {
+      title: "closing",
+      body: "",
+      head: `g/t${branchNo}`,
+      base: "main",
+    });
+    await store.task.insert({
+      project_id: project.id,
+      title: "Closed later",
+      outcome: "x",
+      status: "done",
+      author_agent: agent.id,
+      owner_agent_id: agent.id,
+      pr_url: closing.htmlUrl,
+    });
+    await store.project.patch(project.id, { repos: [`${OWNER}/app`] });
+    const w = await primed({
+      onPullRequestState,
+      repositoryProjects: async () => [{ projectId: project.id, repo: REPO }],
+      onDefaultBranchHead: (p, sha) => {
+        heads.push({
+          projectId: p.projectId,
+          repo: `${p.repo.owner}/${p.repo.name}`,
+          branch: p.branch,
+          sha,
+        });
+      },
+    });
+    // The baseline poll reported both open PRs, each with its head and mergeable.
+    expect(seen.map((s) => [s.number, s.state])).toEqual([
+      [prNumber, "open"],
+      [closing.number, "open"],
+    ]);
+    expect(seen.find((s) => s.number === closing.number)?.sha).toBe(other.sha);
+    // And the default branch's head, once per repository project.
+    const main = (await agentGh.listBranches(REPO)).find((b) => b.name === "main")?.sha;
+    expect(heads).toEqual([
+      { projectId: project.id, repo: `${OWNER}/app`, branch: "main", sha: main },
+    ]);
+    seen.length = 0;
+    heads.length = 0;
+    const merged = await agentGh.mergePullRequest(REPO, prNumber);
+    await agentGh.updatePullRequest(REPO, closing.number, { state: "closed" });
+    await w.pollOnce();
+    expect(seen).toEqual([
+      { number: prNumber, state: "closed", merged: true, sha: merged.sha },
+      { number: closing.number, state: "closed", merged: false, sha: other.sha },
+    ]);
+    expect(heads.map((h) => h.sha)).toEqual([merged.sha]);
+    // Once: neither is read again.
+    seen.length = 0;
+    await w.pollOnce();
+    expect(seen).toEqual([]);
+  });
+
+  it("(g) a callback that fails keeps the PR read the next poll, and never stops the poll", async () => {
+    let fail = true;
+    const seen: string[] = [];
+    const w = await primed({
+      onPullRequestState: (_pr, info) => {
+        seen.push(`${info.number}:${info.merged ? "merged" : info.state}`);
+        if (fail && info.merged) throw new Error("rebuild failed");
+      },
+    });
+    await check("build", "failure");
+    await agentGh.mergePullRequest(REPO, prNumber);
+    const r = await w.pollOnce();
+    expect(r.errors).toEqual([]);
+    fail = false;
+    await w.pollOnce();
+    await w.pollOnce();
+    expect(seen).toEqual([`${prNumber}:open`, `${prNumber}:merged`, `${prNumber}:merged`]);
+  });
+
   it("polls on the clock every pollMs and stops", async () => {
     const cursorStore = memoryCursorStore();
     const w = watcher({ cursorStore });

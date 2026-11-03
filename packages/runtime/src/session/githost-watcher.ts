@@ -5,6 +5,7 @@ import {
   type CommentInfo,
   type GitHost,
   isAgentText,
+  type PullRequestInfo,
   type RepoRef,
   type ReviewCommentInfo,
   type ReviewInfo,
@@ -316,7 +317,8 @@ export interface GitHostWatcherDeps {
     | "listPullRequestReviews"
     | "listPullRequestReviewComments"
     | "listCheckRuns"
-  >;
+  > &
+    Partial<Pick<GitHost, "getRepo" | "getBranchHead">>;
   /** The install's agents: their PRs are watched. */
   agentIds: readonly string[];
   /** The human the audit rows are recorded for. */
@@ -340,6 +342,24 @@ export interface GitHostWatcherDeps {
    * no session. Its failure is logged; the poll goes on.
    */
   retryMerges?: () => Promise<unknown>;
+  /**
+   * What the watcher read of each PR (ADR 0111, dependent-branches), before it marks one closed
+   * and stops reading it: open (with `mergeable` and the head), merged (with `mergeCommitSha`),
+   * closed without a merge. An open PR is reported on every poll, a merged or closed one once:
+   * a callback that throws is logged and leaves that PR to be read again at the next poll. The
+   * baseline poll reports too (reporting is no event: nothing fires from it).
+   */
+  onPullRequestState?: (pr: WatchedPullRequest, info: PullRequestInfo) => void | Promise<void>;
+  /** The repository projects whose default branch is read once per poll (`onDefaultBranchHead`). */
+  repositoryProjects?: () => Promise<{ projectId: string; repo: RepoRef }[]>;
+  /**
+   * The head of each repository project's default branch, once per poll, after the PRs were
+   * read: what later steps compare to see that main moved (a merge by anyone, on GitHub too).
+   */
+  onDefaultBranchHead?: (
+    project: { projectId: string; repo: RepoRef; branch: string },
+    sha: string,
+  ) => void | Promise<void>;
   pollMs?: number;
 }
 
@@ -439,6 +459,7 @@ export class GitHostWatcher {
     // Saved before anything fires: an event is asked for at most once, also across a restart.
     this.cursorStore.save(cursor);
     if (result.deferred) this.logger.info("quiet hours: PRs deferred", { count: result.deferred });
+    await this.reportDefaultHeads();
     await this.retryWaitingMerges();
     if (!result.events.length) return result;
     for (const ev of result.events) {
@@ -450,6 +471,48 @@ export class GitHostWatcher {
     }
     for (const group of groupEvents(result.events)) result.fired.push(await this.fire(group));
     return result;
+  }
+
+  /** Each repository project's default branch name, read once (`getRepo`) and kept. */
+  private readonly defaultBranches = new Map<string, string>();
+
+  /**
+   * The head of each repository project's default branch, once per poll (`onDefaultBranchHead`).
+   * A failure is logged per project; the poll goes on.
+   */
+  private async reportDefaultHeads(): Promise<void> {
+    const report = this.deps.onDefaultBranchHead;
+    const { getRepo, getBranchHead } = this.deps.host;
+    if (!report || !this.deps.repositoryProjects || !getRepo || !getBranchHead) return;
+    let projects: { projectId: string; repo: RepoRef }[] = [];
+    try {
+      projects = await this.deps.repositoryProjects();
+    } catch (e) {
+      this.logger.warn("repository projects not read", { error: errorMessage(e) });
+      return;
+    }
+    for (const p of projects) {
+      const key = `${p.repo.owner}/${p.repo.name}`;
+      try {
+        let branch = this.defaultBranches.get(key);
+        if (!branch) {
+          branch = (await getRepo.call(this.deps.host, p.repo)).defaultBranch;
+          this.defaultBranches.set(key, branch);
+        }
+        const sha = await getBranchHead.call(this.deps.host, p.repo, branch);
+        // A default branch renamed since it was read: read again at the next poll.
+        if (!sha) {
+          this.defaultBranches.delete(key);
+          continue;
+        }
+        await report({ projectId: p.projectId, repo: p.repo, branch }, sha);
+      } catch (e) {
+        this.logger.warn("default branch head not reported", {
+          repo: key,
+          error: errorMessage(e),
+        });
+      }
+    }
   }
 
   /**
@@ -485,6 +548,20 @@ export class GitHostWatcher {
     const key = prKey(pr.repo, pr.number);
     const pc: PrCursor = { ...emptyPrCursor(), ...cursor.prs[key] };
     const info = await this.deps.host.getPullRequest(pr.repo, pr.number);
+    // What it read, reported before a PR is marked closed (dependent-branches, ADR 0111): a
+    // merge on GitHub by any method, a close, an open PR's mergeable.
+    if (this.deps.onPullRequestState) {
+      try {
+        await this.deps.onPullRequestState(pr, info);
+      } catch (e) {
+        this.logger.warn("pull request state not handled", { pr: key, error: errorMessage(e) });
+        // A merged or closed PR whose report failed is read again at the next poll.
+        if (info.state !== "open") {
+          cursor.prs[key] = pc;
+          return [];
+        }
+      }
+    }
     if (info.state !== "open") {
       cursor.prs[key] = { ...pc, closed: true };
       return [];
