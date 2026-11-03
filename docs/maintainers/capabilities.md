@@ -294,6 +294,38 @@ with their milestone.
   `env` adds to the ones `GitOps` sets. `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
+- **Local only** (`local-only.ts`, merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md),
+  the owner's decision of 2026-11-02): a repository project's folder that never leaves this
+  computer and that agents can use. `LOCAL_ONLY_DIR` ("Local only"), `TRY_DIR`
+  (".forerunner-try", a review's try folder, W6-26) and `NEVER_PUSHED` (both).
+  `excludeNeverPushed(dir, folders)` appends `/<folder>/` to the clone's `.git/info/exclude`
+  (idempotent; `.gitignore` untouched). `GitOpsOptions.neverPush`: before every `push`,
+  `neverPushedIn(branch, defaultBranch)` lists the paths under those folders the push would
+  upload (tracked at the tip, or touched by any commit no remote branch has: `git log <branch>
+  --not --remotes=origin`), a folder the remote's default branch already tracks being the
+  repository's own; any is a `path_not_allowed` refusal with `neverPushedWords` ("Forerunner did
+  not upload the branch ...: it holds "Local only/notes.txt", files of Local only, which never
+  leave this computer. Press Try again to redo the work without them."), `isNeverPushed` tells it.
+  `trackedUnder(rev, folders)` reads the files a commit tracks under them (`-z`, raw names).
+  `PrTaskExecutorDeps.localOnlyFor(task)` names the project's folder (in its copy, runtime.md);
+  `execute` wraps the inner run (`withLocalOnly`): a copy an earlier run left is copied back
+  first, then `copyLocalOnlyIn` (regular files only, a link or a junction skipped with a log
+  line, a path resolving outside the folder refused; the marker `.git/forerunner-local-only.json`
+  written before, `copying` then `in`, with each file's hash), the run, and `copyLocalOnlyBack`
+  in a `finally`: only files the run changed or added are written back (through a temporary file
+  and a rename), a file the run deleted stays, nothing is written through a link in the
+  person's folder, and a file the person changed since the copy in keeps their version while the
+  agent's is kept beside it (`besideName`: "notes (from Write the page).txt"); the worktree's
+  copy and the marker are removed. `keptBesideSentence` is put first in the task's result
+  summary (never the PR body or the commit). `recoverLocalOnly()` (compose, at the start) and
+  the next run recover a copy a crash left by the same rules (`recoverLocalOnlyCopies`). The
+  worktree excludes both folders (only the try's when the repository tracks a folder named Local
+  only), `inWorkspace` excludes the try's, the executor's GitOps sets `neverPush`, and the
+  changed files leave them out. Tests: `test/pr-executor.test.ts` "Local only" (read and written
+  in the run, copied back, never pushed or in the PR or the changed files; the person's change
+  kept with the agent's beside it and the sentence; an agent's own commit refused at the push; a
+  link out of the folder, a junction on Windows, never followed; a run killed after the copy in
+  recovered) and `test/git.test.ts` "a push never carries Local only".
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
   of callers.
 - Project operations on the same contract (`ensureProject`, `ensureFields`, `listProjectItems`,

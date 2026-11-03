@@ -127,7 +127,21 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   Overview) as a list with sizes and when each file changed.
   Click a file to read it here (text files; nothing can be changed from this tab). **Open
   folder** (desktop app) opens it in your file manager; **Copy path** copies where it is. Until
-  the work writes something it says "Nothing written yet".
+  the work writes something it says "Nothing written yet". For a repository project the line on
+  top says when the copy was last brought up to date ("As merged on GitHub, updated 14:05."):
+  Forerunner does that after every merge, the ones it makes and the ones you make on GitHub
+  (within about a minute), with no session needed, and the list follows without a reload. The
+  copy is Forerunner's own, under its data folder (it does not link your own working folder):
+  keep your own files in its Local only folder, not beside the merged ones.
+- **Local only** (on Files, for a repository project): a folder inside this computer's copy,
+  "Never uploaded. Agents can read and change it." Put files there that the work may use but
+  that must stay on this computer (notes, data, keys you would never commit). **Open folder**
+  beside it opens that folder. Each task's run gets a copy of it in its own folder and gives back
+  what it changed or added; a file it deleted stays with you. If you change a file there while a
+  run uses it, your version stays and the agent's is kept beside it as "notes (from <task
+  title>).txt", and the task's result says so. Forerunner never uploads it: a branch that holds
+  any of it is not pushed, and the task says so. A repository that already has a folder called
+  "Local only" gets none ("No Local only folder here: …").
 - **Plan** (under More): milestones and their dependencies.
 - **Tasks**: every task, in the order a session runs them (a task after the tasks it waits for,
   then by priority), with its status in words, who does it, its cost and the critic's call. The
@@ -279,9 +293,9 @@ default branch (the project's docs, or a README), so its tasks have something to
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
 …") and what to do. The project's status file (`docs/status.md`) stays in the app: each
 session's update is under **Docs**, Status ("kept in the app"), and no pull request is opened
-for it. At the end of each session Forerunner also brings this computer's copy of the
-repository up to date, so **Docs** and **Files** show what is merged on GitHub, including what
-you merged since the last session. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
+for it. After every merge (in the app or on GitHub) and at the end of each session Forerunner
+brings this computer's copy of the repository up to date, so **Docs** and **Files** show what
+is merged on GitHub, including what you merged a minute ago. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
 Advanced, Other settings): each session then adds its update to one pull request of its own,
 "docs: project status", which you merge when you like; it never goes into a task's reviewed
 pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this

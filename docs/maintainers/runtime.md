@@ -3168,6 +3168,8 @@ search) is cloned when missing, fetched and put on the default branch as the hos
 (`refreshCopy`, nothing pushed; a failure is a warning, the status is written either way). The
 status pull request's write did that on its way; without it a project made from a brief had no
 copy at all and a merge on the host never reached the tabs (review of fix/decisions, 2026-11-02).
+Since merged-copy the copy also follows every merge and the watcher's read of the default
+branch, under one lock per copy (below, "This computer's copy follows every merge").
 `statusDocRoot(project)` names that folder once it
 holds the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`,
 the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
@@ -5472,6 +5474,59 @@ links go through it. `GET
 /projects/:id/docs/:path` also opens a decision record (`DECISION_RECORD`,
 `docs/decisions/<name>.md`), which the Overview's Decisions link to. Both are read-only; the
 real-daemon case "files: the project's folder" covers them.
+
+### This computer's copy follows every merge, and Local only (merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md))
+
+The owner's decision of 2026-11-02. A repository project's copy on this computer
+(`ProjectDocs.copyDir`, `<worktrees>/docs/<project id>`: the docs clone, the first root of
+`docsDirsFor`, what Files, Open folder and the chat's docs search read) is brought to the
+default branch as the host has it after every merge, not only at a session's end:
+
+- `ProjectDocs.refreshCopy(project, { head? })` (public; `ProjectDocsPort.refreshCopy`): clone
+  when missing, fetch, `checkout -B <base> origin/<base>`, then `settle`: Local only and
+  `.forerunner-try/` in `.git/info/exclude` (`excludeNeverPushed`), the `Local only` folder made
+  unless `origin/<base>` already tracks a path under it, and the record
+  `.git/forerunner-copy.json` (`CopyRecord`: `updatedAt` from the Clock, `head`, `localOnly`
+  folder/tracked/none). With `head` (the watcher's read) and the copy already there on the
+  default branch, nothing is fetched; the record is written as checked. A checkout that fails (a
+  file the person changed in the copy that the merge changed too) keeps the old `updatedAt`.
+- Callers (compose.ts `refreshProjectCopy`, which emits the project event when the copy moved):
+  `merge.onMerged` (a session's merge, a retry's, Merge in the app, and merges the watcher saw
+  on GitHub through `DependentBranches`), the watcher's `onDefaultBranchHead` (beside
+  `dependentBranches.sweep`; a merge by anyone, a docs PR merged on GitHub's website),
+  `RepoCreator.onLinked`, and the intake after it wrote its docs to the repository (W6-25: a
+  project made from a brief has its copy while its plan waits; the watcher's first poll clones a
+  missing copy too). The session's end still refreshes it (C-57).
+- One lock per copy (`ProjectDocs.withCopy(projectId, fn)`, a promise chain per folder in this
+  process): `refreshCopy`, the scaffold (`scaffoldInCopy`), the status pull request write and
+  `docsInPullRequests`' fetch take it, so git never runs twice at once in the clone and a
+  watcher refresh waits for a docs write that has the clone on its branch; 'merged-actions''s
+  preview takes it too. Reads (the Files and Docs routes) take no lock.
+- The copy's GitOps (`gitOf`) carries `neverPush: NEVER_PUSHED`.
+- `GET /projects/:id/files` gains `copy` (`ProjectDocs.copyView`: `updatedAt`, `localOnly {
+  folder, line }`, null for a project without a repository; read from the record, no git): the
+  Files tab says "This computer's copy of <repo>. As merged on GitHub, updated 14:05." and shows
+  Local only with "Never uploaded. Agents can read and change it." and its own Open folder, or
+  "No Local only folder here: this repository already has a folder of that name.".
+
+**Local only around a run** (`@forerunner/capabilities` `local-only.ts`, capabilities.md):
+`PrTaskExecutorDeps.localOnlyFor` is `ProjectDocs.localOnlyFolder`; the PR executor copies the
+folder into the task's worktree before the inner run and back after it, removes the worktree's
+copy, and recovers one a crash left at the next run and at compose (`executor.recoverLocalOnly()`
+before any session starts). The review never sees it: the copy is gone by then,
+`projectFileList`, `untestedFiles` and `pagesToTry` skip it, and the worktree's exclude keeps it
+out of the critic's untracked list. The merge step's GitOps (`loop/merge.ts`, bringing the base
+in) sets `neverPush` too. The brief's git lines (`executor.ts` `gitConstraints`,
+`LOCAL_ONLY_BRIEF_LINE`) name the folder for a repository task. Nothing links the person's own
+working folder (the owner's decision: no); the copy stays under Forerunner's data folder.
+
+Tests: `test/loop-docs.test.ts` (the lock: a watcher refresh during a status write waits and both
+end on main; the folder survives a docs write and a refresh; a tracked folder gets the
+sentence), `test/merged-copy.test.ts` (a merge the session makes is in Files at once; the record
+and Local only across a restart), `test/local-only-evidence.test.ts`, `test/executor-brief.test.ts`,
+and the real-daemon block "this computer's copy follows every merge" (a PR and a docs PR merged on
+the fake GitHub, one watcher poll, no session; a project made from a brief; Local only through a
+whole session on the fake GitHub).
 
 ## How to change it
 
