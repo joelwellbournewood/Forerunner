@@ -40,7 +40,9 @@ const FREE_AT: Record<
   read: 0,
   routine_reversible: 2,
   non_routine: 3,
-  merge_pr: 3,
+  // Free at no level (the owner's decision of 2026-11-02, merge-in-app): a merge is freed by the
+  // project's merge mode or the person's Merge, which approve exactly that call (`mayMerge`).
+  merge_pr: null,
   deploy_staging: 3,
   deploy_production: 4,
   external_send: 4,

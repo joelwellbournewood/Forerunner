@@ -135,7 +135,7 @@ describe("Settings Basics (design §6)", () => {
       "Advisor: plans and proposes only; you approve every action",
       "Assisted: acts after you approve each session's plan",
       "Standard: routine, reversible actions run; the rest asks you",
-      "Trusted: also merges reviewed pull requests",
+      "Trusted: also changes tasks and docs, starts costly sessions and deploys to staging",
       "Autopilot: everything except destructive, money and credential actions",
     ];
     const def = (await basicRows()).find(

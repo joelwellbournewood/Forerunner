@@ -16,6 +16,7 @@ import {
   NoSecrets,
 } from "../src/enforcement/ports.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../src/loop/merge.ts";
+import type { MergeMode } from "../src/loop/merge-mode.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
 import { GitHostWatcher } from "../src/session/githost-watcher.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
@@ -54,7 +55,7 @@ afterEach(async () => {
   for (const r of roots.splice(0)) await rm(r, { recursive: true, force: true });
 });
 
-async function chainWorld(opts: { level: 2 | 3 }) {
+async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
   const w = await loopWorld({
     replies: [submitReply({ grade: 91 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
   });
@@ -73,7 +74,11 @@ async function chainWorld(opts: { level: 2 | 3 }) {
   });
   const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
   const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: w.clock });
-  await w.store.project.patch(w.project, { repos: [FULL], autonomy_level: opts.level });
+  await w.store.project.patch(w.project, {
+    repos: [FULL],
+    autonomy_level: opts.level,
+    ...(opts.mode ? { settings: { merge_mode: opts.mode } } : {}),
+  });
   const worktreeRoot = join(root, "worktrees");
   await mkdir(worktreeRoot, { recursive: true });
   const audit = new MemoryAudit();
@@ -395,8 +400,8 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(await m.hostGit("show", "main:src/page.ts")).toContain('footer = "Bye"');
   });
 
-  it("(d) a dependency closed without merging: the dependent is rebuilt without it, its review is void (one sentence, one card), and a merge the gate would make unattended at level 3 does not happen", async () => {
-    const m = await chainWorld({ level: 3 });
+  it("(d) a dependency closed without merging: the dependent is rebuilt without it, its review is void (one sentence, one card), and a merge the gate would make unattended (Merge automatically after review) does not happen", async () => {
+    const m = await chainWorld({ level: 2, mode: "after_review" });
     // A waits for the person (its checks fail), B's checks are still running when it is accepted.
     const a = await m.runTask("Add page", {
       afterPr: (pr) => m.check(pr.headSha, "completed", "failure"),
@@ -503,7 +508,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
   });
 
   it("a dependency closed while the dependent was being reviewed: the dependent is rebuilt before its merge and is not merged unattended", async () => {
-    const m = await chainWorld({ level: 3 });
+    const m = await chainWorld({ level: 2, mode: "after_review" });
     const a = await m.runTask("Add page", {
       afterPr: (pr) => m.check(pr.headSha, "completed", "failure"),
     });

@@ -31,7 +31,7 @@ test("a settings change runs a command, shows the card, needs a yes, and lands i
   await expect(dialog.getByTestId("command-undo")).toBeVisible();
   await dialog.getByTestId("command-close").click();
   await expect(row.getByTestId("setting-value-cell")).toHaveText(
-    "Trusted: also merges reviewed pull requests",
+    "Trusted: also changes tasks and docs, starts costly sessions and deploys to staging",
   );
 
   // Changes is behind More (design §6).

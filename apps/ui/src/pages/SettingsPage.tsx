@@ -91,6 +91,7 @@ export const SETTING_KEYS = [
   "small_project_mode",
   "fast_mode",
   "status_pull_request",
+  "merge_mode",
   "shared_with",
   "quiet_hours",
   "notify_channel",

@@ -72,7 +72,12 @@ const AUTONOMY: Record<number, { name: string; means: string }> = {
   0: { name: "Advisor", means: "plans and proposes only; you approve every action" },
   1: { name: "Assisted", means: "acts after you approve each session's plan" },
   2: { name: "Standard", means: "routine, reversible actions run; the rest asks you" },
-  3: { name: "Trusted", means: "also merges reviewed pull requests" },
+  // merge-in-app (the owner's decision of 2026-11-02): merging is its own per-project setting,
+  // "Who merges accepted work"; level 3 no longer merges.
+  3: {
+    name: "Trusted",
+    means: "also changes tasks and docs, starts costly sessions and deploys to staging",
+  },
   4: { name: "Autopilot", means: "everything except destructive, money and credential actions" },
 };
 

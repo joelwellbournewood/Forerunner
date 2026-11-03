@@ -2,7 +2,7 @@ import { ForerunnerError, join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ToolSpec } from "../src/agent/tools.ts";
-import type { RunContext } from "../src/enforcement/hooks.ts";
+import { approvalKeyFor, type RunContext } from "../src/enforcement/hooks.ts";
 import { AutoApprove, type CapsPort, type SecretsPort } from "../src/enforcement/ports.ts";
 import {
   budget,
@@ -300,11 +300,21 @@ describe("enforcement hooks: tool calls", () => {
     expect(approvals.requests).toEqual([]);
     expect(h.audit.entries.at(-1)).toMatchObject({ tool: "merge_pr", allowed: false });
     expect(h.audit.entries.at(-1)?.deniedReason).toMatch(/^autonomy_insufficient: /);
-    // At level 3 the class is free: the same call passes without a request.
+    // No level frees a merge (merge-in-app, the owner's decision of 2026-11-02): level 3 is
+    // refused unattended too, and the call passes only with its approval (the project's merge
+    // mode or the person's Merge, which the merge step adds for exactly that call).
     const at3 = ctx(h, issue(h, { runId: "run-3", allowedTools: ["merge_pr"], autonomy: 3 }), {
       unattended: true,
     });
-    expect((await h.hooks.beforeToolCall(at3, mergeTool, { number: 7 })).allowed).toBe(true);
+    await expect(h.hooks.beforeToolCall(at3, mergeTool, { number: 7 })).rejects.toMatchObject({
+      code: "autonomy_insufficient",
+    });
+    const approved = ctx(
+      h,
+      issue(h, { runId: "run-3b", allowedTools: ["merge_pr"], autonomy: 2 }),
+      { unattended: true, approvals: new Set([approvalKeyFor("merge_pr", { number: 7 })]) },
+    );
+    expect((await h.hooks.beforeToolCall(approved, mergeTool, { number: 7 })).allowed).toBe(true);
     // An always-human class stays refused unattended at every level, 4 included.
     const at4 = ctx(h, issue(h, { runId: "run-4", allowedTools: ["delete_repo"], autonomy: 4 }), {
       unattended: true,

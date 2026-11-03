@@ -41,8 +41,12 @@ describe("autonomy policy", () => {
     expect(decideAutonomy("deploy_staging", { level: 2 })).toBe("approval_required");
   });
 
-  it("level 3 also merges reviewed PRs and deploys to staging", () => {
-    expect(decideAutonomy("merge_pr", { level: 3 })).toBe("allow");
+  it("level 3 also deploys to staging; no level frees a merge, the project's merge mode or the person's Merge approves each one", () => {
+    // The owner's decision of 2026-11-02 (merge-in-app): merging is its own per-project setting,
+    // separate from level 3 (before: level 3 freed merge_pr, spec J.9).
+    expect(decideAutonomy("merge_pr", { level: 3 })).toBe("approval_required");
+    expect(decideAutonomy("merge_pr", { level: 4 })).toBe("approval_required");
+    expect(decideAutonomy("merge_pr", { level: 2, actionApproved: true })).toBe("allow");
     expect(decideAutonomy("deploy_staging", { level: 3 })).toBe("allow");
     expect(decideAutonomy("deploy_production", { level: 3 })).toBe("approval_required");
     expect(decideAutonomy("external_send", { level: 3 })).toBe("approval_required");

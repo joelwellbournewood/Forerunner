@@ -97,6 +97,7 @@ import {
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
+import { MERGE_MODE_WORDS, mergeModeEffect } from "@forerunner/runtime/loop/merge-mode";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import {
   SANDBOX_WHY,
@@ -3297,6 +3298,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     for (const p of state.projects) {
       const first = p.repos?.[0]?.trim() ?? "";
       if (!/^[\w.-]+\/[\w.-]+$/.test(first)) continue;
+      // merge-in-app: who merges accepted work, as the daemon's row says it.
+      rows.push({
+        key: "project.merge_mode",
+        label: "Who merges accepted work",
+        scope: "project",
+        scopeId: p.id,
+        value: mergeModeOfFake(p.id),
+        description: `You press Merge (each accepted task's pull request waits for your Merge on ${p.name}'s Overview), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
+        risk: "medium",
+      });
       rows.push({
         key: "project.status_pull_request",
         label: "Status pull request",
@@ -4393,6 +4404,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     small_project_mode: "low",
     fast_mode: "medium",
     status_pull_request: "low",
+    // merge-in-app: medium, as SETTING_SPECS.merge_mode (turning automatic merges on asks a yes).
+    merge_mode: "medium",
     critic_ceiling: "medium",
     session_reserve_share: "medium",
     quiet_hours: "low",
@@ -4410,9 +4423,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
     projectId ? `${key}:${projectId}` : key;
+  /** A project's merge mode as the daemon reads it (`mergeModeOf`, merge-in-app): "you" unless set. */
+  const mergeModeOfFake = (projectId: string): "you" | "after_review" =>
+    state.settingValues[settingSlot("merge_mode", projectId)] === "after_review"
+      ? "after_review"
+      : "you";
+  const MERGE_MODE_LABELS = MERGE_MODE_WORDS;
+  const MERGE_MODE_EFFECTS = {
+    you: mergeModeEffect("you"),
+    after_review: mergeModeEffect("after_review"),
+  };
   const PROJECT_KEYS = new Set([
     "small_project_mode",
     "status_pull_request",
+    "merge_mode",
     "critic_ceiling",
     "session_reserve_share",
     "handover",
@@ -4761,6 +4785,51 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           apply: () => {
             state.fastMode[project.id] = value;
             return { before: { fast_mode: before }, after: { fast_mode: value } };
+          },
+        };
+      }
+      if (
+        key === "merge_mode" &&
+        project &&
+        (params.value === "you" || params.value === "after_review")
+      ) {
+        // The daemon's card for this key (`SETTING_SPECS.merge_mode`, merge-in-app): the mode in
+        // words and what the new one means, in the card and the sentence; the same value is
+        // refused; turning automatic merges off acts at once (narrows), on asks a yes.
+        const value = params.value;
+        const before = mergeModeOfFake(project.id);
+        const what = `who merges accepted work for ${project.name}`;
+        if (before === value && state.settingValues[settingSlot(key, project.id)] !== undefined)
+          return refuse(
+            `Who merges accepted work for ${project.name} is already ${MERGE_MODE_LABELS[before]}.`,
+          );
+        const effect = MERGE_MODE_EFFECTS[value];
+        return {
+          name,
+          params,
+          risk: value === "after_review" ? risk : "low",
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: MERGE_MODE_LABELS[before],
+              newValue: `${MERGE_MODE_LABELS[value]} (${effect})`,
+              scope: "project",
+              sentence: `Set ${what} from ${MERGE_MODE_LABELS[before]} to ${MERGE_MODE_LABELS[value]}: ${effect}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            value === "after_review" ? risk : "low",
+          ),
+          apply: () => {
+            const slot = settingSlot(key, project.id);
+            const had = state.settingValues[slot];
+            state.settingValues[slot] = value;
+            return {
+              before: { key, project_id: project.id, value: had ?? null },
+              after: { key, project_id: project.id, value },
+            };
           },
         };
       }
