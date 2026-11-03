@@ -761,6 +761,55 @@ describe("producers", () => {
     expect(stop.dedupeKey).toBe("session:s-1:budget");
   });
 
+  // Review of budget-stop (ADR 0111): a session ended by a pause at this month's cap was told as
+  // "stopped, the budget is used" with "Start a session with a larger budget to go on", which the
+  // month's cap refuses. It names the limit and says what helps.
+  it("session end at an outer limit: the urgent budget_stop names it and what helps", () => {
+    const facts = {
+      sessionId: "s-2",
+      status: "stopped",
+      stopReason: "budget_month",
+      stopCapChfMicro: 230_000,
+      summary:
+        '"Write the manual" needs your decision (Inbox).\nStopped at this month\'s cap of CHF 0.23. CHF 0.04.',
+      news: ["Stopped at this month's cap of CHF 0.23. CHF 0.04."],
+      spentUsdMicro: 50_000,
+      spentChfMicro: 40_000,
+      completed: [],
+      needsHuman: ["t-1"],
+      projectId: "p-1",
+      projectName: "Quote page",
+    };
+    expect(producers.sessionEndIsNews(facts)).toBe(true);
+    const month = producers.sessionEnded("h-1", facts);
+    // The title has 60 characters: the limit; the amounts lead the body.
+    expect(month).toMatchObject({
+      kind: "budget_stop",
+      title: "Quote page: stopped at this month's cap",
+      body: "This month's cap is CHF 0.23. The session spent CHF 0.04. Raise the monthly spending cap in Settings to go on.",
+      dedupeKey: "session:s-2:budget",
+    });
+    const project = producers.sessionEnded("h-1", {
+      ...facts,
+      stopReason: "budget_project",
+      stopCapChfMicro: 400_000,
+      news: ["Stopped at the project's budget of CHF 0.40. CHF 0.04."],
+    });
+    expect(project.title).toBe("Quote page: stopped at the project's budget");
+    expect(project.body).toBe(
+      "The project's budget is CHF 0.40. The session spent CHF 0.04. Raise the project budget in Settings to go on.",
+    );
+    const plan = producers.sessionEnded("h-1", {
+      ...facts,
+      stopReason: "budget_plan",
+      news: ["Stopped at the share of your Claude subscription that Forerunner may use. CHF 0.04."],
+    });
+    expect(plan.title).toBe("Quote page: stopped at your Claude subscription's share");
+    expect(plan.body).toBe(
+      "The session spent CHF 0.04. It can go on once your Claude subscription's usage resets.",
+    );
+  });
+
   it("critic verdicts are info unless they need a human; injections quote the ignored passages", () => {
     const review = {
       id: "rv-1",

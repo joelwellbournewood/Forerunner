@@ -41,27 +41,55 @@ export const WRAP_UP_CALLS = 2;
  * the reserve. The call that would take the run past the line brings the wrap-up message, once.
  * `saveOnly`: the line is at or below the first call's worst case (a tiny budget: the reserve
  * is at least the cap, or leaves no room for one call), so no wrap-up is sent and the run
- * pauses at its budget with the code-side save only.
+ * pauses at its budget with the code-side save only. `firstCallUsdMicro`: that first call's
+ * worst case; above the cap, the run is refused before its first call (a save-only line too).
  */
 export interface RunWrapUpLine {
   capUsdMicro: number;
   reserveUsdMicro: number;
   lineUsdMicro: number;
+  firstCallUsdMicro: number;
   saveOnly: boolean;
 }
 
 /** The wrap-up line of a run with this cap whose first call's worst case is `firstCallUsdMicro`. */
 export function wrapUpLineOf(capUsdMicro: number, firstCallUsdMicro: number): RunWrapUpLine {
-  const reserve = Math.max(
-    Math.ceil(capUsdMicro * WRAP_UP_SHARE),
-    WRAP_UP_CALLS * Math.max(0, firstCallUsdMicro),
-  );
+  const first = Math.max(0, firstCallUsdMicro);
+  const reserve = Math.max(Math.ceil(capUsdMicro * WRAP_UP_SHARE), WRAP_UP_CALLS * first);
   const line = Math.max(0, capUsdMicro - reserve);
   return {
     capUsdMicro,
     reserveUsdMicro: reserve,
     lineUsdMicro: line,
-    saveOnly: line <= firstCallUsdMicro,
+    firstCallUsdMicro: first,
+    saveOnly: line <= first,
+  };
+}
+
+/**
+ * The run's line a refusal of its first call carries (`details.line`, review of budget-stop):
+ * a budget below that call's worst case is refused before the call, and the drivers still say
+ * the line ("save only") from it. Undefined when the details hold none.
+ */
+export function wrapUpLineIn(
+  details: Record<string, unknown> | undefined,
+): RunWrapUpLine | undefined {
+  const l = details?.line;
+  if (!l || typeof l !== "object" || Array.isArray(l)) return undefined;
+  const o = l as Record<string, unknown>;
+  const n = (k: string) =>
+    typeof o[k] === "number" && Number.isFinite(o[k]) ? (o[k] as number) : null;
+  const cap = n("capUsdMicro");
+  const reserve = n("reserveUsdMicro");
+  const line = n("lineUsdMicro");
+  const first = n("firstCallUsdMicro");
+  if (cap === null || reserve === null || line === null || first === null) return undefined;
+  return {
+    capUsdMicro: cap,
+    reserveUsdMicro: reserve,
+    lineUsdMicro: line,
+    firstCallUsdMicro: first,
+    saveOnly: o.saveOnly === true,
   };
 }
 
@@ -144,7 +172,9 @@ export class SessionBudget {
    * Decide whether a call with the given estimate may start. Order: run cap, then session cap.
    * At 80% of the session cap: finish current task, no new work. At 100%: stop. For a work run,
    * the call that would take it past its wrap-up line (`RunWrapUpLine`, set at its first call)
-   * answers `wrap_up`, once; a save-only line never does. The run's first call carries its line.
+   * answers `wrap_up`, once; a save-only line never does. The run's first call carries its line,
+   * and so does a refusal of that call (`details.line`): a budget below one call's worst case is
+   * refused before the call, and its line ("save only") is still said.
    */
   precheck(
     runId: string,
@@ -152,18 +182,27 @@ export class SessionBudget {
     estimateUsdMicro: number,
     phase: "work" | "review",
   ): PrecheckDecision {
-    const local = this.precheckCaps(runId, runCapUsdMicro, estimateUsdMicro, phase);
-    if (phase !== "work") return local;
+    checkAmount(estimateUsdMicro, "budget estimate");
     const runSpent = this.spentByRunId(runId);
     let first: RunWrapUpLine | undefined;
-    let line = this.runLines.get(runId);
-    // The line is fixed at the run's first call, from that call's estimate. A run first seen
-    // with spend already booked (never in the drivers, which check before every call) has none.
-    if (!line && runSpent === 0) {
+    let line = phase === "work" ? this.runLines.get(runId) : undefined;
+    // The line is fixed at the run's first call, from that call's estimate, before the caps are
+    // checked (review of budget-stop: a first call refused at the run's cap said no line). A run
+    // first seen with spend already booked (never in the drivers, which check before every
+    // call) has none.
+    if (phase === "work" && !line && runSpent === 0) {
       first = wrapUpLineOf(runCapUsdMicro, estimateUsdMicro);
       line = { ...first, wrapped: false };
       this.runLines.set(runId, line);
     }
+    let local: { decision: "allow" | "finish_current" };
+    try {
+      local = this.precheckCaps(runId, runCapUsdMicro, estimateUsdMicro, phase);
+    } catch (e) {
+      if (first && e instanceof ForerunnerError) e.details.line = first;
+      throw e;
+    }
+    if (phase !== "work") return local;
     const wrap =
       !!line && !line.saveOnly && !line.wrapped && runSpent + estimateUsdMicro > line.lineUsdMicro;
     if (wrap && line) line.wrapped = true;

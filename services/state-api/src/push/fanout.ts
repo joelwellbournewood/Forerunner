@@ -382,8 +382,17 @@ function needsAttention(m: MessageRow): boolean {
   return m.requires_ack || m.type === "question" || m.type === "request" || m.type === "warning";
 }
 
-/** Session ends that mean the budget stopped the work (the runner's `handoff.stop_reason`). */
-const BUDGET_STOP_REASONS: ReadonlySet<string> = new Set(["budget_exceeded"]);
+/**
+ * Session ends that mean the budget stopped the work (the runner's `handoff.stop_reason`): the
+ * session's own budget, or a task's pause at an outer limit that ended it (ADR 0111: this
+ * month's cap, the project's budget, the subscription's share), each with its words.
+ */
+const BUDGET_STOP_BODIES: ReadonlyMap<string, string> = new Map([
+  ["budget_exceeded", "A session stopped at its budget cap."],
+  ["budget_month", "A session stopped at this month's cap."],
+  ["budget_project", "A session stopped at the project's budget."],
+  ["budget_plan", "A session stopped at your Claude subscription's share."],
+]);
 /** The runner stopped starting new work at the warning share and finished what was running. */
 const BUDGET_WARNING_REASONS: ReadonlySet<string> = new Set(["budget_finish_current"]);
 const ENDED: ReadonlySet<SessionRow["status"]> = new Set(["completed", "failed", "stopped"]);
@@ -401,8 +410,9 @@ function stopReasonOf(row: SessionRow): string | null {
  * the handoff (with `stop_reason`) and the end status when the session ends, and the budget
  * hook refuses the call that would cross the cap, so a budget stop usually ends below the cap.
  *
- * - budget stop (urgent `budget_stop`): ended with `stop_reason` `budget_exceeded`, or
- *   stopped / failed with spend at the cap;
+ * - budget stop (urgent `budget_stop`): ended with `stop_reason` `budget_exceeded` (or an outer
+ *   limit's `budget_month`, `budget_project`, `budget_plan`, whose body names it), or stopped /
+ *   failed with spend at the cap;
  * - budget warning (normal): `stop_reason` `budget_finish_current` (the hook stopped new work
  *   at 80 %), or spend at `BUDGET_WARNING_SHARE` of the cap on a row that records spend while
  *   it runs; not sent when the session ended at the budget stop, which says more;
@@ -414,7 +424,7 @@ export function sessionNotices(row: SessionRow, humanId: string): PushNotice[] {
   const reason = stopReasonOf(row);
   const ended = ENDED.has(row.status);
   const base = { humanId, refId: id, projectId: row.project_id, link: `/sessions/${id}` };
-  const stopReason = reason !== null && BUDGET_STOP_REASONS.has(reason);
+  const stopReason = reason !== null && BUDGET_STOP_BODIES.has(reason);
   const budgetStop =
     ended && (stopReason || (row.status !== "completed" && cap > 0 && row.spent_usd_micro >= cap));
   // The runner writes the handoff a moment before the end status: a row that already names
@@ -444,7 +454,9 @@ export function sessionNotices(row: SessionRow, humanId: string): PushNotice[] {
       urgency: KIND_URGENCY.budget_stop,
       key: `budget:${id}:stop`,
       title: "Budget reached: session stopped",
-      body: "A session stopped at its budget cap.",
+      body:
+        (reason !== null ? BUDGET_STOP_BODIES.get(reason) : undefined) ??
+        "A session stopped at its budget cap.",
     });
   } else if (ended) {
     out.push({

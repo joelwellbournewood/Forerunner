@@ -129,6 +129,7 @@ describe("session budget", () => {
         capUsdMicro: 1_000_000,
         reserveUsdMicro: 200_000,
         lineUsdMicro: 800_000,
+        firstCallUsdMicro: 100_000,
         saveOnly: false,
       },
     });
@@ -150,6 +151,7 @@ describe("session budget", () => {
       capUsdMicro: 1_000_000,
       reserveUsdMicro: 600_000,
       lineUsdMicro: 400_000,
+      firstCallUsdMicro: 300_000,
       saveOnly: false,
     });
   });
@@ -162,6 +164,7 @@ describe("session budget", () => {
       capUsdMicro: 12_500,
       reserveUsdMicro: 13_200,
       lineUsdMicro: 0,
+      firstCallUsdMicro: 6_600,
       saveOnly: true,
     });
     b.record("r1", 3_000);
@@ -176,6 +179,44 @@ describe("session budget", () => {
     // Reserve 2 x 4 000 = 8 000; the line at 12 000 - 8 000 = 4 000 holds one call exactly.
     expect(b.precheck("r1", 12_000, 4_000, "work").line?.saveOnly).toBe(true);
     expect(b.precheck("r2", 12_001, 4_000, "work").line?.saveOnly).toBe(false);
+  });
+
+  // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
+  // on the coder's Sonnet: 4 096 output tokens alone cost USD 0.041) was refused before the line
+  // was fixed, so the run said no budget line at all, not even "save only".
+  it("a first call refused at the run's cap still carries the run's save-only line", () => {
+    const b = mk(10_000_000);
+    let refused: unknown;
+    try {
+      b.precheck("r1", 25_000, 41_000, "work");
+    } catch (e) {
+      refused = e;
+    }
+    expect(refused).toMatchObject({
+      code: "budget_exceeded",
+      details: {
+        level: "run",
+        line: {
+          capUsdMicro: 25_000,
+          reserveUsdMicro: 82_000,
+          lineUsdMicro: 0,
+          firstCallUsdMicro: 41_000,
+          saveOnly: true,
+        },
+      },
+    });
+    // Only the run's first call carries it: a later refusal says nothing new.
+    const c = mk(10_000_000);
+    c.precheck("r1", 25_000, 10_000, "work");
+    c.record("r1", 20_000);
+    let later: unknown;
+    try {
+      c.precheck("r1", 25_000, 10_000, "work");
+    } catch (e) {
+      later = e;
+    }
+    expect(later).toMatchObject({ code: "budget_exceeded" });
+    expect((later as { details: Record<string, unknown> }).details.line).toBeUndefined();
   });
 
   it("a review run has no wrap-up line", () => {

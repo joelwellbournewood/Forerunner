@@ -598,16 +598,20 @@ working and ends its report with "Where I stopped:" and "Left to do:". The reser
 fifth of the run's budget, or the cost of two calls when that is more; the session's log
 (Details) says at the start of each run where its wrap-up comes ("This run may spend CHF 0.40:
 at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish."). A budget too small
-for even that is "save only": nothing is said to the agent, and the run pauses at its budget. A
-run that stopped at a budget, or that wrapped up with work left, is paused: the critic does not
-review half-done work, it does not count as a failed try, and its report stays in the task (the
-next run reads it). A run that wraps up with nothing left is reviewed as usual. The card and the
-task name the limit that stopped it: the task's budget, the specialist's limit, the session's
-budget, the project's budget, this month's cap or the share of your Claude subscription
-Forerunner may use; a stop at the project's budget, the month's cap or the subscription's share
-ends the session. A task's run never spends more than what is left of the session's work budget
-(the fifth kept for reviews stays for them), so a task that fills a whole session gets about 64%
-of it for its work. On a Claude subscription a budget stop really stops Claude Code: the run
+for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
+smaller than a single step's cost says so and pauses before that step. A run that stopped at a
+budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
+it does not count as a failed try, and its report stays in the task (the next run reads it). A
+run that wraps up with nothing left is reviewed as usual. The card and the task name the limit
+that stopped it: the task's budget, the specialist's limit, the session's budget, the project's
+budget, this month's cap or the share of your Claude subscription Forerunner may use. A stop at
+the project's budget, the month's cap or the subscription's share ends the session, and the
+session says which ("Stopped at this month's cap" on its page, "Stopped at this month's cap of
+CHF 150.00." in its result and the Inbox). Its notification says what helps: raise the monthly
+spending cap in Settings, raise the project budget, or wait until your Claude subscription's
+usage resets (a larger session budget would not help). A task's run never spends more than what
+is left of the session's work budget (the fifth kept for reviews stays for them), so a task that
+fills a whole session gets about 64% of it for its work. On a Claude subscription a budget stop really stops Claude Code: the run
 ends only once Claude Code has exited, and Stop now still ends it at once.
 
 When a task fails twice, the third attempt goes to another specialist that can do the same

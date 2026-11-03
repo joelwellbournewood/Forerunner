@@ -168,6 +168,8 @@ export class EnforcementHooks {
             spentUsdMicro: outer.spentUsdMicro,
             capUsdMicro: outer.capUsdMicro,
             runId: claims.runId,
+            // The run's line, when this was its first call: the drivers still say it.
+            ...(local.line ? { line: local.line } : {}),
           },
         },
       );

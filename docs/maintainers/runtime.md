@@ -1824,17 +1824,25 @@ budget-stop; the owner's decision of 2026-11-02).**
   on (it outranks `finish_current`) and returns the line (`line`) on the run's first call. A line
   at or below the first call's worst case is `saveOnly`: a tiny budget never hears a wrap-up and
   pauses at its budget. A review run has no line; a run first seen with spend booked has none.
+  The line is fixed before the caps are checked, and a refusal of the run's first call (a budget
+  below that call's worst case, `firstCallUsdMicro`; or an outer cap) carries it as
+  `details.line` (`wrapUpLineIn` reads it), so both drivers still emit `budget_line` before the
+  run ends. Before (review of budget-stop), such a run said no line at all: live check 3's
+  CHF 0.02 on the coder's Sonnet is one, since 4 096 output tokens alone cost USD 0.041.
 - *The message.* Only a run that asks for it hears it (`RunRequest.wrapUp` /
   `SdkRunRequest.wrapUp`: the executor sets `WRAP_UP_TEXT` for a task's run, never chat,
   planning or reviews). The loop appends it as one text block after the last tool results of
   that request (`appendText`, a new message object, never inside a tool result); the SDK path
   returns it once as PostToolUse's `additionalContext` with the next tool result. Both emit
-  `budget_line` (cap, reserve, line, `saveOnly`) at the first call and `wrap_up_sent`, and report
-  `wrapUpSent`. The executor turns both into session-log lines (`TaskStep` `note` → `task.step`,
-  Details): "This run may spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve
-  of CHF 0.08 to finish." or "... too little to wrap up (a reserve of CHF 0.02 is two calls):
-  save only, ...", and "Told the coder to wrap up: ...". The brief says what the two headings
-  are for (`WRAP_UP_BRIEF_LINE`).
+  `budget_line` (cap, reserve, line, the first call's worst case, `saveOnly`) at the first call
+  and `wrap_up_sent`, and report `wrapUpSent`. The executor turns both into session-log lines
+  (`TaskStep` `note` → `task.step`, Details; `budgetLineWords`, `wrapUpSentWords`): "This run may
+  spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
+  "... too little to wrap up (two steps may cost CHF 0.02): save only, ...", "This run may spend
+  CHF 0.02, less than its first step may cost (CHF 0.05): save only, it pauses at its budget
+  before that step.", and "Told the coder to wrap up: it spent CHF 0.30 of CHF 0.40, and the
+  last CHF 0.08 is kept to finish." (it said "about a fifth is left" while about 40% was). The brief says what the two headings are for
+  (`WRAP_UP_BRIEF_LINE`).
 - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
   do:", markdown-tolerant, "nothing" is empty, cut) and decides: a run is paused when it stopped
@@ -1862,9 +1870,21 @@ budget-stop; the owner's decision of 2026-11-02).**
 - *Routing.* The runner never reviews a `paused` result and counts no try. A pause at the task's
   own limit, the project's budget, the month's cap or the subscription's share moves the task to
   `needs_human` with today's budget card (`fileBudgetStopCard`, its title naming the limit); the
-  last three then end the session (`stopEndsSession`). A pause at the session's budget goes the
-  session-budget way below (C-36; `sessionBudgetStops` counts `paused` runs too) until the
-  'budget-resume' area pauses it with the same card at the first stop.
+  last three then end the session (`stopEndsSession`) with the limit's own stop reason
+  (`budgetStopReasonOf` in `session/stop-words.ts`: `budget_month`, `budget_project`,
+  `budget_plan`; `isBudgetStopReason` says whether a reason is a budget stop) and its amount
+  (`LastSessionOutcome.stopCapChfMicro`, `SessionResult.stopCapChfMicro`). The session's words
+  name it: the badge "Stopped at this month's cap" (`sessionStatusText`, also the log's end
+  line), the result's "Stopped at this month's cap of CHF 0.23." (`stopWords`, also the Inbox
+  Update and the chat's facts), a stopped review's "the session stopped at this month's cap"
+  (`reviewStopWords`), and the urgent `budget_stop` notification ("<Project>: stopped at this
+  month's cap", the amounts first in its body and what helps: raise the monthly spending cap,
+  the project budget, or wait for the subscription's usage to reset; never a larger session
+  budget, which the month's cap refuses). Before (review of budget-stop), such a session took
+  `budget_exceeded` and said "Stopped: the budget is used" at 1% of its own budget. A pause at
+  the session's budget goes the session-budget way below (C-36; `sessionBudgetStops` counts
+  `paused` runs too; stop reason `budget_exceeded`) until the 'budget-resume' area pauses it
+  with the same card at the first stop.
 - *The subscription's stop (`agent/sdk.ts`).* Every stop that is not the kill switch's (a
   budget, the time limit, an error) aborts the run's controller and waits for Claude Code to
   exit (`awaitExit`: what it still sends is read and its usage booked; after `SDK_STOP_WAIT_MS`
@@ -1876,16 +1896,23 @@ budget-stop; the owner's decision of 2026-11-02).**
   Usage is counted once per message id (parallel tool calls share one), and the result's totals
   (`modelUsage`, else `usage`) book what the messages did not (the real output). Claude Code's
   `maxBudgetUsd` is `claudeCodeBudgetUsd`: the run's cap plus 10% and USD 0.01, so Forerunner's
-  own stop comes first.
-- Tests: `budget.test.ts` (the line, the two-call reserve, save only, review), `wrap-up.test.ts`
-  (one block after the tool results, none on a tiny budget or a non-task run, the SDK's
-  `additionalContext` once), `sdk-driver.test.ts` ("a budget stop really stops Claude Code":
-  exit before return, no tool after the stop, Stop now during the wait, `close()` after the
-  wait, one count per message id with the result's output, `error_max_budget_usd`,
-  `maxBudgetUsd`), `budget-pause.test.ts` (composed runtime: paused with no review and no try,
-  reviewed after "Left to do: nothing" or with no wrap-up, the tiny budget, the work budget and
-  its review, across a restart, the month's cap named), `task-budget-cap.test.ts`, and
-  `real-daemon.test.ts` ("a budget stop is a clean pause") in `apps/ui`.
+  own stop comes first. While Claude Code winds down (`handle(m, false)`), a late result only
+  books its usage: an aborted query's own error result no longer turns the budget pause into a
+  Failed task tried again as a passing glitch (review of budget-stop).
+- Tests: `budget.test.ts` (the line, the two-call reserve, save only, review, the line on a
+  refused first call), `wrap-up.test.ts` (one block after the tool results, none on a tiny
+  budget or a non-task run, the SDK's `additionalContext` once, the save-only line when the
+  first call is refused on both paths), `sdk-driver.test.ts` ("a budget stop really stops Claude
+  Code": exit before return, no tool after the stop, Stop now during the wait, `close()` after
+  the wait, a late error result during the wait, one count per message id with the result's
+  output, `error_max_budget_usd`, `maxBudgetUsd`), `budget-pause.test.ts` (composed runtime:
+  paused with no review and no try, reviewed after "Left to do: nothing" or with no wrap-up, the
+  tiny budget, a budget below its first step, the work budget and its review, across a restart,
+  the month's cap named by the run, the card, the task and the session: its badge, result, log,
+  Update and notification), `session-status-words.test.ts` (the outer limits' stop reasons and
+  words), `notifications-channels.test.ts` (the budget stop at an outer limit),
+  `task-budget-cap.test.ts`, and `real-daemon.test.ts` ("a budget stop is a clean pause", "a
+  session ended at this month's cap names it") in `apps/ui`.
 
 **A task a session's own budget stopped twice asks the person (C-36, ADR 0105, the session
 lead's default).** A stop at the session's budget (`budget_exceeded`) releases the task to ready

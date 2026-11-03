@@ -1,5 +1,5 @@
 import { type Clock, errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
-import type { SessionBudget } from "../enforcement/budget.ts";
+import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
@@ -312,6 +312,10 @@ export class SdkAgentDriver {
         const total = resultTotals(msg);
         const rest = total ? usageLeft(total, usage) : null;
         if (rest) await book(rest, "result");
+        // While Claude Code winds down after a stop (`enforce` false), its late result only
+        // books its usage: the stop's outcome and the run's words stand (an aborted query's
+        // error result would otherwise turn a budget pause into a Failed task tried again).
+        if (!enforce) return;
         if (msg.subtype === "error_max_budget_usd") {
           // Claude Code's own spending limit (`maxBudgetUsd`, set above the run's cap): a stop
           // at the run's budget, never a passing error the runner would try again at once.
@@ -428,6 +432,10 @@ export class SdkAgentDriver {
                 ? "killed"
                 : "error";
       const details = e instanceof ForerunnerError ? e.details : {};
+      // A run refused at its first call (a budget below that call's worst case: Claude Code is
+      // never started) still says its line, "save only" (review of budget-stop).
+      const line = numTurns === 0 ? wrapUpLineIn(details) : undefined;
+      if (line) emit({ type: "budget_line", ...line });
       error = {
         code,
         message: errorMessage(e),
@@ -515,8 +523,15 @@ export class SdkAgentDriver {
         const r = await (next ?? iterator.next());
         next = null;
         if (r.done) return;
-        // Booking may fail once the run's token is revoked (Stop all); the run stops anyway.
-        await late(r.value).catch(() => undefined);
+        // Booking may fail once the run's token is revoked (Stop all); the run stops anyway,
+        // and the log says what was not booked (the ledger misses it).
+        await late(r.value).catch((e: unknown) =>
+          this.logger.warn("a stopped run's late message was not booked", {
+            label: registration.label,
+            type: String(r.value.type ?? ""),
+            error: errorMessage(e),
+          }),
+        );
       }
     })().catch(() => undefined);
     const wait = (ms: number) =>

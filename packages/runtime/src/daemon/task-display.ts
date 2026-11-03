@@ -8,7 +8,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
-import { stopReasonOfHandoff } from "../session/stop-words.ts";
+import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
 import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
@@ -302,8 +302,12 @@ export function reviewStopWords(task: Pick<TaskRow, "status">, sessionStop: stri
       return "the session's budget was used";
     case "timeout":
       return "the session ran out of time";
-    default:
-      return "it was stopped";
+    default: {
+      // A pause at the month's cap, the project's budget or the subscription's share ended the
+      // session (ADR 0111): the review stopped there, not at the session's own budget.
+      const limit = stopLimitWords(sessionStop);
+      return limit ? `the session stopped at ${limit}` : "it was stopped";
+    }
   }
 }
 

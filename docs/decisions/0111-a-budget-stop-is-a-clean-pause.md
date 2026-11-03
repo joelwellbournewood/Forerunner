@@ -43,7 +43,8 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
    refused and audited. The kill switch's own stop still returns at once, as its 2 s promise
    says. Claude Code's own spending limit (`maxBudgetUsd`) sits at the run's cap plus 10% and
    USD 0.01, so Forerunner's stop comes first, and its `error_max_budget_usd` result is a stop at
-   the run's budget, never a passing error.
+   the run's budget, never a passing error. While Claude Code winds down, a late result only
+   books its usage: an aborted query's own error result does not turn the stop into a failure.
 2. **Usage is counted once per API message**, and the result's totals (`modelUsage`, else
    `usage`) book what the messages did not count (the real output, subagents' calls).
 3. **Each work run has one wrap-up line**, fixed at its first call: its cap less a reserve, the
@@ -61,8 +62,14 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
    call), no wrap-up is sent and the run pauses at its budget with the code-side save only. The
    run's log line at its start says which applies and names the reserve: "This run may spend CHF
    0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish." or "This
-   run may spend CHF 0.01, too little to wrap up (a reserve of CHF 0.02 is two calls): save only,
-   it pauses at its budget with its work kept."
+   run may spend CHF 0.01, too little to wrap up (two steps may cost CHF 0.02): save only, it
+   pauses at its budget with its work kept." A budget below even its first call's worst case is
+   refused before that call and still says its line: "This run may spend CHF 0.02, less than its
+   first step may cost (CHF 0.05): save only, it pauses at its budget before that step." (On the
+   coder's Sonnet, 4 096 output tokens alone cost USD 0.041, so CHF 0.02 is such a budget.) When
+   the run is told to wrap up, the log says what it spent and the reserve kept: "Told the coder
+   to wrap up: it spent CHF 0.30 of CHF 0.40, and the last CHF 0.08 is kept to finish." (The
+   call that would pass the line brings the wrap-up, so more than a fifth is usually left.)
 5. **Paused.** A task's run is paused when a budget of any level stopped it, or when it heard the
    wrap-up in this run and its report's "Left to do:" list has at least one item. A run that
    ends normally without a wrap-up in this run, or after one with nothing left ("Left to do:
@@ -78,7 +85,12 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
    month's cap of CHF 150.00: it spent CHF 0.40, and its next step would have gone over."), and
    so do the task's status ("Paused at its budget", "Paused at this month's cap") and today's
    card. A pause at the project's budget, the month's cap or the subscription's share ends the
-   session: nothing else of it can run there.
+   session: nothing else of it can run there. That session names the limit too, never "the
+   session's budget is used": its stop reason is the limit's (`budget_month`, `budget_project`,
+   `budget_plan`), its badge reads "Stopped at this month's cap", its result "Stopped at this
+   month's cap of CHF 0.23.", and its urgent notification says what helps (raise the monthly
+   spending cap, the project budget, or wait for the subscription's usage to reset), never a
+   larger session budget, which the month's cap refuses. The phone's push names it as well.
 7. **A run cannot eat the review share.** A task's run may spend at most what is left of the
    session's work budget (its cap less the review reserve). With today's reserve of a fifth, a
    task that fills a whole session gets about 0.8 x 0.8 = 64% of it for work, as the owner was
@@ -100,6 +112,10 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
   improves the estimate, and the line follows.
 - The subscription's stop has no live check in the cloud (no subscription token): it is on the
   owner's checklist, step 6.
+- On the subscription the wrap-up reaches Claude Code only with a tool result (PostToolUse): a
+  run whose next step is its final answer ends without it and is reviewed as usual.
+- A paused run's lessons are recorded like any other run's (what it learned is true whether or
+  not it finished).
 
 ## Alternatives considered
 

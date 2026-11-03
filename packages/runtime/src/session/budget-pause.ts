@@ -191,11 +191,36 @@ export function pauseSentence(
     : `The run stopped at ${what}, after spending ${chf(spentUsdMicro)}.`;
 }
 
-/** The run's budget line at its first call, for the session log (ADR 0111). */
+/**
+ * The run's budget line at its first call, for the session log (ADR 0111). A budget below even
+ * its first step's worst case is refused before that step and says so (review of budget-stop:
+ * it said no line at all); "a reserve of CHF 0.01 is two calls" read oddly, so the save-only
+ * line names what two steps may cost.
+ */
 export function budgetLineWords(line: RunWrapUpLine, chf: (usdMicro: number) => string): string {
+  if (line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro)
+    return `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): save only, it pauses at its budget before that step.`;
   return line.saveOnly
-    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (a reserve of ${chf(line.reserveUsdMicro)} is two calls): save only, it pauses at its budget with its work kept.`
+    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): save only, it pauses at its budget with its work kept.`
     : `This run may spend ${chf(line.capUsdMicro)}: at ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
+}
+
+/**
+ * The session log's line when the run is told to wrap up (ADR 0111): what it spent of what it
+ * may spend, and the reserve kept to finish. The call that would pass the line brings the
+ * wrap-up, so more than a fifth is usually left: "about a fifth ... is left (it spent CHF 0.02
+ * of CHF 0.04)" was not true (review of budget-stop).
+ */
+export function wrapUpSentWords(
+  specialist: string,
+  spentUsdMicro: number,
+  capUsdMicro: number,
+  line: RunWrapUpLine | undefined,
+  chf: (usdMicro: number) => string,
+): string {
+  return line
+    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and the last ${chf(line.reserveUsdMicro)} is kept to finish.`
+    : `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
 }
 
 /** A handoff as the run's artifact stores it: data only, already redacted and cut. */

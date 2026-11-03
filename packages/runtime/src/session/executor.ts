@@ -34,6 +34,7 @@ import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import { type DelegationBrief, renderBrief, validateBrief } from "../brief.ts";
 import { headroomHeaders, isProxyable } from "../context/headroom.ts";
 import type { ContextManager } from "../context/manager.ts";
+import type { RunWrapUpLine } from "../enforcement/budget.ts";
 import type { RunBilling } from "../enforcement/hooks.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import {
@@ -120,6 +121,7 @@ import {
   type RunHandoff,
   stopSourceOf,
   WRAP_UP_BRIEF_LINE,
+  wrapUpSentWords,
 } from "./budget-pause.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
@@ -1106,17 +1108,22 @@ export class LoopTaskExecutor implements TaskExecutor {
     // Live progress (design §4.14, U-086): every model call and tool result is a step the runner
     // counts and logs while the task runs; the tool call's input names what it touched.
     const calls = new Map<string, { name: string; input: unknown }>();
+    // The run's wrap-up line (its budget_line), which the wrap-up's own log line names.
+    let runLine: RunWrapUpLine | undefined;
     const onEvent = (ev: RunEvent) => {
       this.deps.onEvent?.(task.id, ev);
       if (!ctx.onStep) return;
       // ADR 0111: the run's budget line at its start (the reserve, or "save only") and its
       // wrap-up are lines of the session's log.
-      if (ev.type === "budget_line")
+      if (ev.type === "budget_line") {
+        runLine = ev;
         ctx.onStep({ kind: "note", text: budgetLineWords(ev, (n) => this.chfText(n)) });
-      else if (ev.type === "wrap_up_sent")
+      } else if (ev.type === "wrap_up_sent")
         ctx.onStep({
           kind: "note",
-          text: `Told the ${spec.name} to wrap up: about a fifth of this task's budget is left (it spent ${this.chfText(ev.spentUsdMicro)} of ${this.chfText(ev.capUsdMicro)}).`,
+          text: wrapUpSentWords(spec.name, ev.spentUsdMicro, ev.capUsdMicro, runLine, (n) =>
+            this.chfText(n),
+          ),
         });
       else if (ev.type === "model_call_end")
         ctx.onStep({ kind: "model", costUsdMicro: ev.costUsdMicro });

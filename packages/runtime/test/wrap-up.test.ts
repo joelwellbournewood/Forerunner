@@ -94,6 +94,20 @@ describe("the loop's wrap-up message (budget-stop)", () => {
     expect(events.find((e) => e.type === "budget_line")).toMatchObject({ saveOnly: true });
   });
 
+  // Review of budget-stop: a budget below one call's worst case was refused before its line was
+  // reported, so the session log had no budget line at all (live check 3's CHF 0.02 on Sonnet).
+  it("a budget too small for even its first call still says its save-only line", async () => {
+    const { provider, events, result } = run(500, 3);
+    const res = await result;
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(provider.calls).toHaveLength(0);
+    const line = events.find((e) => e.type === "budget_line");
+    expect(line).toMatchObject({ capUsdMicro: 500, lineUsdMicro: 0, saveOnly: true });
+    expect((line as { firstCallUsdMicro: number }).firstCallUsdMicro).toBeGreaterThan(500);
+    // Said before the run ends, so the session log has it.
+    expect(events.map((e) => e.type)).toEqual(["run_start", "budget_line", "run_end"]);
+  });
+
   it("a run that is not a task's (no wrap-up text asked for) is never given one", async () => {
     const { provider, result } = run(30_000, 6, { wrapUp: false });
     const res = await result;
@@ -178,5 +192,45 @@ describe("the Agent SDK path's wrap-up message (budget-stop)", () => {
       (outputs[0]?.hookSpecificOutput as { additionalContext?: string } | undefined)
         ?.additionalContext,
     ).toBeUndefined();
+  });
+
+  it("a budget too small for even its first call still says its save-only line (review of budget-stop)", async () => {
+    const h = harness();
+    let started = false;
+    const q: QueryLike = () => {
+      started = true;
+      return (async function* () {
+        yield { type: "result", subtype: "success", is_error: false, result: "done" };
+      })();
+    };
+    const events: RunEvent[] = [];
+    const res = await new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    }).run({
+      token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 500 }),
+      budget: budget("sess-1", 50_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "oauth_token", value: "oat-value" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "sys",
+      prompt: "p",
+      cwd: process.cwd(),
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+      wrapUp: WRAP_UP_TEXT,
+      onEvent: (e) => events.push(e),
+    });
+    expect(res.outcome).toBe("budget_exceeded");
+    // Claude Code was never started.
+    expect(started).toBe(false);
+    expect(events.find((e) => e.type === "budget_line")).toMatchObject({
+      capUsdMicro: 500,
+      saveOnly: true,
+    });
+    expect(events.at(-1)?.type).toBe("run_end");
   });
 });

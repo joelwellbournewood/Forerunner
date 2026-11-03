@@ -253,7 +253,17 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0111)", () => {
         ),
       ),
     ).toBe(true);
-    expect(said.some((l) => l.startsWith("Told the coder to wrap up"))).toBe(true);
+    // Said by the line (review of budget-stop: "about a fifth ... is left (it spent CHF 0.02 of
+    // CHF 0.04)" was not what was left, since the call that would pass the line brings it).
+    expect(
+      said.some((l) =>
+        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.24, and the last CHF 0\.05 is kept to finish\.$/.test(
+          l,
+        ),
+      ),
+      said.join(" | "),
+    ).toBe(true);
+    expect(said.join(" | ")).not.toMatch(/a fifth of this task's budget is left/);
     expect(
       said.some((l) =>
         /^"Guide pages" paused before its budget of CHF 0\.24 ran out: it spent CHF [\d.]+ and listed 2 things left to do\.$/.test(
@@ -303,6 +313,26 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0111)", () => {
     expect(artifacts).not.toContain("would be exceeded");
     expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
     expect(lines(r.events).some((l) => /too little to wrap up .*: save only/.test(l))).toBe(true);
+  }, 60_000);
+
+  // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
+  // on Sonnet) was refused before its line was said, so the session log had no budget line.
+  it("a budget below its first step's cost says so (save only) and pauses before that step", async () => {
+    const r = await runOne(req, rt, "Stub page", { budgetUsdMicro: 1_000 });
+    expect(coderCalls("Stub page")).toHaveLength(0);
+    expect(
+      lines(r.events).some((l) =>
+        /^This run may spend CHF [\d.]+, less than its first step may cost \(CHF [\d.]+\): save only, it pauses at its budget before that step\.$/.test(
+          l,
+        ),
+      ),
+      lines(r.events).join(" | "),
+    ).toBe(true);
+    const task = await rt.store.task.mustGet(r.taskId);
+    expect(task.status).toBe("needs_human");
+    expect(task.attempt).toBe(0);
+    expect(await reviewOf(r.taskId)).toBeUndefined();
+    expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
   }, 60_000);
 
   it("a run is capped at what is left of the session's work budget, so its review keeps the reserve", async () => {
@@ -379,5 +409,46 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0111)", ()
     expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
     expect(r.runs[0]?.outcome).toBe("budget_exceeded");
+  }, 60_000);
+
+  // Review of budget-stop: the run, the card and the task named the month, but the session it
+  // ended said "Stopped: the budget is used" and "The session's budget is used." (at CHF 0.04 of
+  // a CHF 5.00 session), the Inbox Update said the same, and the urgent notification advised
+  // "Start a session with a larger budget to go on", which the month's cap refuses.
+  it("the session it ends names this month's cap too: its status, its result, its log, the Update and the notification", async () => {
+    const r = await runOne(req, rt, "Members page", { budgetUsdMicro: 2_000_000 });
+    expect(r.session.status).toBe("stopped");
+    expect(r.session.statusText).toBe("Stopped at this month's cap");
+    const summary = String(r.session.summary);
+    expect(summary).toContain("Stopped at this month's cap of CHF 0.10.");
+    expect(summary).not.toMatch(/session's budget|budget is used/);
+    const said = lines(r.events);
+    // The session's end line (before: "Stopped: the budget is used: 1 needs you. CHF 0.04.").
+    expect(
+      said.some((l) => /^Stopped at this month's cap: /.test(l)),
+      said.join(" | "),
+    ).toBe(true);
+    expect(said.join(" | ")).not.toMatch(/budget is used/);
+    // The Inbox Update (the card says the task's decision; the Update says how the session ended).
+    const updates = ((await (await req("/inbox")).json()) as { messages: Json[] }).messages
+      .filter((m) => m.projectId === r.projectId)
+      .map((m) => String(m.body));
+    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.10.");
+    expect(updates.join(" | ")).not.toMatch(/budget is used/);
+    // The urgent notification names the month and says what helps.
+    const stop = await waitFor(
+      async () =>
+        (
+          (await (await req("/notifications/recent?limit=200")).json()) as {
+            notifications: Json[];
+          }
+        ).notifications.find((n) => n.kind === "budget_stop" && n.sessionId === r.sessionId),
+      async () => "the session's budget_stop notification",
+    );
+    expect(String(stop.title)).toBe("Members page project: stopped at this month's cap");
+    expect(String(stop.body)).toMatch(
+      /^This month's cap is CHF 0\.10\. The session spent CHF [\d.]+\. .*Raise the monthly spending cap in Settings to go on\.$/,
+    );
+    expect(String(stop.body)).not.toMatch(/larger budget|session's budget/);
   }, 60_000);
 });

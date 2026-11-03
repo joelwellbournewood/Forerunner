@@ -106,7 +106,13 @@ import {
   type SandboxWaitingTask,
   summarizeSandboxWaiting,
 } from "./sandbox-gate.ts";
-import { type PersonStop, personStopOf, taskReasonForStop } from "./stop-words.ts";
+import {
+  budgetStopReasonOf,
+  type PersonStop,
+  personStopOf,
+  stopLimitWords,
+  taskReasonForStop,
+} from "./stop-words.ts";
 import type { WebSource } from "./web-sources.ts";
 
 /**
@@ -439,6 +445,11 @@ export interface SessionResult {
   news: string[];
   handoff: Record<string, unknown>;
   stopReason: string;
+  /**
+   * The amount of the outer limit a task's pause ended the session at (this month's cap, the
+   * project's budget: ADR 0111), in CHF; the budget-stop notification names it.
+   */
+  stopCapChfMicro?: number;
   /** What the human said during the session and the task each line reached (spec O.9). */
   heard: HeardDelivery[];
 }
@@ -828,6 +839,8 @@ export class SessionRunner {
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
+    /** The amount of the outer limit a task's pause ended the session at (ADR 0111), if any. */
+    let stopCapUsdMicro: number | null = null;
     let status: SessionRow["status"] = "completed";
     /** The queue items each task's brief carried (design §4.7: used up by finished work). */
     const notesGiven = new Map<string, string[]>();
@@ -2015,7 +2028,10 @@ export class SessionRunner {
               result.budgetStop &&
               stopEndsSession(result.budgetStop.source)
             ) {
-              stopReason = "budget_exceeded";
+              // The session names the limit that ended it (review of budget-stop): before, it
+              // said "the session's budget is used" at 1% of its own budget.
+              stopReason = budgetStopReasonOf(result.budgetStop.source);
+              stopCapUsdMicro = result.budgetStop.capUsdMicro;
               skipped.push(...queue.map((i) => i.taskId));
               queue.length = 0;
               break;
@@ -2322,6 +2338,10 @@ export class SessionRunner {
         .filter((t) => endState.readyNow.some((r) => r.id === t.id))
         .map((t) => ({ id: t.id, title: t.title })),
       stopReason,
+      // The outer limit's amount, while the session still ends there (ADR 0111).
+      ...(stopCapUsdMicro !== null && stopLimitWords(stopReason) !== null
+        ? { stopCapChfMicro: usdToChfMicro(stopCapUsdMicro, rate) }
+        : {}),
       spentChfMicro: spentChf,
     };
     const resultFacts = {
@@ -2805,6 +2825,9 @@ export class SessionRunner {
       news,
       handoff,
       stopReason,
+      ...(outcome.stopCapChfMicro !== undefined
+        ? { stopCapChfMicro: outcome.stopCapChfMicro }
+        : {}),
       heard,
     };
   }

@@ -652,7 +652,7 @@ it does not run through the command registry.
 
 ### Fake daemon
 
-A task paused at a budget (ADR 0111) reads as the daemon words it, "Paused at its budget" (or the limit its card names), since the fake builds every task's `display` with the daemon's own `taskDisplay`; `test/inbox.test.tsx` and `test/real-daemon.test.ts` ("a budget stop is a clean pause": the stand-in's wrap-up, no critic call, the run's report in the drawer) check it on both sides.
+A task paused at a budget (ADR 0111) reads as the daemon words it, "Paused at its budget" (or the limit its card names), since the fake builds every task's `display` with the daemon's own `taskDisplay`; `test/inbox.test.tsx` and `test/real-daemon.test.ts` ("a budget stop is a clean pause": the stand-in's wrap-up, no critic call, the run's report in the drawer) check it on both sides. A session a pause at this month's cap ended reads "Stopped at this month's cap" (the daemon's `statusText`, which the session page shows as it comes) with "Stopped at this month's cap of CHF ..." in its result and Update; the fake simulates no budget stop, so only `test/real-daemon.test.ts` ("a session ended at this month's cap names it") checks it.
 
 Sessions in the fake carry the real view's `stopReason` and `statusText` (design §3.7): a
 started one reads "Working", `POST /sessions/:id/stop` ends it `stopped` with the stop reason

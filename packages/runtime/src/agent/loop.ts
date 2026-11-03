@@ -2,7 +2,7 @@ import { fastModeVariantId } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import { z } from "zod";
 import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
-import type { SessionBudget } from "../enforcement/budget.ts";
+import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
@@ -191,13 +191,15 @@ export type RunEvent =
   | { type: "warning"; message: string }
   /**
    * The run's wrap-up line, at its first call (ADR 0111): its cap, the reserve and the line;
-   * `saveOnly` when the budget is too small to wrap up. Both drivers emit it.
+   * `saveOnly` when the budget is too small to wrap up; `firstCallUsdMicro`, that call's worst
+   * case. Both drivers emit it, also when that first call is refused (a budget below it).
    */
   | {
       type: "budget_line";
       capUsdMicro: number;
       reserveUsdMicro: number;
       lineUsdMicro: number;
+      firstCallUsdMicro: number;
       saveOnly: boolean;
     }
   /** The run was told to wrap up (ADR 0111), once; `spentUsdMicro` is what it had spent then. */
@@ -677,6 +679,10 @@ export class LoopAgentDriver {
       const code = e instanceof ForerunnerError ? e.code : "internal";
       outcome = outcomeFor(code, controller.signal);
       const details = e instanceof ForerunnerError ? e.details : {};
+      // A run refused at its first call (a budget below that call's worst case) still says its
+      // line, "save only" (review of budget-stop): the refusal carries it.
+      const line = modelCalls === 0 ? wrapUpLineIn(details) : undefined;
+      if (line) emit({ type: "budget_line", ...line });
       error = {
         code,
         message: errorMessage(e),

@@ -2930,6 +2930,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         sessionId: result.sessionId,
         status: result.status,
         stopReason: result.stopReason,
+        ...(result.stopCapChfMicro !== undefined
+          ? { stopCapChfMicro: result.stopCapChfMicro }
+          : {}),
         summary: result.summary,
         news: result.news,
         spentUsdMicro: result.spentUsdMicro,

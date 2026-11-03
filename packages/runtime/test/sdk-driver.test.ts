@@ -371,7 +371,7 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
    * fires; then it takes `exitMs` to wind down. With `ignoreAbort` it goes on until `close()`.
    * From the second message on, each costs more than the run's cap, so the budget stops it.
    */
-  function claudeCodeLike(opts: { exitMs: number; ignoreAbort?: boolean }) {
+  function claudeCodeLike(opts: { exitMs: number; ignoreAbort?: boolean; lateResult?: boolean }) {
     const state = {
       exited: false,
       closed: false,
@@ -386,6 +386,15 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
         for (let i = 0; ; i++) {
           if (state.closed || (ac.signal.aborted && !opts.ignoreAbort)) {
             if (!state.closed) await new Promise((r) => setTimeout(r, opts.exitMs));
+            // An aborted query's own error result, as it winds down.
+            if (opts.lateResult)
+              yield {
+                type: "result",
+                subtype: "error_during_execution",
+                is_error: true,
+                result: "Claude Code process aborted by user",
+                total_cost_usd: 0,
+              };
             state.exited = true;
             return;
           }
@@ -449,6 +458,18 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
     expect(state.decisions.some((d) => d.afterStop)).toBe(true);
     expect(state.decisions.filter((d) => d.afterStop && d.allowed)).toEqual([]);
     expect(h.kill.activeCount()).toBe(0);
+  });
+
+  // Review of budget-stop: the drain read a late error result like any other, so an aborted
+  // query's own "error_during_execution" turned the budget pause into a Failed task tried again.
+  it("a late error result while Claude Code winds down leaves the budget stop as it was", async () => {
+    const h = harness();
+    const { q, state } = claudeCodeLike({ exitMs: 10, lateResult: true });
+    const res = await driverOf(h, q).run(req(h));
+    expect(state.exited).toBe(true);
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(res.error?.code).toBe("budget_exceeded");
+    expect(res.finalText).not.toContain("aborted by user");
   });
 
   it("the hooks refuse a tool call that arrives after run() returned (its token is ended)", async () => {
