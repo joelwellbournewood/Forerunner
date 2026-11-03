@@ -231,7 +231,11 @@ with their milestone.
   aborted and files the rebase-conflict request with the dropped pull requests named
   (`droppedWords`). `rebuildDependents(projectId, changedDependencyTaskId, hooks)` does it for
   every done task of the project that waits for that one (directly or through others) and whose
-  worktree holds it (`rebuildTask` for one task): the branch as the host has it, rebuilt,
+  worktree holds it (`rebuildTask` for one task), a task before those that build on it: a
+  rebuild that kept the task's own change records `refs/forerunner/rebuilt/<old head>` (the new
+  head) in its worktree, and a dependent holding the old head follows it (`rebuiltTo`: kept,
+  `open`) instead of reading it as redone (a 3-task chain on the bench, 2026-11-03, voided the
+  third task before this). Each: the branch as the host has it, rebuilt,
   `hooks.beforePush(rebuild, pr)` (the runtime settles the merge record there), then a push
   with a lease (never the default branch) and the "Builds on" line updated. A worktree a run or
   another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one with

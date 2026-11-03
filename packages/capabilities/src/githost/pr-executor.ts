@@ -188,6 +188,12 @@ export function withBuildsOn(body: string, line: string): string {
  * rebuild reads them when a dependency's pull request is merged, closed or redone.
  */
 export const DEPS_HELD_PREFIX = "refs/forerunner/deps/";
+/**
+ * Where a task's worktree records that its branch was rebuilt with the same own change:
+ * `refs/forerunner/rebuilt/<old head>` names the new head. A task that built on the old head
+ * follows it (in a chain, the next one is rebuilt onto it), not voided as redone.
+ */
+export const REBUILT_PREFIX = "refs/forerunner/rebuilt/";
 export function depsHeldRef(taskId: string): string {
   return `${DEPS_HELD_PREFIX}${safeSegment(taskId)}`;
 }
@@ -845,15 +851,39 @@ export class PrTaskExecutor implements TaskExecutor {
       : [];
     const open = prs.find((p) => p.state === "open");
     if (open) {
-      // The open pull request still carries the work held (it may have moved on since).
+      // The open pull request still carries the work held (it may have moved on since), or the
+      // same change rebuilt (the dependency was itself rebuilt onto main: this one follows it).
       const tip = await git.resolveRef(`origin/${dep.branch}`);
-      const carries = !!tip && (await git.isAncestor(e.sha, tip));
+      let carries = !!tip && (await git.isAncestor(e.sha, tip));
+      if (!carries && tip) {
+        const rebuilt = await this.rebuiltTo(dep.id, e.sha);
+        carries = !!rebuilt && (await git.hasRef(rebuilt)) && (await git.isAncestor(rebuilt, tip));
+      }
       return { ...base, number: open.number, state: carries ? "open" : "redone" };
     }
     const latest = [...prs].sort((a, b) => b.number - a.number);
     const merged = latest.find((p) => p.merged);
     if (merged) return { ...base, number: merged.number, state: "copied" };
     return { ...base, number: latest[0]?.number ?? numberOf(dep.pr_url), state: "closed" };
+  }
+
+  /**
+   * The head `sha` of a task's branch was rebuilt to with the same own change (following a
+   * chain of rebuilds), read in that task's worktree; null when it was not.
+   */
+  private async rebuiltTo(taskId: string, sha: string): Promise<string | null> {
+    const dir = join(this.deps.worktreeRoot, safeSegment(taskId));
+    if (!existsSync(join(dir, ".git"))) return null;
+    const git = new GitOps({ cwd: dir });
+    let at: string | null = null;
+    let from = sha;
+    for (let hop = 0; hop < 20; hop++) {
+      const next = await git.resolveRef(`${REBUILT_PREFIX}${from}`);
+      if (!next) break;
+      at = next;
+      from = next;
+    }
+    return at;
   }
 
   /** The tasks `task` waits for, and those they wait for, in the same project. */
@@ -934,6 +964,9 @@ export class PrTaskExecutor implements TaskExecutor {
     await this.setDepsBase(git, newBase, newHeld);
     out.after = await git.headSha();
     out.ownAfter = await ownChangeId(git, base).catch(() => null);
+    // The same change on a new head: what built on the old head follows it (`rebuiltTo`).
+    if (out.ownBefore && out.ownBefore === out.ownAfter)
+      await git.setRef(`${REBUILT_PREFIX}${before}`, out.after);
     this.logger.info("dependent branch rebuilt", {
       taskId: task.id,
       branch,
@@ -964,12 +997,18 @@ export class PrTaskExecutor implements TaskExecutor {
         limit: 2000,
       },
     );
+    // A task before the tasks that build on it: in a chain, each one follows the one before it
+    // once that one was rebuilt (`rebuiltTo`).
+    const todo: { task: TaskRow; depth: number }[] = [];
     for (const t of done) {
       if (t.id === changedDependencyTaskId || !t.branch || !(t.depends_on ?? []).length) continue;
       const deps = await this.dependencyTasks(t);
       if (!deps.some((d) => d.id === changedDependencyTaskId)) continue;
-      out.push(await this.rebuildTask(t, hooks, changedDependencyTaskId));
+      todo.push({ task: t, depth: deps.length });
     }
+    todo.sort((a, b) => a.depth - b.depth);
+    for (const { task } of todo)
+      out.push(await this.rebuildTask(task, hooks, changedDependencyTaskId));
     return out;
   }
 

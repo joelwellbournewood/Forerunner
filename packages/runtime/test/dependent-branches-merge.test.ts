@@ -342,6 +342,41 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     );
   });
 
+  it("(c) a chain of three, the first squash-merged on GitHub: the second is rebuilt onto main and the third follows it (bench walk, 2026-11-03), nothing is voided and both merge in order", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add notes", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect(await m.prCommits(prB)).toEqual(["Add footer"]);
+    // C holds B's rebuilt branch and its own commit, nothing of A.
+    expect(await m.prFiles(prC)).toEqual([m.fileOf("Add footer"), m.fileOf("Add notes")].sort());
+    expect(await m.prCommits(prC)).not.toContain("Add page");
+    expect((await m.pr(c.id)).body).toContain(`Builds on #${prB} (not merged yet)`);
+    // Neither review is void: both still wait for the person with their own sentence.
+    for (const t of [b, c]) {
+      const r = await m.record(t.id);
+      expect(r.state).toBe("left_to_you");
+      expect(r.last_outcome).toBe("not_allowed");
+      expect(r.reviewed_head_sha).toBe((await m.pr(t.id)).head.sha);
+    }
+    expect(await m.cards(c.id)).toEqual([]);
+    // Merged in order, each one cleanly; main has each task's change once.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    await m.poll();
+    expect((await m.mergeByPerson(c.id)).status).toBe("merged");
+    for (const t of [a, b, c])
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf(t.title))).split("\n"),
+      ).toHaveLength(1);
+  });
+
   it("(d) a dependency closed without merging: the dependent is rebuilt without it, its review is void (one sentence, one card), and a merge the gate would make unattended at level 3 does not happen", async () => {
     const m = await chainWorld({ level: 3 });
     // A waits for the person (its checks fail), B's checks are still running when it is accepted.
