@@ -45,7 +45,7 @@ Status: accepted | superseded by NNNN
 | 0028 | Critic independence and verdict rules in code; amended 2026-10-26: at effort max the verdict ends the run and the first call's cap (8192 to 24000) is sized from the review's budget left, and a captured verdict is never reported as a later refusal (D.15 live run of 2026-10-25) |
 | 0029 | Daemon wiring of the phase 6 and 7 modules: extensions, updates, model watch, estimates, mirror, sandbox |
 | 0030 | Command registry: risk resolution, confirmations, change log and undo |
-| 0031 | Desktop shell: its own `/events` subscription, tray behaviour, restart handling, deep links |
+| 0031 | Desktop shell: its own `/events` subscription, tray behaviour, restart handling, deep links; amended 2026-11-02 (the owner's decision Q7): a Ctrl- or Shift-click on one of the app's own links shows that page in the same window, as a plain click does |
 | 0032 | Android app: one bundle under `/m`, Keystore-wrapped device key, remote plan envelope, offline scope, push stand-in |
 | 0033 | Cloud runner: the vault unlock protocol and the PC-wins precedence rule |
 | 0034 | Approvals web: session from a one-time link, per-tab device key, re-entered code for high-risk answers, chat as a remote command |

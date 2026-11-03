@@ -24,6 +24,7 @@ import {
   fallbackEndpoints,
   freePort,
   heldKey,
+  inAppClickVerdict,
   installStandIn,
   isAppUrl,
   noSecondWindow,
@@ -817,6 +818,8 @@ describe("the shell's hand-offs in its log", () => {
       "[2026-11-02][08:03:04][forerunner_desktop_lib::windows][INFO] handed to the system browser (link): http://127.0.0.1:4100/acme/window-check/pull/1",
       "[2026-11-02][08:03:09][forerunner_desktop_lib::windows][INFO] handed to the system browser (new window): https://example.org/a%20b (query not logged)",
       "[2026-11-02][08:03:12][forerunner_desktop_lib::windows][WARN] opening file from the window refused (link)",
+      "[2026-11-02][08:03:15][forerunner_desktop_lib::windows][INFO] shown in this window (new window): http://tauri.localhost/inbox",
+      "[2026-11-02][08:03:16][forerunner_desktop_lib::windows][INFO] shown in this window (new window): http://tauri.localhost/projects/p1/tasks (query not logged)",
       "[2026-11-02][08:03:20][forerunner_desktop_lib::folder][INFO] handed to the file manager: C:\\Users\\runneradmin\\fr window\\Zürich home\\data\\projects\\p1\\workspace",
       "[2026-11-02][08:03:30][forerunner_desktop_lib::windows][WARN] could not open https://example.org/x in the browser: no handler",
     ].join("\r\n");
@@ -828,6 +831,8 @@ describe("the shell's hand-offs in its log", () => {
       },
       { kind: "browser", via: "new window", target: "https://example.org/a%20b" },
       { kind: "refused", scheme: "file", via: "link" },
+      { kind: "window", via: "new window", target: "http://tauri.localhost/inbox" },
+      { kind: "window", via: "new window", target: "http://tauri.localhost/projects/p1/tasks" },
       {
         kind: "folder",
         target: "C:\\Users\\runneradmin\\fr window\\Zürich home\\data\\projects\\p1\\workspace",
@@ -840,6 +845,12 @@ describe("the shell's hand-offs in its log", () => {
     expect(shellSource("windows.rs")).toContain(
       'pub const HANDED_TO_BROWSER: &str = "handed to the system browser";',
     );
+    // Q7: an app page asked for in a new window is shown in this one, and the shell says so
+    // (the cargo test an_app_page_shown_in_this_window_is_logged_without_its_query pins it).
+    expect(shellSource("windows.rs")).toContain(
+      'pub const SHOWN_IN_WINDOW: &str = "shown in this window";',
+    );
+    expect(shellSource("windows.rs")).toContain('"{SHOWN_IN_WINDOW} ({}): {}"');
     expect(shellSource("windows.rs")).toContain('"opening {} from the window refused ({})"');
     expect(shellSource("folder.rs")).toContain(
       'pub const HANDED_TO_FILE_MANAGER: &str = "handed to the file manager";',
@@ -1057,12 +1068,110 @@ describe("Ctrl- and Shift-clicked links, and what the page threw", () => {
     });
     expect(noSecondWindow(unread, one)).toMatchObject({ ok: false });
 
-    // The Ctrl-, Shift- and in-app Ctrl+click checks count with these, and no read of the
-    // window's list turns a failure into an empty one.
+    // The Ctrl+ and Shift+click checks, on a link that leaves the app and on the app's own
+    // Inbox, count with these, and no read of the window's list turns a failure into an empty one.
     const script = readFileSync(join(REPO, "scripts", "desktop-window-check.mjs"), "utf8");
     expect(script.match(/noSecondWindow\(windowsBefore, await pageTargets\(\)\)/g)).toHaveLength(2);
     expect(script).not.toMatch(/listTargets\([^)]*\)\s*\.catch\(\s*\(\)\s*=>\s*\[\]\s*\)/);
     expect(script).not.toMatch(/page target\(s\), \$\{windowsBefore\} before/);
+  });
+
+  /**
+   * Q7, the owner's decision of 2026-11-02: a Ctrl- or Shift-click on one of the app's own links
+   * acts like a plain click. Run 41495902701 passed "a Ctrl+click on one of the app's own links
+   * opens no browser and no second window" with "the shell refused it (http, new window)": the
+   * person clicked Inbox and nothing happened. That is now a failure, and the check expects the
+   * Inbox in the same window (the owner changed what is expected; the check is not weaker).
+   */
+  it("expects a Ctrl- or Shift-click on Inbox to show the Inbox in this window, and fails what run 41495902701 passed", () => {
+    const tasks = "http://tauri.localhost/projects/p1/tasks";
+    const inbox = "http://tauri.localhost/inbox";
+    const held = (key: "Control" | "Shift") => ({
+      ctrl: key === "Control",
+      shift: key === "Shift",
+      trusted: true,
+      prevented: false,
+    });
+    const oneWindow = { ok: true, words: "1 page target(s), 1 before" };
+    const shownLine = parseHandoffs(
+      "[2026-11-02][08:03:15][forerunner_desktop_lib::windows][INFO] shown in this window (new window): http://tauri.localhost/inbox",
+    );
+    const base = {
+      said: shownLine,
+      seen: held("Control"),
+      key: "Control" as const,
+      windows: oneWindow,
+      before: tasks,
+      after: inbox,
+      route: "/inbox",
+      shown: true,
+    };
+    expect(inAppClickVerdict(base)).toEqual({
+      ok: true,
+      detail:
+        "the shell showed it in this window (new window: http://tauri.localhost/inbox); the page saw the click with Ctrl held; the window moved to /inbox; the page shows it; 1 page target(s), 1 before",
+    });
+    expect(inAppClickVerdict({ ...base, seen: held("Shift"), key: "Shift" })).toMatchObject({
+      ok: true,
+    });
+
+    // Run 41495902701, as it went: refused, nothing happened.
+    const refusedRun = inAppClickVerdict({
+      ...base,
+      said: parseHandoffs(
+        "[2026-11-02][18:20:00][forerunner_desktop_lib::windows][WARN] opening http from the window refused (new window)",
+      ),
+      after: tasks,
+      shown: false,
+    });
+    expect(refusedRun.ok).toBe(false);
+    expect(refusedRun.detail).toBe(
+      `the shell refused it (http, new window), so nothing happened; the page saw the click with Ctrl held; the window is on ${tasks} (before the click ${tasks}), not on /inbox; the page does not show it; 1 page target(s), 1 before`,
+    );
+
+    // Each part is needed on its own.
+    const fails = (o: Partial<typeof base>) => inAppClickVerdict({ ...base, ...o }).ok;
+    // The page went to the browser as well, or instead.
+    expect(
+      fails({
+        said: [...shownLine, { kind: "browser", via: "new window", target: inbox }],
+      }),
+    ).toBe(false);
+    expect(
+      inAppClickVerdict({
+        ...base,
+        said: [{ kind: "browser", via: "new window", target: inbox }],
+      }).detail,
+    ).toMatch(/^handed off: browser http:\/\/tauri\.localhost\/inbox;/);
+    // A second window opened (it would have no daemon token), or the count could not be read.
+    expect(fails({ windows: { ok: false, words: "2 page target(s), 1 before" } })).toBe(false);
+    // The Inbox did not show (no heading, so the daemon never answered the page).
+    expect(fails({ shown: false })).toBe(false);
+    // The window is elsewhere, did not move, or left the app.
+    expect(fails({ after: tasks })).toBe(false);
+    expect(fails({ before: inbox, after: inbox })).toBe(false);
+    expect(fails({ after: "https://example.org/inbox" })).toBe(false);
+    // The key never arrived: that is a plain click, which proves nothing about this path.
+    expect(fails({ seen: { ctrl: false, shift: false, trusted: true, prevented: false } })).toBe(
+      false,
+    );
+    // The page moved, but not by the shell's new-window answer (nothing in its log).
+    expect(inAppClickVerdict({ ...base, said: [] })).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(/^nothing reached the shell;/),
+    });
+
+    // The journey clicks Inbox with Ctrl, then with Shift, through this verdict, and no longer
+    // expects the click to do nothing.
+    const script = readFileSync(join(REPO, "scripts", "desktop-window-check.mjs"), "utf8");
+    expect(script).toContain(
+      'const inboxLink = page.getByRole("link", { name: "Inbox" }).first();',
+    );
+    expect(script).toContain("await inboxLink.click({ modifiers: [key] });");
+    expect(script).toContain("const verdict = inAppClickVerdict({");
+    expect(script).toContain('route: "/inbox",');
+    expect(script).not.toContain("own links opens no browser and no second window");
+    expect(script).not.toContain('stays(before, "a Ctrl+click on an in-app link")');
   });
 
   it("the shell builds the opener plugin without its page script, so these clicks reach its new-window handler", () => {

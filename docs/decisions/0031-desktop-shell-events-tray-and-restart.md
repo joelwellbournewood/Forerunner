@@ -6,6 +6,10 @@ Status: accepted
 Amended 2026-10-31 by ADR 0094 (U-018): Quit stops the daemon and everything it started; the
 first close to the tray says that Forerunner keeps running.
 
+Amended 2026-11-02 by the owner's decision Q7 (point 6): a Ctrl- or Shift-click on one of the
+app's own links acts like a plain click, so the main window shows that page; a link to another
+site still opens in the system browser, and no second window is ever created.
+
 ## Context
 
 ADR 0026 makes the desktop shell (`apps/desktop`, Tauri 2) attach to one `fr daemon` per
@@ -90,6 +94,14 @@ state lives.
    (`tauri://localhost`, `http(s)://tauri.localhost`, the dev server); the main window's
    navigation policy refuses every other origin and opens `http(s)` links in the OS browser.
    The token therefore never reaches a remote page even if the UI navigates.
+   *Amended 2026-11-02 (the owner's decision Q7):* a new-window request (`target="_blank"`,
+   `window.open`, and in WebView2 a link clicked with Ctrl or Shift) never opens a second
+   window. An `http(s)` page goes to the OS browser; one of the app's own pages is shown in the
+   main window, as a plain click on its link would show it: the UI is moved in place with
+   `history.pushState` plus a `popstate` event (as for a deep link, point 7), to the page's own
+   path, query and fragment, so the page keeps its token and what the person typed; anything
+   else (`about:blank`, the splash, other schemes) is refused. Before, the app's own page was
+   refused as well, and a Ctrl-click on Inbox did nothing.
 7. **Deep links** use the scheme `fr`, registered for Windows and Linux through the deep-link
    plugin (bundler config plus `register_all()` at start for AppImage and dev builds) with the
    single-instance plugin forwarding a second launch to the running shell. `fr://<route>` maps
@@ -116,6 +128,13 @@ state lives.
   updated as well as the UI's (`sse.rs` mirrors `apps/ui/src/api/sse.ts`).
 
 ## Alternatives considered
+
+- For a Ctrl- or Shift-clicked app link (Q7): loading the URL in the main webview. The
+  initialization script would give the new document the token again, but the whole UI would
+  reload and drop what the person had typed; a plain click on an in-app link moves the page in
+  place, so the shell does the same. A second window with its own injection: two windows on one
+  token, and every rebuild of the main window (a restarted daemon) would have to find both.
+  Keeping the refusal: safe, but the click did nothing, which the owner called broken.
 
 - Subscribing through the webview and a Tauri command: simpler, but silent while hidden and
   it would put the token in a URL.

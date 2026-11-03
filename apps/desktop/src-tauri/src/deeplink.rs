@@ -78,8 +78,10 @@ pub fn route_for_deep_link(raw: &str) -> Option<String> {
     is_safe_route(&route).then_some(route)
 }
 
-/// Script that moves the UI to `route` in place. The route is JSON-encoded; callers pass only
-/// routes `is_safe_route` accepted.
+/// Script that moves the UI to `route` in place. The route is JSON-encoded, and
+/// `history.pushState` only moves within the page's own origin (anything else throws, and the
+/// script does nothing). A deep link passes only routes `is_safe_route` accepted; an app page
+/// asked for in a new window passes its own path, query and fragment (`windows::app_route`).
 pub fn navigate_script(route: &str) -> String {
     let encoded = serde_json::to_string(route).unwrap_or_else(|_| "\"/\"".to_string());
     format!(
@@ -97,6 +99,13 @@ pub fn navigation_allowed(url: &url::Url, app_origins: &[String]) -> bool {
     if url.scheme() == "http" && url.host_str() == Some(&format!("{SPLASH_SCHEME}.localhost")) {
         return true;
     }
+    on_app_origin(url, app_origins)
+}
+
+/// Whether `url` is one of the app's own pages: on one of `app_origins` exactly (a look-alike
+/// host such as `tauri.localhost.evil.example` or another port is not).
+pub fn on_app_origin(url: &url::Url, app_origins: &[String]) -> bool {
+    let s = url.as_str();
     app_origins
         .iter()
         .any(|o| s == o || s.starts_with(&format!("{o}/")))

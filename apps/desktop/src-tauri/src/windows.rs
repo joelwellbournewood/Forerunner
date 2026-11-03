@@ -10,7 +10,9 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, Webv
 use tauri_plugin_opener::OpenerExt;
 
 use crate::actions::shared;
-use crate::deeplink::{SPLASH_SCHEME, navigate_script, navigation_allowed, route_for_deep_link};
+use crate::deeplink::{
+    SPLASH_SCHEME, navigate_script, navigation_allowed, on_app_origin, route_for_deep_link,
+};
 use crate::devtools::WebviewArgs;
 use crate::inject::{Injection, app_origins, initialization_script};
 use crate::state::{OpenAction, defer_launch_during_quit, lock, open_action};
@@ -130,12 +132,15 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
             false
         })
         // A new-window request: a `target="_blank"` link or `window.open`, and in WebView2 a
-        // link clicked with Ctrl or Shift. A web page opens in the system browser; the app's own
-        // pages stay in this one window. Those clicks used to do nothing (the Tasks tab's PR
-        // link, `target="_blank"` then, was one) because tauri-plugin-opener's page script
+        // link clicked with Ctrl or Shift. A web page opens in the system browser; one of the
+        // app's own pages is shown in this one window, as a plain click on its link does (Q7,
+        // the owner's decision of 2026-11-02: a Ctrl+click on Inbox was refused and did
+        // nothing). Those clicks on web pages used to do nothing too (the Tasks tab's PR link,
+        // `target="_blank"` then, was one) because tauri-plugin-opener's page script
         // cancelled them before the webview asked for a window and called
         // `plugin:opener|open_url`, which the ACL refuses (Desktop app run 41442343517). The
-        // shell builds that plugin without its script (`lib.rs`, `opener_plugin`).
+        // shell builds that plugin without its script (`lib.rs`, `opener_plugin`). No second
+        // window is ever created.
         .on_new_window(move |url, _features| {
             leave(
                 &new_window_app,
@@ -175,13 +180,18 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
     Ok(())
 }
 
-/// What the main window does with a link that leaves the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the main window does with a link that leaves the page it shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LeaveAction {
     /// An http(s) page: the system browser opens it.
     OpenInBrowser,
-    /// Anything else (`file:`, `javascript:`, `data:`, an app page asked for in a new window):
-    /// nothing opens, and the log says why.
+    /// One of the app's own pages asked for in a new window (a Ctrl- or Shift-click on an
+    /// in-app link, `target="_blank"`, `window.open`): this window moves to that route, as a
+    /// plain click on the link does (the owner's decision of 2026-11-02, Q7). The route is the
+    /// page's path, query and fragment (`app_route`).
+    ShowHere(String),
+    /// Anything else (`file:`, `javascript:`, `data:`, `about:blank` or the splash in a new
+    /// window): nothing opens, and the log says why.
     Refuse,
 }
 
@@ -194,10 +204,16 @@ pub fn leave_action(url: &url::Url) -> LeaveAction {
     }
 }
 
-/// A new-window request (`target="_blank"`, `window.open`): a web page goes to the system
-/// browser as a navigation does; one of the app's own pages is not opened a second time (a
-/// second window would have no daemon token), so it is refused.
+/// A new-window request (`target="_blank"`, `window.open`, and in WebView2 a link clicked with
+/// Ctrl or Shift): a web page goes to the system browser as a navigation does. One of the
+/// app's own pages is shown in this window, as a plain click on the link does (the owner's
+/// decision of 2026-11-02, Q7); it is never opened a second time, because a second window would
+/// have no daemon token and the system browser cannot show the app's page. `about:blank` and
+/// the splash are refused.
 pub fn new_window_action(url: &url::Url, app_origins: &[String]) -> LeaveAction {
+    if on_app_origin(url, app_origins) {
+        return app_route(url).map_or(LeaveAction::Refuse, LeaveAction::ShowHere);
+    }
     if navigation_allowed(url, app_origins) {
         return LeaveAction::Refuse;
     }
@@ -221,9 +237,38 @@ impl Via {
     }
 }
 
+/// The UI route of one of the app's own pages: its path, query and fragment, for
+/// `navigate_script`. A path that starts with `//` or `/\` would read as another host, so it
+/// has none (`history.pushState` would refuse it anyway: it only moves within the page's
+/// origin).
+pub fn app_route(url: &url::Url) -> Option<String> {
+    let path = if url.path().is_empty() {
+        "/"
+    } else {
+        url.path()
+    };
+    if !path.starts_with('/') || path[1..].starts_with(['/', '\\']) {
+        return None;
+    }
+    let mut route = path.to_string();
+    if let Some(query) = url.query() {
+        route.push('?');
+        route.push_str(query);
+    }
+    if let Some(fragment) = url.fragment() {
+        route.push('#');
+        route.push_str(fragment);
+    }
+    Some(route)
+}
+
 /// Start of the shell log line written each time the window hands a web page to the system
 /// browser; the CI window check (`scripts/desktop-window-check.mjs`) asserts on it.
 pub const HANDED_TO_BROWSER: &str = "handed to the system browser";
+
+/// Start of the shell log line written each time the window moves to one of its own pages that
+/// was asked for in a new window (`LeaveAction::ShowHere`); the CI window check asserts on it.
+pub const SHOWN_IN_WINDOW: &str = "shown in this window";
 
 /// A link as the shell log names it: scheme, host, port and path. The query and the fragment
 /// (where a token could ride) and any user name or password are left out.
@@ -244,12 +289,38 @@ pub fn handed_to_browser_line(url: &url::Url, via: Via) -> String {
     )
 }
 
+/// The shell log line for one of the app's own pages shown in this window.
+pub fn shown_in_window_line(url: &url::Url, via: Via) -> String {
+    format!("{SHOWN_IN_WINDOW} ({}): {}", via.words(), loggable_url(url))
+}
+
+/// Move the main window's UI to `route` in place (`navigate_script`: `history.pushState` and a
+/// `popstate`, which React Router follows, as for a deep link), so the page keeps its daemon
+/// token and what the person had typed. It runs off the webview's own new-window handler:
+/// the script reaches the window through the event loop once the request has been answered.
+fn show_here(app: &AppHandle, url: &url::Url, route: String, via: Via) {
+    let app = app.clone();
+    let line = shown_in_window_line(url, via);
+    let shown = loggable_url(url);
+    tauri::async_runtime::spawn(async move {
+        let Some(window) = app.get_webview_window(MAIN) else {
+            log::warn!("could not show {shown} in the window: there is no window");
+            return;
+        };
+        match window.eval(navigate_script(&route)) {
+            Ok(()) => log::info!("{line}"),
+            Err(e) => log::warn!("could not show {shown} in the window: {e}"),
+        }
+    });
+}
+
 fn leave(app: &AppHandle, url: &url::Url, action: LeaveAction, via: Via) {
     match action {
         LeaveAction::OpenInBrowser => match app.opener().open_url(url.as_str(), None::<&str>) {
             Ok(()) => log::info!("{}", handed_to_browser_line(url, via)),
             Err(e) => log::warn!("could not open {} in the browser: {e}", loggable_url(url)),
         },
+        LeaveAction::ShowHere(route) => show_here(app, url, route, via),
         LeaveAction::Refuse => log::warn!(
             "opening {} from the window refused ({})",
             url.scheme(),
@@ -538,10 +609,111 @@ mod tests {
                 "{refused}"
             );
         }
-        // The app's own page in a second window would have no daemon token: refused.
+        // The app's own pages never leave the window: see the next test.
+    }
+
+    /// Q7, the owner's decision of 2026-11-02: a Ctrl- or Shift-click on one of the app's own
+    /// links (the sidebar's Inbox) did nothing in the window. The webview asks for a new window
+    /// for it ("opening http from the window refused (new window)", Desktop app run
+    /// 41495902701), and the shell refused that, because a second window would have no daemon
+    /// token and the system browser cannot show the app's page. Now this window moves to the
+    /// page, as a plain click on the link does.
+    #[test]
+    fn an_app_page_asked_for_in_a_new_window_is_shown_in_this_window() {
+        let dev = url::Url::parse("http://localhost:1420/").unwrap();
+        let origins = app_origins(Some(&dev), true);
+        let url = |s: &str| url::Url::parse(s).unwrap();
+        let here = |s: &str| new_window_action(&url(s), &origins);
+        let show = |route: &str| LeaveAction::ShowHere(route.to_string());
+        // WebView2 asks for http://tauri.localhost/<route>, WebKitGTK for tauri://localhost/...
+        assert_eq!(here("http://tauri.localhost/inbox"), show("/inbox"));
         assert_eq!(
-            new_window_action(&url("http://localhost:1420/projects/p1/tasks"), &origins),
+            here("https://tauri.localhost/projects/p1/tasks"),
+            show("/projects/p1/tasks")
+        );
+        assert_eq!(here("tauri://localhost/settings"), show("/settings"));
+        assert_eq!(here("tauri://localhost"), show("/"));
+        assert_eq!(here("http://tauri.localhost/"), show("/"));
+        // Every route the UI has, not only the deep-link roots; the dev server in a dev build.
+        assert_eq!(here("http://localhost:1420/changes"), show("/changes"));
+        assert_eq!(
+            here("http://tauri.localhost/settings/capabilities/email"),
+            show("/settings/capabilities/email")
+        );
+        // The page the link names, query and fragment included.
+        assert_eq!(
+            here("http://tauri.localhost/projects/p1/tasks?task=t1#notes"),
+            show("/projects/p1/tasks?task=t1#notes")
+        );
+        // A path that would read as another host is no route: nothing opens.
+        assert_eq!(
+            here("http://tauri.localhost//evil.example/x"),
             LeaveAction::Refuse
+        );
+        // Not one of the app's pages: `window.open()` with no address, the splash.
+        for refused in [
+            "about:blank",
+            "frshell://localhost/splash",
+            "http://frshell.localhost/splash",
+        ] {
+            assert_eq!(here(refused), LeaveAction::Refuse, "{refused}");
+        }
+        // Look-alikes of the app's origins are web pages, for the browser.
+        assert_eq!(
+            here("http://tauri.localhost.evil.example/inbox"),
+            LeaveAction::OpenInBrowser
+        );
+        assert_eq!(
+            here("http://localhost:14200/inbox"),
+            LeaveAction::OpenInBrowser
+        );
+        // A release build never takes the dev server for the app.
+        assert_eq!(
+            new_window_action(
+                &url("http://localhost:1420/inbox"),
+                &app_origins(Some(&dev), false)
+            ),
+            LeaveAction::OpenInBrowser
+        );
+    }
+
+    #[test]
+    fn an_app_route_is_the_pages_path_query_and_fragment() {
+        let route = |s: &str| app_route(&url::Url::parse(s).unwrap());
+        assert_eq!(
+            route("http://tauri.localhost/inbox").as_deref(),
+            Some("/inbox")
+        );
+        assert_eq!(route("tauri://localhost").as_deref(), Some("/"));
+        assert_eq!(
+            route("http://tauri.localhost/a%20b?x=1&y=%22#f").as_deref(),
+            Some("/a%20b?x=1&y=%22#f")
+        );
+        assert_eq!(route("http://tauri.localhost//evil.example/x"), None);
+        assert_eq!(route("tauri://localhost//evil.example/x"), None);
+        assert_eq!(route("tauri://localhost/\\evil.example/x"), None);
+        // The route goes into the page as a JSON string, never as code.
+        let script = navigate_script(&route("http://tauri.localhost/x?q=\");alert(1)//").unwrap());
+        assert!(
+            script.contains(r#"var p = "/x?q=%22);alert(1)//";"#),
+            "{script}"
+        );
+    }
+
+    /// The CI window check reads this line for a Ctrl- or Shift-click on an in-app link.
+    #[test]
+    fn an_app_page_shown_in_this_window_is_logged_without_its_query() {
+        let url = |s: &str| url::Url::parse(s).unwrap();
+        assert_eq!(
+            shown_in_window_line(&url("http://tauri.localhost/inbox"), Via::NewWindow),
+            "shown in this window (new window): http://tauri.localhost/inbox"
+        );
+        assert_eq!(
+            shown_in_window_line(
+                &url("http://tauri.localhost/projects/p1/tasks?task=t1#x"),
+                Via::NewWindow
+            ),
+            "shown in this window (new window): http://tauri.localhost/projects/p1/tasks (query not logged)"
         );
     }
 

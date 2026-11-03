@@ -1214,7 +1214,8 @@ apps/desktop/src-tauri/
     restart.rs        restart.json parsing, decide_after_exit() (the restart budget)
     inject.rs         initialization_script(): origin-guarded window.__FORERUNNER__
     sse.rs            SseParser (mirror of apps/ui/src/api/sse.ts), typed daemon events
-    deeplink.rs       fr:// -> UI route, is_safe_route(), navigate_script(), navigation policy
+    deeplink.rs       fr:// -> UI route, is_safe_route(), navigate_script(), navigation policy,
+                      on_app_origin()
     window_state.rs   <config>/window-state.json, placement() against the monitors
     state.rs          ShellState (shared), tray_view(): what the tray shows, derived from facts
     actions.rs        bootstrap() attach-or-start, attached(), handle_daemon_exit(), kill switch,
@@ -1224,7 +1225,8 @@ apps/desktop/src-tauri/
     events.rs         the Rust /events subscription and the 10 s /health monitor
     tray.rs           tray icon, menu items, refresh() from tray_view, menu dispatch
     windows.rs        main window (build/rebuild with the injection), splash, deep-link navigation;
-                      new_window(): every window, with the same WebView2 arguments
+                      new_window(): every window, with the same WebView2 arguments;
+                      leave_action() / new_window_action(): browser, this window or refused
     devtools.rs       FORERUNNER_WEBVIEW_DEVTOOLS_PORT (development and CI only): the windows'
                       WebView2 arguments, read once at start (pure, unit-tested)
     hotkey.rs         the chord grammar, HotkeyState (registration state machine), <config>/hotkey.json,
@@ -1318,9 +1320,11 @@ with an initialization script that defines a frozen, non-configurable
 when the page origin is one of `tauri://localhost`, `http(s)://tauri.localhost` or the dev
 server. The window's navigation policy (`deeplink::navigation_allowed`) refuses every other
 origin and opens `http(s)` targets in the OS browser (opener plugin; `windows::leave_action`).
-A new-window request (`target="_blank"`, `window.open`) goes through `on_new_window`
-(`windows::new_window_action`): an `http(s)` page opens in the OS browser, the app's own pages
-and other schemes are refused, and no second window is ever created. The Tasks tab's PR link
+A new-window request (`target="_blank"`, `window.open`, a link clicked with Ctrl or Shift)
+goes through `on_new_window` (`windows::new_window_action`): an `http(s)` page opens in the OS
+browser; one of the app's own pages (`deeplink::on_app_origin`) is shown in this window
+(`LeaveAction::ShowHere`, below); `about:blank`, the splash and other schemes are refused; no
+second window is ever created. The Tasks tab's PR link
 (`target="_blank"` then) did nothing because the opener plugin's page script cancelled the
 click before the webview asked for a window, and the ACL refused the script's own call
 (below).
@@ -1336,10 +1340,18 @@ command (`capabilities/`), so the ACL refused that call ("Command
 plugin:opener|open_url not allowed by ACL") and the click did nothing; the window check found
 it (Desktop app run 41442343517). Without the script, a Ctrl- or Shift-click is the webview's
 own new-window request: an external page goes to the system browser ("handed to the system
-browser (new window)"), and a Ctrl+click on one of the app's own links (the sidebar's Inbox)
-opens nothing: a second window would have no daemon token and the system browser cannot show
-the app's page, so the shell refuses it ("opening http from the window refused (new window)")
-and the window stays on its page. Granting the page `opener:allow-open-url` instead would
+browser (new window)"), and a Ctrl- or Shift-click on one of the app's own links (the
+sidebar's Inbox) acts like a plain click (Q7, the owner's decision of 2026-11-02; ADR 0031,
+amended). A second window would have no daemon token and the system browser cannot show the
+app's page, so the shell moves this window instead: `windows::app_route` takes the page's
+path, query and fragment (none for a path that starts with `//` or `/\`, which would read as
+another host), and `show_here` evaluates `deeplink::navigate_script` on the main window
+(`history.pushState` plus `popstate`, which React Router follows, as for a deep link), off the
+webview's own new-window handler. The page keeps its token and what the person had typed, and
+the log says "shown in this window (new window): <url>" (`windows::shown_in_window_line`,
+query left out). Until then the shell refused it ("opening http from the window refused (new
+window)", Desktop app run 41495902701) and the click did nothing. Granting the page
+`opener:allow-open-url` instead would
 open a second way out that skips the allowlist and the log. The capabilities give the page the
 core IPC, the shell's own commands and one plugin command, the notification permission read
 (below); never an opener command.
