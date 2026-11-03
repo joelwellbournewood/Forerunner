@@ -1,7 +1,7 @@
 # 0111 — The merge record, one gated merge entry, merge commits only and the branch's rules
 
 Date: 2026-11-02
-Status: accepted (amends ADR 0062 and ADR 0106 point 6); amended by dependent-branches (2026-11-03): dependent branches kept true
+Status: accepted (amends ADR 0062 and ADR 0106 point 6); amended by dependent-branches (2026-11-03): dependent branches kept true; amended by merge-in-app (2026-11-03): who merges is the project's merge mode, and Merge in the app
 
 ## Context
 
@@ -182,6 +182,65 @@ under it.
 Known gaps: the rebuilds a busy worktree postponed are kept in memory (after a restart the run's
 own check and the sweep's redo/cancel detection remain); a merge that is already under way when
 a dependency closes can finish before the rebuild pushes.
+
+## Amendment: who merges, and Merge in the app ('merge-in-app', 2026-11-03)
+
+The owner's decision of 2026-11-02 on merging, recorded here as decided: for GitHub projects the
+default is "you press Merge", with a one-click Merge in the app (dependency order, merge commits
+only, the safe merge step), and a per-project option "merge automatically after review". In the
+owner's research the setting "is separate from level 3, which would also allow much more"
+(owner-answers.md section 1): it replaces the merge half of requirement J.9 ("Level 3 Trusted:
+also merges reviewed PRs and deploys to staging.") and J.10's note on it; the deploy half stays.
+Before it, the merge's permission was the autonomy class `merge_pr`, free at level 3
+(`autonomy.ts`), so every new project (level 2) left every pull request on GitHub with nothing
+in the app to merge it, and a level-3 project merged with no per-project choice. Built as follows:
+
+1. **The merge mode.** `settings.set merge_mode` per project (`project.settings.merge_mode`):
+   `you`, the default, worded "You press Merge"; `after_review`, worded "Merge automatically after
+   review", a yes first, whose card says that merges show under the person's own GitHub name, a
+   comment on a merged pull request starts nothing, and on a repository whose main goes online by
+   itself every accepted task goes live. Choosing the starting mode by reading the repository at
+   linking was left out: the owner chose "you press Merge" as every project's default.
+2. **The mode, not the level, frees a merge.** `merge_pr` is free at no level (`FREE_AT.merge_pr =
+   null`); `mayMerge`'s body (point 2 above) reads the mode at every call, and the merge entry adds
+   the approval of exactly that `merge_pr` call for the mode or the click, so `hooks.ts` is
+   unchanged and the audit row's input says where the approval came from (`approved_by`). No
+   retry, resume or record made before a switch merges in "You press Merge"; Autopilot follows the
+   mode too.
+3. **Checks on the combined result.** In the automatic mode, when main moved since the review with
+   work the reviewed head does not hold (a move by a dependency merged with a merge commit counts
+   as none), main is merged into the branch first and the repository's checks must pass on that
+   head; on a repository without automatic checks nothing would test the two together, so that
+   pull request waits for the person's Merge with one sentence.
+4. **Merge in the app.** `POST /projects/:id/pull-requests/:number/merge` answers at once. The
+   records of the chain (the open pull requests the task builds on, then itself) are approved by
+   the person (`approval: person`) and queued before the answer, then merged in that order in the
+   background through `mergeRecorded`, each with a merge commit, nothing rebased or forced between
+   them (with merge commits each dependency's commits reach main as they are). A merge that waits
+   for its checks is finished by the watcher's retry pass, after a restart too; a person-approved
+   record waits there until what it builds on is merged, and when one of those goes to the person
+   the rest are left to the person with one sentence. A pull request without a record merges as it
+   is on GitHub now, and the answer says so. Forerunner's docs pull requests merge only on the
+   click, as they are, in either mode. Where a rule needs an approval or merge commits are off, the
+   row shows the sentence instead of a button; the view reads those once per look.
+5. **True words.** The task row and drawer read "Merged", "Accepted · merges when its checks pass"
+   or "Accepted · waiting for you to merge" from the record; the session result counts what merges
+   by itself apart from what waits for the person, and the Overview adds "Since then: merged #2,
+   #3 and #4."; the session line of a pull request left open is worded from the merge step's
+   status. The Overview's pull-request block says without the raw error why it lists nothing: no
+   token (GitHub is not asked), a refused token, or GitHub not answering (C-56).
+
+Alternatives considered: keeping level 3 as what frees an unattended merge and adding only the
+button (rejected by the owner's decision: level 3 also frees costly session starts, task and doc
+edits and staging deploys); merging a dependent alone and letting GitHub mark its dependencies
+merged (rejected for the click: the person sees the order they asked for, one merge commit per
+pull request); waiting inside the request for the checks (rejected: a request would hang for up to
+ten minutes).
+
+Known gaps: the conflict notice (an open task pull request whose `mergeable` turned false after
+another merge, one card per project) is not built; the rebuild card still offers "I merged it" and
+"Leave it open" (Merge and Redo would fit); a merge the retry makes outside a session posts no
+Update.
 
 ## Consequences
 

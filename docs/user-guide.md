@@ -322,7 +322,29 @@ never repeats work that is already in the default branch:
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
 the way; the old pull request stays as it was.
 
-**How Forerunner merges** (when it merges at all: today at Trusted). It merges exactly the version
+**Merging: you press Merge, or Forerunner merges after review.** Each repository project has a
+setting **Who merges accepted work** (Settings, Other settings; the Overview's line "Merging: you
+press Merge · Change" links there). By default, **You press Merge**: each task's pull request waits
+on the Overview under **Waiting for you to merge**, and the task's row on the Tasks tab says
+"Accepted · waiting for you to merge". Press **Merge** on a row: the answer comes at once
+("Merging #2, #3 and #4 in order."), the rows say "Merging…", and a moment later "Merged #2, #3 and
+#4." and the task rows say **Merged**. A pull request that builds on others ("Merges #2 and #3
+first.") merges those first, each with a merge commit, so each is marked merged on GitHub. A
+pull request whose checks still run says "#4 merges when its checks pass." and merges by itself
+once they pass, also after a restart. Where Forerunner cannot merge (a rule it cannot meet,
+merge commits turned off, what it builds on is not accepted yet), the row says why in one sentence
+instead of offering Merge. With **Merge automatically after review**, Forerunner merges each
+accepted task's pull request by itself and its row says **Merged**; Settings asks you to confirm
+it first and says what it means: the merges show under your own GitHub name, a comment on a
+merged pull request starts nothing, and if the repository's main goes online by itself (website
+hosting, for example) every accepted task goes live. When main changed after the review and the
+repository has no automatic checks, nothing tests the two together, so that pull request waits
+for your Merge with one sentence. The autonomy level no longer decides merging (Trusted does not
+merge by itself). Forerunner's own docs pull requests merge only when you press Merge, as they
+are on GitHub now. If the pull requests cannot be listed, the Overview says why: no GitHub token
+(with **Connect GitHub**), a token GitHub refused, or GitHub not answering.
+
+**How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
 after the review: look at the new commits, then merge it yourself or send it back."); **I merged
