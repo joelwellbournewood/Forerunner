@@ -10,6 +10,7 @@ import {
   issue,
   registry,
   ScriptedProvider,
+  stopRuns,
   until,
 } from "./helpers.ts";
 
@@ -399,7 +400,12 @@ describe("agent loop: whole milliseconds (the Run row's timing columns are integ
       timeoutMs: 60_000,
       onEvent: (e) => events.push(e),
     });
-    await until(() => provider.calls.length === 1, "the model call");
+    await until(() => provider.calls.length === 1, "the model call", {
+      progress: () => [provider.calls.length, events.length],
+      seen: () =>
+        `${provider.calls.length} model call(s); events: ${events.map((e) => e.type).join(", ") || "none"}`,
+      stop: stopRuns(h, [p]),
+    });
     await h.clock.advance(2_000);
     const res = await p;
     expect(res.outcome).toBe("completed");

@@ -700,9 +700,98 @@ vitest.config.ts`); to also give vitest's own process CI's colour, prefix them w
 speed: a case that waits on a session or does dozens of git commands is several times slower
 there and slower again under load. Such a case waits on the state it needs, as long as that
 state still moves, with a message that says what it saw, and leaves nothing running when it
-gives up (`sessionOver` and `settle` in `packages/runtime/test/notifications-hear-once.test.ts`:
-on c8c16fb a session still taking steps every 2 to 4 s outlived a fixed 30 s wait, and the
-runtime was closed under it, "sqlite database is closed").
+gives up: the shared wait below (on c8c16fb a session still taking steps every 2 to 4 s outlived
+a fixed 30 s wait, and the runtime was closed under it, "sqlite database is closed").
+
+### Waiting on work a case started (`testenv/src/wait.ts`, `packages/runtime/test/runtime-watch.ts`)
+
+About twenty test files had their own `waitFor`, `until` or `eventually`: a fixed limit (2 s,
+3 s, 20 s, 30 s), a message that often said only "timed out waiting", and nothing stopped when
+it gave up, so the session it waited for ran on into the next case or into `rt.close()` (which
+does not stop sessions). The one on c8c16fb gave up after 30 s on a session still taking a step
+every 2 to 4 s on the loaded Windows runner. Every wait on a session's, a run's, a task's or a
+card's state now goes through one helper: `grep -rln "timed out waiting" packages/*/test
+apps/*/test testenv` lists `testenv/src/wait.ts` and the tests of the wait, plus two waits on
+something no case starts and leaves running: `packages/capabilities/test/email-mailbox.test.ts`
+(the mailbox watch's parsing of a message; `afterEach` stops the mail world) and
+`apps/approvals-web/test/harness.tsx` (the rendered page; its message has the page's text).
+
+**The wait** (`waitFor(what, probe, opts)` and `until(what, cond, opts)` in
+`testenv/src/wait.ts`, `@forerunner/testenv/wait`). It polls `probe` until it gives a value and:
+
+- goes on while what it watches still changes: `progress` (default `seen`), read every poll.
+  It gives up when that did not change for `quietMs` (45 s; the longest quiet spell seen on the
+  loaded Windows runner was a 16 s session start), or at its limit however much still changes;
+- takes its limit from the running case (`TestRunner.getCurrentTest()`: the case's timeout and
+  start): the case's timeout less a reserve, a quarter of it between 1 and 20 s (`waitLimit`),
+  or `limitMs` if that is shorter. So it gives up before vitest's own timeout, which would end
+  the case with "Test timed out in 20000ms", nothing stopped and nothing said. In a 120 s case
+  it gives up after 100 s, in the unit project's default 20 s after 15 s. Outside a case (a
+  hook) the limit is `limitMs`, else 45 s. A case that waits for a whole session to run has a
+  120 s timeout, as `notifications-hear-once.test.ts` has had since c8c16fb: the limit is not a
+  fixed number in the wait any more but what the case allows;
+- before it throws, calls `stop(why)`, which stops what the case started and waits until none
+  of it runs; its own failure is named, not hidden;
+- throws `WaitTimeout`: `timed out waiting for <what> (<why>; stopped what the case started):
+  saw <seen>`, `why` being "nothing it watches changed for 45 s" or "it was still waiting after
+  100 s, the last change 0.2 s before".
+
+`storeProgress(store)` is the usual `progress` where the work writes to a state store: each
+table's row count and the sum of its rows' versions (the tables with a `version` column, read
+from SQLite's or Postgres's catalogue once per store), so any row written or updated moves it.
+
+**The runtime's watch** (`watchRuntime(rt, { request })` in
+`packages/runtime/test/runtime-watch.ts`), for a composed runtime: its `waitFor`, `until` and
+`sessionOver(id)` (the session's row ended and the scheduler's start over) are the shared wait
+with
+
+- `progress`: the store's, plus the agent's registered runs, whether a start runs and how many
+  wait; so a session taking steps, a review, a task moved, a card filed all count as moving;
+- `seen`: the probe's own `seen` (what the case read: the task's status, the session page's view)
+  and "the runtime: sessions not over: <id> running (9 steps, 10602 µUSD, running, last event
+  task.step); a start running, 1 run(s) registered";
+- `stop`: the waiting starts are cancelled, every session the case started (`track(id)`) or that
+  has a run registered is stopped as the session page's Stop now does (`POST /sessions/:id/stop`
+  when the daemon app's `request` is given, else the kill switch's stop of the session, which is
+  what that route does for a running session), any other run of the agent is stopped without a
+  freeze, and it waits until no start runs or waits and the store has been quiet for 250 ms
+  (a stopped run unwinds and writes its end after its registration is gone), at most 15 s;
+- `settle()`: the same stop when anything still runs, a no-op otherwise. Every file that starts
+  work on a runtime calls it before `rt.close()` (in `afterAll`, `afterEach`, a `finally`, or
+  before a restart inside a case); `apps/ui/test/real-daemon.test.ts` wraps `composeRuntime` so
+  every runtime it composes is watched and its `close()` settles first, and its `eventually` is
+  the shared wait over every runtime still open.
+
+A case that closes its runtime on purpose with work held that never returns (the Quit during
+"Being reviewed" case: the browser step never ends, as on the person's PC; the product's
+`/shutdown` has stopped every run) closes it unwatched after the Quit, and says why.
+
+**Checking the give-up path.** `FORERUNNER_TEST_WAIT_GIVE_UP_MS=<ms>` makes every wait give up
+after that long (its quiet window and its limit; not the wait inside a stop), so each wait of a
+file that does not hold at once stops what its case started and fails with what it saw:
+
+```bash
+FORERUNNER_TEST_WAIT_GIVE_UP_MS=300 pnpm vitest run --project unit packages/runtime/test/notifications-hear-once.test.ts
+```
+
+What to look for: every failure is a `WaitTimeout` that says "stopped what the case started"
+and what it saw; no "sqlite database is closed", no unhandled error or rejection and no vitest
+"Test timed out". A case after a forced one may fail its own assertions (its describe's earlier
+session was stopped), which is expected. `testenv/test/wait.test.ts` checks the wait itself
+(the quiet window, the limit, the cap below the case's timeout, a failed stop and a failed read
+named, the forced give-up, `storeProgress` on SQLite; `wait.integration.test.ts` the same on
+Postgres, where `schema_migrations` is listed too), and `packages/runtime/test/runtime-watch.test.ts`
+the runtime's watch on a run that never answers (the stand-in's reply waits on a clock nothing
+moves): the wait gives up after 1.5 s, the session is stopped through Stop now (and, without a
+daemon, through the kill switch), its task is ready again, nothing runs, and `settle` does the
+same before the close.
+
+**Writing a new wait.** Use `watch.waitFor`/`watch.until`/`watch.sessionOver` on a composed
+runtime and the plain `waitFor`/`until` elsewhere; name what is waited for in words and give a
+`seen` that says what the probe read; give a `progress` that moves while the work goes on and a
+`stop` that stops it; track the sessions the case starts; settle before the close; give a case
+that waits for a whole session 120 s. Never only raise a limit: a wait that gives up on work
+that still moves is a wait without `progress`.
 
 ### Where test temp files go (`testenv/src/test-tmp.ts`)
 
@@ -2495,6 +2584,14 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 
 ### Known issues
 
+- `world.waitForEvent` is not yet the shared wait ("Waiting on work a case started"): it
+  listens for a session event and rejects after a fixed `holdTimeoutMs` (60 s), and
+  `world.close()` releases the holds and the planners and closes the store without stopping a
+  session first, so a scenario that gave up can leave a released session running into the
+  closed store. It is event-driven and runs several installs on one store without a
+  `RuntimeApp`, so `runtime-watch.ts` does not fit it as is; stopping each install's runs in
+  `close()` (and a progress-aware wait over the store) is its own change. Found in the sweep of
+  2026-11-03.
 - The world still assembles the daemon's composition by hand. The reason it was written that
   way is gone (`composeRuntime` binds an install by selector since ADR 0082, never to the
   store's first human, and two installs on one store are covered by

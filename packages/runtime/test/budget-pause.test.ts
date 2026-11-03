@@ -10,6 +10,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { handoffOf } from "../src/session/budget-pause.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Budget-stop (ADR 0112, the owner's decision of 2026-11-02), through the composed runtime and
@@ -111,30 +112,17 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
         ...(init.headers ?? {}),
       },
     });
-  return { rt, req };
-}
-
-/** Polls in real time (at least 10 s); the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  // What the cases start, watched: a wait goes on while the runtime moves and stops what runs
+  // (Stop now) before it gives up; `settle` before the runtime closes.
+  const watch = watchRuntime(rt, { request: req });
+  return { rt, req, watch };
 }
 
 type Req = Awaited<ReturnType<typeof compose>>["req"];
 
 /** A project with one task (what New task sends), a session on it, run to its end. */
 async function runOne(
-  req: Req,
-  rt: RuntimeApp,
+  { req, rt, watch }: { req: Req; rt: RuntimeApp; watch: RuntimeWatch },
   title: string,
   opts: { budgetUsdMicro?: number; sessionBudgetUsdMicro?: number } = {},
 ) {
@@ -172,17 +160,11 @@ async function runOne(
     }),
   });
   expect(started.status, await started.clone().text()).toBe(202);
-  const sessionId = (((await started.json()) as Json).session as Json).id as string;
-  const session = await waitFor(
-    async () => {
-      const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-      return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
-        ? s
-        : undefined;
-    },
-    async () =>
-      `the session of "${title}" to end (${(await rt.store.task.mustGet(taskId)).status})`,
-  );
+  const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+  await watch.sessionOver(sessionId, {
+    seen: async () => `the task "${title}" is ${(await rt.store.task.mustGet(taskId)).status}`,
+  });
+  const session = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
   const view = ((await (await req(`/projects/${projectId}/tasks`)).json()) as Json[]).find(
     (t) => t.id === taskId,
   ) as Json;
@@ -200,11 +182,13 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
   const fake = provider(clock, calls);
   let rt: RuntimeApp;
   let req: Req;
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -212,7 +196,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
   const reviewOf = async (taskId: string) => rt.store.review.latestForTask(taskId);
 
   it("a run at its line hears the wrap-up once; with work left it is paused: no review, no try, report and handoff kept", async () => {
-    const r = await runOne(req, rt, "Guide pages", { budgetUsdMicro: 300_000 });
+    const r = await runOne({ req, rt, watch }, "Guide pages", { budgetUsdMicro: 300_000 });
     // Exactly one request first carried the wrap-up: one text block after the tool results.
     const mine = coderCalls("Guide pages");
     const first = mine.findIndex(heardWrapUp);
@@ -271,28 +255,28 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
         ),
       ),
     ).toBe(true);
-  }, 60_000);
+  }, 120_000);
 
   it("a run that hears the wrap-up and ends with nothing left is reviewed", async () => {
-    const r = await runOne(req, rt, "Notes page", { budgetUsdMicro: 300_000 });
+    const r = await runOne({ req, rt, watch }, "Notes page", { budgetUsdMicro: 300_000 });
     expect(coderCalls("Notes page").some(heardWrapUp)).toBe(true);
     expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
     expect(await reviewOf(r.taskId)).toBeDefined();
     expect(r.runs[0]?.outcome).toBe("completed");
     // A finished task is a sample, as before.
     expect(rt.estimates.recentSamples().some((x) => x.taskId === r.taskId)).toBe(true);
-  }, 60_000);
+  }, 120_000);
 
   it("a run never told to wrap up that lists work left is reviewed as usual", async () => {
-    const r = await runOne(req, rt, "Plan page", { budgetUsdMicro: 300_000 });
+    const r = await runOne({ req, rt, watch }, "Plan page", { budgetUsdMicro: 300_000 });
     expect(coderCalls("Plan page").some(heardWrapUp)).toBe(false);
     expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
     expect(await reviewOf(r.taskId)).toBeDefined();
-  }, 60_000);
+  }, 120_000);
 
   it("a tiny budget hears no wrap-up and pauses at its budget with the save only", async () => {
     // CHF 0.01: two calls are more than the whole budget.
-    const r = await runOne(req, rt, "Tiny page", { budgetUsdMicro: 12_500 });
+    const r = await runOne({ req, rt, watch }, "Tiny page", { budgetUsdMicro: 12_500 });
     const mine = coderCalls("Tiny page");
     expect(mine.length).toBeGreaterThan(0);
     expect(mine.some(heardWrapUp)).toBe(false);
@@ -313,12 +297,12 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(artifacts).not.toContain("would be exceeded");
     expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
     expect(lines(r.events).some((l) => /too little to wrap up .*: save only/.test(l))).toBe(true);
-  }, 60_000);
+  }, 120_000);
 
   // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
   // on Sonnet) was refused before its line was said, so the session log had no budget line.
   it("a budget below its first step's cost says so (save only) and pauses before that step", async () => {
-    const r = await runOne(req, rt, "Stub page", { budgetUsdMicro: 1_000 });
+    const r = await runOne({ req, rt, watch }, "Stub page", { budgetUsdMicro: 1_000 });
     expect(coderCalls("Stub page")).toHaveLength(0);
     expect(
       lines(r.events).some((l) =>
@@ -333,13 +317,13 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(task.attempt).toBe(0);
     expect(await reviewOf(r.taskId)).toBeUndefined();
     expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
-  }, 60_000);
+  }, 120_000);
 
   it("a run is capped at what is left of the session's work budget, so its review keeps the reserve", async () => {
     // A session of USD 2 and a task with no budget of its own (the coder's limit is USD 3): the
     // run may spend the session's work budget, USD 1.60 (CHF 1.28), not the whole USD 2. (The
     // Start dialog's check needs the work budget to hold the coder's estimate of USD 1.50.)
-    const r = await runOne(req, rt, "Big report", { sessionBudgetUsdMicro: 2_000_000 });
+    const r = await runOne({ req, rt, watch }, "Big report", { sessionBudgetUsdMicro: 2_000_000 });
     expect(lines(r.events).some((l) => l.startsWith("This run may spend CHF 1.28: at CHF "))).toBe(
       true,
     );
@@ -349,15 +333,16 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(await reviewOf(r.taskId)).toBeDefined();
     const spentByRun = r.runs[0]?.cost_usd_micro ?? 0;
     expect(spentByRun).toBeLessThanOrEqual(1_600_000);
-  }, 60_000);
+  }, 120_000);
 
   it("a paused task stays paused across a restart: the card, the words and the Run row", async () => {
     const guide = (await rt.store.task.list({} as never, { limit: 100 })).find(
       (t) => t.title === "Guide pages",
     );
     expect(guide).toBeDefined();
+    await watch.settle();
     await rt.close();
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
     await rt.syncApprovals();
     const view = (
       (await (await req(`/projects/${guide?.project_id}/tasks`)).json()) as Json[]
@@ -381,18 +366,20 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
   const fake = provider(clock, calls);
   let rt: RuntimeApp;
   let req: Req;
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, fake));
+    ({ rt, req, watch } = await compose(home, clock, fake));
     // A month's cap of USD 0.125 (CHF 0.10): the task's own budget is far above it.
     await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 125_000 });
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
   it("the run's sentence and the card name this month's cap, and the session stops there", async () => {
-    const r = await runOne(req, rt, "Members list", { budgetUsdMicro: 2_000_000 });
+    const r = await runOne({ req, rt, watch }, "Members list", { budgetUsdMicro: 2_000_000 });
     const said = lines(r.events);
     // Before: "stopped at its budget of CHF 1.60", and its card offered to raise that budget.
     expect(
@@ -409,14 +396,14 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
     expect(r.runs[0]?.outcome).toBe("budget_exceeded");
-  }, 60_000);
+  }, 120_000);
 
   // Review of budget-stop: the run, the card and the task named the month, but the session it
   // ended said "Stopped: the budget is used" and "The session's budget is used." (at CHF 0.04 of
   // a CHF 5.00 session), the Inbox Update said the same, and the urgent notification advised
   // "Start a session with a larger budget to go on", which the month's cap refuses.
   it("the session it ends names this month's cap too: its status, its result, its log, the Update and the notification", async () => {
-    const r = await runOne(req, rt, "Members page", { budgetUsdMicro: 2_000_000 });
+    const r = await runOne({ req, rt, watch }, "Members page", { budgetUsdMicro: 2_000_000 });
     expect(r.session.status).toBe("stopped");
     expect(r.session.statusText).toBe("Stopped at this month's cap");
     const summary = String(r.session.summary);
@@ -436,19 +423,28 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.10.");
     expect(updates.join(" | ")).not.toMatch(/budget is used/);
     // The urgent notification names the month and says what helps.
-    const stop = await waitFor(
+    const recent = async () =>
+      (
+        (await (await req("/notifications/recent?limit=200")).json()) as {
+          notifications: Json[];
+        }
+      ).notifications;
+    const stop = await watch.waitFor(
+      "the session's budget_stop notification",
       async () =>
-        (
-          (await (await req("/notifications/recent?limit=200")).json()) as {
-            notifications: Json[];
-          }
-        ).notifications.find((n) => n.kind === "budget_stop" && n.sessionId === r.sessionId),
-      async () => "the session's budget_stop notification",
+        (await recent()).find((n) => n.kind === "budget_stop" && n.sessionId === r.sessionId),
+      {
+        seen: async () =>
+          `notifications of the session: ${(await recent())
+            .filter((n) => n.sessionId === r.sessionId)
+            .map((n) => `${n.kind}: ${n.title}`)
+            .join("; ")}`,
+      },
     );
     expect(String(stop.title)).toBe("Members page project: stopped at this month's cap");
     expect(String(stop.body)).toMatch(
       /^This month's cap is CHF 0\.10\. The session spent CHF [\d.]+\. .*Raise the monthly spending cap in Settings to go on\.$/,
     );
     expect(String(stop.body)).not.toMatch(/larger budget|session's budget/);
-  }, 60_000);
+  }, 120_000);
 });

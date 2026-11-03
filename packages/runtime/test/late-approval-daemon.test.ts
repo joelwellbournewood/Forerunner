@@ -10,6 +10,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { approvalKeyFor } from "../src/enforcement/hooks.ts";
 import { LATE_APPROVAL_AUDIT_TOOL } from "../src/session/late-approval.ts";
 import { AcceptingCriticProvider } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * ADR 0088 on the desktop daemon: a hooks approval a session filed for its task, answered
@@ -115,16 +116,6 @@ async function pausedTask(
   return { task, session, request };
 }
 
-async function waitFor<T>(probe: () => Promise<T | undefined>, ms = 20_000): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error("timed out waiting");
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
-
 function card(r: HumanRequestRow): Json {
   return (r.change_card ?? {}) as Json;
 }
@@ -134,6 +125,9 @@ describe("a hooks approval answered after its session ended, on the desktop daem
   let rt: RuntimeApp;
   let app: ReturnType<typeof createDaemonApp>["app"];
   let token: string;
+  // The session the late answer starts, watched: a wait goes on while the runtime moves and
+  // stops what runs (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   const req = (path: string, init: RequestInit = {}) =>
     app.request(path, {
       ...init,
@@ -147,8 +141,10 @@ describe("a hooks approval answered after its session ended, on the desktop daem
   beforeAll(async () => {
     rt = await compose(clock);
     ({ app, token } = createDaemonApp(rt));
+    watch = watchRuntime(rt, { request: req });
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -167,10 +163,16 @@ describe("a hooks approval answered after its session ended, on the desktop daem
       tool: "delete_repo",
     });
     expect(typeof card(await rt.store.humanRequest.mustGet(request.id)).applied_at).toBe("string");
-    const follow = await waitFor(async () =>
-      (await rt.store.session.list({ project_id: projectId }, { orderBy: "created_at" })).find(
-        (s) => s.trigger === "message" && s.status === "completed",
-      ),
+    const sessions = () =>
+      rt.store.session.list({ project_id: projectId }, { orderBy: "created_at" });
+    const follow = await watch.waitFor(
+      "the follow-up message session to complete",
+      async () =>
+        (await sessions()).find((s) => s.trigger === "message" && s.status === "completed"),
+      {
+        seen: async () =>
+          `the project's sessions: ${(await sessions()).map((s) => `${s.trigger} ${s.status}`).join(", ")}; the task is ${(await rt.store.task.mustGet(task.id)).status}`,
+      },
     );
     expect(follow.id).not.toBe(session.id);
     expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
@@ -188,8 +190,11 @@ describe("a hooks approval answered after its session ended, on the desktop daem
     // Idempotent: another sync (a later answer, a restart) starts no second session.
     expect((await rt.syncApprovals()).late).toEqual({ started: 0, refused: 0, skipped: 0 });
     expect(await rt.store.session.list({ project_id: projectId })).toHaveLength(2);
-    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
-  });
+    await watch.until(
+      "the scheduler to finish the follow-up's start",
+      () => !rt.scheduler.isActive(rt.agent.id),
+    );
+  }, 120_000);
 
   it("a refused late answer starts nothing, is consumed and the task records the refusal", async () => {
     const projectId = await project(rt, "Refuse");

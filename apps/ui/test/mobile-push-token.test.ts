@@ -12,7 +12,13 @@ import {
 } from "../src/mobile/push.ts";
 import { MobileController, type MobileEnv } from "../src/mobile/store.tsx";
 import { HUMAN_J } from "./fake-state-service.ts";
-import { createMobileHarness, renderMobile, SERVICE_URL } from "./mobile-helpers.tsx";
+import {
+  createMobileHarness,
+  phoneWatch,
+  renderMobile,
+  SERVICE_URL,
+  until,
+} from "./mobile-helpers.tsx";
 
 // ADR 0085 points 6 and 9: the phone sends its FCM registration token at pairing and after a
 // refresh, signed like every device mutation, and never logs, shows or stores the token.
@@ -58,11 +64,6 @@ function resumeSource() {
     },
     size: () => listeners.size,
   };
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
 }
 
 /** A storage that remembers every value ever written, to prove the token never lands there. */
@@ -248,7 +249,12 @@ describe("the first token arrives after pairing (review of c829a02)", () => {
     const h = await pairWith(push, recordingStorage(), { pushRetryMs: 30 });
     expect(pushTokenCalls(h)).toHaveLength(0);
     push.token = TOKEN_A;
-    await waitFor(() => pushTokenCalls(h).length > 0);
+    // The shared wait (it gave up silently after 3 s and left the assertion to say nothing).
+    await until(
+      () => pushTokenCalls(h).length > 0,
+      "the retried push token",
+      phoneWatch(h.service, h.controller),
+    );
     expect(pushTokenCalls(h)).toHaveLength(1);
     expect(pushTokenCalls(h)[0]).toMatchObject({ signed: true, body: { pushToken: TOKEN_A } });
     h.controller.close();
@@ -292,7 +298,11 @@ describe("the shell's resume event re-checks the token (not visibilitychange alo
     expect(resumed.size()).toBe(1);
     push.token = TOKEN_B;
     resumed.fire();
-    await waitFor(() => pushTokenCalls(h).length > 0);
+    await until(
+      () => pushTokenCalls(h).length > 0,
+      "the rotated push token",
+      phoneWatch(h.service, c),
+    );
     expect(pushTokenCalls(h)).toHaveLength(1);
     expect(h.service.state.pushTokens.get(h.deviceId)).toBe(TOKEN_B);
     c.close();

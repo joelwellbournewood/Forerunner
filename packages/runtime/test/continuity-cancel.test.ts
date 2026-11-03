@@ -15,6 +15,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { fileReviewFailedRequest } from "../src/session/findings.ts";
 import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Live walk 2 part 3 (C1, real model, 2026-11-01): "Skip the About page task" in chat, Yes,
@@ -60,22 +61,23 @@ async function compose(home: string, clock: SimulatedClock, provider: ScriptedPr
         ...(init.headers ?? {}),
       },
     });
-  return { rt, req };
+  // What the cases start, watched: a wait goes on while the runtime moves and stops what runs
+  // (Stop now) before it gives up; `settle` before the runtime closes.
+  const watch = watchRuntime(rt, { request: req });
+  return { rt, req, watch };
 }
 
-/** Polls in real time (at least 10 s); the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 20));
-  }
+/**
+ * Wait until the session has ended (the shared watch: while the runtime still moves; it stops
+ * the session if it gives up), then read it as the session page does.
+ */
+async function sessionEnded(
+  w: { req: (path: string) => Response | Promise<Response>; watch: RuntimeWatch },
+  sessionId: string,
+  seen: () => Promise<string>,
+): Promise<Json> {
+  await w.watch.sessionOver(sessionId, { seen });
+  return (await (await w.req(`/sessions/${sessionId}`)).json()) as Json;
 }
 
 const write = (path: string, content: string): ScriptReply => ({
@@ -104,6 +106,7 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
   );
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
   let projectId = "";
   let aboutId = "";
   let workspace = "";
@@ -112,7 +115,7 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
   const taskRow = (id: string) => rt.store.task.mustGet(id);
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
     const project = await rt.store.project.insert({
       name: "Garden club",
       goal: "A small site for the club",
@@ -140,6 +143,7 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
     await add("Write the README", 1);
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -149,12 +153,12 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
       body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
     });
     expect(started.status).toBe(202);
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
     // The run wrote about.html and the link, and still runs.
-    await waitFor(
-      async () =>
-        provider.calls.length === 3 && existsSync(join(workspace, "about.html")) ? true : undefined,
-      async () => `the About page to be written (${provider.calls.length} model calls)`,
+    await watch.until(
+      "the About page to be written while its run goes on",
+      () => provider.calls.length === 3 && existsSync(join(workspace, "about.html")),
+      { seen: () => `${provider.calls.length} model call(s)` },
     );
     expect((await taskRow(aboutId)).status).toBe("in_progress");
     // What the Tasks tab's Cancel sends.
@@ -170,14 +174,10 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
       'Cancelled "About page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
     cancelChangeId = String(change.changeLogId);
-    const ended = await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
-          ? s
-          : undefined;
-      },
-      async () => `the session to end (${provider.calls.length} model calls)`,
+    const ended = await sessionEnded(
+      { req, watch },
+      sessionId,
+      async () => `${provider.calls.length} model call(s)`,
     );
     expect(ended.status).toBe("completed");
     // Its files are out of the folder; the home page is as it was.
@@ -200,11 +200,12 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
     expect(lines).toContain(
       'You cancelled it while "About page" ran; what it changed is removed and the session goes on.',
     );
-  }, 60_000);
+  }, 120_000);
 
   it("Undo of the cancel, after a restart, puts the files back and the task is ready again", async () => {
+    await watch.settle();
     await rt.close();
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
     const undone = await req(`/changes/${cancelChangeId}/undo`, { method: "POST", body: "{}" });
     expect(undone.status).toBe(200);
     const body = (await undone.json()) as Json;
@@ -230,11 +231,13 @@ describe("cancelling a task while the critic reviews it (live walk 2, C1)", () =
   );
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -261,14 +264,16 @@ describe("cancelling a task while the critic reviews it (live walk 2, C1)", () =
       method: "POST",
       body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
     });
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    await waitFor(
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.until(
+      "the critic to review the task",
       async () =>
-        provider.calls.length === 3 && (await rt.store.task.mustGet(task.id)).status === "in_review"
-          ? true
-          : undefined,
-      async () =>
-        `the critic to review (${provider.calls.length} calls, task ${(await rt.store.task.mustGet(task.id)).status})`,
+        provider.calls.length === 3 &&
+        (await rt.store.task.mustGet(task.id)).status === "in_review",
+      {
+        seen: async () =>
+          `${provider.calls.length} model call(s), the task is ${(await rt.store.task.mustGet(task.id)).status}`,
+      },
     );
     expect(existsSync(join(workspace, "contact.html"))).toBe(true);
     // What chat's "Skip the Contact page task" runs once the person says Yes.
@@ -289,14 +294,10 @@ describe("cancelling a task while the critic reviews it (live walk 2, C1)", () =
     expect(JSON.stringify(await res.json())).toContain(
       'Cancelled \\"Contact page\\": its review stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
-    const ended = await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
-          ? s
-          : undefined;
-      },
-      async () => `the session to end (task ${(await rt.store.task.mustGet(task.id)).status})`,
+    const ended = await sessionEnded(
+      { req, watch },
+      sessionId,
+      async () => `the task is ${(await rt.store.task.mustGet(task.id)).status}`,
     );
     expect(ended.status).toBe("completed");
     const after = await rt.store.task.mustGet(task.id);
@@ -308,7 +309,7 @@ describe("cancelling a task while the critic reviews it (live walk 2, C1)", () =
     );
     expect(view?.verdict ?? null).toBeNull();
     expect(existsSync(join(workspace, "contact.html"))).toBe(false);
-  }, 60_000);
+  }, 120_000);
 });
 
 /** The critic's verdict as the model sends it: an unremarkable accept. */
@@ -328,9 +329,6 @@ const accept: ScriptReply = {
     },
   ],
 };
-
-const isEnded = (s: Json) =>
-  ["completed", "stopped", "failed", "killed"].includes(String(s.status));
 
 describe("Stop now while the critic reviews a task (design §4.9, phase C review)", () => {
   // Before: the critic's stopped review threw "killed" and the task stayed "Being reviewed"
@@ -354,11 +352,13 @@ describe("Stop now while the critic reviews a task (design §4.9, phase C review
   );
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -385,24 +385,24 @@ describe("Stop now while the critic reviews a task (design §4.9, phase C review
       method: "POST",
       body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
     });
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    await waitFor(
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.until(
+      "the critic to review the task",
       async () =>
-        provider.calls.length === 3 && (await rt.store.task.mustGet(task.id)).status === "in_review"
-          ? true
-          : undefined,
-      async () =>
-        `the critic to review (${provider.calls.length} calls, task ${(await rt.store.task.mustGet(task.id)).status})`,
+        provider.calls.length === 3 &&
+        (await rt.store.task.mustGet(task.id)).status === "in_review",
+      {
+        seen: async () =>
+          `${provider.calls.length} model call(s), the task is ${(await rt.store.task.mustGet(task.id)).status}`,
+      },
     );
     // The session page's Stop now.
     const stop = await req(`/sessions/${sessionId}/stop`, { method: "POST", body: "{}" });
     expect(stop.status).toBe(200);
-    const first = await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return isEnded(s) ? s : undefined;
-      },
-      async () => `the session to end (task ${(await rt.store.task.mustGet(task.id)).status})`,
+    const first = await sessionEnded(
+      { req, watch },
+      sessionId,
+      async () => `the task is ${(await rt.store.task.mustGet(task.id)).status}`,
     );
     expect(first.status).toBe("killed");
     const after = await rt.store.task.mustGet(task.id);
@@ -435,19 +435,17 @@ describe("Stop now while the critic reviews a task (design §4.9, phase C review
       body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
     });
     expect(again.status).toBe(202);
-    const secondId = (((await again.json()) as Json).session as Json).id as string;
-    const second = await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${secondId}`)).json()) as Json;
-        return isEnded(s) ? s : undefined;
-      },
+    const secondId = watch.track((((await again.json()) as Json).session as Json).id as string);
+    const second = await sessionEnded(
+      { req, watch },
+      secondId,
       async () =>
-        `the second session to end (${provider.calls.length} calls, task ${(await rt.store.task.mustGet(task.id)).status})`,
+        `${provider.calls.length} model call(s), the task is ${(await rt.store.task.mustGet(task.id)).status}`,
     );
     expect(second.status).toBe("completed");
     expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
     expect(await rt.store.review.forTask(task.id)).toHaveLength(1);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("Cancel on a task in review that no session reviews (phase C review)", () => {
@@ -460,11 +458,12 @@ describe("Cancel on a task in review that no session reviews (phase C review)", 
   const provider = new ScriptedProvider([{ text: "unused" }], clock);
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
   let projectId = "";
   let workspace = "";
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
     projectId = (
       await rt.store.project.insert({ name: "Contact club", goal: "Pages", autonomy_level: 2 })
     ).id;
@@ -473,6 +472,7 @@ describe("Cancel on a task in review that no session reviews (phase C review)", 
     writeFileSync(join(workspace, "contact.html"), "<p>Write to the club.</p>\n", "utf8");
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -556,13 +556,15 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
   );
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
   const Q = "Where is the page published?";
   const A = "On Cloudflare Pages, at bakery.example.org";
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -605,11 +607,11 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
       body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
     });
     expect(started.status).toBe(202);
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    await waitFor(
-      async () =>
-        provider.calls.length === 2 && existsSync(join(workspace, "index.html")) ? true : undefined,
-      async () => `the page to be written (${provider.calls.length} model calls)`,
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.until(
+      "the page to be written while its run goes on",
+      () => provider.calls.length === 2 && existsSync(join(workspace, "index.html")),
+      { seen: () => `${provider.calls.length} model call(s)` },
     );
     // While "Build the page" runs, the person answers the card in the Inbox.
     const inbox = (await (await req("/inbox")).json()) as { requests: Json[] };
@@ -641,12 +643,10 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
     expect(change.sentence).toBe(
       'Cancelled "Build the page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
-    await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return isEnded(s) ? s : undefined;
-      },
-      async () => `the session to end (task ${(await rt.store.task.mustGet(build.id)).status})`,
+    await sessionEnded(
+      { req, watch },
+      sessionId,
+      async () => `the task is ${(await rt.store.task.mustGet(build.id)).status}`,
     );
     // The run's file is out of the folder; the person's answers are not.
     expect(existsSync(join(workspace, "index.html"))).toBe(false);
@@ -661,7 +661,7 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
     expect(JSON.stringify(await undone.json())).toContain("What it changed is back in the folder.");
     expect(readFileSync(join(workspace, "index.html"), "utf8")).toBe("<h1>Bakery</h1>\n");
     expect(record().split(A).length - 1).toBe(1);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("Undo of a cancel after the session's next task changed the same file (stops, L-6)", () => {
@@ -692,11 +692,13 @@ describe("Undo of a cancel after the session's next task changed the same file (
   );
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
-    ({ rt, req } = await compose(home, clock, provider));
+    ({ rt, req, watch } = await compose(home, clock, provider));
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -729,11 +731,11 @@ describe("Undo of a cancel after the session's next task changed the same file (
       body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
     });
     expect(started.status).toBe(202);
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    await waitFor(
-      async () =>
-        provider.calls.length === 3 && existsSync(join(workspace, "print.css")) ? true : undefined,
-      async () => `print.css to be written (${provider.calls.length} model calls)`,
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.until(
+      "print.css to be written while its run goes on",
+      () => provider.calls.length === 3 && existsSync(join(workspace, "print.css")),
+      { seen: () => `${provider.calls.length} model call(s)` },
     );
     // The row's Cancel while it runs.
     const loaded = await rt.store.task.mustGet(print.id);
@@ -747,12 +749,10 @@ describe("Undo of a cancel after the session's next task changed the same file (
       'Cancelled "Print stylesheet": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
     );
     // The session goes on: the next task rewrites index.html.
-    const ended = await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return isEnded(s) ? s : undefined;
-      },
-      async () => `the session to end (task ${(await rt.store.task.mustGet(menu.id)).status})`,
+    const ended = await sessionEnded(
+      { req, watch },
+      sessionId,
+      async () => `the task "Menu" is ${(await rt.store.task.mustGet(menu.id)).status}`,
     );
     expect(ended.status).toBe("completed");
     expect(readFileSync(join(workspace, "index.html"), "utf8")).toContain("Nussgipfel");
@@ -776,5 +776,5 @@ describe("Undo of a cancel after the session's next task changed the same file (
     expect((await rt.store.task.mustGet(print.id)).status).toBe("ready");
     expect(existsSync(join(workspace, "print.css"))).toBe(false);
     expect(readFileSync(join(workspace, "index.html"), "utf8")).toContain("Nussgipfel");
-  }, 60_000);
+  }, 120_000);
 });

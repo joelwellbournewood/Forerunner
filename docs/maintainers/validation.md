@@ -86,7 +86,7 @@ These are rules, not advice. A change that breaks one is not done, whatever else
 | Windows-only behaviour never run on Windows as a person | U-002, U-011, U-012, U-024 | Rule 5: CI as a standard user; paths and links tested; owner checklist |
 | An error that hides its cause or the next step | U-007, U-009, U-017 | Rule 9: assert the text and the next step |
 | A test world wired differently from the app | U-008, U-044 (the e2e world gave no specialist list, so the ladder's stand-in never ran) | Rule 3: stand-ins and test worlds are built from the same wiring as compose, or a test compares them |
-| A test that passes only on the machine that wrote it: its git identity, its colour settings, its speed | CI on c8c16fb (a plain `git merge` without an identity; `FORCE_COLOR=1` from ci.yml colouring a tried command's output, which a person whose environment forces colour also saw; Windows cases on fixed waits) | Every test worker runs with CI's environment (`testenv/src/ci-env.ts`: no git identity, `FORCE_COLOR=1`; testing.md, "Tests run as CI runs them"); a commit in a test names its identity; a wait polls the state it needs while it still moves, says what it saw, and stops what it started when it gives up |
+| A test that passes only on the machine that wrote it: its git identity, its colour settings, its speed | CI on c8c16fb (a plain `git merge` without an identity; `FORCE_COLOR=1` from ci.yml colouring a tried command's output, which a person whose environment forces colour also saw; Windows cases on fixed waits) | Every test worker runs with CI's environment (`testenv/src/ci-env.ts`: no git identity, `FORCE_COLOR=1`; testing.md, "Tests run as CI runs them"); a commit in a test names its identity; a wait polls the state it needs while it still moves, says what it saw, and stops what it started when it gives up: every such wait is the shared one (`testenv/src/wait.ts`, `packages/runtime/test/runtime-watch.ts`; testing.md, "Waiting on work a case started"), whose limit comes from the case's own timeout, and `settle()` runs before every `rt.close()` |
 
 Add a row when a new class reaches a release.
 
@@ -111,7 +111,11 @@ Add a row when a new class reaches a release.
       (on c8c16fb it did not: a machine with a git identity and no forced colour passed three
       tests CI failed). To give vitest's own process CI's colour too, prefix the commands with
       `FORCE_COLOR=1`. A case that passes only alone or only on a quiet machine is reported
-      either way, and run again alone (testing.md, "Tests run as CI runs them").
+      either way, and run again alone (testing.md, "Tests run as CI runs them"). A new wait on
+      a session, a run, a task or a card uses the shared wait, never a local loop with a fixed
+      limit, and its give-up path is run once with `FORERUNNER_TEST_WAIT_GIVE_UP_MS=300`: it
+      stops what the case started and says what it saw (testing.md, "Waiting on work a case
+      started").
 - [ ] Work merged from parallel branches is validated together after the merge (the same
       commands), and the tree is searched for conflict markers (`git grep -n "^<<<<<<< "`).
 - [ ] The U-entry has a **Check in the app** line: the steps a person takes to see the fix

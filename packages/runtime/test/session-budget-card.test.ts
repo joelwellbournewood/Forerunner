@@ -12,6 +12,7 @@ import {
   SESSION_BUDGET_STOP_OPTIONS,
 } from "../src/session/budget-card.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * C-36 (the session lead's default, ADR 0105): a task a session's own budget stopped went back
@@ -81,27 +82,15 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
   return { rt, req };
 }
 
-/** Polls in real time (at least 10 s); the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
 describe("a task that needs more than a session's budget asks the person after the second stop (C-36)", () => {
   const clock = new SimulatedClock("2026-11-03T09:00:00Z");
   const home = mkdtempSync(join(tmpdir(), "fr-session-budget-"));
   const fake = provider(clock);
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  // What the cases start, watched: a wait goes on while the runtime moves and stops what runs
+  // (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   let projectId = "";
   let taskId = "";
 
@@ -124,20 +113,16 @@ describe("a task that needs more than a session's budget asks the person after t
       }),
     });
     expect(started.status).toBe(202);
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    return waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
-          ? s
-          : undefined;
-      },
-      async () => `the session to end (task ${String((await taskView()).status)})`,
-    );
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.sessionOver(sessionId, {
+      seen: async () => `the task is ${String((await taskView()).status)}`,
+    });
+    return (await (await req(`/sessions/${sessionId}`)).json()) as Json;
   };
 
   beforeAll(async () => {
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     projectId = (
       (await (
         await req("/projects", {
@@ -165,6 +150,7 @@ describe("a task that needs more than a session's budget asks the person after t
     taskId = ((await created.json()) as Json).id as string;
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -181,7 +167,7 @@ describe("a task that needs more than a session's budget asks the person after t
     const t = await rt.store.task.mustGet(taskId);
     expect(t.status).toBe("ready");
     expect(t.attempt).toBe(0);
-  }, 60_000);
+  }, 120_000);
 
   it("the second stop files one card with three options in words; the task waits for it", async () => {
     const ended = await session();
@@ -216,11 +202,13 @@ describe("a task that needs more than a session's budget asks the person after t
     });
     for (const text of [card.title, card.body, JSON.stringify(card.choices), view.reason])
       expect(String(text)).not.toMatch(/\$|USD/);
-  }, 60_000);
+  }, 120_000);
 
   it("the card survives a restart with no second copy, and no session runs the task meanwhile", async () => {
+    await watch.settle();
     await rt.close();
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     await rt.syncApprovals();
     expect(await openCards()).toHaveLength(1);
     expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
@@ -234,14 +222,17 @@ describe("a task that needs more than a session's budget asks the person after t
       body: JSON.stringify({ version: card.version, answer: choice.label }),
     });
     expect(answered.status).toBe(200);
-    const done = await waitFor(
+    const done = await watch.waitFor(
+      "the session Raise its budget started to finish the task",
       async () => {
         const t = await rt.store.task.mustGet(taskId);
         return t.status === "done" ? t : undefined;
       },
-      async () => {
-        const t = await rt.store.task.mustGet(taskId);
-        return `the task to be done (${t.status}: ${t.reason})`;
+      {
+        seen: async () => {
+          const t = await rt.store.task.mustGet(taskId);
+          return `the task is ${t.status}: ${t.reason}`;
+        },
       },
     );
     expect(done.status).toBe("done");
@@ -256,7 +247,7 @@ describe("a task that needs more than a session's budget asks the person after t
     expect(project.settings.session_cap_usd_micro).toBeUndefined();
     const after = (await inbox()).requests.find((r) => r.id === card.id) as Json | undefined;
     expect(String(after?.outcome)).toMatch(/^Gave "Long report" one session of CHF 4\.00/);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("the session-budget card's other options (C-36)", () => {
@@ -264,6 +255,9 @@ describe("the session-budget card's other options (C-36)", () => {
   const home = mkdtempSync(join(tmpdir(), "fr-session-budget-options-"));
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  // What the cases start, watched: a wait goes on while the runtime moves and stops what runs
+  // (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   let projectId = "";
 
   beforeAll(async () => {
@@ -272,9 +266,11 @@ describe("the session-budget card's other options (C-36)", () => {
       clock,
       new FakeProvider({ clock, latency: "none", onNoMatch: "echo", replies: [] }),
     ));
+    watch = watchRuntime(rt, { request: req });
     projectId = (await rt.store.project.insert({ name: "Options", goal: "g", repos: [] })).id;
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -336,23 +332,22 @@ describe("the session-budget card's other options (C-36)", () => {
     expect(["ready", "claimed", "in_progress", "in_review", "done", "failed"]).toContain(t.status);
     expect(t.budget_usd_micro).toBe(50_000_000);
     // The session it started ends before the next case (nothing left running).
-    await waitFor(
-      async () => {
-        const running = await rt.store.session.list(
-          { project_id: projectId, status: "running" } as never,
-          { limit: 5 },
-        );
-        return running.length === 0 ? true : undefined;
-      },
+    await watch.until(
+      "the session it started to end",
       async () =>
-        `the started session to end (task ${(await rt.store.task.mustGet(task.id)).status})`,
+        (
+          await rt.store.session.list({ project_id: projectId, status: "running" } as never, {
+            limit: 5,
+          })
+        ).length === 0,
+      { seen: async () => `the task is ${(await rt.store.task.mustGet(task.id)).status}` },
     );
     const started = await rt.store.session.list({ project_id: projectId } as never, {
       orderBy: [{ column: "created_at", direction: "desc" }],
       limit: 1,
     });
     expect(started[0]?.budget_cap_usd_micro).toBe(raisedSessionBudgetUsdMicro(SESSION_BUDGET));
-  }, 60_000);
+  }, 120_000);
 
   it("Cancel task cancels it", async () => {
     const { task, card } = await carded("Long appendix");

@@ -1,5 +1,6 @@
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { until as sharedUntil, type WaitOptions } from "../../../testenv/src/wait.ts";
 import { WebCryptoSigner } from "../src/api/state-signing.ts";
 import { memoryStorage } from "../src/lib/storage.ts";
 import { MobileRoutes } from "../src/mobile/MobileApp.tsx";
@@ -111,16 +112,55 @@ export function postedCalls(harness: MobileHarness, path: string | RegExp) {
   );
 }
 
-/** Wait until `predicate` holds or `timeoutMs` passes (polls every 10 ms). */
+/**
+ * Wait until `predicate` holds: the shared wait (`testenv/src/wait.ts`; testing.md, "Waiting on
+ * work a case started"). It goes on while what `watch` watches still moves (`phoneWatch`: the
+ * controllers and the fake service), gives up before the case's own timeout, stops what the case
+ * started first (closes the controllers, so nothing polls on) and says what it saw. It was a fixed
+ * 3 s that said only what it waited for and left the controllers polling.
+ */
 export async function until(
   predicate: () => boolean,
-  timeoutMs = 3000,
-  what = "condition",
+  what: string,
+  watch: WaitOptions = {},
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  if (!predicate()) throw new Error(`timed out waiting for ${what}`);
+  await sharedUntil(what, predicate, { everyMs: 10, ...watch });
+}
+
+/** A phone controller's state in a few words, for a wait's message. */
+function controllerLine(c: MobileController): string {
+  const s = c.state;
+  return `stage ${s.stage}, projects ${s.projectsLoaded ? "loaded" : "not loaded"}, sync ${
+    s.syncMode
+  }, ${s.outboxPending} queued, notice ${JSON.stringify(s.notice)}`;
+}
+
+/**
+ * What a wait on the phone watches and how it stops what the case started: the controllers'
+ * state and the fake service's requests and change feed move while the phone works; the message
+ * names the controllers' stage, sync and queue and the service's last requests; the stop closes
+ * the controllers (their stream, poll and retry timers).
+ */
+export function phoneWatch(
+  service: FakeStateService,
+  ...controllers: MobileController[]
+): WaitOptions {
+  return {
+    progress: () => [
+      controllers.map((c) => c.state),
+      service.state.calls.length,
+      service.state.seq,
+      service.state.queue.length,
+      service.state.uploads.length,
+    ],
+    seen: () =>
+      `${controllers.map(controllerLine).join("; ") || "no controller"}; the service had ${
+        service.state.calls.length
+      } request(s), the last ${JSON.stringify(
+        service.state.calls.slice(-3).map((c) => `${c.method} ${c.path}`),
+      )}`,
+    stop: () => {
+      for (const c of controllers) c.close();
+    },
+  };
 }

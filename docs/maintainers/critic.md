@@ -497,6 +497,15 @@ network). The fixture world (`test/helpers.ts`) seeds its session with a plan, s
 a reason (`fixture session`) and the owner agent as author, as the store's B.5 insert guard
 requires.
 
+A case that waits for a review to reach the stand-in model before it moves the simulated clock
+uses `test/helpers.ts`'s `until`, the shared wait of `testenv/src/wait.ts` (testing.md, "Waiting
+on work a case started"), with `reviewWait(w, controller, review)`: it goes on while the model
+calls or the store's rows move, gives up before the case's own timeout, and first stops the
+review the case started (the review's context carries `signal: controller.signal`; the stop
+aborts it, ends what the kill switch holds of it and waits until its promise has settled) so the
+case's `w.close()` never closes the store under it; the message says the model calls and the
+task's runs it saw. It was a fixed 2 s that left the review going.
+
 - `fast-mode.test.ts` (spec D.20, ADR 0057):
   - With the flag on, a tier-2 review on the Opus rung of an API source carries
     `speed: "fast"`. The Run row, the ledger rows and `ReviewOutput.model` name the variant at

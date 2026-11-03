@@ -1,4 +1,5 @@
 import { type Clock, SimulatedClock } from "@forerunner/platform";
+import { until as sharedUntil, type WaitOptions, waitFor } from "@forerunner/testenv/wait";
 import { z } from "zod";
 import type { RunPricing } from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
@@ -256,15 +257,60 @@ export function registry(): ToolRegistry {
 }
 
 /**
- * Polls `cond` on real timers (never the simulated clock) until it holds, for a run that must
- * have reached the provider before the test advances the clock. Throws after about 2 s.
+ * Waits on real timers (never the simulated clock) until `cond` holds, for a run that must have
+ * reached the provider before the test advances the clock. The shared wait
+ * (`@forerunner/testenv/wait`; testing.md, "Waiting on work a case started"): it goes on while
+ * `opts.progress` moves, gives up before the case's own timeout, calls `opts.stop` first (for a
+ * run the case started: `stopRuns`) and throws with what it saw (`opts.seen`). It was a fixed
+ * 2 s that left the run going when it gave up.
  */
-export async function until(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 400; i++) {
-    if (cond()) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error(`timed out waiting for ${what}`);
+export async function until(
+  cond: () => boolean,
+  what: string,
+  opts: WaitOptions = {},
+): Promise<void> {
+  await sharedUntil(what, cond, opts);
+}
+
+/**
+ * The `stop` of a wait on runs a case started directly (a driver's, an executor's or a session
+ * runner's run on the harness): the kill switch ends every run registered in it (Stop now:
+ * nothing frozen), then the stop waits until each run's promise has settled, calling `release`
+ * (a stand-in that holds its task until released, such as a gate) and moving the simulated
+ * clock on (a stand-in's latency, a wind-down) on every poll; at most 5 s, then it says how many
+ * did not end. Nothing of the runs then writes to a store the case closes.
+ */
+export function stopRuns(
+  h: { kill: KillSwitch; clock?: SimulatedClock },
+  runs: Promise<unknown>[],
+  release?: () => void,
+): (why: string) => Promise<void> {
+  return async (why) => {
+    await h.kill.stop("all", `stopped by the test: ${why}`, { freeze: false, by: "you" });
+    let pending = runs.length;
+    for (const r of runs)
+      void r.then(
+        () => pending--,
+        () => pending--,
+      );
+    await waitFor(
+      "the runs the case started to end",
+      async () => {
+        if (pending === 0) return true;
+        release?.();
+        await h.clock?.advance(60_000);
+        return undefined;
+      },
+      {
+        seen: () => `${pending} of ${runs.length} run(s) still going after the kill switch's stop`,
+        limitMs: 5_000,
+        quietMs: 5_000,
+        reserveMs: 500,
+        everyMs: 20,
+        forceable: false,
+      },
+    );
+  };
 }
 
 /** The critic's tool name (`@forerunner/critic`'s SUBMIT_REVIEW_TOOL), kept here to avoid a cycle. */

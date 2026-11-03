@@ -31,7 +31,8 @@ import {
 import { CREDENTIAL_REQUESTS, validateSubscriptionTokenFormat } from "../src/setup/validators.ts";
 import { PLAN_ALLOWANCE_QUESTION, runSetup, SECRET_NAMES } from "../src/setup/wizard.ts";
 import { RouterTaskBilling, seedBillingSources } from "../src/wiring/billing-pick.ts";
-import { ScriptedProvider, until } from "./helpers.ts";
+import { ScriptedProvider, stopRuns } from "./helpers.ts";
+import { watchRuntime } from "./runtime-watch.ts";
 
 /**
  * The subscription half of the phase 1 check (ADR 0044): one composition with both credentials
@@ -157,6 +158,8 @@ describe("the subscription path (ADR 0044)", () => {
   });
   afterAll(async () => {
     offLogs();
+    // Whatever a failed case left running ends before the runtime closes.
+    await watchRuntime(rt).settle();
     await rt.close();
     rmSync(home, { recursive: true, force: true });
   });
@@ -458,7 +461,13 @@ describe("the subscription path (ADR 0044)", () => {
     });
     try {
       const p = execute(w);
-      await until(() => started, "the SDK run to start");
+      await watchRuntime(rt).until("the SDK run to start", () => started, {
+        seen: async () =>
+          `the stand-in ${started ? "started" : "did not start"}; the task's runs: ${JSON.stringify(
+            (await rt.store.run.forTask(w.task.id)).map((r) => r.outcome),
+          )}`,
+        stop: stopRuns({ kill: rt.kill, clock }, [p]),
+      });
       const t0 = performance.now();
       const report = await rt.kill.stop("all", "test stop");
       const res = await p;

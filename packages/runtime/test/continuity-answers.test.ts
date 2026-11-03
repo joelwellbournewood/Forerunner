@@ -9,6 +9,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { taskContextBlock } from "../src/session/task-context.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Live walk 2 (2026-11-01), phase C "continuity": the owner answered seven questions on the
@@ -72,33 +73,22 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
   return { rt, req };
 }
 
-/** Polls in real time; the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
 describe("the person's answers reach the task that waited on them (phase C, live walk 2 #3)", () => {
   const clock = new SimulatedClock("2026-11-01T09:00:00Z");
   const home = mkdtempSync(join(tmpdir(), "fr-continuity-answers-"));
   const fake = provider(clock);
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  // The session the answer starts, watched: a wait goes on while the runtime moves and stops
+  // what runs (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   let projectId = "";
   let content: TaskRow;
   let fill: TaskRow;
 
   beforeAll(async () => {
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     projectId = (
       await rt.store.project.insert({
         name: "Bakery",
@@ -137,6 +127,7 @@ describe("the person's answers reach the task that waited on them (phase C, live
     } as never);
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -161,13 +152,16 @@ describe("the person's answers reach the task that waited on them (phase C, live
     expect(answered.status).toBe(200);
     expect((await rt.store.task.mustGet(content.id)).status).toBe("done");
     // Answering resumes work: a session runs the task that waited, and the critic reviews it.
-    const call = await waitFor(
-      async () =>
+    const call = await watch.waitFor(
+      "the coder's run of the task that waited",
+      () =>
         fake.calls.find((c) =>
           JSON.stringify(c.request.messages).includes("Replace the placeholders"),
         ),
-      async () =>
-        `the coder's run (task ${(await rt.store.task.mustGet(fill.id)).status}, ${fake.calls.length} calls)`,
+      {
+        seen: async () =>
+          `the task is ${(await rt.store.task.mustGet(fill.id)).status}, ${fake.calls.length} model call(s)`,
+      },
     );
     const brief = String(
       (call.request.messages[0] as { content: unknown } | undefined)?.content ?? "",
@@ -185,17 +179,20 @@ describe("the person's answers reach the task that waited on them (phase C, live
     expect(brief).toContain("docs/decisions/");
     // The plan's promise for the person's task is not told as what was done.
     expect(brief).not.toContain("recorded in docs/data.md");
-    await waitFor(
-      async () => ((await rt.store.task.mustGet(fill.id)).status === "done" ? true : undefined),
-      async () => {
-        const t = await rt.store.task.mustGet(fill.id);
-        return `the task to be done (${t.status}: ${t.reason})`;
+    await watch.until(
+      "the task to be done",
+      async () => (await rt.store.task.mustGet(fill.id)).status === "done",
+      {
+        seen: async () => {
+          const t = await rt.store.task.mustGet(fill.id);
+          return `the task is ${t.status}: ${t.reason}`;
+        },
       },
     );
     // Nothing asked again: no new card for the task that waited.
     const after = (await (await req("/inbox")).json()) as { requests: Json[] };
     expect(after.requests.filter((r) => r.taskId === fill.id && r.status === "open")).toEqual([]);
-  }, 60_000);
+  }, 120_000);
 
   it("Go ahead without is no answer to the person's own card: refused in words, the task and the one after it wait (phase E)", async () => {
     // Before phase E this closed the person's task with no answers although its card offers

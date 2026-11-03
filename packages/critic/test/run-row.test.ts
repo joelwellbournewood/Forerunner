@@ -2,7 +2,15 @@ import { ForerunnerError, Logger, type LogRecord } from "@forerunner/platform";
 import { RUN_PERSIST_FAILED_AUDIT_TOOL } from "@forerunner/runtime";
 import { describe, expect, it, vi } from "vitest";
 import type { ReviewInput } from "../src/types.ts";
-import { baseEvidence, CRITIC_PROMPT, closingReply, submitReply, until, world } from "./helpers.ts";
+import {
+  baseEvidence,
+  CRITIC_PROMPT,
+  closingReply,
+  reviewWait,
+  submitReply,
+  until,
+  world,
+} from "./helpers.ts";
 
 const input = (taskId: string): ReviewInput => ({
   subject: { kind: "task", taskId },
@@ -20,8 +28,9 @@ describe("CriticService: the critic's Run row (D.5, D.19)", () => {
       replies: [submitReply({}, { ttftMs: 12.345, totalMs: 987.65 }), closingReply()],
     });
     try {
-      const p = w.critic.review(input(w.ids.task), w.ctx());
-      await until(() => w.provider.calls.length >= 1, "the review call");
+      const ac = new AbortController();
+      const p = w.critic.review(input(w.ids.task), w.ctx({ signal: ac.signal }));
+      await until(() => w.provider.calls.length >= 1, "the review call", reviewWait(w, ac, p));
       await w.clock.advance(5_000);
       const out = await p;
       expect(out.outcome).toBe("completed");

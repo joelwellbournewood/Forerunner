@@ -8,6 +8,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { raisedBudgetUsdMicro } from "../src/session/budget-card.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Live walk 2 part 3 (B2, 2026-11-01): a task over its own budget ("Contact page", CHF 0.01)
@@ -75,27 +76,15 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
   return { rt, req };
 }
 
-/** Polls in real time (at least 10 s); the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
 describe("a task stopped at its budget asks the person once, in CHF (live walk 2, B2)", () => {
   const clock = new SimulatedClock("2026-11-01T09:00:00Z");
   const home = mkdtempSync(join(tmpdir(), "fr-continuity-budget-"));
   const fake = provider(clock);
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  // What the cases start, watched: a wait goes on while the runtime moves and stops what runs
+  // (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   let projectId = "";
   let taskId = "";
 
@@ -109,6 +98,7 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
 
   beforeAll(async () => {
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     projectId = (
       (await (
         await req("/projects", {
@@ -136,6 +126,7 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     taskId = ((await created.json()) as Json).id as string;
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -145,16 +136,11 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
       body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
     });
     expect(started.status).toBe(202);
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    const ended = await waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
-          ? s
-          : undefined;
-      },
-      async () => `the session to end (task ${String((await taskView()).status)})`,
-    );
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.sessionOver(sessionId, {
+      seen: async () => `the task is ${String((await taskView()).status)}`,
+    });
+    const ended = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
     const cards = await openCards();
     expect(cards).toHaveLength(1);
     const card = cards[0] as Json;
@@ -184,11 +170,13 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     for (const text of [card.title, card.body, view.reason, JSON.stringify(view.display)])
       expect(String(text)).not.toMatch(/\$|USD/);
     expect(String(view.reason)).toContain("CHF 0.01");
-  }, 60_000);
+  }, 120_000);
 
   it("the card survives a restart with no second copy", async () => {
+    await watch.settle();
     await rt.close();
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     await rt.syncApprovals();
     expect(await openCards()).toHaveLength(1);
     expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
@@ -208,21 +196,24 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     // The amount the button promised is the one set.
     const promised = /CHF (\d+\.\d\d)/.exec(String(choice.explain))?.[1];
     expect(promised).toBeDefined();
-    const done = await waitFor(
+    const done = await watch.waitFor(
+      "the session Raise the budget started to finish the task",
       async () => {
         const t = await rt.store.task.mustGet(taskId);
         return t.status === "done" ? t : undefined;
       },
-      async () => {
-        const t = await rt.store.task.mustGet(taskId);
-        return `the task to be done (${t.status}: ${t.reason})`;
+      {
+        seen: async () => {
+          const t = await rt.store.task.mustGet(taskId);
+          return `the task is ${t.status}: ${t.reason}`;
+        },
       },
     );
     expect(done.status).toBe("done");
     expect(await openCards()).toEqual([]);
     const after = (await inbox()).requests.find((r) => r.id === card.id) as Json | undefined;
     expect(String(after?.outcome)).toMatch(/^Raised the budget of "Contact page" to CHF \d+\.\d\d/);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("the budget Raise the budget sets", () => {

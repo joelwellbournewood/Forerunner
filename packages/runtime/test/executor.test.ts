@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { ForerunnerError, join, Logger, type LogRecord } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
+import { storeProgress } from "@forerunner/testenv/wait";
 import { describe, expect, it, vi } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
@@ -10,7 +11,15 @@ import {
   type RunSandboxPort,
   type SpecialistSpec,
 } from "../src/session/executor.ts";
-import { flatPricing, harness, issue, registry, ScriptedProvider, until } from "./helpers.ts";
+import {
+  flatPricing,
+  harness,
+  issue,
+  registry,
+  ScriptedProvider,
+  stopRuns,
+  until,
+} from "./helpers.ts";
 
 // Credential-shaped, built by concatenation so no scanner sees a token. // not-a-secret
 const KEY_LIKE = ["sk-ant-api03-", "leaked", "0".repeat(40)].join(""); // not-a-secret
@@ -361,7 +370,14 @@ describe("LoopTaskExecutor: the Run row (D.5, D.19)", () => {
       h.clock,
     );
     const p = executorFor(h, store, w, provider)();
-    await until(() => provider.calls.length === 1, "the model call");
+    await until(() => provider.calls.length === 1, "the model call", {
+      progress: async () => [provider.calls.length, await storeProgress(store)],
+      seen: async () =>
+        `${provider.calls.length} model call(s); the task's runs: ${JSON.stringify(
+          (await store.run.forTask(w.task.id)).map((r) => r.outcome),
+        )}`,
+      stop: stopRuns(h, [p]),
+    });
     await h.clock.advance(2_000);
     const res = await p;
     expect(res.outcome).toBe("done");

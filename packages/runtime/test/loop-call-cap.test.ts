@@ -18,6 +18,7 @@ import {
   harness,
   issue,
   ScriptedProvider,
+  stopRuns,
   until,
 } from "./helpers.ts";
 
@@ -403,12 +404,22 @@ describe("agent loop: per-call output cap from the budget left (maxTokensCeiling
         maxTokensPerCall: 8192,
         maxTokensCeiling: 24_000,
       });
-      return { h, provider, asked, p };
+      // The read of the model's limit, waited on: it never answers, so the run waits at it.
+      const limitRead = () =>
+        until(() => asked.length === 1, "the limit read", {
+          progress: () => [asked.length, provider.calls.length],
+          seen: () =>
+            `${asked.length} limit read(s), ${provider.calls.length} model call(s); the run ${
+              h.kill.activeCount() > 0 ? "is registered" : "is not registered"
+            }`,
+          stop: stopRuns(h, [p]),
+        });
+      return { h, provider, asked, p, limitRead };
     };
 
     it("the loop waits MODEL_LIMIT_WAIT_MS, then calls unclamped", async () => {
       const s = stalled(60_000);
-      await until(() => s.asked.length === 1, "the limit read");
+      await s.limitRead();
       // The read is handed the run's signal.
       expect(s.asked[0]).toBeInstanceOf(AbortSignal);
       expect(s.provider.calls).toHaveLength(0);
@@ -420,7 +431,7 @@ describe("agent loop: per-call output cap from the budget left (maxTokensCeiling
 
     it("a run timeout shorter than the wait ends the run on time", async () => {
       const s = stalled(2_000);
-      await until(() => s.asked.length === 1, "the limit read");
+      await s.limitRead();
       await s.h.clock.advance(2_000);
       const res = await s.p;
       expect(res.outcome).toBe("timeout");

@@ -32,6 +32,12 @@ import {
   toolReply,
 } from "@forerunner/testenv";
 import {
+  until as sharedUntil,
+  storeProgress,
+  type WaitOptions,
+  waitFor,
+} from "@forerunner/testenv/wait";
+import {
   type CriticDeps,
   type CriticPromptSource,
   CriticService,
@@ -316,13 +322,67 @@ export function reviewOutput(over: Partial<ReviewOutput> = {}): ReviewOutput {
 }
 
 /**
- * Polls `cond` on real timers (never the simulated clock) until it holds, for a review that
- * must have reached the provider before the test advances the clock. Throws after about 2 s.
+ * Waits on real timers (never the simulated clock) until `cond` holds, for a review that must
+ * have reached the provider before the test advances the clock. The shared wait
+ * (`@forerunner/testenv/wait`; testing.md, "Waiting on work a case started"): it goes on while
+ * `opts.progress` moves, gives up before the case's own timeout, calls `opts.stop` first (for a
+ * review the case started: `reviewWait`) and throws with what it saw. It was a fixed 2 s that
+ * left the review going when it gave up, and the case then closed the store under it.
  */
-export async function until(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 400; i++) {
-    if (cond()) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error(`timed out waiting for ${what}`);
+export async function until(
+  cond: () => boolean,
+  what: string,
+  opts: WaitOptions = {},
+): Promise<void> {
+  await sharedUntil(what, cond, opts);
+}
+
+/**
+ * What a wait on a review the case started (with `signal: controller.signal` in its context)
+ * watches and how it stops it: the progress is the model calls and the store's rows, what it
+ * saw the calls and the task's runs; the stop aborts the review (and ends whatever the kill
+ * switch holds of it) and waits until its promise has settled, moving the simulated clock on so
+ * a reply sleeping on it gets there; at most 5 s, then it says the review did not end.
+ */
+export function reviewWait(
+  w: World,
+  controller: AbortController,
+  review: Promise<unknown>,
+): WaitOptions {
+  return {
+    progress: async () => [w.provider.calls.length, await storeProgress(w.store)],
+    seen: async () =>
+      `${w.provider.calls.length} model call(s); the task's runs: ${JSON.stringify(
+        (await w.store.run.forTask(w.ids.task)).map((r) => `${r.specialist}: ${r.outcome}`),
+      )}`,
+    stop: async (why) => {
+      controller.abort(new Error(`stopped by the test: ${why}`));
+      await w.kill.stop("all", `stopped by the test: ${why}`, { freeze: false, by: "you" });
+      let settled = false;
+      void review.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await waitFor(
+        "the review the case started to end",
+        async () => {
+          if (settled) return true;
+          await w.clock.advance(60_000);
+          return undefined;
+        },
+        {
+          seen: () => "the review is still going after its abort",
+          limitMs: 5_000,
+          quietMs: 5_000,
+          reserveMs: 500,
+          everyMs: 20,
+          forceable: false,
+        },
+      );
+    },
+  };
 }

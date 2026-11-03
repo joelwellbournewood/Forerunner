@@ -21,7 +21,7 @@ import { LocalOutbox } from "../src/mobile/outbox.ts";
 import { ShellSigner, shellSecureStore } from "../src/mobile/shell-bridge.ts";
 import { MobileController } from "../src/mobile/store.tsx";
 import { FAKE_REQUESTS, HUMAN_J } from "./fake-state-service.ts";
-import { createMobileHarness, SERVICE_URL, until } from "./mobile-helpers.tsx";
+import { createMobileHarness, phoneWatch, SERVICE_URL, until } from "./mobile-helpers.tsx";
 
 interface ShellCall {
   cmd: string;
@@ -243,7 +243,7 @@ describe("security: auth loss", () => {
       online ? realFetch(input, init) : Promise.reject(new Error("offline"));
     const ctrl = new MobileController(h.env);
     await ctrl.bootstrap();
-    await until(() => ctrl.state.projectsLoaded, 3000, "projects");
+    await until(() => ctrl.state.projectsLoaded, "projects", phoneWatch(h.service, ctrl));
     const oldToken = (await h.env.secure.get("session-token")) as string;
     expect(oldToken).toBeTruthy();
     online = false;
@@ -263,7 +263,7 @@ describe("security: auth loss", () => {
     const mark = h.service.state.calls.length;
     online = true;
     await ctrl.refresh();
-    await until(() => ctrl.state.stage === "unpaired", 3000, "unpaired");
+    await until(() => ctrl.state.stage === "unpaired", "unpaired", phoneWatch(h.service, ctrl));
 
     // Nothing after the 401 used the old token for a mutation, and the outbox was not flushed.
     const after = h.service.state.calls.slice(mark);

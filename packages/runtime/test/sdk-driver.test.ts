@@ -1,7 +1,7 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { type QueryLike, SDK_STOP_WAIT_MS, SdkAgentDriver, scrubEnv } from "../src/agent/sdk.ts";
-import { budget, flatPricing, harness, issue, registry, until } from "./helpers.ts";
+import { budget, flatPricing, harness, issue, registry, stopRuns, until } from "./helpers.ts";
 
 function fakeQuery(script: (opts: Record<string, unknown>) => Record<string, unknown>[]): {
   q: QueryLike;
@@ -507,7 +507,11 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
         return r;
       });
     // The budget stop came (the second message is over the cap); the stand-in ignores the abort.
-    await until(() => state.decisions.some((d) => d.afterStop), "a tool call after the stop");
+    await until(() => state.decisions.some((d) => d.afterStop), "a tool call after the stop", {
+      progress: () => [state.decisions.length, state.exited, state.closed],
+      seen: () => `${JSON.stringify(state)}; the run ${done ? "ended" : "goes on"}`,
+      stop: stopRuns(h, [run]),
+    });
     expect(done).toBe(false);
     // Before: the run had left the kill switch, so Stop now found nothing to stop.
     expect(h.kill.hasTask("task-7")).toBe(true);
@@ -529,7 +533,11 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
         done = true;
         return r;
       });
-    await until(() => state.decisions.some((d) => d.afterStop), "a tool call after the stop");
+    await until(() => state.decisions.some((d) => d.afterStop), "a tool call after the stop", {
+      progress: () => [state.decisions.length, state.exited, state.closed],
+      seen: () => `${JSON.stringify(state)}; the run ${done ? "ended" : "goes on"}`,
+      stop: stopRuns(h, [run]),
+    });
     expect(done).toBe(false);
     await h.clock.advance(SDK_STOP_WAIT_MS);
     const res = await run;

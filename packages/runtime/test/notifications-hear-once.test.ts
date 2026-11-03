@@ -14,6 +14,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import type { CriticPort, SessionReviewOutcome } from "../src/loop/ports.ts";
 import { type SessionEndFacts, sessionEndIsNews } from "../src/notifications/producers.ts";
 import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpers.ts";
+import { watchRuntime } from "./runtime-watch.ts";
 
 /**
  * The person hears once (core-experience design §4.3, §5.10, §5.11). Before (wave 3 review,
@@ -75,27 +76,13 @@ async function compose(env: Record<string, string>, benchClock?: SimulatedClock)
     expect(res.status, `${init.method ?? "GET"} ${path}`).toBeLessThan(300);
     return (await res.json()) as Json;
   };
-  /** The sessions the cases started, for `settle`. */
-  const sessions: string[] = [];
-  return { rt, req, json, bench, sessions };
+  // What the cases start, watched: a wait goes on while the runtime moves, and stops what runs
+  // (Stop now, through the route) before it gives up; `settle` before the runtime closes.
+  const watch = watchRuntime(rt, { request: req });
+  return { rt, req, json, bench, watch };
 }
 
 type World = Awaited<ReturnType<typeof compose>>;
-
-/** Polls in real time (at least 10 s); the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 30_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
 
 async function newProject(w: World, name: string): Promise<string> {
   return String((await w.json("/projects", post({ name, goal: "A small page" }))).id);
@@ -124,19 +111,8 @@ async function startSession(w: World, projectId: string): Promise<string> {
     post({ agentId: w.rt.agent.id, projectId, trigger: "manual" }),
   );
   expect(started.status).toBe(202);
-  const id = String((((await started.json()) as Json).session as Json).id);
-  w.sessions.push(id);
-  return id;
+  return w.watch.track(String((((await started.json()) as Json).session as Json).id));
 }
-
-const ENDED = ["completed", "stopped", "failed", "killed"];
-/**
- * A session whose row and log did not change for this long is stuck, however loaded the
- * machine is (the Windows runner's longest quiet spell seen was a 16 s start).
- */
-const NO_PROGRESS_MS = 45_000;
-/** Below the cases' own 120 s, so a session that never ends is stopped here, not left running. */
-const SESSION_LIMIT_MS = 100_000;
 
 /**
  * Wait until the session has ended and its start is over in the scheduler (the session-end
@@ -145,71 +121,16 @@ const SESSION_LIMIT_MS = 100_000;
  *
  * A session that is still working is waited for: on the Windows runner under load one with a
  * task that fails after its retries took more than 30 s (CI on c8c16fb) while it kept taking
- * steps. It fails when the session took no step for `NO_PROGRESS_MS`, or ran past
- * `SESSION_LIMIT_MS`; then it is stopped and waited for first, so nothing of it runs into the
- * next case or into the runtime's close, and the error says what was seen.
+ * steps. The shared wait (`runtime-watch.ts`) gives up when nothing in the runtime moved for
+ * 45 s, or 20 s before the case's own 120 s; then it stops the session through Stop now and
+ * waits until nothing of it runs, so nothing of it runs into the next case or into the
+ * runtime's close, and the error says what was seen.
  */
 async function sessionOver(w: World, sessionId: string): Promise<Json> {
-  const view = () => w.json(`/sessions/${sessionId}`);
-  const events = async () =>
-    ((await w.json(`/sessions/${sessionId}/events`)) as unknown as Json[]).length;
-  const progress = async (s: Json) =>
-    JSON.stringify([s.status, s.steps, s.spent, s.currentTask, s.statusText, await events()]);
-  const started = Date.now();
-  let last = "";
-  let movedAt = started;
-  for (;;) {
-    const s = await view();
-    if (ENDED.includes(String(s.status)) && !w.rt.scheduler.isActive(w.rt.agent.id)) {
-      // The notifier records asynchronously: a turn of the event loop lets a pending one land.
-      await new Promise((r) => setTimeout(r, 200));
-      return s;
-    }
-    const now = Date.now();
-    const at = await progress(s);
-    if (at !== last) {
-      last = at;
-      movedAt = now;
-    }
-    const why =
-      now - movedAt > NO_PROGRESS_MS
-        ? `it took no step for ${Math.round((now - movedAt) / 1000)} s`
-        : now - started > SESSION_LIMIT_MS
-          ? `it was still working after ${Math.round((now - started) / 1000)} s`
-          : null;
-    if (why) {
-      const seen = JSON.stringify(s);
-      await stopAndWait(w, sessionId, why);
-      throw new Error(`session ${sessionId} did not end (${why}; stopped it): ${seen}`);
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
-
-/** Stop a session as the session page's Stop now does and wait until nothing of it runs. */
-async function stopAndWait(w: World, sessionId: string, why: string): Promise<void> {
-  const view = () => w.json(`/sessions/${sessionId}`);
-  await w.req(`/sessions/${sessionId}/stop`, post({}));
-  await waitFor(
-    async () =>
-      ENDED.includes(String((await view()).status)) && !w.rt.scheduler.isActive(w.rt.agent.id)
-        ? true
-        : undefined,
-    async () => `session ${sessionId} to stop (${why}): ${JSON.stringify(await view())}`,
-  );
-}
-
-/**
- * Before the runtime closes: a session a failed case left running is stopped and waited for,
- * so it never meets a closed database ("sqlite database is closed" on the Windows runner) or
- * the next case.
- */
-async function settle(w: World | undefined): Promise<void> {
-  if (!w) return;
-  for (const id of w.sessions) {
-    const s = await w.json(`/sessions/${id}`);
-    if (!ENDED.includes(String(s.status))) await stopAndWait(w, id, "the cases are over");
-  }
+  await w.watch.sessionOver(sessionId, { seen: () => w.json(`/sessions/${sessionId}`) });
+  // The notifier records asynchronously: a turn of the event loop lets a pending one land.
+  await new Promise((r) => setTimeout(r, 200));
+  return w.json(`/sessions/${sessionId}`);
 }
 
 async function recent(w: World): Promise<Json[]> {
@@ -224,7 +145,7 @@ describe("one notification per outcome: a task that fails after its retries (des
     w = await compose({ FORERUNNER_BENCH_FAIL: "Write the scope" });
   }, 120_000);
   afterAll(async () => {
-    await settle(w);
+    await w?.watch.settle();
     await w?.rt.close();
   });
 
@@ -387,7 +308,7 @@ describe("the person's own Stop now is not echoed back (design §5.11)", () => {
     w = await compose({ FORERUNNER_BENCH_DELAY_MS: "60000" }, still);
   }, 120_000);
   afterAll(async () => {
-    await settle(w);
+    await w?.watch.settle();
     await w?.rt.close();
   });
 
@@ -409,12 +330,11 @@ describe("the person's own Stop now is not echoed back (design §5.11)", () => {
         )?.status,
       );
     // A session's start on the loaded Windows runner took 16 s before its first task (CI on
-    // c8c16fb): the wait is the case's own limit less the stop's; `settle` stops what is left.
-    await waitFor(
-      async () => ((await status()) === "in_progress" ? true : undefined),
-      async () => `the task to run (it is ${await status()})`,
-      SESSION_LIMIT_MS,
-    );
+    // c8c16fb): the wait goes on while the runtime moves, up to the case's own limit less the
+    // stop's, and stops the session if it gives up.
+    await w.watch.until("the task to run", async () => (await status()) === "in_progress", {
+      seen: async () => `the task is ${await status()}`,
+    });
     const stopped = await w.req(`/sessions/${sessionId}/stop`, post({}));
     expect(stopped.status).toBe(200);
     const row = await sessionOver(w, sessionId);

@@ -5484,6 +5484,24 @@ real-daemon case "files: the project's folder" covers them.
 
 ## Tests
 
+Every wait on a session's, a run's, a task's or a card's state goes through
+`test/runtime-watch.ts` (`watchRuntime(rt, { request })`) over the shared wait of
+`testenv/src/wait.ts` (testing.md, "Waiting on work a case started"): it goes on while the
+runtime still moves (any row written, a run registered, a start active or waiting), gives up
+before the case's own timeout, stops what the case started first (Stop now through
+`POST /sessions/:id/stop`, or the kill switch's stop of the session without a daemon app) and
+says what it saw of the session and the runtime; `watch.settle()` runs before every
+`rt.close()`, which itself stops no session. `test/runtime-watch.test.ts` checks the give-up on a
+run that never answers. The files' own `waitFor`/`until` with a fixed 2 to 30 s limit are gone
+(on c8c16fb one gave up after 30 s on a session still taking steps on the loaded Windows runner,
+and the runtime closed under it: "sqlite database is closed"). `test/helpers.ts`'s `until`,
+which waits for a run to reach the stand-in model before a case moves the simulated clock, is
+the shared `until` too, with a `progress` and `seen` per call site (model calls, the store, the
+task's runs) and `stopRuns(h, runs, release?)` as its stop for runs a case started on the
+harness directly: the kill switch ends them (nothing frozen), then it waits until each run's
+promise has settled, releasing a gate and moving the simulated clock on each poll, so nothing of
+them writes to the store the case then closes.
+
 `fast-mode.test.ts` (spec D.20, ADR 0057; `sqlite::memory:`, a stub provider named
 `anthropic` with `fastMode`, a stub billing port, a fake Agent SDK `query`): flag on, the Opus
 call carries `speed: "fast"` on `claude-opus-5-5`, the Run row and the one ledger row name

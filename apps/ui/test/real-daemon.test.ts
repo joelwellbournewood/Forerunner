@@ -8,10 +8,10 @@ import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/pla
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import {
   type ComposeOptions,
-  composeRuntime,
+  composeRuntime as composeUnwatched,
   type RuntimeApp,
 } from "@forerunner/runtime/daemon/compose";
-import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import { createDaemonApp as createUnwatchedApp } from "@forerunner/runtime/daemon/server";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
@@ -25,6 +25,11 @@ import {
   AcceptingCriticProvider,
   ScriptedProvider,
 } from "../../../packages/runtime/test/helpers.ts";
+import {
+  type RuntimeWatch,
+  type RuntimeWatchOptions,
+  watchRuntime,
+} from "../../../packages/runtime/test/runtime-watch.ts";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import {
   type BenchOptions,
@@ -37,6 +42,7 @@ import {
   messagesApiStandIn,
   standInFetch,
 } from "../../../testenv/src/provider/messages-api.ts";
+import { asLine, until } from "../../../testenv/src/wait.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
@@ -67,6 +73,45 @@ const NO_ENGINE = {
   reason: "test: no engine",
   checkedAt: "2026-03-05T08:00:00.000Z",
 };
+
+/**
+ * Every runtime a case composes here is watched (packages/runtime/test/runtime-watch.ts;
+ * docs/maintainers/testing.md, "Waiting on work a case started"): an `eventually` goes on while
+ * one of them still moves, and when it gives up it stops what runs in them (Stop now, through
+ * the daemon app the case made for it) before it throws with what it saw; and `close()` first
+ * stops and waits for whatever a failed case left running, so nothing of it meets the closed
+ * database. `composeRuntime` and `createDaemonApp` below are the runtime's own, watched.
+ */
+const watches = new Map<RuntimeApp, { watch: RuntimeWatch; options: RuntimeWatchOptions }>();
+
+async function composeRuntime(opts: ComposeOptions): Promise<RuntimeApp> {
+  const rt = await composeUnwatched(opts);
+  const options: RuntimeWatchOptions = {};
+  watches.set(rt, { watch: watchRuntime(rt, options), options });
+  const close = rt.close.bind(rt);
+  rt.close = async () => {
+    const watched = watches.get(rt);
+    watches.delete(rt);
+    try {
+      await watched?.watch.settle();
+    } finally {
+      await close();
+    }
+  };
+  return rt;
+}
+
+function createDaemonApp(...args: Parameters<typeof createUnwatchedApp>) {
+  const made = createUnwatchedApp(...args);
+  const watched = watches.get(args[0]);
+  if (watched && !watched.options.request)
+    watched.options.request = (path, init = {}) =>
+      made.app.request(path, {
+        ...init,
+        headers: { authorization: `Bearer ${made.token}`, ...(init.headers ?? {}) },
+      });
+  return made;
+}
 
 /** What a call came back with, when it is a mismatch between the screens and the daemon. */
 function mismatch(error: unknown): string | null {
@@ -218,11 +263,12 @@ describe("the UI client against the real daemon", () => {
 
   it("start session with a note: the session keeps it for every task's brief (design §4.6)", async () => {
     // The session the case before started ends first (one session per agent).
-    for (let i = 0; i < 200; i++) {
-      const running = (await client.sessions({ projectId })).filter((s) => !s.endedAt);
-      if (running.length === 0) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    const running = async () => (await client.sessions({ projectId })).filter((s) => !s.endedAt);
+    await eventually(
+      async () => (await running()).length === 0,
+      "the session the case before started to end",
+      async () => JSON.stringify(await running()),
+    );
     await someWork("Write note.md");
     const started = await client.startSession({
       agentId,
@@ -231,14 +277,12 @@ describe("the UI client against the real daemon", () => {
       note: "Keep it in plain HTML.",
     });
     const id = started.session?.id ?? "";
-    let handoff: unknown = null;
-    for (let i = 0; i < 200; i++) {
-      const s = await client.session(id);
-      handoff = s.handoff;
-      if (s.endedAt) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(handoff).toMatchObject({ note: "Keep it in plain HTML." });
+    await eventually(
+      async () => Boolean((await client.session(id)).endedAt),
+      "the session with the note to end",
+      async () => JSON.stringify(await client.session(id)),
+    );
+    expect((await client.session(id)).handoff).toMatchObject({ note: "Keep it in plain HTML." });
   });
 
   it("next-session queue: add, list and dismiss (U-004)", async () => {
@@ -466,7 +510,6 @@ describe("the UI client against the real daemon", () => {
       "the agent to be free",
       async () =>
         `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
-      10_000,
     );
   });
 
@@ -1925,18 +1968,31 @@ async function composeWithWaitingRun(
   return { rt, client, provider };
 }
 
-/** Real-time poll for what the daemon does at once; `seen` says what it saw last. */
+/**
+ * Wait for what the daemon does (testenv/src/wait.ts): it goes on while a runtime the cases
+ * composed still moves, gives up when none moved for 45 s or before the case's own timeout,
+ * stops what runs in them first, and says what `seen` saw and what ran.
+ */
 async function eventually(
   cond: () => Promise<boolean>,
   what: string,
   seen: () => Promise<string> = async () => "",
-  timeoutMs = 3000,
 ): Promise<void> {
-  for (let i = 0; i < timeoutMs / 5; i++) {
-    if (await cond()) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error(`timed out waiting for ${what} (${await seen()})`);
+  const live = () => [...watches.values()].map((w) => w.watch);
+  await until(what, cond, {
+    everyMs: 10,
+    progress: async () => asLine(await Promise.all(live().map((w) => w.progress()))),
+    seen: async () =>
+      [
+        await seen(),
+        ...(await Promise.all(live().map(async (w) => `the runtime: ${await w.seen()}`))),
+      ]
+        .filter(Boolean)
+        .join("; "),
+    stop: async (why) => {
+      for (const w of live()) await w.stop(why);
+    },
+  });
 }
 
 /**
@@ -2076,7 +2132,6 @@ describe("the UI client against the real daemon: a task a session is running", (
       "the agent to be free",
       async () =>
         `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
-      10_000,
     );
   });
 
@@ -2097,7 +2152,6 @@ describe("the UI client against the real daemon: a task a session is running", (
       async () => (await rowOf())?.display?.key === "running" && provider.calls.length === 4,
       "the task's run",
       async () => `${(await rowOf())?.status}, ${provider.calls.length} model call(s)`,
-      10_000,
     );
     const running = await rowOf();
     expect(running?.display).toMatchObject({ label: "Running", agentName: "Alice" });
@@ -2151,7 +2205,6 @@ describe("the UI client against the real daemon: a start waiting behind a sessio
       async () => provider.calls.length >= 1,
       "the running task's model call",
       async () => `${provider.calls.length} model call(s)`,
-      10_000,
     );
     // The Start dialog's call while it runs: it waits its turn.
     const waiting = await client.startSession({ agentId, projectId: project.id });
@@ -2171,7 +2224,6 @@ describe("the UI client against the real daemon: a start waiting behind a sessio
       "the waiting start to begin its session",
       async () =>
         `${await sessionsOf()} session(s), ${rt.scheduler.pendingStarts(agentId).length} waiting, active ${rt.scheduler.isActive(agentId)}`,
-      10_000,
     );
     // Nothing is left running or waiting for the next test: the second session finds nothing
     // to run and ends.
@@ -2179,7 +2231,6 @@ describe("the UI client against the real daemon: a start waiting behind a sessio
       async () => !rt.scheduler.isActive(agentId),
       "the agent to be free",
       async () => `active ${rt.scheduler.isActive(agentId)}`,
-      10_000,
     );
   });
 });
@@ -2317,7 +2368,6 @@ describe("the UI client against the real daemon: the task drawer after a session
         async () => (await client.session(sessionId)).status !== "running",
         "the session to end",
         statuses,
-        30_000,
       );
     }
     const done = await client.task(task.id);
@@ -2350,7 +2400,7 @@ describe("the UI client against the real daemon: the task drawer after a session
     expect(retried.runs.filter((r) => r.kind === "review" && (r.report || r.files.length))).toEqual(
       [],
     );
-  });
+  }, 60_000);
 
   it("Reviews: a done task's findings are no open work, each review names its task's status, the evidence has no run ids or prompt hashes (design §3.5)", async () => {
     const project = (await client.projects()).find((p) => p.name === "Drawer");
@@ -2409,14 +2459,12 @@ describe("the UI client against the real daemon: the task drawer after a session
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
-      30_000,
     );
     // The notification of the session's end is written after the end; wait for it.
     await eventually(
       async () => (await client.sessionEvents(sessionId)).some((e) => e.type === "notification"),
       "the end's notification line",
       async () => (await client.sessionEvents(sessionId)).map((e) => e.type).join(", "),
-      10_000,
     );
     const events = await client.sessionEvents(sessionId);
     expect(events.every((e) => e.audience === "person" || e.audience === "detail")).toBe(true);
@@ -2447,7 +2495,7 @@ describe("the UI client against the real daemon: the task drawer after a session
     // Even under Details, the notification line names no channel that was not set up.
     const note = detail.find((e) => e.type === "notification");
     expect(note?.text).toMatch(/^Notified you: ".+"\.$/);
-  });
+  }, 60_000);
 });
 
 describe("the UI client against the real daemon: Stop all and the chat's stop while a task runs", () => {
@@ -2800,7 +2848,6 @@ describe("the UI client against the real daemon: nothing is Done without the rig
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
-      30_000,
     );
   };
 
@@ -2905,7 +2952,6 @@ describe("the UI client against the real daemon: nothing is Done without the rig
       },
       "the session the answer started to end",
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
-      30_000,
     );
     // The work made no chart and asked for the file: not done, it needs you.
     const row = (await client.tasks(project.id)).find((t) => t.id === chart.id);
@@ -2983,7 +3029,6 @@ describe("the UI client against the real daemon: a retry that changes no file is
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
-      60_000,
     );
     const detail = await client.task(clamp.id);
     const work = detail.runs.filter((r) => r.kind === "work");
@@ -3070,7 +3115,6 @@ describe("the UI client against the real daemon: what was checked survives a res
         async () => (await first.client.session(started.session?.id ?? "")).status !== "running",
         "the session to end",
         async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
-        30_000,
       );
       const before = (await first.client.tasks(projectId)).find((t) => t.id === taskId);
       expect(before?.check).toEqual({ label: "Reviewed and tried", tried: true });
@@ -3109,7 +3153,6 @@ describe("the UI client against the real daemon: a command line tool and an API 
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
-      30_000,
     );
   };
 
@@ -3282,7 +3325,7 @@ describe("the UI client against the real daemon: a task that fails gets one card
       (await sessionsOf()).every((s) => !["running", "paused"].includes(s.status));
     const first = await client.startSession({ agentId, projectId: project.id });
     expect(first.session?.id).toBeTruthy();
-    await eventually(ended, "the session to end", async () => "", 60_000);
+    await eventually(ended, "the session to end", async () => "");
 
     // The session page's log (design §3.7, §5 "Log line"): at most about eight lines for the
     // task over all its attempts; each attempt is one line with the specialist's words and
@@ -3357,7 +3400,6 @@ describe("the UI client against the real daemon: a task that fails gets one card
       async () => (await sessionsOf()).length > sessionsBefore && (await ended()),
       "the session the answer started",
       async () => `${(await sessionsOf()).length} sessions`,
-      60_000,
     );
     // It failed again: one card again, never one per attempt.
     const again = await cardsOf();
@@ -3386,7 +3428,6 @@ describe("the UI client against the real daemon: a task that fails gets one card
         (await client.tasks(project.id)).find((t) => t.id === readme.id)?.status === "done",
       "the README to be done by the session the answer started",
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
-      60_000,
     );
     // The Answered list keeps both answers with what came of them.
     const answered = (await client.inbox(me.id)).requests.filter(
@@ -3437,14 +3478,12 @@ describe("the UI client against the real daemon: a task that fails gets one card
       async () => (await sessionsOf()).length > 0,
       "the session the answer started",
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
-      60_000,
     );
     await eventually(
       async () =>
         (await client.tasks(project.id)).find((t) => t.id === readme.id)?.status === "done",
       "the README to be done by the session the answer started",
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
-      60_000,
     );
   }, 120_000);
 
@@ -3480,7 +3519,6 @@ describe("the UI client against the real daemon: a task that fails gets one card
       },
       "the session to end with the project's Docker card",
       async () => JSON.stringify((await client.sessions({ projectId: project.id })).length),
-      90_000,
     );
     // The project's Docker card names the task (Set up Docker, Cancel task).
     expect((await dockerCard())?.title).toBe('"Check the page in a browser" waits for Docker');
@@ -3665,7 +3703,6 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
       async () => (await client.sessions({ projectId: project.id })).length > 0,
       "the session the approval started",
       async () => "",
-      10_000,
     );
   }, 60_000);
 
@@ -3888,7 +3925,6 @@ describe("the UI client against the real daemon: a one-line brief's work is revi
       async () => (await client.task(build.id)).task.status === "done",
       "the build task to be done",
       states,
-      60_000,
     );
     // The task's runs, newest first: the critic's review after the coder's work.
     const runs = (await client.task(build.id)).runs;
@@ -3902,7 +3938,6 @@ describe("the UI client against the real daemon: a one-line brief's work is revi
         (await client.sessions({ projectId: project.id })).every((s) => s.status !== "running"),
       "the session to end",
       states,
-      60_000,
     );
   }, 150_000);
 });
@@ -3944,7 +3979,6 @@ describe("the UI client against the real daemon: a run that errors fails its tas
         ),
       "the session to end",
       async () => "",
-      60_000,
     );
     expect((await client.tasks(project.id)).find((t) => t.id === scope.id)?.status).toBe("failed");
     const inbox = await client.inbox(me.id);
@@ -4065,7 +4099,6 @@ describe("the UI client against the real daemon without a Claude key (U-047)", (
         async () => (await Promise.all(heard)).includes("failed"),
         "a project.changed after the plan failed",
         async () => (await Promise.all(heard)).join(", "),
-        10_000,
       );
       const row = (await client.projects()).find((p) => p.id === created.id);
       expect(row?.statusLine).toEqual({
@@ -4441,7 +4474,6 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       async () => (await running()).length === 0,
       "every session to end",
       async () => (await running()).map((s) => `${s.status}: ${s.summary ?? ""}`).join(" | "),
-      20_000,
     );
   };
 
@@ -4460,7 +4492,6 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       },
       "the session to end",
       async () => (await sessions()).map((s) => `${s.status}: ${s.summary ?? ""}`).join(" | "),
-      20_000,
     );
     return client.session(started.session?.id ?? "");
   };
@@ -4532,14 +4563,13 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         const t = (await client.tasks(project.id)).find((x) => x.id === created.id);
         return `${t?.status}: ${t?.reason}`;
       },
-      20_000,
     );
     const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
     expect(done?.budget.usdMicro).toBe(550_000);
     expect(await cardsOf()).toEqual([]);
     // Nothing left running for the next case.
     await allEnded();
-  });
+  }, 60_000);
 
   it("a task the run refused at once: one card that says why, the Tasks tab offers no Resume, Cancel task cancels it (live walk 4)", async () => {
     const me = await client.me();
@@ -4587,7 +4617,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     expect((await client.tasks(project.id)).find((t) => t.id === created.id)?.status).toBe(
       "cancelled",
     );
-  });
+  }, 60_000);
 
   it("Cancel while the task runs: the reply says its work is removed, its file leaves the folder, Undo brings it back (ADR 0105)", async () => {
     const project = await client.createProject({ name: "About club", goal: "An about page" });
@@ -4614,7 +4644,6 @@ describe("the UI client against the real daemon: a task that stops waits on one 
             "in_progress" && (await files()).includes("about.html"),
         "the run to write about.html",
         async () => (await files()).join(", "),
-        20_000,
       );
       const row = (await client.tasks(project.id)).find((t) => t.id === created.id);
       const cancelled = await client.taskAction(created.id, {
@@ -4642,7 +4671,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       'Undone: reopened the task "Write the About page in about.html"; it is ready again and a session picks it up. What it changed is back in the folder.',
     );
     expect(await files()).toContain("about.html");
-  });
+  }, 60_000);
 
   it("Stop now while the critic reviews: the task is Ready again with its file and no review, and the next session reviews it (design §4.9, phase C review)", async () => {
     const project = await client.createProject({ name: "Contact club", goal: "A contact page" });
@@ -4669,7 +4698,6 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         async () => (await row())?.display?.key === "review",
         "the critic to review the task",
         async () => `${(await row())?.display?.label}`,
-        20_000,
       );
       // The session page's Stop now.
       await client.stopSession(sessionId);
@@ -4704,7 +4732,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     await runSession(project.id);
     expect((await row())?.status).toBe("done");
     expect((await client.task(created.id)).review?.verdict).toBeTruthy();
-  });
+  }, 60_000);
 
   it("a task in review whose card waits reads Needs your decision, and Cancel says only that it is cancelled (phase C review)", async () => {
     const project = await client.createProject({ name: "Review club", goal: "A contact page" });
@@ -5080,7 +5108,6 @@ describe("the UI client against the real daemon: research on an API key reads th
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       states,
-      60_000,
     );
     // The researcher ran (no refusal, no hand-over to the person) and the critic reviewed it.
     const done = await client.task(task.id);
@@ -5138,7 +5165,6 @@ describe("the UI client against the real daemon: research on an API key reads th
         async () => (await off.client.session(sessionId)).status !== "running",
         "the session to end",
         async () => (await off.client.tasks(project.id)).map((t) => t.status).join(", "),
-        60_000,
       );
       // Never handed to the person for a missing tool: the researcher ran and was reviewed.
       const done = await off.client.task(task.id);
@@ -5224,7 +5250,6 @@ describe("the UI client against the real daemon: answers do what the person said
       },
       "the person task's card",
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
-      30_000,
     );
     if (!asked) throw new Error("no person card");
     // What the Inbox offers on it: the form and Cancel task.
@@ -5447,7 +5472,6 @@ describe("the UI client against the real daemon: answers do what the person said
       async () => (await client.sessions({})).every((s) => s.status !== "running"),
       "the sessions of the cases before to end",
       async () => (await client.sessions({})).map((s) => s.status).join(", "),
-      30_000,
     );
     bench.fail = ["Build the notes CLI"];
     try {
@@ -5458,7 +5482,6 @@ describe("the UI client against the real daemon: answers do what the person said
           (await client.task(task.id)).task.status !== "in_progress",
         "the session to run the task's attempts and end",
         async () => `${(await client.task(task.id)).task.status}`,
-        60_000,
       );
     } finally {
       bench.fail = [];
@@ -5525,7 +5548,6 @@ describe("the UI client against the real daemon: answers do what the person said
       async () => (await client.sessions({})).every((s) => s.status !== "running"),
       "the sessions of the cases before to end",
       async () => (await client.sessions({})).map((s) => s.status).join(", "),
-      30_000,
     );
     // The run errors (the model call fails): the session files the failed-task card.
     bench.fail = ["Write the quote page"];
@@ -5540,13 +5562,11 @@ describe("the UI client against the real daemon: answers do what the person said
         async () => (await openCards()).length > 0,
         "the failed task's card",
         async () => `${(await client.task(task.id)).task.status}`,
-        60_000,
       );
       await eventually(
         async () => (await client.sessions({})).every((s) => s.status !== "running"),
         "the session to end",
         async () => (await client.sessions({})).map((s) => s.status).join(", "),
-        30_000,
       );
     } finally {
       bench.fail = [];
@@ -5593,7 +5613,6 @@ describe("the UI client against the real daemon: answers do what the person said
       async () => (await client.sessions({})).every((s) => s.status !== "running"),
       "the session the answer started to end",
       async () => (await client.sessions({})).map((s) => s.status).join(", "),
-      30_000,
     );
   }, 120_000);
 
@@ -5611,7 +5630,6 @@ describe("the UI client against the real daemon: answers do what the person said
       async () => (await client.sessions({})).every((s) => s.status !== "running"),
       "the sessions of the cases before to end",
       async () => (await client.sessions({})).map((s) => s.status).join(", "),
-      30_000,
     );
     const say = (text: string) =>
       client.chat({
@@ -5637,7 +5655,6 @@ describe("the UI client against the real daemon: answers do what the person said
       async () => (await client.session(started?.id ?? "")).status !== "running",
       "the started session to end",
       async () => (await client.session(started?.id ?? "")).status,
-      30_000,
     );
   }, 90_000);
 
@@ -5706,7 +5723,6 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
         !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
       "the session to end",
       states,
-      60_000,
     );
     return sessionId;
   }
@@ -5783,14 +5799,12 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
         async () => (await status()) === "in_review" && criticCalls.length > asked,
         "the critic's call to begin",
         async () => `task ${await status()}, ${criticCalls.length - asked} critic call(s)`,
-        30_000,
       );
       await client.stopSession(sessionId, "stopped from the live view");
       await eventually(
         async () => !["running", "paused"].includes((await client.session(sessionId)).status),
         "the session to end",
         async () => `session ${(await client.session(sessionId)).status}`,
-        30_000,
       );
     } finally {
       bench.criticDelayMs = 0;
@@ -5835,7 +5849,6 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
         ),
       "the started session to end",
       async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
-      60_000,
     );
     expect(await row()).toMatchObject({
       undoState: "undoable",
@@ -6162,7 +6175,6 @@ describe("the UI client against the real daemon: Continue where it stopped start
       async () => provider.calls.length > calls,
       "the first project's run",
       async () => `session ${(await client.session(sessionId)).status}`,
-      10_000,
     );
     return { a, b, sessionId };
   }
@@ -6178,7 +6190,6 @@ describe("the UI client against the real daemon: Continue where it stopped start
         async () => (await first.client.session(one.sessionId)).stopReason === "stop_all",
         "the session to end by Stop all",
         async () => `session ${(await first.client.session(one.sessionId)).status}`,
-        10_000,
       );
       // Only the project that ran: the other one has ready work too, and nothing stopped it.
       expect((await first.client.resume()).stoppedProjects).toEqual([one.a.id]);
@@ -6193,7 +6204,6 @@ describe("the UI client against the real daemon: Continue where it stopped start
         async () => first.provider.calls.length > calls,
         "the run again",
         async () => `session ${(await first.client.session(again.session?.id ?? "")).status}`,
-        10_000,
       );
       await first.client.kill({ scope: "all", reason: "stop all from the UI" });
       a = one.a.id;
@@ -6233,7 +6243,6 @@ describe("the UI client against the real daemon: Continue where it stopped start
         async () => (await first.client.session(one.sessionId)).stopReason === "stop_all",
         "the session to end by the chat's Stop all",
         async () => JSON.stringify(await first.client.session(one.sessionId)),
-        15_000,
       );
       a = one.a.id;
     } finally {
@@ -6287,7 +6296,6 @@ describe("the UI client against the real daemon: Continue where it stopped start
         async () => provider.calls.length > calls,
         "the chat's session to run its task",
         async () => `session ${(await sessionOf(undone.id))?.status ?? "none"}`,
-        15_000,
       );
       const undoneSession = (await sessionOf(undone.id))?.id ?? "";
       expect(undoneSession).not.toBe("");
@@ -6298,7 +6306,6 @@ describe("the UI client against the real daemon: Continue where it stopped start
         async () => (await client.session(undoneSession)).stopReason === "you",
         "the undone session to end, stopped by you",
         async () => JSON.stringify(await client.session(undoneSession)),
-        15_000,
       );
 
       // A session on the other project, then Stop all.
@@ -6309,14 +6316,12 @@ describe("the UI client against the real daemon: Continue where it stopped start
         async () => provider.calls.length > calls,
         "the other project's run",
         async () => `session ${(await client.session(otherSession)).status}`,
-        15_000,
       );
       await client.kill({ scope: "all", reason: "stop all from the UI" });
       await eventually(
         async () => (await client.session(otherSession)).stopReason === "stop_all",
         "the other session to end by Stop all",
         async () => `session ${(await client.session(otherSession)).status}`,
-        15_000,
       );
       expect((await client.resume()).stoppedProjects).toEqual([other.id]);
     } finally {
@@ -6359,7 +6364,6 @@ describe("the UI client against the real daemon: a start on a project with nothi
         async () => provider.calls.length >= 1,
         "the busy project's model call",
         async () => `${provider.calls.length} model call(s)`,
-        10_000,
       );
       const check = await client.startCheck(empty.id);
       expect(check.busy).toBe(true);
@@ -6397,7 +6401,6 @@ describe("the UI client against the real daemon: a start on a project with nothi
         "the agent to be free, with nothing waiting",
         async () =>
           `active ${rt.scheduler.isActive(agentId)}, ${rt.scheduler.pendingStarts(agentId).length} waiting`,
-        10_000,
       );
     }
     expect(await client.sessions({ projectId: empty.id })).toEqual([]);
@@ -6500,7 +6503,7 @@ describe("the UI client against the real daemon: what the bench walks (phase E, 
     const states = async () =>
       `${(await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ")}; held=${hold.held}`;
     // The specialist's first call is held: the session runs the build task now.
-    await eventually(async () => hold.held, "the build task's first model call", states, 30_000);
+    await eventually(async () => hold.held, "the build task's first model call", states);
     const session = (await client.sessions({ projectId: project.id })).find(
       (s) => s.status === "running",
     );
@@ -6519,7 +6522,6 @@ describe("the UI client against the real daemon: what the bench walks (phase E, 
       async () => (await client.session(session.id)).status !== "running",
       "the session to end",
       states,
-      60_000,
     );
     // The check task asked the person; the session finished with it waiting for them.
     const ended = await client.session(session.id);
@@ -6600,7 +6602,6 @@ describe("the UI client against the real daemon: a session on a repository opens
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       states,
-      90_000,
     );
     const done = await client.task(task.id);
     expect(done.task.status, await states()).toBe("done");
@@ -6664,6 +6665,7 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
     );
     let projectId = "";
     let taskId = "";
+    let quit = false;
     try {
       const project = await first.client.createProject({ name: "Garden club", goal: "Pages" });
       projectId = project.id;
@@ -6683,17 +6685,21 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
             "Being reviewed",
         "the task to read Being reviewed",
         async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
-        30_000,
       );
       // Quit, as the desktop shell's Quit asks the daemon (`POST /shutdown`): every run stops
       // and every claim is released; then the process ends.
       const { app, token } = createDaemonApp(first.rt, { onShutdown: () => undefined });
-      const quit = await app.request("/shutdown", {
+      const shutdown = await app.request("/shutdown", {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(quit.status).toBe(202);
+      expect(shutdown.status).toBe(202);
+      quit = true;
     } finally {
+      // After the Quit the process ends with the review's browser step still held: it never
+      // returns, so nothing of it reaches the closed store, and a settle would wait for it in
+      // vain. Before the Quit (a failed case) the close settles what runs, as everywhere.
+      if (quit) watches.delete(first.rt);
       await first.rt.close();
     }
 
@@ -6717,7 +6723,6 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
         async () => (await second.client.session(started.session?.id ?? "")).status !== "running",
         "the next session to end",
         async () => (await second.client.tasks(projectId)).map((t) => t.status).join(", "),
-        30_000,
       );
       const done = await second.client.task(taskId);
       expect(done.task.status).toBe("done");
@@ -6777,7 +6782,6 @@ describe("the UI client against the real daemon: Cancel in the first moment of '
         async () => trying && (await row())?.display?.label === "Being reviewed",
         "the task to read Being reviewed",
         async () => `${(await row())?.status}`,
-        30_000,
       );
       const files = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
       expect(await files()).toContain("credits.html");
@@ -6796,7 +6800,6 @@ describe("the UI client against the real daemon: Cancel in the first moment of '
         async () => (await client.session(started.session?.id ?? "")).status !== "running",
         "the session to end",
         async () => `${(await row())?.status}, ${criticCalls.length} critic calls`,
-        30_000,
       );
       expect(criticCalls).toHaveLength(0);
       expect((await row())?.display?.label).toBe("Cancelled");
@@ -6832,7 +6835,6 @@ describe("the UI client against the real daemon: 'Skip the … task' in Chat can
         async () => (await row())?.display?.label === "Running",
         "the task to run",
         async () => `${(await row())?.status}`,
-        30_000,
       );
       const say = (text: string) =>
         client.chat({
@@ -6858,7 +6860,6 @@ describe("the UI client against the real daemon: 'Skip the … task' in Chat can
         async () => (await client.session(started.session?.id ?? "")).status !== "running",
         "the session to end",
         async () => `${(await row())?.status}`,
-        30_000,
       );
     } finally {
       await rt.close();
@@ -6906,7 +6907,6 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
         async () => (await view(running.id))?.display?.label === "Being reviewed",
         "the About page's review to begin",
         async () => `${(await view(running.id))?.status}`,
-        30_000,
       );
       // Its review goes on here; the other one's does not.
       expect((await view(running.id))?.display?.live).toBe(true);
@@ -6945,7 +6945,6 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
         async () => (await client.session(started.session?.id ?? "")).status !== "running",
         "the session to end",
         async () => `${(await view(running.id))?.status}`,
-        30_000,
       );
       const after = await view(running.id);
       expect(after?.display?.label).toBe("Ready");
@@ -6979,7 +6978,6 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
         async () => (await view())?.display?.label === "Being reviewed",
         "the About page's review to begin",
         async () => `${(await view())?.status}`,
-        30_000,
       );
       // Its pull request, as the runner records it for a repository project.
       await rt.store.task.patch(page.id, { pr_url: "https://github.test/o/garden/pull/3" });
@@ -7008,7 +7006,6 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
         async () => (await client.session(started.session?.id ?? "")).status !== "running",
         "the session to end",
         async () => `${(await view())?.status}`,
-        30_000,
       );
     } finally {
       await rt.close();
@@ -7120,7 +7117,6 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       async () => (await client.session(sessionId)).status !== "running",
       "the session to end",
       statuses,
-      60_000,
     );
     expect(await statuses()).toBe(
       "Write the notes in notes.md=done, Write the summary in summary.md=done",
@@ -7251,7 +7247,6 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       () => sessionsEnded(planned + 1),
       "the session the approval started to end",
       statuses,
-      60_000,
     );
     const intakePr = (await host.listPullRequests(briefRepo, { state: "open" })).find((p) =>
       /^fr\/intake-.+-docs$/.test(p.head.ref),
@@ -7306,12 +7301,7 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     const before = (await client.sessions({ projectId: project.id })).length;
     const started = await client.startSession({ agentId, projectId: project.id });
     expect(started.session?.id, await statuses()).toBeDefined();
-    await eventually(
-      () => sessionsEnded(before + 1),
-      "the second session to end",
-      statuses,
-      60_000,
-    );
+    await eventually(() => sessionsEnded(before + 1), "the second session to end", statuses);
     const after = await client.docs(project.id);
     expect(after.find((d) => d.path === "docs/overview.md")).toMatchObject({
       exists: true,
@@ -7407,7 +7397,6 @@ describe("the UI client against the real daemon: a budget stop is a clean pause 
         const s = await client.session(sessionId);
         return `${s.status}: ${s.summary ?? ""}`;
       },
-      20_000,
     );
     // The run's own lines: its budget line with the reserve, the wrap-up.
     const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
@@ -7490,7 +7479,6 @@ describe("the UI client against the real daemon: a session ended at this month's
         const s = await client.session(sessionId);
         return `${s.status}: ${s.summary ?? ""}`;
       },
-      20_000,
     );
     const session = await client.session(sessionId);
     // Before: "Stopped: the budget is used" and "The session's budget is used." at 1% of the
@@ -7607,7 +7595,6 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
       "the session to end",
       async () => (await client.session(sessionId)).status,
-      20_000,
     );
     return sessionId;
   }
@@ -7657,7 +7644,6 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
         "the tasks the reset's session ran",
         async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
-        20_000,
       );
       expect(workCalls(onKey)).toHaveLength(0);
       const sessions = await client.sessions({ projectId: project.id });
@@ -7759,7 +7745,6 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         async () => (await client.intakeStatus(planned.id)).state === "waiting",
         "the planning to wait for a new key",
         async () => JSON.stringify(await client.intakeStatus(planned.id)),
-        20_000,
       );
       const plan = await client.intakeStatus(planned.id);
       expect(plan.error).toBeNull();
@@ -7826,7 +7811,6 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         async () => (await client.tasks(notes.id)).every((t) => t.status === "done"),
         "the tasks that waited to finish",
         async () => (await client.tasks(notes.id)).map((t) => t.status).join(", "),
-        30_000,
       );
       expect((await client.sessions({ projectId: notes.id })).map((s) => s.trigger).sort()).toEqual(
         ["budget_reset", "manual"],
@@ -7836,7 +7820,6 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         async () => (await client.intakeStatus(planned.id)).state === "pending",
         "the plan to be drafted after the new key",
         async () => JSON.stringify(await client.intakeStatus(planned.id)),
-        30_000,
       );
       expect((await client.project(planned.id)).statusLine?.text).toBe(
         "Waiting for you: approve the plan",

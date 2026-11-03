@@ -1,4 +1,5 @@
 import { openStore, type StateStore } from "@forerunner/state";
+import { storeProgress } from "@forerunner/testenv/wait";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
@@ -11,6 +12,7 @@ import {
   registry,
   ScriptedProvider,
   type ScriptReply,
+  stopRuns,
   until,
 } from "./helpers.ts";
 
@@ -242,7 +244,14 @@ describe("closeout: wall-clock timeout of a run (D.17)", () => {
     // The first call and the tool run take no simulated time. Wait (on real timers) until the
     // second call has reached the provider and sleeps on the simulated clock, then let the
     // deadline pass: a fixed sleep would race the run on a slow machine.
-    await until(() => provider.calls.length >= 2, "the second model call");
+    await until(() => provider.calls.length >= 2, "the second model call", {
+      progress: async () => [provider.calls.length, await storeProgress(store)],
+      seen: async () =>
+        `${provider.calls.length} model call(s); the task's runs: ${JSON.stringify(
+          (await store.run.forTask(s.task.id)).map((r) => r.outcome),
+        )}`,
+      stop: stopRuns(h, [p]),
+    });
     await h.clock.advance(1_500);
     await h.clock.advance(10_000);
     const res = await p;

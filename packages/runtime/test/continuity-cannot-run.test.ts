@@ -8,6 +8,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { plainStopReason } from "../src/session/cannot-run-card.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * Live walk 4 (real model, 2026-11-02): a task the run refused at once (the researcher on an
@@ -59,21 +60,6 @@ async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) 
   return { rt, req };
 }
 
-/** Polls in real time (at least 10 s); the error says what was seen last. */
-async function waitFor<T>(
-  probe: () => Promise<T | undefined>,
-  what: () => Promise<string>,
-  ms = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error(`timed out waiting: ${await what()}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
 describe("a task a run leaves waiting without asking gets one card (live walk 4)", () => {
   const clock = new SimulatedClock("2026-11-02T09:00:00Z");
   const home = mkdtempSync(join(tmpdir(), "fr-continuity-cannot-run-"));
@@ -85,6 +71,9 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
   });
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
+  // What the cases start, watched: a wait goes on while the runtime moves and stops what runs
+  // (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   let projectId = "";
   let taskId = "";
 
@@ -101,20 +90,16 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
       body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
     });
     expect(started.status).toBe(202);
-    const sessionId = (((await started.json()) as Json).session as Json).id as string;
-    return waitFor(
-      async () => {
-        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
-        return ["completed", "stopped", "failed", "killed"].includes(String(s.status))
-          ? s
-          : undefined;
-      },
-      async () => `the session to end (task ${String((await taskView()).status)})`,
-    );
+    const sessionId = watch.track((((await started.json()) as Json).session as Json).id as string);
+    await watch.sessionOver(sessionId, {
+      seen: async () => `the task is ${String((await taskView()).status)}`,
+    });
+    return (await (await req(`/sessions/${sessionId}`)).json()) as Json;
   };
 
   beforeAll(async () => {
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     projectId = (
       (await (
         await req("/projects", {
@@ -141,6 +126,7 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     taskId = ((await created.json()) as Json).id as string;
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -180,11 +166,13 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     expect(
       ((await (await req("/inbox")).json()) as { needsYouCount?: number }).needsYouCount,
     ).toBeGreaterThanOrEqual(1);
-  }, 60_000);
+  }, 120_000);
 
   it("the card survives a restart with no second copy", async () => {
+    await watch.settle();
     await rt.close();
     ({ rt, req } = await compose(home, clock, fake));
+    watch = watchRuntime(rt, { request: req });
     await rt.syncApprovals();
     expect(await openCards()).toHaveLength(1);
     expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
@@ -199,20 +187,24 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     });
     expect(answered.status).toBe(200);
     // A session started by itself and ran into the same refusal.
-    await waitFor(
+    await watch.until(
+      "a session after Try again, run to its end",
       async () => {
         const all = await rt.store.session.list({} as never, { limit: 100 });
-        return all.length > sessionsBefore && all.every((s) => s.status !== "running")
-          ? true
-          : undefined;
+        return all.length > sessionsBefore && all.every((s) => s.status !== "running");
       },
-      async () =>
-        `a session after Try again (task ${(await rt.store.task.mustGet(taskId)).status})`,
+      {
+        seen: async () =>
+          `the task is ${(await rt.store.task.mustGet(taskId)).status}, sessions ${(
+            await rt.store.session.list({} as never, { limit: 100 })
+          )
+            .map((s) => s.status)
+            .join(", ")}`,
+      },
     );
-    await waitFor(
-      async () => ((await openCards()).length === 1 ? true : undefined),
-      async () => `one open card (${(await openCards()).length})`,
-    );
+    await watch.until("one open card", async () => (await openCards()).length === 1, {
+      seen: async () => `${(await openCards()).length} open card(s)`,
+    });
     const again = await openCards();
     expect(again).toHaveLength(1);
     expect(again[0]?.id).not.toBe(card.id);
@@ -220,7 +212,7 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     expect(String(old?.outcome)).toMatch(
       /^Trying "Draw the club's logo" again: (a session started|it runs after the current session)\.$/,
     );
-  }, 60_000);
+  }, 120_000);
 
   it("Cancel task cancels it and closes the card", async () => {
     const card = (await openCards())[0] as Json;
@@ -252,7 +244,7 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     const cards = await openCards(id);
     expect(cards.map((c) => c.title)).not.toContain('"Choose the club\'s colours" could not run');
     expect(cards).toHaveLength(1);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("a stop reason as a person reads it", () => {

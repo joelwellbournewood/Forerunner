@@ -9,6 +9,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { approvedPlanIdOf, PLAN_APPROVAL_AUDIT_TOOL } from "../src/session/plan-approval.ts";
 import { AcceptingCriticProvider } from "./helpers.ts";
+import { type RuntimeWatch, watchRuntime } from "./runtime-watch.ts";
 
 /**
  * J.7 on the desktop daemon (ADR 0053): a project at autonomy 1 starts a session that files
@@ -74,38 +75,75 @@ async function readyTask(rt: RuntimeApp, projectId: string, title: string) {
   });
 }
 
-async function waitFor<T>(probe: () => Promise<T | undefined>, ms = 20_000): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error("timed out waiting");
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
-
 async function sessionsOf(rt: RuntimeApp, projectId: string): Promise<SessionRow[]> {
   return rt.store.session.list({ project_id: projectId }, { orderBy: "created_at" });
+}
+
+/** The project's sessions in words, for a wait's message. */
+async function sessionsSeen(rt: RuntimeApp, projectId: string): Promise<string> {
+  return `the project's sessions: ${(await sessionsOf(rt, projectId))
+    .map(
+      (s) =>
+        `${s.trigger} ${s.status}${(s.handoff as { stop_reason?: string }).stop_reason ? ` (${(s.handoff as { stop_reason?: string }).stop_reason})` : ""}`,
+    )
+    .join(", ")}`;
 }
 
 /** The session that filed the plan (ended `stopped`, `plan_awaiting_approval`) and its request. */
 async function planFiled(
   rt: RuntimeApp,
+  watch: RuntimeWatch,
   projectId: string,
 ): Promise<{ session: SessionRow; request: HumanRequestRow }> {
-  const session = await waitFor(async () =>
-    (await sessionsOf(rt, projectId)).find(
-      (s) =>
-        s.status === "stopped" &&
-        (s.handoff as { stop_reason?: string }).stop_reason === "plan_awaiting_approval",
-    ),
+  const session = await watch.waitFor(
+    "the session to file its plan and stop",
+    async () =>
+      (await sessionsOf(rt, projectId)).find(
+        (s) =>
+          s.status === "stopped" &&
+          (s.handoff as { stop_reason?: string }).stop_reason === "plan_awaiting_approval",
+      ),
+    { seen: () => sessionsSeen(rt, projectId) },
   );
-  const request = await waitFor(async () =>
-    (await rt.store.humanRequest.open({ humanId: rt.human.id })).find(
-      (r) => r.session_id === session.id,
-    ),
+  const request = await watch.waitFor(
+    "the plan's card",
+    async () =>
+      (await rt.store.humanRequest.open({ humanId: rt.human.id })).find(
+        (r) => r.session_id === session.id,
+      ),
+    {
+      seen: async () =>
+        `open requests: ${(await rt.store.humanRequest.open({ humanId: rt.human.id }))
+          .map((r) => `${r.kind} of session ${r.session_id}`)
+          .join(", ")}`,
+    },
   );
   return { session, request };
+}
+
+/** The follow-up `message` session the approved plan started, once it has completed. */
+async function followUp(
+  rt: RuntimeApp,
+  watch: RuntimeWatch,
+  projectId: string,
+  taskId: string,
+): Promise<SessionRow> {
+  return watch.waitFor(
+    "the approved plan's follow-up session to complete",
+    async () =>
+      (await sessionsOf(rt, projectId)).find(
+        (s) => s.trigger === "message" && s.status === "completed",
+      ),
+    {
+      seen: async () =>
+        `${await sessionsSeen(rt, projectId)}; the task is ${(await rt.store.task.mustGet(taskId)).status}`,
+    },
+  );
+}
+
+/** The scheduler has finished the follow-up's start, so the next case's start is not queued. */
+async function schedulerIdle(rt: RuntimeApp, watch: RuntimeWatch): Promise<void> {
+  await watch.until("the scheduler to finish its start", () => !rt.scheduler.isActive(rt.agent.id));
 }
 
 function card(r: HumanRequestRow): Json {
@@ -117,6 +155,9 @@ describe("plan approval on the desktop daemon", () => {
   let rt: RuntimeApp;
   let app: ReturnType<typeof createDaemonApp>["app"];
   let token: string;
+  // The sessions the cases start, watched: a wait goes on while the runtime moves and stops
+  // what runs (Stop now) before it gives up; `settle` before the runtime closes.
+  let watch: RuntimeWatch;
   const req = (path: string, init: RequestInit = {}) =>
     app.request(path, {
       ...init,
@@ -130,8 +171,10 @@ describe("plan approval on the desktop daemon", () => {
   beforeAll(async () => {
     rt = await compose(clock, false);
     ({ app, token } = createDaemonApp(rt));
+    watch = watchRuntime(rt, { request: req });
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -143,7 +186,7 @@ describe("plan approval on the desktop daemon", () => {
       body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: CAP }),
     });
     expect(started.status).toBe(202);
-    const { session: filed, request } = await planFiled(rt, projectId);
+    const { session: filed, request } = await planFiled(rt, watch, projectId);
     expect(request).toMatchObject({ kind: "approval", blocking: true, project_id: projectId });
     expect(card(request).key).toBe(`plan:${filed.id}`);
     const planId = approvedPlanIdOf(request);
@@ -161,11 +204,7 @@ describe("plan approval on the desktop daemon", () => {
       outcome: "started",
       plan_id: planId,
     });
-    const follow = await waitFor(async () =>
-      (await sessionsOf(rt, projectId)).find(
-        (s) => s.trigger === "message" && s.status === "completed",
-      ),
-    );
+    const follow = await followUp(rt, watch, projectId, task.id);
     expect(follow.id).not.toBe(filed.id);
     expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
     const events = await rt.store.event.list(follow.id);
@@ -187,7 +226,7 @@ describe("plan approval on the desktop daemon", () => {
     expect(
       view.some((e) => String(e.text).startsWith("Running the plan you approved (1 task)")),
     ).toBe(true);
-  });
+  }, 120_000);
 
   it("'approve' through the command registry (POST /commands/execute, then the yes) starts the plan at once on a local store", async () => {
     const projectId = await assistedProject(rt, "Palette");
@@ -200,7 +239,7 @@ describe("plan approval on the desktop daemon", () => {
         })
       ).status,
     ).toBe(202);
-    const { session: filed, request } = await planFiled(rt, projectId);
+    const { session: filed, request } = await planFiled(rt, watch, projectId);
     const executed = (await (
       await req("/commands/execute", {
         method: "POST",
@@ -225,17 +264,13 @@ describe("plan approval on the desktop daemon", () => {
     expect(card(await rt.store.humanRequest.mustGet(request.id))).toMatchObject({
       outcome: "started",
     });
-    const follow = await waitFor(async () =>
-      (await sessionsOf(rt, projectId)).find(
-        (s) => s.trigger === "message" && s.status === "completed",
-      ),
-    );
+    const follow = await followUp(rt, watch, projectId, task.id);
     expect(follow.id).not.toBe(filed.id);
     // The follow-up planned under the cap of the session the human approved the plan of.
     expect(follow.budget_cap_usd_micro).toBe(CAP);
     expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
-    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
-  });
+    await schedulerIdle(rt, watch);
+  }, 120_000);
 
   it("'approve' said in chat or voice (the conversation agent's command path) starts the plan", async () => {
     const projectId = await assistedProject(rt, "Voice");
@@ -248,7 +283,7 @@ describe("plan approval on the desktop daemon", () => {
         })
       ).status,
     ).toBe(202);
-    const { request } = await planFiled(rt, projectId);
+    const { request } = await planFiled(rt, watch, projectId);
     if (!rt.conversation) throw new Error("no conversation agent");
     const turn = {
       humanId: rt.human.id,
@@ -268,13 +303,18 @@ describe("plan approval on the desktop daemon", () => {
     expect(card(await rt.store.humanRequest.mustGet(request.id))).toMatchObject({
       outcome: "started",
     });
-    await waitFor(async () =>
-      (await rt.store.task.mustGet(task.id)).status === "done" ? true : undefined,
+    await watch.until(
+      "the task to be done",
+      async () => (await rt.store.task.mustGet(task.id)).status === "done",
+      {
+        seen: async () =>
+          `the task is ${(await rt.store.task.mustGet(task.id)).status}; ${await sessionsSeen(rt, projectId)}`,
+      },
     );
     // The follow-up has ended before the next case starts one (the simulated clock never
     // ticks the scheduler, so a start queued behind it would wait forever).
-    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
-  });
+    await schedulerIdle(rt, watch);
+  }, 120_000);
 
   it("a rejected plan starts nothing and the task stays ready", async () => {
     const projectId = await assistedProject(rt, "Reject");
@@ -287,7 +327,7 @@ describe("plan approval on the desktop daemon", () => {
         })
       ).status,
     ).toBe(202);
-    const { request } = await planFiled(rt, projectId);
+    const { request } = await planFiled(rt, watch, projectId);
     const answered = await req(`/requests/${request.id}/answer`, {
       method: "POST",
       body: JSON.stringify({ version: request.version, answer: "reject" }),
@@ -300,17 +340,21 @@ describe("plan approval on the desktop daemon", () => {
     expect(await sessionsOf(rt, projectId)).toHaveLength(1);
     expect((await rt.store.task.mustGet(task.id)).status).toBe("ready");
     expect((await rt.syncApprovals()).plans).toEqual({ started: 0, rejected: 0, skipped: 0 });
-  });
+  }, 120_000);
 });
 
 describe("plan approval from another device: the approvals poll", () => {
   const clock = new SimulatedClock("2026-10-23T10:00:00Z");
   let rt: RuntimeApp;
+  // No daemon app here: a stop on giving up is the kill switch's stop of the session.
+  let watch: RuntimeWatch;
 
   beforeAll(async () => {
     rt = await compose(clock, true);
+    watch = watchRuntime(rt);
   }, 120_000);
   afterAll(async () => {
+    await watch?.settle();
     await rt?.close();
   });
 
@@ -326,7 +370,7 @@ describe("plan approval from another device: the approvals poll", () => {
         budgetUsdMicro: CAP,
       } as never),
     ).toBe("started");
-    const { session: filed, request } = await planFiled(rt, projectId);
+    const { session: filed, request } = await planFiled(rt, watch, projectId);
     // The phone's answer: the state service writes the row; no daemon route is involved.
     await rt.store.humanRequest.answer(request.id, request.version, "approve", rt.human.id);
     await new Promise((r) => setTimeout(r, 100));
@@ -335,11 +379,7 @@ describe("plan approval from another device: the approvals poll", () => {
     expect(card(await rt.store.humanRequest.mustGet(request.id))).toMatchObject({
       outcome: "started",
     });
-    const follow = await waitFor(async () =>
-      (await sessionsOf(rt, projectId)).find(
-        (s) => s.trigger === "message" && s.status === "completed",
-      ),
-    );
+    const follow = await followUp(rt, watch, projectId, task.id);
     expect(follow.id).not.toBe(filed.id);
     expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
     await clock.advance(3 * POLL_MS);
@@ -348,5 +388,5 @@ describe("plan approval from another device: the approvals poll", () => {
     expect(
       (await rt.store.auditLog.list()).filter((r) => r.tool === PLAN_APPROVAL_AUDIT_TOOL),
     ).toHaveLength(1);
-  });
+  }, 120_000);
 });

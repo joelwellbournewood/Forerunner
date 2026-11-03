@@ -1,5 +1,6 @@
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply } from "@forerunner/testenv";
+import { storeProgress } from "@forerunner/testenv/wait";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ConversationAgent } from "../src/conversation/agent.ts";
@@ -27,6 +28,7 @@ import {
   issue,
   registry,
   ScriptedProvider,
+  stopRuns,
   until,
 } from "./helpers.ts";
 
@@ -208,6 +210,25 @@ function gatedExecutor(w: World) {
   return { executor, gate, given };
 }
 
+/**
+ * Until the gated executor holds the first task (the session is in flight). A give-up stops the
+ * session through the kill switch and releases the gate, so the run ends before the case does.
+ */
+function firstInFlight(
+  w: World,
+  gated: ReturnType<typeof gatedExecutor>,
+  running: Promise<unknown>,
+): Promise<void> {
+  return until(() => gated.gate.release !== null, "the first task to be in flight", {
+    progress: async () => [gated.given.size, await storeProgress(w.store)],
+    seen: async () =>
+      `${gated.given.size} task(s) given to the executor; sessions: ${JSON.stringify(
+        (await w.store.session.active(w.alice)).map((s) => `${s.status}: ${s.summary}`),
+      )}`,
+    stop: stopRuns(w.h, [running], () => gated.gate.release?.()),
+  });
+}
+
 const heardMessages = (w: World, agentId = w.alice) =>
   w.store.message
     .inbox({ agentId }, { limit: 50 })
@@ -262,9 +283,10 @@ describe("what you say during a live session (design §3.9)", () => {
     const w = await setup([textReply("The coder is on the first task.")]);
     const first = await w.addTask("First task", 9);
     const second = await w.addTask("Second task", 1);
-    const { executor, gate, given } = gatedExecutor(w);
+    const gated = gatedExecutor(w);
+    const { executor, gate, given } = gated;
     const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
+    await firstInFlight(w, gated, running);
     expect(given.has(first.id)).toBe(true);
 
     const r = await w.chat("what are you working on right now?", { source: "voice" });
@@ -295,9 +317,10 @@ describe("what you say during a live session (design §3.9)", () => {
     const w = await setup([textReply("should not be called")]);
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
-    const { executor, gate } = gatedExecutor(w);
+    const gated = gatedExecutor(w);
+    const { executor, gate } = gated;
     const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
+    await firstInFlight(w, gated, running);
     const note = await w.chat("note: try the new renderer");
     expect(note.actions[0]?.kind).toBe("note.add");
     expect((await w.store.queue.pending(w.game)).map((q) => q.text)).toEqual([
@@ -324,9 +347,10 @@ describe("what you say during a live session (design §3.9)", () => {
     const k = (await w.store.human.insert({ name: "K", email: "k@example.test" })).id;
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
-    const { executor, gate } = gatedExecutor(w);
+    const gated = gatedExecutor(w);
+    const { executor, gate } = gated;
     const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
+    await firstInFlight(w, gated, running);
     const r = await w.chat("delete the repo", { humanId: k });
     expect(r.reply).toBe("Sure.");
     expect(await heardMessages(w)).toHaveLength(0);
@@ -340,9 +364,10 @@ describe("what you say during a live session (design §3.9)", () => {
     const w = await setup([textReply("should not be called")]);
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
-    const { executor, gate } = gatedExecutor(w);
+    const gated = gatedExecutor(w);
+    const { executor, gate } = gated;
     const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
+    await firstInFlight(w, gated, running);
     const r = await w.chat("stop and tell me what happened", { source: "voice" });
     // The stop ran through the registry at once; the rest of the line is reported, not asked
     // about, not answered by the model and not handed to the session as data.
@@ -367,9 +392,10 @@ describe("what you say during a live session (design §3.9)", () => {
     const w = await setup([textReply("should not be called")]);
     await w.addTask("First task", 9);
     await w.addTask("Second task", 1);
-    const { executor, gate } = gatedExecutor(w);
+    const gated = gatedExecutor(w);
+    const { executor, gate } = gated;
     const running = w.start(w.runner(executor));
-    await until(() => gate.release !== null, "the first task to be in flight");
+    await firstInFlight(w, gated, running);
     const card = await w.chat("give it 20 francs tonight");
     expect(card.pendingConfirmation).not.toBeNull();
     const r = await w.chat("stop", { source: "voice" });

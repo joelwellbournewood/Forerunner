@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { MobileController } from "../src/mobile/store.tsx";
 import { PERSIST_MAX_BYTES } from "../src/mobile/uploads.ts";
-import { createMobileHarness, postedCalls, renderMobile, until } from "./mobile-helpers.tsx";
+import {
+  createMobileHarness,
+  phoneWatch,
+  postedCalls,
+  renderMobile,
+  until,
+} from "./mobile-helpers.tsx";
 
 /**
  * The Upload screen (spec R.5; ADR 0080): reachable from the nav, shows the service's size
@@ -73,7 +79,11 @@ describe("Upload screen", () => {
     );
     expect(screen.getByTestId("m-upload-kind")).toHaveValue("photo");
     await user.click(screen.getByTestId("m-upload-send"));
-    await until(() => h.service.state.uploads.length === 1, 3000, "upload");
+    await until(
+      () => h.service.state.uploads.length === 1,
+      "upload",
+      phoneWatch(h.service, h.controller),
+    );
     expect(h.service.state.uploads[0]).toMatchObject({
       projectIds: ["proj_pharma"],
       kind: "photo",
@@ -125,7 +135,11 @@ describe("Upload screen", () => {
     const user = userEvent.setup();
     renderMobile("/upload", h);
     await screen.findByRole("heading", { name: "Upload" });
-    await until(() => h.controller.state.projectsLoaded, 3000, "projects");
+    await until(
+      () => h.controller.state.projectsLoaded,
+      "projects",
+      phoneWatch(h.service, h.controller),
+    );
 
     mode = "offline";
     await user.upload(

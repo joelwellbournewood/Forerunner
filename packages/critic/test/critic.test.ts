@@ -19,7 +19,15 @@ import { ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
 import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
 import type { ReviewEvidence, ReviewInput } from "../src/types.ts";
-import { baseEvidence, CRITIC_PROMPT, closingReply, submitReply, until, world } from "./helpers.ts";
+import {
+  baseEvidence,
+  CRITIC_PROMPT,
+  closingReply,
+  reviewWait,
+  submitReply,
+  until,
+  world,
+} from "./helpers.ts";
 
 const taskInput = (
   taskId: string,
@@ -1224,8 +1232,12 @@ describe("CriticService: a max-effort review finishes inside its budget (D.15 li
       deps: { pricing },
     });
     try {
-      const p = w.critic.review(taskInput(w.ids.task, 3), w.ctx({ budgetUsdMicro: REVIEW_CAP }));
-      await until(() => w.provider.calls.length >= 1, "the review call");
+      const ac = new AbortController();
+      const p = w.critic.review(
+        taskInput(w.ids.task, 3),
+        w.ctx({ budgetUsdMicro: REVIEW_CAP, signal: ac.signal }),
+      );
+      await until(() => w.provider.calls.length >= 1, "the review call", reviewWait(w, ac, p));
       const req = w.provider.calls[0]?.request;
       expect(req?.effort).toBe("max");
       expect(req?.max_tokens ?? 0).toBeGreaterThan(REVIEW_TOKENS_PER_CALL);

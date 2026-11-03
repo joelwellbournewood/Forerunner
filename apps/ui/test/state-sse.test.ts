@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { WaitOptions } from "../../../testenv/src/wait.ts";
 import { createStateClient } from "../src/api/state-client.ts";
 import { WebCryptoSigner } from "../src/api/state-signing.ts";
 import {
@@ -11,6 +12,22 @@ import {
 import { createFakeStateService, HUMAN_J } from "./fake-state-service.ts";
 import { fetchFromApp } from "./helpers.tsx";
 import { ADMIN_TOKEN, NOW_MS, until } from "./mobile-helpers.tsx";
+
+/**
+ * What a wait on a subscription the case opened watches and how it stops it: its mode and what it
+ * has delivered (`moving`) move while it works, the message names both, and the stop closes it
+ * (its stream and poll timer) so nothing polls on after the case gives up.
+ */
+function subWatch(
+  sub: { readonly mode: string; close(): void },
+  moving: () => unknown,
+): WaitOptions {
+  return {
+    progress: () => [sub.mode, moving()],
+    seen: () => `the subscription is ${sub.mode}; ${JSON.stringify(moving())}`,
+    stop: () => sub.close(),
+  };
+}
 
 async function pairedClient(options: { heartbeatMs?: number } = {}) {
   const service = createFakeStateService({
@@ -70,7 +87,11 @@ describe("subscribeStateEvents", () => {
       onEvent: (e) => events.push(e),
       onMode: (m) => modes.push(m),
     });
-    await until(() => sub.mode === "live", 2000, "live mode");
+    await until(
+      () => sub.mode === "live",
+      "live mode",
+      subWatch(sub, () => ({ events: events.map((e) => e.event) })),
+    );
     await service.app.request("http://state.test/__test/emit", {
       method: "POST",
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}`, "Content-Type": "application/json" },
@@ -79,8 +100,16 @@ describe("subscribeStateEvents", () => {
         payload: { id: "req_x", version: 1, status: "open" },
       }),
     });
-    await until(() => events.some((e) => e.event === "changed"), 2000, "a change event");
-    await until(() => events.some((e) => e.event === "heartbeat"), 2000, "a heartbeat");
+    await until(
+      () => events.some((e) => e.event === "changed"),
+      "a change event",
+      subWatch(sub, () => ({ events: events.map((e) => e.event) })),
+    );
+    await until(
+      () => events.some((e) => e.event === "heartbeat"),
+      "a heartbeat",
+      subWatch(sub, () => ({ events: events.map((e) => e.event) })),
+    );
     const change = events.find((e) => e.event === "changed");
     expect(change && change.event === "changed" ? change.data.type : null).toBe(
       "human_request.changed",
@@ -95,7 +124,11 @@ describe("subscribeStateEvents", () => {
     const { service, client } = await pairedClient();
     const events: StateStreamEvent[] = [];
     const sub = subscribeStateEvents(client, { onEvent: (e) => events.push(e) });
-    await until(() => sub.mode === "live", 2000, "live mode");
+    await until(
+      () => sub.mode === "live",
+      "live mode",
+      subWatch(sub, () => ({ events: events.map((e) => e.event) })),
+    );
     for (const humanId of ["human_other", HUMAN_J.id]) {
       await service.app.request("http://state.test/__test/emit", {
         method: "POST",
@@ -103,7 +136,11 @@ describe("subscribeStateEvents", () => {
         body: JSON.stringify({ type: "message.changed", payload: { id: `m_${humanId}` }, humanId }),
       });
     }
-    await until(() => events.some((e) => e.event === "changed"), 2000, "the own event");
+    await until(
+      () => events.some((e) => e.event === "changed"),
+      "the own event",
+      subWatch(sub, () => ({ events: events.map((e) => e.event) })),
+    );
     await new Promise((r) => setTimeout(r, 80));
     const ids = events
       .filter((e) => e.event === "changed")
@@ -130,12 +167,24 @@ describe("subscribeStateEvents", () => {
         },
       },
     );
-    await until(() => polls >= 2, 2000, "two polls");
+    await until(
+      () => polls >= 2,
+      "two polls",
+      subWatch(sub, () => ({ polls })),
+    );
     expect(sub.mode).toBe("polling");
     fail = true;
-    await until(() => sub.mode === "offline", 2000, "offline");
+    await until(
+      () => sub.mode === "offline",
+      "offline",
+      subWatch(sub, () => ({ polls })),
+    );
     fail = false;
-    await until(() => sub.mode === "polling", 2000, "back to polling");
+    await until(
+      () => sub.mode === "polling",
+      "back to polling",
+      subWatch(sub, () => ({ polls })),
+    );
     sub.close();
     expect(notices.some((n) => /polling/.test(n))).toBe(true);
     expect(notices.some((n) => /offline/.test(n))).toBe(true);
@@ -155,7 +204,11 @@ describe("subscribeStateEvents", () => {
         },
       },
     );
-    await until(() => sub.mode === "polling" && polls >= 1, 2000, "polling after refusal");
+    await until(
+      () => sub.mode === "polling" && polls >= 1,
+      "polling after refusal",
+      subWatch(sub, () => ({ polls })),
+    );
     sub.close();
   });
 });
@@ -208,9 +261,17 @@ describe("subscribeStateSessionEvents", () => {
       },
       { live: false, pollIntervalMs: 10, afterSeq: 1 },
     );
-    await until(() => seen.length >= 1 && headers >= 1, 2000, "events and a header");
+    await until(
+      () => seen.length >= 1 && headers >= 1,
+      "events and a header",
+      subWatch(sub, () => ({ seen, headers })),
+    );
     service.state.events.push(event(3));
-    await until(() => seen.includes(3), 2000, "the third event");
+    await until(
+      () => seen.includes(3),
+      "the third event",
+      subWatch(sub, () => ({ seen, headers })),
+    );
     sub.close();
     expect(seen).toEqual([2, 3]);
   });

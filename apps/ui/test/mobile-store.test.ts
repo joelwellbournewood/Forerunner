@@ -11,7 +11,7 @@ import { LocalOutbox } from "../src/mobile/outbox.ts";
 import { inQuietHours, noticeFor, PollingPush } from "../src/mobile/push.ts";
 import { MobileController } from "../src/mobile/store.tsx";
 import { HUMAN_J } from "./fake-state-service.ts";
-import { createMobileHarness, NOW_MS, SERVICE_URL, until } from "./mobile-helpers.tsx";
+import { createMobileHarness, NOW_MS, phoneWatch, SERVICE_URL, until } from "./mobile-helpers.tsx";
 
 /** Like the page's web signer: a new key after `forget`, one ticket book throughout. */
 function regeneratingSigner(): DeviceSigner {
@@ -184,7 +184,11 @@ describe("controller", () => {
   it("boots from the stored session and never puts the token or key in state, storage or logs", async () => {
     const h = await createMobileHarness();
     await h.controller.bootstrap();
-    await until(() => h.controller.state.projectsLoaded, 3000, "projects");
+    await until(
+      () => h.controller.state.projectsLoaded,
+      "projects",
+      phoneWatch(h.service, h.controller),
+    );
     const token = (await h.env.secure.get("session-token")) as string;
     const snapshot = JSON.stringify(h.controller.state);
     expect(snapshot).not.toContain(token);
@@ -237,7 +241,7 @@ describe("controller", () => {
       online ? realFetch(input, init) : Promise.reject(new Error("offline"));
     const ctrl = new MobileController(h.env);
     await ctrl.bootstrap();
-    await until(() => ctrl.state.projectsLoaded, 3000, "projects");
+    await until(() => ctrl.state.projectsLoaded, "projects", phoneWatch(h.service, ctrl));
     online = false;
     expect(await ctrl.addNote("proj_game", "queued while offline")).toEqual({ queued: true });
     const sent = await ctrl.sendPlan({
@@ -262,8 +266,8 @@ describe("controller", () => {
     });
     online = true;
     await ctrl.refresh();
-    await until(() => ctrl.state.stage === "unpaired", 3000, "unpaired");
-    await until(() => /kept/.test(ctrl.state.notice ?? ""), 3000, "notice");
+    await until(() => ctrl.state.stage === "unpaired", "unpaired", phoneWatch(h.service, ctrl));
+    await until(() => /kept/.test(ctrl.state.notice ?? ""), "notice", phoneWatch(h.service, ctrl));
     expect(ctrl.state.notice).toMatch(
       /revoked or its token expired.*2 queued actions are kept and will be sent after pairing/,
     );
@@ -280,7 +284,7 @@ describe("controller", () => {
     expect(ctrl.state.stage).toBe("paired");
     expect(h.service.state.devices).toHaveLength(2);
     expect(h.service.state.devices[1]?.publicKey).not.toBe(device.publicKey);
-    await until(() => ctrl.state.outboxPending === 0, 3000, "flush");
+    await until(() => ctrl.state.outboxPending === 0, "flush", phoneWatch(h.service, ctrl));
     expect(h.service.state.queue.map((q) => q.text)).toEqual(["queued while offline"]);
     expect(h.service.state.remoteCommands).toHaveLength(1);
     expect(h.service.state.remoteCommands[0]?.deviceId).toBe(h.service.state.devices[1]?.id);
@@ -288,8 +292,8 @@ describe("controller", () => {
       () =>
         ctrl.changeLog.get(sent.entry.id)?.remoteCommandId ===
         h.service.state.remoteCommands[0]?.id,
-      3000,
       "change log linked",
+      phoneWatch(h.service, ctrl),
     );
     expect(ctrl.state.notice).toMatch(/Sent 2 queued actions/);
 
@@ -309,7 +313,11 @@ describe("controller", () => {
   it("takes the monthly cap and the CHF rate from the service, never from constants", async () => {
     const h = await createMobileHarness();
     await h.controller.bootstrap();
-    await until(() => h.controller.state.projectsLoaded, 3000, "projects");
+    await until(
+      () => h.controller.state.projectsLoaded,
+      "projects",
+      phoneWatch(h.service, h.controller),
+    );
     const ctx = h.controller.cardContext();
     // The fake's /me carries no monthly cap (the real service does not send one yet): unknown.
     expect(ctx.monthlyCeilingChfMicro).toBeNull();
@@ -338,7 +346,11 @@ describe("controller", () => {
     };
     const ctrl = new MobileController(h.env);
     await ctrl.bootstrap();
-    await until(() => ctrl.state.session?.monthlyCapChfMicro === 200_000_000, 3000, "cap");
+    await until(
+      () => ctrl.state.session?.monthlyCapChfMicro === 200_000_000,
+      "cap",
+      phoneWatch(h.service, ctrl),
+    );
     expect(ctrl.cardContext().monthlyCeilingChfMicro).toBe(200_000_000);
     expect(h.env.storage.get("forerunner.mobile.test.session")).toContain("200000000");
     const lower = ctrl.planCard([

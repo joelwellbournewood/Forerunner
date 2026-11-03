@@ -822,6 +822,22 @@ them"): `real-daemon.test.ts`'s C-57 case merged on the seed repository with a p
 `git merge` and passed only where the person had a git identity (CI on c8c16fb, both runners);
 its merge now names the seed's identity.
 
+Waits on what a case started are the shared wait (`testenv/src/wait.ts`; testing.md, "Waiting
+on work a case started"): they go on while the work still moves, give up before the case's own
+timeout, stop what the case started first and say what they saw. In `real-daemon.test.ts`,
+`composeRuntime` and `createDaemonApp` are the runtime's own wrapped so every runtime a case
+composes is watched (`packages/runtime/test/runtime-watch.ts`) and its `close()` settles first
+(stops and waits for any session a failed case left running); `eventually(cond, what, seen)` is
+the shared wait over every runtime still open (its fixed 3 to 90 s limits are gone; cases that
+waited longer than the 20 s default allowed now say 60 s). The Quit during "Being reviewed" case
+closes its first runtime unwatched after the Quit, since its browser step never returns by
+design. The phone's tests wait with `mobile-helpers.tsx`'s `until(predicate, what,
+phoneWatch(service, ...controllers))`: progress is the controllers' state and the fake service's
+requests and change feed, the stop closes the controllers (their poll and retry timers), and the
+message names their stage, sync, queue and the service's last requests (`state-sse.test.ts` has
+the same for its subscription, and `mobile-push-token.test.ts`'s wait, which returned silently
+after 3 s, now throws with what it saw). It was a fixed 3 s that left the controllers polling.
+
 The suite, and the real daemons and git it starts, write their temp files into one folder per
 run, removed when the run ends: `vitest.config.ts`'s `globalSetup` is
 `testenv/src/test-tmp-global-setup.ts` (testing.md, "Where test temp files go"), and
