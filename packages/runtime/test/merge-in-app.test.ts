@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { projectSummary } from "../src/daemon/views.ts";
 import { MERGE_PR_TOOL } from "../src/loop/merge.ts";
 import { forcedPushes, inboxCards, mergeRows, recordWorld } from "./merge-world.ts";
 
@@ -25,6 +26,20 @@ describe("the merge mode and the person's Merge in the app (merge-in-app)", {
     expect(mergeRows(m.audit).at(-1)?.deniedReason).toBe(
       'autonomy_insufficient: the project\'s merge mode is "You press Merge"',
     );
+  });
+
+  it("the Overview's Last result says what was merged since the session left it open", async () => {
+    // Bench (2026-11-03): after Merge, Last result still read "Left 3 reviewed pull requests for
+    // you to merge." with nothing saying they were merged since (design §5 rule 4: true now).
+    const m = await recordWorld({ level: 2 });
+    const t = await m.runTask("Add feature");
+    const pr = await m.pr(t.id);
+    const before = await projectSummary(m.w.store, m.w.project, 1);
+    expect(before.lastSession?.summary).toContain("Left 1 reviewed pull request for you to merge.");
+    expect(before.lastSession?.since ?? []).toEqual([]);
+    await m.merge.mergeRecorded(await m.record(t.id), { kind: "person", humanId: m.w.human });
+    const after = await projectSummary(m.w.store, m.w.project, 1);
+    expect(after.lastSession?.since).toEqual([`Since then: merged #${pr.number}.`]);
   });
 
   it("the person's Merge on the dependent merges what it builds on first, each a merge commit, in order, nothing forced", async () => {
