@@ -449,7 +449,22 @@ export interface FakeDaemonState {
    * `GET /projects/:id/pull-requests` by project (ADR 0106): the PRs that wait for the person,
    * or the host's error in words; a project without an entry has none waiting.
    */
-  pullRequests: Record<string, { waiting: ProjectPullRequestView[]; error: string | null }>;
+  pullRequests: Record<
+    string,
+    {
+      waiting: ProjectPullRequestView[];
+      error: string | null;
+      errorKind?: "no_token" | "refused" | "unreachable" | null;
+    }
+  >;
+  /**
+   * The person's Merge in the app (merge-in-app): the pull requests a click is merging, by
+   * project and number, with how many reads of GET pull-requests still show them merging; the
+   * next read after that drops them (merged), or shows `outcome`'s sentence when a test set one
+   * (the merge step left it to the person).
+   */
+  pullRequestMerges: Record<string, { number: number; reads: number }[]>;
+  pullRequestMergeOutcome: { state: "left_to_you" | "blocked"; sentence: string } | null;
   /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
   docs: Record<string, DocView[]>;
   messages: MessageView[];
@@ -894,6 +909,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
     pullRequests: clone(PROJECT_PULL_REQUESTS),
+    pullRequestMerges: {},
+    pullRequestMergeOutcome: null,
     docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
     killActive: false,
@@ -6402,10 +6419,77 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!project) return errorBody(c, 404, "not_found", "no such project");
     const repository = repositoryOf(project.repos);
     const prs = state.pullRequests[id];
+    // merge-in-app: a Merge pressed in the app shows "merging" for a read, then the rows are
+    // gone (merged, as GitHub lists open pull requests only) or carry the outcome's sentence.
+    const merging = state.pullRequestMerges[id] ?? [];
+    if (prs)
+      for (const m of [...merging]) {
+        if (m.reads > 0) {
+          m.reads -= 1;
+          continue;
+        }
+        merging.splice(merging.indexOf(m), 1);
+        const row = prs.waiting.find((r) => r.number === m.number);
+        if (!row) continue;
+        const outcome = state.pullRequestMergeOutcome;
+        if (outcome)
+          row.merge = {
+            state: outcome.state,
+            canMerge: outcome.state === "left_to_you",
+            sentence: outcome.sentence,
+            first: [],
+          };
+        else prs.waiting = prs.waiting.filter((r) => r.number !== m.number);
+      }
+    const mode = mergeModeOfFake(id);
     return c.json({
       repository,
       waiting: repository ? (prs?.waiting ?? []) : [],
       error: repository ? (prs?.error ?? null) : null,
+      errorKind: repository ? (prs?.errorKind ?? null) : null,
+      mode: { key: mode, label: MERGE_MODE_WORDS[mode] },
+    });
+  });
+  // The person's Merge on the Overview (merge-in-app), as the daemon answers it: at once, the
+  // pull requests it builds on first; a row that offers no Merge is refused with its sentence.
+  app.post("/projects/:id/pull-requests/:number/merge", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 403, "forbidden", "not your project");
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return errorBody(c, 400, "validation", "not a pull request number");
+    const prs = state.pullRequests[id];
+    const row = prs?.waiting.find((r) => r.number === number);
+    if (!prs || !row)
+      return c.json({
+        state: "refused",
+        sentence: `#${number} does not wait to be merged: it may be merged or closed already.`,
+        order: [],
+      });
+    if (row.merge && !row.merge.canMerge)
+      return c.json({
+        state: "refused",
+        sentence: row.merge.sentence ?? `#${number} cannot be merged here: merge it on GitHub.`,
+        order: [],
+      });
+    const order = [...(row.merge?.first ?? []), number];
+    const merging = (state.pullRequestMerges[id] ??= []);
+    for (const n of order) {
+      const r = prs.waiting.find((w) => w.number === n);
+      if (!r) continue;
+      r.merge = { state: "merging", canMerge: false, sentence: null, first: [] };
+      merging.push({ number: n, reads: 1 });
+    }
+    const names = order.map((n) => `#${n}`);
+    const list =
+      names.length <= 1
+        ? (names[0] ?? "")
+        : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    return c.json({
+      state: "queued",
+      sentence: order.length > 1 ? `Merging ${list} in order.` : `Merging ${list}.`,
+      order,
     });
   });
   app.get("/projects/:id/files", (c) => {

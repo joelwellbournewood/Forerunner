@@ -1154,7 +1154,8 @@ export function SettingsPage() {
             </ul>
           </div>
 
-          <div>
+          {/* The Overview's "Merging: ... · Change" lands here (merge-in-app). */}
+          <div id="other-settings">
             <div className="flex flex-wrap items-baseline gap-3">
               <h2 className="font-semibold">Other settings</h2>
               <span className="text-xs text-neutral-500" data-testid="edit-hint">

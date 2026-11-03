@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { createHarness, renderApp } from "./helpers.tsx";
+import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
  * The project page as a person uses it to see progress and results (design §3.4, §3.10): the
@@ -78,15 +78,16 @@ describe("a project linked to a repository: its pull requests on the Overview (A
       "https://github.com/org/atlas",
     );
     const rows = await within(files).findAllByTestId("pr-waiting");
+    // merge-in-app: each row has Merge (before: Open only, merging was GitHub's).
     expect(rows.map((r) => r.textContent)).toEqual([
-      '"Index the documentation pages" · pull request #11Open',
+      '"Index the documentation pages" · pull request #11OpenMerge',
     ]);
     expect(within(rows[0] as HTMLElement).getByTestId("pr-waiting-link")).toHaveAttribute(
       "href",
       "https://example.test/org/atlas/pull/11",
     );
     expect(within(files).getByTestId("prs-waiting")).toHaveTextContent(
-      "Merging on GitHub puts the work into the default branch.",
+      "Merge puts the work into main with a merge commit; one that builds on others merges them first.",
     );
     expect(within(files).getByTestId("prs-critic")).toHaveTextContent("Reviewed by the critic");
     // No folder of this computer is offered as the project's files.
@@ -125,25 +126,25 @@ describe("a project linked to a repository: its pull requests on the Overview (A
     const titles = (rows: NodeListOf<Element>) => [...rows].map((r) => r.textContent);
     expect(within(files).getByTestId("prs-critic")).toHaveTextContent("Reviewed by the critic");
     expect(titles(await group("prs-critic"))).toEqual([
-      '"Create the page skeleton in index.html" · pull request #2Open',
-      '"Style the page in styles.css" · pull request #3Open',
+      '"Create the page skeleton in index.html" · pull request #2OpenMerge',
+      '"Style the page in styles.css" · pull request #3OpenMerge',
     ]);
     expect(within(files).getByTestId("prs-you")).toHaveTextContent("Accepted by you at sign-off");
     expect(titles(await group("prs-you"))).toEqual([
-      '"Add the deploy script" · pull request #5Open',
+      '"Add the deploy script" · pull request #5OpenMerge',
     ]);
     expect(within(files).getByTestId("prs-not-reviewed")).toHaveTextContent(
       "Marked done without the critic's review",
     );
     expect(titles(await group("prs-not-reviewed"))).toEqual([
-      '"Write the README" · pull request #4Open',
+      '"Write the README" · pull request #4OpenMerge',
     ]);
     const docs = within(files).getByTestId("prs-docs");
     expect(docs).toHaveTextContent("Forerunner's docs, merge them when you like");
     expect(docs).not.toHaveTextContent("Reviewed");
     expect(titles(await group("prs-docs"))).toEqual([
-      `"The project's docs from the plan" · pull request #1Open`,
-      '"Project status (docs/status.md)" · pull request #6Open',
+      `"The project's docs from the plan" · pull request #1OpenMerge`,
+      '"Project status (docs/status.md)" · pull request #6OpenMerge',
     ]);
     // Each one opens on GitHub.
     expect(within(docs).getAllByTestId("pr-waiting-link")[1]).toHaveAttribute(
@@ -152,7 +153,7 @@ describe("a project linked to a repository: its pull requests on the Overview (A
     );
   });
 
-  it("no PR waiting says so; a git host that does not answer says that in words", async () => {
+  it("no PR waiting says so; a git host that does not answer says that in words, without the raw error; no token or a refused one offers Connect GitHub (C-56)", async () => {
     const harness = createHarness();
     harness.daemon.state.pullRequests.proj_atlas = { waiting: [], error: null };
     const first = renderApp("/projects/proj_atlas", harness);
@@ -162,14 +163,134 @@ describe("a project linked to a repository: its pull requests on the Overview (A
     first.unmount();
     harness.daemon.state.pullRequests.proj_atlas = {
       waiting: [],
-      error:
-        "GitHub did not answer, so the pull requests are not listed (fetch failed). Try again later.",
+      error: "GitHub did not answer, so the pull requests are not listed. Try again later.",
+      errorKind: "unreachable",
+    };
+    const second = renderApp("/projects/proj_atlas", harness);
+    expect(await screen.findByTestId("prs-error")).toHaveTextContent(
+      "GitHub did not answer, so the pull requests are not listed. Try again later.",
+    );
+    expect(screen.queryByTestId("prs-none")).toBeNull();
+    expect(screen.queryByTestId("prs-connect")).toBeNull();
+    second.unmount();
+    // No token: GitHub was never asked, and the button that fixes it is there.
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [],
+      error: "Add a GitHub token in Settings to see the pull requests.",
+      errorKind: "no_token",
     };
     renderApp("/projects/proj_atlas", harness);
     expect(await screen.findByTestId("prs-error")).toHaveTextContent(
-      "GitHub did not answer, so the pull requests are not listed",
+      "Add a GitHub token in Settings to see the pull requests.",
     );
-    expect(screen.queryByTestId("prs-none")).toBeNull();
+    expect(screen.getByTestId("prs-connect")).toHaveTextContent("Connect GitHub");
+    expect(screen.getByTestId("prs-connect")).toHaveAttribute("href", "/setup");
+  });
+});
+
+describe("Merge in the app (merge-in-app, the owner's decision of 2026-11-02)", () => {
+  const row = (n: number, title: string, merge: Record<string, unknown> = {}) => ({
+    kind: "task" as const,
+    taskId: `task_${n}`,
+    title,
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: `fr/${n}`,
+    review: "critic" as const,
+    merge: { state: "ready" as const, canMerge: true, sentence: null, first: [], ...merge },
+  });
+
+  it("says who merges with Change; Merge on the last of a chain is answered at once, shows Merging while the list is read again, then says what was merged; what was sent is the PR's number", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        row(2, "Add the page"),
+        row(3, "Add the footer", { first: [2] }),
+        row(4, "Add the test", { first: [2, 3] }),
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    expect(await within(files).findByTestId("merge-mode")).toHaveTextContent(
+      "Merging: you press Merge · Change",
+    );
+    expect(within(files).getByTestId("merge-mode-change")).toHaveAttribute(
+      "href",
+      "/settings#other-settings",
+    );
+    const rows = await within(files).findAllByTestId("pr-waiting");
+    const last = rows[2] as HTMLElement;
+    expect(within(last).getByTestId("pr-merge-first")).toHaveTextContent("Merges #2 and #3 first.");
+    expect(within(last).getByTestId("pr-merge")).toHaveAttribute(
+      "title",
+      "Merges #2 and #3 first, then this one.",
+    );
+    await user.click(within(last).getByTestId("pr-merge"));
+    expect(await within(files).findByTestId("merge-answer")).toHaveTextContent(
+      "Merging #2, #3 and #4 in order.",
+    );
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/4/merge")).toHaveLength(1);
+    // While the daemon merges, the rows say so and offer no second Merge.
+    await waitFor(() => expect(within(files).getAllByTestId("pr-merging")).toHaveLength(3));
+    expect(within(files).queryAllByTestId("pr-merge")).toEqual([]);
+    // The list is read again until they are gone: merged.
+    expect(await within(files).findByTestId("prs-none", {}, { timeout: 10_000 })).toHaveTextContent(
+      "No pull request waits for you.",
+    );
+    expect(within(files).getByTestId("merge-answer")).toHaveTextContent("Merged #2, #3 and #4.");
+  });
+
+  it("a merge the step leaves to the person ends with its sentence on the row, and Merge is offered again", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequestMergeOutcome = {
+      state: "left_to_you",
+      sentence:
+        "#11 waits for you: main changed since the review, and this repository has no automatic checks to test the two together. Press Merge if it should go in.",
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    await user.click(await within(files).findByTestId("pr-merge"));
+    expect(
+      await within(files).findByTestId("pr-merge-sentence", {}, { timeout: 10_000 }),
+    ).toHaveTextContent("main changed since the review");
+    expect(within(files).getByTestId("pr-merge")).toBeEnabled();
+  });
+
+  it("a row whose rules Forerunner cannot meet says why instead of a Merge; the automatic mode's line says so", async () => {
+    const harness = createHarness();
+    harness.daemon.state.settingValues["merge_mode:proj_atlas"] = "after_review";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        row(7, "Add the page", {
+          state: "blocked",
+          canMerge: false,
+          sentence:
+            "This repository needs an approving review before merging, and GitHub does not let you approve your own pull request: merge it on GitHub once someone else approved it.",
+        }),
+        row(8, "Add the footer", {
+          state: "waiting_checks",
+          canMerge: false,
+          sentence: "#8 merges when its checks pass.",
+        }),
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    expect(await within(files).findByTestId("merge-mode")).toHaveTextContent(
+      "Merging: automatically after review · Change",
+    );
+    const rows = await within(files).findAllByTestId("pr-waiting");
+    expect(within(files).queryAllByTestId("pr-merge")).toEqual([]);
+    expect(within(rows[0] as HTMLElement).getByTestId("pr-merge-sentence")).toHaveTextContent(
+      "needs an approving review before merging",
+    );
+    expect(within(rows[1] as HTMLElement).getByTestId("pr-merge-sentence")).toHaveTextContent(
+      "#8 merges when its checks pass.",
+    );
   });
 });
 

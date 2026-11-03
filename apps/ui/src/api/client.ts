@@ -112,6 +112,8 @@ import {
   type ProjectPullRequestView,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
+  type PullRequestMergeAnswer,
+  PullRequestMergeAnswer as PullRequestMergeAnswerSchema,
   type RemoveSourceView,
   RemoveSourceView as RemoveSourceViewSchema,
   type RenameAgentBody,
@@ -320,6 +322,7 @@ export type {
   ProjectFilesView,
   ProjectPullRequestsView,
   ProjectPullRequestView,
+  PullRequestMergeAnswer,
   ProjectSettingsView,
   ProjectSummary,
   QueueItemView,
@@ -806,6 +809,11 @@ export interface DaemonClient {
    * (design §3.4 "Your files", ADR 0106); read from the git host when asked.
    */
   projectPullRequests(projectId: string, signal?: AbortSignal): Promise<ProjectPullRequestsView>;
+  /**
+   * The person's Merge on the Overview (merge-in-app): answered at once, the merges then run in
+   * dependency order in the daemon; read `projectPullRequests` again to follow them.
+   */
+  mergePullRequest(projectId: string, number: number): Promise<PullRequestMergeAnswer>;
   /** One file of the project's folder, its text inline (null when it is not text). */
   projectFile(
     projectId: string,
@@ -1274,6 +1282,12 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         ProjectPullRequestsViewSchema,
         undefined,
         signal,
+      ),
+    mergePullRequest: (projectId, number) =>
+      post(
+        routePath("mergePullRequest", { id: projectId, number: String(number) }),
+        PullRequestMergeAnswerSchema,
+        {},
       ),
     projectFile: (projectId, path, signal) =>
       get(

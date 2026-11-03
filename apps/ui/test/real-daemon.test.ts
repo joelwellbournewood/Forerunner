@@ -17,9 +17,11 @@ import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
+import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
+import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import {
   AcceptingCriticProvider,
@@ -32,6 +34,7 @@ import {
   createRolePlayer,
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
+import { FakeGitHost } from "../../../testenv/src/githost/fake-git-host.ts";
 import {
   keyRule,
   messagesApiStandIn,
@@ -4820,6 +4823,9 @@ describe("the UI client against the real daemon: a project linked to a repositor
       repository: { fullName: "o/empty", url: "https://github.com/o/empty" },
       waiting: [],
       error: null,
+      errorKind: null,
+      // merge-in-app: who merges the project's accepted work, for the Overview's line.
+      mode: { key: "you", label: "You press Merge" },
     });
     // The docs are on main: the Docs tab reads them as present.
     const docs = await client.docs(project.id);
@@ -4976,6 +4982,8 @@ describe("the UI client against the real daemon: a project linked to a repositor
         url: "memory://o/seeded/pull/1",
         branch: "fr/docs-scaffold",
         review: null,
+        // merge-in-app: what the Overview's Merge does for it.
+        merge: { state: "ready", canMerge: true, sentence: null, first: [] },
       },
       {
         kind: "task",
@@ -4985,6 +4993,8 @@ describe("the UI client against the real daemon: a project linked to a repositor
         url: pr.htmlUrl,
         branch: "fr/aaaa-create-the-page",
         review: "critic",
+        // merge-in-app: what the Overview's Merge does for it.
+        merge: { state: "ready", canMerge: true, sentence: null, first: [] },
       },
       {
         kind: "task",
@@ -4994,6 +5004,8 @@ describe("the UI client against the real daemon: a project linked to a repositor
         url: readmePr.htmlUrl,
         branch: "fr/cccc-write-the-readme",
         review: "none",
+        // merge-in-app: what the Overview's Merge does for it.
+        merge: { state: "ready", canMerge: true, sentence: null, first: [] },
       },
       {
         kind: "task",
@@ -5003,6 +5015,8 @@ describe("the UI client against the real daemon: a project linked to a repositor
         url: deployPr.htmlUrl,
         branch: "fr/dddd-add-the-deploy-script",
         review: "you",
+        // merge-in-app: what the Overview's Merge does for it.
+        merge: { state: "ready", canMerge: true, sentence: null, first: [] },
       },
     ]);
     // Merged on GitHub: gone at once, since the list is read from the host when asked.
@@ -7850,5 +7864,303 @@ describe("the UI client against the real daemon: a Claude credential at its limi
     } finally {
       await rt.close();
     }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: Merge in the app (merge-in-app, U-028)", () => {
+  // The owner's decision of 2026-11-02: "you press Merge" by default, with a one-click Merge in
+  // the app that merges in dependency order, merge commits only, through the safe merge step.
+  // Before, no daemon route merged: the Overview's list linked each PR to GitHub. Real git on
+  // the testenv fake GitHub (its REST API and git smart HTTP) behind the daemon's GitHub client.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let token = "";
+  let work = "";
+  const FULL = "alice/app";
+  const REPO = { owner: "alice", name: "app" };
+  const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    work = mkdtempSync(join(tmpdir(), "fr-ui-real-merge-"));
+    const clock = new SystemClock();
+    host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    await host.createRepo({
+      owner: "alice",
+      name: "app",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# app\n" },
+    });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const vault = new MemoryVault();
+    await vault.set(SECRET_NAMES.github, token);
+    ({ rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+        vault,
+        config: {
+          version: 1,
+          profile: "default",
+          timezone: "UTC",
+          githubApiBase: host.baseUrl,
+          anthropicApiBase: "http://an.test",
+          repos: [],
+          credentials: { github: true, anthropic: false, anthropicSubscription: false },
+          stateUrl: "sqlite::memory:",
+        },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /** A done task with its pull request on the host, as a session leaves it (`from`: what it builds on). */
+  async function doneTask(
+    projectId: string,
+    title: string,
+    file: string,
+    opts: { from?: string; dependsOn?: string[]; record?: boolean } = {},
+  ) {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "done",
+      priority: 1,
+      depends_on: opts.dependsOn ?? [],
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      author_agent: rt.agent.id,
+    });
+    const dir = join(work, `wt-${task.id}`);
+    const git = new GitOps({ cwd: dir, identity, auth: { token } });
+    await git.clone(host.cloneUrl(FULL));
+    const branch = `fr/${file.replace(/\W+/g, "-")}`;
+    await git.createBranch(branch, opts.from ? `origin/${opts.from}` : "origin/main");
+    writeFileSync(join(dir, file), `export const f = "${file}";\n`);
+    await git.commitAll(`Add ${file}`);
+    await git.push(branch);
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+    const pr = await github.createPullRequest(REPO, {
+      title,
+      body: "",
+      head: branch,
+      base: "main",
+    });
+    await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch });
+    if (opts.record !== false)
+      await rt.store.mergeRecord.pin({
+        task_id: task.id,
+        project_id: projectId,
+        agent_id: rt.agent.id,
+        pr_number: pr.number,
+        pr_url: pr.htmlUrl,
+        reviewed_head_sha: pr.head.sha,
+        author_agent: rt.agent.id,
+      });
+    return { task, pr, branch };
+  }
+
+  const hostGit = async (...args: string[]) =>
+    (await run(["git", "--git-dir", host.repo(FULL)?.dir ?? "", ...args])).stdout.trim();
+  const forced = () => host.events().filter((e) => e.event === "push" && e.payload.forced === true);
+  const checkRun = async (
+    sha: string,
+    status: "in_progress" | "completed",
+    conclusion?: string,
+  ) => {
+    const res = await fetch(`${host.baseUrl}/repos/${FULL}/check-runs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "ci/test",
+        head_sha: sha,
+        status,
+        ...(conclusion ? { conclusion } : {}),
+      }),
+    });
+    expect(res.status).toBe(201);
+  };
+
+  it("Merge on the dependent PR of a chain is answered at once and merges both in order, each a merge commit with two parents, no force-push; GET lists none after", async () => {
+    const project = await client.createProject({ name: "Chain", goal: "A page", repos: [FULL] });
+    const view0 = await client.projectPullRequests(project.id);
+    expect(view0.mode).toEqual({ key: "you", label: "You press Merge" });
+    const a = await doneTask(project.id, "Add the page", "page.ts");
+    const b = await doneTask(project.id, "Add the footer", "footer.ts", {
+      from: a.branch,
+      dependsOn: [a.task.id],
+    });
+    const before = await client.projectPullRequests(project.id);
+    const rowB = before.waiting.find((w) => w.number === b.pr.number);
+    expect(rowB?.merge).toEqual({
+      state: "ready",
+      canMerge: true,
+      sentence: null,
+      first: [a.pr.number],
+    });
+    const answer = await client.mergePullRequest(project.id, b.pr.number);
+    expect(answer).toEqual({
+      state: "queued",
+      sentence: `Merging #${a.pr.number} and #${b.pr.number} in order.`,
+      order: [a.pr.number, b.pr.number],
+    });
+    const states = async () =>
+      JSON.stringify(
+        (await client.projectPullRequests(project.id)).waiting.map((w) => [
+          w.number,
+          w.merge?.state,
+        ]),
+      );
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(b.task.id))?.state === "merged",
+      "both pull requests to be merged",
+      states,
+      30_000,
+    );
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
+    ).toEqual([]);
+    const recordA = await rt.store.mergeRecord.forTask(a.task.id);
+    const recordB = await rt.store.mergeRecord.forTask(b.task.id);
+    expect(recordA).toMatchObject({
+      state: "merged",
+      method: "merge",
+      approval: "person",
+      approved_by: rt.human.id,
+    });
+    expect(recordB).toMatchObject({ state: "merged", method: "merge", approval: "person" });
+    // In order: A's merge commit is the first parent of B's; each has two parents.
+    const parentsOf = async (sha: string) =>
+      (await hostGit("rev-list", "--parents", "-n", "1", sha)).split(" ").slice(1);
+    expect(await parentsOf(recordA?.merge_sha ?? "")).toEqual([expect.any(String), a.pr.head.sha]);
+    expect(await parentsOf(recordB?.merge_sha ?? "")).toEqual([recordA?.merge_sha, b.pr.head.sha]);
+    expect(forced()).toEqual([]);
+    // The audit rows name the person's click as the approval.
+    const rows = (await rt.store.auditLog.list({ tool: "merge_pr" } as never)).filter((r) =>
+      r.input_summary.includes(`the person ${rt.human.id}`),
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.every((r) => r.allowed)).toBe(true);
+  }, 120_000);
+
+  it("a Merge whose checks still run is answered at once and waits on the record; the watcher's retry merges it once they pass, with no session", async () => {
+    const project = await client.createProject({ name: "Checks", goal: "A page", repos: [FULL] });
+    const c = await doneTask(project.id, "Add the notes", "notes.ts");
+    await checkRun(c.pr.head.sha, "in_progress");
+    const answer = await client.mergePullRequest(project.id, c.pr.number);
+    expect(answer).toMatchObject({ state: "queued", sentence: `Merging #${c.pr.number}.` });
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(c.task.id))?.state === "waiting_checks",
+      "the record to wait for its checks",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(c.task.id)),
+      30_000,
+    );
+    const row = (await client.projectPullRequests(project.id)).waiting.find(
+      (w) => w.number === c.pr.number,
+    );
+    expect(row?.merge).toMatchObject({
+      state: "waiting_checks",
+      canMerge: false,
+      sentence: `#${c.pr.number} merges when its checks pass.`,
+    });
+    await checkRun(c.pr.head.sha, "completed", "success");
+    await rt.merge.retryWaiting();
+    expect((await rt.store.mergeRecord.forTask(c.task.id))?.state).toBe("merged");
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
+    ).toEqual([]);
+  }, 120_000);
+
+  it("a pull request with no record merges as it is on GitHub now, and the answer says so", async () => {
+    const project = await client.createProject({ name: "Old", goal: "A page", repos: [FULL] });
+    const d = await doneTask(project.id, "Add the about page", "about.ts", { record: false });
+    const answer = await client.mergePullRequest(project.id, d.pr.number);
+    expect(answer).toEqual({
+      state: "queued",
+      sentence: `Merging #${d.pr.number} as it is on GitHub now.`,
+      order: [d.pr.number],
+    });
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(d.task.id))?.state === "merged",
+      "the pull request to be merged",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(d.task.id)),
+      30_000,
+    );
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
+    ).toEqual([]);
+    expect(await rt.store.mergeRecord.forTask(d.task.id)).toMatchObject({
+      state: "merged",
+      approval: "person",
+      reviewed_head_sha: d.pr.head.sha,
+    });
+  }, 120_000);
+
+  it("a branch rule that needs an approving review: the row says so instead of Merge, the click is refused with the sentence, and nothing merges", async () => {
+    const project = await client.createProject({ name: "Rules", goal: "A page", repos: [FULL] });
+    const e = await doneTask(project.id, "Add the contact page", "contact.ts");
+    host.setBranchProtection(FULL, "main", {
+      required_pull_request_reviews: { required_approving_review_count: 1 },
+      enforce_admins: { enabled: false },
+    });
+    try {
+      const sentence =
+        "This repository needs an approving review before merging, and GitHub does not let you approve your own pull request: merge it on GitHub once someone else approved it.";
+      const row = (await client.projectPullRequests(project.id)).waiting.find(
+        (w) => w.number === e.pr.number,
+      );
+      expect(row?.merge).toEqual({ state: "blocked", canMerge: false, sentence, first: [] });
+      expect(await client.mergePullRequest(project.id, e.pr.number)).toEqual({
+        state: "refused",
+        sentence,
+        order: [],
+      });
+      expect((await rt.store.mergeRecord.forTask(e.task.id))?.state).toBe("queued");
+      const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+      expect((await github.getPullRequest(REPO, e.pr.number)).merged).toBe(false);
+    } finally {
+      host.setBranchProtection(FULL, "main", null);
+    }
+  }, 120_000);
+
+  it("the merge mode is a setting per repository project: 'Merge automatically after review' asks a yes and the GET says the mode", async () => {
+    const project = await client.createProject({ name: "Auto", goal: "A page", repos: [FULL] });
+    const row = (await client.settings()).find(
+      (s) => s.key === "project.merge_mode" && s.scopeId === project.id,
+    );
+    expect(row).toMatchObject({ label: "Who merges accepted work", value: "you" });
+    const asked = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "merge_mode", value: "after_review", project: project.id },
+        },
+      ],
+      source: "ui",
+    });
+    // Automatic merges are a yes first, and the card says what they mean.
+    expect(asked.status, JSON.stringify(asked)).toBe("pending");
+    expect(JSON.stringify(asked.card)).toContain("Merges show under your GitHub name");
+    const yes = await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
+    expect(yes.status, JSON.stringify(yes)).toBe("done");
+    expect((await client.projectPullRequests(project.id)).mode).toEqual({
+      key: "after_review",
+      label: "Merge automatically after review",
+    });
   }, 120_000);
 });
