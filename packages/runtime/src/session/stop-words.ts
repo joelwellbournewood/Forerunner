@@ -1,6 +1,7 @@
 import { formatChf } from "@forerunner/billing";
 import { type StopBy, stopByOf } from "../enforcement/killswitch.ts";
 import type { BudgetStopSource } from "./budget-pause.ts";
+import { CREDENTIAL_WAIT_STOP } from "./credential-wait.ts";
 
 /**
  * How a session ended, in the person's words (core-experience design §3.7, §4.9). Stop now,
@@ -137,6 +138,9 @@ export function sessionStatusText(status: string, stopReason: string | null | un
       return "Waiting for you: approve the plan";
     case "nothing_runnable":
       return "Ended: nothing could run";
+    // U-078: no Claude credential may serve its work now; it starts by itself (the result says when).
+    case CREDENTIAL_WAIT_STOP:
+      return "Waiting for a Claude credential";
     default:
       break;
   }

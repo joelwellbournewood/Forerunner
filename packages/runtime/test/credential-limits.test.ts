@@ -230,6 +230,18 @@ describe("a key at its usage limit (U-078)", () => {
     expect(result.summary.split("\n")[0]).toBe(
       "Waits until 16:40 (your API key's limit) and starts by itself.",
     );
+    // The session page: its badge and its last line say it waits, not "Stopped: 2 not started".
+    const page = await json<{ statusText?: string }>(first.req(`/sessions/${result.sessionId}`));
+    expect(page.statusText).toBe("Waiting for a Claude credential");
+    const lines = (
+      await json<{ text: string; audience?: string }[]>(
+        first.req(`/sessions/${result.sessionId}/events`),
+      )
+    ).filter((e) => e.audience !== "detail");
+    expect(lines.map((e) => e.text)).toContain(
+      'Your API key reached its usage limit; "Write note A" waits until 16:40 (your API key\'s limit) and starts by itself.',
+    );
+    expect(lines.at(-1)?.text).toBe("Waiting for a Claude credential: nothing done. CHF 0.00.");
     const rows = await json<TaskView[]>(first.req(`/projects/${project.id}/tasks`));
     expect(rows.map((t) => [t.display?.label, t.display?.detail])).toEqual([
       ["Waits until 16:40, your API key's limit", "It starts by itself then."],

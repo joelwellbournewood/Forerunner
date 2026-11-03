@@ -141,7 +141,7 @@ async function main() {
     if (WAIT_START > 0) {
       const next = await R.until(
         async () => {
-          const list = await R.api(NAME, "GET", `/projects/${enc(project.id)}/sessions`).catch(
+          const list = await R.api(NAME, "GET", `/sessions?projectId=${enc(project.id)}`).catch(
             () => [],
           );
           const later = (Array.isArray(list) ? list : (list.sessions ?? [])).filter(

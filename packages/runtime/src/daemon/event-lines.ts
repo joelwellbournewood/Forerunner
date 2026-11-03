@@ -275,7 +275,11 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
           : `Session over. ${chf("spentUsdMicro")}.`;
       const status = sessionStatusText(s("status"), s("stopReason"));
       const head = status === "Done" ? "Session over" : status;
-      return `${head}: ${counts || "nothing done"}. ${chf("spentUsdMicro")}.`;
+      // U-078: the tasks that wait for a credential are said by the wait's line, not again as
+      // "not started".
+      const said =
+        s("stopReason") === "credential_wait" ? endedCounts({ ...p, skipped: 0 }) : counts;
+      return `${head}: ${said || "nothing done"}. ${chf("spentUsdMicro")}.`;
     }
     case "session.plan_filed":
       return `The plan waits for your approval in the Inbox${p.changed ? "; it changed since you approved it, so nothing ran" : ""}.`;
