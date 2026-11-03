@@ -5484,6 +5484,11 @@ real-daemon case "files: the project's folder" covers them.
 
 ## Tests
 
+The voice install tests make their folders with `voiceTestDir()` and the layouts in
+`voice-install-helpers.ts`, short because the installer checks their length (espeak-ng's 159
+characters, Windows' 260); `voice-test-paths.test.ts` checks every layout from CI's Windows temp
+folder too (`voice.md`, the voice profile's tests; `testing.md`, "The path budget").
+
 `fast-mode.test.ts` (spec D.20, ADR 0057; `sqlite::memory:`, a stub provider named
 `anthropic` with `fastMode`, a stub billing port, a fake Agent SDK `query`): flag on, the Opus
 call carries `speed: "fast"` on `claude-opus-5-5`, the Run row and the one ledger row name

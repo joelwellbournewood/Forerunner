@@ -1,9 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { appDirs, join } from "@forerunner/platform";
+import { rmSync } from "node:fs";
+import { appDirs } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
 import { readVoiceSettings } from "../packages/runtime/src/voice/install.ts";
-import { fakeRunner, NVIDIA } from "../packages/runtime/test/voice-install-helpers.ts";
+import {
+  fakeRunner,
+  NVIDIA,
+  voiceTestDir,
+} from "../packages/runtime/test/voice-install-helpers.ts";
 import { runVoiceInstall } from "./voice-install.ts";
 
 /**
@@ -11,8 +14,9 @@ import { runVoiceInstall } from "./voice-install.ts";
  * in its dedicated FORERUNNER_HOME, the same installer as `fr voice install`.
  */
 const temps: string[] = [];
+/** A short home of its own (voice-install-helpers.ts: the installer checks its path's length). */
 const home = () => {
-  const d = mkdtempSync(join(tmpdir(), "fr-voice-install-script-"));
+  const d = voiceTestDir();
   temps.push(d);
   return d;
 };

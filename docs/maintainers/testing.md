@@ -715,14 +715,11 @@ more; about 15 GB, with 8 GB of the disk free).
 Instead of asking every test to clean up, each run gets one folder and removes it at its end;
 no test file needs to change.
 
-- **The run folder.** `<temp>/fr-test-run-<pid>-<start>` (the start in seconds, base 36), with
-  a marker file `.fr-test-run` that says what it is. The name is 24 to 26 characters, and every
-  path a test makes is that much longer: on Windows without long paths nothing of 260
-  characters or more opens. The tightest case known is `voice-install.test.ts`'s "a folder that
-  fits" (PyTorch's deepest file about 120 characters below site-packages): 250 characters where
-  259 is the most that fits, on CI's Windows runner (`C:\Users\RUNNER~1\AppData\Local\Temp`,
-  36 characters); it trips where the temp folder's own path is longer than 45 characters (a
-  long user name), where before it tripped above 70. TMPDIR, TMP and TEMP point at it: `os.tmpdir()` reads
+- **The run folder.** `<temp>/frt-<start>` (the start in seconds, base 36; two runs that start
+  in the same second get the next free second), with a marker file `.fr-test-run` that says what
+  it is and names the pid of the process that made it. The name is 10 characters whatever the
+  pid (`RUN_NAME_LENGTH`, until 2038), and every path a test makes is that and a separator
+  longer; see "The path budget" below. TMPDIR, TMP and TEMP point at it: `os.tmpdir()` reads
   TMPDIR on Linux and macOS and TEMP, then TMP, on Windows (where `GetTempPath` reads TMP, then
   TEMP), so every `mkdtemp(join(tmpdir(), …))` and every program that asks the system for its
   temp folder writes there. `FORERUNNER_TEST_TMP_RUN` names the folder,
@@ -744,10 +741,36 @@ no test file needs to change.
   inherit the variables, and workers, which load the config again, find
   `FORERUNNER_TEST_TMP_RUN` set and make none. The runner removes the folder when it exits,
   after it has stopped the web servers.
+- **The path budget.** The run folder is in the temp folder itself and its name is short,
+  because the tests' paths have limits of their own. Windows without long paths opens nothing of
+  260 characters or more, and the voice install tests run the installer's real path checks
+  (U-069), most with Linux's layout on every OS, so espeak-ng's 159 characters apply to a test
+  home's venv on Windows too. CI's Windows temp folder is
+  `C:\Users\RUNNER~1\AppData\Local\Temp` (36 characters, `WINDOWS_CI_TEMP`; Windows gives
+  TEMP the 8.3 short form of a longer user name, so a person's is usually no longer), and a run
+  folder in it is 47. With `fr-test-run-<pid>-<start>` (2622e74, 23 characters there) 22 voice
+  tests failed on Windows only: a test home's espeak-ng folder was 164 characters, the install
+  folder's in `dependencies.test.ts` 182 and its fallback to the data folder 160 (1 character to
+  spare before the run folder existed). The voice tests now make their folders with
+  `voiceTestDir()` (`fr-v-` and mkdtemp's six characters,
+  `packages/runtime/test/voice-install-helpers.ts`; the install world's install folder is
+  `<that>/app`). From CI's Windows temp folder: a test home's espeak-ng folder is 139 characters
+  (20 to spare), the install folder's 151 (8 to spare, the tightest case), and U-069's "a folder
+  that fits" reaches 226 with PyTorch's deepest file. `packages/runtime/test/voice-test-paths.test.ts`
+  puts every voice test layout through the installer's own checks from this run's temp folder
+  and from a stand-in as long as a run folder in CI's Windows temp folder, on any OS, so a longer
+  name or a deeper layout fails there first, naming the layout and the length. The deepest path
+  the rest of the unit project leaves is 163 characters below the run folder (a continuity
+  test's git ref, `<test folder>/data/projects/<uuid>/workspace/.git/refs/forerunner/set-aside/<uuid>`;
+  one `pnpm test` with the run folder kept, 2026-11-03), 211 from CI's Windows temp folder;
+  `test-tmp.test.ts` checks that it stays below 260 from there and from this run's folder. A
+  test that nests deeper is not covered until it is measured again (the unit project with a
+  config without the global setup and TMPDIR on an empty folder, then the longest paths left).
 - **Only its own folders.** At its start a run removes the run folders a run left in its temp
   folder (a crash, a kill, a folder that could not be removed), and nothing else: the exact
-  name `fr-test-run-<digits>-<base 36>`, a real folder (not a link), holding the marker, with
-  both the start in the name and the marker's last change over a day old (a live run touches
+  name `frt-<base 36>` (or `fr-test-run-<digits>-<base 36>`, the name before 2026-11-03), a
+  real folder (not a link), holding the marker, with both the start in the name and the
+  marker's last change over a day old (a live run touches
   its marker every 10 minutes, so a watch session of days keeps its folder). It prints what it
   removed. Other `fr-*` folders (another run's, a tool's, the leftovers of runs before this
   mechanism) are never touched; those older leftovers are for a person to remove.
@@ -797,9 +820,14 @@ near-miss name, a file and a link (not on Windows) stay; a test in it that point
 variables elsewhere gets that folder; the sweep's day boundary on the name and the marker; the
 exact name shape; start and stop setting the variables back, a parent run's too; an `EBUSY`
 that does not clear (retried, the folder left, the message, the try at exit); `EACCES` named as
-a permission; a real process working in the folder
-(on Windows the folder stays and the message says why, elsewhere it goes; it goes once the
-process ends); `keptTempDir`; and that every vitest and Playwright config in the repository
+a permission; two runs started in the same second getting a folder each, and a crashed run's
+folder named the old way swept; the run folder's length and the deepest known test path against
+Windows' 260, from CI's Windows temp folder and from this run's; a real process working in the
+folder (on Windows the folder stays and the message says why, elsewhere it goes; it goes once
+the process ends). That case removes the folder only once the child has said where it runs:
+Node's `spawn` event comes when CreateProcess returns, before the child's own start-up opens the
+working folder whose handle keeps it on Windows, and on 2de0a25 Windows CI removed the folder in
+that gap, at the first try, 27 ms after the start; `keptTempDir`; and that every vitest and Playwright config in the repository
 wires it, with the root config's projects naming none of their own. `apps/ui/test/test-tmp.test.ts`,
 `apps/approvals-web/test/test-tmp.test.ts`, `apps/ui/e2e/temp-folder.spec.ts` and the
 `reportDir` cases of `tests/live/test/report.test.ts` check their suite's wiring.

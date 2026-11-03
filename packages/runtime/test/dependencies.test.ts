@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { type AppDirs, appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { type AppDirs, join, SimulatedClock } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import {
   DEPENDENCIES_SUBDIR,
@@ -19,7 +18,7 @@ import {
   writeVoiceSettings,
 } from "../src/voice/install.ts";
 import { localVoiceSettings } from "../src/voice/local-profile.ts";
-import { fakeRunner } from "./voice-install-helpers.ts";
+import { fakeRunner, voiceInstallWorld, voiceTestDir } from "./voice-install-helpers.ts";
 
 /**
  * Downloaded dependencies beside the install (U-011 in docs/status/UPDATE-LOG.md): the owner
@@ -28,12 +27,14 @@ import { fakeRunner } from "./voice-install-helpers.ts";
  * and temporary files, and to the data folder only when the install folder cannot be written.
  */
 
+/**
+ * A home and an install folder, short (voice-install-helpers.ts): voice beside the install
+ * stays there only when its espeak-ng folder, 88 characters below it, fits espeak-ng's limit.
+ */
 function world(): { dirs: AppDirs; env: NodeJS.ProcessEnv; install: string } {
-  const root = mkdtempSync(join(tmpdir(), "fr-deps-"));
-  const env = { FORERUNNER_HOME: join(root, "home") };
-  const install = join(root, "D", "AGENT", "Forerunner");
-  mkdirSync(install, { recursive: true });
-  return { dirs: appDirs({ env }), env, install };
+  const w = voiceInstallWorld(voiceTestDir());
+  mkdirSync(w.install, { recursive: true });
+  return w;
 }
 
 const beside = (install: string): DependenciesDir => ({

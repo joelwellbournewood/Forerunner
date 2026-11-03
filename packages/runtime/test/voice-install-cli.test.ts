@@ -1,11 +1,8 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { appDirs, join } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProgram } from "../src/cli/main.ts";
 import { readVoiceSettings } from "../src/voice/install.ts";
 import { formatInstallEvent, voiceSetupStep } from "../src/voice/install-cli.ts";
-import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
+import { fakeRunner, NVIDIA, voiceTestDir, voiceTestHome } from "./voice-install-helpers.ts";
 
 /**
  * The voice profile from the command line (ADR 0090): `fr voice install [--cpu|--gpu]`,
@@ -14,10 +11,9 @@ import { fakeRunner, NVIDIA } from "./voice-install-helpers.ts";
  * with a fake process runner.
  */
 
+/** A short home of its own (voice-install-helpers.ts: the installer checks its path's length). */
 function home() {
-  const h = mkdtempSync(join(tmpdir(), "fr-voice-cli-"));
-  const env = { FORERUNNER_HOME: h };
-  return { env, dirs: appDirs({ env }) };
+  return voiceTestHome(voiceTestDir());
 }
 
 async function fr(
