@@ -7905,6 +7905,67 @@ describe("the UI client against the real daemon: a Claude credential at its limi
     }
   }, 120_000);
 
+  /** Claude Code refusing the sign-in (an expired token's 401) on every turn. */
+  const refusedSignIn =
+    (calls: string[]): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        yield {
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          result: 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+        };
+      })();
+    };
+
+  it("a refused Claude sign-in under the default 'Wait': the task waits for a new sign-in (nothing on the API key); under 'use the other one' the card says the API key costs money (U-078)", async () => {
+    const sdkCalls: string[] = [];
+    const { rt, client, onKey } = await compose(refusedSignIn(sdkCalls));
+    try {
+      const project = await client.createProject({ name: "Sign-in", goal: "A note" });
+      await addTask(client, project.id, "Write the note");
+      const sessionId = await runToEnd(client, project.id);
+      // Before: '"Write the note" continues on your API key now.' (money under 'Wait').
+      expect((await client.session(sessionId)).summary?.split("\n")[0]).toBe(
+        "Waits for a new Claude sign-in: save one in Settings.",
+      );
+      expect((await client.tasks(project.id)).map((t) => [t.status, t.display?.label])).toEqual([
+        ["ready", "Waits for a new Claude sign-in"],
+      ]);
+      expect(workCalls(onKey)).toHaveLength(0);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.status === "open" && r.title === "Anthropic refused your Claude sign-in",
+      );
+      expect(card?.body).toBe(
+        "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+      );
+      // "Use the other one", as Settings sends it (a yes): the card says where the tasks go on,
+      // and what it costs, and the next session runs the task on the API key.
+      const asked = await client.executeCommands({
+        commands: [
+          { name: "settings.set", params: { key: "mid_session_limit", value: "use_other" } },
+        ],
+        wordsUsed:
+          "Settings: When my first choice runs out mid-session to Use the other one at once (may cost money)",
+        source: "ui",
+      });
+      await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
+      const moved = (await client.inbox(me.id)).requests.find((r) => r.id === card?.id);
+      expect(moved?.body).toBe(
+        "Save a new one in Settings. Until then your tasks go on with your API key, which costs money.",
+      );
+      await runToEnd(client, project.id);
+      expect((await client.tasks(project.id)).map((t) => t.status)).toEqual(["done"]);
+      expect(workCalls(onKey).length).toBeGreaterThan(0);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
   it("a refused API key: one card with where to save a new one, planning and tasks wait (none failed), Settings says Refused, and the key saved in the setup assistant starts both by itself", async () => {
     // As `fr daemon` composes it, with no injected provider: the routed provider over the
     // vault's key calls the Messages API stand-in, which answers a key holding "refused" with

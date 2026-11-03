@@ -532,6 +532,13 @@ then."), the log (`billing.fallback`; `task.finished` with `usage_limit` is a de
 the person's zone (`clockTime`). (6) "When my first choice runs out mid-session"
 (`human.notify_prefs.mid_session_limit`, `midSessionLimitOf`, default `wait`): the executor's
 `billingRequest` sets `waitOnRest` for task runs under `wait`; the non-task calls never set it.
+Under `wait` a refused first choice holds the pick too (ADR 0100 point 15, the session lead's
+default: the router's `waitFor` with `reason: "refused"`, which `credentialWaitOf` reads as a
+refused wait), so its task work waits for a new credential instead of moving onto the other
+one; the refused card's body says what happens to the task work, read when it is shown
+(`requestContexts` -> `RequestWordsContext.credentialGoesOn`: under `use_other` "Until then your
+tasks go on with your API key, which costs money.", else "The work that needs it waits and
+starts by itself then.").
 (7) Planning waits too (ADR 0100 point 12, the review of credential-limits): a background
 draft (`IntakeService.enqueue`) whose planning call ended `provider_auth`, `unavailable` or
 `USAGE_LIMIT_CODE` asks `IntakeDeps.credentialWait.now()` (compose: `RoutedProvider.waitNow()`

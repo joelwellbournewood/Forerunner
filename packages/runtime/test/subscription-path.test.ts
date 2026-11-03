@@ -10,17 +10,21 @@ import {
   type LogRecord,
   SimulatedClock,
 } from "@forerunner/platform";
-import { type HumanRequestRow, openStore } from "@forerunner/state";
+import { openStore } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { claudeCodeToolNames } from "../src/agent/cc-tools.ts";
 import type { QueryLike } from "../src/agent/sdk.ts";
 import { billingSourcesLine, buildProgram } from "../src/cli/main.ts";
 import { composeRuntime, type RuntimeApp, TOOL_UNMAPPED_AUDIT } from "../src/daemon/compose.ts";
-import { requestView } from "../src/daemon/views.ts";
+import { requestViews } from "../src/daemon/views.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
-import { BILLING_PICK_AUDIT_TOOL, planShareAfter } from "../src/session/billing.ts";
+import {
+  BILLING_PICK_AUDIT_TOOL,
+  MID_SESSION_LIMIT_SETTING,
+  planShareAfter,
+} from "../src/session/billing.ts";
 import { planItemFor, SDK_RUN_PROVIDER } from "../src/session/executor.ts";
 import {
   DEFAULT_PLAN_USD_MONTHLY,
@@ -512,8 +516,11 @@ describe("the subscription path (ADR 0044)", () => {
   });
 
   // U-078: Claude Code's refusal of the sign-in, as an assistant error and as a 401 result: the
-  // task is no failure and is never tried again at once; the sign-in is marked refused, one card
-  // names it, and the next credential takes over. Before, both were "model call failed".
+  // task is no failure and is never tried again at once; the sign-in is marked refused and one
+  // card names it. Before, both were "model call failed". Under the default 'Wait' (the session
+  // lead's default of 2026-11-03) the task work waits for a new sign-in: nothing moves onto the
+  // API key, which costs money; under "use the other one" the API key takes over and the card
+  // says that costs money.
   for (const [label, script] of [
     [
       "an authentication_failed assistant error",
@@ -545,15 +552,17 @@ describe("the subscription path (ADR 0044)", () => {
       },
     ],
   ] as const) {
-    it(`${label} marks the sign-in refused, files one card, and the API key takes over`, async () => {
+    it(`${label} marks the sign-in refused, files one card, and under 'Wait' the task waits for a new sign-in`, async () => {
       const w = await seedTask(`Refused sign-in (${label})`);
       sdk.set(script as SdkScript);
       try {
         const res = await execute(w);
         expect(res.outcome).toBe("usage_limit");
-        expect(res.credentialWait).toBeUndefined();
+        // Before (credential-limits): "... continues on your API key now.", money the person
+        // did not choose under 'Wait'.
+        expect(res.credentialWait).toMatchObject({ reason: "refused", kind: "subscription" });
         expect(res.summary).toBe(
-          `Anthropic refused your Claude sign-in; "Refused sign-in (${label})" continues on your API key now.`,
+          `Anthropic refused your Claude sign-in; "Refused sign-in (${label})" waits for a new Claude sign-in: save one in Settings.`,
         );
         const sub = (
           await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
@@ -563,10 +572,24 @@ describe("the subscription path (ADR 0044)", () => {
           (r) => (r.change_card as { key?: string } | null)?.key === "credential:refused",
         );
         expect(cards).toHaveLength(1);
-        const view = requestView(cards[0] as HumanRequestRow, null);
-        expect(view.title).toBe("Anthropic refused your Claude sign-in");
-        expect(view.links?.[0]?.label).toBe("Save a new sign-in");
-        // The next pick skips the refused sign-in: the API key, on the loop driver.
+        // The card as the Inbox shows it (`GET /inbox` reads its words now).
+        const [view] = await requestViews(rt.store, cards);
+        expect(view?.title).toBe("Anthropic refused your Claude sign-in");
+        expect(view?.body).toBe(
+          "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+        );
+        expect(view?.links?.[0]?.label).toBe("Save a new sign-in");
+        // A task pick under 'Wait' waits for the sign-in; a non-task pick (chat, planning,
+        // reviews) skips it: the API key, on the loop driver.
+        await expect(
+          rt.billing.pick.pick({
+            agentId: rt.agent.id,
+            agentOwnerHumanId: rt.human.id,
+            runner: "pc",
+            modelTier: "sonnet",
+            waitOnRest: true,
+          }),
+        ).rejects.toMatchObject({ details: { waitFor: { reason: "refused" } } });
         const pick = await rt.billing.pick.pick({
           agentId: rt.agent.id,
           agentOwnerHumanId: rt.human.id,
@@ -589,6 +612,46 @@ describe("the subscription path (ADR 0044)", () => {
       expect(cleared?.limits.refusedAt).toBeUndefined();
     });
   }
+
+  it("a refused sign-in under 'use the other one': the API key takes over, and the card says that costs money (U-078)", async () => {
+    const prefs = (await rt.store.human.get(rt.human.id))?.notify_prefs ?? {};
+    await rt.store.human.patch(rt.human.id, {
+      notify_prefs: { ...prefs, [MID_SESSION_LIMIT_SETTING]: "use_other" },
+    });
+    const w = await seedTask("Refused sign-in, use the other one");
+    sdk.set(async function* () {
+      yield init;
+      yield {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        result: 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+      };
+    });
+    try {
+      const res = await execute(w);
+      expect(res.outcome).toBe("usage_limit");
+      expect(res.credentialWait).toBeUndefined();
+      expect(res.summary).toBe(
+        'Anthropic refused your Claude sign-in; "Refused sign-in, use the other one" continues on your API key now.',
+      );
+      const cards = (await rt.store.humanRequest.open({ humanId: rt.human.id })).filter(
+        (r) => (r.change_card as { key?: string } | null)?.key === "credential:refused",
+      );
+      const [view] = await requestViews(rt.store, cards);
+      expect(view?.body).toBe(
+        "Save a new one in Settings. Until then your tasks go on with your API key, which costs money.",
+      );
+    } finally {
+      await rt.billing.waits.credentialSaved("subscription");
+      await rt.store.human.patch(rt.human.id, { notify_prefs: prefs });
+      sdk.set(async function* () {
+        yield init;
+        yield assistant("Implemented the change. Lesson: none.");
+        yield done("Implemented the change. Lesson: none.");
+      });
+    }
+  });
 
   it("another human's agent never runs on the subscription: the API key through the loop driver", async () => {
     const other = await rt.store.human.insert({

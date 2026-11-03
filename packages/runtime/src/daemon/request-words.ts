@@ -77,6 +77,12 @@ export interface RequestWordsContext {
   waiting?: readonly string[];
   /** The person made the task's last change (a withdrawn card says "you moved the task"). */
   movedByYou?: boolean;
+  /**
+   * A refused credential's card (U-078): the credential its task work goes on with now, when
+   * the person chose "When my first choice runs out mid-session: use the other one" and another
+   * one can serve; null or absent under 'Wait', where the work waits for a new one.
+   */
+  credentialGoesOn?: string | null;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -862,13 +868,23 @@ const CREDENTIAL_REFUSED_KEY = "credential:refused";
  * task, no answer to give; the link opens the setup assistant where a new key or sign-in is
  * pasted, which closes the card and starts the work that waited for it.
  */
-function refusedCredentialCard(card: JsonObject): RequestWords {
+function refusedCredentialCard(card: JsonObject, ctx: RequestWordsContext = {}): RequestWords {
   const subscription = card.credential_kind === "subscription";
+  // U-078 (the session lead's default of 2026-11-03): under 'Wait' the task work waits for a
+  // new one; under "use the other one" it goes on with the other credential, and the card says
+  // so, with the money when that is the API key.
+  const goesOn = ctx.credentialGoesOn;
+  const body =
+    goesOn === "api_key" || goesOn === "plan_credits"
+      ? `Save a new one in Settings. Until then your tasks go on with ${goesOn === "api_key" ? "your API key" : "your plan credits"}, which costs money.`
+      : goesOn === "subscription"
+        ? "Save a new one in Settings. Until then your tasks go on with your Claude subscription."
+        : "Save a new one in Settings. The work that needs it waits and starts by itself then.";
   return {
     title:
       str(card.title) ??
       (subscription ? "Anthropic refused your Claude sign-in" : "Anthropic refused your API key"),
-    body: "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+    body,
     choices: [],
     links: [
       {
@@ -1008,7 +1024,7 @@ export function requestWords(
     if (card.outcome === "cancel")
       outcome = `${ctx.taskTitle ? q(ctx.taskTitle) : "The task"} was cancelled.`;
   } else if (key === CREDENTIAL_REFUSED_KEY) {
-    words = refusedCredentialCard(card);
+    words = refusedCredentialCard(card, ctx);
     // Closed when a new credential was saved (`closeRefusedCards`).
     if (r.status === "withdrawn") {
       words.outcome = "A new one is saved; the work that waited for it goes on.";

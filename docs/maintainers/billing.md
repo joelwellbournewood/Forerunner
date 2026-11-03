@@ -85,8 +85,10 @@ refused credential, never its value, and `refusedWhy`); a probe reports
 new credential); the runtime starts their sessions when it serves again. `RouteContext.waitOnRest`
 ("When my first choice runs out mid-session: Wait", task runs only): a resting source that
 ranks ahead of every source that could serve makes `pick` throw `unavailable` with
-`details.waitFor` ({ sourceId, kind, until }) instead of moving on; without it the next source
-serves, as before. Tests: `test/router.test.ts` ("skips a refused source", "'Wait'").
+`details.waitFor` ({ sourceId, kind, until, reason }) instead of moving on; a refused source
+holds the same way (`reason: "refused"`, `until: null`; the session lead's default of
+2026-11-03, ADR 0100 point 15); without it the next source serves, as before. Tests: `test/router.test.ts` ("skips a refused source", "'Wait'", "'Wait' holds to a refused
+first choice too").
 
 **What the task needs (U-078, the credential chooser; ADR 0100 amended).** The router knows
 kinds and the order; what a task needs of its credential is the runtime's

@@ -36,7 +36,9 @@ import { type AgentModelConfig, modeOverride, specialistOverride } from "../mode
 import { priorityLevel } from "../priority.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
+import { MID_SESSION_LIMIT_SETTING, midSessionLimitOf } from "../session/billing.ts";
 import { countsList } from "../session/counts.ts";
+import { CREDENTIAL_REFUSED_KEY } from "../session/credential-wait.ts";
 import { runCapOf } from "../session/executor.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
@@ -707,9 +709,35 @@ export async function requestContexts(
     out.set(r.id, {
       projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
       taskTitle: null,
+      ...(r.status === "open"
+        ? { credentialGoesOn: await credentialGoesOnFor(store, r).catch(() => null) }
+        : {}),
     });
   }
   return out;
+}
+
+/**
+ * A refused credential's card (U-078): the credential its task work goes on with now, read when
+ * the card is shown. Under "When my first choice runs out mid-session: use the other one", an
+ * enabled credential of the person that is not refused; under 'Wait' (the default) none, since
+ * the task work waits for a new one (the session lead's default of 2026-11-03).
+ */
+async function credentialGoesOnFor(store: StateStore, r: HumanRequestRow): Promise<string | null> {
+  const card = r.change_card as { key?: unknown; source_id?: unknown } | null;
+  if (card?.key !== CREDENTIAL_REFUSED_KEY || !r.human_id) return null;
+  const human = await store.human.get(r.human_id);
+  if (midSessionLimitOf(human?.notify_prefs?.[MID_SESSION_LIMIT_SETTING]) !== "use_other")
+    return null;
+  const rows = await store.billingSource.list({ human_id: r.human_id }, { limit: 100 });
+  const other = rows.find(
+    (s) =>
+      s.enabled &&
+      s.kind !== "fake" &&
+      s.id !== card.source_id &&
+      typeof (s.limits as { refusedAt?: unknown }).refusedAt !== "string",
+  );
+  return other?.kind ?? null;
 }
 
 /** `requestView` of each row with what it needs read now (`requestContexts`). */

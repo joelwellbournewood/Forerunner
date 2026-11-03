@@ -641,8 +641,12 @@ hour when it gives none), and the session log says so in one sentence. For tasks
 If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expired sign-in),
 one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),
 Settings shows the credential as **Refused** (Accounts and keys says "Anthropic refused your
-API key." with **Save a new key**, never "connected" through it), and Forerunner stops using it: your other
-credential takes over, or the work waits ("Waits for a new API key"). No task fails because of
+API key." with **Save a new key**, never "connected" through it), and Forerunner stops using it.
+With **Wait** (the default) your tasks wait for a new one ("Waits for a new Claude sign-in"):
+nothing moves onto your other credential, so a refused subscription never turns into API
+spend. With **Use the other one** your tasks go on with the other credential, and the card
+says so ("Until then your tasks go on with your API key, which costs money."). Chat, project
+setup and reviews use your other credential either way. No task fails because of
 it, and neither does the plan of a new project: its page says "Planning waits for a new API
 key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
 with **Save a new key** on the card or on the project page (the setup assistant): the card

@@ -369,6 +369,35 @@ describe("BillingRouter: the person's order and the rest after a usage limit (U-
     ).toBe("alice-api");
   });
 
+  it("'Wait' holds to a refused first choice too: its work waits for a new credential; off, the next one serves (U-078)", async () => {
+    const probe = new FakeProbe({
+      "alice-sub": { available: true, planUsageShare: 0.1, refused: "2026-11-01T14:00:00Z" },
+    });
+    await expect(
+      router([aliceSub, aliceApi], probe).pick(
+        ctx({ order: ["subscription", "api_key"], waitOnRest: true }),
+      ),
+    ).rejects.toMatchObject({
+      code: "unavailable",
+      details: {
+        waitFor: { sourceId: "alice-sub", kind: "subscription", until: null, reason: "refused" },
+      },
+    });
+    // "Use the other one" (and every non-task call): the API key serves.
+    expect(
+      (await router([aliceSub, aliceApi], probe).pick(ctx({ order: ["subscription", "api_key"] })))
+        .source.id,
+    ).toBe("alice-api");
+    // A refused credential that is not the first choice holds nothing.
+    expect(
+      (
+        await router([aliceSub, aliceApi], probe).pick(
+          ctx({ order: ["api_key", "subscription"], waitOnRest: true }),
+        )
+      ).source.id,
+    ).toBe("alice-api");
+  });
+
   it("reads a stored order: distinct orderable kinds, anything else is no order", () => {
     expect(billingOrderOf(["api_key", "subscription"])).toEqual(["api_key", "subscription"]);
     expect(billingOrderOf(["plan_credits"])).toEqual(["plan_credits"]);

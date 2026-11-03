@@ -247,6 +247,20 @@ Decision, amending point 4 for task runs and adding three points:
     code work to the API key (money); (c) a third value, "the API key when the project has
     dependencies". Changing the answer changes `needsOf` and the setting's values, not the
     chooser.
+15. **A refused first choice under 'Wait' (the session lead's default for the U-078 owner
+    question, 2026-11-03; it amends point 10's "a refused credential is no running out").** A
+    refused subscription files its card and its task work waits for the person (a new sign-in)
+    instead of moving onto the API key, which costs money; under "use the other one" it moves to
+    the next credential and the card says so ("Save a new one in Settings. Until then your tasks
+    go on with your API key, which costs money."). The rule is the same for a refused API key
+    (its work waits for a new key; with "use the other one" it goes on with the subscription), so
+    'Wait' keeps one meaning: nothing moves onto the other credential. In code: the router's
+    `waitOnRest` holds to a refused first choice like a resting one (`details.waitFor` with
+    `reason: "refused"`, `until: null`); the card's words are read when it is shown
+    (`RequestWordsContext.credentialGoesOn`). Chat, planning and reviews still use the next
+    source (point 4). The owner may still choose otherwise in U-078: (a) as built; (b) a refused
+    credential's work always moves to the other one (point 10 before), the card saying when that
+    costs money.
 
 Consequences: a refused key costs one call and one card, not two failed tasks and four calls; a
 limit never fails a task, and the work starts by itself at the reset, after a restart too; with
