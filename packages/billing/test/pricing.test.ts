@@ -73,15 +73,94 @@ describe("costOf", () => {
   });
 
   it("estimates conservatively and values cache reads at full price", () => {
+    // Nothing expected from the cache: the whole input at the cache-write price (the history
+    // breakpoint writes it, 1.25 x 3 per MTok), the output ceiling at the output price.
     expect(
       estimateUsdMicro({ inputTokens: 1000, maxOutputTokens: 1000 }, "claude-sonnet-4-5"),
-    ).toBe(18_000);
+    ).toBe(3_750 + 15_000);
     expect(
       cacheSavingsUsdMicro(
         { tokens_in: 0, tokens_out: 0, cache_read_tokens: M },
         "claude-sonnet-4-5",
       ),
     ).toBe(2_700_000);
+  });
+});
+
+describe("estimateUsdMicro: the pre-call worst case of a cached conversation (cost)", () => {
+  // What the API bills a call of an agent loop that caches its conversation (a breakpoint on
+  // the last message): the prefix the previous call cached is read, the rest is written, the
+  // reply is output. `cached` is that prefix; `written` the rest; `out` the reply.
+  const billed = (model: string, cached: number, written: number, out: number) =>
+    costOf(
+      { tokens_in: 0, tokens_out: out, cache_read_tokens: cached, cache_write_tokens: written },
+      model,
+    );
+  const MODELS = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-sonnet-4-5"];
+
+  it("a first call, whose whole input the history breakpoint writes, never costs more than its estimate", () => {
+    for (const model of MODELS) {
+      const est = estimateUsdMicro({ inputTokens: 40_000, maxOutputTokens: 4096 }, model);
+      expect(est, model).toBeGreaterThanOrEqual(billed(model, 0, 40_000, 4096));
+      // Below the minimum cacheable length nothing is written: billed at the input price.
+      expect(est, model).toBeGreaterThanOrEqual(
+        costOf({ tokens_in: 40_000, tokens_out: 4096 }, model),
+      );
+    }
+  });
+
+  it("a turn that adds a large tool result is priced at the write price for everything new", () => {
+    for (const model of MODELS) {
+      // 10k tokens cached by the previous call, a 60k-token page just read.
+      const est = estimateUsdMicro(
+        { inputTokens: 70_000, maxOutputTokens: 4096, cachedInputTokens: 10_000 },
+        model,
+      );
+      expect(est, model).toBeGreaterThanOrEqual(billed(model, 10_000, 60_000, 4096));
+    }
+  });
+
+  it("only where cache reads dominate is it below the old whole-input-at-input-price figure", () => {
+    const model = "claude-sonnet-5-5";
+    const old = (input: number, out: number) =>
+      costOf({ tokens_in: input, tokens_out: out }, model);
+    // 75k of 78k tokens from the cache (the research task's late turns): far cheaper, and still
+    // at least the bill.
+    const late = estimateUsdMicro(
+      { inputTokens: 78_000, maxOutputTokens: 4096, cachedInputTokens: 75_000 },
+      model,
+    );
+    expect(late).toBeLessThan(old(78_000, 4096));
+    expect(late).toBeGreaterThanOrEqual(billed(model, 75_000, 3_000, 4096));
+    // A first call, or one whose new part is most of the input: not below the old figure.
+    expect(estimateUsdMicro({ inputTokens: 78_000, maxOutputTokens: 4096 }, model)).toBeGreaterThan(
+      old(78_000, 4096),
+    );
+    expect(
+      estimateUsdMicro(
+        { inputTokens: 78_000, maxOutputTokens: 4096, cachedInputTokens: 5_000 },
+        model,
+      ),
+    ).toBeGreaterThan(old(78_000, 4096));
+  });
+
+  it("never expects more from the cache than the input, and rejects a bad count", () => {
+    const model = "claude-sonnet-5-5";
+    expect(
+      estimateUsdMicro({ inputTokens: 1_000, maxOutputTokens: 0, cachedInputTokens: 9_000 }, model),
+    ).toBe(billed(model, 1_000, 0, 0));
+    expect(() =>
+      estimateUsdMicro({ inputTokens: 1_000, maxOutputTokens: 0, cachedInputTokens: -1 }, model),
+    ).toThrow(ForerunnerError);
+  });
+
+  it("an override whose write price is below its input price is priced at the input price", () => {
+    const table = mergePricing(BUILTIN_PRICING, {
+      "claude-sonnet-5-5": { cache_write_per_mtok_usd: 1 },
+    });
+    expect(
+      estimateUsdMicro({ inputTokens: M, maxOutputTokens: 0 }, "claude-sonnet-5-5", table),
+    ).toBe(2 * M);
   });
 });
 

@@ -135,8 +135,19 @@ dated suffixes, `-v1:0`, `-latest`, `[1m]`). Each row has `input_per_mtok_usd`,
 list: reads 10% of input, writes 125% (models with a different list price for reads carry it
 explicitly). `costOf(usage, model)` returns `usd_micro = tokens * price_per_mtok`, rounded
 half-up once; an unknown model throws `ForerunnerError("validation")`, never a silent zero.
-`estimateUsdMicro` is the conservative pre-run estimate (full input plus `max_tokens` at output
-price). `cacheSavingsUsdMicro` values cache reads at the full input price.
+`estimateUsdMicro({ inputTokens, maxOutputTokens, cachedInputTokens })` is the pre-call worst
+case, never below what the provider can bill (ADR 0112, amendment of 2026-11-03, 'cost'): the
+runtime's agent loop caches its conversation, so `cachedInputTokens` (the prefix the run's
+previous call read from and wrote to the cache, while that call started less than
+`CACHE_TTL_MS` less the loop's margin ago) is priced at the cache-read price, the rest of the
+input at the cache-write price (the history breakpoint writes it; below the minimum cacheable
+length the input price applies, which the write price covers; a row whose write price is below
+its input price is priced at the input price), and `max_tokens` at the output price. With no
+`cachedInputTokens` the whole input is at the write price. Before, the whole input was priced at
+the input price, which a cache write (1.25 times) exceeds. `CACHE_TTL_MS` is the provider's
+five-minute entry lifetime, counted from the start of the request that wrote or read it.
+`cacheSavingsUsdMicro` values cache reads at the full input price. Tests: `pricing.test.ts`
+("the pre-call worst case of a cached conversation").
 
 **Fast mode rows (spec D.20, ADR 0057):** Opus fast mode is the same model requested with
 the provider's speed parameter, priced apart under its own row named for the variant:

@@ -122,6 +122,17 @@ Review of the first build found two things the decision above left implicit.
   The snapshot format moved to version 2 (`folded` carries the finish time); nothing had
   persisted version 1.
 
+## Amendment 2026-11-03: calibrated starts, faster correction ('cost')
+
+The live checks of 2026-11-02 measured plan and start estimates about ten times what tasks cost
+on the real model (L-22). ADR 0112's amendment of 2026-11-03 records the change: the cold start's
+cost is a calibrated figure per specialist (`STARTING_ESTIMATES_USD_MICRO`, USD 0.06 for one it
+does not name; the registry share and the 0.5 USD fallback remain only for a caller that passes
+`startingEstimates: null`), the multiplier is clamped to `[0.1, 10]` (was `[0.25, 4]`) and
+the shrinkage pseudo-count is 1 (was 5), the plan's guess is kept within 1.5 times of its kind's
+figure, a task with a `paused` or `budget_exceeded` run is no sample, and the fold's actual is the
+work runs' cost (the ledger less the critic's Run rows). The wall-time cold start is unchanged.
+
 ## Amendment 2026-10-26: the eval budget bounds a run the human consented to
 
 ADR 0089 changes when the evals run, not the thresholds. A watch run makes no paid eval

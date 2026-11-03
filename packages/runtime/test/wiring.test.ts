@@ -549,6 +549,45 @@ describe("daemon wiring", () => {
     for (let i = 0; i < 1200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
       await new Promise((r) => setTimeout(r, 25));
     expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
+
+    // 'cost' (L-22): the next task of the kind is measured against its own estimate, never the
+    // figure the planner already corrected with what it learned from the first (that fed the
+    // correction back into itself and settled near the square root of the real error).
+    const second = await json(
+      await post(`/projects/${str(card.id)}/tasks`, {
+        title: "Write a second note",
+        outcome: "Another note exists",
+        acceptanceCriteria: ["note written"],
+      }),
+    );
+    const corrected = rt.estimates.estimate({ specialist: "coder", risk_tier: 1 });
+    expect(corrected.costRatio).not.toBe(1);
+    const again = await post("/sessions", {
+      agentId: rt.agent.id,
+      projectId: card.id,
+      budgetUsdMicro: 2_000_000,
+    });
+    expect(again.status).toBe(202);
+    const againBody = (await again.json()) as { session?: { id?: string } };
+    let secondStatus = "";
+    for (let i = 0; i < 1200; i++) {
+      secondStatus = (await rt.store.task.mustGet(str(second.id))).status;
+      if (!/^(ready|claimed|in_progress)$/.test(secondStatus)) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(secondStatus, "the second task's run returned").not.toMatch(
+      /^(ready|claimed|in_progress)$/,
+    );
+    expect((await post(`/sessions/${str(againBody.session?.id)}/stop`, {})).status).toBe(200);
+    for (let i = 0; i < 1200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
+      await new Promise((r) => setTimeout(r, 25));
+    expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
+    const after = EstimateAccuracyViewSchema.parse(await (await req("/costs/estimates")).json());
+    const own = rt.estimates.coldStart("coder").usdMicro;
+    const ofSecond = after.recent.find((s) => s.task_id === second.id);
+    expect(ofSecond, "the second task is a sample").toBeDefined();
+    expect(ofSecond?.estimate_usd_micro).toBe(own);
+    expect(after.recent.find((s) => s.task_id === task.id)?.estimate_usd_micro).toBe(own);
   }, 120_000);
 
   /** A task, its session, a run token and a budget for one executor call (worktree pinned). */

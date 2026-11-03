@@ -278,14 +278,15 @@ describe("Opus fast mode per project (D.20)", () => {
     // The estimate before the call reads the variant's rate (spec I.3).
     const start = o.events.find((e) => e.type === "model_call_start");
     const est = start && start.type === "model_call_start" ? start.estimateUsdMicro : 0;
-    // The estimate is the input count at 8 USD/MTok plus the 4096-token output ceiling at 40.
+    // The estimate is the input count at the variant's cache-write rate (10 USD/MTok, 1.25 x 8:
+    // the loop's history breakpoint writes it, 'cost') plus the 4096-token output ceiling at 40.
     const ceiling = estimateUsdMicro(
       { inputTokens: 0, maxOutputTokens: 4096 },
       "claude-opus-5-5-fast",
     );
     expect(ceiling).toBe(4096 * 40);
     expect(est).toBeGreaterThan(ceiling);
-    expect((est - ceiling) % 8).toBe(0);
+    expect((est - ceiling) % 10).toBe(0);
     const runStart = o.events.find((e) => e.type === "run_start");
     expect(runStart && runStart.type === "run_start" ? runStart.model : "").toBe(
       "claude-opus-5-5-fast",

@@ -3,6 +3,7 @@ export * from "./collect.ts";
 export * from "./fake-provider.ts";
 export * from "./hash.ts";
 export * from "./messages-api.ts";
+export * from "./prompt-cache.ts";
 export * from "./recording-store.ts";
 export * from "./replies.ts";
 export * from "./tokens.ts";

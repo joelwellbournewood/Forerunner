@@ -93,7 +93,7 @@ import { clearKillRequest, KillFileWatcher, writeKillRequest } from "../enforcem
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsBilling, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
-import { EstimateModel, kindOfTask } from "../estimates/model.ts";
+import { EstimateModel } from "../estimates/model.ts";
 import { HumanRequestExtensionApprovals } from "../extensions/approvals.ts";
 import { catalogUrlFromEnv, ExtensionCatalog, loadBuiltinCatalog } from "../extensions/catalog.ts";
 import { ExtensionGate, GatedEnforcementHooks } from "../extensions/gate.ts";
@@ -1672,8 +1672,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     modelIdFor(tier, p.name, modelConfig.get().ladder);
   /** Pricing closures that follow the tables in force, so an adopted change prices the next call. */
   const livePricing = (p: ModelProvider, modelOf: () => string): RunPricing => ({
-    estimate: (inputTokens, maxOutputTokens) =>
-      pricingForProvider(p, modelOf(), pricingTable).estimate(inputTokens, maxOutputTokens),
+    estimate: (inputTokens, maxOutputTokens, cachedInputTokens) =>
+      pricingForProvider(p, modelOf(), pricingTable).estimate(
+        inputTokens,
+        maxOutputTokens,
+        cachedInputTokens,
+      ),
     cost: (usage) => pricingForProvider(p, modelOf(), pricingTable).cost(usage),
   });
 
@@ -2336,24 +2340,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
       // A paused run (ADR 0112) stopped short of the work: its cost is a lower bound, never a
-      // sample of what the task costs ('cost' makes the learner skip its Run rows too).
+      // sample of what the task costs (the fold skips its Run rows too, 'cost').
       if (result.outcome === "paused") return;
-      const planned = estimates.estimate({
-        specialist: item.specialist,
-        risk_tier: task.risk_tier,
-        est_cost_usd_micro: task.est_cost_usd_micro,
-        budget_usd_micro: task.budget_usd_micro,
-      });
-      estimates.observe({
-        specialist: item.specialist,
-        kind: kindOfTask({ risk_tier: task.risk_tier }),
-        estimateUsdMicro: item.estimateUsdMicro > 0 ? item.estimateUsdMicro : planned.usdMicro,
-        actualUsdMicro: result.costUsdMicro,
-        estimateWallMs: planned.wallMs,
-        actualWallMs: durationMs,
-        at: clock.nowIso(),
-        taskId: task.id,
-      });
+      // The same sample the fold builds after a restart ('cost', L-22): measured against the
+      // task's own estimate (or its kind's starting one), never the plan item's figure, which
+      // the learner already corrected (that fed the correction back into itself).
+      estimates.observeTask(
+        { ...task, specialist: item.specialist },
+        { usdMicro: result.costUsdMicro, wallMs: durationMs, at: clock.nowIso() },
+      );
     },
   };
   const runner = new SessionRunner({
@@ -4389,13 +4384,23 @@ async function ensureConversationSession(
 
 /**
  * Real providers price from the billing table in force (built-ins plus the adopted
- * overrides); fake providers count one micro-USD per token.
+ * overrides); fake providers count one micro-USD per token, every token: a stand-in that
+ * reports a prompt cache (the bench's) splits the input into cache reads and writes, and they
+ * are tokens too ('cost': before, a cached token cost nothing on a stand-in).
  */
-function pricingForProvider(p: ModelProvider | null, modelId: string, table?: PricingTable) {
+function pricingForProvider(
+  p: ModelProvider | null,
+  modelId: string,
+  table?: PricingTable,
+): RunPricing {
   if (p && p.name === "anthropic") return pricingFor(modelId, table);
   return {
     estimate: (i: number, o: number) => i + o,
-    cost: (u: { input_tokens: number; output_tokens: number }) => u.input_tokens + u.output_tokens,
+    cost: (u) =>
+      u.input_tokens +
+      (u.cache_read_input_tokens ?? 0) +
+      (u.cache_creation_input_tokens ?? 0) +
+      u.output_tokens,
   };
 }
 

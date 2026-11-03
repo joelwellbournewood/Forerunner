@@ -33,6 +33,7 @@ import { type LoopAgentDriver, type RunPricing, type RunResult, wholeMs } from "
 import { ToolRegistry } from "../agent/tools.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
+import { boundedPlanEstimate } from "../estimates/model.ts";
 import type { ProjectDocsPort } from "../loop/ports.ts";
 import {
   capEffort,
@@ -1331,10 +1332,8 @@ export class IntakeService {
     // person task the work waits on, whatever the model planned (live L-11: the bakery's menu,
     // hours and address became placeholders and the person was never asked); a change of the
     // person's that drops that step is the plan as the model redrafted it (review of 2026-11-02).
-    const proposal = withOwnersContent(
-      called.proposal,
-      [given, project.goal].filter(Boolean).join("\n"),
-      changes,
+    const proposal = withBoundedEstimates(
+      withOwnersContent(called.proposal, [given, project.goal].filter(Boolean).join("\n"), changes),
     );
     const plan = proposal.plan;
     // The plan shaped without error in `callModel` (a dependency cycle is a reply problem there,
@@ -2384,6 +2383,30 @@ function sizes(p: IntakeProposal, shaped: ShapedPlan | null): IntakeProposalOutc
     tasks: p.plan.milestones.reduce((n, m) => n + m.tasks.length, 0) + p.plan.tasks.length,
     docs: Object.keys(p.docs).length,
     firstSessionTasks: p.firstSession.items.length,
+  };
+}
+
+/**
+ * The plan's estimates, each kept within its kind's calibrated band ('cost', L-22): the planning
+ * model guessed about USD 0.15 for a page whose work cost USD 0.01 to 0.03, so the plan card
+ * and the Start dialog left out work that would fit. What the card shows, the task's estimate
+ * and the first session's plan all use the bounded figure; the learner corrects it from there.
+ */
+function withBoundedEstimates(p: IntakeProposal): IntakeProposal {
+  const named = keyedTasks(p.plan);
+  return {
+    ...p,
+    firstSession: {
+      ...p.firstSession,
+      items: p.firstSession.items.map((item) => {
+        const t = named.get(item.key);
+        const specialist = t?.specialist ? canonicalSpecialistName(t.specialist) : null;
+        return {
+          ...item,
+          estimateUsdMicro: boundedPlanEstimate(item.estimateUsdMicro, specialist),
+        };
+      }),
+    },
   };
 }
 

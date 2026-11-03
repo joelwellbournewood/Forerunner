@@ -94,7 +94,8 @@ describe("fast-mode price rows (D.20)", () => {
     expect(fast).toBe(standard * 2);
     expect(
       estimateUsdMicro({ inputTokens: 1_000, maxOutputTokens: 4_096 }, "claude-opus-5-5-fast"),
-    ).toBe(1_000 * 8 + 4_096 * 40);
+      // The variant's cache-write rate (1.25 x 8): the loop's history breakpoint writes the input.
+    ).toBe(1_000 * 10 + 4_096 * 40);
   });
 
   it("an override in pricing.json corrects the variant without touching the standard row", () => {

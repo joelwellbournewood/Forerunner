@@ -122,8 +122,17 @@ export interface ModelRequest {
    * records name the variant (`<id>-fast`).
    */
   speed?: SpeedMode;
-  /** Mark stable prefixes (system prompt, project brief) for prompt caching. */
-  cache?: { system?: boolean; tools?: boolean };
+  /**
+   * Prompt caching (Anthropic's `cache_control` breakpoints, at most four a request): `system`
+   * the system prompt, `tools` the tool definitions, `messages` the conversation, so each call
+   * of a run reads what the call before it sent and pays the write price only for what is new
+   * ('cost', L-15: a research task re-sent 78k tokens a turn uncached). With `messages` the
+   * Anthropic adapter marks the last block of the last message and the last block of the last
+   * user message before the last assistant message, where the previous call of an agent loop
+   * ended (so the read never depends on the API's 20-block lookback). A provider without a
+   * prompt cache ignores the field.
+   */
+  cache?: { system?: boolean; tools?: boolean; messages?: boolean };
   /** Opaque metadata recorded with the run (prompt version, task id). Never sent as instructions. */
   metadata?: Record<string, string>;
   /**

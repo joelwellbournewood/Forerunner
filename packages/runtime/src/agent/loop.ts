@@ -1,8 +1,13 @@
-import { fastModeVariantId } from "@forerunner/billing";
+import { CACHE_TTL_MS, fastModeVariantId } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import { z } from "zod";
 import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
-import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
+import {
+  type SessionBudget,
+  WRAP_UP_CALLS,
+  WRAP_UP_SHARE,
+  wrapUpLineIn,
+} from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
@@ -38,6 +43,27 @@ export const CUT_OFF_RETRIES = 2;
 export const CUT_OFF_MAX_TOKENS = 32_000;
 
 /**
+ * The output cap of a call of a run that can write files (a `write_file` tool) and gives no
+ * ceiling of its own ('cost', L-15): room for a whole file in one call, so the first long write
+ * is not cut off at 4096 tokens and asked again (the research task of 2026-11-02 paid USD 0.17
+ * for a reply cut off with nothing usable before its 16,384 retry). It is used only as far as
+ * the run's budget leaves room: each call's worst case at most the room the hooks report, and
+ * at most half the fifth of the run's budget kept to wrap up (ADR 0112), never below the
+ * floor's; so a small budget keeps the floor and its wrap-up reserve does not grow.
+ */
+export const WRITE_MAX_TOKENS_PER_CALL = 16_384;
+/** The tools a run writes files with on the loop driver (`daemon/tools.ts`; `registry/tools.ts`). */
+const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set(["write_file"]);
+
+/**
+ * The prompt cache ('cost', L-15): a call's worst case counts on the prefix its previous call
+ * read from and wrote to the cache only while that call started less than `CACHE_TTL_MS` less
+ * this margin ago. An entry lives five minutes from the start of the request that wrote or
+ * read it, and the next request reaches the API a little after the loop priced it.
+ */
+export const CACHE_TTL_MARGIN_MS = 30_000;
+
+/**
  * What a task's run hears once at its wrap-up line (ADR 0112, the owner's decision of
  * 2026-11-02): one text block after the last tool results of the next request on the loop
  * driver, PostToolUse's `additionalContext` on the Agent SDK path. The brief says what the two
@@ -47,7 +73,13 @@ export const WRAP_UP_TEXT =
   "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: as a list.";
 
 export interface RunPricing {
-  estimate(inputTokens: number, maxOutputTokens: number): number;
+  /**
+   * One call's worst case before it is made (`estimateUsdMicro` in `@forerunner/billing`):
+   * `cachedInputTokens` is the start of the input the provider's cache is expected to serve
+   * (the loop's rule: what its previous call read from and wrote to the cache, when that call
+   * started less than `CACHE_TTL_MS` less `CACHE_TTL_MARGIN_MS` ago); 0 or absent, none.
+   */
+  estimate(inputTokens: number, maxOutputTokens: number, cachedInputTokens?: number): number;
   cost(usage: Usage): number;
 }
 
@@ -367,8 +399,18 @@ export class LoopAgentDriver {
     const sendSpeed = req.speed === "fast" && caps.fastMode;
     const sendTemperature = req.temperature !== undefined && caps.acceptsTemperature;
 
-    // The run's output-cap ceiling, clamped to the model's limit on the first turn.
+    // The run's output-cap ceiling, clamped to the model's limit on the first turn: the run's
+    // own, else room for a whole file when it can write files ('cost', L-15).
+    const writesFiles = toolDefs.some((t) => FILE_WRITING_TOOLS.has(t.name));
+    const roomForWrites = req.maxTokensCeiling === undefined && writesFiles;
+    const ceilingAsked =
+      req.maxTokensCeiling ?? (writesFiles ? WRITE_MAX_TOKENS_PER_CALL : undefined);
     let ceiling: number | undefined;
+    // The prompt cache ('cost', L-15): what the previous call read from and wrote to it, when it
+    // started, and how many messages it sent.
+    let cachedPrefix = 0;
+    let cacheFrom: number | undefined;
+    let sentMessages = 0;
     // After a reply cut off inside a tool call (U-085): the raised floor of every later call,
     // and how often it happened.
     let cutOffFloor: number | undefined;
@@ -383,32 +425,47 @@ export class LoopAgentDriver {
         }
         // Stopped between calls (the caller's signal, the kill switch, the timeout): no new call.
         if (controller.signal.aborted) throw controller.signal.reason;
-        const inputTokens = req.provider.countTokens(
+        // The cached prefix counts only while the previous call's entry certainly lives; the
+        // input is never less than that prefix plus what was added since (the count is an
+        // estimate, the prefix the provider's own figure).
+        const cached =
+          cacheFrom !== undefined && clock.now() - cacheFrom < CACHE_TTL_MS - CACHE_TTL_MARGIN_MS
+            ? cachedPrefix
+            : 0;
+        const counted = req.provider.countTokens(
           req.system + JSON.stringify(messages) + JSON.stringify(toolDefs),
         );
+        const added =
+          cached > 0 ? req.provider.countTokens(JSON.stringify(messages.slice(sentMessages))) : 0;
+        const inputTokens = Math.max(counted, cached + added);
+        const priceAt = (n: number) => req.pricing.estimate(inputTokens, n, cached);
         const floor = Math.max(
           req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL,
           cutOffFloor ?? 0,
         );
-        if (turn === 1 && req.maxTokensCeiling !== undefined) {
+        if (turn === 1 && ceilingAsked !== undefined) {
           ceiling = await clampToModelLimit(
             req.provider,
             req.model,
-            req.maxTokensCeiling,
+            ceilingAsked,
             controller.signal,
             clock,
           );
         }
-        const maxOut =
-          ceiling !== undefined && ceiling > floor
-            ? fitMaxTokens(
-                (n) => req.pricing.estimate(inputTokens, n),
-                floor,
-                ceiling,
-                await this.deps.hooks.callRoomUsdMicro(ctx),
-              )
-            : floor;
-        const estimate = req.pricing.estimate(inputTokens, maxOut);
+        let maxOut = floor;
+        if (ceiling !== undefined && ceiling > floor) {
+          let room = await this.deps.hooks.callRoomUsdMicro(ctx);
+          if (roomForWrites)
+            room = Math.min(
+              room,
+              Math.max(
+                Math.floor((WRAP_UP_SHARE * claims.budgetUsdMicro) / WRAP_UP_CALLS),
+                priceAt(floor),
+              ),
+            );
+          maxOut = fitMaxTokens(priceAt, floor, ceiling, room);
+        }
+        const estimate = priceAt(maxOut);
         const pre = await this.deps.hooks.beforeModelCall(ctx, estimate);
         if (pre.line) emit({ type: "budget_line", ...pre.line });
         if (pre.decision === "finish_current" && !finishCurrent) {
@@ -433,6 +490,8 @@ export class LoopAgentDriver {
         emit({ type: "model_call_start", turn, estimateUsdMicro: estimate });
         modelCalls++;
         const callStart = clock.monotonic();
+        const callStartedAt = clock.now();
+        sentMessages = messages.length;
         const response = await collectStream(
           this.tapText(
             req.provider.stream({
@@ -445,7 +504,8 @@ export class LoopAgentDriver {
               ...(req.thinking === "off" ? { thinking: "off" as const } : {}),
               ...(sendSpeed ? { speed: "fast" as const } : {}),
               ...(sendTemperature ? { temperature: req.temperature } : {}),
-              cache: { system: true, tools: true },
+              // 'cost' (L-15): the conversation too, so each call reads what the last one sent.
+              cache: { system: true, tools: true, messages: true },
               compression: bypass,
               origin: {
                 label: req.label ?? `run ${claims.runId}`,
@@ -505,6 +565,9 @@ export class LoopAgentDriver {
         const callCost = req.pricing.cost(response.usage);
         addUsage(usage, response.usage);
         cost += callCost;
+        cachedPrefix =
+          response.usage.cache_read_input_tokens + response.usage.cache_creation_input_tokens;
+        cacheFrom = callStartedAt;
         // Whole milliseconds from here on: the Run row's timing columns are integers.
         const ttftMs = wholeMs(response.time_to_first_token_ms) ?? 0;
         ttfts.push(ttftMs);

@@ -216,15 +216,55 @@ export function costOf(
 }
 
 /**
- * Conservative pre-run estimate: the whole input at the full input price plus the output
- * ceiling at the output price. Cache hits only make the actual cheaper.
+ * How long a prompt-cache entry lives (the provider's default, "ephemeral", entry), counted from
+ * the start of the request that wrote it or last read it: the generation time counts against
+ * it, and every read starts it again.
+ */
+export const CACHE_TTL_MS = 5 * 60_000;
+
+/** One model call as the pre-call estimate sees it (`estimateUsdMicro`). */
+export interface CallEstimateInput {
+  /** Every input token of the request: system prompt, tool definitions and messages. */
+  inputTokens: number;
+  /** The call's output ceiling (`max_tokens`). */
+  maxOutputTokens: number;
+  /**
+   * The start of the input the provider's cache is expected to serve: what the run's previous
+   * call read from the cache and wrote to it, when that call started less than `CACHE_TTL_MS`
+   * ago (the agent loop decides). 0 or absent: nothing is expected from the cache.
+   */
+  cachedInputTokens?: number;
+}
+
+/**
+ * The pre-call worst case of one model call, never below what the provider can bill for it
+ * (ADR 0112, "cost"). The loop caches the conversation (a breakpoint on its last message), so:
+ * - the prefix the cache is expected to serve is priced at the cache-read price;
+ * - the rest of the input is priced at the cache-write price, because the history breakpoint
+ *   writes it (1.25 times the input price). A prefix below the model's minimum cacheable length
+ *   is not written and is billed at the input price, which the write price covers; so is a call
+ *   that asks for no cache. A row whose write price is below its input price (an override) is
+ *   priced at the input price;
+ * - the output ceiling is priced at the output price.
+ * With nothing expected from the cache the whole input is priced at the write price. Before the
+ * history was cached this priced the whole input at the input price, on the premise that cache
+ * hits only make the actual cheaper; a cache write makes it dearer, so that was too low.
  */
 export function estimateUsdMicro(
-  est: { inputTokens: number; maxOutputTokens: number },
+  est: CallEstimateInput,
   modelId: string,
   table: PricingTable = BUILTIN_PRICING,
 ): number {
-  return costOf({ tokens_in: est.inputTokens, tokens_out: est.maxOutputTokens }, modelId, table);
+  const p = priceFor(modelId, table);
+  const input = assertTokens(est.inputTokens, "inputTokens");
+  const output = assertTokens(est.maxOutputTokens, "maxOutputTokens");
+  const cached = Math.min(input, assertTokens(est.cachedInputTokens, "cachedInputTokens"));
+  const writePrice = Math.max(p.cache_write_per_mtok_usd, p.input_per_mtok_usd);
+  return roundHalfUp(
+    cached * p.cache_read_per_mtok_usd +
+      (input - cached) * writePrice +
+      output * p.output_per_mtok_usd,
+  );
 }
 
 /**

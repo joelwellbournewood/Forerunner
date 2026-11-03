@@ -8,7 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { requestView } from "../src/daemon/views.ts";
+import { PLAN_ESTIMATE_BOUND, STARTING_ESTIMATES_USD_MICRO } from "../src/estimates/model.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
+import { chfText } from "../src/money-words.ts";
 import type { StateBrief } from "../src/session/brief.ts";
 import {
   INTAKE_AUDIT_TOOL,
@@ -22,6 +24,11 @@ import {
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
 import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
+
+/** A coder task's plan estimate at the top of its calibrated band ('cost', L-22). */
+const CODER_BAND = Math.round((STARTING_ESTIMATES_USD_MICRO.coder as number) * PLAN_ESTIMATE_BOUND);
+/** The plan card's words for an amount (the intake's own `approxChf`). */
+const approxChfOf = (micro: number) => chfText(micro);
 
 /**
  * PM intake (spec A.2): the brief becomes the doc set, the milestones, the tasks and a
@@ -247,8 +254,23 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const c = row.change_card as JsonObject;
       expect(c.key).toBe(intakeKey(projectId));
       expect(c.applied_at).toBeNull();
-      const prop = c.proposal as { plan: { milestones: unknown[] }; docs: JsonObject };
+      const prop = c.proposal as {
+        plan: { milestones: unknown[] };
+        docs: JsonObject;
+        firstSession: { items: { key: string; estimateUsdMicro: number }[] };
+      };
       expect(prop.plan.milestones).toHaveLength(2);
+      // 'cost' (L-22): the model guessed USD 0.40 and 0.25 for two coder tasks; the card keeps
+      // each within its kind's calibrated band (a coder task's work cost USD 0.01-0.09 live).
+      const coderBand = CODER_BAND;
+      expect(prop.firstSession.items).toEqual([
+        expect.objectContaining({ key: "scaffold", estimateUsdMicro: coderBand }),
+        expect.objectContaining({ key: "ci", estimateUsdMicro: coderBand }),
+      ]);
+      expect(row.why).toContain(`(~${approxChfOf(2 * coderBand)})`);
+      expect(row.steps.find((st) => st.startsWith("First session:"))).toContain(
+        `1. Scaffold the repository (~${approxChfOf(coderBand)})`,
+      );
       expect(Object.keys(prop.docs)).toContain("docs/decisions/0001-stack.md");
       expect(row.why).toContain("2 milestone(s)");
       expect(row.steps.some((s) => s.startsWith("Milestone: Foundations"))).toBe(true);
@@ -326,7 +348,8 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         author_human: rt.human.id,
         author_agent: rt.agent.id,
         reason: "planned from the brief",
-        est_cost_usd_micro: 400_000,
+        // The guess (USD 0.40) kept within the coder's band ('cost', L-22).
+        est_cost_usd_micro: CODER_BAND,
       });
       // The docs: the drafted ones as drafted, the two the model left out from the templates.
       const dir = rt.intake.workspaceDir(projectId);
@@ -343,12 +366,12 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const first = (project.summary_cache as { first_session?: JsonObject }).first_session;
       expect(first).toMatchObject({
         request_id: requestId,
-        estimate_usd_micro: 650_000,
+        estimate_usd_micro: 2 * CODER_BAND,
         summary: "Scaffold first, then wire CI; sign-in waits for the skeleton.",
       });
       expect(first?.items).toEqual([
-        expect.objectContaining({ task_id: scaffold?.id, estimate_usd_micro: 400_000 }),
-        expect.objectContaining({ task_id: ci?.id, estimate_usd_micro: 250_000 }),
+        expect.objectContaining({ task_id: scaffold?.id, estimate_usd_micro: CODER_BAND }),
+        expect.objectContaining({ task_id: ci?.id, estimate_usd_micro: CODER_BAND }),
       ]);
       expect((project.summary_cache as { next_steps?: string[] }).next_steps).toEqual([
         "Scaffold the repository",

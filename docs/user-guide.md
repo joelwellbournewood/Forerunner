@@ -656,7 +656,14 @@ never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 bud
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
 run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
-forecast. When a task reaches its budget it waits for you and the session goes on with the
+forecast. It starts from what that kind of work cost on the real model (a page or a coder
+task a few centimes, a test task a little more, a research task that reads web pages about
+CHF 0.40), whatever the plan model guessed, and it learns from every task that finishes: after
+three tasks of a kind it is within about twice what they really cost. A task that stopped at its
+budget does not count toward that, since it did not finish its work. Each step of a task
+reuses what the step before sent (the conversation is kept in Anthropic's prompt cache for five
+minutes), so a long task pays the full price only for what is new; a step that writes a whole
+file can do so in one go when the task's budget leaves room. When a task reaches its budget it waits for you and the session goes on with the
 other tasks. The Inbox gets one card, '"Contact page" stopped at its budget of CHF 0.01', with
 what it spent so far and two buttons: **Raise the budget** (it names the new amount, sets it and
 starts a session that tries again) and **Cancel task**. The Tasks tab reads "Paused at its

@@ -987,6 +987,65 @@ describe("bench role-player: critic and chat", () => {
   });
 });
 
+describe("bench role-player: the prompt cache ('cost', L-15)", () => {
+  // A coder's run as the agent loop sends it: the conversation marked for caching.
+  const system = `You are the coder specialist of Forerunner. ${"Follow the brief. ".repeat(200)}`;
+  const brief: ChatMessage = { role: "user", content: "# Task brief\n## Goal\nWrite index.html" };
+  const step = (n: number): ChatMessage[] => [
+    {
+      role: "assistant",
+      content: [{ type: "tool_use", id: `tu_${n}`, name: "read_file", input: { path: `f${n}` } }],
+    },
+    {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: `tu_${n}`, content: `file ${n} `.repeat(300) }],
+    },
+  ];
+  const request = (messages: ChatMessage[], cache?: ModelRequest["cache"]): ModelRequest => ({
+    model: "fake-sonnet",
+    system,
+    messages,
+    tools: [tool("read_file"), tool("write_file")],
+    max_tokens: 4096,
+    ...(cache ? { cache } : {}),
+    origin: { label: "coder on Write index.html", sessionId: "s1", runId: "run-cache" },
+  });
+  const usageOf = (r: Awaited<ReturnType<typeof call>>) =>
+    r.end?.type === "message_end" ? r.end.usage : undefined;
+
+  it("reads what the call before sent, more each call, and the log says what was marked", async () => {
+    const { p, log } = player();
+    const all = { system: true, tools: true, messages: true };
+    const first = usageOf(await call(p, request([brief], all)));
+    const second = usageOf(await call(p, request([brief, ...step(1)], all)));
+    const third = usageOf(await call(p, request([brief, ...step(1), ...step(2)], all)));
+    expect(first?.cache_read_input_tokens).toBe(0);
+    expect(first?.cache_creation_input_tokens).toBeGreaterThan(0);
+    expect(second?.cache_read_input_tokens).toBeGreaterThanOrEqual(
+      (first?.cache_creation_input_tokens ?? 0) + (first?.cache_read_input_tokens ?? 0),
+    );
+    expect(third?.cache_read_input_tokens).toBeGreaterThan(second?.cache_read_input_tokens ?? 0);
+    // The last breakpoint is the last block: no plain input after it.
+    expect(third?.input_tokens).toBe(0);
+    const recs = lines(log);
+    expect(recs.map((r) => r.cache)).toEqual([all, all, all]);
+    expect(recs.map((r) => r.reply.usage?.cache_read_input_tokens)).toEqual([
+      0,
+      second?.cache_read_input_tokens,
+      third?.cache_read_input_tokens,
+    ]);
+  });
+
+  it("a request that marks nothing is plain input, and its log line has no cache field", async () => {
+    const { p, log } = player();
+    const u = usageOf(await call(p, request([brief])));
+    expect(u?.cache_read_input_tokens).toBe(0);
+    expect(u?.cache_creation_input_tokens).toBe(0);
+    expect(u?.input_tokens).toBeGreaterThan(0);
+    expect(lines(log)[0]?.cache).toBeUndefined();
+  });
+});
+
 describe("bench live mode: the logging wrapper", () => {
   const KEY = "sk-ant-api03-THIS_IS_NOT_A_REAL_KEY_0123456789"; // not-a-secret
   const inner: ModelProvider = {

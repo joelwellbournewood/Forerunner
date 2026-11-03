@@ -154,6 +154,18 @@ export function assertSubscriptionCredential(credential: SdkRunRequest["credenti
   }
 }
 
+/**
+ * About how many tokens Claude Code sends of its own before the brief (its system prompt and
+ * its tool definitions), for the run's first pre-call estimate ('cost'): the SDK reports real
+ * counts only after its first call. Before, the step cap (about 200) stood for the input, so
+ * the first call's worst case, and with it the run's wrap-up reserve (ADR 0112), was almost
+ * only the output ceiling.
+ */
+export const CLAUDE_CODE_PROMPT_TOKENS = 20_000;
+
+/** The output ceiling the SDK path prices a call at (Claude Code chooses its own). */
+const SDK_CALL_OUTPUT_TOKENS = 4096;
+
 export class SdkAgentDriver {
   private readonly logger = log("agent-sdk");
 
@@ -285,12 +297,20 @@ export class SdkAgentDriver {
           if (id) counted.add(id);
           numTurns++;
           const turnUsage = await book(usageOf(u), "turn");
-          // Enforce before the SDK makes its next call.
+          // Enforce before the SDK makes its next call ('cost'): it sends at least the whole
+          // prompt this one sent (Claude Code caches it: what it read and wrote is expected
+          // from the cache) and this call's reply; before, only the plain remainder counted.
+          const cachedPrompt =
+            turnUsage.cache_read_input_tokens + turnUsage.cache_creation_input_tokens;
           if (enforce)
             decided(
               await this.deps.hooks.beforeModelCall(
                 ctx,
-                req.pricing.estimate(turnUsage.input_tokens, 4096),
+                req.pricing.estimate(
+                  turnUsage.input_tokens + cachedPrompt + turnUsage.output_tokens,
+                  SDK_CALL_OUTPUT_TOKENS,
+                  cachedPrompt,
+                ),
               ),
             );
         }
@@ -349,7 +369,10 @@ export class SdkAgentDriver {
       // per assistant message, which we account turn by turn.
       const preflight = await this.deps.hooks.beforeModelCall(
         ctx,
-        req.pricing.estimate(ctx.budget.limits.stepCap, 4096),
+        req.pricing.estimate(
+          CLAUDE_CODE_PROMPT_TOKENS + Math.ceil((req.systemPrompt.length + req.prompt.length) / 4),
+          SDK_CALL_OUTPUT_TOKENS,
+        ),
       );
       emit({ type: "run_start", runId: claims.runId, model: req.model });
       decided(preflight);

@@ -36,7 +36,12 @@ export interface EstimateInput {
   kind?: string;
 }
 
-export type EstimateBasis = "learned" | "task_estimate" | "registry_default" | "fallback";
+export type EstimateBasis =
+  | "learned"
+  | "task_estimate"
+  | "calibrated"
+  | "registry_default"
+  | "fallback";
 
 export interface EstimateResult {
   usdMicro: number;
@@ -90,8 +95,15 @@ export interface EstimateKeyStats {
 export interface EstimateModelOptions {
   /** Weight of the newest sample in the exponentially weighted means. Default 0.3. */
   alpha?: number;
-  /** Pseudo-count that holds the ratio near 1 and the confidence near 0 with few samples. Default 5. */
+  /** Pseudo-count that holds the ratio near 1 and the confidence near 0 with few samples. Default 1. */
   shrinkage?: number;
+  /**
+   * What one task of a specialist's kind costs to start with, in micro-USD ('cost', L-22): the
+   * calibrated table by default (`STARTING_ESTIMATES_USD_MICRO`), with
+   * `DEFAULT_STARTING_ESTIMATE_USD_MICRO` for a specialist it does not name. `null`: the older
+   * cold start, a share of the registry's per-run cap, else the fallback.
+   */
+  startingEstimates?: Readonly<Record<string, number>> | null;
   /** Registry lookup for cold-start defaults; undefined when the specialist is unknown. */
   defaults?: (specialist: string) => SpecialistDefaults | undefined;
   /** Used when neither the task nor the registry gives a figure. Default 0.5 USD, 20 minutes. */
@@ -116,7 +128,71 @@ export interface EstimateModelOptions {
 }
 
 export const DEFAULT_ALPHA = 0.3;
-export const DEFAULT_SHRINKAGE = 5;
+/**
+ * One pseudo-sample ('cost', L-22: it was 5, and with the multiplier clamped to x0.25 a ten-times
+ * over-estimate was never corrected below x2.5). With 1 a consistent error is within x2 after 3
+ * tasks of the kind and within x1.25 after 10.
+ */
+export const DEFAULT_SHRINKAGE = 1;
+
+/**
+ * What one task's work costs, per specialist, in micro-USD: the starting estimate of a task
+ * with no estimate of its own, the band a plan's guess is kept in (`boundedPlanEstimate`) and
+ * the figure the learner corrects ('cost', L-22). Calibrated on the real model's runs of
+ * 2026-11-01 and 2026-11-02 (Sonnet 5.5 for every specialist; live walks 3 and 4 and the
+ * phase C checks: coder runs USD 0.014 to 0.090, median about 0.03; tester 0.03 to 0.10;
+ * writer, designer, data analyst, migration, reviewer and ops about 0.03 to 0.06 of work; one
+ * research task USD 1.13 of work before the conversation was cached, about half that with the
+ * cache). It is the work's cost (what the task's budget caps); the critic's review is paid from
+ * the session's review reserve. The model watch re-checks it with the prices.
+ */
+export const STARTING_ESTIMATES_USD_MICRO: Readonly<Record<string, number>> = Object.freeze({
+  coder: 40_000,
+  tester: 60_000,
+  reviewer: 30_000,
+  "writer-marketing": 40_000,
+  designer: 60_000,
+  "data-analyst": 50_000,
+  "migration-specialist": 40_000,
+  "ops-deploy": 40_000,
+  researcher: 500_000,
+  "science-evaluator": 300_000,
+});
+/** The starting estimate of a specialist the table does not name: a typical task's work. */
+export const DEFAULT_STARTING_ESTIMATE_USD_MICRO = 60_000;
+/**
+ * A plan's guessed estimate is kept within this factor of its kind's starting estimate
+ * (`boundedPlanEstimate`): the planning model guessed USD 0.15 for a page that cost USD 0.01 to
+ * 0.03 (L-22), while its guess still tells a larger task from a smaller one.
+ */
+export const PLAN_ESTIMATE_BOUND = 1.5;
+
+/** The calibrated starting estimate of one task of `specialist`'s kind (coder when none). */
+export function startingEstimateUsdMicro(
+  specialist: string | null | undefined,
+  table: Readonly<Record<string, number>> = STARTING_ESTIMATES_USD_MICRO,
+): number {
+  const own = table[specialist ?? "coder"];
+  return typeof own === "number" && own > 0 ? own : DEFAULT_STARTING_ESTIMATE_USD_MICRO;
+}
+
+/**
+ * The plan model's guess for one task, kept within `PLAN_ESTIMATE_BOUND` of its kind's starting
+ * estimate (the intake stores this as the task's estimate, the plan card shows it); no guess,
+ * the starting estimate. The learner corrects it from there.
+ */
+export function boundedPlanEstimate(
+  guessUsdMicro: number,
+  specialist: string | null | undefined,
+): number {
+  const base = startingEstimateUsdMicro(specialist);
+  if (!(guessUsdMicro > 0)) return base;
+  return clamp(
+    Math.round(guessUsdMicro),
+    Math.round(base / PLAN_ESTIMATE_BOUND),
+    Math.round(base * PLAN_ESTIMATE_BOUND),
+  );
+}
 export const DEFAULT_COLD_START_BUDGET_SHARE = 0.5;
 export const DEFAULT_COLD_START_TIMEOUT_SHARE = 0.5;
 export const DEFAULT_FALLBACK_USD_MICRO = 500_000;
@@ -124,14 +200,25 @@ export const DEFAULT_FALLBACK_WALL_MS = 20 * 60_000;
 export const DEFAULT_FOLD_OVERLAP_MS = 15 * 60_000;
 /** Task statuses the fold treats as finished. */
 export const FINISHED_TASK_STATUSES: readonly TaskStatus[] = ["done", "failed", "cancelled"];
+/**
+ * Run outcomes that make a task no sample of what its work costs ('cost', ADR 0112): a run that
+ * paused at a budget (gracefully, `paused`, or at the hard stop, `budget_exceeded`) stopped short
+ * of the work, so what the task spent is a lower bound, not its cost.
+ */
+export const BUDGET_STOP_RUN_OUTCOMES: readonly string[] = ["paused", "budget_exceeded"];
+/** The specialist name a review's Run row carries: its cost is no part of the work's. */
+const CRITIC_RUN_SPECIALIST = "critic";
 /** Ids per IN (...) clause when the fold lists runs (SQLite's parameter limit is far above this). */
 const RUN_LIST_CHUNK = 500;
 /** Per-sample ratio clamp: one runaway or aborted run cannot dominate. */
 export const SAMPLE_RATIO_MIN = 0.1;
 export const SAMPLE_RATIO_MAX = 10;
-/** Clamp on the multiplier the planner sees. */
-export const RATIO_MIN = 0.25;
-export const RATIO_MAX = 4;
+/**
+ * Clamp on the multiplier the planner sees: as wide as one sample's ('cost', L-22: it was x0.25
+ * to x4, so a ten-times over-estimate stayed two and a half times too high for good).
+ */
+export const RATIO_MIN = 0.1;
+export const RATIO_MAX = 10;
 
 export function kindOfTask(task: Pick<EstimateInput, "risk_tier" | "kind">): string {
   if (task.kind) return task.kind;
@@ -208,6 +295,7 @@ export class EstimateModel implements EstimatePort {
     >
   > &
     Pick<EstimateModelOptions, "defaults" | "kindOf">;
+  private readonly startingEstimates: Readonly<Record<string, number>> | null;
 
   constructor(options: EstimateModelOptions = {}) {
     this.alpha = options.alpha ?? DEFAULT_ALPHA;
@@ -232,26 +320,49 @@ export class EstimateModel implements EstimatePort {
       defaults: options.defaults,
       kindOf: options.kindOf,
     };
+    this.startingEstimates =
+      options.startingEstimates === undefined
+        ? STARTING_ESTIMATES_USD_MICRO
+        : options.startingEstimates;
   }
 
   private keyOf(specialist: string, kind: string): string {
     return `${specialist}\u0000${kind}`;
   }
 
-  /** Cold-start figures for a specialist: registry defaults scaled, else the fallback. */
-  coldStart(specialist: string): { usdMicro: number; wallMs: number; fromRegistry: boolean } {
+  /**
+   * Cold-start figures for a specialist: the cost from the calibrated table ('cost', L-22), the
+   * wall time from the registry's timeout scaled; without the table, the registry's per-run cap
+   * scaled too, else the fallback.
+   */
+  coldStart(specialist: string): {
+    usdMicro: number;
+    wallMs: number;
+    fromRegistry: boolean;
+    calibrated: boolean;
+  } {
     const d = this.opts.defaults?.(specialist);
-    if (d && d.maxBudgetUsd > 0 && d.timeoutMinutes > 0) {
+    const fromRegistry = !!(d && d.maxBudgetUsd > 0 && d.timeoutMinutes > 0);
+    const wallMs =
+      d && fromRegistry
+        ? Math.round(d.timeoutMinutes * 60_000 * this.opts.coldStartTimeoutShare)
+        : this.opts.fallbackWallMs;
+    if (this.startingEstimates) {
       return {
-        usdMicro: Math.round(d.maxBudgetUsd * 1_000_000 * this.opts.coldStartBudgetShare),
-        wallMs: Math.round(d.timeoutMinutes * 60_000 * this.opts.coldStartTimeoutShare),
-        fromRegistry: true,
+        usdMicro: startingEstimateUsdMicro(specialist, this.startingEstimates),
+        wallMs,
+        fromRegistry,
+        calibrated: true,
       };
     }
     return {
-      usdMicro: this.opts.fallbackUsdMicro,
-      wallMs: this.opts.fallbackWallMs,
-      fromRegistry: false,
+      usdMicro:
+        d && fromRegistry
+          ? Math.round(d.maxBudgetUsd * 1_000_000 * this.opts.coldStartBudgetShare)
+          : this.opts.fallbackUsdMicro,
+      wallMs,
+      fromRegistry,
+      calibrated: false,
     };
   }
 
@@ -330,9 +441,11 @@ export class EstimateModel implements EstimatePort {
         ? "learned"
         : taskEstimate > 0
           ? "task_estimate"
-          : cold.fromRegistry
-            ? "registry_default"
-            : "fallback";
+          : cold.calibrated
+            ? "calibrated"
+            : cold.fromRegistry
+              ? "registry_default"
+              : "fallback";
     return {
       usdMicro: Math.max(1, Math.round(baseCost * r.cost)),
       wallMs: Math.max(1, Math.round(baseWall * r.wall)),
@@ -415,9 +528,12 @@ export class EstimateModel implements EstimatePort {
   }
 
   /**
-   * Fold every finished task (done, failed, cancelled) with at least one finished run: actual
-   * cost from the cost ledger (the truth for caps) or, without ledger rows, from the run rows;
-   * actual wall time from the run durations; the estimate from the task row or the cold start.
+   * Fold every finished task (done, failed, cancelled) with at least one finished work run:
+   * actual cost from the cost ledger (the truth for caps) less its reviews (the critic's Run
+   * rows: the work's cost is what the task's budget caps, 'cost') or, without ledger rows, from
+   * the work runs; actual wall time from the work runs' durations; the estimate from the task
+   * row or the cold start. A task with a run that stopped at a budget (`paused`,
+   * `budget_exceeded`) is no sample ('cost', ADR 0112).
    */
   static async fromStore(
     store: StateStore,
@@ -447,20 +563,40 @@ export class EstimateModel implements EstimatePort {
     }
     const byTask = new Map<
       string,
-      { cost: number; wall: number; finished: number; fast: boolean }
+      {
+        cost: number;
+        reviews: number;
+        wall: number;
+        finished: number;
+        fast: boolean;
+        budgetStop: boolean;
+      }
     >();
     for (let i = 0; i < fresh.length; i += RUN_LIST_CHUNK) {
       const ids = fresh.slice(i, i + RUN_LIST_CHUNK).map((t) => t.id);
       for (const r of await store.run.list({ task_id: ids })) {
         if (!r.task_id || r.outcome === "running" || r.outcome === "") continue;
-        const acc = byTask.get(r.task_id) ?? { cost: 0, wall: 0, finished: 0, fast: false };
+        const acc = byTask.get(r.task_id) ?? {
+          cost: 0,
+          reviews: 0,
+          wall: 0,
+          finished: 0,
+          fast: false,
+          budgetStop: false,
+        };
+        byTask.set(r.task_id, acc);
+        // A review is paid from the session's review reserve, not the task's budget.
+        if (r.specialist === CRITIC_RUN_SPECIALIST) {
+          acc.reviews += r.cost_usd_micro;
+          continue;
+        }
         // A fast-mode run (its Run row names the `<id>-fast` variant, spec D.20, ADR 0057) costs
         // the fast-mode surcharge: the task is no sample of what the work costs.
         if (isFastModeVariant(r.model)) acc.fast = true;
+        if (BUDGET_STOP_RUN_OUTCOMES.includes(r.outcome)) acc.budgetStop = true;
         acc.cost += r.cost_usd_micro;
         acc.wall += r.duration_ms ?? 0;
         acc.finished += 1;
-        byTask.set(r.task_id, acc);
       }
     }
     // A task's ledger rows are recorded after the task exists, so the oldest fresh task's
@@ -477,9 +613,10 @@ export class EstimateModel implements EstimatePort {
     for (const t of fresh) {
       this.remember(t.id, t.updated_at);
       const runs = byTask.get(t.id);
-      if (!runs || runs.finished === 0 || runs.fast) continue;
+      if (!runs || runs.finished === 0 || runs.fast || runs.budgetStop) continue;
+      const booked = ledger.get(t.id);
       const sample = this.sampleForTask(t, {
-        usdMicro: ledger.get(t.id) ?? runs.cost,
+        usdMicro: booked === undefined ? runs.cost : Math.max(0, booked - runs.reviews),
         wallMs: runs.wall,
         at: t.updated_at,
       });
