@@ -65,6 +65,7 @@ function provider(events: StreamEvent[]): ModelProvider & { calls: number } {
 function world(sources: BillingSource[], byId: Record<string, ModelProvider>) {
   const picks: TaskBillingRequest[] = [];
   const rests: string[] = [];
+  const refusals: string[] = [];
   const sentences: string[] = [];
   const routed = new RoutedProvider({
     billing: {
@@ -89,6 +90,9 @@ function world(sources: BillingSource[], byId: Record<string, ModelProvider>) {
         rests.push(sourceId);
         return resetAt ?? "2026-10-31T10:00:00.000Z";
       },
+      async refuse(sourceId) {
+        refusals.push(sourceId);
+      },
     },
     providerFor: async (s) => byId[s.id] ?? null,
     sources: async () => sources,
@@ -97,7 +101,7 @@ function world(sources: BillingSource[], byId: Record<string, ModelProvider>) {
     clock: new SimulatedClock("2026-10-31T09:00:00Z"),
     onFallback: (s) => sentences.push(s),
   });
-  return { routed, picks, rests, sentences };
+  return { routed, picks, rests, refusals, sentences };
 }
 
 const req: ModelRequest = {
@@ -159,14 +163,35 @@ describe("RoutedProvider (U-078)", () => {
 
   it("another error is passed on as it is, with no rest and no retry", async () => {
     const a = provider([
-      { type: "error", code: "provider_auth", message: "refused", retryable: false },
+      { type: "error", code: "provider_error", message: "bad request", retryable: false },
     ]);
     const b = provider(reply("never"));
     const w = world([sub, key], { sub: a, key: b });
     const out = await events(w.routed);
-    expect(out).toEqual([expect.objectContaining({ code: "provider_auth", sourceId: "sub" })]);
+    expect(out).toEqual([expect.objectContaining({ code: "provider_error", sourceId: "sub" })]);
     expect(b.calls).toBe(0);
     expect(w.rests).toEqual([]);
+    expect(w.refusals).toEqual([]);
+  });
+
+  it("a refused credential (U-078) is marked refused and the call is made once more on the next source", async () => {
+    const a = provider([
+      { type: "error", code: "provider_auth", message: "refused", retryable: false },
+    ]);
+    const b = provider(reply("from the key"));
+    const w = world([sub, key], { sub: a, key: b });
+    const out = await events(w.routed);
+    expect(out.find((e) => e.type === "text_delta")).toMatchObject({ text: "from the key" });
+    expect(out.some((e) => e.type === "error")).toBe(false);
+    expect(w.refusals).toEqual(["sub"]);
+    expect(w.rests).toEqual([]);
+    expect(b.calls).toBe(1);
+    // With nothing else that can serve, the refusal is the call's error.
+    const alone = world([sub], { sub: a });
+    expect(await events(alone.routed)).toEqual([
+      expect.objectContaining({ code: "provider_auth", sourceId: "sub" }),
+    ]);
+    expect(alone.refusals).toEqual(["sub"]);
   });
 
   it("with nothing that can serve, says so in plain words", async () => {

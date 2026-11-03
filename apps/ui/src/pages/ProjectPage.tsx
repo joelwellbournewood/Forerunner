@@ -81,7 +81,11 @@ export function ProjectPage() {
   // The plan banner says "Drafting the plan…" / "Waiting for you: approve the plan" itself.
   const planBanner =
     (view.progress?.total ?? 0) === 0 &&
-    (intake === "drafting" || intake === "pending" || intake === "failed" || intake === "rejected");
+    (intake === "drafting" ||
+      intake === "pending" ||
+      intake === "failed" ||
+      intake === "waiting" ||
+      intake === "rejected");
   const moreTabs = PROJECT_TABS.filter((t) => t.more);
   const inMore = moreTabs.some((t) => t.id === tab);
   const tabClass = ({ isActive }: { isActive: boolean }) =>

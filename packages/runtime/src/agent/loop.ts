@@ -468,10 +468,17 @@ export class LoopAgentDriver {
             cost += req.pricing.cost(response.usage);
             throw controller.signal.reason;
           }
-          // A credential at its limit, or none that can serve (ADR 0100): the code and the
-          // provider's words reach the caller, which rests the source or tells the person.
+          // A credential at its limit, a credential Anthropic refused (U-078: a 401 or 403 key,
+          // an expired sign-in), or none that can serve (ADR 0100): the code and the provider's
+          // words reach the caller, which rests or marks the source and tells the person. Before,
+          // a refusal became "model call failed", a passing error tried again at once.
           const failed = response.error;
-          if (failed && (failed.code === USAGE_LIMIT_CODE || failed.code === "unavailable")) {
+          if (
+            failed &&
+            (failed.code === USAGE_LIMIT_CODE ||
+              failed.code === "unavailable" ||
+              failed.code === "provider_auth")
+          ) {
             throw new ForerunnerError(failed.code, failed.message, {
               details: {
                 ...(failed.resetAt ? { resetAt: failed.resetAt } : {}),

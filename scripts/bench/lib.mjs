@@ -232,6 +232,32 @@ export function storeLiveKey({ dir, home, extra = {} }) {
 }
 
 /**
+ * `--api-key refused|limited|ok` (U-078): a key-shaped key of that kind written straight into
+ * the home's file vault by `vault-key.ts` (the app's setup would check it first and refuse a
+ * refused one), for `--provider bench-api`, whose stand-in answers the key by its kind. The
+ * key is never printed.
+ */
+export function storeBenchKey({ dir, home, kind }) {
+  const env = daemonEnv({ home, provider: "none", extra: {} });
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      path.join("scripts", "bench", "vault-key.ts"),
+      "--home",
+      home,
+      "--kind",
+      kind,
+    ],
+    { cwd: REPO, env, encoding: "utf8", timeout: 60_000, windowsHide: true },
+  );
+  writeFileSync(path.join(dir, "vault-key.log"), `${r.stdout ?? ""}${r.stderr ?? ""}`);
+  if (r.status !== 0)
+    fail(`the ${kind} API key was not written into the vault (exit ${r.status ?? r.signal})`);
+}
+
+/**
  * `fr setup`'s environment for `storeLiveKey`: the daemon's without a provider, the key as
  * FORERUNNER_ANTHROPIC_KEY, and the API base the start's `--env` names
  * (FORERUNNER_ANTHROPIC_API, else FORERUNNER_BENCH_LIVE_API, the daemon's), so a live start can

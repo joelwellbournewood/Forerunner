@@ -59,6 +59,12 @@ import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { markAnswer } from "./answer-mark.ts";
+import {
+  type CredentialWait,
+  credentialWaitFrom,
+  planWaitWords,
+  saveLink,
+} from "./credential-wait.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import { withOwnersContent } from "./intake-content.ts";
 import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS, PERSON_SPECIALIST } from "./person-questions.ts";
@@ -318,7 +324,24 @@ export type IntakeState =
   | "approved"
   | "rejected"
   | "skipped"
-  | "failed";
+  | "failed"
+  | "waiting";
+
+/**
+ * Planning waits for a Claude credential (U-078, `state: "waiting"`): Anthropic refused the only
+ * one that may serve it, or it rests after a usage limit. `text` is the project page's sentence,
+ * `short` the status sentence's, `save` where a refused one is replaced (null at a limit). The
+ * plan is drafted by itself once the credential serves (`RuntimeApp.billing.waits`).
+ */
+export interface IntakeWaitView {
+  reason: CredentialWait["reason"];
+  kind: CredentialWait["kind"];
+  /** When the credential serves again (a limit); null for a refusal. */
+  until: string | null;
+  text: string;
+  short: string;
+  save: { label: string; to: string } | null;
+}
 
 /** What a draft is asked with (`propose`, `enqueue`). */
 export interface IntakeDraftOptions {
@@ -345,6 +368,8 @@ export interface IntakeStatus {
   docs: IntakeDocsOutcome | null;
   /** Why the last automatic intake failed (`state: "failed"`). */
   error: string | null;
+  /** What planning waits for (`state: "waiting"`, U-078); null otherwise. */
+  wait: IntakeWaitView | null;
 }
 
 export interface IntakeDeps {
@@ -354,6 +379,17 @@ export interface IntakeDeps {
   driver: LoopAgentDriver;
   /** Null when the install has no model credential: `propose` is then `unavailable`. */
   provider: ModelProvider | null;
+  /**
+   * The Claude credential a planning call waits for (U-078, the review of credential-limits): a
+   * background draft that met a refusal or a usage limit asks `now()` (a pick that only reads)
+   * whether planning must wait, and for what; the wait is kept on the credential (`note`), so
+   * the plan is drafted by itself once it serves again, after a restart too. Absent (no routed
+   * provider): such a draft fails as any other.
+   */
+  credentialWait?: {
+    now(): Promise<CredentialWait | null>;
+    note(wait: CredentialWait, projectId: string): Promise<void>;
+  };
   /** Pricing of the planning rung in force; null with no provider. */
   pricing: RunPricing | null;
   /**
@@ -964,18 +1000,23 @@ export class IntakeService {
         appliedAt: null,
         docs: null,
         error: null,
+        wait: null,
       };
     const failure = (project.summary_cache as { intake?: JsonObject }).intake;
     const failedAt = typeof failure?.failed_at === "string" ? failure.failed_at : null;
+    // U-078: a draft that met a refused or resting credential waits for it; it did not fail.
+    const waiting = failedAt ? credentialWaitFrom(failure?.wait) : null;
+    const wait = waiting ? await this.waitView(waiting) : null;
     if (!row) {
       return {
         projectId,
-        state: failedAt ? "failed" : "none",
+        state: wait ? "waiting" : failedAt ? "failed" : "none",
         requestId: null,
         outcome: null,
         appliedAt: null,
         docs: null,
-        error: failedAt ? String(failure?.error ?? "") : null,
+        error: failedAt && !wait ? String(failure?.error ?? "") : null,
+        wait,
       };
     }
     const card = (row.change_card ?? {}) as JsonObject;
@@ -985,12 +1026,13 @@ export class IntakeService {
     if (failedAt && failedAt > row.created_at) {
       return {
         projectId,
-        state: "failed",
+        state: wait ? "waiting" : "failed",
         requestId: row.id,
         outcome,
         appliedAt,
         docs: null,
-        error: String(failure?.error ?? ""),
+        error: wait ? null : String(failure?.error ?? ""),
+        wait,
       };
     }
     // "Change the plan" answered with no new draft running and none filed after it: the draft
@@ -1022,7 +1064,48 @@ export class IntakeService {
           : changeLost
             ? "The new plan with your changes was not drafted: Forerunner closed before it was done. Try again drafts it with your changes."
             : null,
+      wait: null,
     };
+  }
+
+  /** A planning wait in the person's words, in their time zone (U-078). */
+  private async waitView(wait: CredentialWait): Promise<IntakeWaitView> {
+    const human = await this.deps.store.human.get(this.deps.human.id).catch(() => undefined);
+    const words = planWaitWords(wait, {
+      ...(human?.timezone ? { timezone: human.timezone } : {}),
+      nowMs: this.deps.clock.now(),
+    });
+    return {
+      reason: wait.reason,
+      kind: wait.kind,
+      until: wait.until,
+      ...words,
+      save: wait.reason === "refused" ? saveLink(wait.kind) : null,
+    };
+  }
+
+  /**
+   * What a failed background draft waits for (U-078): a planning call that met a refused key or
+   * sign-in, a usage limit, or no credential that can serve, while the only credential that may
+   * serve it is refused or resting (`credentialWait.now`). The wait is kept on that credential,
+   * so the plan is drafted by itself once it serves. Null for any other failure.
+   */
+  private async waitFor(e: unknown, projectId: string): Promise<CredentialWait | null> {
+    const port = this.deps.credentialWait;
+    if (!port || !(e instanceof ForerunnerError)) return null;
+    const provider = e.details.providerCode;
+    const code = e.code === "provider_error" && typeof provider === "string" ? provider : e.code;
+    if (code !== "provider_auth" && code !== "unavailable" && code !== USAGE_LIMIT_CODE)
+      return null;
+    const wait = await port.now().catch(() => null);
+    if (!wait) return null;
+    await port.note(wait, projectId).catch((err: unknown) =>
+      this.logger.warn("the planning's wait was not kept on the credential", {
+        projectId,
+        error: errorMessage(err),
+      }),
+    );
+    return wait;
   }
 
   /**
@@ -1076,8 +1159,20 @@ export class IntakeService {
     if (running) return running;
     const job = this.propose(projectId, opts)
       .catch(async (e: unknown) => {
-        this.logger.warn("automatic intake failed", { projectId, error: errorMessage(e) });
-        await this.recordFailure(projectId, intakeFailureWords(e));
+        const wait = await this.waitFor(e, projectId);
+        if (wait) {
+          // U-078: no failure and no Try again (it cannot work while the credential is refused
+          // or rests); the plan is drafted by itself once the credential serves.
+          this.logger.info("planning waits for a Claude credential", {
+            projectId,
+            reason: wait.reason,
+            ...(wait.until ? { until: wait.until } : {}),
+          });
+          await this.recordFailure(projectId, (await this.waitView(wait)).text, wait);
+        } else {
+          this.logger.warn("automatic intake failed", { projectId, error: errorMessage(e) });
+          await this.recordFailure(projectId, intakeFailureWords(e));
+        }
         throw e;
       })
       .finally(() => {
@@ -1111,12 +1206,22 @@ export class IntakeService {
   async retry(projectId: string): Promise<IntakeStatus> {
     const current = await this.status(projectId);
     // Design §3.3: after a Reject the project page offers "Draft a new plan", which is this.
-    if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
+    // A plan that waits for a credential is drafted again too (U-078): the wake once the
+    // credential serves (`RuntimeApp.billing.waits`); while it still cannot, it waits again.
+    if (
+      current.state !== "failed" &&
+      current.state !== "none" &&
+      current.state !== "rejected" &&
+      current.state !== "waiting"
+    )
       return current;
     if (!this.deps.provider || !this.deps.pricing)
       throw new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL);
+    // A "Change the plan" draft that failed or waited (U-078) is drafted again with the changes.
     const changed =
-      current.state === "failed" && current.outcome === "changed" && current.requestId
+      (current.state === "failed" || current.state === "waiting") &&
+      current.outcome === "changed" &&
+      current.requestId
         ? await this.deps.store.humanRequest.get(current.requestId)
         : undefined;
     const changes = changesAskedOn(changed?.change_card as JsonObject | undefined);
@@ -1130,13 +1235,31 @@ export class IntakeService {
     return this.jobs.get(projectId) ?? null;
   }
 
-  private async recordFailure(projectId: string, error: string): Promise<void> {
+  private async recordFailure(
+    projectId: string,
+    error: string,
+    wait?: CredentialWait,
+  ): Promise<void> {
     try {
       const project = await this.deps.store.project.mustGet(projectId);
       await this.deps.store.project.update(project.id, project.version, {
         summary_cache: {
           ...project.summary_cache,
-          intake: { failed_at: this.deps.clock.nowIso(), error: redact(cut(error)) },
+          intake: {
+            failed_at: this.deps.clock.nowIso(),
+            error: redact(cut(error)),
+            // What it waits for (U-078): `status` answers `waiting` while this is kept.
+            ...(wait
+              ? {
+                  wait: {
+                    reason: wait.reason,
+                    sourceId: wait.sourceId,
+                    kind: wait.kind,
+                    until: wait.until,
+                  },
+                }
+              : {}),
+          },
         },
       });
     } catch (e) {

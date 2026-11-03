@@ -42,6 +42,24 @@ export interface BillingSourceLimits {
    * it and the router skips the source (`cooldown`); a time in the past means nothing.
    */
   restingUntil?: string;
+  /**
+   * ISO time Anthropic refused the source's credential (a 401 or 403 key, an expired sign-in;
+   * U-078, ADR 0100 amended 2026-11-03). The daemon's probe reports it while the credential in
+   * the vault is the one refused (`refusedKey`), and the router skips the source (`refused`).
+   */
+  refusedAt?: string;
+  /**
+   * The refused credential's fingerprint (the first hex characters of its SHA-256, never the
+   * value): a different credential saved for the source ends the mark by itself.
+   */
+  refusedKey?: string;
+  /** What the provider said, cut and without the credential. */
+  refusedWhy?: string;
+  /**
+   * Projects whose work waits for this source to serve again (its rest ends, or a new credential
+   * is saved): each gets a session started by itself then, after a restart too.
+   */
+  waiting?: { projectId: string; agentId: string; since: string }[];
 }
 
 export interface BillingSource {
@@ -70,6 +88,11 @@ export interface BillingSourceStatus {
    * `cooldown`.
    */
   restingUntil?: string;
+  /**
+   * Set while Anthropic refuses the source's credential: the ISO time it was refused (U-078).
+   * The router then skips the source with code `refused` until a new credential is saved.
+   */
+  refused?: string;
   reason?: string;
   checkedAt?: string;
 }
@@ -126,6 +149,12 @@ const limitsSchema = z
     planUsdMicro: z.number().int().positive().optional(),
     personalRunner: z.boolean().optional(),
     restingUntil: z.string().optional(),
+    refusedAt: z.string().optional(),
+    refusedKey: z.string().optional(),
+    refusedWhy: z.string().optional(),
+    waiting: z
+      .array(z.object({ projectId: z.string(), agentId: z.string(), since: z.string() }))
+      .optional(),
   })
   .strict();
 

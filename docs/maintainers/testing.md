@@ -2701,7 +2701,31 @@ install with a key), refuses at once without a key, and a daemon that exits duri
 ends the start at once. Setup checks the key where the daemon will call (`setupEnv`: the
 start's `--env FORERUNNER_BENCH_LIVE_API`, or `FORERUNNER_ANTHROPIC_API` on its own), so a live
 start can be dry-run against a local stand-in of the API without spending (the review of
-2026-11-02 had to edit `lib.mjs` to do it). Tests: `testenv/test/bench-role-player.test.ts` (the stand-in against
+2026-11-02 had to edit `lib.mjs` to do it). **The Messages API stand-in and `--provider
+bench-api` (U-078).** `testenv/src/provider/messages-api.ts` (`messagesApiStandIn`) answers
+`POST /v1/messages` (SSE, or one JSON message), `GET /v1/models` and `GET /v1/models/<id>` per
+key, as the API does: a refused key gets 401 `authentication_error`, a key at its limit the
+spend cap (429 `enforced_spend_limit_reached`, "You will regain access on ... UTC") or the
+spend limit (400) until its reset, then answers again; any other key gets the model behind it.
+`keyRule` / `keyRuleFromEnv` decide by the key's text (`FORERUNNER_BENCH_API_REFUSE`, default
+"refused"; `FORERUNNER_BENCH_API_LIMIT`, default "limited", for `FORERUNNER_BENCH_API_LIMIT_MIN`
+minutes, default 3, in `FORERUNNER_BENCH_API_LIMIT_FORM` 429 or 400). Its log names keys by
+`keyIdOf` (a SHA-256 id), never their text. `standInFetch` is a `fetch` that sends the API's
+requests (api.anthropic.com, or a base) to it and the rest on: tests pass it as
+`composeRuntime`'s `fetchImpl` with no injected provider, so the routed provider, the billing
+sources, the refused and resting marks and a key saved in the vault all run
+(`packages/runtime/test/credential-limits.test.ts`, `messages-api-stand-in.test.ts`).
+`fr daemon --provider bench-api` (a repository checkout only, `daemonFetch`) composes the
+same way with the role-player behind the stand-in (`benchApiFetch`) and logs each request in
+`<home>/bench/api-requests.jsonl`; `start.mjs --api-key refused|limited|ok` writes a key of
+that kind straight into the home's vault (`vault-key.ts`), and `journeys/credentials.cjs`
+walks what a person sees (with `--brief "<text>"` the planning call meets the key first: the
+plan waits, is drafted by itself after `--save-key ok` or at the reset with `--wait-start`, and
+is approved so its tasks run). The stand-in's limit window ("limited for N minutes from its
+first call") is kept per process: after `restart-daemon.mjs` the key is limited for another N
+minutes, so a walk across a restart sees a second wait before the work starts. The real-daemon
+case of a refused key (`apps/ui/test/real-daemon.test.ts`, the credential-limits block) composes
+the same way with the role-player behind the stand-in. Tests: `testenv/test/bench-role-player.test.ts` (the stand-in against
 the runtime's own intake parser, plan writer and critic schema; the live wrapper over a stubbed
 provider), `packages/runtime/test/cli-daemon-provider.test.ts` (the live path end to end
 against a stub of the Messages API: prices, no part of the key), `scripts/bench-scripts.test.ts`

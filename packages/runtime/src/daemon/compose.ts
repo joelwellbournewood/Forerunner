@@ -205,6 +205,7 @@ import {
 import type { TaskBillingPort } from "../session/billing.ts";
 import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
+import type { CredentialWait } from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
@@ -749,6 +750,16 @@ export interface RuntimeApp {
     hostCommands: boolean;
     /** The plan allowance the subscription row was seeded with, and where it came from. */
     planAllowance: PlanAllowance;
+    /**
+     * Work waiting for a Claude credential (U-078): `wake()` starts a session of every project
+     * whose wait is over (the credential's rest ended, or a new one was saved), as the scheduler
+     * does before every tick; `credentialSaved(kind)` ends a refusal of that kind at once and
+     * wakes its waiting work (the setup assistant calls it when a key or sign-in is stored).
+     */
+    waits: {
+      wake(): Promise<number>;
+      credentialSaved(kind: "api_key" | "subscription"): Promise<number>;
+    };
   };
   chfPerUsd: () => number;
   /** Context layer per session: policy, Headroom probe, pipeline, savings (ADR 0003). */
@@ -2362,6 +2373,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     driver,
     // The planning call follows the person's order for purpose `interactive` (ADR 0100).
     provider: intakeProvider,
+    // U-078: planning that meets a refused or resting credential waits for it like task work
+    // (kept on the source's `limits.waiting`), and `credentialWaits.wake` drafts it again by
+    // itself once the credential serves: a new key saved, or the limit's reset.
+    ...(routed
+      ? {
+          credentialWait: {
+            now: () => routed.withPurpose("interactive").waitNow(),
+            note: (wait: CredentialWait, projectId: string) =>
+              taskBilling.noteWait(wait.sourceId, projectId, principal.id),
+          },
+        }
+      : {}),
     pricing: provider
       ? livePricing(provider, () =>
           rungModelFor(provider, modelConfig.get().modeDefaults.planning.tier),
@@ -3039,8 +3062,82 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     fired: fileFiredKeys(join(dirs.data, "scheduler-fired.json")),
     refresh: async (target) => {
       await refreshJobSchedules(target);
+      // U-078: work that waited for a Claude credential starts by itself once it can serve
+      // (its rest ended, a new key was saved), within a tick, after a restart too.
+      await credentialWaits
+        .wake()
+        .catch((e: unknown) =>
+          logger.warn("work waiting for a credential not started", { error: errorMessage(e) }),
+        );
     },
   });
+  /**
+   * Work waiting for a Claude credential (U-078, ADR 0100 amended): the waits are kept on the
+   * billing sources (`limits.waiting`), so they survive a restart; each project whose wait is
+   * over gets one session start through the scheduler (`budget_reset`: a limit reset), and only
+   * while it still has ready work; a plan from the brief that waited is drafted again (the
+   * review of credential-limits: before, planning that met a refusal stayed "Planning failed").
+   */
+  const credentialWaits: RuntimeApp["billing"]["waits"] = {
+    wake: async () => {
+      const ready = await taskBilling.takeReady();
+      let started = 0;
+      const plans: { projectId: string; sourceId: string; agentId: string }[] = [];
+      for (const projectId of [...new Set(ready.map((w) => w.projectId))]) {
+        const entry = ready.find((w) => w.projectId === projectId);
+        const project = await store.project.get(projectId).catch(() => undefined);
+        if (!entry || !project) continue;
+        const plan = await intake.status(projectId).catch(() => null);
+        if (plan?.state === "waiting") {
+          plans.push({ projectId, sourceId: entry.sourceId, agentId: entry.agentId });
+          continue;
+        }
+        const work = await store.task.readyTasks(projectId, { limit: 1 }).catch(() => []);
+        if (!work.length) continue;
+        // With Stop all on, no session starts: the wait is kept, so the start comes once the
+        // person allows sessions again and the next tick finds the credential serving.
+        if (kill.isFrozen({ agentId: entry.agentId })) {
+          await taskBilling.noteWait(entry.sourceId, projectId, entry.agentId);
+          continue;
+        }
+        await scheduler.request({
+          agentId: entry.agentId,
+          projectId,
+          trigger: "budget_reset",
+          reason: "a Claude credential it waited for can serve again",
+        });
+        started++;
+      }
+      // The plans that waited are drafted again, in the background as at creation; if the
+      // credential still cannot serve one, it waits again. A planning call holds the agent's
+      // one session (the runner refuses a start while it runs), so with a session just asked
+      // for they keep their wait for the next tick instead of racing that start.
+      const sessions = started;
+      for (const p of plans) {
+        if (sessions > 0) {
+          await taskBilling.noteWait(p.sourceId, p.projectId, p.agentId);
+          continue;
+        }
+        try {
+          await intake.retry(p.projectId);
+          events.emit("project", { id: p.projectId });
+          started++;
+        } catch (e) {
+          await taskBilling.noteWait(p.sourceId, p.projectId, p.agentId);
+          logger.warn("the plan that waited for a credential was not drafted again", {
+            projectId: p.projectId,
+            error: errorMessage(e),
+          });
+        }
+      }
+      if (started) logger.info("work that waited for a credential starts again", { started });
+      return started;
+    },
+    credentialSaved: async (kind) => {
+      await taskBilling.credentialSaved(kind);
+      return credentialWaits.wake();
+    },
+  };
   scheduleModelWatch(scheduler, { timezone: human.timezone });
   // A model watch report the human put off ("remind me") is asked again when due (U-035).
   scheduleModelWatchReminders(scheduler, { timezone: human.timezone });
@@ -3124,15 +3221,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           budgetUsdMicro,
         );
         // The plan from the brief, while no task is written yet (the dialog names it too).
-        const plan =
-          check.ready === 0 ? (await intake.status(project.id).catch(() => null))?.state : null;
+        const planNow =
+          check.ready === 0 ? await intake.status(project.id).catch(() => null) : null;
+        const plan = planNow?.state;
         const blocked = startBlockedReason(check, {
           stopped: kill.isFrozen({ agentId: agent.id }),
           hasModel: !!provider,
           busy: busyHere(scheduler.activeStart(agent.id), project.id),
           projectId: project.id,
           chfPerUsd: chfPerUsd(),
-          plan: plan === "pending" || plan === "drafting" ? plan : null,
+          plan: plan === "pending" || plan === "drafting" || plan === "waiting" ? plan : null,
+          planWait: planNow?.wait ?? null,
         });
         if (!blocked) return null;
         // The dialog's button, said in words for the chat.
@@ -3970,6 +4069,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       sdk: sdkDriver,
       hostCommands: sdkHostCommands,
       planAllowance,
+      waits: credentialWaits,
     },
     chfPerUsd,
     context,

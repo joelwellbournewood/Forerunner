@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type IntakeStatusView } from "../../api/client.ts";
 import { Button, buttonClassName } from "../../components/ui.tsx";
@@ -47,6 +47,16 @@ export function useIntakeStatus(
     const t = setTimeout(reload, pollMs);
     return () => clearTimeout(t);
   }, [data, reload, pollMs]);
+  // The project changed (the store reads its card again on every `project.changed`): read the
+  // plan again, as Summary does. U-078: a plan that waited for a Claude credential is drafted by
+  // itself once a new key is saved or the limit resets, and the page follows without a reload.
+  const card = useUiState((s) => s.projects.find((p) => p.id === projectId) ?? null);
+  const seen = useRef(card);
+  useEffect(() => {
+    if (seen.current === card) return;
+    seen.current = card;
+    if (enabled) reload();
+  }, [card, reload, enabled]);
   return status;
 }
 
@@ -142,6 +152,30 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
           </p>
         ) : null}
         {retryButton("Draft a new plan", "Drafting…")}
+      </div>
+    );
+  // U-078: planning met a refused or resting Claude credential. It waits and is drafted by
+  // itself once the credential serves: no Try again, which cannot work while it waits; a
+  // refused one links to where a new key is saved.
+  if (view.state === "waiting")
+    return (
+      <div
+        className={`${box} flex flex-wrap items-center gap-2 border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100`}
+        data-testid="intake-banner"
+        data-state="waiting"
+      >
+        <span data-testid="intake-wait">
+          {view.wait?.text ?? "Planning waits for a Claude credential."}
+        </span>
+        {view.wait?.save ? (
+          <Link
+            to={view.wait.save.to}
+            className={buttonClassName("primary")}
+            data-testid="intake-save-key"
+          >
+            {view.wait.save.label}
+          </Link>
+        ) : null}
       </div>
     );
   if (view.state === "failed")

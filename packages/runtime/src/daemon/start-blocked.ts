@@ -22,7 +22,13 @@ export interface StartBlockedFacts {
    * approval in the Inbox (`pending`) or is being drafted (`drafting`); null or absent otherwise
    * (`IntakeService.status`).
    */
-  plan?: "pending" | "drafting" | null;
+  plan?: "pending" | "drafting" | "waiting" | null;
+  /**
+   * With `plan: "waiting"` (U-078): what planning waits for, as the project page says it
+   * ("Planning waits for a new API key: save one in Settings."), and where a refused key is
+   * replaced.
+   */
+  planWait?: { text: string; save: { label: string; to: string } | null } | null;
 }
 
 /**
@@ -63,6 +69,15 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
       kind: "nothing_runnable",
       sentence: "Nothing can run yet: the plan from your brief is being drafted.",
       action: null,
+    };
+  // U-078: the plan waits for a Claude credential; it is drafted by itself once one serves.
+  if (f.plan === "waiting")
+    return {
+      kind: "nothing_runnable",
+      sentence: `Nothing can run yet. ${f.planWait?.text ?? "Planning waits for a Claude credential."}`,
+      action: f.planWait?.save
+        ? { kind: "link", label: f.planWait.save.label, to: f.planWait.save.to }
+        : null,
     };
   return blocked;
 }

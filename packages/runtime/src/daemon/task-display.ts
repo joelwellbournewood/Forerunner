@@ -1,3 +1,4 @@
+import type { BillingSourceKind } from "@forerunner/billing";
 import type {
   EventRow,
   HumanRequestRow,
@@ -7,8 +8,10 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { type CredentialWaitWords, waitRowWords } from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
+import { waitingOf } from "../wiring/billing-pick.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
 import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
@@ -65,7 +68,51 @@ export async function loadTaskDisplayContext(
     const latest = await store.review.latestForTask(t.id);
     if (latest) reviews.set(t.id, latest);
   }
-  return { tasks, cards, sandboxReady, runs, agentNames, reviews };
+  const credentialWait = projectId ? await credentialWaitRow(store, projectId) : null;
+  return {
+    tasks,
+    cards,
+    sandboxReady,
+    runs,
+    agentNames,
+    reviews,
+    ...(credentialWait ? { credentialWait } : {}),
+  };
+}
+
+/**
+ * What the project's ready tasks wait for, when they wait for a Claude credential (U-078): the
+ * source that keeps the project in its `limits.waiting` and still cannot serve (it rests, or its
+ * refusal stands), worded for the row in the person's time zone. Null once it can serve: the
+ * scheduler starts the session within a tick.
+ */
+export async function credentialWaitRow(
+  store: StateStore,
+  projectId: string,
+): Promise<CredentialWaitWords | null> {
+  const rows = await store.billingSource.list({}, { limit: 100 }).catch(() => []);
+  const now = store.clock.now();
+  for (const row of rows) {
+    if (!waitingOf(row.limits).some((w) => w.projectId === projectId)) continue;
+    const limits = row.limits as { restingUntil?: unknown; refusedAt?: unknown };
+    const until =
+      typeof limits.restingUntil === "string" && Date.parse(limits.restingUntil) > now
+        ? limits.restingUntil
+        : null;
+    const refused = typeof limits.refusedAt === "string";
+    if (!until && !refused) continue;
+    const human = await store.human.get(row.human_id).catch(() => undefined);
+    return waitRowWords(
+      {
+        reason: refused ? "refused" : "limit",
+        sourceId: row.id,
+        kind: row.kind as BillingSourceKind,
+        until,
+      },
+      { ...(human?.timezone ? { timezone: human.timezone } : {}), nowMs: now },
+    );
+  }
+  return null;
 }
 
 /** The `verification` record a review keeps in its evidence (ADR 0104), or null. */

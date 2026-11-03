@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   BillingRouter,
   type BillingSource,
@@ -11,7 +12,7 @@ import {
   type RoutingPolicy,
 } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
-import { log } from "@forerunner/platform";
+import { errorMessage, log, redact } from "@forerunner/platform";
 import type { BillingSourceRow, StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { restUntil } from "../provider/usage-limit.ts";
@@ -21,6 +22,11 @@ import type {
   TaskBillingPort,
   TaskBillingRequest,
 } from "../session/billing.ts";
+import {
+  BILLING_REFUSED_AUDIT_TOOL,
+  closeRefusedCards,
+  fileRefusedCard,
+} from "../session/credential-wait.ts";
 import {
   PLAN_USD_MONTHLY_ENV,
   type PlanAllowance,
@@ -146,7 +152,8 @@ export async function seedBillingSources(
 export class VaultLedgerProbe implements BillingSourceProbe {
   constructor(
     private readonly deps: {
-      vault: Pick<Vault, "has">;
+      /** `get` reads the credential a refusal named (U-078): a new one ends the mark. */
+      vault: Pick<Vault, "has"> & Partial<Pick<Vault, "get">>;
       store: Pick<StateStore, "costLedger">;
       clock: Clock;
     },
@@ -170,14 +177,54 @@ export class VaultLedgerProbe implements BillingSourceProbe {
     }
     const usage = await planUsageOf(this.deps.store, this.deps.clock, source);
     const resting = restingUntilOf(source, this.deps.clock.now());
+    const refused = await refusedSince(source, this.deps.vault);
     return {
       available: true,
       checkedAt,
       monthSpentUsdMicro: usage.monthUsdMicro,
       ...(usage.share !== null ? { planUsageShare: usage.share } : {}),
       ...(resting ? { restingUntil: resting } : {}),
+      ...(refused ? { refused } : {}),
     };
   }
+}
+
+/**
+ * A credential's fingerprint for the refused mark (U-078): the first 16 hex characters of its
+ * SHA-256. It tells "the credential that was refused" from "a new one" and is never the value.
+ */
+export function credentialFingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+/**
+ * When Anthropic refused the source's credential (`limits.refusedAt`, U-078), while the vault
+ * still holds the credential that was refused; null when it is not refused, or a new credential
+ * was saved since (whichever way: the app's setup, `fr setup`, another install's vault).
+ */
+export function refusedNow(
+  source: Pick<BillingSource, "limits">,
+  current: string | null | undefined,
+): string | null {
+  const at = source.limits.refusedAt;
+  if (typeof at !== "string") return null;
+  const key = source.limits.refusedKey;
+  if (typeof key === "string" && typeof current === "string" && current)
+    return credentialFingerprint(current) === key ? at : null;
+  return at;
+}
+
+/** `refusedNow` with the vault's credential read (only for a source that carries the mark). */
+export async function refusedSince(
+  source: Pick<BillingSource, "limits" | "credentialRef">,
+  vault: Partial<Pick<Vault, "get">>,
+): Promise<string | null> {
+  if (typeof source.limits.refusedAt !== "string") return null;
+  const current =
+    vault.get && source.credentialRef
+      ? await vault.get(source.credentialRef).catch(() => null)
+      : null;
+  return refusedNow(source, current);
 }
 
 /**
@@ -263,9 +310,14 @@ export function pcRoutingPolicy(
 }
 
 export interface RouterTaskBillingOptions {
-  /** `human` for the person's order, `auditLog` for the rest's audit row (ADR 0100). */
-  store: Pick<StateStore, "billingSource" | "costLedger" | "human" | "auditLog">;
-  vault: Pick<Vault, "has">;
+  /**
+   * `human` for the person's order, `auditLog` for the rest's and the refusal's audit rows (ADR
+   * 0100), `humanRequest` for the refused credential's one card (U-078).
+   */
+  store: Pick<StateStore, "billingSource" | "costLedger" | "human" | "auditLog"> &
+    Partial<Pick<StateStore, "humanRequest">>;
+  /** `get` (optional) fingerprints a refused credential, so a new one ends the mark (U-078). */
+  vault: Pick<Vault, "has"> & Partial<Pick<Vault, "get">>;
   clock: Clock;
   /** The human whose sources this install pays with (the daemon's human). */
   humanId: string;
@@ -361,6 +413,7 @@ export class RouterTaskBilling implements TaskBillingPort {
       purpose: req.purpose ?? "session",
       modelTier: req.modelTier,
       ...(order?.length ? { order } : {}),
+      ...(req.waitOnRest ? { waitOnRest: true } : {}),
     });
     const skipped = [...withheld, ...decision.skipped];
     let reason = decision.reason;
@@ -416,6 +469,162 @@ export class RouterTaskBilling implements TaskBillingPort {
       .catch(() => undefined);
     return until;
   }
+
+  /**
+   * Anthropic refused the source's credential (U-078: a 401 or 403 key, an expired sign-in):
+   * `limits.refusedAt` with the refused credential's fingerprint, so every later pick skips it
+   * (`refused`) until a new one is saved, after a restart too; one `billing.refused` audit row;
+   * and one Inbox card per credential ("Anthropic refused your API key. Save a new one in
+   * Settings."), filed once while the mark stands. A second refusal of the same credential
+   * changes nothing.
+   */
+  async refuse(sourceId: string, why: string): Promise<void> {
+    const row = await this.opts.store.billingSource.get(sourceId);
+    if (!row) return;
+    const current =
+      this.opts.vault.get && row.credential_ref
+        ? await this.opts.vault.get(row.credential_ref).catch(() => null)
+        : null;
+    const fingerprint = current ? credentialFingerprint(current) : undefined;
+    const known =
+      typeof row.limits.refusedAt === "string" &&
+      (fingerprint === undefined || row.limits.refusedKey === fingerprint);
+    if (!known) {
+      const words = redact(current ? why.split(current).join("[REDACTED]") : why).slice(0, 300);
+      await this.opts.store.billingSource.patch(row.id, {
+        limits: {
+          ...row.limits,
+          refusedAt: this.opts.clock.nowIso(),
+          ...(fingerprint ? { refusedKey: fingerprint } : {}),
+          refusedWhy: words,
+        },
+      });
+      this.logger.warn("billing source refused: its credential was not accepted", {
+        sourceId,
+        kind: row.kind,
+      });
+      await this.opts.store.auditLog
+        .append({
+          tool: BILLING_REFUSED_AUDIT_TOOL,
+          allowed: true,
+          human_id: this.opts.humanId,
+          input_summary: JSON.stringify({ sourceId, kind: row.kind }),
+          result_summary: `refused: ${words}`.slice(0, 500),
+          occurred_at: this.opts.clock.nowIso(),
+        })
+        .catch(() => undefined);
+    }
+    if (this.opts.store.humanRequest && row.kind !== "fake")
+      await fileRefusedCard(this.opts.store as Pick<StateStore, "humanRequest">, {
+        humanId: this.opts.humanId,
+        agentId: null,
+        sourceId: row.id,
+        kind: row.kind,
+      }).catch((e: unknown) =>
+        this.logger.warn("the refused credential's card was not filed", {
+          sourceId,
+          error: errorMessage(e),
+        }),
+      );
+  }
+
+  /**
+   * A project's work waits for this source (its reset, or a new credential; U-078): kept on the
+   * source (`limits.waiting`), so `takeReady` starts its session by itself once the source can
+   * serve again, after a restart too. One entry per project.
+   */
+  async noteWait(sourceId: string, projectId: string, agentId: string): Promise<void> {
+    const row = await this.opts.store.billingSource.get(sourceId);
+    if (!row) return;
+    const waiting = waitingOf(row.limits);
+    if (waiting.some((w) => w.projectId === projectId)) return;
+    await this.opts.store.billingSource.patch(row.id, {
+      limits: {
+        ...row.limits,
+        waiting: [...waiting, { projectId, agentId, since: this.opts.clock.nowIso() }],
+      },
+    });
+  }
+
+  /**
+   * The projects whose wait is over now (U-078): every source with waiting projects that serves
+   * again (its rest ended, and no refusal stands: a new credential was saved). Their entries are
+   * taken off the source, and a refusal a new credential ended is cleared with its card; the
+   * caller starts each project's session. A source still resting or refused keeps its list.
+   */
+  async takeReady(): Promise<{ projectId: string; agentId: string; sourceId: string }[]> {
+    const rows = await this.opts.store.billingSource.list(
+      { human_id: this.opts.humanId },
+      { limit: 100 },
+    );
+    const out: { projectId: string; agentId: string; sourceId: string }[] = [];
+    const now = this.opts.clock.now();
+    for (const row of rows) {
+      const source = {
+        limits: row.limits as BillingSource["limits"],
+        credentialRef: row.credential_ref ?? "",
+      };
+      const refused = await refusedSince(source, this.opts.vault);
+      const stale = typeof row.limits.refusedAt === "string" && !refused;
+      const waiting = waitingOf(row.limits);
+      const free = !refused && !restingUntilOf(source, now);
+      if (!stale && !(free && waiting.length)) continue;
+      const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, waiting: _l, ...rest } = row.limits;
+      await this.opts.store.billingSource.patch(row.id, {
+        limits: {
+          ...rest,
+          ...(refused ? { refusedAt: row.limits.refusedAt } : {}),
+          ...(refused && row.limits.refusedKey ? { refusedKey: row.limits.refusedKey } : {}),
+          ...(refused && row.limits.refusedWhy ? { refusedWhy: row.limits.refusedWhy } : {}),
+          ...(!free && waiting.length ? { waiting } : {}),
+        },
+      });
+      if (stale && this.opts.store.humanRequest)
+        await closeRefusedCards(
+          this.opts.store as Pick<StateStore, "humanRequest">,
+          this.opts.humanId,
+          row.id,
+        ).catch(() => undefined);
+      if (free) for (const w of waiting) out.push({ ...w, sourceId: row.id });
+    }
+    return out;
+  }
+
+  /**
+   * A new credential of `kind` was saved (the setup assistant, U-078): its source's refusal
+   * ends at once, whatever the vault can tell (`takeReady` clears it on the next pass too).
+   */
+  async credentialSaved(kind: "api_key" | "subscription"): Promise<void> {
+    const rows = await this.opts.store.billingSource.list(
+      { human_id: this.opts.humanId },
+      { limit: 100 },
+    );
+    for (const row of rows) {
+      if (row.kind !== kind || typeof row.limits.refusedAt !== "string") continue;
+      const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, ...rest } = row.limits;
+      await this.opts.store.billingSource.patch(row.id, { limits: rest });
+      if (this.opts.store.humanRequest)
+        await closeRefusedCards(
+          this.opts.store as Pick<StateStore, "humanRequest">,
+          this.opts.humanId,
+          row.id,
+        ).catch(() => undefined);
+    }
+  }
+}
+
+/** The projects that wait for a source (`limits.waiting`, U-078), well-formed entries only. */
+export function waitingOf(
+  limits: Record<string, unknown>,
+): { projectId: string; agentId: string; since: string }[] {
+  const list = Array.isArray(limits.waiting) ? limits.waiting : [];
+  return list.flatMap((w) => {
+    if (!w || typeof w !== "object") return [];
+    const { projectId, agentId, since } = w as Record<string, unknown>;
+    return typeof projectId === "string" && typeof agentId === "string"
+      ? [{ projectId, agentId, since: typeof since === "string" ? since : "" }]
+      : [];
+  });
 }
 
 /** `FORERUNNER_SDK_HOST_COMMANDS`: "1" grants `cc:Bash` on the SDK path (see `SdkExecutorDeps.hostCommands`). */

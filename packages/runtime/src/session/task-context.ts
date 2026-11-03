@@ -47,8 +47,15 @@ export function failureWords(error: { code: string; message: string }): string {
       return "The run stopped at a budget before its next step.";
     case "timeout":
       return "The run took longer than its time limit.";
+    // U-078: a refused key or sign-in is said as such, never "model call failed".
+    case "provider_auth":
+      return "Anthropic refused the Claude key or sign-in. Save a new one in Settings.";
     case "unavailable":
-      return oneSentence(error.message) || "No Claude credential could run it.";
+      // The router's own words ("no billing source available for session work on the pc
+      // runner") are no sentence for a person (U-078).
+      return /no billing source available/i.test(error.message)
+        ? "No Claude credential can be used now."
+        : oneSentence(error.message) || "No Claude credential could run it.";
     default: {
       const said = oneSentence(error.message);
       return said ? `The run failed: ${said}` : "The run failed.";

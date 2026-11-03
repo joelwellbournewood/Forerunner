@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Start a test bench: the real daemon on an isolated home plus the real UI dev server.
 //   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
-//        [--provider bench|fake|bench-live|none] [--home <dir>] [--fresh] [--env KEY=VAL ...]
+//        [--provider bench|fake|bench-live|bench-api|none] [--api-key refused|limited|ok] [--home <dir>] [--fresh] [--env KEY=VAL ...]
 //        [--githost <port> [--githost-in-setup]]
 // Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
 // See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs. The daemon
@@ -25,6 +25,7 @@ import {
   spawnLogged,
   startDaemon,
   startGithost,
+  storeBenchKey,
   storeGithubToken,
   storeLiveKey,
   waitFor,
@@ -39,8 +40,16 @@ const provider = typeof args.provider === "string" ? args.provider : "bench";
 if (!name || name === true) fail("--name <n> is required");
 if (!Number.isInteger(daemonPort) || !Number.isInteger(uiPort))
   fail("--daemon-port <p> and --ui-port <u> are required");
-if (!["bench", "fake", "bench-live", "none"].includes(provider))
-  fail(`--provider must be bench, fake, bench-live or none (got ${provider})`);
+if (!["bench", "fake", "bench-live", "bench-api", "none"].includes(provider))
+  fail(`--provider must be bench, fake, bench-live, bench-api or none (got ${provider})`);
+// `--api-key refused|limited|ok` (U-078): a key-shaped key made here, written straight into the
+// home's vault (setup checks a key before it stores one); the stand-in of bench-api answers it
+// by its kind. Never with bench-live, whose key is the environment's.
+const apiKey = args["api-key"];
+if (apiKey !== undefined && !["refused", "limited", "ok"].includes(apiKey))
+  fail(`--api-key must be refused, limited or ok (got ${apiKey})`);
+if (apiKey !== undefined && provider === "bench-live")
+  fail("--api-key is for --provider bench-api (or none); bench-live stores the environment's key");
 // The real Messages API needs a key: refused here, before anything starts (not after a wait).
 if (provider === "bench-live" && !liveKey()) fail(LIVE_KEY_MISSING);
 
@@ -90,6 +99,10 @@ if (githostPort !== null) {
 if (provider === "bench-live") {
   console.log(`bench ${name}: storing the key in the home's vault (fr setup checks it first) ...`);
   storeLiveKey({ dir, home, extra });
+}
+if (apiKey !== undefined) {
+  console.log(`bench ${name}: writing a ${apiKey} API key into the home's vault ...`);
+  storeBenchKey({ dir, home, kind: apiKey });
 }
 console.log(`bench ${name}: starting the daemon (provider ${provider}) on port ${daemonPort} ...`);
 const daemon = await startDaemon({ dir, home, provider, port: daemonPort, extra });
@@ -153,6 +166,10 @@ const bench = {
   daemonNodePid: daemon.nodePid,
   projectsRoot: path.join(home, "data", "projects"),
   modelCallLog: path.join(home, "bench", "model-calls.jsonl"),
+  // bench-api (U-078): every request the Messages API stand-in got, its key named by id only.
+  ...(provider === "bench-api"
+    ? { apiRequestLog: path.join(home, "bench", "api-requests.jsonl") }
+    : {}),
   logs: { daemon: path.join(dir, "daemon.log"), ui: uiLog },
   steps: path.join(dir, "steps"),
   startedAt: new Date().toISOString(),

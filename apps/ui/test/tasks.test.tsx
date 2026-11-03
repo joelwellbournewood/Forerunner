@@ -99,6 +99,7 @@ describe("Tasks tab (design §3.5)", () => {
       pausedByPerson: new Set(),
       added: new Map(TASKS.map((t, i) => [t.id, i])),
       notLive: new Set(),
+      credentialWaits: new Map(),
     });
     expect(
       filterTasks(views, { status: "done", specialist: "", text: "" }).map((t) => t.id),
@@ -202,6 +203,52 @@ describe("Tasks tab (design §3.5)", () => {
     // A finished task has no cap line.
     expect(within(await rowOf("task_1")).queryByTestId("task-cap")).toBeNull();
     expect(within(await rowOf("t_gone")).queryByTestId("task-cap")).toBeNull();
+  });
+
+  it("a ready task that waits for a Claude credential says until when, and that it starts by itself (U-078)", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_wait", "Write note A");
+    harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
+      label: "Waits until 16:40, your API key's limit",
+      detail: "It starts by itself then.",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_wait", harness);
+    const row = await rowOf("t_wait");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent(
+      "Waits until 16:40, your API key's limit",
+    );
+    // The drawer says what comes next.
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(drawer).toHaveTextContent("It starts by itself then.");
+    // It is no failure: the ready task's own actions, never Try again.
+    expect(actionsOf(row)).toEqual(["Pause", "Cancel"]);
+    expect(row.textContent).not.toMatch(/Failed|no billing source/);
+  });
+
+  it("a project whose tasks wait for a new key says so in its status, with where to save one (U-078, the review of credential-limits)", async () => {
+    // Before: the header fell back to "0 of 2 done [Open Tasks]" while the rows waited.
+    const harness = createHarness();
+    for (const t of harness.daemon.state.tasks.filter((t) => t.projectId === "proj_atlas"))
+      t.status = "done";
+    // Nothing else waits on the person or runs here, so the wait is what the status says.
+    const others = harness.daemon.state.requests.filter((r) => r.projectId !== "proj_atlas");
+    harness.daemon.state.requests.splice(0, Infinity, ...others);
+    harness.daemon.state.sessions.splice(0, Infinity);
+    addTask(harness, "t_wait", "Write note A");
+    harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
+      label: "Waits for a new API key",
+      detail: "Save one in Settings; it starts by itself then.",
+      line: "Waiting for a new API key",
+      save: { label: "Save a new key", to: "/setup" },
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const status = await screen.findByTestId("project-status");
+    expect(status).toHaveTextContent("Waiting for a new API key: 1 task");
+    const header = screen.getByTestId("project-header");
+    expect(within(header).getByRole("link", { name: "Save a new key" })).toHaveAttribute(
+      "href",
+      "/setup",
+    );
   });
 
   it("Pause says what it does, sends the action and the note, shows Paused by you, and Undo puts it back", async () => {

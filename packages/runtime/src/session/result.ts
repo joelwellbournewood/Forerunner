@@ -45,6 +45,12 @@ export interface LastSessionOutcome {
    * `budget_project`, ADR 0112), in CHF: the result's "Stopped at this month's cap of CHF 0.23."
    */
   stopCapChfMicro?: number;
+  /**
+   * The work waits for a Claude credential (U-078): the sentence, as the session ended on it
+   * ("Waits until 15:40 (your subscription's limit) and starts by itself.", "Waits for a new
+   * API key: save one in Settings.").
+   */
+  credentialWait?: string;
   spentChfMicro: number;
 }
 
@@ -136,6 +142,180 @@ export interface ToldByCards {
 }
 
 /**
+ * One sentence builder of the result (`RESULT_LINE_BUILDERS`): the sentences it adds to line 1
+ * (what needs the person or waits), line 2 (what happened) or line 3 (what is next, how it
+ * ended, the money). `f` is the facts; `o` the outcome as this reader sees it (with `told`, what
+ * an open card already says is left out).
+ */
+export interface ResultLineBuilder {
+  /** A name for tests and the maintainer doc. */
+  name: string;
+  line: 1 | 2 | 3;
+  build(f: ResultFacts, o: LastSessionOutcome, told: ToldByCards | undefined): string[];
+}
+
+/**
+ * The result's sentences in order (U-078 made it a list so each area adds its own builder and
+ * changes no other's; later areas append theirs where the order says): what waits for a reset, a
+ * key or the person first; then what happened (what was merged and what waits to merge); then
+ * how it ended, what is left, and the cost last.
+ */
+export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
+  {
+    // U-078: the work waits for a Claude credential, and says when it starts by itself.
+    name: "credential wait",
+    line: 1,
+    build: (_f, o) => (o.credentialWait ? [o.credentialWait] : []),
+  },
+  {
+    name: "plan approval",
+    line: 1,
+    build: (_f, o, told) =>
+      o.stopReason === "plan_awaiting_approval" && !told?.plan
+        ? ["The plan waits for your approval in the Inbox; nothing ran."]
+        : [],
+  },
+  {
+    name: "needs you",
+    line: 1,
+    build: (_f, o) => (o.needsYou.length ? [needsYouSentence(titlesOf(o.needsYou))] : []),
+  },
+  {
+    name: "failed",
+    line: 1,
+    build: (_f, o) => {
+      if (o.failed.length === 1 && o.failed[0]) {
+        const f0 = o.failed[0];
+        // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
+        const reason = plainPlurals(withoutIds(f0.reason)).replace(/\s*\(\s*\)/g, "");
+        return [`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`];
+      }
+      return o.failed.length > 1 ? [`${namesOf(titlesOf(o.failed))} failed.`] : [];
+    },
+  },
+  {
+    name: "waiting for Docker",
+    line: 1,
+    build: (_f, o) =>
+      o.waitingForDocker.length
+        ? [`Waiting for Docker: ${namesOf(titlesOf(o.waitingForDocker))}.`]
+        : [],
+  },
+  {
+    name: "done",
+    line: 2,
+    build: (_f, o) =>
+      o.done.length
+        ? [
+            `Did ${o.done.length} ${plural(o.done.length, "task", "tasks")}: ${namesOf(titlesOf(o.done))}.`,
+          ]
+        : [],
+  },
+  {
+    name: "in review",
+    line: 2,
+    build: (f) =>
+      f.inReview.length
+        ? [
+            `${namesOf(titlesOf(f.inReview))} ${plural(f.inReview.length, "waits", "wait")} for review.`,
+          ]
+        : [],
+  },
+  {
+    name: "merged",
+    line: 2,
+    build: (f) =>
+      f.mergedPrs
+        ? [`Merged ${f.mergedPrs} ${plural(f.mergedPrs, "pull request", "pull requests")}.`]
+        : [],
+  },
+  {
+    // A wait for Docker is the reason nothing ran, whether or not its card already said so.
+    name: "nothing could run",
+    line: 2,
+    build: (f, o) => {
+      const did = o.done.length || f.inReview.length || f.mergedPrs;
+      if (did || o.stopReason !== "nothing_runnable" || f.outcome.waitingForDocker.length)
+        return [];
+      const w = o.waiting[0];
+      return [
+        w
+          ? `Nothing could run: "${w.title}" waits on ${w.waitsOn.join(" and ")}.`
+          : "Nothing could run: no task is ready.",
+      ];
+    },
+  },
+  {
+    name: "how it ended",
+    line: 3,
+    build: (_f, o) => {
+      const stop = stopWords(o.stopReason, o.stopCapChfMicro);
+      return stop ? [stop] : [];
+    },
+  },
+  {
+    name: "left for next time",
+    line: 3,
+    build: (f, o) => {
+      if (f.leftOutForBudget.length) {
+        const named = f.leftOutForBudget
+          .slice(0, 3)
+          .map((t) => `"${t.title}" (about ${formatChf(t.estimateChfMicro)})`)
+          .join(", ");
+        const more =
+          f.leftOutForBudget.length > 3 ? ` and ${f.leftOutForBudget.length - 3} more` : "";
+        return [
+          `Left for next time: ${named}${more}; this session's ${formatChf(f.sessionCapChfMicro)} was used.`,
+        ];
+      }
+      // Ready tasks that wait for a credential are said by the wait's sentence, not as ready
+      // to continue (U-078: they start by themselves).
+      if (o.leftOver.length && !o.credentialWait)
+        return [
+          `${namesOf(titlesOf(o.leftOver))} ${plural(o.leftOver.length, "is", "are")} ready to continue.`,
+        ];
+      return [];
+    },
+  },
+  {
+    // The session's own reviewed PRs left open, said as what this session did: the Overview's
+    // "Waiting for you to merge" lists every PR that waits now (earlier sessions', Forerunner's
+    // docs), and "1 reviewed pull request waits" stood next to a list of 3 there and stayed
+    // after a merge on GitHub (review, 2026-11-02).
+    name: "left to merge",
+    line: 3,
+    build: (f) =>
+      f.openPrs
+        ? [
+            `Left ${f.openPrs} reviewed ${plural(f.openPrs, "pull request", "pull requests")} for you to merge.`,
+          ]
+        : [],
+  },
+  {
+    name: "waiting on other tasks",
+    line: 3,
+    build: (_f, o) => {
+      const blocked = o.waiting.length;
+      if (blocked && (o.failed.length || o.needsYou.length))
+        return [`${blocked} ${plural(blocked, "task waits", "tasks wait")} on it.`];
+      if (blocked)
+        return [`${blocked} ${plural(blocked, "task waits", "tasks wait")} on other tasks.`];
+      return [];
+    },
+  },
+  {
+    name: "nothing left",
+    line: 3,
+    build: (f, o) => (f.openTasks === 0 && o.done.length ? ["Nothing left."] : []),
+  },
+  {
+    name: "cost",
+    line: 3,
+    build: (_f, o) => [`${formatChf(o.spentChfMicro)}.`],
+  },
+];
+
+/**
  * The result's lines (at most three). With `told`, what an open card already says is left out:
  * the news the session-end notification and the Inbox Update carry (the session page and the
  * Overview keep the whole result).
@@ -149,78 +329,12 @@ export function sessionResultLines(f: ResultFacts, told?: ToldByCards): string[]
         waitingForDocker: told.docker ? [] : f.outcome.waitingForDocker,
       }
     : f.outcome;
-  const lines: string[] = [];
-  // 1. What needs the person.
-  const asks: string[] = [];
-  if (o.stopReason === "plan_awaiting_approval" && !told?.plan)
-    asks.push("The plan waits for your approval in the Inbox; nothing ran.");
-  if (o.needsYou.length) asks.push(needsYouSentence(titlesOf(o.needsYou)));
-  if (o.failed.length === 1 && o.failed[0]) {
-    const f0 = o.failed[0];
-    // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
-    const reason = plainPlurals(withoutIds(f0.reason)).replace(/\s*\(\s*\)/g, "");
-    asks.push(`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`);
-  } else if (o.failed.length > 1) asks.push(`${namesOf(titlesOf(o.failed))} failed.`);
-  if (o.waitingForDocker.length)
-    asks.push(`Waiting for Docker: ${namesOf(titlesOf(o.waitingForDocker))}.`);
-  if (asks.length) lines.push(asks.join(" "));
-  // 2. What happened.
-  const did: string[] = [];
-  if (o.done.length)
-    did.push(
-      `Did ${o.done.length} ${plural(o.done.length, "task", "tasks")}: ${namesOf(titlesOf(o.done))}.`,
-    );
-  if (f.inReview.length)
-    did.push(
-      `${namesOf(titlesOf(f.inReview))} ${plural(f.inReview.length, "waits", "wait")} for review.`,
-    );
-  if (f.mergedPrs)
-    did.push(`Merged ${f.mergedPrs} ${plural(f.mergedPrs, "pull request", "pull requests")}.`);
-  // A wait for Docker is the reason nothing ran, whether or not its card already said so.
-  if (!did.length && o.stopReason === "nothing_runnable" && !f.outcome.waitingForDocker.length) {
-    const w = o.waiting[0];
-    did.push(
-      w
-        ? `Nothing could run: "${w.title}" waits on ${w.waitsOn.join(" and ")}.`
-        : "Nothing could run: no task is ready.",
-    );
-  }
-  if (did.length) lines.push(did.join(" "));
-  // 3. What is next, how it ended, the money.
-  const next: string[] = [];
-  const stop = stopWords(o.stopReason, o.stopCapChfMicro);
-  if (stop) next.push(stop);
-  if (f.leftOutForBudget.length) {
-    const named = f.leftOutForBudget
-      .slice(0, 3)
-      .map((t) => `"${t.title}" (about ${formatChf(t.estimateChfMicro)})`)
-      .join(", ");
-    const more = f.leftOutForBudget.length > 3 ? ` and ${f.leftOutForBudget.length - 3} more` : "";
-    next.push(
-      `Left for next time: ${named}${more}; this session's ${formatChf(f.sessionCapChfMicro)} was used.`,
-    );
-  } else if (o.leftOver.length) {
-    next.push(
-      `${namesOf(titlesOf(o.leftOver))} ${plural(o.leftOver.length, "is", "are")} ready to continue.`,
-    );
-  }
-  // The session's own reviewed PRs left open, said as what this session did: the Overview's
-  // "Waiting for you to merge" lists every PR that waits now (earlier sessions', Forerunner's
-  // docs), and "1 reviewed pull request waits" stood next to a list of 3 there and stayed after
-  // a merge on GitHub (review, 2026-11-02).
-  if (f.openPrs)
-    next.push(
-      `Left ${f.openPrs} reviewed ${plural(f.openPrs, "pull request", "pull requests")} for you to merge.`,
-    );
-  const blocked = o.waiting.length;
-  if (blocked && (o.failed.length || o.needsYou.length))
-    next.push(`${blocked} ${plural(blocked, "task waits", "tasks wait")} on it.`);
-  else if (blocked)
-    next.push(`${blocked} ${plural(blocked, "task waits", "tasks wait")} on other tasks.`);
-  if (f.openTasks === 0 && o.done.length) next.push("Nothing left.");
-  next.push(`${formatChf(o.spentChfMicro)}.`);
-  lines.push(next.join(" "));
-  return lines.slice(0, 3);
+  const byLine: Record<1 | 2 | 3, string[]> = { 1: [], 2: [], 3: [] };
+  for (const b of RESULT_LINE_BUILDERS) byLine[b.line].push(...b.build(f, o, told));
+  return [byLine[1], byLine[2], byLine[3]]
+    .filter((sentences) => sentences.length > 0)
+    .map((sentences) => sentences.join(" "))
+    .slice(0, 3);
 }
 
 /**

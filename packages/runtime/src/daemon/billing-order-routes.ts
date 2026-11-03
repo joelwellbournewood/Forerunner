@@ -8,7 +8,12 @@ import type { Clock } from "@forerunner/platform";
 import type { StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { Hono } from "hono";
-import { personOrderOf, planUsageOf, restingUntilOf } from "../wiring/billing-pick.ts";
+import {
+  personOrderOf,
+  planUsageOf,
+  refusedSince,
+  restingUntilOf,
+} from "../wiring/billing-pick.ts";
 import { stateSources } from "../wiring/billing-ports.ts";
 import {
   BillingOrderBody,
@@ -32,7 +37,8 @@ import {
  */
 export interface BillingOrderRoutesDeps {
   store: Pick<StateStore, "billingSource" | "costLedger" | "human" | "auditLog">;
-  vault: Pick<Vault, "has">;
+  /** `get` tells a refused credential from a new one saved since (U-078). */
+  vault: Pick<Vault, "has"> & Partial<Pick<Vault, "get">>;
   clock: Clock;
   humanId: string;
   chfPerUsd: () => number;
@@ -86,19 +92,22 @@ export async function billingOrderView(deps: BillingOrderRoutesDeps): Promise<Bi
       ? await deps.vault.has(source.credentialRef).catch(() => false)
       : false;
     const resting = restingUntilOf(source, deps.clock.now());
+    const refused = hasCredential ? await refusedSince(source, deps.vault) : null;
     const monthlyCap =
       typeof source.limits.monthlyUsdMicro === "number" ? source.limits.monthlyUsdMicro : null;
     const blocked: BillingOrderSourceView["blocked"] = !enabled.has(r.id)
       ? "disabled"
       : !hasCredential
         ? "no_credential"
-        : resting
-          ? "resting"
-          : kind === "subscription" && usage.share !== null && usage.share >= usage.cap
-            ? "allowance"
-            : monthlyCap !== null && usage.monthUsdMicro >= monthlyCap
-              ? "monthly_cap"
-              : null;
+        : refused
+          ? "refused"
+          : resting
+            ? "resting"
+            : kind === "subscription" && usage.share !== null && usage.share >= usage.cap
+              ? "allowance"
+              : monthlyCap !== null && usage.monthUsdMicro >= monthlyCap
+                ? "monthly_cap"
+                : null;
     sources.push({
       id: r.id,
       kind,

@@ -1,7 +1,7 @@
 # 0100 — The person orders their Claude credentials; every call follows the order and falls back on a usage limit; an API key never runs through Claude Code
 
 Date: 2026-10-31
-Status: accepted
+Status: accepted (amended 2026-11-03: a refused credential, waiting at a limit, the mid-session setting)
 
 ## Context
 
@@ -129,3 +129,95 @@ How the two providers report that a credential's limit is reached (read 2026-10-
   would be forgotten daily and the first call after each start would meet the limit again.
 - **Fall back on any provider error.** Rejected: a refused token or a bad request would hop
   credentials and hide the cause; only the limit codes move on.
+
+## Amendment (2026-11-03, phase E wave 7, area "credential-limits": the owner's decision of 2026-11-02)
+
+The owner's decision of 2026-11-02 on credentials ("refused-key detection and one card; wait at
+a limit with the reset time and start by itself; honest words"; owner-answers.md section 2)
+changes points 4 and 6 and adds what a refused credential does. What the code did before it:
+
+- A refused key or an expired sign-in (401, 403, Claude Code's `authentication_failed`) became
+  `provider_error` "model call failed" in the loop and on the SDK path: a passing error, tried
+  again at once, then a failed task with its card; the next task picked the same refused key.
+- With no credential that could serve (one credential at its limit, or every one resting), the
+  router's "no billing source available for session work on the pc runner" made every remaining
+  task of the session fail, each with that sentence on its own card.
+- A task stopped by a limit went back to ready, was held out of the session, and its sentence
+  said it "runs on the next credential"; nothing started it when the limit reset, and the
+  session's other tasks moved onto the next credential (with a second one saved).
+
+Decision, amending point 4 for task runs and adding three points:
+
+8. **A refused credential is marked and named once.** `provider_auth` survives the loop and the
+   SDK path with the provider's words (`isClaudeCodeRefusal`: an assistant error of a refusal
+   kind, or a result reading as a 401 or an expired sign-in). `RouterTaskBilling.refuse` marks
+   the source (`limits.refusedAt`, `refusedKey`: the first 16 hex characters of the refused
+   credential's SHA-256, never the value, `refusedWhy`), writes a `billing.refused` audit row
+   and files one Inbox card per credential ("Anthropic refused your API key" / "... your Claude
+   sign-in"; "Save a new one in Settings."; a link to the setup assistant, no answer to give),
+   filed once while the mark stands. The router skips the source (`refused`) until a new
+   credential is saved; a different credential in the vault ends the mark by itself (the
+   fingerprint), and the setup assistant ends it at once (`credentialSaved`) and closes the
+   card. A task the refusal stopped goes back to ready without counting a try and is never
+   retried as a passing error; chat, planning and reviews (`RoutedProvider`) mark the source the
+   same way and make the call once more on the next source. Settings shows the source as
+   "Refused".
+9. **Work waits; it never fails for want of a credential.** When no credential that may serve a
+   task can now (each rests or is refused; under 'Wait', point 10, the first choice rests), the
+   task goes back to ready without counting a try, the session ends on one sentence instead of a
+   row of failed tasks ("Waits until 15:40 (your subscription's limit) and starts by itself.",
+   or "Waits for a new API key: save one in Settings."), the task's row says the same
+   ("Waits until 15:40, your subscription's limit"), and the project is kept on the source it
+   waits for (`limits.waiting`, so it survives a restart). Before every scheduler tick
+   (`RuntimeApp.billing.waits.wake`) every project whose source can serve again (its rest ended,
+   or a new credential was saved) gets one session start (`budget_reset`) while it has ready
+   work; saving a new credential in the setup assistant wakes it at once. The time is said in
+   the person's time zone.
+10. **"When my first choice runs out mid-session" (`human.notify_prefs.mid_session_limit`).**
+    `wait`, the default (the owner's decision of 2026-11-02, owner-answers.md section 2: "the
+    default is to wait and start again by itself ... switching moves work from plan limits onto
+    money"): nothing moves onto another credential: a first choice that rests holds the task
+    runs' picks (`RouteContext.waitOnRest`, `details.waitFor`), so the stopped task and the
+    session's other tasks whose first choice it is wait for its reset and start by themselves,
+    whether or not another credential is saved. `use_other`: the stopped task goes on at once in
+    the same session on the next credential that can do it, and so does the rest of the session
+    (point 4 as before, without holding the task out). A refused credential is no "running
+    out": the next one serves under both values. Task runs only; chat, planning and reviews
+    keep point 4's one-time move to the next source, and the setting's row says so. Settings
+    changes it through `settings.set mid_session_limit` (medium risk: `use_other` asks a yes).
+    The owner confirms the meaning with a second credential in U-078 (built: (a) nothing moves;
+    option (b): only the stopped task waits while the others go on). Changing the answer
+    changes one rule in the pick (`waitOnRest`) and the sentences.
+11. **Honest words after a limit.** The session log says what is really scheduled: "Your
+    Claude subscription reached its usage limit; "X" waits until 15:40 (your subscription's
+    limit) and starts by itself." (wait), "...; "X" continues on your API key now." (use the
+    other one, or a refusal with another credential), "Anthropic refused your API key; "X"
+    waits for a new API key: save one in Settings." The router's own sentence never reaches a
+    person (`failureWords` of `unavailable`).
+12. **Planning waits too (the review of credential-limits, 2026-11-03).** A new project's brief
+    is usually the first call that meets a refused key, and the card's "The work that needs it
+    waits and starts by itself then" must hold for it as well. A background draft (`enqueue`)
+    whose planning call met a refusal, a usage limit or no credential that can serve asks the
+    routed provider what a planning call would wait for now (`RoutedProvider.waitNow`, a pick
+    that only reads); when the only credential that may serve it is refused or resting, the
+    intake is no failure: `summary_cache.intake.wait` keeps what it waits for, the project is
+    kept on that source's `limits.waiting` like task work, and `GET /projects/:id/intake` says
+    `state: "waiting"` with the words ("Planning waits for a new API key: save one in
+    Settings." with a "Save a new key" link, or "Planning waits until 15:40 (your subscription's
+    limit) and starts by itself."). The project page, Home, the Start dialog and the chat say the
+    same, with no Try again (it cannot work while the credential is refused or resting). The
+    wake (`RuntimeApp.billing.waits.wake`, point 9) drafts the plan again once the credential
+    serves: a new key saved, or the limit's reset; a planning call holds the agent's one session,
+    so when the same wake starts a task session the plan keeps its wait for the next tick. The
+    project status sentence also says when a project's tasks wait for a credential ("Waiting for
+    a new API key: 2 tasks [Save a new key]", "Waiting until 15:40 (your subscription's limit):
+    2 tasks"); before, it fell through to "0 of 2 done".
+
+Consequences: a refused key costs one call and one card, not two failed tasks and four calls; a
+limit never fails a task, and the work starts by itself at the reset, after a restart too; with
+the default, plan-limit work never becomes API spend without the person's choice. A task held
+for a resting first choice may wait while a second credential could have served (the owner's
+choice). A manual Start while the credential still rests ends at once with the same sentence. The
+bench exercises all of it with no real key (`--provider bench-api`: the routed provider over the
+vault's keys, the Messages API stand-in in testenv answering a refused key with 401 and a limited
+one with the spend cap until its reset).

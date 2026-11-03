@@ -32,6 +32,11 @@ import {
   createRolePlayer,
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
+import {
+  keyRule,
+  messagesApiStandIn,
+  standInFetch,
+} from "../../../testenv/src/provider/messages-api.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
@@ -7505,4 +7510,345 @@ describe("the UI client against the real daemon: a session ended at this month's
     expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.02.");
     expect(updates.join(" | ")).not.toMatch(/budget is used/);
   }, 60_000);
+});
+
+describe("the UI client against the real daemon: a Claude credential at its limit (credential-limits, U-078)", () => {
+  // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
+  const oauth = ["sk-ant-oat01-", "credlimit", "8".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "credlimit", "9".repeat(40)].join(""); // not-a-secret
+  const resetAt = "2026-03-05T10:40:00.000Z";
+
+  /** Claude Code at the plan's limit on its first `limited` turns, then answering. */
+  const claudeCode =
+    (calls: string[], limited: number): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      const atLimit = calls.length <= limited;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+
+  async function compose(sdkQuery: NonNullable<ComposeOptions["sdkQuery"]>) {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-cred-"));
+    const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      provider: new AcceptingCriticProvider(onKey),
+      sdkQuery,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, clock, onKey };
+  }
+
+  const addTask = (client: DaemonClient, projectId: string, title: string) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is written`,
+      acceptanceCriteria: ["it is written"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 0,
+    });
+
+  async function runToEnd(client: DaemonClient, projectId: string): Promise<string> {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      async () => (await client.session(sessionId)).status,
+      20_000,
+    );
+    return sessionId;
+  }
+
+  /** A model call of a task's run (the critic's reviews are not). */
+  const workCalls = (onKey: ScriptedProvider) =>
+    onKey.calls.filter((c) => !(c.tools ?? []).some((t) => t.name === "submit_review"));
+
+  it("under the default 'Wait': the tasks wait (none on the API key), the screens say until when, and the start at the reset runs them", async () => {
+    const sdkCalls: string[] = [];
+    const { rt, client, clock, onKey } = await compose(claudeCode(sdkCalls, 1));
+    try {
+      // Settings lists the setting, at its default.
+      const row = (await client.settings()).find((s) => s.key === "human.mid_session_limit");
+      expect(row?.value).toBe("wait");
+      expect(row?.label).toBe("When my first choice runs out mid-session");
+      const project = await client.createProject({ name: "Waits", goal: "Two notes" });
+      await addTask(client, project.id, "Write note A");
+      await addTask(client, project.id, "Write note B");
+      const sessionId = await runToEnd(client, project.id);
+      const session = await client.session(sessionId);
+      // 10:40 UTC is 11:40 in Zurich. One sentence, no failed task.
+      expect(session.summary?.split("\n")[0]).toBe(
+        "Waits until 11:40 (your subscription's limit) and starts by itself.",
+      );
+      const tasks = await client.tasks(project.id);
+      expect(tasks.map((t) => [t.status, t.display?.label])).toEqual([
+        ["ready", "Waits until 11:40, your subscription's limit"],
+        ["ready", "Waits until 11:40, your subscription's limit"],
+      ]);
+      // 'Wait': nothing moved onto the API key.
+      expect(workCalls(onKey)).toHaveLength(0);
+      expect(sdkCalls).toHaveLength(1);
+      const order = await client.billingOrder();
+      expect(order.sources.find((s) => s.kind === "subscription")).toMatchObject({
+        usable: false,
+        blocked: "resting",
+        restingUntil: resetAt,
+      });
+      // No card: a limit asks nothing of the person.
+      const me = await client.me();
+      expect((await client.inbox(me.id)).requests.filter((r) => r.status === "open")).toEqual([]);
+      // At the reset the scheduler starts the project's session by itself.
+      clock.set(Date.parse("2026-03-05T10:41:00Z"));
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the tasks the reset's session ran",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      expect(workCalls(onKey)).toHaveLength(0);
+      const sessions = await client.sessions({ projectId: project.id });
+      expect(sessions.map((s) => s.trigger).sort()).toEqual(["budget_reset", "manual"]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("Settings' 'Use the other one' is stored after a yes, and the stopped task goes on at once on the API key", async () => {
+    const { rt, client } = await compose(claudeCode([], 99));
+    try {
+      // What the Settings dialog sends; moving plan-limit work onto money asks a yes first.
+      const asked = await client.executeCommands({
+        commands: [
+          { name: "settings.set", params: { key: "mid_session_limit", value: "use_other" } },
+        ],
+        wordsUsed:
+          "Settings: When my first choice runs out mid-session to Use the other one at once (may cost money)",
+        source: "ui",
+      });
+      expect(asked.status, JSON.stringify(asked)).toBe("pending");
+      const yes = await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
+      expect(yes.status, JSON.stringify(yes)).toBe("done");
+      expect(
+        (await client.settings()).find((s) => s.key === "human.mid_session_limit")?.value,
+      ).toBe("use_other");
+      const project = await client.createProject({ name: "Other", goal: "A note" });
+      await addTask(client, project.id, "Write the note");
+      const sessionId = await runToEnd(client, project.id);
+      expect((await client.tasks(project.id)).map((t) => t.status)).toEqual(["done"]);
+      const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+      expect(lines).toContain(
+        'Your Claude subscription reached its usage limit; "Write the note" continues on your API key now.',
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("a refused API key: one card with where to save a new one, planning and tasks wait (none failed), Settings says Refused, and the key saved in the setup assistant starts both by itself", async () => {
+    // As `fr daemon` composes it, with no injected provider: the routed provider over the
+    // vault's key calls the Messages API stand-in, which answers a key holding "refused" with
+    // 401; the bench's role-player is the model behind it once a key serves.
+    const refused = ["sk-ant-api03-", "refused", "7".repeat(40)].join(""); // not-a-secret
+    const good = ["sk-ant-api03-", "good", "6".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-refused-"));
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_api_key: refused }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const calls = () => standIn.requests.filter((r) => r.path === "/v1/messages");
+    try {
+      const me = await client.me();
+      // New project with a brief (the dialog's body): planning meets the refusal and waits.
+      const planned = await client.createProject({
+        name: "Quotes",
+        goal: goalFromBrief("A page that shows a random quote."),
+        brief: "A page that shows a random quote.",
+        intake: true,
+      });
+      await eventually(
+        async () => (await client.intakeStatus(planned.id)).state === "waiting",
+        "the planning to wait for a new key",
+        async () => JSON.stringify(await client.intakeStatus(planned.id)),
+        20_000,
+      );
+      const plan = await client.intakeStatus(planned.id);
+      expect(plan.error).toBeNull();
+      expect(plan.wait).toMatchObject({
+        reason: "refused",
+        text: "Planning waits for a new API key: save one in Settings.",
+        save: { label: "Save a new key", to: "/setup" },
+      });
+      expect((await client.project(planned.id)).statusLine).toEqual({
+        kind: "waiting",
+        text: "Planning waits for a new API key",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // The Start dialog names the wait with the same link, never "add a task".
+      expect((await client.startCheck(planned.id)).blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet. Planning waits for a new API key: save one in Settings.",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+
+      // A project with two tasks: its session meets the mark, not the API, and ends on one
+      // sentence; the rows wait, none failed.
+      const notes = await client.createProject({ name: "Notes", goal: "Two notes" });
+      await addTask(client, notes.id, "Write note A");
+      await addTask(client, notes.id, "Write note B");
+      const sessionId = await runToEnd(client, notes.id);
+      expect((await client.session(sessionId)).summary?.split("\n")[0]).toBe(
+        "Waits for a new API key: save one in Settings.",
+      );
+      expect((await client.tasks(notes.id)).map((t) => [t.status, t.display?.label])).toEqual([
+        ["ready", "Waits for a new API key"],
+        ["ready", "Waits for a new API key"],
+      ]);
+      expect((await client.project(notes.id)).statusLine).toEqual({
+        kind: "waiting",
+        text: "Waiting for a new API key: 2 tasks",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // One request reached Anthropic, and was refused.
+      expect(calls().map((c) => c.status)).toEqual([401]);
+
+      // The Inbox: exactly one card, with nothing to answer and the link to the setup assistant.
+      const open = (await client.inbox(me.id)).requests.filter((r) => r.status === "open");
+      expect(open.map((r) => r.title)).toEqual(["Anthropic refused your API key"]);
+      expect(open[0]?.choices ?? []).toEqual([]);
+      expect(open[0]?.links?.map((l) => [l.label, l.to])).toEqual([["Save a new key", "/setup"]]);
+      // Settings -> Claude: which to use first.
+      expect((await client.billingOrder()).sources.map((s) => [s.kind, s.blocked])).toEqual([
+        ["api_key", "refused"],
+      ]);
+
+      // The setup assistant saves a new key: the mark and the card go, the tasks' session starts
+      // by itself, and the plan is drafted on the next tick (a planning call would hold the
+      // agent's one session while the tasks' start is made).
+      const saved = await client.setupAnthropic(good);
+      expect(saved.ok).toBe(true);
+      expect((await client.billingOrder()).sources.map((s) => s.blocked)).toEqual([null]);
+      const answered = (await client.inbox(me.id)).requests.find(
+        (r) => r.title === "Anthropic refused your API key",
+      );
+      expect(answered?.status).not.toBe("open");
+      expect(answered?.outcome).toBe("A new one is saved; the work that waited for it goes on.");
+      await eventually(
+        async () => (await client.tasks(notes.id)).every((t) => t.status === "done"),
+        "the tasks that waited to finish",
+        async () => (await client.tasks(notes.id)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      expect((await client.sessions({ projectId: notes.id })).map((s) => s.trigger).sort()).toEqual(
+        ["budget_reset", "manual"],
+      );
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.intakeStatus(planned.id)).state === "pending",
+        "the plan to be drafted after the new key",
+        async () => JSON.stringify(await client.intakeStatus(planned.id)),
+        30_000,
+      );
+      expect((await client.project(planned.id)).statusLine?.text).toBe(
+        "Waiting for you: approve the plan",
+      );
+      // Every call after the refusal went with the new key, and none was refused.
+      expect(
+        calls()
+          .slice(1)
+          .every((c) => c.status === 200),
+      ).toBe(true);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

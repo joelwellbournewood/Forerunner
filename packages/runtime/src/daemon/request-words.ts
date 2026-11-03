@@ -854,6 +854,35 @@ function mergeLeftOpenOutcome(card: JsonObject): string | null {
   return null;
 }
 
+/** The refused-credential card's key (`session/credential-wait.ts`, U-078). */
+const CREDENTIAL_REFUSED_KEY = "credential:refused";
+
+/**
+ * Anthropic refused a Claude credential (U-078, ADR 0100 amended): one card per credential, no
+ * task, no answer to give; the link opens the setup assistant where a new key or sign-in is
+ * pasted, which closes the card and starts the work that waited for it.
+ */
+function refusedCredentialCard(card: JsonObject): RequestWords {
+  const subscription = card.credential_kind === "subscription";
+  return {
+    title:
+      str(card.title) ??
+      (subscription ? "Anthropic refused your Claude sign-in" : "Anthropic refused your API key"),
+    body: "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+    choices: [],
+    links: [
+      {
+        label: subscription ? "Save a new sign-in" : "Save a new key",
+        to: "/setup",
+        explain: "The setup assistant checks it with Anthropic and saves it.",
+      },
+    ],
+    reply: "none",
+    details: [],
+    outcome: null,
+  };
+}
+
 /** Any other card: its own words, its options with the reject-like ones secondary. */
 function genericCard(
   r: Pick<HumanRequestRow, "kind" | "why" | "steps" | "options" | "change_card">,
@@ -978,6 +1007,13 @@ export function requestWords(
     words = dockerCard(r, card, ctx);
     if (card.outcome === "cancel")
       outcome = `${ctx.taskTitle ? q(ctx.taskTitle) : "The task"} was cancelled.`;
+  } else if (key === CREDENTIAL_REFUSED_KEY) {
+    words = refusedCredentialCard(card);
+    // Closed when a new credential was saved (`closeRefusedCards`).
+    if (r.status === "withdrawn") {
+      words.outcome = "A new one is saved; the work that waited for it goes on.";
+      return words;
+    }
   } else {
     words = genericCard(r);
     outcome = changeCardOutcome(card, r.answer);

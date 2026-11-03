@@ -239,10 +239,11 @@ export function StartSessionDialog({
   // What a session would run is said only when it can start: above "Claude is not connected"
   // or "Sessions are stopped", "This session runs ..." contradicted the disabled Start.
   const plan = data && !blocked ? planSentence(data) : null;
-  // While the plan from the brief waits for approval or is being drafted, the daemon's one
+  // While the plan from the brief waits for approval, is being drafted or waits for a Claude
+  // credential (U-078), the daemon's one
   // sentence names it with its one link (startBlocked); nothing is said twice (wave 2 handoff:
   // three statements of one blocker, one pointing to the Tasks tab).
-  const planBlocks = intake === "pending" || intake === "drafting";
+  const planBlocks = intake === "pending" || intake === "drafting" || intake === "waiting";
   const noReadyTask =
     data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable" && !planBlocks;
 

@@ -108,6 +108,31 @@ export function isClaudeCodeUsageLimit(kind: string, text: string, rejected: boo
   return rejected || PLAN_LIMIT_TEXT.test(text);
 }
 
+/** Claude Code's assistant error kinds that mean the sign-in itself was not accepted (U-078). */
+const CLAUDE_CODE_REFUSALS: ReadonlySet<string> = new Set([
+  "authentication_failed",
+  "oauth_org_not_allowed",
+  "account_on_hold",
+  "verification_required",
+]);
+/**
+ * A result text that says the sign-in was refused: an API error or HTTP status 401, an expired
+ * or revoked token. A bare "401" is not enough (the review of credential-limits): a run's own
+ * output can hold the number ("expected 401 to be 200").
+ */
+const REFUSED_TEXT =
+  /(?:api error|status(?: code)?|http)\s*:?\s*401\b|\b401 unauthorized\b|authentication_error|invalid (?:x-api-key|api key|bearer token|authentication)|oauth token (?:has )?(?:expired|been revoked)|please run \/login|not logged in/i;
+
+/**
+ * Whether Claude Code says Anthropic refused the credential (U-078, ADR 0100 amended): an
+ * assistant error of a refusal kind (`authentication_failed` and its kin), or a result whose
+ * text is a 401 or an expired sign-in. Such a run is `provider_auth`, never a passing error.
+ */
+export function isClaudeCodeRefusal(kind: string | null | undefined, text: string): boolean {
+  if (kind && CLAUDE_CODE_REFUSALS.has(kind)) return true;
+  return REFUSED_TEXT.test(text);
+}
+
 /**
  * Until when a source rests after a usage limit: the reported reset when it is ahead (at most
  * `MAX_REST_MS` away), else `DEFAULT_REST_MS` from now.

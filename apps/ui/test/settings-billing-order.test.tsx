@@ -54,7 +54,8 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
     expect(sub).toHaveTextContent("1. Claude subscription");
     expect(within(sub).getByTestId("billing-order-how")).toHaveTextContent("Through Claude Code");
     expect(within(sub).getByTestId("billing-order-status")).toHaveTextContent(
-      `Resting until ${formatDateTime(resting)} after a usage limit`,
+      // U-078: what happens to the work that waits for it.
+      `Resting until ${formatDateTime(resting)} (its usage limit); waiting work starts by itself then`,
     );
     expect(within(sub).getByTestId("billing-order-spent")).toHaveTextContent(
       "42% of the allowance used this month",
@@ -73,6 +74,27 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
       within(section).getByRole("button", { name: "Move Claude subscription up" }),
     ).toBeDisabled();
     expect(within(section).getByRole("button", { name: "Move API key down" })).toBeDisabled();
+  });
+
+  it("a key Anthropic refused reads Refused, with where to save a new one (U-078)", async () => {
+    const harness = createHarness({
+      billingOrder: {
+        sources: [
+          { kind: "subscription", usable: false, blocked: "refused" },
+          { kind: "api_key", usable: false, blocked: "refused" },
+        ],
+      },
+    });
+    renderApp("/settings", harness);
+    const section = await screen.findByTestId("billing-order-section");
+    const key = await within(section).findByTestId("billing-order-row-api_key");
+    expect(within(key).getByTestId("billing-order-status")).toHaveTextContent(
+      "Refused: Anthropic did not accept this key. Save a new one under Accounts and keys",
+    );
+    const sub = within(section).getByTestId("billing-order-row-subscription");
+    expect(within(sub).getByTestId("billing-order-status")).toHaveTextContent(
+      "Refused: Anthropic did not accept this sign-in. Save a new one under Accounts and keys",
+    );
   });
 
   it("Move up puts the API key first, sends the order the daemon expects and shows it", async () => {

@@ -94,6 +94,7 @@ export const SETTING_KEYS = [
   "shared_with",
   "quiet_hours",
   "notify_channel",
+  "mid_session_limit",
   "voice_alerts",
   "default_autonomy",
   "language",

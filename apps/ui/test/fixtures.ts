@@ -626,6 +626,17 @@ export const SETTINGS: SettingView[] = [
     risk: "low",
   },
   {
+    // U-078, as settings-view.ts: wait (the default) or use the other one; task runs only.
+    key: "human.mid_session_limit",
+    label: "When my first choice runs out mid-session",
+    scope: "human",
+    scopeId: "human_alice",
+    value: "wait",
+    description:
+      "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
+    risk: "medium",
+  },
+  {
     key: "human.voice_alerts",
     label: "Read urgent notifications aloud",
     scope: "human",

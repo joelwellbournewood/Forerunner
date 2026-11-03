@@ -34,6 +34,14 @@ export interface RouteContext {
    * kinds the purpose may use at all. Absent or empty: the purpose's `preference` orders them.
    */
   order?: readonly BillingSourceKind[];
+  /**
+   * "When my first choice runs out mid-session: Wait" (U-078, the owner's decision of
+   * 2026-11-02, ADR 0100 amended): a source that rests after a usage limit and ranks ahead of
+   * every source that could serve makes the pick wait for it instead of moving on: the pick
+   * throws `unavailable` with `details.waitFor` (the resting source, its kind and until when).
+   * Off ("Use the other one", and every non-task call): the next source serves, as before.
+   */
+  waitOnRest?: boolean;
 }
 
 export interface RoutingPolicy {
@@ -103,6 +111,8 @@ export type SkipCode =
   | "unavailable"
   /** The source met its provider's usage limit and rests until `status.restingUntil` (ADR 0100). */
   | "cooldown"
+  /** Anthropic refused the source's credential; it serves again once a new one is saved (U-078). */
+  | "refused"
   | "plan_share"
   | "monthly_limit"
   | "tier"
@@ -113,6 +123,8 @@ export interface RouteSkip {
   kind: BillingSourceKind;
   code: SkipCode;
   reason: string;
+  /** `cooldown`: the ISO time the source may serve again. */
+  until?: string;
 }
 
 export interface RouteDecision {
@@ -162,6 +174,8 @@ export class BillingRouter {
     const tierKinds = this.policy.kindsForTier?.[ctx.modelTier];
 
     const candidates: { source: BillingSource; status: BillingSourceStatus; rank: number }[] = [];
+    /** Sources resting after a usage limit, with their rank (the 'wait' rule reads them). */
+    const resting: { source: BillingSource; rank: number; until: string }[] = [];
     for (const source of all) {
       // Invariant, not policy: never another human's source.
       if (source.humanId !== ctx.humanId) {
@@ -200,10 +214,20 @@ export class BillingRouter {
         skipped.push(skip(source, "unavailable", status.reason ?? "not available"));
         continue;
       }
+      if (status.refused) {
+        skipped.push(skip(source, "refused", `its credential was refused at ${status.refused}`));
+        continue;
+      }
       if (status.restingUntil) {
-        skipped.push(
-          skip(source, "cooldown", `resting after a usage limit until ${status.restingUntil}`),
-        );
+        skipped.push({
+          ...skip(source, "cooldown", `resting after a usage limit until ${status.restingUntil}`),
+          until: status.restingUntil,
+        });
+        resting.push({
+          source,
+          rank: rankOf(source.kind, rank, ctx.order),
+          until: status.restingUntil,
+        });
         continue;
       }
       if (source.kind === "subscription" && typeof status.planUsageShare === "number") {
@@ -237,24 +261,50 @@ export class BillingRouter {
         (a.source.id < b.source.id ? -1 : a.source.id > b.source.id ? 1 : 0),
     );
     const chosen = candidates[0];
+    const details = () => ({
+      humanId: ctx.humanId,
+      agentId: ctx.agentId,
+      purpose: ctx.purpose,
+      runner: ctx.runner,
+      skipped: skipped.map((s) => ({
+        sourceId: s.sourceId,
+        kind: s.kind,
+        code: s.code,
+        reason: s.reason,
+        ...(s.until ? { until: s.until } : {}),
+      })),
+    });
+    // 'Wait' (U-078): the first choice rests, so nothing moves onto a later one.
+    resting.sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        a.source.priority - b.source.priority ||
+        (a.source.id < b.source.id ? -1 : a.source.id > b.source.id ? 1 : 0),
+    );
+    const first = resting[0];
+    if (
+      ctx.waitOnRest &&
+      first &&
+      (!chosen ||
+        first.rank < chosen.rank ||
+        (first.rank === chosen.rank && first.source.priority < chosen.source.priority))
+    ) {
+      throw new ForerunnerError(
+        "unavailable",
+        `the first choice for ${ctx.purpose} work rests until ${first.until}; waiting for it`,
+        {
+          details: {
+            ...details(),
+            waitFor: { sourceId: first.source.id, kind: first.source.kind, until: first.until },
+          },
+        },
+      );
+    }
     if (!chosen) {
       throw new ForerunnerError(
         "unavailable",
         `no billing source available for ${ctx.purpose} work on the ${ctx.runner} runner`,
-        {
-          details: {
-            humanId: ctx.humanId,
-            agentId: ctx.agentId,
-            purpose: ctx.purpose,
-            runner: ctx.runner,
-            skipped: skipped.map((s) => ({
-              sourceId: s.sourceId,
-              kind: s.kind,
-              code: s.code,
-              reason: s.reason,
-            })),
-          },
-        },
+        { details: details() },
       );
     }
 

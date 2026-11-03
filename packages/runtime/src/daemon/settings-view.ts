@@ -116,6 +116,15 @@ export function settingsView(input: SettingsViewInput): Row[] {
       risk: "low",
     }),
     human({
+      // U-078: wait (the default) or use the other one; task runs only.
+      key: "human.mid_session_limit",
+      label: "When my first choice runs out mid-session",
+      value: prefOf(h, "mid_session_limit") === "use_other" ? "use_other" : "wait",
+      description:
+        "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
+      risk: "medium",
+    }),
+    human({
       key: "human.voice_alerts",
       label: "Read urgent notifications aloud",
       value: prefOf(h, "voice_alerts") === true,

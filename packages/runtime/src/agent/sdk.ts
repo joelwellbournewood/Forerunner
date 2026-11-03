@@ -5,6 +5,7 @@ import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
 import type { EffortLevel, Usage } from "../provider/types.ts";
 import {
+  isClaudeCodeRefusal,
   isClaudeCodeUsageLimit,
   rejectedRateLimitOf,
   USAGE_LIMIT_CODE,
@@ -327,10 +328,12 @@ export class SdkAgentDriver {
           };
         } else if (msg.is_error) {
           outcome = "error";
-          error = {
-            code: "provider_error",
-            message: String(msg.result ?? msg.subtype ?? "sdk error"),
-          };
+          const said = String(msg.result ?? msg.subtype ?? "sdk error");
+          // A 401 or an expired sign-in is a refusal (U-078), never a passing error tried again
+          // at once: the executor marks the credential and the task waits for a new one.
+          error = isClaudeCodeRefusal(null, said)
+            ? { code: "provider_auth", message: `Anthropic refused the Claude sign-in: ${said}` }
+            : { code: "provider_error", message: said };
         }
         if (typeof msg.result === "string" && msg.result) finalText = msg.result;
       }
@@ -417,6 +420,13 @@ export class SdkAgentDriver {
           code: USAGE_LIMIT_CODE,
           message: `The Claude subscription's usage limit is reached${failedTurn.text ? `: ${failedTurn.text}` : ""}`,
           ...(limit?.resetAt ? { resetAt: limit.resetAt } : {}),
+        };
+      } else if (failedTurn && isClaudeCodeRefusal(failedTurn.kind, "")) {
+        // Claude Code's `authentication_failed` (an expired or revoked sign-in; U-078).
+        outcome = "error";
+        error = {
+          code: "provider_auth",
+          message: `Anthropic refused the Claude sign-in (${failedTurn.kind})${failedTurn.text ? `: ${failedTurn.text}` : ""}`,
         };
       }
     } catch (e) {

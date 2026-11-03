@@ -79,7 +79,6 @@ import {
   speedPreferenceNote,
 } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import { labelOf, plainTime } from "../provider/routed.ts";
 import {
   type EffortLevel,
   type ModelProvider,
@@ -108,9 +107,12 @@ import type { Sandbox } from "../sandbox/types.ts";
 import { pricingFor as tablePricingFor } from "../wiring/billing-ports.ts";
 import {
   BILLING_PICK_AUDIT_TOOL,
+  MID_SESSION_LIMIT_SETTING,
+  midSessionLimitOf,
   planShareAfter,
   type TaskBillingPick,
   type TaskBillingPort,
+  type TaskBillingRequest,
 } from "./billing.ts";
 import {
   budgetLineWords,
@@ -123,6 +125,12 @@ import {
   WRAP_UP_BRIEF_LINE,
   wrapUpSentWords,
 } from "./budget-pause.ts";
+import {
+  type CredentialWait,
+  credentialWaitOf,
+  stoppedRunSentence,
+  waitSentence,
+} from "./credential-wait.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
 import { renderQueueNotes } from "./next-session.ts";
@@ -497,8 +505,6 @@ export function runCapOf(
     };
   return { usdMicro: Math.max(0, specialistLimitUsdMicro), source: "specialist_limit" };
 }
-
-const capitalFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** What either driver came back with, in the shape the Run row and the result need. */
 interface DriverOutcome {
@@ -1351,25 +1357,61 @@ export class LoopTaskExecutor implements TaskExecutor {
       // The result is never lost because bookkeeping failed, and the failure is on record.
       await this.runPersistFailed(runIds, "end", e);
     }
-    // The credential's usage limit stopped the run (U-078, ADR 0100): the source rests until its
-    // reset (else an hour) and the task goes back to ready for the next credential. It is no
-    // failure of the work, so the retry ladder's attempt is not counted and no critic reviews it.
-    if (result.error?.code === USAGE_LIMIT_CODE) {
+    // The credential stopped the run (U-078, ADR 0100 amended): its usage limit (the source
+    // rests until its reset, else an hour) or Anthropic refused it (a 401 or 403 key, an expired
+    // sign-in: the source is marked refused and one card names it). It is no failure of the work:
+    // the task goes back to ready without counting a try, no critic reviews it, and it is never
+    // tried again at once as a passing error. What comes next is said as it is: the credential
+    // that takes over now, or the wait and that it starts by itself.
+    const credentialStop =
+      result.error?.code === USAGE_LIMIT_CODE
+        ? ("limit" as const)
+        : result.error?.code === "provider_auth" && choice.pick
+          ? ("refused" as const)
+          : null;
+    if (credentialStop && result.error) {
       const source = choice.pick?.source;
       const failedOn = result.error;
-      const until =
-        source && this.deps.billing?.rest
-          ? await this.deps.billing
-              .rest(source.id, failedOn.resetAt, failedOn.message)
-              .catch(() => failedOn.resetAt)
-          : failedOn.resetAt;
-      const summary = `${source ? capitalFirst(labelOf(source)) : "The credential"} reached its usage limit and rests until ${plainTime(until)}; "${task.title}" goes back to ready and runs on the next credential, without counting a retry.`;
+      let until: string | undefined = failedOn.resetAt;
+      if (source && credentialStop === "limit" && this.deps.billing?.rest)
+        until = await this.deps.billing
+          .rest(source.id, failedOn.resetAt, failedOn.message)
+          .catch(() => failedOn.resetAt);
+      if (source && credentialStop === "refused" && this.deps.billing?.refuse)
+        await this.deps.billing
+          .refuse(source.id, redact(failedOn.message))
+          .catch((e: unknown) =>
+            this.logger.warn("the refused credential was not marked", { error: errorMessage(e) }),
+          );
+      const found = await this.nextCredential(ctx, tier, webFirst);
+      // A pick that could not say (no billing port): the task waits for this credential.
+      const next =
+        found.wait || found.continuesOn
+          ? found
+          : {
+              wait: {
+                reason: credentialStop,
+                sourceId: source?.id ?? "",
+                kind: source?.kind ?? "api_key",
+                until: credentialStop === "limit" ? (until ?? null) : null,
+              } satisfies CredentialWait,
+            };
+      if (next.wait) await this.noteWait(ctx, next.wait);
+      const words = await this.waitWords(ctx);
+      const summary = stoppedRunSentence(
+        { reason: credentialStop, kind: source?.kind ?? "api_key" },
+        task.title,
+        next.wait ? { wait: next.wait } : { continuesOn: next.continuesOn ?? "api_key" },
+        words,
+      );
       onEvent({ type: "warning", message: summary });
       return {
         outcome: "usage_limit",
         summary,
         costUsdMicro: result.costUsdMicro,
         runId: run.id,
+        ...(credentialStop === "refused" ? { errorCode: "provider_auth" } : {}),
+        ...(next.wait ? { credentialWait: next.wait } : {}),
         ...(worktree ? { worktree } : {}),
       };
     }
@@ -1495,21 +1537,25 @@ export class LoopTaskExecutor implements TaskExecutor {
         billing: undefined,
       };
     }
-    const { session, token, budget } = ctx;
-    const agent = await this.deps.store.agent.get(session.agent_id);
-    const pick = await this.deps.billing.pick({
-      agentId: session.agent_id,
-      agentOwnerHumanId: agent?.owner_human_id ?? token.claims.ownerHumanId,
-      runner: session.runner === "cloud" ? "cloud" : "pc",
-      modelTier: tier,
-      purpose: "session",
-      ...(webFirst
-        ? {
-            firstKinds: ["api_key"] as const,
-            firstWhy: "research reads web pages on the API key first",
-          }
-        : {}),
-    });
+    const { budget } = ctx;
+    const request = await this.billingRequest(ctx, tier, webFirst);
+    let pick: TaskBillingPick;
+    try {
+      pick = await this.deps.billing.pick(request);
+    } catch (e) {
+      // U-078: no credential that may serve this task can now (each rests after its limit or
+      // was refused, or 'wait' holds to a first choice that rests): the task waits, it does not
+      // fail. The runner gives it back without counting a try and ends the session with the
+      // wait's sentence; its start at the reset (or once a new key is saved) is scheduled.
+      const wait = credentialWaitOf(e);
+      if (!wait) throw e;
+      await this.noteWait(ctx, wait);
+      throw new ForerunnerError(
+        "unavailable",
+        waitSentence(wait, { ...(await this.waitWords(ctx)), title: ctx.task.title }),
+        { details: { wait: wait as unknown as JsonValue } },
+      );
+    }
     if (pick.driver === "sdk") this.sdkDeps();
     const plan = pick.plan;
     const billing: RunBilling =
@@ -1523,6 +1569,87 @@ export class LoopTaskExecutor implements TaskExecutor {
           }
         : { kind: pick.source.kind === "plan_credits" ? "plan_credits" : "api" };
     return { sourceId: pick.source.id, driver: pick.driver, pick, billing };
+  }
+
+  /**
+   * The billing pick of this task: its runner, the agent's owner, its tier, research's first
+   * kind (C-64), and the person's "When my first choice runs out mid-session" (U-078: `wait`,
+   * the default, holds to a first choice that rests; `use_other` moves on).
+   */
+  private async billingRequest(
+    ctx: Parameters<TaskExecutor["execute"]>[0],
+    tier: ModelTier,
+    webFirst: boolean,
+  ): Promise<TaskBillingRequest> {
+    const { session, token } = ctx;
+    const agent = await this.deps.store.agent.get(session.agent_id);
+    const ownerId = agent?.owner_human_id ?? token.claims.ownerHumanId;
+    const human = await this.deps.store.human.get(ownerId).catch(() => undefined);
+    const mode = midSessionLimitOf(human?.notify_prefs?.[MID_SESSION_LIMIT_SETTING]);
+    return {
+      agentId: session.agent_id,
+      agentOwnerHumanId: ownerId,
+      runner: session.runner === "cloud" ? "cloud" : "pc",
+      modelTier: tier,
+      purpose: "session",
+      ...(webFirst
+        ? {
+            firstKinds: ["api_key"] as const,
+            firstWhy: "research reads web pages on the API key first",
+          }
+        : {}),
+      ...(mode === "wait" ? { waitOnRest: true } : {}),
+    };
+  }
+
+  /**
+   * What the task meets next after its credential stopped it (U-078): the credential that takes
+   * over now (the router's pick, which skips the resting or refused one), or the wait, as the
+   * runner will meet it. Nothing is spent: the pick only reads the sources.
+   */
+  private async nextCredential(
+    ctx: Parameters<TaskExecutor["execute"]>[0],
+    tier: ModelTier,
+    webFirst: boolean,
+  ): Promise<{ continuesOn?: string; wait?: CredentialWait }> {
+    if (!this.deps.billing) return {};
+    try {
+      const pick = await this.deps.billing.pick(await this.billingRequest(ctx, tier, webFirst));
+      return { continuesOn: pick.source.kind };
+    } catch (e) {
+      const wait = credentialWaitOf(e);
+      return wait ? { wait } : {};
+    }
+  }
+
+  /**
+   * The project's work waits for this credential (U-078): kept on the source, so a session of
+   * the project starts by itself at its reset or once a new credential is saved.
+   */
+  private async noteWait(
+    ctx: Parameters<TaskExecutor["execute"]>[0],
+    wait: CredentialWait,
+  ): Promise<void> {
+    const projectId = ctx.task.project_id;
+    if (!projectId || !wait.sourceId || !this.deps.billing?.noteWait) return;
+    await this.deps.billing
+      .noteWait(wait.sourceId, projectId, ctx.session.agent_id)
+      .catch((e: unknown) =>
+        this.logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
+      );
+  }
+
+  /** The person's time zone and now, for the wait's reset time in their words (U-078). */
+  private async waitWords(
+    ctx: Parameters<TaskExecutor["execute"]>[0],
+  ): Promise<{ timezone?: string; nowMs: number }> {
+    const human = await this.deps.store.human
+      .get(ctx.token.claims.ownerHumanId)
+      .catch(() => undefined);
+    return {
+      ...(human?.timezone ? { timezone: human.timezone } : {}),
+      nowMs: this.deps.clock.now(),
+    };
   }
 
   /**

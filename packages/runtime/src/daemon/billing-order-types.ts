@@ -25,10 +25,13 @@ export const BillingOrderSourceView = z.object({
   /**
    * Why not, when it cannot: `allowance` (the subscription's share of its allowance is at the
    * stop line), `monthly_cap` (the source's monthly cap is reached), `resting` (it met its
-   * provider's usage limit; until `restingUntil`), `no_credential` (nothing saved in the
-   * vault), `disabled`. Null when usable.
+   * provider's usage limit; until `restingUntil`), `refused` (Anthropic refused its key or
+   * sign-in, U-078; until a new one is saved), `no_credential` (nothing saved in the vault),
+   * `disabled`. Null when usable.
    */
-  blocked: z.enum(["allowance", "monthly_cap", "resting", "no_credential", "disabled"]).nullable(),
+  blocked: z
+    .enum(["allowance", "monthly_cap", "resting", "refused", "no_credential", "disabled"])
+    .nullable(),
   /** ISO time a resting source may serve again; null unless `blocked` is `resting`. */
   restingUntil: z.string().nullable(),
   /** The subscription's share of its monthly allowance (0..1); null for API-style sources. */

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import { daemonProvider } from "../src/cli/main.ts";
+import { daemonFetch, daemonProvider } from "../src/cli/main.ts";
 
 /**
  * `fr daemon --provider <name>`: the install's own provider by default, the echoing fake, and
@@ -50,6 +50,36 @@ describe("fr daemon --provider", () => {
     const log = join(h, "bench", "model-calls.jsonl");
     expect(existsSync(log)).toBe(true);
     expect(JSON.parse(readFileSync(log, "utf8").trim()).role).toBe("chat");
+  });
+
+  it("bench-api keeps the routed provider and points the Anthropic API at the stand-in (U-078)", async () => {
+    // No provider is injected: the install's own routed provider over the vault's keys stays.
+    expect(await daemonProvider("bench-api", {})).toBeUndefined();
+    const missing = pathToFileURL(join(home(), "testenv", "src", "bench", "index.ts"));
+    await expect(daemonFetch("bench-api", {}, missing)).rejects.toThrow(
+      /development option of the test bench.*testenv/,
+    );
+    expect(await daemonFetch("bench", {})).toBeUndefined();
+    const h = home();
+    const f = await daemonFetch("bench-api", {
+      FORERUNNER_HOME: h,
+      FORERUNNER_BENCH_DELAY_MS: "0",
+    });
+    // Built by concatenation so no scanner sees a token.
+    const refused = ["sk-ant-api03-", "bench-refused-", "1".repeat(40)].join(""); // not-a-secret
+    const r = await f?.("https://api.anthropic.com/v1/models", {
+      headers: { "x-api-key": refused },
+    });
+    expect(r?.status).toBe(401);
+    const ok = await f?.("https://api.anthropic.com/v1/models", {
+      headers: { "x-api-key": ["sk-ant-api03-", "bench-ok-", "2".repeat(40)].join("") },
+    });
+    expect(ok?.status).toBe(200);
+    // The stand-in's request log names each key by id, never by its text.
+    const log = readFileSync(join(h, "bench", "api-requests.jsonl"), "utf8");
+    expect(log.trim().split("\n")).toHaveLength(2);
+    expect(log).not.toContain("bench-refused");
+    expect(JSON.parse(log.split("\n")[0] ?? "{}").answer).toBe("refused");
   });
 
   it("bench-live needs a key in the environment and never makes a call to check it", async () => {
