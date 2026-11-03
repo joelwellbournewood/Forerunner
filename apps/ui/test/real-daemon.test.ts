@@ -7137,14 +7137,16 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     );
     const onMain = await run(["git", "--git-dir", bare, "ls-tree", "-r", "--name-only", "main"]);
     expect(onMain.stdout).not.toContain("notes.md");
-    // B's pull request targets main and says it carries A's unmerged work.
+    // B's pull request targets main and says it carries A's unmerged work, and how to merge
+    // them (ADR 0111): never "Merge in any order".
     const open = await host.listPullRequests(repo, { state: "open" });
     const prA = open.find((p) => p.head.ref === taskA.branch);
     const prB = open.find((p) => p.head.ref === taskB.branch);
     expect(prB?.base.ref).toBe("main");
     expect(prB?.body).toContain(
-      `Builds on #${prA?.number} ("Write the notes in notes.md"), not merged yet`,
+      `Builds on #${prA?.number} (not merged yet): this pull request includes its changes. Merge #${prA?.number} first, or use Merge in Forerunner, which merges them in order.`,
     );
+    expect(prB?.body).not.toMatch(/any order/i);
     // The Overview lists both as waiting for the person.
     const waiting = await client.projectPullRequests(project.id);
     expect(waiting.waiting.filter((w) => w.kind === "task").map((w) => w.number)).toEqual([
