@@ -1,7 +1,7 @@
 # 0111 — The merge record, one gated merge entry, merge commits only and the branch's rules
 
 Date: 2026-11-02
-Status: accepted (amends ADR 0062 and ADR 0106 point 6)
+Status: accepted (amends ADR 0062 and ADR 0106 point 6); amended by dependent-branches (2026-11-03): dependent branches kept true
 
 ## Context
 
@@ -108,9 +108,80 @@ Amendment of ADR 0062: point 3's rebase and push with a lease, and the "after a 
 check must pass again" rule, become point 4 above (main merged in, never a rebase); point 4's
 card for checks still running becomes the waiting record and its retry; the reviewed commit is
 the record's, not the worktree's HEAD at merge time; the "no later session retries the merge"
-consequence no longer holds. Amendment of ADR 0106 point 6: "Merge in any order" holds because
-Forerunner's merges are merge commits; after a squash or rebase merge on GitHub's website the
-dependent branch needs the rebuild that 'dependent-branches' builds.
+consequence no longer holds. Amendment of ADR 0106 point 6: Forerunner's own merges are merge
+commits; after a squash or rebase merge on GitHub's website the dependent branch needs the
+rebuild that 'dependent-branches' builds (below), and the dependent PR no longer says "Merge in
+any order".
+
+## Amendment: dependent branches kept true ('dependent-branches', 2026-11-03)
+
+The owner's decision of 2026-11-02 on merging says each task's agent keeps committing on its own
+branch; this part keeps a branch that builds on unmerged work (ADR 0106 point 6) true when what
+it builds on is merged, closed or redone. Before it, the PR executor still replayed: a single
+dependency was brought in by a fast-forward (no merge commit), the next run deleted the marker
+(`DEPS_BASE_REF`) once no dependency was open and rebased onto main, copying the dependency's
+commits after a squash (a conflict) or keeping them silently after a close; nothing rebuilt a
+dependent when its dependency was merged by squash or rebase, closed or redone; the watcher
+stopped reading a PR once it was not open and reported nothing; a redo of a merged task pushed
+to the old branch (refused when GitHub kept it); and every dependent PR said "Merge in any
+order", true only for GitHub's merge commits. Built as follows:
+
+1. **No replay in the PR executor.** The base a dependent starts from merges each dependency
+   with `--no-ff`, so a branch that brought one in always shows a merge commit, and the
+   worktree records each dependency held (`refs/forerunner/deps/<task>`). The marker is never
+   removed while the branch holds a dependency's commits (only a rebuild onto main without open
+   dependencies removes it). Every sync of a branch that holds merged-in work (the run's
+   resume and post-run syncs, `continueResolved`) decides by `holdsMergedWork`: merged, never
+   rebased.
+2. **Rebuilds, one entry.** `PrTaskExecutor.rebuildDependents(projectId, changedTaskId)` (and
+   `rebuildTask`, and a run's own check before and after the inner executor) reads what each
+   held dependency became: open (kept), in main as itself (a merge commit: nothing to do, the
+   dependent's PR then shows only its own commits), merged by squash or rebase, closed, redone
+   or cancelled. When one went away the branch is rebuilt: the base again with the dependencies
+   still open, then `git rebase --onto <new base> DEPS_BASE_REF`, which replays only the task's
+   own commits; it is force-pushed with a lease (never the default branch) and its "Builds on"
+   line updated. A rebuild that conflicts is aborted: the branch stays as it was.
+3. **A rebuild never merges unseen.** Before the push, the dependent's merge record is settled:
+   a dependency dropped whose work is not in main (closed, redone, cancelled) voids the review,
+   so the record goes to `left_to_you` with one sentence ("#8 was rebuilt without #4, which was
+   closed. It was reviewed with #4's changes, so it waits for you: look at it before you merge
+   it, or send it back.") and one card, and nothing merges it unattended, in any mode; a rebuild
+   that only dropped what main already has keeps the record, moved to the new head, when
+   `ownChangeId` is unchanged (else the same as a void, with its own sentence); a conflicting
+   rebuild leaves the record to the person with a sentence and a card naming the pull requests.
+   A merge already waiting when this happens finds its head moved and does not follow it, since
+   its record was moved meanwhile. The session's merge of an accepted task first checks its
+   branch the same way, so work closed while it was reviewed never merges with it.
+4. **The watcher reports what it reads**, and is the only place that reads PR states: an open PR
+   on every poll (mergeable, head), a merged one once (its merge commit), a closed one once,
+   before it is marked closed (`onPullRequestState`); and the default branch's head of each
+   repository project once per poll (`onDefaultBranchHead`). The daemon marks a task PR merged
+   on GitHub in its record (with the merge commit and the method read from the merge commit's
+   parents and the PR's commits) and reports it through `ReviewedPrMerge.merged`, so `onMerged`
+   hears merges by any method; a close leaves the record to the person. Every merge and close
+   calls the rebuild; the default branch's head drives a sweep that drops a dependency redone or
+   cancelled and retries a rebuild a busy worktree postponed. 'merge-in-app' and 'merged-copy'
+   subscribe to these callbacks in compose.ts.
+5. **The PR says how to merge it:** "Builds on #4 (not merged yet): this pull request includes
+   its changes. Merge #4 first, or use Merge in Forerunner, which merges them in order." Never
+   "Merge in any order".
+6. **A redo of a task whose PR was merged or closed** starts from main on a fresh branch (the old
+   name with `-r2`, `-r3`, ...), so a branch GitHub keeps after a merge never refuses the push;
+   its merge record starts again for the new pull request.
+
+Amendment of ADR 0106 point 6, completing the one above: a dependent branch is a merge of its
+dependencies' branches with merge commits, its marker and held refs say what it holds, and it is
+rebuilt as point 2 says; "Merge in any order" is gone.
+
+Alternatives considered for this part: stacked pull requests (each based on the one before) and
+holding a dependent until its dependency merges were rejected in the owner's research (the
+merge order on the person, the stall). Keeping a voided review's record on the new head because
+the task's own diff is unchanged was rejected: it was reviewed on top of code that is no longer
+under it.
+
+Known gaps: the rebuilds a busy worktree postponed are kept in memory (after a restart the run's
+own check and the sweep's redo/cancel detection remain); a merge that is already under way when
+a dependency closes can finish before the rebuild pushes.
 
 ## Consequences
 

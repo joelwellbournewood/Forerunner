@@ -289,12 +289,38 @@ project's docs pull requests are listed, never one another project left on the s
 repository.
 A task that waits for another whose pull request you have not merged yet starts from that work:
 its branch includes it, so a check finds the page it checks. Its own pull request still goes to
-the default branch and says so in its first lines ("Builds on #4 ("Add index.html"), not merged
-yet: this pull request includes its changes, so merging it merges them too. Merge in any
-order."). The critic reviews only what the task itself changed, and its files in the task
-drawer are its own. If the work it builds on conflicts (two pull requests change the same
-lines), it does not start: its card says which pull requests and files, and you merge them on
-GitHub, resolving the conflict, then press **Try again**.
+the default branch and says so in its first lines ("Builds on #4 (not merged yet): this pull
+request includes its changes. Merge #4 first, or use Merge in Forerunner, which merges them in
+order."). Merge them in that order: GitHub's **Squash and merge** on either one first would make
+the other conflict where the later task changed the earlier one's files. The critic reviews only
+what the task itself changed, and its files in the task drawer are its own. If the work it
+builds on conflicts (two pull requests change the same lines), it does not start: its card says
+which pull requests and files, and you merge them on GitHub, resolving the conflict, then press
+**Try again**.
+
+When the work a pull request builds on changes, Forerunner rebuilds that pull request's branch
+within a minute or two (at the next look at GitHub), so it never carries work that is gone and
+never repeats work that is already in the default branch:
+
+- **#4 merged with a merge commit** (Forerunner's Merge, or GitHub's "Create a merge commit"):
+  nothing changes; #8 then shows only its own changes on GitHub, and its "Builds on" line drops #4.
+- **#4 merged with Squash or Rebase on GitHub**: #8 is rebuilt on the default branch with only
+  its own commits (GitHub shows a force-push on it) and the "Builds on" line goes. Its own change
+  is the one the critic accepted, so nothing else changes: it still waits for you, or merges by
+  itself where Forerunner merges.
+- **#4 closed without merging, or its task redone or cancelled**: #8 is rebuilt without #4. It was
+  reviewed with #4's changes, so it no longer merges by itself: one Inbox card says so ("#8 was
+  rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you:
+  look at it before you merge it, or send it back."). Look at it on GitHub, then merge it
+  yourself, or press **Redo** on its task.
+- If #8 cannot be rebuilt without #4 (it changes #4's own files), its branch stays as it was and
+  one card says so ("#8 could not be rebuilt without #4, which was closed: both change
+  src/page.ts. It waits for you: redo the task, or merge it on GitHub only if you want #4's
+  changes too.").
+
+**Redo** of a task whose pull request was already merged or closed opens a new pull request from
+a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
+the way; the old pull request stays as it was.
 
 **How Forerunner merges** (when it merges at all: today at Trusted). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
