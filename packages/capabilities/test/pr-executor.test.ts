@@ -1046,6 +1046,45 @@ describe("Local only: the person's folder the run can use and that never leaves 
     await w.store.close();
   });
 
+  it("a review's try folder a dead daemon left is never committed or pushed, in a workspace or a repository (W6-26)", async () => {
+    // Before: `.forerunner-try/` (the try's samples, its server driver) was not excluded, so
+    // the next "Workspace before" commit or a retry's PR commit picked it up.
+    const { w, exec, ctx, onHost } = await setup();
+    const res = await exec(
+      agent((dir) => {
+        mkdirSync(join(dir, ".forerunner-try"), { recursive: true });
+        writeFileSync(join(dir, ".forerunner-try", "sample-1.txt"), "left by a review\n");
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+      }),
+    ).execute(await ctx());
+    expect(res.outcome).toBe("in_review");
+    expect(await onHost(res.branch)).toEqual(["README.md", "page.html"]);
+    // A project's own folder (no repository): the baseline and the run's change leave it out.
+    const workspace = join(w.root, "workspace");
+    mkdirSync(join(workspace, ".forerunner-try"), { recursive: true });
+    writeFileSync(join(workspace, ".forerunner-try", "driver.mjs"), "// a try's driver\n");
+    writeFileSync(join(workspace, "notes.md"), "# notes\n");
+    const inWorkspace = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: agent((dir) => {
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+      }),
+      repoFor: async () => null,
+      workspaceFor: async () => workspace,
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const ran = await inWorkspace.execute(await ctx());
+    expect(ran.outcome).toBe("done");
+    expect(ran.changedFiles).toEqual(["page.html"]);
+    const tracked = await run(["git", "ls-files"], { cwd: workspace });
+    expect(tracked.stdout).toContain("notes.md");
+    expect(tracked.stdout).not.toContain(".forerunner-try");
+    await w.store.close();
+  });
+
   it("a run killed after the copy in is recovered at the next start, by the same rules", async () => {
     const { w, source, exec, ctx, wt } = await setup();
     // The app closes in the middle of the run: the run never returns.
