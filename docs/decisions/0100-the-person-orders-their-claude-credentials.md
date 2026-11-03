@@ -194,6 +194,24 @@ Decision, amending point 4 for task runs and adding three points:
     other one, or a refusal with another credential), "Anthropic refused your API key; "X"
     waits for a new API key: save one in Settings." The router's own sentence never reaches a
     person (`failureWords` of `unavailable`).
+12. **Planning waits too (the review of credential-limits, 2026-11-03).** A new project's brief
+    is usually the first call that meets a refused key, and the card's "The work that needs it
+    waits and starts by itself then" must hold for it as well. A background draft (`enqueue`)
+    whose planning call met a refusal, a usage limit or no credential that can serve asks the
+    routed provider what a planning call would wait for now (`RoutedProvider.waitNow`, a pick
+    that only reads); when the only credential that may serve it is refused or resting, the
+    intake is no failure: `summary_cache.intake.wait` keeps what it waits for, the project is
+    kept on that source's `limits.waiting` like task work, and `GET /projects/:id/intake` says
+    `state: "waiting"` with the words ("Planning waits for a new API key: save one in
+    Settings." with a "Save a new key" link, or "Planning waits until 15:40 (your subscription's
+    limit) and starts by itself."). The project page, Home, the Start dialog and the chat say the
+    same, with no Try again (it cannot work while the credential is refused or resting). The
+    wake (`RuntimeApp.billing.waits.wake`, point 9) drafts the plan again once the credential
+    serves: a new key saved, or the limit's reset; a planning call holds the agent's one session,
+    so when the same wake starts a task session the plan keeps its wait for the next tick. The
+    project status sentence also says when a project's tasks wait for a credential ("Waiting for
+    a new API key: 2 tasks [Save a new key]", "Waiting until 15:40 (your subscription's limit):
+    2 tasks"); before, it fell through to "0 of 2 done".
 
 Consequences: a refused key costs one call and one card, not two failed tasks and four calls; a
 limit never fails a task, and the work starts by itself at the reset, after a restart too; with

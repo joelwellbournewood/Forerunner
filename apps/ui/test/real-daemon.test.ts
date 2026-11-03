@@ -32,6 +32,11 @@ import {
   createRolePlayer,
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
+import {
+  keyRule,
+  messagesApiStandIn,
+  standInFetch,
+} from "../../../testenv/src/provider/messages-api.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
@@ -7686,6 +7691,160 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       expect(lines).toContain(
         'Your Claude subscription reached its usage limit; "Write the note" continues on your API key now.',
       );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("a refused API key: one card with where to save a new one, planning and tasks wait (none failed), Settings says Refused, and the key saved in the setup assistant starts both by itself", async () => {
+    // As `fr daemon` composes it, with no injected provider: the routed provider over the
+    // vault's key calls the Messages API stand-in, which answers a key holding "refused" with
+    // 401; the bench's role-player is the model behind it once a key serves.
+    const refused = ["sk-ant-api03-", "refused", "7".repeat(40)].join(""); // not-a-secret
+    const good = ["sk-ant-api03-", "good", "6".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-refused-"));
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_api_key: refused }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const calls = () => standIn.requests.filter((r) => r.path === "/v1/messages");
+    try {
+      const me = await client.me();
+      // New project with a brief (the dialog's body): planning meets the refusal and waits.
+      const planned = await client.createProject({
+        name: "Quotes",
+        goal: goalFromBrief("A page that shows a random quote."),
+        brief: "A page that shows a random quote.",
+        intake: true,
+      });
+      await eventually(
+        async () => (await client.intakeStatus(planned.id)).state === "waiting",
+        "the planning to wait for a new key",
+        async () => JSON.stringify(await client.intakeStatus(planned.id)),
+        20_000,
+      );
+      const plan = await client.intakeStatus(planned.id);
+      expect(plan.error).toBeNull();
+      expect(plan.wait).toMatchObject({
+        reason: "refused",
+        text: "Planning waits for a new API key: save one in Settings.",
+        save: { label: "Save a new key", to: "/setup" },
+      });
+      expect((await client.project(planned.id)).statusLine).toEqual({
+        kind: "waiting",
+        text: "Planning waits for a new API key",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // The Start dialog names the wait with the same link, never "add a task".
+      expect((await client.startCheck(planned.id)).blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet. Planning waits for a new API key: save one in Settings.",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+
+      // A project with two tasks: its session meets the mark, not the API, and ends on one
+      // sentence; the rows wait, none failed.
+      const notes = await client.createProject({ name: "Notes", goal: "Two notes" });
+      await addTask(client, notes.id, "Write note A");
+      await addTask(client, notes.id, "Write note B");
+      const sessionId = await runToEnd(client, notes.id);
+      expect((await client.session(sessionId)).summary?.split("\n")[0]).toBe(
+        "Waits for a new API key: save one in Settings.",
+      );
+      expect((await client.tasks(notes.id)).map((t) => [t.status, t.display?.label])).toEqual([
+        ["ready", "Waits for a new API key"],
+        ["ready", "Waits for a new API key"],
+      ]);
+      expect((await client.project(notes.id)).statusLine).toEqual({
+        kind: "waiting",
+        text: "Waiting for a new API key: 2 tasks",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // One request reached Anthropic, and was refused.
+      expect(calls().map((c) => c.status)).toEqual([401]);
+
+      // The Inbox: exactly one card, with nothing to answer and the link to the setup assistant.
+      const open = (await client.inbox(me.id)).requests.filter((r) => r.status === "open");
+      expect(open.map((r) => r.title)).toEqual(["Anthropic refused your API key"]);
+      expect(open[0]?.choices ?? []).toEqual([]);
+      expect(open[0]?.links?.map((l) => [l.label, l.to])).toEqual([["Save a new key", "/setup"]]);
+      // Settings -> Claude: which to use first.
+      expect((await client.billingOrder()).sources.map((s) => [s.kind, s.blocked])).toEqual([
+        ["api_key", "refused"],
+      ]);
+
+      // The setup assistant saves a new key: the mark and the card go, the tasks' session starts
+      // by itself, and the plan is drafted on the next tick (a planning call would hold the
+      // agent's one session while the tasks' start is made).
+      const saved = await client.setupAnthropic(good);
+      expect(saved.ok).toBe(true);
+      expect((await client.billingOrder()).sources.map((s) => s.blocked)).toEqual([null]);
+      const answered = (await client.inbox(me.id)).requests.find(
+        (r) => r.title === "Anthropic refused your API key",
+      );
+      expect(answered?.status).not.toBe("open");
+      expect(answered?.outcome).toBe("A new one is saved; the work that waited for it goes on.");
+      await eventually(
+        async () => (await client.tasks(notes.id)).every((t) => t.status === "done"),
+        "the tasks that waited to finish",
+        async () => (await client.tasks(notes.id)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      expect((await client.sessions({ projectId: notes.id })).map((s) => s.trigger).sort()).toEqual(
+        ["budget_reset", "manual"],
+      );
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.intakeStatus(planned.id)).state === "pending",
+        "the plan to be drafted after the new key",
+        async () => JSON.stringify(await client.intakeStatus(planned.id)),
+        30_000,
+      );
+      expect((await client.project(planned.id)).statusLine?.text).toBe(
+        "Waiting for you: approve the plan",
+      );
+      // Every call after the refusal went with the new key, and none was refused.
+      expect(
+        calls()
+          .slice(1)
+          .every((c) => c.status === 200),
+      ).toBe(true);
     } finally {
       await rt.close();
     }

@@ -93,7 +93,14 @@ export interface TaskDisplayContext {
    * your subscription's limit") or a new key ("Waits for a new API key"), as the row says it,
    * with the line under it. Absent or null: no wait.
    */
-  credentialWait?: { label: string; detail: string } | null;
+  credentialWait?: {
+    label: string;
+    detail: string;
+    /** The project status sentence's head ("Waiting for a new API key"; `credentialWaitRow`). */
+    line?: string;
+    /** Where a refused credential's replacement is saved ("Save a new key", /setup). */
+    save?: { label: string; to: string } | null;
+  } | null;
 }
 
 /** A title as a status names it: whole when short, else cut at a word. */

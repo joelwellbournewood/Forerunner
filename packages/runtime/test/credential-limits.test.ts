@@ -14,7 +14,7 @@ import type {
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
-import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
+import { AcceptingCriticProvider, ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /**
  * U-078 (ADR 0100 amended 2026-11-03, the owner's decision of 2026-11-02): a refused key is named
@@ -41,12 +41,67 @@ interface World {
   messages: () => number;
 }
 
-function world(clock: SimulatedClock, opts: { limitMs?: number } = {}) {
+/**
+ * A small plan, as the planning call is asked for one ("Plan size: small": one milestone with one
+ * task, a README): what the stand-in's model answers once a credential serves the call.
+ */
+const SMALL_PLAN = JSON.stringify({
+  plan: {
+    reason: "planned from the brief",
+    milestones: [
+      {
+        name: "The page",
+        successCriteria: ["the page shows a quote"],
+        targetDate: null,
+        tasks: [
+          {
+            key: "page",
+            title: "Write the quote page",
+            outcome: "index.html shows a random quote",
+            acceptanceCriteria: ["opening index.html shows a quote"],
+            priority: 5,
+            specialist: "coder",
+          },
+        ],
+      },
+    ],
+    tasks: [],
+  },
+  docs: { "README.md": "# Quotes\n\nA page that shows a random quote.\n" },
+  firstSession: {
+    summary: "Write the page.",
+    items: [{ key: "page", estimateUsdMicro: 200_000, rationale: "the whole brief" }],
+  },
+});
+
+/** The project as New project creates it: the dialog's exact body, with a brief (U-046). */
+const QUOTES = {
+  name: "Quotes",
+  goal: "A page that shows a random quote",
+  brief: "A page that shows a random quote.",
+  intake: true,
+};
+
+/** A project card's status sentence (`ProjectCard.statusLine`). */
+interface StatusLine {
+  kind: string;
+  text: string;
+  action: { kind: string; label: string; to: string | null } | null;
+}
+
+/** The plan from the brief, as `GET /projects/:id/intake` answers it. */
+interface IntakeView {
+  state: string;
+  error: string | null;
+  wait?: { reason: string; text: string; short: string } | null;
+}
+
+function world(clock: SimulatedClock, opts: { limitMs?: number; replies?: ScriptReply[] } = {}) {
   const home = mkdtempSync(join(tmpdir(), "fr-cred-limits-"));
   const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
   const vault = new MemoryVault();
   const model = new AcceptingCriticProvider(
-    new ScriptedProvider([{ text: "Wrote the note. Lesson: none." }], clock),
+    new ScriptedProvider(opts.replies ?? [{ text: "Wrote the note. Lesson: none." }], clock),
   );
   const standIn = messagesApiStandIn({
     model,
@@ -193,23 +248,152 @@ describe("a refused API key (U-078)", () => {
     const again = await json<InboxView>(req("/inbox"));
     expect(again.requests.filter((r) => r.status === "open")).toHaveLength(1);
 
-    // The person pastes a new key in the setup assistant: the mark and the card go, and the
-    // waiting work starts by itself and finishes.
-    const saved = await json<{ ok: boolean }>(req("/setup/anthropic", { value: GOOD }));
+    // Quit and start again on the same home and vault (the mark is persisted state): the card,
+    // the rows and Settings still say so, the scheduler's ticks start nothing on the refused
+    // key, and nothing calls the API.
+    await rt.close();
+    const later = await w.start();
+    await later.rt.scheduler.tick();
+    expect(messages()).toBe(1);
+    const kept = await json<InboxView>(later.req("/inbox"));
+    expect(kept.requests.filter((r) => r.status === "open").map((r) => r.title)).toEqual([
+      "Anthropic refused your API key",
+    ]);
+    const keptRows = await json<TaskView[]>(later.req(`/projects/${project.id}/tasks`));
+    expect(keptRows.map((t) => [t.status, t.display?.label])).toEqual([
+      ["ready", "Waits for a new API key"],
+      ["ready", "Waits for a new API key"],
+    ]);
+    const keptOrder = await json<BillingOrderView>(later.req("/settings/billing-order"));
+    expect(keptOrder.sources.map((s) => [s.kind, s.blocked])).toEqual([["api_key", "refused"]]);
+    // Home and the project header say what the project waits for, with where to fix it
+    // (before: "0 of 2 done [Open Tasks]").
+    const card0 = await json<{ statusLine: StatusLine }>(later.req(`/projects/${project.id}`));
+    expect(card0.statusLine).toEqual({
+      kind: "waiting",
+      text: "Waiting for a new API key: 2 tasks",
+      action: { kind: "link", label: "Save a new key", to: "/setup" },
+    });
+
+    // The person pastes a new key in the setup assistant after the restart: the mark and the
+    // card go, and the waiting work starts by itself and finishes.
+    const saved = await json<{ ok: boolean }>(later.req("/setup/anthropic", { value: GOOD }));
     expect(saved.ok).toBe(true);
-    const after = await json<BillingOrderView>(req("/settings/billing-order"));
+    const after = await json<BillingOrderView>(later.req("/settings/billing-order"));
     expect(after.sources[0]?.blocked).toBeNull();
-    const closed = await json<InboxView>(req("/inbox"));
+    const closed = await json<InboxView>(later.req("/inbox"));
     expect(closed.requests.filter((r) => r.status === "open")).toHaveLength(0);
     expect(closed.requests.find((r) => r.title === "Anthropic refused your API key")?.outcome).toBe(
       "A new one is saved; the work that waited for it goes on.",
     );
     await until("the waiting tasks to finish after the new key", async () => {
-      const now = await Promise.all([a, b].map((t) => rt.store.task.mustGet(t.id)));
+      const now = await Promise.all([a, b].map((t) => later.rt.store.task.mustGet(t.id)));
       return now.every((t) => t.status === "done") ? null : now.map((t) => t.status).join(", ");
     });
-    const audit = await rt.store.auditLog.list({ tool: "billing.refused" } as never, { limit: 10 });
+    const audit = await later.rt.store.auditLog.list({ tool: "billing.refused" } as never, {
+      limit: 10,
+    });
     expect(audit).toHaveLength(1);
+  }, 120_000);
+});
+
+describe("planning that meets a refused API key (U-078)", () => {
+  it("waits for a new key instead of failing, says so with where to save one, and drafts the plan by itself once it is saved, after a restart too", async () => {
+    const clock = new SimulatedClock("2026-11-03T14:00:00Z");
+    const w = world(clock, { replies: [{ text: SMALL_PLAN }] });
+    await w.vault.set(SECRET_NAMES.anthropic, REFUSED);
+    const first = await w.start();
+
+    // New project with a brief: the plan is drafted in the background and meets the refusal.
+    const created = await json<{ id: string }>(first.req("/projects", QUOTES));
+    await first.rt.intake.inFlight(created.id)?.catch(() => undefined);
+    expect(first.messages()).toBe(1);
+
+    // The project page: the plan waits for a new key, it did not fail, and Try again (which
+    // cannot work while the key is refused) is not offered.
+    const status = await json<IntakeView>(first.req(`/projects/${created.id}/intake`));
+    expect(status.state).toBe("waiting");
+    expect(status.wait).toMatchObject({
+      reason: "refused",
+      text: "Planning waits for a new API key: save one in Settings.",
+      short: "Planning waits for a new API key",
+    });
+    const card = await json<{ statusLine: StatusLine }>(first.req(`/projects/${created.id}`));
+    expect(card.statusLine).toEqual({
+      kind: "waiting",
+      text: "Planning waits for a new API key",
+      action: { kind: "link", label: "Save a new key", to: "/setup" },
+    });
+    // One card names the key; its promise ("starts by itself then") covers the planning too.
+    const inbox = await json<InboxView>(first.req("/inbox"));
+    expect(inbox.requests.filter((r) => r.status === "open").map((r) => r.title)).toEqual([
+      "Anthropic refused your API key",
+    ]);
+
+    // Quit and start again: the plan still waits, and nothing calls the refused key.
+    await first.rt.close();
+    const second = await w.start();
+    await second.rt.scheduler.tick();
+    expect(second.messages()).toBe(1);
+    const kept = await json<IntakeView>(second.req(`/projects/${created.id}/intake`));
+    expect(kept.state).toBe("waiting");
+
+    // The setup assistant saves a new key (the UI's body): the plan is drafted by itself and
+    // waits in the Inbox for approval; the refused card is answered.
+    const saved = await json<{ ok: boolean }>(second.req("/setup/anthropic", { value: GOOD }));
+    expect(saved.ok).toBe(true);
+    await until("the plan to be drafted after the new key", async () => {
+      const s = await json<IntakeView>(second.req(`/projects/${created.id}/intake`));
+      return s.state === "pending" ? null : `${s.state} ${s.error ?? ""}`;
+    });
+    const now = await json<{ statusLine: StatusLine }>(second.req(`/projects/${created.id}`));
+    expect(now.statusLine.text).toBe("Waiting for you: approve the plan");
+    const after = await json<InboxView>(second.req("/inbox"));
+    expect(after.requests.filter((r) => r.status === "open").map((r) => r.kind)).toEqual([
+      "approval",
+    ]);
+    expect(after.requests.find((r) => r.title === "Anthropic refused your API key")?.outcome).toBe(
+      "A new one is saved; the work that waited for it goes on.",
+    );
+    expect(second.messages()).toBe(2);
+  }, 120_000);
+
+  it("at a usage limit the plan waits until the reset, says until when, and is drafted by itself then", async () => {
+    const clock = new SimulatedClock("2026-11-03T14:00:00Z");
+    const w = world(clock, { limitMs: 100 * 60_000, replies: [{ text: SMALL_PLAN }] });
+    await w.vault.set(SECRET_NAMES.anthropic, LIMITED);
+    const { rt, req, messages } = await w.start();
+
+    const created = await json<{ id: string }>(req("/projects", QUOTES));
+    await rt.intake.inFlight(created.id)?.catch(() => undefined);
+    expect(messages()).toBe(1);
+    const status = await json<IntakeView>(req(`/projects/${created.id}/intake`));
+    expect(status.state).toBe("waiting");
+    // 15:40 UTC is 16:40 in Zurich.
+    expect(status.wait).toMatchObject({
+      reason: "limit",
+      text: "Planning waits until 16:40 (your API key's limit) and starts by itself.",
+      short: "Planning waits until 16:40, your API key's limit",
+    });
+    const card = await json<{ statusLine: StatusLine }>(req(`/projects/${created.id}`));
+    expect(card.statusLine).toEqual({
+      kind: "planning",
+      text: "Planning waits until 16:40, your API key's limit",
+      action: null,
+    });
+    // A limit asks nothing of the person: no card.
+    const inbox = await json<InboxView>(req("/inbox"));
+    expect(inbox.requests.filter((r) => r.status === "open")).toHaveLength(0);
+
+    // Before the reset a tick drafts nothing; at the reset the plan is drafted by itself.
+    await rt.scheduler.tick();
+    expect(messages()).toBe(1);
+    clock.set(Date.parse("2026-11-03T15:41:00Z"));
+    await rt.scheduler.tick();
+    await until("the plan to be drafted at the reset", async () => {
+      const s = await json<IntakeView>(req(`/projects/${created.id}/intake`));
+      return s.state === "pending" ? null : `${s.state} ${s.error ?? ""}`;
+    });
   }, 120_000);
 });
 
@@ -249,6 +433,13 @@ describe("a key at its usage limit (U-078)", () => {
     ]);
     const order = await json<BillingOrderView>(first.req("/settings/billing-order"));
     expect(order.sources[0]?.blocked).toBe("resting");
+    // Home and the project header: what the project waits for, and that nothing is to be done.
+    const card = await json<{ statusLine: StatusLine }>(first.req(`/projects/${project.id}`));
+    expect(card.statusLine).toEqual({
+      kind: "paused",
+      text: "Waiting until 16:40 (your API key's limit): 2 tasks",
+      action: null,
+    });
     // No card: a limit is nothing the person must do.
     const inbox = await json<InboxView>(first.req("/inbox"));
     expect(inbox.requests.filter((r) => r.status === "open")).toHaveLength(0);

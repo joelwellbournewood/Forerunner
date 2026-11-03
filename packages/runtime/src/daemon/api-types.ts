@@ -1125,8 +1125,21 @@ export type IntakeProposalView = z.infer<typeof IntakeProposalView>;
 /** `GET /projects/:id/intake`: the project's latest intake and what became of it. */
 export const IntakeStatusView = z.object({
   projectId: z.string(),
-  /** `drafting`: the plan is being drafted in the background now (U-046). */
-  state: z.enum(["none", "drafting", "pending", "approved", "rejected", "skipped", "failed"]),
+  /**
+   * `drafting`: the plan is being drafted in the background now (U-046). `waiting` (U-078): the
+   * planning call met a refused or resting Claude credential, the only one that may serve it;
+   * the plan is drafted by itself once it serves (`wait` says what for).
+   */
+  state: z.enum([
+    "none",
+    "drafting",
+    "pending",
+    "approved",
+    "rejected",
+    "skipped",
+    "failed",
+    "waiting",
+  ]),
   requestId: z.string().nullable(),
   /** The card's outcome once answered: `approved`, `rejected`, or why it was skipped. */
   outcome: z.string().nullable(),
@@ -1135,6 +1148,23 @@ export const IntakeStatusView = z.object({
   docs: z.unknown().nullable(),
   /** Why the last automatic intake failed (`state: "failed"`). */
   error: z.string().nullable(),
+  /**
+   * What planning waits for (`state: "waiting"`, U-078): a refusal (until a new key or sign-in
+   * is saved, `save` links to the setup assistant) or a limit (`until`, its reset). `text` is
+   * the project page's sentence, `short` the status sentence's. Null otherwise; an older daemon
+   * leaves it out.
+   */
+  wait: z
+    .object({
+      reason: z.enum(["limit", "refused"]),
+      kind: z.string(),
+      until: z.string().nullable(),
+      text: z.string(),
+      short: z.string(),
+      save: z.object({ label: z.string(), to: z.string() }).nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type IntakeStatusView = z.infer<typeof IntakeStatusView>;
 
@@ -2786,9 +2816,9 @@ export const DAEMON_ROUTES = {
   intake:
     "POST /projects/:id/intake (IntakeRequestBody -> 202 IntakeProposalView: PM intake, spec A.2, ADR 0055; one planning-rung model call turns the brief into the plan, the standard doc set and a first-session plan, filed as one blocking approval request whose card carries the whole proposal (change_card.key intake:<project>); an open proposal is reused without a call; nothing is written until the answer in the inbox: approve writes milestones and tasks (applyProjectPlan), the docs as a pull request on the project's repository or into its workspace directory, and the first-session plan onto the summary cache and the next-session queue; reject writes a queue note only; 409 conflict with cause validation when the model's reply is malformed or its plan cannot be written (a dependency cycle), with cause claim_conflict when a brief is given while a proposal is open; 503 without a model provider; 404 for an unknown project)",
   intakeStatus:
-    "GET /projects/:id/intake (IntakeStatusView: the latest intake request and its outcome, where the docs went, or why the last automatic intake failed or an approved proposal could not be written: state failed, outcome apply_failed, the error; state drafting while the background draft runs)",
+    "GET /projects/:id/intake (IntakeStatusView: the latest intake request and its outcome, where the docs went, or why the last automatic intake failed or an approved proposal could not be written: state failed, outcome apply_failed, the error; state drafting while the background draft runs; state waiting with wait when the planning call met a refused or resting Claude credential, U-078: drafted by itself once it serves)",
   intakeRetry:
-    "POST /projects/:id/intake/retry (-> 202 IntakeStatusView: U-046, the project page's Retry after a failed intake; drafts the proposal again in the background and answers drafting at once; a plan waiting in the Inbox, a running draft or an answered intake is answered as it stands with no model call; 503 without a model provider, 404 for an unknown project)",
+    "POST /projects/:id/intake/retry (-> 202 IntakeStatusView: U-046, the project page's Retry after a failed intake; drafts the proposal again in the background and answers drafting at once, also for a plan that waits for a Claude credential (U-078); a plan waiting in the Inbox, a running draft or an answered intake is answered as it stands with no model call; 503 without a model provider, 404 for an unknown project)",
   extensions: "GET /extensions?kind=",
   extensionCatalog: "GET /extensions/catalog",
   extension: "GET /extensions/:id",

@@ -136,9 +136,12 @@ describe("every setting is visible in Settings (U-060)", () => {
       "Wait for its reset; the tasks start by themselves",
     );
     // The row says what it covers: tasks only, and that the other one may cost money.
-    expect(row).toHaveTextContent("Chat, planning and reviews always use the next one.");
+    expect(row).toHaveTextContent("Chat, planning and reviews always use the next one");
     await user.click(within(row).getByTestId("setting-change"));
     const dialog = await screen.findByTestId("setting-dialog");
+    // One full stop after the description (review of credential-limits: "next one.. The same").
+    expect(dialog).toHaveTextContent("Chat, planning and reviews always use the next one. The");
+    expect(dialog).not.toHaveTextContent("..");
     await user.selectOptions(within(dialog).getByTestId("setting-value"), "use_other");
     await user.click(within(dialog).getByTestId("setting-apply"));
     await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));

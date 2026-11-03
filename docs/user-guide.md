@@ -612,8 +612,16 @@ If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expi
 one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),
 Settings shows the credential as **Refused**, and Forerunner stops using it: your other
 credential takes over, or the work waits ("Waits for a new API key"). No task fails because of
-it. Save a new key with **Save a new key** on the card (the setup assistant): the card closes,
-the mark goes, and the waiting work starts by itself. Until you choose an order, tasks use the subscription first and Chat, project setup
+it, and neither does the plan of a new project: its page says "Planning waits for a new API
+key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
+with **Save a new key** on the card or on the project page (the setup assistant): the card
+closes, the mark goes, and the waiting work starts by itself: the tasks run, and the plan is
+drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
+("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
+drafted at that time. Home and the project page say what a project waits for ("Waiting for a
+new API key: 2 tasks").
+
+Until you choose an order, tasks use the subscription first and Chat, project setup
 and reviews use the API key first. Whatever the order, a research task (the researcher, the
 science evaluator) uses the API key first when one is saved: only there can it open web pages.
 

@@ -8,7 +8,7 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
-import { waitRowWords } from "../session/credential-wait.ts";
+import { type CredentialWaitWords, waitRowWords } from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { waitingOf } from "../wiring/billing-pick.ts";
@@ -89,7 +89,7 @@ export async function loadTaskDisplayContext(
 export async function credentialWaitRow(
   store: StateStore,
   projectId: string,
-): Promise<{ label: string; detail: string } | null> {
+): Promise<CredentialWaitWords | null> {
   const rows = await store.billingSource.list({}, { limit: 100 }).catch(() => []);
   const now = store.clock.now();
   for (const row of rows) {

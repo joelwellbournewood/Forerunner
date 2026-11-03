@@ -115,9 +115,13 @@ const CLAUDE_CODE_REFUSALS: ReadonlySet<string> = new Set([
   "account_on_hold",
   "verification_required",
 ]);
-/** A result text that says the sign-in was refused: a 401, an expired or revoked token. */
+/**
+ * A result text that says the sign-in was refused: an API error or HTTP status 401, an expired
+ * or revoked token. A bare "401" is not enough (the review of credential-limits): a run's own
+ * output can hold the number ("expected 401 to be 200").
+ */
 const REFUSED_TEXT =
-  /\b401\b|authentication_error|invalid (?:x-api-key|api key|bearer token|authentication)|oauth token (?:has )?(?:expired|been revoked)|please run \/login|not logged in/i;
+  /(?:api error|status(?: code)?|http)\s*:?\s*401\b|\b401 unauthorized\b|authentication_error|invalid (?:x-api-key|api key|bearer token|authentication)|oauth token (?:has )?(?:expired|been revoked)|please run \/login|not logged in/i;
 
 /**
  * Whether Claude Code says Anthropic refused the credential (U-078, ADR 0100 amended): an

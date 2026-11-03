@@ -633,7 +633,7 @@ export const SETTINGS: SettingView[] = [
     scopeId: "human_alice",
     value: "wait",
     description:
-      "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one.",
+      "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
     risk: "medium",
   },
   {

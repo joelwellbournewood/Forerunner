@@ -29,6 +29,7 @@ export type PlanState =
   | "approved"
   | "rejected"
   | "failed"
+  | "waiting"
   | "skipped"
   | null;
 
@@ -44,6 +45,22 @@ export interface ProjectStatusInput {
   plan: PlanState;
   /** Why planning failed, in words (`summary_cache.intake.error`). */
   planError?: string | null;
+  /**
+   * The plan from the brief waits for a Claude credential (`plan: "waiting"`, U-078): the status
+   * sentence's words ("Planning waits for a new API key") and, for a refusal, where a new one is
+   * saved. Waiting is no failure: no Try again, which cannot work while it waits.
+   */
+  planWait?: { short: string; save: { label: string; to: string } | null } | null;
+  /**
+   * The project's ready tasks wait for a Claude credential (U-078, the rows' `credentialWait`):
+   * the sentence's head ("Waiting for a new API key", "Waiting until 15:40 (your subscription's
+   * limit)") and, for a refusal, where a new one is saved.
+   */
+  credentialWait?: {
+    label: string;
+    line?: string;
+    save?: { label: string; to: string } | null;
+  } | null;
   /**
    * Whether a Claude credential is in force now (the intake can call the model); null when not
    * known. Without one, Try again cannot work, so the button is Connect Claude.
@@ -205,6 +222,24 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       text: `Waiting for Docker: ${plural(docker.length, "task")}`,
       action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
     };
+  // U-078: the tasks wait for a Claude credential, as their rows say: a refused one needs the
+  // person (Save a new key), a limit needs nothing (they start by themselves at its reset).
+  // Before, the line fell through to "0 of 2 done [Open Tasks]".
+  const head = input.credentialWait?.line;
+  const credential = head
+    ? input.tasks.filter(
+        (t) =>
+          keyOf(t) === "waiting" && input.displays.get(t.id)?.label === input.credentialWait?.label,
+      )
+    : [];
+  if (head && credential.length > 0) {
+    const save = input.credentialWait?.save ?? null;
+    return {
+      kind: save ? "waiting" : "paused",
+      text: `${head}: ${plural(credential.length, "task")}`,
+      action: save ? { kind: "link", label: save.label, to: save.to } : null,
+    };
+  }
 
   // 4. Work that can run now. Continue opens the Start dialog, so the line offers it only when
   // the dialog would start (`start-blocked.ts`): without Claude it is Connect Claude, and with
@@ -233,6 +268,16 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
     return { kind: "planning", text: "Drafting the plan…", action: null };
   if (input.plan === "failed" && total === 0)
     return planFailedLine(input.planError, input.hasModel);
+  // U-078: planning waits for a Claude credential (a refusal or a limit), and is drafted by
+  // itself once one serves; a refusal links to where a new one is saved.
+  if (input.plan === "waiting" && total === 0) {
+    const save = input.planWait?.save ?? null;
+    return {
+      kind: save ? "waiting" : "planning",
+      text: input.planWait?.short ?? "Planning waits for a Claude credential",
+      action: save ? { kind: "link", label: save.label, to: save.to } : null,
+    };
+  }
   // Design §3.3: "You rejected the plan. Nothing was written. [Draft a new plan]".
   if (input.plan === "rejected" && total === 0)
     return {

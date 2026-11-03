@@ -170,20 +170,84 @@ export function waitSentence(
   return `${who} until ${at} (${limitOf(wait.kind)}) and starts by itself.`;
 }
 
-/** A waiting task's row (design §2: a status, then one line of why): label and detail. */
+/**
+ * A waiting task's row (design §2: a status, then one line of why): label and detail, with what
+ * the project's status sentence says of the waiting tasks (`line`: "Waiting for a new API key",
+ * "Waiting until 15:40 (your subscription's limit)") and the link that unblocks a refusal.
+ */
 export function waitRowWords(
   wait: CredentialWait,
   opts: { timezone?: string; nowMs: number },
-): { label: string; detail: string } {
+): CredentialWaitWords {
   if (wait.reason === "refused")
     return {
       label: `Waits for ${newCredential(wait.kind)}`,
       detail: "Save one in Settings; it starts by itself then.",
+      line: `Waiting for ${newCredential(wait.kind)}`,
+      save: saveLink(wait.kind),
     };
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
   return {
     label: `Waits until ${at}, ${limitOf(wait.kind)}`,
     detail: "It starts by itself then.",
+    line: `Waiting until ${at} (${limitOf(wait.kind)})`,
+    save: null,
+  };
+}
+
+/** A credential wait in the words of a task row and of the project's status sentence. */
+export interface CredentialWaitWords {
+  label: string;
+  detail: string;
+  /** The status sentence's head; the count of waiting tasks follows it ("…: 2 tasks"). */
+  line: string;
+  /** Where a refused credential's replacement is saved (null at a limit: nothing to do). */
+  save: { label: string; to: string } | null;
+}
+
+/** The refused card's link and the status sentence's: where a new key or sign-in is saved. */
+export function saveLink(kind: BillingSourceKind | string): { label: string; to: string } {
+  return {
+    label: kind === "subscription" ? "Save a new sign-in" : "Save a new key",
+    to: "/setup",
+  };
+}
+
+/**
+ * The plan from the brief waits for a credential (U-078, the review of credential-limits):
+ * planning that meets a refusal or a limit is no failure. `text` is the project page's sentence
+ * ("Planning waits for a new API key: save one in Settings.", "Planning waits until 15:40 (your
+ * subscription's limit) and starts by itself."), `short` the status sentence's ("Planning
+ * waits for a new API key", "Planning waits until 15:40, your subscription's limit"). The plan
+ * is drafted by itself once the credential serves (`RuntimeApp.billing.waits`).
+ */
+export function planWaitWords(
+  wait: CredentialWait,
+  opts: { timezone?: string; nowMs: number },
+): { text: string; short: string } {
+  if (wait.reason === "refused")
+    return {
+      text: `Planning waits for ${newCredential(wait.kind)}: save one in Settings.`,
+      short: `Planning waits for ${newCredential(wait.kind)}`,
+    };
+  const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
+  return {
+    text: `Planning waits until ${at} (${limitOf(wait.kind)}) and starts by itself.`,
+    short: `Planning waits until ${at}, ${limitOf(wait.kind)}`,
+  };
+}
+
+/** A credential wait read back from stored JSON (`summary_cache.intake.wait`), or null. */
+export function credentialWaitFrom(value: unknown): CredentialWait | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.reason !== "limit" && v.reason !== "refused") return null;
+  if (typeof v.sourceId !== "string" || typeof v.kind !== "string") return null;
+  return {
+    reason: v.reason,
+    sourceId: v.sourceId,
+    kind: v.kind as BillingSourceKind,
+    until: typeof v.until === "string" ? v.until : null,
   };
 }
 

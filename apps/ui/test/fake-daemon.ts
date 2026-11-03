@@ -1391,6 +1391,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         })),
       plan: state.intake[p.id]?.state ?? null,
       planError: state.intake[p.id]?.error ?? null,
+      // U-078, as the daemon: a plan that waits for a credential, and tasks that wait for one.
+      planWait: state.intake[p.id]?.wait
+        ? {
+            short: state.intake[p.id]?.wait?.short ?? "",
+            save: state.intake[p.id]?.wait?.save ?? null,
+          }
+        : null,
+      credentialWait: state.taskMeta.credentialWaits.get(p.id) ?? null,
       // As the daemon (`!!rt.provider`): `/me`'s provider, unknown when the fixture names none.
       hasModel: me.provider === undefined ? null : me.provider !== null,
       stopped: state.killActive,
@@ -1477,8 +1485,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id))
       return errorBody(c, 404, "not_found", "no such project");
     const current = intakeOf(id);
-    // As the daemon: a failed, rejected (Draft a new plan) or never run intake is drafted again.
-    if (current.state !== "failed" && current.state !== "none" && current.state !== "rejected")
+    // As the daemon: a failed, rejected (Draft a new plan), waiting (U-078) or never run intake
+    // is drafted again.
+    if (
+      current.state !== "failed" &&
+      current.state !== "none" &&
+      current.state !== "rejected" &&
+      current.state !== "waiting"
+    )
       return c.json(current, 202);
     // As the daemon: without a model the retry is refused before anything starts.
     if (me.provider === null)
@@ -1489,7 +1503,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
         503,
       );
-    state.intake[id] = { ...current, state: "drafting", requestId: null, error: null };
+    state.intake[id] = {
+      ...current,
+      state: "drafting",
+      requestId: null,
+      error: null,
+      wait: null,
+    };
     // As the daemon: the screens hear the project changed ("Drafting the plan…").
     emit("project.changed", { id });
     return c.json(state.intake[id], 202);
@@ -2125,6 +2145,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sentence: "Nothing can run yet: the plan from your brief is being drafted.",
         action: null,
       };
+    // As the daemon (U-078): the plan waits for a Claude credential.
+    else if (nothing && intake === "waiting") {
+      const wait = state.intake[id]?.wait;
+      view.blocked = {
+        kind: "nothing_runnable",
+        sentence: `Nothing can run yet. ${wait?.text ?? "Planning waits for a Claude credential."}`,
+        action: wait?.save ? { kind: "link", label: wait.save.label, to: wait.save.to } : null,
+      };
+    }
     return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {
@@ -5696,6 +5725,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       else setup.credentials.anthropicApiKey = true;
       setupRestartNeeded();
       setupComplete();
+      endRefusal(subscription ? "subscription" : "api_key");
     }
     return c.json({
       ok,
@@ -5705,6 +5735,38 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       status: setup,
     });
   });
+  /**
+   * As the daemon's `RuntimeApp.billing.waits.credentialSaved` (U-078): a new key or sign-in ends
+   * its refusal at once. Settings no longer reads Refused, the refused card is closed ("A new one
+   * is saved; ..."), and the work that waited for it starts by itself: a plan that waited is
+   * drafted again, the tasks' rows lose their wait.
+   */
+  const endRefusal = (kind: BillingOrderKind) => {
+    for (const s of billingSources)
+      if (s.kind === kind && s.blocked === "refused") {
+        s.blocked = null;
+        s.usable = true;
+      }
+    let closed = false;
+    for (const r of state.requests) {
+      const card = (r.changeCard ?? {}) as { key?: unknown; credential_kind?: unknown };
+      if (r.status !== "open" || card.key !== "credential:refused") continue;
+      if ((card.credential_kind ?? "api_key") !== kind) continue;
+      r.status = "withdrawn";
+      closed = true;
+    }
+    if (closed) emit("inbox.changed", { blockingCount: blockingCount() });
+    for (const [id, intake] of Object.entries(state.intake))
+      if (intake.state === "waiting" && intake.wait?.reason === "refused") {
+        state.intake[id] = { ...intake, state: "drafting", error: null, wait: null };
+        emit("project.changed", { id });
+      }
+    for (const [projectId, wait] of [...state.taskMeta.credentialWaits])
+      if (wait.save) {
+        state.taskMeta.credentialWaits.delete(projectId);
+        emit("project.changed", { id: projectId });
+      }
+  };
   app.post("/setup/github", async (c) => {
     const { token: pasted = "" } = (await c.req.json().catch(() => ({}))) as { token?: string };
     if (pasted.startsWith("sk-ant-")) {

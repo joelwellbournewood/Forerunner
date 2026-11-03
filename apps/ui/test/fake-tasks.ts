@@ -39,7 +39,17 @@ export interface FakeTaskMeta {
    * daemon's `credentialWaitRow` gives them ("Waits until 16:40, your API key's limit"). A test
    * sets them; the daemon reads them from the billing sources' `limits.waiting`.
    */
-  credentialWaits: Map<string, { label: string; detail: string }>;
+  credentialWaits: Map<
+    string,
+    {
+      label: string;
+      detail: string;
+      /** The status sentence's head ("Waiting for a new API key"; `waitRowWords`). */
+      line?: string;
+      /** A refusal's link to where a new key is saved; null or absent at a limit. */
+      save?: { label: string; to: string } | null;
+    }
+  >;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {

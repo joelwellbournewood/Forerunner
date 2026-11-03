@@ -274,6 +274,8 @@ export interface PlanState {
   state: IntakeState;
   /** Why planning failed, in words (`intakeFailureWords`), for `failed`. */
   error: string | null;
+  /** What planning waits for, for `waiting` (U-078): the project page's sentence. */
+  wait?: { text: string; reason: string } | null;
 }
 
 /**
@@ -289,8 +291,16 @@ export function planBlock(plan: PlanState): string {
   return line ? `# Plan from the brief\n${line}` : "";
 }
 
-function planLine({ state, error }: PlanState): string {
+function planLine({ state, error, wait }: PlanState): string {
   switch (state) {
+    // U-078: no failure and nothing to press; the plan is drafted by itself once the
+    // credential serves (a refused one, once the person saves a new one in Settings).
+    case "waiting":
+      return `${wait?.text ?? "Planning waits for a Claude credential."} There is no Try again: ${
+        wait?.reason === "refused"
+          ? "once the person saves a new one, the plan is drafted by itself."
+          : "the plan is drafted by itself then."
+      }`;
     case "drafting":
       return "The plan from your brief is being drafted.";
     case "pending":
@@ -327,6 +337,8 @@ export function emptyTasksLine(plan: PlanState | null): string {
       return "(none yet: the plan from the brief writes them once it is approved)";
     case "failed":
       return "(none yet: planning failed, so nothing was written)";
+    case "waiting":
+      return "(none yet: planning waits for a Claude credential, so nothing was written)";
     case "rejected":
       return "(none yet: the plan was rejected, so nothing was written)";
     default:

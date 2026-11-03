@@ -3,7 +3,11 @@
 // `--provider bench-api --api-key refused` (or `--api-key limited`): the app's own routed
 // provider over the vault's key, with the Messages API stand-in answering that key.
 //   node scripts/bench/journeys/credentials.cjs <bench> <label> [--save-key ok] [--wait-start <s>]
-// It makes a project with two small tasks (no planning call: a refused key would refuse it too),
+//     [--brief "<text>"]
+// With `--brief`, New project with that brief instead: the planning call meets the key first and
+// waits ("Planning waits for a new API key", no Try again); `--save-key ok` then drafts the plan
+// by itself, and the walk approves it ("Approve and start") and waits for its tasks to finish.
+// Otherwise it makes a project with two small tasks (no planning call),
 // starts a session, and records the Tasks tab, the Inbox, the session page with its result,
 // Settings (Advanced: Claude: which to use first) and the task rows. `--save-key ok` then saves
 // a new key the stand-in serves through the setup assistant's route (as Settings -> Accounts and
@@ -26,6 +30,7 @@ const flag = (f) => {
 };
 const SAVE_KEY = flag("--save-key");
 const WAIT_START = Number(flag("--wait-start") ?? 0);
+const BRIEF = flag("--brief");
 
 const result = { label: LABEL, checks: [], tasks: {}, cards: [], requests: [] };
 const out = (s) => console.log(`[credentials ${LABEL}] ${s}`);
@@ -73,8 +78,116 @@ async function shots(page, b, project, session, tag) {
   result[`${tag}Settings`] = (await R.step(page, `${LABEL} ${tag} settings`)).slice(0, 4000);
 }
 
+/**
+ * `--brief "<text>"`: New project with a brief (the dialog's body), so the planning call meets
+ * the refused or limited key first. The plan waits ("Planning waits for a new API key"), never
+ * "Planning failed [Try again]"; `--save-key ok` then drafts it by itself, and the plan card is
+ * approved ("Approve and start") so its task runs and finishes.
+ */
+async function planningWalk(b) {
+  const project = await R.api(NAME, "POST", "/projects", {
+    name: `Planning (${LABEL} ${new Date().toISOString().slice(11, 19)})`,
+    goal: BRIEF.replace(/\.$/, ""),
+    brief: BRIEF,
+    intake: true,
+  });
+  const intakeOf = () => R.api(NAME, "GET", `/projects/${enc(project.id)}/intake`);
+  const first = await R.until(
+    async () => {
+      const s = await intakeOf();
+      return s.state === "drafting" ? null : s;
+    },
+    120_000,
+    1000,
+    "the planning to end or wait",
+  );
+  result.intake = first;
+  check("planning waits, it did not fail", first.state === "waiting", JSON.stringify(first));
+  const card = await R.api(NAME, "GET", `/projects/${enc(project.id)}`);
+  result.statusLine = card.statusLine;
+  check(
+    "the status says what planning waits for, with no Try again",
+    /^Planning waits/.test(card.statusLine?.text ?? "") &&
+      card.statusLine?.action?.kind !== "retry",
+    JSON.stringify(card.statusLine),
+  );
+  const { browser, page } = await R.openApp(NAME);
+  try {
+    await R.skipSetup(page).catch(() => undefined);
+    await shots(page, b, project, null, "first");
+    if (WAIT_START > 0 && !SAVE_KEY) {
+      // A limit: the plan is drafted by itself at the reset (within a scheduler tick).
+      const pending = await R.until(
+        async () => {
+          const s = await intakeOf();
+          return s.state === "pending" ? s : null;
+        },
+        WAIT_START * 1000,
+        5000,
+        "the plan to be drafted by itself at the reset",
+      ).catch(() => null);
+      check("the plan was drafted by itself at the reset", !!pending);
+      await shots(page, b, project, null, "after-reset");
+    }
+    if (SAVE_KEY) {
+      const key = `sk-ant-api03-bench-${SAVE_KEY}-${require("node:crypto").randomBytes(24).toString("hex")}`;
+      const saved = await R.api(NAME, "POST", "/setup/anthropic", { value: key });
+      check("the new key is saved", saved.ok === true, saved.summary);
+      const pending = await R.until(
+        async () => {
+          const s = await intakeOf();
+          return s.state === "pending" ? s : null;
+        },
+        120_000,
+        2000,
+        "the plan to be drafted by itself after the new key",
+      ).catch(() => null);
+      check("the plan was drafted by itself and waits for approval", !!pending);
+      await shots(page, b, project, null, "after-key");
+      if (pending) {
+        const inbox = await R.api(NAME, "GET", "/inbox");
+        const plan = inbox.requests.find((r) => r.id === pending.requestId);
+        await R.api(NAME, "POST", `/requests/${enc(plan.id)}/answer`, {
+          version: plan.version,
+          answer: "approve",
+        });
+        const done = await R.until(
+          async () => {
+            const now = await R.api(NAME, "GET", `/projects/${enc(project.id)}/tasks`);
+            return now.length && now.every((t) => t.status === "done") ? now : null;
+          },
+          300_000,
+          3000,
+          "the plan's tasks to finish after Approve and start",
+        ).catch(() => null);
+        check("the plan's tasks ran and finished", !!done);
+        await shots(page, b, project, null, "after-approve");
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  return project;
+}
+
 async function main() {
   const b = R.bench(NAME);
+  if (BRIEF) {
+    const project = await planningWalk(b);
+    const after = await R.api(NAME, "GET", `/projects/${enc(project.id)}/tasks`);
+    for (const t of after) result.tasks[t.title] = { status: t.status, display: t.display };
+    result.requests = apiRequests(b).map((r) => ({
+      time: r.time,
+      path: r.path,
+      keyId: r.keyId,
+      status: r.status,
+      answer: r.answer,
+    }));
+    const file = path.join(b.steps, `${LABEL}-credentials.json`);
+    fs.writeFileSync(file, `${JSON.stringify(result, null, 2)}\n`);
+    out(`result: ${file}`);
+    return;
+  }
   const me = await R.api(NAME, "GET", "/me");
   const project = await R.api(NAME, "POST", "/projects", {
     name: `Credentials (${LABEL} ${new Date().toISOString().slice(11, 19)})`,

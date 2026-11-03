@@ -1,9 +1,39 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import type { EventSourceLike, StreamOptions } from "../src/api/sse.ts";
 import { milestonesFromTasks } from "../src/pages/project/PlanTab.tsx";
 import { money, PROJECTS, TASKS } from "./fixtures.ts";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
+
+/** An `/events` EventSource wired to the fake daemon's listeners, open at once. */
+function liveEvents(harness: Harness): StreamOptions {
+  const factory = (_url: string): EventSourceLike => {
+    const listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
+    const fromDaemon = (event: string, data: unknown) => {
+      for (const l of listeners.get(event) ?? []) l({ data: JSON.stringify(data) } as MessageEvent);
+    };
+    const es: EventSourceLike & { readyState: number } = {
+      readyState: 0,
+      onerror: null,
+      onopen: null,
+      addEventListener(type, listener) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+      },
+      close() {
+        es.readyState = 2;
+        harness.daemon.state.listeners.delete(fromDaemon);
+      },
+    };
+    harness.daemon.state.listeners.add(fromDaemon);
+    queueMicrotask(() => {
+      es.readyState = 1;
+      es.onopen?.(new Event("open"));
+    });
+    return es;
+  };
+  return { eventSource: factory, setTimer: () => 0, clearTimer: () => {} };
+}
 
 describe("Project page", () => {
   it("opens on the Overview: the tabs are Overview, Tasks, Chat, Files and More; Last result, Next computed now, Your files (design §3.4, §6)", async () => {
@@ -293,6 +323,88 @@ describe("Project page", () => {
       expect(await within(dialog).findByTestId("start-session-intake")).toHaveTextContent(
         /plan from your brief could not be drafted; the project page says why/,
       );
+    });
+
+    // U-078 (the review of credential-limits): planning that met a refused key waited, but the
+    // page said "Planning failed: ... [Try again]", and Try again cannot work while the key is
+    // refused; the card promised the work would start by itself, and nothing restarted it.
+    const waiting = (reason: "refused" | "limit") => ({
+      ...intake("failed"),
+      state: "waiting" as const,
+      error: null,
+      wait:
+        reason === "refused"
+          ? {
+              reason,
+              kind: "api_key",
+              until: null,
+              text: "Planning waits for a new API key: save one in Settings.",
+              short: "Planning waits for a new API key",
+              save: { label: "Save a new key", to: "/setup" },
+            }
+          : {
+              reason,
+              kind: "api_key",
+              until: "2026-11-03T15:40:00.000Z",
+              text: "Planning waits until 16:40 (your API key's limit) and starts by itself.",
+              short: "Planning waits until 16:40, your API key's limit",
+              save: null,
+            },
+    });
+
+    it("a plan that waits for a new key says so, links to where it is saved, and offers no Try again; saving it drafts the plan (U-078)", async () => {
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = waiting("refused");
+      renderApp("/projects/proj_beacon", harness, liveEvents(harness));
+      const banner = await screen.findByTestId("intake-banner");
+      expect(banner).toHaveAttribute("data-state", "waiting");
+      expect(within(banner).getByTestId("intake-wait")).toHaveTextContent(
+        /^Planning waits for a new API key: save one in Settings\.$/,
+      );
+      expect(banner).not.toHaveTextContent(/failed/i);
+      expect(within(banner).queryByTestId("intake-retry")).toBeNull();
+      expect(within(banner).getByRole("link", { name: "Save a new key" })).toHaveAttribute(
+        "href",
+        "/setup",
+      );
+      // The setup assistant saves a new key (as the daemon's `credentialSaved`): the plan is
+      // drafted by itself, and the page follows without a reload.
+      const saved = await harness.client.setupAnthropic("sk-ant-api03-new");
+      expect(saved.ok).toBe(true);
+      await waitFor(
+        () => expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "drafting"),
+        { timeout: 6000 },
+      );
+    }, 15_000);
+
+    it("a plan that waits for a usage limit says until when and that it starts by itself, with no button (U-078)", async () => {
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = waiting("limit");
+      renderApp("/projects/proj_beacon", harness);
+      const banner = await screen.findByTestId("intake-banner");
+      expect(banner).toHaveAttribute("data-state", "waiting");
+      expect(banner).toHaveTextContent(
+        "Planning waits until 16:40 (your API key's limit) and starts by itself.",
+      );
+      expect(within(banner).queryByRole("button")).toBeNull();
+      expect(within(banner).queryByRole("link")).toBeNull();
+    });
+
+    it("the Start dialog names a plan that waits for a new key, with where to save one (U-078)", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.intake.proj_beacon = waiting("refused");
+      renderApp("/projects/proj_beacon", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
+        /^Nothing can run yet\. Planning waits for a new API key: save one in Settings\.$/,
+      );
+      expect(within(dialog).getByTestId("start-session-unblock")).toHaveTextContent(
+        "Save a new key",
+      );
+      expect(dialog).not.toHaveTextContent(/Give your agent work first|could not be drafted/);
     });
   });
 

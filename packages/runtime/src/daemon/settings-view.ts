@@ -121,7 +121,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
       label: "When my first choice runs out mid-session",
       value: prefOf(h, "mid_session_limit") === "use_other" ? "use_other" : "wait",
       description:
-        "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one.",
+        "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
       risk: "medium",
     }),
     human({

@@ -130,7 +130,12 @@ export function openMilestone<M extends Pick<MilestoneRow, "status">>(
  */
 export interface ProjectCardFacts {
   sandboxReady: boolean | null;
-  plan?: (projectId: string) => Promise<{ state: PlanState; error: string | null }>;
+  plan?: (projectId: string) => Promise<{
+    state: PlanState;
+    error: string | null;
+    /** `waiting` (U-078): the status sentence's words and where a refused key is replaced. */
+    wait?: { short: string; save: { label: string; to: string } | null } | null;
+  }>;
   folder?: (project: ProjectRow) => string | null;
   /** The repository the project is linked to, with its page (`projectRepository`). */
   repository?: (project: ProjectRow) => { fullName: string; url: string } | null;
@@ -187,6 +192,8 @@ export async function projectCard(
     cards,
     plan: plan.state,
     planError: plan.error,
+    planWait: "wait" in plan ? (plan.wait ?? null) : null,
+    credentialWait: ctx.credentialWait ?? null,
     hasModel: facts?.hasModel ?? null,
     stopped: facts?.stopped ?? null,
     working,

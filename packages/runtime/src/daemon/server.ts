@@ -850,7 +850,12 @@ export function createDaemonApp(
         if (plan) return plan;
         try {
           const s = await rt.intake.status(projectId);
-          return { state: s.state, error: s.error };
+          // U-078: a plan that waits for a credential says so, with where to save a new one.
+          return {
+            state: s.state,
+            error: s.error,
+            wait: s.wait ? { short: s.wait.short, save: s.wait.save } : null,
+          };
         } catch {
           return { state: null, error: null };
         }
@@ -919,6 +924,7 @@ export function createDaemonApp(
       appliedAt: s.appliedAt,
       docs: s.docs,
       error: s.error,
+      wait: s.wait,
     }) satisfies IntakeStatusView;
   app.get("/projects/:id/intake", async (c) =>
     c.json(intakeStatusView(await rt.intake.status(c.req.param("id")))),
@@ -1293,7 +1299,11 @@ export function createDaemonApp(
       busy: busyHere(rt.scheduler.activeStart(agentId), projectId),
       projectId,
       chfPerUsd: chf(),
-      plan: intake?.state === "pending" || intake?.state === "drafting" ? intake.state : null,
+      plan:
+        intake?.state === "pending" || intake?.state === "drafting" || intake?.state === "waiting"
+          ? intake.state
+          : null,
+      planWait: intake?.wait ?? null,
     });
   };
 

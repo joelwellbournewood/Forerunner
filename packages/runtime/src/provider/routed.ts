@@ -14,6 +14,7 @@ import {
   type TaskBillingPick,
   type TaskBillingRequest,
 } from "../session/billing.ts";
+import { type CredentialWait, credentialWaitOf } from "../session/credential-wait.ts";
 import { tierFromId } from "./anthropic.ts";
 import {
   type CallBilling,
@@ -141,6 +142,21 @@ export class RoutedProvider implements ModelProvider {
       return (await this.pick(model, [])).source;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * What a call of this purpose would wait for now, without making one (U-078): the wait the
+   * router's "no source" means (the only credential that may serve it is refused or resting),
+   * or null when one can serve or none is saved at all. The intake asks it after a planning
+   * call failed, so the plan waits for the credential instead of failing.
+   */
+  async waitNow(model = "claude-sonnet-5-5"): Promise<CredentialWait | null> {
+    try {
+      await this.pick(model, []);
+      return null;
+    } catch (e) {
+      return credentialWaitOf(e);
     }
   }
 
