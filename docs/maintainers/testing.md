@@ -2815,12 +2815,24 @@ click and the ACL refused its `open_url`; `apps.md`, "How a link leaves the app"
      check expected nothing to happen, and run 41495902701 passed it with "the shell refused it
      (http, new window)"; that is a failure now. The owner changed what is expected, which is
      not a weaker check. After each, the journey goes back to the project's page (Home, the
-     project's card);
-   - a `file:` link added to the page: no hand-off of any kind;
+     project's card) and waits there until the page has settled on the Overview (below);
+   - a `file:` link added to the page, from the Overview: no hand-off of any kind;
    - Open folder on the Overview: "handed to the file manager: <folder>", the folder the
      Overview shows, and no error under the button;
-   - after each other step, the window still shows the same app page (the shell must not
-     navigate away);
+   - after each other step, the window still shows the same app page, the very address it
+     had before the click (`staysVerdict`; the shell must not navigate away). The address
+     before a step that follows a move of the journey's own (the Tasks tab, back to the project,
+     the file: link, Open folder, Settings) is read once the page has settled (`settledPage`):
+     the address the same for 1 s, on the step's route, and the page's own marker shown (the
+     Overview's panel, the PR link, Open folder, "Get Docker Desktop"). The project's card opens
+     `/projects/<id>`, which the app sends on to `/projects/<id>/summary` a moment later
+     (`ProjectPage.tsx`); run 41567593475 (on e16bb8c) read the file: link's "before" in that
+     moment and failed "the window stays on the app's page after a file: link" with "before
+     .../projects/<id>, after .../projects/<id>/summary", while the shell had handed the link
+     to no program. The check after the click is as strict as it was: any move after it fails.
+     A page that does not settle within 30 s fails "the window settles on <page>" with what it
+     saw (the address still changing, another page, or no marker), so the step after it is
+     not blamed;
    - at the end, "the page threw no uncaught error", required: every `Runtime.exceptionThrown`
      since the attach, with what was thrown (`pageErrorText`: a rejection with a string, as
      Tauri's refusals are, was recorded as "Uncaught (in promise)" only before). A refusal by
@@ -2912,7 +2924,10 @@ whether the page saw the key and whether the browser opened the link in a tab, w
 driver's modified click is a real one). On 2026-11-02 (`--name links`, headless Chrome for Testing 153)
 every required check passed, the three new steps skipped with "the page saw the click with
 Ctrl held" (Shift for the second) and "this browser opened the link in a new tab or window",
-and the page threw no uncaught error:
+and the page threw no uncaught error. On 2026-11-03 (`--name winsettle`, the same browser, after
+the settling fix) every required check passed again, and each "settled:" line after Home and
+the project's card read "it went .../projects/<id> → .../projects/<id>/summary" (about 1.3 s):
+the move run 41567593475 took for the file: link's doing happens in Chromium too.
 
 ```
 node scripts/bench/start.mjs --name win --daemon-port 48731 --ui-port 1871 --fresh
@@ -2933,7 +2948,13 @@ the in-app Ctrl+ and Shift+click verdict (`inAppClickVerdict`, Q7): the Inbox sh
 window passes, run 41495902701's refusal fails, and so does each part missing on its own (a
 browser hand-off, a second window, no heading, the window elsewhere or unmoved, the key not
 held, no "shown in this window" line), with the shell's words for that line pinned in
-`windows.rs`; the shell builds the opener without its
+`windows.rs`; the page a step starts from (`settledPage`, run 41567593475), on a clock the
+waits move: it waits through the project's page's redirect to its Overview (and one later than
+the quiet time, held by the route and the marker), and the run's own "before" fails the strict
+`staysVerdict` while the settled one passes; a real move after the click (another page, a
+query, a `file:` address, a page not the app's) still fails, and a page that keeps moving,
+lands elsewhere, never shows its marker (or its probe throws) or cannot be read is reported in
+words; every step's "before" after a move is read from it; the shell builds the opener without its
 page script and has `on_new_window`; the app's environment with both DevTools switches on two ports, and that the variables,
 the provider name, the shell's feature lists, wry's autoplay policy (both ways carry wry's whole
 default) and the shell's log line are the ones `supervisor.rs` and `devtools.rs` use; a port

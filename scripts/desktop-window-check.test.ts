@@ -43,7 +43,9 @@ import {
   runCaptured,
   sameFolder,
   seedPrUrl,
+  settledPage,
   startLinkServer,
+  staysVerdict,
   summaryMarkdown,
   switchMechanism,
   tcpProbe,
@@ -1180,6 +1182,183 @@ describe("Ctrl- and Shift-clicked links, and what the page threw", () => {
     expect(lib).toContain(".open_js_links_on_click(false)");
     expect(lib).not.toContain("tauri_plugin_opener::init(");
     expect(shellSource("windows.rs")).toMatch(/\.on_new_window\(move \|url, _features\| \{/);
+  });
+});
+
+/**
+ * Run 41567593475 (on e16bb8c) failed one check: "the window stays on the app's page after a
+ * file: link: before http://tauri.localhost/projects/<id>, after
+ * http://tauri.localhost/projects/<id>/summary". The shell handed the file: link to no program;
+ * the journey had read "before" right after Home and the project's card opened `/projects/<id>`,
+ * which the app sends on to its Overview a moment later (ProjectPage.tsx). A step's "before" is
+ * now read once the page has settled; the check after the click is as strict as it was.
+ */
+describe("the page a step starts from, read once it has settled (run 41567593475)", () => {
+  /** A clock the helper's waits move forward, so a redirect happens at a set time. */
+  function fakeClock() {
+    let t = 0;
+    return {
+      now: () => t,
+      sleep: async (ms: number) => {
+        t += ms;
+      },
+    };
+  }
+  const project = "http://tauri.localhost/projects/p1";
+  const overview = `${project}/summary`;
+  const inbox = "http://tauri.localhost/inbox";
+
+  it("waits through the app's redirect of the project's page to its Overview, then reads the address", async () => {
+    const clock = fakeClock();
+    // The app sends the project's page on to its Overview 600 ms after the card's click; the
+    // Overview's panel shows 200 ms after that.
+    const url = async () => (clock.now() < 600 ? project : overview);
+    const shown = async () => clock.now() >= 800;
+    // What run 41567593475 read: the address right after the click.
+    const unsettled = await url();
+    expect(unsettled).toBe(project);
+
+    const s = await settledPage({
+      url,
+      shown,
+      route: "/projects/p1/summary",
+      marker: "the Overview",
+      now: clock.now,
+      sleep: clock.sleep,
+    });
+    expect(s).toEqual({
+      ok: true,
+      url: overview,
+      seen: [project, overview],
+      detail: `settled on ${overview} in 1750 ms (it went ${project} → ${overview})`,
+    });
+
+    // The file: link moved nothing: from the settled address the check passes, and the
+    // address read before the redirect is what failed it (the run's words).
+    expect(staysVerdict(s.url, overview)).toEqual({ ok: true, detail: overview });
+    expect(staysVerdict(unsettled, overview)).toEqual({
+      ok: false,
+      detail: `before ${project}, after ${overview}`,
+    });
+
+    // A redirect later than the quiet time is waited for too: the page's marker and the route
+    // hold the wait until the Overview is there, not only an address that stood still a while.
+    const late = fakeClock();
+    const lateUrl = async () => (late.now() < 2_600 ? project : overview);
+    const settledLate = await settledPage({
+      url: lateUrl,
+      shown: async () => (await lateUrl()) === overview,
+      route: "/projects/p1/summary",
+      now: late.now,
+      sleep: late.sleep,
+    });
+    expect(settledLate).toMatchObject({ ok: true, url: overview, seen: [project, overview] });
+    expect(late.now()).toBeGreaterThanOrEqual(3_600);
+  });
+
+  it("still reports a real move: a page that moves after the click fails, and one that never settles is named", async () => {
+    // After the click, anywhere but the settled address is a move.
+    expect(staysVerdict(overview, inbox)).toEqual({
+      ok: false,
+      detail: `before ${overview}, after ${inbox}`,
+    });
+    expect(staysVerdict(overview, `${overview}?tab=tasks`).ok).toBe(false);
+    expect(staysVerdict(overview, "file:///C:/Windows/win.ini").ok).toBe(false);
+    expect(staysVerdict("https://example.org/", "https://example.org/").ok).toBe(false);
+    // --attach: the bench's page is the app's origin.
+    const bench = "http://127.0.0.1:2160/projects/p1/summary";
+    expect(staysVerdict(bench, bench, ["http://127.0.0.1:2160"])).toEqual({
+      ok: true,
+      detail: bench,
+    });
+
+    type Settled = { ok: boolean; url: string; seen: string[]; detail: string };
+    const settle = async (o: {
+      url: () => Promise<string>;
+      shown?: () => Promise<boolean> | boolean;
+    }) => {
+      const clock = fakeClock();
+      const r: Settled = await settledPage({
+        route: "/projects/p1/summary",
+        marker: "the Overview",
+        timeoutMs: 5_000,
+        now: clock.now,
+        sleep: clock.sleep,
+        ...o,
+      });
+      return { ...r, at: clock.now() };
+    };
+
+    // A page that keeps moving (a redirect loop) never counts as settled.
+    let reads = 0;
+    const moving = await settle({
+      url: async () => (Math.floor(reads++ / 2) % 2 === 0 ? overview : `${project}/tasks`),
+    });
+    expect(moving.ok).toBe(false);
+    expect(moving.detail).toMatch(
+      /^the window's address was still changing after 5 s: http:\/\/tauri\.localhost\/projects\/p1\/(summary|tasks) → /,
+    );
+    expect(moving.at).toBeGreaterThanOrEqual(5_000);
+    expect(moving.at).toBeLessThan(5_500);
+
+    // The page went somewhere else and stayed there.
+    let n = 0;
+    const elsewhere = await settle({ url: async () => (n++ < 2 ? project : inbox) });
+    expect(elsewhere).toMatchObject({
+      ok: false,
+      url: inbox,
+      detail: `the window is on ${inbox}, not on /projects/p1/summary (it went ${project} → ${inbox})`,
+    });
+
+    // The address is right but the page never shows its marker, or reading it throws.
+    const blank = await settle({ url: async () => overview, shown: async () => false });
+    expect(blank).toMatchObject({
+      ok: false,
+      detail: `the page on ${overview} does not show the Overview after 5 s`,
+    });
+    for (const shown of [
+      async () => {
+        throw new Error("strict mode: 2 elements");
+      },
+      () => {
+        throw new Error("strict mode: 2 elements");
+      },
+    ])
+      expect(await settle({ url: async () => overview, shown })).toMatchObject({
+        ok: false,
+        detail: `the page on ${overview} does not show the Overview after 5 s`,
+      });
+
+    // The address cannot be read at all.
+    const unread = await settle({
+      url: async () => {
+        throw new Error("CDP: the page closed");
+      },
+    });
+    expect(unread).toMatchObject({
+      ok: false,
+      url: "",
+      seen: [],
+      detail: "the window's address could not be read: CDP: the page closed",
+    });
+  });
+
+  it("the journey reads every step's 'before' after a move from the settled page, and stays() is as strict as before", () => {
+    const script = readFileSync(join(REPO, "scripts", "desktop-window-check.mjs"), "utf8");
+    expect(script).toContain(
+      `const beforeFile = await settled("the project's Overview, before the file: link", onOverview);`,
+    );
+    expect(script).toContain(
+      `return settled("the project's Overview (Home, then the project's card)", onOverview);`,
+    );
+    for (const before of ["beforePr", "beforeFolder", "beforeDocker"])
+      expect(script).toContain(`const ${before} = await settled(`);
+    expect(script).toMatch(/route: `\$\{projectBase\}\/summary`,/);
+    expect(script).toContain("const v = staysVerdict(before, await page.url(), origins);");
+    // A failure to settle is a failed check of its own, never waited out in silence.
+    expect(script).toMatch(/else check\(`the window settles on \$\{what\}`, false, s\.detail\);/);
+    // The wait that took `/projects/<id>` for the project's page whatever came next is gone.
+    expect(script).not.toMatch(/\(await page\.url\(\)\)\.includes\(`\/projects\//);
   });
 });
 

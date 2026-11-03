@@ -33,7 +33,9 @@
 //      Inbox link (the Inbox in this window, as a plain click; no browser, no second window:
 //      the owner's decision of 2026-11-02, Q7), a file: link (must open nothing) and Open
 //      folder on the Overview. After each, the window must still show the app on the same page
-//      (on the Inbox after the in-app clicks); the page must throw no uncaught error (a refusal
+//      (on the Inbox after the in-app clicks), the address before it read once the page the
+//      journey moved to has settled (`settledPage`: the app sends the project's page on to its
+//      Overview a moment later); the page must throw no uncaught error (a refusal
 //      by the shell's ACL above all: the opener plugin's page script once made Ctrl/Shift-clicks
 //      do nothing that way);
 //   5. saves a screenshot (Page.captureScreenshot) and the visible text of every step, and of
@@ -1229,14 +1231,7 @@ export function inAppClickVerdict(o) {
   const handed = o.said.filter((x) => x.kind === "browser" || x.kind === "folder");
   const inWindow = o.said.find((x) => x.kind === "window");
   const refusal = o.said.find((x) => x.kind === "refused");
-  const pathOf = (u) => {
-    try {
-      return new URL(u).pathname;
-    } catch {
-      return "";
-    }
-  };
-  const moved = isAppUrl(o.after, origins) && pathOf(o.after) === o.route && o.after !== o.before;
+  const moved = isAppUrl(o.after, origins) && urlPath(o.after) === o.route && o.after !== o.before;
   const shell = handed.length
     ? `handed off: ${handed.map((x) => `${x.kind === "folder" ? "file manager" : "browser"} ${x.target}`).join(", ")}`
     : inWindow
@@ -1263,6 +1258,111 @@ export function inAppClickVerdict(o) {
       o.windows.words,
     ].join("; "),
   };
+}
+
+/** An address's path (`/projects/p1/summary`), or "" when it is no address. */
+function urlPath(u) {
+  try {
+    return new URL(u).pathname;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * "The window stays on the app's page" after a click that must not move it: the address after
+ * the click is one of the app's pages and the very address before it. Strict on purpose: a page
+ * that moves after the click fails, whatever moved it. `before` is read once the page has
+ * settled (`settledPage`), so the app's own redirect of the page the journey opened is not
+ * taken for the click's doing (run 41567593475).
+ * @param {string} before
+ * @param {string} after
+ * @param {readonly string[]} [origins]
+ * @returns {{ ok: boolean, detail: string }}
+ */
+export function staysVerdict(before, after, origins = APP_ORIGINS) {
+  const ok = isAppUrl(after, origins) && after === before;
+  return { ok, detail: ok ? after : `before ${before}, after ${after}` };
+}
+
+/**
+ * Waits for the window's page to settle after the journey moved it, before a step reads the
+ * address it must keep: the address unchanged for `quietMs` (read every `everyMs`), its path
+ * `route` when one is given, and the page's own marker shown (`shown`; `marker` names it in
+ * words). The project's page is such a move: Home, then the project's card, opens
+ * `/projects/<id>`, which the app sends on to its Overview, `/projects/<id>/summary`
+ * (`apps/ui/src/pages/ProjectPage.tsx`), a moment later. Run 41567593475 read the file: link's
+ * "before" in that moment, so "stays on the app's page" compared two addresses of one page and
+ * failed although the window never left it. A page that keeps moving, lands elsewhere or never
+ * shows its marker within `timeoutMs` is reported (`ok: false`, `detail` says which), never
+ * waited out silently. Every address seen is kept, in order, for the words.
+ * @param {{
+ *   url: () => Promise<string>,
+ *   shown?: () => Promise<boolean> | boolean,
+ *   marker?: string,
+ *   route?: string,
+ *   quietMs?: number,
+ *   everyMs?: number,
+ *   timeoutMs?: number,
+ *   now?: () => number,
+ *   sleep?: (ms: number) => Promise<void>,
+ * }} o
+ * @returns {Promise<{ ok: boolean, url: string, seen: string[], detail: string }>}
+ */
+export async function settledPage(o) {
+  const quietMs = o.quietMs ?? 1_000;
+  const everyMs = o.everyMs ?? 250;
+  const timeoutMs = o.timeoutMs ?? 30_000;
+  const now = o.now ?? (() => Date.now());
+  const wait = o.sleep ?? sleep;
+  const marker = o.marker ?? "its marker";
+  const start = now();
+  /** @type {string[]} */
+  const seen = [];
+  let url = "";
+  let since = start;
+  let error = "";
+  const went = () => (seen.length > 1 ? ` (it went ${seen.join(" → ")})` : "");
+  for (;;) {
+    const t = now();
+    let current = null;
+    try {
+      current = String(await o.url());
+      error = "";
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    if (current !== null && current !== url) {
+      url = current;
+      since = t;
+      seen.push(current);
+    }
+    let shown = current !== null;
+    if (shown && o.shown) {
+      try {
+        shown = !!(await o.shown());
+      } catch {
+        shown = false;
+      }
+    }
+    const onRoute = !o.route || urlPath(url) === o.route;
+    const quiet = t - since >= quietMs;
+    if (current !== null && shown && onRoute && quiet)
+      return { ok: true, url, seen, detail: `settled on ${url} in ${t - start} ms${went()}` };
+    if (t - start >= timeoutMs) {
+      const secs = `${Math.round(timeoutMs / 1000)} s`;
+      const why =
+        current === null
+          ? `the window's address could not be read${url ? ` (last ${url})` : ""}: ${error}`
+          : !quiet
+            ? `the window's address was still changing after ${secs}: ${seen.slice(-5).join(" → ")}`
+            : !onRoute
+              ? `the window is on ${url}, not on ${o.route}${went()}`
+              : `the page on ${url} does not show ${marker} after ${secs}${went()}`;
+      return { ok: false, url, seen, detail: why };
+    }
+    await wait(everyMs);
+  }
 }
 
 /**
@@ -1807,13 +1907,24 @@ async function main() {
     };
     const stays = async (before, label) => {
       await sleep(1_500);
-      const after = await page.url();
-      const ok = isAppUrl(after, origins) && after === before;
-      check(
-        `the window stays on the app's page after ${label}`,
-        ok,
-        ok ? after : `before ${before}, after ${after}`,
-      );
+      const v = staysVerdict(before, await page.url(), origins);
+      check(`the window stays on the app's page after ${label}`, v.ok, v.detail);
+    };
+    // The address a step must keep, read once the page the journey moved to has settled
+    // (`settledPage`): the app may still move it on (the project's page to its Overview), and a
+    // "before" read in that moment blames the step for the app's own redirect (run
+    // 41567593475). A page that does not settle fails here, by name.
+    const projectBase = `/projects/${encodeURIComponent(projectId)}`;
+    const settled = async (what, { route, shown, marker }) => {
+      const s = await settledPage({ url: () => page.url(), route, shown, marker });
+      if (s.ok) console.log(`settled: ${what}: ${s.detail}`);
+      else check(`the window settles on ${what}`, false, s.detail);
+      return s.url || (await page.url());
+    };
+    const onOverview = {
+      route: `${projectBase}/summary`,
+      shown: () => page.getByTestId("tab-panel-summary").isVisible(),
+      marker: "the Overview",
     };
 
     // The PR link on the Tasks tab (the owner's complaint 1).
@@ -1833,7 +1944,11 @@ async function main() {
     const prShown = (await prLink.count()) === 1;
     must("the Tasks tab shows the task's PR link", prShown, `${await prLink.count()} PR link(s)`);
     await shot("tasks tab with a PR");
-    const beforePr = await page.url();
+    const beforePr = await settled("the Tasks tab", {
+      route: `${projectBase}/tasks`,
+      shown: () => prLink.isVisible(),
+      marker: "the PR link",
+    });
     let offset = logSize(shellLog);
     await prLink.click();
     await backToPage();
@@ -1932,7 +2047,8 @@ async function main() {
     // the system browser cannot show the app's own page, so neither opens. Until then the
     // shell refused the new window and the person stayed where they were (run 41495902701).
     // Each click starts on the project's page, so the move to the Inbox can be seen; the
-    // journey goes on from there.
+    // journey goes on from there. The project's card opens `/projects/<id>`, which the app
+    // sends on to the Overview a moment later: back on the project means settled there.
     const backToProject = async () => {
       await page.getByRole("link", { name: "Home", exact: true }).first().click();
       await page
@@ -1940,9 +2056,7 @@ async function main() {
         .filter({ has: page.getByText(projectName, { exact: true }) })
         .getByTestId("open-project")
         .click();
-      await until("the project's page", 30_000, 500, async () =>
-        (await page.url()).includes(`/projects/${encodeURIComponent(projectId)}`) ? true : null,
-      ).catch(() => undefined);
+      return settled("the project's Overview (Home, then the project's card)", onOverview);
     };
     for (const key of /** @type {const} */ (["Control", "Shift"])) {
       const keyName = key === "Control" ? "Ctrl" : "Shift";
@@ -1982,10 +2096,11 @@ async function main() {
       await backToProject();
     }
 
-    // A file: link opens nothing, in no program.
+    // A file: link opens nothing, in no program. It starts on the project's Overview, where
+    // the last backToProject left the window, read once settled.
     await page.evaluate(injectLinkScript("fr-check-file", "file:///C:/Windows/win.ini", ""));
     offset = logSize(shellLog);
-    const beforeFile = await page.url();
+    const beforeFile = await settled("the project's Overview, before the file: link", onOverview);
     await page.getByTestId("fr-check-file").click();
     await backToPage();
     await sleep(3_000);
@@ -2021,7 +2136,11 @@ async function main() {
       const hasOpen = (await open.count()) === 1;
       must("Open folder is on the Overview", hasOpen, hasOpen ? "" : "no Open folder button");
       offset = logSize(shellLog);
-      const beforeFolder = await page.url();
+      const beforeFolder = await settled("the Overview, before Open folder", {
+        ...onOverview,
+        shown: () => open.isVisible(),
+        marker: "Open folder",
+      });
       await open.click();
       const h = await handoffSince(offset, (x) => x.kind === "folder");
       check(
@@ -2050,7 +2169,11 @@ async function main() {
     if ((await dockerLink.count()) === 1) {
       await shot("settings sandbox");
       offset = logSize(shellLog);
-      const beforeDocker = await page.url();
+      const beforeDocker = await settled("Settings", {
+        route: "/settings",
+        shown: () => dockerLink.isVisible(),
+        marker: '"Get Docker Desktop"',
+      });
       await dockerLink.click();
       await backToPage();
       if (shellMode) {
