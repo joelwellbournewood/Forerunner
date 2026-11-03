@@ -377,6 +377,24 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
       ).toHaveLength(1);
   });
 
+  it("(c) the dependent changes the dependency's own file (live check 1's second chain): after a squash on GitHub it is rebuilt with only its own commit and merges with no conflict", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Add page", { "src/page.ts": 'export const title = "Hello";\n' });
+    const a = await m.runTask("Add page");
+    m.writes.set("Change the page", {
+      "src/page.ts": 'export const title = "Hello";\nexport const footer = "Bye";\n',
+    });
+    const b = await m.runTask("Change the page", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.github.mergePullRequest(REPO, await m.prNumber(a.id), { method: "squash" });
+    await m.poll();
+    expect(await m.prCommits(prB)).toEqual(["Change the page"]);
+    expect(await m.prFiles(prB)).toEqual(["src/page.ts"]);
+    expect((await m.record(b.id)).last_outcome).toBe("not_allowed");
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    expect(await m.hostGit("show", "main:src/page.ts")).toContain('footer = "Bye"');
+  });
+
   it("(d) a dependency closed without merging: the dependent is rebuilt without it, its review is void (one sentence, one card), and a merge the gate would make unattended at level 3 does not happen", async () => {
     const m = await chainWorld({ level: 3 });
     // A waits for the person (its checks fail), B's checks are still running when it is accepted.
