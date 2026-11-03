@@ -7,3 +7,4 @@ export * from "./replies.ts";
 export * from "./tokens.ts";
 export type * from "./types.ts";
 export * from "./usage-source.ts";
+export * from "./messages-api.ts";
