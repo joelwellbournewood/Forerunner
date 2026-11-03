@@ -195,7 +195,7 @@ export function BillingOrderSection() {
           {view.sources.length === 0 ? (
             <p className="text-sm" data-testid="billing-order-empty">
               {view.startedWith
-                ? `No Claude credential is saved here. This app was started with its own model (${view.startedWith}), which answers for now, so there is no order to choose. To use your own, add your subscription token or an API key under Accounts and keys.`
+                ? "No Claude credential is saved here. This app was started with a model of its own, which answers for now, so there is no order to choose. To use your own, add your subscription token or an API key under Accounts and keys."
                 : "No Claude credential is saved yet. Add your subscription token or an API key under Accounts and keys."}
             </p>
           ) : (

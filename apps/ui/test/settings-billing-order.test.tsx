@@ -206,7 +206,7 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
     renderApp("/settings", createHarness({ billingOrder: { sources: [] }, startedWith: "bench" }));
     const section = await screen.findByTestId("billing-order-section");
     expect(await within(section).findByTestId("billing-order-empty")).toHaveTextContent(
-      "No Claude credential is saved here. This app was started with its own model (bench), which answers for now, so there is no order to choose. To use your own, add your subscription token or an API key under Accounts and keys.",
+      "No Claude credential is saved here. This app was started with a model of its own, which answers for now, so there is no order to choose. To use your own, add your subscription token or an API key under Accounts and keys.",
     );
   });
 
