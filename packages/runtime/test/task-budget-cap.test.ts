@@ -207,9 +207,10 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
       spendThenFinish(499_000),
     );
     // The second call would pass the budget: the run stops there, and the task (not the
-    // session, which has USD 10) waits for the person with what to do.
+    // session, which has USD 10) waits for the person with what to do. ADR 0112: it is paused
+    // (no critic, no failed try), no longer `needs_human`.
     expect(provider.calls).toHaveLength(1);
-    expect(result.outcome).toBe("needs_human");
+    expect(result.outcome).toBe("paused");
     // In CHF (design §5 rule 7, live walk 2 B2), with what the runner needs to file the card.
     expect(result.summary).toBe(
       "The run stopped at its budget of CHF 0.40: it spent CHF 0.40, and its next step would have gone over.",
@@ -219,6 +220,7 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
       spentUsdMicro: result.costUsdMicro,
       source: "task_budget",
       specialist: "coder",
+      stoppedBy: "budget",
     });
     expect(result.costUsdMicro).toBeGreaterThanOrEqual(499_000);
   });
@@ -231,8 +233,9 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
       spendThenFinish(10),
     );
     expect(provider.calls).toHaveLength(0);
+    // ADR 0112: a pause at its budget (before: `needs_human`), with nothing left by a run.
     expect(result).toEqual({
-      outcome: "needs_human",
+      outcome: "paused",
       summary: "Its budget of CHF 0.40 is spent (CHF 0.40 so far), so nothing ran.",
       costUsdMicro: 0,
       budgetStop: {
@@ -240,11 +243,13 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
         spentUsdMicro: 500_000,
         source: "task_budget",
         specialist: "coder",
+        stoppedBy: "budget",
       },
+      handoff: { stopped: "", leftToDo: [], stoppedBy: "budget" },
     });
   });
 
-  it("a stop at the session's budget is still the session's: budget_exceeded", async () => {
+  it("a stop at the session's budget is still the session's: paused, named the session", async () => {
     const w = await world();
     const { result } = await runTask(
       w,
@@ -252,7 +257,13 @@ describe("a task's run is capped at its budget, not at the estimate (U-042)", ()
       spendThenFinish(449_500),
       450_000,
     );
-    expect(result.outcome).toBe("budget_exceeded");
+    // ADR 0112: a pause whose limit is the session's work budget (before: `budget_exceeded`); the
+    // runner ends the session on it as before.
+    expect(result.outcome).toBe("paused");
+    expect(result.budgetStop?.source).toBe("session");
+    expect(result.summary).toBe(
+      "The run stopped at this session's budget of CHF 0.36: it spent CHF 0.36, and its next step would have gone over.",
+    );
   });
 
   it("runCapOf: what is left of the task's budget, else the specialist's limit", () => {

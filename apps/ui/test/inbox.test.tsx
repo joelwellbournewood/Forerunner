@@ -1105,13 +1105,14 @@ describe("Inbox", () => {
       expect(task?.budget.usdMicro).toBe(500_000);
     });
 
-    it("on the Tasks tab the task reads Needs your decision: its budget is used, with Answer, Edit and Cancel", async () => {
+    it("on the Tasks tab the task reads Paused at its budget, with Answer, Edit and Cancel (ADR 0112)", async () => {
       const harness = setUp();
       const tasks = await harness.client.tasks("proj_atlas");
       const view = tasks.find((t) => t.id === "task_3");
       expect(view?.display).toMatchObject({
         key: "answer",
-        label: "Needs your decision: its budget is used",
+        // ADR 0112: a stop at a budget is a pause (before: "Needs your decision: its budget is used").
+        label: "Paused at its budget",
         detail: "Its card is in the Inbox: raise its budget, or cancel it.",
         blocker: { kind: "card", requestId: "req_budget", cardKind: "budget" },
       });
@@ -1122,9 +1123,7 @@ describe("Inbox", () => {
       const row = (await screen.findAllByTestId("task-row")).find(
         (r) => r.getAttribute("data-task-id") === "task_3",
       ) as HTMLElement;
-      expect(within(row).getByTestId("task-status")).toHaveTextContent(
-        "Needs your decision: its budget is used",
-      );
+      expect(within(row).getByTestId("task-status")).toHaveTextContent("Paused at its budget");
       expect(
         within(row)
           .getAllByRole("button")
@@ -1134,7 +1133,10 @@ describe("Inbox", () => {
       const drawer = await screen.findByTestId("task-drawer");
       expect(within(drawer).getByTestId("drawer-action-edit")).toBeInTheDocument();
       expect(within(drawer).queryByTestId("drawer-action-resume")).toBeNull();
-      expect(drawer).not.toHaveTextContent(/\$|USD|Paused|Press Resume/);
+      // ADR 0112: it says it is paused at its budget (before, the word "Paused" was banned here,
+      // because it read "Paused" with Resume); never "Paused by you", never Resume.
+      expect(drawer).toHaveTextContent("Paused at its budget");
+      expect(drawer).not.toHaveTextContent(/\$|USD|Paused by you|Press Resume/);
     });
   });
 

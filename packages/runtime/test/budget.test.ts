@@ -117,6 +117,113 @@ describe("session budget", () => {
     expect(b.quietRoomUsdMicro("r1", 1_000_000, "review")).toBe(0);
   });
 
+  // ADR 0112 (budget-stop): each run has one wrap-up line, its cap less a reserve (the larger of
+  // a fifth of the cap and the worst case of two calls, the run's first call's estimate twice).
+  // Before, the only 80% line was the session's, and the run was never told.
+  it("a run gets one wrap-up line at its cap less the reserve, and the wrap-up once", () => {
+    const b = mk(10_000_000);
+    const first = b.precheck("r1", 1_000_000, 100_000, "work");
+    expect(first).toEqual({
+      decision: "allow",
+      line: {
+        capUsdMicro: 1_000_000,
+        reserveUsdMicro: 200_000,
+        lineUsdMicro: 800_000,
+        firstCallUsdMicro: 100_000,
+        saveOnly: false,
+      },
+    });
+    b.record("r1", 650_000);
+    // 650 000 + 100 000 stays at the line: nothing yet, and the line is told only once.
+    expect(b.precheck("r1", 1_000_000, 100_000, "work")).toEqual({ decision: "allow" });
+    b.record("r1", 100_000);
+    // 750 000 + 100 000 would go past it: this call brings the wrap-up, once.
+    expect(b.precheck("r1", 1_000_000, 100_000, "work").decision).toBe("wrap_up");
+    b.record("r1", 100_000);
+    expect(b.precheck("r1", 1_000_000, 100_000, "work").decision).toBe("allow");
+    // Another run has its own line.
+    expect(b.precheck("r2", 1_000_000, 100_000, "work").line?.lineUsdMicro).toBe(800_000);
+  });
+
+  it("the reserve is two calls when they cost more than a fifth of the cap", () => {
+    const b = mk(10_000_000);
+    expect(b.precheck("r1", 1_000_000, 300_000, "work").line).toEqual({
+      capUsdMicro: 1_000_000,
+      reserveUsdMicro: 600_000,
+      lineUsdMicro: 400_000,
+      firstCallUsdMicro: 300_000,
+      saveOnly: false,
+    });
+  });
+
+  it("a tiny budget has no room to wrap up: save only, and never a wrap-up", () => {
+    const b = mk(10_000_000);
+    // CHF 0.01 against a first call of about USD 0.0066: two calls are more than the cap.
+    const first = b.precheck("r1", 12_500, 6_600, "work");
+    expect(first.line).toEqual({
+      capUsdMicro: 12_500,
+      reserveUsdMicro: 13_200,
+      lineUsdMicro: 0,
+      firstCallUsdMicro: 6_600,
+      saveOnly: true,
+    });
+    b.record("r1", 3_000);
+    expect(b.precheck("r1", 12_500, 6_600, "work").decision).toBe("allow");
+    b.record("r1", 3_000);
+    // The run cap still stops it: the run pauses at its budget.
+    expect(() => b.precheck("r1", 12_500, 6_600, "work")).toThrow(/run budget would be exceeded/);
+  });
+
+  it("a line that leaves no room for the first call is save only too", () => {
+    const b = mk(10_000_000);
+    // Reserve 2 x 4 000 = 8 000; the line at 12 000 - 8 000 = 4 000 holds one call exactly.
+    expect(b.precheck("r1", 12_000, 4_000, "work").line?.saveOnly).toBe(true);
+    expect(b.precheck("r2", 12_001, 4_000, "work").line?.saveOnly).toBe(false);
+  });
+
+  // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
+  // on the coder's Sonnet: 4 096 output tokens alone cost USD 0.041) was refused before the line
+  // was fixed, so the run said no budget line at all, not even "save only".
+  it("a first call refused at the run's cap still carries the run's save-only line", () => {
+    const b = mk(10_000_000);
+    let refused: unknown;
+    try {
+      b.precheck("r1", 25_000, 41_000, "work");
+    } catch (e) {
+      refused = e;
+    }
+    expect(refused).toMatchObject({
+      code: "budget_exceeded",
+      details: {
+        level: "run",
+        line: {
+          capUsdMicro: 25_000,
+          reserveUsdMicro: 82_000,
+          lineUsdMicro: 0,
+          firstCallUsdMicro: 41_000,
+          saveOnly: true,
+        },
+      },
+    });
+    // Only the run's first call carries it: a later refusal says nothing new.
+    const c = mk(10_000_000);
+    c.precheck("r1", 25_000, 10_000, "work");
+    c.record("r1", 20_000);
+    let later: unknown;
+    try {
+      c.precheck("r1", 25_000, 10_000, "work");
+    } catch (e) {
+      later = e;
+    }
+    expect(later).toMatchObject({ code: "budget_exceeded" });
+    expect((later as { details: Record<string, unknown> }).details.line).toBeUndefined();
+  });
+
+  it("a review run has no wrap-up line", () => {
+    const b = mk(10_000_000);
+    expect(b.precheck("r1", 1_000_000, 900_000, "review")).toEqual({ decision: "allow" });
+  });
+
   it("estimates conservatively from input tokens and max output", () => {
     expect(
       estimateCallUsdMicro(1_000_000, 1_000, { inputPerMtokUsd: 3, outputPerMtokUsd: 15 }),

@@ -452,6 +452,7 @@ out).
 
 ## How to change it
 
+- The critic's runs are review-phase runs: they have no wrap-up line and never hear the wrap-up message (ADR 0112; the loop's `RunRequest.wrapUp` is set only for a task's run). The critic's own synthetic `RunResult` (a review that could not start) carries `wrapUpSent: false` like every driver result.
 - The prompt: edit `critic/critic.md` in the `forerunner-registry` repository and sync it to
   `evals/registry/critic/critic.md`. The frontmatter's `max_effort` caps the effort; the body is
   the system prompt. Every run stores the prompt version (`critic@<semver>+<sha8>`), so a change

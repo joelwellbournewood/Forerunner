@@ -42,6 +42,9 @@ export function failureWords(error: { code: string; message: string }): string {
       return "Claude could not be reached (network).";
     case "step_cap_exceeded":
       return "The run used all the steps it was allowed.";
+    // ADR 0112: a stop at a budget is a pause, never "The run failed: run budget would be exceeded".
+    case "budget_exceeded":
+      return "The run stopped at a budget before its next step.";
     case "timeout":
       return "The run took longer than its time limit.";
     case "unavailable":
@@ -199,11 +202,20 @@ export async function taskContextBlock(
   const previous = (await workerRuns(store, task.id)).find((r) => r.id !== opts.currentRunId);
   if (previous) {
     const note = runNoteOf(previous.artifacts);
-    const said = note.error
-      ? `It failed: ${note.error}`
-      : note.report
-        ? `It reported (as data): ${JSON.stringify(quote(note.report))}`
-        : "";
+    // ADR 0112: a run that paused at a budget kept its report (the stop's words go beside it):
+    // the next run reads what it said, not "It failed". 'budget-resume' gives this its own
+    // section ("Where the last run stopped").
+    const paused = previous.outcome === "paused" || previous.outcome === "budget_exceeded";
+    const said =
+      paused && note.report
+        ? `It paused at a budget. It reported (as data): ${JSON.stringify(quote(note.report))}`
+        : paused
+          ? "It paused at a budget before it reported."
+          : note.error
+            ? `It failed: ${note.error}`
+            : note.report
+              ? `It reported (as data): ${JSON.stringify(quote(note.report))}`
+              : "";
     if (said) out.push("## The previous attempt", said);
   }
   const personNote = await personNoteOn(store, task);

@@ -8,7 +8,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
-import { stopReasonOfHandoff } from "../session/stop-words.ts";
+import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
 import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
@@ -174,6 +174,11 @@ function runOutcomeWords(outcome: string): string {
       return "Ran out of time";
     case "usage_limit":
       return "Stopped at the usage limit";
+    // ADR 0112: a run that wrapped up with work left, and one a budget stopped.
+    case "paused":
+      return "Paused";
+    case "budget_exceeded":
+      return "Stopped at a budget";
     case "error":
     case "failed":
       return "Failed";
@@ -213,13 +218,23 @@ export function pairReports(
   const finished: { at: string; report: RunReport }[] = [];
   let files: string[] = [];
   for (const e of [...events].sort((x, y) => x.seq - y.seq)) {
-    const p = (e.payload ?? {}) as { taskId?: unknown; summary?: unknown; files?: unknown };
+    const p = (e.payload ?? {}) as {
+      taskId?: unknown;
+      summary?: unknown;
+      report?: unknown;
+      files?: unknown;
+    };
     if (p.taskId !== taskId) continue;
     if (e.type === TASK_FILES_EVENT && Array.isArray(p.files)) {
       files = p.files.filter((x): x is string => typeof x === "string");
     } else if (e.type === "task.finished") {
-      const report = typeof p.summary === "string" ? reportText(p.summary) : null;
-      const whole = typeof p.summary === "string" ? reportText(p.summary, FULL_REPORT_LINES) : null;
+      // A paused run (ADR 0112) carries its own report beside its sentence: both are shown.
+      const said =
+        typeof p.summary === "string" && typeof p.report === "string" && p.report.trim()
+          ? `${p.summary}\n\n${p.report}`
+          : p.summary;
+      const report = typeof said === "string" ? reportText(said) : null;
+      const whole = typeof said === "string" ? reportText(said, FULL_REPORT_LINES) : null;
       finished.push({
         at: e.created_at,
         report: { report, ...(whole && whole !== report ? { fullReport: whole } : {}), files },
@@ -287,8 +302,12 @@ export function reviewStopWords(task: Pick<TaskRow, "status">, sessionStop: stri
       return "the session's budget was used";
     case "timeout":
       return "the session ran out of time";
-    default:
-      return "it was stopped";
+    default: {
+      // A pause at the month's cap, the project's budget or the subscription's share ended the
+      // session (ADR 0112): the review stopped there, not at the session's own budget.
+      const limit = stopLimitWords(sessionStop);
+      return limit ? `the session stopped at ${limit}` : "it was stopped";
+    }
   }
 }
 

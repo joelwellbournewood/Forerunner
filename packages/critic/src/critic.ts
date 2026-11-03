@@ -1167,6 +1167,7 @@ function failedRun(runId: string, message: string): RunResult {
     error: { code: "internal", message },
     injectionReports: [],
     finishCurrent: false,
+    wrapUpSent: false,
     context: { tokensBefore: 0, tokensAfter: 0, saved: 0, transforms: [], headroomUsed: false },
   };
 }

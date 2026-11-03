@@ -1,5 +1,5 @@
 import { type Clock, errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
-import type { SessionBudget } from "../enforcement/budget.ts";
+import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
@@ -56,6 +56,11 @@ export interface SdkRunRequest {
    * like the kill switch does (`killed`), and a signal already aborted ends it at once.
    */
   signal?: AbortSignal;
+  /**
+   * A task's run: the text it hears once, as PostToolUse's `additionalContext`, after its next
+   * call would take it past its wrap-up line (`WRAP_UP_TEXT`, ADR 0112).
+   */
+  wrapUp?: string;
 }
 
 export interface SdkRunResult {
@@ -70,8 +75,29 @@ export interface SdkRunResult {
   durationMs: number;
   ttftMs: number | null;
   sessionId: string | null;
-  /** `resetAt`: a `provider_usage_limit` with the reset time Claude Code reported (ADR 0100). */
-  error?: { code: string; message: string; resetAt?: string };
+  /**
+   * `resetAt`: a `provider_usage_limit` with the reset time Claude Code reported (ADR 0100).
+   * `level` and `source`: a budget stop's refusal (`details.level` and `details.source` of the
+   * hooks' `budget_exceeded`; "run" for Claude Code's own `error_max_budget_usd`), so the
+   * executor names the limit that stopped it (ADR 0112).
+   */
+  error?: {
+    code: string;
+    message: string;
+    resetAt?: string;
+    level?: string;
+    source?: string;
+    capUsdMicro?: number;
+  };
+  /** The run was told to wrap up (`SdkRunRequest.wrapUp`, ADR 0112). */
+  wrapUpSent: boolean;
+}
+
+/** The wrap-up of one SDK run: due once the hooks said so, given by the next PostToolUse. */
+interface WrapUpState {
+  text?: string;
+  due: boolean;
+  sent: boolean;
 }
 
 export interface SdkDriverDeps {
@@ -83,10 +109,29 @@ export interface SdkDriverDeps {
 }
 
 // A structural subset of the SDK's query() so tests can inject a fake without the real module.
+// The real one returns a `Query`, whose `close()` ends the Claude Code process at once.
 export type QueryLike = (params: {
   prompt: string;
   options?: Record<string, unknown>;
-}) => AsyncIterable<Record<string, unknown>>;
+}) => AsyncIterable<Record<string, unknown>> & { close?: () => void };
+
+/**
+ * How long a run that stopped for any reason but the kill switch waits for Claude Code to exit
+ * after its abort (budget-stop, ADR 0112). The SDK ends its process on the abort (SIGTERM, and
+ * SIGKILL five seconds later); a process still there after this is ended with `close()`, and the
+ * run then waits at most `SDK_CLOSE_WAIT_MS` more. Stop now ends the wait at once.
+ */
+export const SDK_STOP_WAIT_MS = 15_000;
+export const SDK_CLOSE_WAIT_MS = 5_000;
+
+/**
+ * Claude Code's own spending limit (`maxBudgetUsd`) sits this much above the run's cap, so
+ * Forerunner's own stop, which refuses the call that would go over, comes first; Claude Code's
+ * figure is a second layer that prices the calls its own way.
+ */
+export function claudeCodeBudgetUsd(runCapUsdMicro: number): number {
+  return Math.max(0.01, Math.ceil(runCapUsdMicro * 1.1 + 10_000) / 1_000_000);
+}
 
 /** Claude Code tool names are prefixed in our allowlists so they never collide with Forerunner tools. */
 export const CC_TOOL_PREFIX = "cc:";
@@ -118,14 +163,14 @@ export class SdkAgentDriver {
     const { clock } = this.deps;
     const claims = req.token.claims;
     const controller = new AbortController();
-    const unregister = this.deps.kill.register({
+    const registration = {
       agentId: claims.agentId,
       sessionId: claims.sessionId,
       // A person's move of the task stops this run (`KillSwitch.stopTask`, U-039).
       ...(claims.taskId ? { taskId: claims.taskId } : {}),
-      controller,
       label: req.label ?? `sdk run ${claims.runId}`,
-    });
+    };
+    let unregister = this.deps.kill.register({ ...registration, controller });
     const started = clock.monotonic();
     const cancelTimeout = clock.setTimeout(
       () => controller.abort(new ForerunnerError("timeout", "run timeout")),
@@ -157,12 +202,7 @@ export class SdkAgentDriver {
 
     let outcome: RunOutcome = "completed";
     let finalText = "";
-    let usage: Usage = {
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-    };
+    let usage: Usage = { ...ZERO_USAGE };
     let cost = 0;
     let sdkCostUsd = 0;
     let numTurns = 0;
@@ -173,17 +213,145 @@ export class SdkAgentDriver {
     // error kind (ADR 0100); read together once the stream ends.
     let rejected: { resetAt?: string } | null = null;
     let sdkError: { kind: string; text: string } | null = null;
+    // Usage is counted once per API message (budget-stop, ADR 0112): the messages of parallel
+    // tool calls share one id and one usage, and a streamed message's output count is a
+    // placeholder, which the result's totals correct.
+    const counted = new Set<string>();
+    // The wrap-up (ADR 0112): due when the hooks answer `wrap_up`, given once by PostToolUse.
+    const wrap: WrapUpState = {
+      ...(req.wrapUp ? { text: req.wrapUp } : {}),
+      due: false,
+      sent: false,
+    };
+    const decided = (d: Awaited<ReturnType<EnforcementHooks["beforeModelCall"]>>) => {
+      if (d.line) emit({ type: "budget_line", ...d.line });
+      if (d.decision === "wrap_up" && wrap.text && !wrap.sent) wrap.due = true;
+    };
 
+    /** Book one share of usage: the ledger row and the session's spend (the hooks). */
+    const book = async (turnUsage: Usage, stopReason: string): Promise<Usage> => {
+      const turnCost = req.pricing.cost(turnUsage);
+      usage = addUsage(usage, turnUsage);
+      cost += turnCost;
+      await this.deps.hooks.afterModelCall(ctx, turnUsage, turnCost);
+      emit({
+        type: "model_call_end",
+        turn: numTurns,
+        usage: turnUsage,
+        costUsdMicro: turnCost,
+        ttftMs: ttftMs ?? 0,
+        stopReason,
+      });
+      return turnUsage;
+    };
+    /**
+     * One message from Claude Code. `enforce`: a new model call follows, so the hooks decide
+     * whether it may start (they throw at a cap); while the run stops it only books what came.
+     */
+    const handle = async (msg: Record<string, unknown>, enforce: boolean): Promise<void> => {
+      const type = msg.type as string;
+      if (type === "system" && msg.subtype === "init")
+        sessionId = (msg.session_id as string) ?? null;
+      if (type === "stream_event") {
+        const ev = msg.event as
+          | { type?: string; delta?: { type?: string; text?: string } }
+          | undefined;
+        if (
+          ev?.type === "content_block_delta" &&
+          ev.delta?.type === "text_delta" &&
+          ev.delta.text
+        ) {
+          if (ttftMs === null) ttftMs = Math.round(clock.monotonic() - started);
+          emit({ type: "text_delta", text: ev.delta.text });
+        }
+      }
+      if (type === "assistant") {
+        const m = msg.message as
+          | {
+              id?: string;
+              content?: { type: string; text?: string }[];
+              usage?: Record<string, number>;
+            }
+          | undefined;
+        const text = (m?.content ?? [])
+          .filter((b) => b.type === "text")
+          .map((b) => b.text ?? "")
+          .join("");
+        if (text) finalText = text;
+        const u = m?.usage;
+        const id = typeof m?.id === "string" && m.id ? m.id : null;
+        if (u && !(id && counted.has(id))) {
+          if (id) counted.add(id);
+          numTurns++;
+          const turnUsage = await book(usageOf(u), "turn");
+          // Enforce before the SDK makes its next call.
+          if (enforce)
+            decided(
+              await this.deps.hooks.beforeModelCall(
+                ctx,
+                req.pricing.estimate(turnUsage.input_tokens, 4096),
+              ),
+            );
+        }
+      }
+      rejected = rejectedRateLimitOf(msg) ?? rejected;
+      if (type === "assistant" && typeof msg.error === "string") {
+        const m = msg.message as { content?: { type: string; text?: string }[] } | undefined;
+        sdkError = {
+          kind: msg.error,
+          text: (m?.content ?? [])
+            .filter((b) => b.type === "text")
+            .map((b) => b.text ?? "")
+            .join(""),
+        };
+      }
+      if (type === "result") {
+        sdkCostUsd = (msg.total_cost_usd as number) ?? 0;
+        // The totals Claude Code reports for the whole query: what the messages did not count
+        // (the real output, a subagent's calls) is booked now as one more share.
+        const total = resultTotals(msg);
+        const rest = total ? usageLeft(total, usage) : null;
+        if (rest) await book(rest, "result");
+        // While Claude Code winds down after a stop (`enforce` false), its late result only
+        // books its usage: the stop's outcome and the run's words stand (an aborted query's
+        // error result would otherwise turn a budget pause into a Failed task tried again).
+        if (!enforce) return;
+        if (msg.subtype === "error_max_budget_usd") {
+          // Claude Code's own spending limit (`maxBudgetUsd`, set above the run's cap): a stop
+          // at the run's budget, never a passing error the runner would try again at once.
+          outcome = "budget_exceeded";
+          error = {
+            code: "budget_exceeded",
+            message: "Claude Code reached its spending limit for this run",
+            level: "run",
+          };
+        } else if (msg.is_error) {
+          outcome = "error";
+          error = {
+            code: "provider_error",
+            message: String(msg.result ?? msg.subtype ?? "sdk error"),
+          };
+        }
+        if (typeof msg.result === "string" && msg.result) finalText = msg.result;
+      }
+    };
+
+    let query: ReturnType<QueryLike> | undefined;
+    let iterator: AsyncIterator<Record<string, unknown>> | undefined;
+    // The read in flight: kept when the abort won the race, so no message is lost.
+    let pending: Promise<IteratorResult<Record<string, unknown>>> | null = null;
+    let exited = false;
     try {
       // Pre-flight: the first model call is accounted like any other; the SDK then reports usage
       // per assistant message, which we account turn by turn.
-      await this.deps.hooks.beforeModelCall(
+      const preflight = await this.deps.hooks.beforeModelCall(
         ctx,
         req.pricing.estimate(ctx.budget.limits.stepCap, 4096),
       );
       emit({ type: "run_start", runId: claims.runId, model: req.model });
+      decided(preflight);
 
-      const query = this.deps.queryImpl ?? (await loadSdkQuery());
+      const queryFn = this.deps.queryImpl ?? (await loadSdkQuery());
       // The subscription's token only (refused above otherwise); the session's extra variables
       // (the Headroom proxy) never carry another way to authenticate.
       const env: Record<string, string | undefined> = {
@@ -192,7 +360,7 @@ export class SdkAgentDriver {
         ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
         ...withoutClaudeCodeAuth(req.env ?? {}),
       };
-      const hooks = this.sdkHooks(ctx, req.tools, emit);
+      const hooks = this.sdkHooks(ctx, req.tools, emit, wrap);
       const options: Record<string, unknown> = {
         abortController: controller,
         cwd: req.cwd,
@@ -203,7 +371,7 @@ export class SdkAgentDriver {
         allowedTools: [...ccTools, ...mcpTools.map((t) => `mcp__forerunner__${t}`)],
         permissionMode: "dontAsk",
         maxTurns: req.maxTurns ?? 60,
-        maxBudgetUsd: Math.max(0.01, claims.budgetUsdMicro / 1_000_000),
+        maxBudgetUsd: claudeCodeBudgetUsd(claims.budgetUsdMicro),
         env,
         hooks,
         includePartialMessages: true,
@@ -211,17 +379,11 @@ export class SdkAgentDriver {
         settingSources: [],
         allowDangerouslySkipPermissions: false,
       };
-      let lastCum: { in: number; out: number; cr: number; cw: number; usd: number } = {
-        in: 0,
-        out: 0,
-        cr: 0,
-        cw: 0,
-        usd: 0,
-      };
-      // The kill switch and the timeout abort the controller; the SDK then tears its
-      // subprocess down, which can take longer than the 2 s the kill switch promises. The run
-      // ends the moment the abort fires: the iterator is left to finish in the background.
-      const iterator = query({ prompt: req.prompt, options })[Symbol.asyncIterator]();
+      // The kill switch, the timeout and every stop abort the controller; the SDK then tears
+      // its subprocess down. A stop of the kill switch ends the run at once (its 2 s promise);
+      // every other stop waits below until the process has exited.
+      query = queryFn({ prompt: req.prompt, options });
+      iterator = query[Symbol.asyncIterator]();
       const aborted = new Promise<never>((_, reject) => {
         const fail = () => {
           const reason = controller.signal.reason;
@@ -231,103 +393,16 @@ export class SdkAgentDriver {
         else controller.signal.addEventListener("abort", fail, { once: true });
       });
       aborted.catch(() => undefined);
-      try {
-        for (;;) {
-          const next = await Promise.race([iterator.next(), aborted]);
-          if (next.done) break;
-          const msg = next.value;
-          const type = msg.type as string;
-          if (type === "system" && msg.subtype === "init")
-            sessionId = (msg.session_id as string) ?? null;
-          if (type === "stream_event") {
-            const ev = msg.event as
-              | { type?: string; delta?: { type?: string; text?: string } }
-              | undefined;
-            if (
-              ev?.type === "content_block_delta" &&
-              ev.delta?.type === "text_delta" &&
-              ev.delta.text
-            ) {
-              if (ttftMs === null) ttftMs = Math.round(clock.monotonic() - started);
-              emit({ type: "text_delta", text: ev.delta.text });
-            }
-          }
-          if (type === "assistant") {
-            numTurns++;
-            const m = msg.message as
-              | { content?: { type: string; text?: string }[]; usage?: Record<string, number> }
-              | undefined;
-            const text = (m?.content ?? [])
-              .filter((b) => b.type === "text")
-              .map((b) => b.text ?? "")
-              .join("");
-            if (text) finalText = text;
-            const u = m?.usage;
-            if (u) {
-              const turnUsage: Usage = {
-                input_tokens: u.input_tokens ?? 0,
-                output_tokens: u.output_tokens ?? 0,
-                cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
-                cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
-              };
-              const turnCost = req.pricing.cost(turnUsage);
-              usage = addUsage(usage, turnUsage);
-              cost += turnCost;
-              await this.deps.hooks.afterModelCall(ctx, turnUsage, turnCost);
-              emit({
-                type: "model_call_end",
-                turn: numTurns,
-                usage: turnUsage,
-                costUsdMicro: turnCost,
-                ttftMs: ttftMs ?? 0,
-                stopReason: "turn",
-              });
-              // Enforce before the SDK makes its next call.
-              await this.deps.hooks.beforeModelCall(
-                ctx,
-                req.pricing.estimate(turnUsage.input_tokens, 4096),
-              );
-            }
-          }
-          rejected = rejectedRateLimitOf(msg) ?? rejected;
-          if (type === "assistant" && typeof msg.error === "string") {
-            const m = msg.message as { content?: { type: string; text?: string }[] } | undefined;
-            sdkError = {
-              kind: msg.error,
-              text: (m?.content ?? [])
-                .filter((b) => b.type === "text")
-                .map((b) => b.text ?? "")
-                .join(""),
-            };
-          }
-          if (type === "result") {
-            sdkCostUsd = (msg.total_cost_usd as number) ?? 0;
-            if (msg.is_error) {
-              outcome = "error";
-              error = {
-                code: "provider_error",
-                message: String(msg.result ?? msg.subtype ?? "sdk error"),
-              };
-            }
-            if (typeof msg.result === "string" && msg.result) finalText = msg.result;
-            lastCum = {
-              in: usage.input_tokens,
-              out: usage.output_tokens,
-              cr: usage.cache_read_input_tokens,
-              cw: usage.cache_creation_input_tokens,
-              usd: sdkCostUsd,
-            };
-          }
+      for (;;) {
+        pending ??= iterator.next();
+        const next = await Promise.race([pending, aborted]);
+        pending = null;
+        if (next.done) {
+          exited = true;
+          break;
         }
-      } finally {
-        if (controller.signal.aborted) {
-          // Not awaited: the subprocess teardown must not delay the killed outcome.
-          void Promise.resolve()
-            .then(() => iterator.return?.(undefined))
-            .catch(() => undefined);
-        }
+        await handle(next.value, true);
       }
-      void lastCum;
       // The subscription's usage limit stopped the run (ADR 0100): a stable code with the
       // reset time Claude Code reported, so the executor rests the source and gives the task
       // back without counting an attempt.
@@ -356,14 +431,54 @@ export class SdkAgentDriver {
               : code === "killed" || controller.signal.aborted
                 ? "killed"
                 : "error";
-      error = { code, message: errorMessage(e) };
+      const details = e instanceof ForerunnerError ? e.details : {};
+      // A run refused at its first call (a budget below that call's worst case: Claude Code is
+      // never started) still says its line, "save only" (review of budget-stop).
+      const line = numTurns === 0 ? wrapUpLineIn(details) : undefined;
+      if (line) emit({ type: "budget_line", ...line });
+      error = {
+        code,
+        message: errorMessage(e),
+        ...(typeof details.level === "string" ? { level: details.level } : {}),
+        ...(typeof details.source === "string" ? { source: details.source } : {}),
+        ...(typeof details.capUsdMicro === "number" ? { capUsdMicro: details.capUsdMicro } : {}),
+      };
       if (outcome === "error")
         this.logger.error("sdk run failed", { runId: claims.runId, error: error.message });
     } finally {
       cancelTimeout();
       outer?.removeEventListener("abort", onOuterAbort);
-      unregister();
     }
+    if (iterator && !exited) {
+      // The run stopped while Claude Code still ran: the abort ends it, and every hook refuses
+      // from the abort on (the run's signal), so it can start no tool.
+      if (!controller.signal.aborted)
+        controller.abort(
+          new ForerunnerError(
+            outcome === "budget_exceeded" ? "budget_exceeded" : "killed",
+            error?.message ?? "run stopped",
+          ),
+        );
+      if (outcome === "killed") {
+        // The kill switch, a person's move of the task or the caller: the run ends at once and
+        // the subprocess winds down in the background (the kill switch's 2 s promise).
+        const it = iterator;
+        void Promise.resolve()
+          .then(() => it.return?.(undefined))
+          .catch(() => undefined);
+      } else {
+        // Every other stop (a budget, the time limit, an error): the run returns only once
+        // Claude Code has exited, so nothing it does is left uncounted or out of reach. Stop now
+        // reaches it meanwhile and ends it at once.
+        unregister();
+        unregister = await this.awaitExit(iterator, pending, query, registration, (m) =>
+          handle(m, false),
+        );
+      }
+    }
+    // The run is over: a hook call that still arrives for it is refused.
+    this.deps.hooks.endRun(ctx);
+    unregister();
     emit({ type: "run_end", outcome, costUsdMicro: cost, steps: numTurns });
     return {
       runId: claims.runId,
@@ -377,11 +492,87 @@ export class SdkAgentDriver {
       ttftMs,
       sessionId,
       error,
+      wrapUpSent: wrap.sent,
     };
   }
 
+  /**
+   * Wait for Claude Code to exit after a stop (budget-stop, ADR 0112): what it still sends is
+   * read and its usage booked (`late`), for at most `SDK_STOP_WAIT_MS`; then `close()` ends the
+   * process and the run waits at most `SDK_CLOSE_WAIT_MS` more. Meanwhile the run is registered
+   * with the kill switch again, so Stop now (or a person's move of the task) ends the wait at
+   * once with `close()`. Returns the registration's unregister.
+   */
+  private async awaitExit(
+    iterator: AsyncIterator<Record<string, unknown>>,
+    pending: Promise<IteratorResult<Record<string, unknown>>> | null,
+    query: { close?: () => void } | undefined,
+    registration: { agentId: string; sessionId: string; taskId?: string; label: string },
+    late: (msg: Record<string, unknown>) => Promise<void>,
+  ): Promise<() => void> {
+    const { clock, kill } = this.deps;
+    const force = new AbortController();
+    const unregister = kill.register({
+      ...registration,
+      controller: force,
+      label: `${registration.label} (stopping)`,
+    });
+    const drained = (async () => {
+      let next = pending;
+      for (;;) {
+        const r = await (next ?? iterator.next());
+        next = null;
+        if (r.done) return;
+        // Booking may fail once the run's token is revoked (Stop all); the run stops anyway,
+        // and the log says what was not booked (the ledger misses it).
+        await late(r.value).catch((e: unknown) =>
+          this.logger.warn("a stopped run's late message was not booked", {
+            label: registration.label,
+            type: String(r.value.type ?? ""),
+            error: errorMessage(e),
+          }),
+        );
+      }
+    })().catch(() => undefined);
+    const wait = (ms: number) =>
+      new Promise<"waited">((resolve) => {
+        const cancel = clock.setTimeout(() => resolve("waited"), ms);
+        void drained.then(cancel);
+      });
+    const forced = new Promise<"forced">((resolve) => {
+      if (force.signal.aborted) resolve("forced");
+      else force.signal.addEventListener("abort", () => resolve("forced"), { once: true });
+    });
+    const first = await Promise.race([
+      drained.then(() => "exited" as const),
+      wait(SDK_STOP_WAIT_MS),
+      forced,
+    ]);
+    if (first !== "exited") {
+      this.logger.warn("claude code did not exit after the stop; ending it", {
+        label: registration.label,
+        why: first,
+      });
+      try {
+        query?.close?.();
+      } catch {
+        // Already closed.
+      }
+      void Promise.resolve()
+        .then(() => iterator.return?.(undefined))
+        .catch(() => undefined);
+      await Promise.race([drained, wait(SDK_CLOSE_WAIT_MS)]);
+    }
+    return unregister;
+  }
+
   /** Map our hooks onto the SDK's PreToolUse / PostToolUse. */
-  private sdkHooks(ctx: RunContext, tools: ToolRegistry, emit: (ev: RunEvent) => void) {
+  private sdkHooks(
+    ctx: RunContext,
+    tools: ToolRegistry,
+    emit: (ev: RunEvent) => void,
+    wrap: WrapUpState = { due: false, sent: false },
+  ) {
     // PostToolUse reports the input the tool ran with, which is the `updatedInput` PreToolUse
     // returned: the resolved secret values. The audit row must carry the model's input (the
     // `secret:<name>` references), so it is kept per tool_use_id between the two hooks.
@@ -464,10 +655,17 @@ export class SdkAgentDriver {
               origin: String(toolInput?.file_path ?? toolInput?.path ?? toolName),
             } as const)
           : undefined;
-      const r = await this.deps.hooks.afterToolCall(ctx, spec, modelInput, {
-        content: raw,
-        untrusted,
-      });
+      let r: Awaited<ReturnType<EnforcementHooks["afterToolCall"]>>;
+      try {
+        r = await this.deps.hooks.afterToolCall(ctx, spec, modelInput, {
+          content: raw,
+          untrusted,
+        });
+      } catch (e) {
+        // The run's token is ended (the run stopped): nothing of this result reaches the model
+        // and Claude Code is told to stop (budget-stop, ADR 0112).
+        return { continue: false, stopReason: `run stopped: ${errorMessage(e)}` };
+      }
       if (r.report?.suspicious)
         emit({ type: "injection_flagged", tool: toolName, report: r.report });
       emit({
@@ -482,8 +680,27 @@ export class SdkAgentDriver {
       // the data envelope where the source is untrusted. The SDK applies the replacement to
       // MCP tool outputs; for the web tools it is handed over as before. A built-in file tool's
       // output cannot be rewritten from a hook: its read is scanned and flagged, not changed.
-      return untrusted || isMcpTool(toolName)
-        ? { hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: r.content } }
+      // The wrap-up (ADR 0112) goes with the first result after the hooks said so, once, as
+      // context beside the result, never inside it.
+      const wrapUp = wrap.due && wrap.text && !wrap.sent ? wrap.text : undefined;
+      if (wrapUp) {
+        wrap.due = false;
+        wrap.sent = true;
+        emit({
+          type: "wrap_up_sent",
+          spentUsdMicro: ctx.budget.spentByRunId(ctx.token.claims.runId),
+          capUsdMicro: ctx.token.claims.budgetUsdMicro,
+        });
+      }
+      const replaced = untrusted || isMcpTool(toolName) ? { updatedMCPToolOutput: r.content } : {};
+      return wrapUp || "updatedMCPToolOutput" in replaced
+        ? {
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              ...replaced,
+              ...(wrapUp ? { additionalContext: wrapUp } : {}),
+            },
+          }
         : {};
     };
     return {
@@ -535,6 +752,71 @@ function addUsage(a: Usage, b: Usage): Usage {
     cache_read_input_tokens: a.cache_read_input_tokens + b.cache_read_input_tokens,
     cache_creation_input_tokens: a.cache_creation_input_tokens + b.cache_creation_input_tokens,
   };
+}
+
+const ZERO_USAGE: Usage = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+};
+
+/** A whole, non-negative token count, or 0. */
+const tokens = (n: unknown): number =>
+  typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+
+/** An API message's usage (snake case) as the ledger counts it. */
+function usageOf(u: Record<string, number>): Usage {
+  return {
+    input_tokens: tokens(u.input_tokens),
+    output_tokens: tokens(u.output_tokens),
+    cache_read_input_tokens: tokens(u.cache_read_input_tokens),
+    cache_creation_input_tokens: tokens(u.cache_creation_input_tokens),
+  };
+}
+
+/**
+ * The whole query's usage as Claude Code's result reports it (budget-stop, ADR 0112): the sum of
+ * `modelUsage` over its models, "the correct field for token/cost accounting" (it covers
+ * subagents and internal calls), else the result's `usage` (the main loop only). Null when the
+ * result carries neither.
+ */
+function resultTotals(msg: Record<string, unknown>): Usage | null {
+  const per = msg.modelUsage;
+  if (per && typeof per === "object" && !Array.isArray(per)) {
+    const models = Object.values(per as Record<string, Record<string, unknown>>);
+    if (models.length)
+      return models.reduce<Usage>(
+        (sum, m) =>
+          addUsage(sum, {
+            input_tokens: tokens(m?.inputTokens),
+            output_tokens: tokens(m?.outputTokens),
+            cache_read_input_tokens: tokens(m?.cacheReadInputTokens),
+            cache_creation_input_tokens: tokens(m?.cacheCreationInputTokens),
+          }),
+        { ...ZERO_USAGE },
+      );
+  }
+  const u = msg.usage;
+  if (u && typeof u === "object" && !Array.isArray(u)) return usageOf(u as Record<string, number>);
+  return null;
+}
+
+/** What `total` holds beyond `counted`, per field (never negative); null when nothing. */
+function usageLeft(total: Usage, counted: Usage): Usage | null {
+  const rest: Usage = {
+    input_tokens: Math.max(0, total.input_tokens - counted.input_tokens),
+    output_tokens: Math.max(0, total.output_tokens - counted.output_tokens),
+    cache_read_input_tokens: Math.max(
+      0,
+      total.cache_read_input_tokens - counted.cache_read_input_tokens,
+    ),
+    cache_creation_input_tokens: Math.max(
+      0,
+      total.cache_creation_input_tokens - counted.cache_creation_input_tokens,
+    ),
+  };
+  return Object.values(rest).some((n) => n > 0) ? rest : null;
 }
 
 /** Variables of the providers and stores the daemon itself talks to: never the subprocess's. */

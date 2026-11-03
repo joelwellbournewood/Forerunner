@@ -80,9 +80,23 @@ export function budgetStopTitle(
   rate: number,
 ): string {
   const title = `"${task.title.replace(/\s+/g, " ").trim()}"`;
-  return stop.source === "task_budget"
-    ? `${title} stopped at its budget of ${chfText(stop.capUsdMicro, rate)}`
-    : `${title} stopped at the ${stop.specialist}'s limit of ${chfText(stop.capUsdMicro, rate)} per run`;
+  const chf = chfText(stop.capUsdMicro, rate);
+  // The limit that stopped it (ADR 0112): before, every stop below the session's remainder was
+  // "its budget" or the specialist's limit, whatever refused it.
+  switch (stop.source) {
+    case "task_budget":
+      return `${title} stopped at its budget of ${chf}`;
+    case "specialist_limit":
+      return `${title} stopped at the ${stop.specialist}'s limit of ${chf} per run`;
+    case "session":
+      return `${title} stopped at this session's budget of ${chf}`;
+    case "project":
+      return `${title} stopped at the project's budget of ${chf}`;
+    case "month":
+      return `${title} stopped at this month's cap of ${chf}`;
+    case "plan":
+      return `${title} stopped at the share of your Claude subscription that Forerunner may use`;
+  }
 }
 
 export interface BudgetStopCardInput {
@@ -168,8 +182,12 @@ export async function sessionBudgetStops(
     if (Array.isArray(card.run_ids))
       for (const id of card.run_ids) if (typeof id === "string") accounted.add(id);
   }
+  // A run that paused at the session's budget after its wrap-up is a stop too (ADR 0112).
   const runIds = (await store.run.forTask(taskId, { limit: 1000 }))
-    .filter((r) => r.specialist !== "critic" && r.outcome === "budget_exceeded")
+    .filter(
+      (r) =>
+        r.specialist !== "critic" && (r.outcome === "budget_exceeded" || r.outcome === "paused"),
+    )
     .map((r) => r.id)
     .filter((id) => !accounted.has(id));
   if (current && !runIds.includes(current) && !accounted.has(current)) runIds.push(current);

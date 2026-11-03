@@ -1,4 +1,6 @@
+import { formatChf } from "@forerunner/billing";
 import { type StopBy, stopByOf } from "../enforcement/killswitch.ts";
+import type { BudgetStopSource } from "./budget-pause.ts";
 
 /**
  * How a session ended, in the person's words (core-experience design §3.7, §4.9). Stop now,
@@ -44,6 +46,65 @@ export function taskReasonForStop(stop: PersonStop): string {
 export const STOPPED_AFTER_TASK = "stopped_after_task";
 
 /**
+ * The stop reasons of a session ended by a task's pause at an outer limit (ADR 0112, review of
+ * budget-stop): this month's cap, the project's budget, the subscription's share. Before, the
+ * session took `budget_exceeded` and said "Stopped: the budget is used" and "The session's
+ * budget is used." while its own budget was 1% spent, and the notification advised a larger
+ * session budget, which the month's cap refuses. A stop at the session's own budget keeps
+ * `budget_exceeded`.
+ */
+export const MONTH_CAP_STOP = "budget_month";
+export const PROJECT_BUDGET_STOP = "budget_project";
+export const PLAN_SHARE_STOP = "budget_plan";
+const OUTER_LIMIT_STOPS: ReadonlySet<string> = new Set([
+  MONTH_CAP_STOP,
+  PROJECT_BUDGET_STOP,
+  PLAN_SHARE_STOP,
+]);
+
+/** The session's stop reason for a pause at this limit (`BudgetStop.source`). */
+export function budgetStopReasonOf(source: BudgetStopSource): string {
+  switch (source) {
+    case "month":
+      return MONTH_CAP_STOP;
+    case "project":
+      return PROJECT_BUDGET_STOP;
+    case "plan":
+      return PLAN_SHARE_STOP;
+    default:
+      return "budget_exceeded";
+  }
+}
+
+/** Whether a session ended at a budget: its own (`budget_exceeded`) or an outer limit's. */
+export function isBudgetStopReason(stopReason: string | null | undefined): boolean {
+  return stopReason === "budget_exceeded" || (!!stopReason && OUTER_LIMIT_STOPS.has(stopReason));
+}
+
+/**
+ * The outer limit a session's stop names, short ("this month's cap of CHF 0.23", "your Claude
+ * subscription's share"), or null for any other stop. `capChfMicro`: the limit's amount, when
+ * known (the subscription's share has none in CHF).
+ */
+export function stopLimitWords(
+  stopReason: string | null | undefined,
+  capChfMicro?: number,
+): string | null {
+  const of =
+    typeof capChfMicro === "number" && capChfMicro > 0 ? ` of ${formatChf(capChfMicro)}` : "";
+  switch (stopReason) {
+    case MONTH_CAP_STOP:
+      return `this month's cap${of}`;
+    case PROJECT_BUDGET_STOP:
+      return `the project's budget${of}`;
+    case PLAN_SHARE_STOP:
+      return "your Claude subscription's share";
+    default:
+      return null;
+  }
+}
+
+/**
  * The session's status in words (the session page's badge, the header chip): "Working",
  * "Done", "Stopped by you", "Interrupted: Forerunner closed", ...
  */
@@ -66,6 +127,10 @@ export function sessionStatusText(status: string, stopReason: string | null | un
     case "budget_exceeded":
     case "budget_finish_current":
       return "Stopped: the budget is used";
+    case MONTH_CAP_STOP:
+    case PROJECT_BUDGET_STOP:
+    case PLAN_SHARE_STOP:
+      return `Stopped at ${stopLimitWords(stopReason)}`;
     case "timeout":
       return "Stopped: the time limit was reached";
     case "plan_awaiting_approval":

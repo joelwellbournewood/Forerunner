@@ -61,7 +61,21 @@ const result = (text: string) => ({
   total_cost_usd: 0.001,
 });
 
-/** Run the driver once with a fake SDK and hand back the hooks and the options it saw. */
+/**
+ * The fake runs still open: each ends after its test. A run's token is ended when it returns
+ * (budget-stop, ADR 0112), so the hooks are asked while the run goes on, as Claude Code asks
+ * them; before, these cases asked them after `run()` had returned, which the hooks now refuse.
+ */
+const openRuns: (() => void)[] = [];
+afterEach(async () => {
+  for (const release of openRuns.splice(0)) release();
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+/**
+ * Start the driver with a fake SDK that holds the run open (until the test ends) and hand back
+ * the hooks and the options it saw.
+ */
 async function runDriver(
   h: Harness,
   over: {
@@ -73,12 +87,18 @@ async function runDriver(
 ) {
   let hooks: SdkHooks | null = null;
   let options: Record<string, unknown> = {};
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  openRuns.push(() => release());
   const q: QueryLike = ({ options: o }) => {
     options = o ?? {};
     hooks = options.hooks as SdkHooks;
     return (async function* () {
       yield { type: "system", subtype: "init", session_id: "sdk-1" };
       yield assistant("working");
+      await held;
       yield result("done");
     })();
   };
@@ -98,7 +118,7 @@ async function runDriver(
     grantedSecrets: over.grantedSecrets ?? [],
     autonomy: 3,
   });
-  const res = await driver.run({
+  const res = driver.run({
     token,
     budget: budget("sess-1", 5_000_000, h.clock),
     billingSourceId: "bs",
@@ -115,6 +135,9 @@ async function runDriver(
     pricing: flatPricing,
     timeoutMs: 60_000,
   });
+  // Until the fake SDK has its hooks, or the run ends (a refused credential ends it first).
+  for (let i = 0; !hooks && i < 400; i++)
+    await Promise.race([res.then(() => undefined), new Promise((r) => setTimeout(r, 5))]);
   if (!hooks) throw new Error("the fake SDK saw no hooks");
   const pre = (hooks as SdkHooks).PreToolUse[0]?.hooks[0] as Hook;
   const post = (hooks as SdkHooks).PostToolUse[0]?.hooks[0] as Hook;

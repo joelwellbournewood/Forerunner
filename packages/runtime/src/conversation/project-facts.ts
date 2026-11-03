@@ -147,7 +147,7 @@ export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
       lines.push(`Waiting for Docker: ${names(out.waitingForDocker).join(", ")}`);
     // In words (design §5.6; phase E: before, the raw reason, "Ended because: plan awaiting
     // approval"); a session that simply ran out of work says nothing more.
-    const ended = out.stopReason ? stopWords(out.stopReason) : "";
+    const ended = out.stopReason ? stopWords(out.stopReason, out.stopCapChfMicro) : "";
     if (ended) lines.push(`How it ended: ${ended}`);
     if (typeof out.spentChfMicro === "number" && out.spentChfMicro > 0)
       lines.push(`Spent: ${formatChf(out.spentChfMicro)}`);

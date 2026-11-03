@@ -2296,6 +2296,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
+      // A paused run (ADR 0112) stopped short of the work: its cost is a lower bound, never a
+      // sample of what the task costs ('cost' makes the learner skip its Run rows too).
+      if (result.outcome === "paused") return;
       const planned = estimates.estimate({
         specialist: item.specialist,
         risk_tier: task.risk_tier,
@@ -2953,6 +2956,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         sessionId: result.sessionId,
         status: result.status,
         stopReason: result.stopReason,
+        ...(result.stopCapChfMicro !== undefined
+          ? { stopCapChfMicro: result.stopCapChfMicro }
+          : {}),
         summary: result.summary,
         news: result.news,
         spentUsdMicro: result.spentUsdMicro,

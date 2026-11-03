@@ -476,6 +476,36 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(h.api.push.status().holding).toBe(0);
   });
 
+  // Review of budget-stop (ADR 0112): a task paused at this month's cap ends its session with
+  // `budget_month` (likewise `budget_project`, `budget_plan`), far below the session's own cap.
+  // It is the urgent budget stop and names the limit; before, the runner wrote
+  // `budget_exceeded` and the phone said the session stopped at its budget cap.
+  it("a session ended at this month's cap (stop_reason budget_month) is the urgent budget stop and names the month", async () => {
+    await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    await h.store.session.patch(h.seed.session.id, {
+      budget_cap_usd_micro: 5_000_000,
+      spent_usd_micro: 50_000,
+      handoff: { stop_reason: "budget_month", spent_usd_micro: 50_000 },
+      status: "stopped",
+    });
+    await h.tick();
+    expect(
+      h.google.sent.map((s) => [
+        s.message.data?.kind,
+        s.message.notification?.title,
+        s.message.notification?.body,
+        s.message.android?.priority,
+      ]),
+    ).toEqual([
+      [
+        "budget",
+        "Budget reached: session stopped",
+        "A session stopped at this month's cap.",
+        "HIGH",
+      ],
+    ]);
+  });
+
   it("a session that stopped new work at 80 % (budget_finish_current) pushes the budget warning and the end", async () => {
     await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
     await h.store.session.patch(h.seed.session.id, {

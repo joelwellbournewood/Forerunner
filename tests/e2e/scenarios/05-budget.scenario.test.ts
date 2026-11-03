@@ -4,9 +4,10 @@
  *
  * Fake provider, no network beyond 127.0.0.1, simulated clock. Alice's session has a cap of
  * 0.15 USD and three planned tasks. The first is quick and accepted by the critic. The second
- * has no estimate, so its allowance is the session's remaining budget (the executor caps every
- * run at the session's remaining budget); its specialist keeps calling a tool with long replies
- * until the enforcement hooks refuse the next model call (`SessionBudget.precheck` through
+ * has no estimate, so its allowance is what is left of the session's work budget (the executor
+ * caps every run at it, ADR 0112: the fifth kept for reviews stays for them); its specialist
+ * hears the wrap-up at its line, ignores it and keeps calling a tool with long replies until the
+ * enforcement hooks refuse the next model call (`SessionBudget.precheck` through
  * `EnforcementHooks.beforeModelCall`). The runner then stops the session: the task goes back to
  * ready for the next session (design §4.2, phase C: before, it waited in needs_human with no card
  * while the summary said it needed J's decision in an empty Inbox), the third task is never
@@ -90,7 +91,10 @@ describe("scenario 5: budget", () => {
     expect(ledger).toBeGreaterThan(0);
     expect(ledger).toBeLessThanOrEqual(CAP);
     expect(session.spent_usd_micro).toBe(ledger);
-    expect(ledger).toBeGreaterThan(CAP * 0.8);
+    // ADR 0112: the run is capped at the session's work budget, so the review's fifth is left
+    // (before, the run spent past 80% of the cap, into the share kept for reviews).
+    expect(ledger).toBeLessThanOrEqual(CAP * 0.8);
+    expect(ledger).toBeGreaterThan(CAP * 0.6);
     const runs = await w.store.run.forSession(first.sessionId);
     const runaways = runs.filter((r) => r.task_id === t2.id);
     expect(runaways).toHaveLength(1);
@@ -108,10 +112,14 @@ describe("scenario 5: budget", () => {
     const lastEnd = ends[ends.length - 1];
     if (lastStart?.type !== "model_call_start" || lastEnd?.type !== "model_call_end")
       throw new Error("run events out of shape");
-    expect(ledger + lastStart.estimateUsdMicro + lastEnd.usage.output_tokens).toBeGreaterThan(CAP);
-    expect(t2Events.some((e) => e.type === "warning" && e.message.includes("budget at 80%"))).toBe(
-      true,
+    // The refused call would have gone over the run's cap, the session's work budget (ADR 0112;
+    // before, over the whole cap).
+    expect(ledger + lastStart.estimateUsdMicro + lastEnd.usage.output_tokens).toBeGreaterThan(
+      CAP * 0.8,
     );
+    // It heard the wrap-up at its line and ignored it (ADR 0112; before, only an 80% warning
+    // event that the model never saw).
+    expect(t2Events.filter((e) => e.type === "wrap_up_sent")).toHaveLength(1);
     const runEnd = t2Events.find((e) => e.type === "run_end");
     expect(runEnd).toMatchObject({ outcome: "budget_exceeded", costUsdMicro: run.cost_usd_micro });
     // Mid-task: the specialist had made tool calls, every one audited and allowed; the hooks
@@ -127,7 +135,7 @@ describe("scenario 5: budget", () => {
       events.find(
         (e) => e.type === "task.finished" && (e.payload as { taskId: string }).taskId === t2.id,
       )?.payload,
-    ).toMatchObject({ outcome: "budget_exceeded", costUsdMicro: run.cost_usd_micro });
+    ).toMatchObject({ outcome: "paused", costUsdMicro: run.cost_usd_micro });
     expect(events.find((e) => e.type === "session.ended")?.payload).toMatchObject({
       status: "stopped",
       stopReason: "budget_exceeded",

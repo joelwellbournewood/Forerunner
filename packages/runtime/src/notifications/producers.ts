@@ -11,7 +11,14 @@ import { requestWords } from "../daemon/request-words.ts";
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
-import { isNewsLine } from "../session/result.ts";
+import { isNewsLine, stopWords } from "../session/result.ts";
+import {
+  isBudgetStopReason,
+  MONTH_CAP_STOP,
+  PLAN_SHARE_STOP,
+  PROJECT_BUDGET_STOP,
+  stopLimitWords,
+} from "../session/stop-words.ts";
 import type { Notification, NotificationRecord } from "./types.ts";
 
 /*
@@ -127,6 +134,11 @@ export interface SessionEndFacts {
   sessionId: string;
   status: string;
   stopReason: string;
+  /**
+   * The amount of the outer limit a pause ended the session at (this month's cap, the project's
+   * budget; ADR 0112), in CHF: the budget stop's body says it first.
+   */
+  stopCapChfMicro?: number;
   summary: string;
   /**
    * The result's lines without what an open Inbox card already says (the runner's
@@ -209,7 +221,7 @@ const PERSON_STOPS = new Set(["you", "stop_all", "quit"]);
  * now sent "Quote page: stopped by you" back to the person who pressed it.
  */
 export function sessionEndIsNews(r: SessionEndFacts): boolean {
-  if (r.stopReason === "budget_exceeded") return true;
+  if (isBudgetStopReason(r.stopReason)) return true;
   if (PERSON_STOPS.has(r.stopReason)) return false;
   return (r.news ?? linesOf(r.summary)).some(isNewsLine);
 }
@@ -222,7 +234,7 @@ export function sessionEndIsNews(r: SessionEndFacts): boolean {
  * send it at all.
  */
 export function sessionEnded(humanId: string, r: SessionEndFacts): Notification {
-  if (r.stopReason === "budget_exceeded") return budgetStop(humanId, r);
+  if (isBudgetStopReason(r.stopReason)) return budgetStop(humanId, r);
   const lines = r.news ? r.news.map((l) => l.trim()).filter(Boolean) : linesOf(r.summary);
   const { first, rest } = splitResult(lines);
   // "Answer it in the Inbox" only when the words name something the person must answer: with
@@ -243,23 +255,73 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification 
   };
 }
 
+/** The outer limit's amount, as the budget stop's body says it first ("This month's cap is CHF 0.23."). */
+function limitAmount(stopReason: string, capChfMicro: number | undefined): string {
+  if (typeof capChfMicro !== "number" || capChfMicro <= 0) return "";
+  switch (stopReason) {
+    case MONTH_CAP_STOP:
+      return `This month's cap is ${formatChf(capChfMicro)}.`;
+    case PROJECT_BUDGET_STOP:
+      return `The project's budget is ${formatChf(capChfMicro)}.`;
+    default:
+      return "";
+  }
+}
+
+/** What helps after a stop at an outer limit (ADR 0112); a larger session budget does not. */
+function goOnAfter(stopReason: string): string {
+  switch (stopReason) {
+    case MONTH_CAP_STOP:
+      return "Raise the monthly spending cap in Settings to go on.";
+    case PROJECT_BUDGET_STOP:
+      return "Raise the project budget in Settings to go on.";
+    case PLAN_SHARE_STOP:
+      return "It can go on once your Claude subscription's usage resets.";
+    default:
+      return "Start a session with a larger budget to go on.";
+  }
+}
+
 /**
  * A session hit its cap and stopped with a handoff (scenario 5). The title says the stop and
  * the spend; the body what the result adds (what was done, what is left), never "The session's
- * budget is used" or the money again.
+ * budget is used" or the money again. A stop at an outer limit (this month's cap, the project's
+ * budget, the subscription's share: ADR 0112) names it in the title and what helps in the
+ * body, the amounts first (a title has 60 characters): before, it read "stopped, the budget is
+ * used" and advised a larger session budget, which the month's cap refuses (review of
+ * budget-stop).
  */
 export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
   const chf = r.spentChfMicro ?? chfMicroOf(r.spentUsdMicro);
-  const said = (r.news ?? linesOf(r.summary))
+  const limit = stopLimitWords(r.stopReason);
+  let text = (r.news ?? linesOf(r.summary))
     .join(" ")
-    .replace(/The session's budget is used\.\s*/g, "")
+    .replace(/The session's budget is used\.\s*/g, "");
+  // The title says the limit: its sentence is not said again.
+  if (limit) text = text.split(stopWords(r.stopReason, r.stopCapChfMicro)).join(" ");
+  const said = text
+    .replace(/\s{2,}/g, " ")
     .replace(/\s*CHF \d+\.\d{2}\.\s*$/, "")
     .trim();
   return {
     kind: "budget_stop",
     humanId,
-    title: titled(r.projectName, `stopped, the budget is used (${formatChf(chf)} spent)`),
-    body: bodyOf(said, "Start a session with a larger budget to go on."),
+    title: titled(
+      r.projectName,
+      limit ? `stopped at ${limit}` : `stopped, the budget is used (${formatChf(chf)} spent)`,
+    ),
+    body: bodyOf(
+      limit
+        ? [
+            limitAmount(r.stopReason, r.stopCapChfMicro),
+            `The session spent ${formatChf(chf)}.`,
+            said,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : said,
+      goOnAfter(r.stopReason),
+    ),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
     sessionId: r.sessionId,

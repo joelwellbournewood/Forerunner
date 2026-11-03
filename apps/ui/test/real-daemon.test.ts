@@ -4503,7 +4503,8 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
     expect(view?.display).toMatchObject({
       key: "answer",
-      label: "Needs your decision: its budget is used",
+      // ADR 0112: a stop at a budget is a pause (before: "Needs your decision: its budget is used").
+      label: "Paused at its budget",
       blocker: { kind: "card", requestId: card?.id, cardKind: "budget" },
     });
     // CHF everywhere a person reads it.
@@ -7355,4 +7356,151 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     for (const d of await client.docs(second.id))
       expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
   }, 120_000);
+});
+
+describe("the UI client against the real daemon: a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[];
+
+  beforeAll(async () => {
+    // The stand-in writes the guide one part per call until it hears the wrap-up.
+    ({ rt, client, criticCalls } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_LONG: "Write the guide",
+    }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a task whose budget is a few times its run's reserve hears the wrap-up and pauses: its words say so, no critic reviews it, its report is kept", async () => {
+    const project = await client.createProject({ name: "Budget pause", goal: "A guide" });
+    // What New task sends with a budget of CHF 0.036 (USD 0.045): about three times the reserve
+    // of two stand-in calls its run's budget line names.
+    const created = await client.createTask(project.id, {
+      title: "Write the guide",
+      outcome: "guide.md explains the club",
+      acceptanceCriteria: ["guide.md exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 45_000,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, JSON.stringify(started)).toBeTruthy();
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      async () => {
+        const s = await client.session(sessionId);
+        return `${s.status}: ${s.summary ?? ""}`;
+      },
+      20_000,
+    );
+    // The run's own lines: its budget line with the reserve, the wrap-up.
+    const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+    expect(
+      lines.some((l) =>
+        /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
+          l,
+        ),
+      ),
+      lines.join(" | "),
+    ).toBe(true);
+    expect(lines.some((l) => l.startsWith("Told the coder to wrap up"))).toBe(true);
+    // The task's words say paused, with its card to open.
+    const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
+    expect(view?.status).toBe("needs_human");
+    expect(view?.display).toMatchObject({
+      key: "answer",
+      label: "Paused at its budget",
+      blocker: { kind: "card", cardKind: "budget" },
+    });
+    // No critic call for it, and no try counted.
+    expect(criticCalls.filter((c) => (c.origin?.label ?? "").includes(created.id))).toEqual([]);
+    expect(view?.attempt).toBe(0);
+    // Its run's report is kept, with the two headings (the drawer's run).
+    const detail = await client.task(created.id);
+    const work = detail.runs.filter((r) => r.kind === "work");
+    expect(work).toHaveLength(1);
+    expect(work[0]?.outcome).toBe("Paused");
+    const report = `${work[0]?.report ?? ""}\n${work[0]?.fullReport ?? ""}`;
+    expect(report).toContain("Where I stopped:");
+    expect(report).toContain("Left to do:");
+  }, 60_000);
+});
+
+describe("the UI client against the real daemon: a session ended at this month's cap names it (review of budget-stop)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    // The stand-in writes the guide one part per call until it hears the wrap-up, so the
+    // month's cap stops it long before its own budget's line.
+    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_LONG: "Write the guide" }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("the session page, its result, its log and the Inbox Update say this month's cap, not the session's budget", async () => {
+    // As Settings sends a lowered monthly cap (it applies at once).
+    const lowered = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 0.02 } }],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(lowered.status, JSON.stringify(lowered)).toBe("done");
+    const project = await client.createProject({ name: "Month cap", goal: "A guide" });
+    // What New task sends with a budget of CHF 1.00: far above what is left this month.
+    await client.createTask(project.id, {
+      title: "Write the guide",
+      outcome: "guide.md explains the club",
+      acceptanceCriteria: ["guide.md exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 1_250_000,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    // A start without a typed budget (a budget card's Raise, the chat, a schedule).
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, JSON.stringify(started)).toBeTruthy();
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      async () => {
+        const s = await client.session(sessionId);
+        return `${s.status}: ${s.summary ?? ""}`;
+      },
+      20_000,
+    );
+    const session = await client.session(sessionId);
+    // Before: "Stopped: the budget is used" and "The session's budget is used." at 1% of the
+    // session's own CHF 5.00.
+    expect(session.statusText).toBe("Stopped at this month's cap");
+    expect(session.summary ?? "").toContain("Stopped at this month's cap of CHF 0.02.");
+    expect(session.summary ?? "").not.toMatch(/budget is used/);
+    const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+    expect(
+      lines.some((l) => /^Stopped at this month's cap: /.test(l)),
+      lines.join(" | "),
+    ).toBe(true);
+    expect(lines.join(" | ")).not.toMatch(/budget is used/);
+    const updates = (await client.inbox(me.id)).messages
+      .filter((m) => m.projectId === project.id)
+      .map((m) => m.body);
+    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.02.");
+    expect(updates.join(" | ")).not.toMatch(/budget is used/);
+  }, 60_000);
 });

@@ -135,8 +135,9 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   failed**, **Waiting for Docker** (a full review needs Docker, and it is not running), **Running
   (Alice, 2 min)**, **Being reviewed**, **Needs your answer** (its card is in the Inbox),
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
-  and the row offers **Answer**, **Try again** and **Cancel**), **Needs your decision: its
-  budget is used** and **Needs your decision: it could not run** (its card in the Inbox says
+  and the row offers **Answer**, **Try again** and **Cancel**), **Paused at its budget** (or
+  at the limit that stopped it: **Paused at this month's cap**, **Paused at the project's
+  budget**) and **Needs your decision: it could not run** (its card in the Inbox says
   why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Needs your
   decision** on a task whose review could not finish or found something still open (its card
   offers **Try again**, **Mark done anyway** and **Cancel task**; the row offers **Answer** and
@@ -607,9 +608,30 @@ plan shows is only a
 forecast. When a task reaches its budget it waits for you and the session goes on with the
 other tasks. The Inbox gets one card, '"Contact page" stopped at its budget of CHF 0.01', with
 what it spent so far and two buttons: **Raise the budget** (it names the new amount, sets it and
-starts a session that tries again) and **Cancel task**. The Tasks tab reads "Needs your
-decision: its budget is used", with Answer (the card), Edit (set another budget yourself) and
-Cancel.
+starts a session that tries again) and **Cancel task**. The Tasks tab reads "Paused at its
+budget", with Answer (the card), Edit (set another budget yourself) and Cancel.
+
+A budget stop is a pause, not a failure. Before a task's run reaches its budget, the agent is
+told once that about a fifth of its budget is left: it starts nothing new, leaves the files
+working and ends its report with "Where I stopped:" and "Left to do:". The reserve for that is a
+fifth of the run's budget, or the cost of two calls when that is more; the session's log
+(Details) says at the start of each run where its wrap-up comes ("This run may spend CHF 0.40:
+at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish."). A budget too small
+for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
+smaller than a single step's cost says so and pauses before that step. A run that stopped at a
+budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
+it does not count as a failed try, and its report stays in the task (the next run reads it). A
+run that wraps up with nothing left is reviewed as usual. The card and the task name the limit
+that stopped it: the task's budget, the specialist's limit, the session's budget, the project's
+budget, this month's cap or the share of your Claude subscription Forerunner may use. A stop at
+the project's budget, the month's cap or the subscription's share ends the session, and the
+session says which ("Stopped at this month's cap" on its page, "Stopped at this month's cap of
+CHF 150.00." in its result and the Inbox). Its notification says what helps: raise the monthly
+spending cap in Settings, raise the project budget, or wait until your Claude subscription's
+usage resets (a larger session budget would not help). A task's run never spends more than what
+is left of the session's work budget (the fifth kept for reviews stays for them), so a task that
+fills a whole session gets about 64% of it for its work. On a Claude subscription a budget stop really stops Claude Code: the run
+ends only once Claude Code has exited, and Stop now still ends it at once.
 
 When a task fails twice, the third attempt goes to another specialist that can do the same
 work (the coder's to the migration specialist, the tester's to the coder, and so on); the

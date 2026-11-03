@@ -16,7 +16,7 @@ import { getPath } from "../agent/tools.ts";
 import { type InjectionReport, wrapUntrusted } from "../injection/scan.ts";
 import type { Usage } from "../provider/types.ts";
 import { ALWAYS_HUMAN, type AutonomyDecision, decideAutonomy } from "./autonomy.ts";
-import type { SessionBudget } from "./budget.ts";
+import type { RunWrapUpLine, SessionBudget } from "./budget.ts";
 import type { KillSwitch } from "./killswitch.ts";
 import type {
   ApprovalPort,
@@ -129,11 +129,16 @@ export class EnforcementHooks {
     return claims;
   }
 
-  /** Before every model call: kill state, wall clock, steps, run/session/task/project/month caps. */
+  /**
+   * Before every model call: kill state, wall clock, steps, run/session/task/project/month caps.
+   * `wrap_up` (once per work run, ADR 0112): this call takes the run past its wrap-up line, so
+   * the driver tells the agent to wrap up; it outranks `finish_current`, whose no-new-work state
+   * the session's budget keeps anyway. `line`: the run's wrap-up line, on its first call.
+   */
   async beforeModelCall(
     ctx: RunContext,
     estimateUsdMicro: number,
-  ): Promise<{ decision: "allow" | "finish_current" }> {
+  ): Promise<{ decision: "allow" | "finish_current" | "wrap_up"; line?: RunWrapUpLine }> {
     const claims = this.claims(ctx);
     const now = this.deps.clock.now();
     ctx.budget.checkWallClock(now);
@@ -163,15 +168,20 @@ export class EnforcementHooks {
             spentUsdMicro: outer.spentUsdMicro,
             capUsdMicro: outer.capUsdMicro,
             runId: claims.runId,
+            // The run's line, when this was its first call: the drivers still say it.
+            ...(local.line ? { line: local.line } : {}),
           },
         },
       );
     }
     return {
       decision:
-        outer.decision === "finish_current" || local.decision === "finish_current"
-          ? "finish_current"
-          : "allow",
+        local.decision === "wrap_up"
+          ? "wrap_up"
+          : outer.decision === "finish_current" || local.decision === "finish_current"
+            ? "finish_current"
+            : "allow",
+      ...(local.line ? { line: local.line } : {}),
     };
   }
 
@@ -217,6 +227,16 @@ export class EnforcementHooks {
           : {}),
       },
     };
+  }
+
+  /**
+   * The run is over (budget-stop, ADR 0112): its driver returned, and on the Agent SDK path its
+   * Claude Code process has exited or was ended. Its token is revoked, so every hook refuses a
+   * call that still arrives for it (`claims` throws "capability token revoked"): before, the
+   * hooks allowed tools after `run()` had returned. Idempotent.
+   */
+  endRun(ctx: Pick<RunContext, "token">): void {
+    this.deps.tokens.revoke(ctx.token.claims.id);
   }
 
   /** After a model call: account the real cost. */

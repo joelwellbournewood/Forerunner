@@ -2,6 +2,12 @@ import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import { namesOf } from "./recovery.ts";
+import {
+  MONTH_CAP_STOP,
+  PLAN_SHARE_STOP,
+  PROJECT_BUDGET_STOP,
+  stopLimitWords,
+} from "./stop-words.ts";
 
 /**
  * A session's result in the person's words (core-experience design §5, "Session result"):
@@ -34,6 +40,11 @@ export interface LastSessionOutcome {
   /** Full-review tasks waiting for the Docker sandbox. */
   waitingForDocker: NamedTask[];
   stopReason: string;
+  /**
+   * The amount of the outer limit a pause ended the session at (`budget_month`,
+   * `budget_project`, ADR 0112), in CHF: the result's "Stopped at this month's cap of CHF 0.23."
+   */
+  stopCapChfMicro?: number;
   spentChfMicro: number;
 }
 
@@ -80,9 +91,17 @@ const noDot = (s: string) => s.trim().replace(/[.\s]+$/, "");
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const titlesOf = (l: readonly NamedTask[]) => l.map((t) => t.title);
 
-/** How the session ended, in words, or "" when it simply ran out of work. */
-export function stopWords(stopReason: string): string {
+/**
+ * How the session ended, in words, or "" when it simply ran out of work. A pause at an outer
+ * limit names it, with its amount when known (`capChfMicro`, ADR 0112).
+ */
+export function stopWords(stopReason: string, capChfMicro?: number): string {
   switch (stopReason) {
+    case MONTH_CAP_STOP:
+    case PROJECT_BUDGET_STOP:
+      return `Stopped at ${stopLimitWords(stopReason, capChfMicro)}.`;
+    case PLAN_SHARE_STOP:
+      return "Stopped at the share of your Claude subscription that Forerunner may use.";
     case "you":
       return "Stopped by you.";
     case "quit":
@@ -169,7 +188,7 @@ export function sessionResultLines(f: ResultFacts, told?: ToldByCards): string[]
   if (did.length) lines.push(did.join(" "));
   // 3. What is next, how it ended, the money.
   const next: string[] = [];
-  const stop = stopWords(o.stopReason);
+  const stop = stopWords(o.stopReason, o.stopCapChfMicro);
   if (stop) next.push(stop);
   if (f.leftOutForBudget.length) {
     const named = f.leftOutForBudget

@@ -44,7 +44,7 @@ names a session appends a `notification` event to that session's log.
 | `request_opened` | normal | `producers.requestOpened` for a non-blocking human request | `/inbox` |
 | `request_blocking` | **urgent** | `producers.requestOpened` when `blocking` is true | `/inbox` |
 | `session_ended` | normal | `producers.sessionEnded` from the session runner, only when `sessionEndIsNews` says the end is news (see "Hearing once" below); the title is the project and the first point of the result's news ("Quote page: did 2 tasks: …"), the body the rest, never the title's sentence again, and "Open the session for the details." (or "Answer it in the Inbox." when the words ask the person) (design §5); a budget stop's title says the spend in CHF (`spentChfMicro`, the ledger's figure; the default rate without it; U-074), as does the calibration report's cost line | `/sessions/<id>` |
-| `budget_stop` | **urgent** | `producers.sessionEnded` when `stopReason === "budget_exceeded"` (or `producers.budgetStop`) | `/sessions/<id>` |
+| `budget_stop` | **urgent** | `producers.sessionEnded` when `isBudgetStopReason(stopReason)` (`budget_exceeded`, or an outer limit's `budget_month`, `budget_project`, `budget_plan`; or `producers.budgetStop`) | `/sessions/<id>` |
 | `critic_verdict` | info (`escalate` and `human` verdicts: normal) | `producers.criticVerdict` | `/projects/<id>/reviews` or `/inbox` |
 | `injection_flagged` | **urgent** | `producers.injectionFlagged` with an `InjectionReport`; the body (`summarizeInjection`) is one line within 140 characters: the count, the origin (shortened to its host when long) and the rules that fired ("and 2 more" when they do not fit), never the passages (ADR 0047) | `/sessions/<id>` or `/inbox` |
 | `update_available` | info | `producers.updateAvailable` from the updater | `/settings` (the UI's `/updates` page once the shell lists that root) |
@@ -232,7 +232,16 @@ not cut): a body never repeats its title (phase E #89: a one-line result was sai
 and again in the body). `SessionEndFacts.news` is the runner's `SessionResult.news` (the result
 without what an open card says); without it the summary's lines are used, and
 `SessionEndFacts.projectName` carries the project. `budgetStop`'s body leaves out "The
-session's budget is used" and the money, which its title says. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
+session's budget is used" and the money, which its title says. A session a task's pause ended
+at an outer limit (stop reason `budget_month`, `budget_project` or `budget_plan`, ADR 0112;
+`isBudgetStopReason`) is a budget stop too and names it: the title "<Project>: stopped at this
+month's cap" (the limit only: a title has 60 characters), the body the limit's amount
+(`SessionEndFacts.stopCapChfMicro`) and the session's spend first ("This month's cap is CHF
+0.23. The session spent CHF 0.04."), then what the result adds without its stop sentence, then
+what helps ("Raise the monthly spending cap in Settings to go on.", the project budget, or
+"It can go on once your Claude subscription's usage resets."); before (review of budget-stop)
+it read "stopped, the budget is used" and advised "Start a session with a larger budget",
+which the month's cap refuses. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
 critic sent "X" back'), never "Critic: revise (grade 35)" or "Review <id> of task <id>".
 `killSwitch(…, by)` says whose stop it was ("Stop all: every session stopped", "Forerunner was
 closed: its work stopped") and what happens next, without the run, process and token counts.
