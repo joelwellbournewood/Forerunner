@@ -183,6 +183,62 @@ describe("Inbox", () => {
     );
   });
 
+  it("a pull request that stopped merging cleanly into main is one card titled by its task, with Redo and Leave it open; Redo sends that option (R-conflict)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const sentence =
+      "#8 conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.";
+    harness.daemon.state.requests.unshift({
+      id: "req_conflict",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_1",
+      taskTitle: "Index the documentation pages",
+      sessionId: null,
+      kind: "decision",
+      why: `The critic accepted "Index the documentation pages", but pull request #8 was not merged. ${sentence}`,
+      steps: [],
+      options: ["Redo", "Leave it open"],
+      blocking: false,
+      risk: "medium",
+      changeCard: {
+        key: "merge:left_open",
+        task_id: "task_1",
+        pr_url: "https://example.test/org/atlas/pull/8",
+        status: "conflict",
+        sentence,
+        notice: "conflict",
+        base: "main",
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-08T14:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const requests = await screen.findAllByTestId("request");
+    const card = requests.find(
+      (r) => r.getAttribute("data-request-id") === "req_conflict",
+    ) as HTMLElement;
+    expect(within(card).getByTestId("request-title")).toHaveTextContent(
+      '"Index the documentation pages" conflicts with main',
+    );
+    expect(card).toHaveTextContent(sentence);
+    const options = within(card).getAllByTestId("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Redo", "Leave it open"]);
+    expect(card).not.toHaveTextContent("I merged it");
+    expect(card).toHaveTextContent("The task is done again from main; a session starts for it.");
+    expect(card).toHaveTextContent("Closes this card; the pull request stays open on GitHub.");
+    await user.click(within(card).getByRole("button", { name: "Redo" }));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/requests/req_conflict/answer")[0]?.body).toEqual({
+        version: 1,
+        answer: "Redo",
+      }),
+    );
+  });
+
   it("posts the chosen option with the request version; the card is replaced by its Done line and listed under Answered", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

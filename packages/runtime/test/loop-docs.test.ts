@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
@@ -621,6 +621,67 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     });
     expect(await readFile(join(clone, "merged.md"), "utf8")).toBe("# merged\n");
     expect(await new GitOps({ cwd: clone, identity }).headSha()).toBe(moved);
+    await w.close();
+  });
+
+  it("a copy that cannot follow a merge says why, with the files: a file the person changed that the merge changes too, or one of theirs in the way; once moved away, the next merge brings it up to date (R-copystuck)", async () => {
+    const w = await loopWorld();
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    await docs.refreshCopy(project);
+    const clone = join(root, "worktrees", w.project);
+    const first = docs.copyView(project);
+    expect(first?.updatedAt).toBe(w.clock.nowIso());
+    expect(first?.stopped ?? null).toBeNull();
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    const merge = async (file: string, text: string) => {
+      writeFileSync(join(root, "seed", file), text);
+      await seed.commitAll(`merged ${file}`);
+      await seed.push("main");
+      await w.clock.advance(60_000);
+      return docs.refreshCopy(project, { head: await seed.headSha(), base: "main" });
+    };
+    // The person edits README.md in the copy; a merge then changes README.md too.
+    writeFileSync(join(clone, "README.md"), "# my own notes\n");
+    await merge("README.md", "# sample, merged\n");
+    const changed = docs.copyView(project);
+    expect(changed?.updatedAt).toBe(first?.updatedAt);
+    expect(changed?.stopped).toEqual({
+      reason: "changed",
+      files: ["README.md"],
+      line: "You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.",
+    });
+    // Their file is kept as they left it.
+    expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# my own notes\n");
+    // Across a restart (a new ProjectDocs over the same folders): the copy still says it
+    // stopped and why, also after the first refresh of the new daemon (the review's rule 4).
+    const { docs: restarted } = await docsFor(w, root, bare);
+    expect(restarted.copyView(project)?.stopped).toEqual(changed?.stopped);
+    await restarted.refreshCopy(project, { head: await seed.headSha(), base: "main" });
+    expect(restarted.copyView(project)).toMatchObject({
+      updatedAt: first?.updatedAt,
+      stopped: changed?.stopped,
+    });
+    // The person puts README.md back; a file of theirs is now in the way of the next merge.
+    writeFileSync(join(clone, "README.md"), "# sample\n");
+    writeFileSync(join(clone, "notes.md"), "my notes\n");
+    await merge("notes.md", "# notes, merged\n");
+    expect(docs.copyView(project)?.stopped).toEqual({
+      reason: "in_the_way",
+      files: ["notes.md"],
+      line: "notes.md in this copy is in the way of a merged file: move it and the copy follows again.",
+    });
+    // Moved away: the next refresh brings the copy to what is merged and says nothing more.
+    rmSync(join(clone, "notes.md"));
+    await w.clock.advance(60_000);
+    expect(await docs.refreshCopy(project, { head: await seed.headSha(), base: "main" })).toEqual({
+      refreshed: true,
+    });
+    const after = docs.copyView(project);
+    expect(after?.stopped ?? null).toBeNull();
+    expect(after?.updatedAt).toBe(w.clock.nowIso());
+    expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes, merged\n");
     await w.close();
   });
 

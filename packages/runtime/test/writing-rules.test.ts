@@ -368,6 +368,14 @@ describe("writing rules (design §5)", () => {
         "p-1",
         { projectName: "Quote page", taskTitle: "Style the page in styles.css" },
       ),
+      // leftovers7-merge2: a merge the app made by itself (the retry pass, the resume).
+      producers.prMerged("h-1", {
+        projectId: "p-1",
+        projectName: "Quote page",
+        taskTitle: "Style the page in styles.css",
+        prNumber: 12,
+        recordId: ID,
+      }),
       producers.killSwitch(
         "h-1",
         { stoppedRuns: 2, killedProcesses: 1, revokedTokens: 2, durationMs: 9, scope: "all" },

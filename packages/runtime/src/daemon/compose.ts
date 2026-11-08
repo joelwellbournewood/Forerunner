@@ -3020,6 +3020,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const notifyLater = (p: Promise<unknown>, what: string): void => {
     p.catch((e: unknown) => logger.warn("notification not sent", { what, error: errorMessage(e) }));
   };
+  // leftovers7-merge2: a merge the app made by itself (the watcher's retry pass, the resume at
+  // the start) is a notification too, beside its Inbox Update (design §3.8).
+  merge.onMergedLater(async ({ task, record }) => {
+    const projectId = record.project_id ?? task.project_id ?? null;
+    const projectName = projectId ? ((await store.project.get(projectId))?.name ?? null) : null;
+    notifyLater(
+      notifications.prMerged(human.id, {
+        projectId,
+        projectName,
+        taskTitle: task.title,
+        prNumber: record.pr_number,
+        recordId: record.id,
+      }),
+      `merged #${record.pr_number}`,
+    );
+  });
   // Producers: every human request this human gets (approvals from the hooks, the extension
   // registry, the mirror, the Cloudflare deployer, the critic, the updater, ...) is one insert
   // on the repo, so the hook lives there: blocking requests are urgent, the rest normal.
@@ -4311,7 +4327,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         // PR merged on GitHub's website); a copy already there is not fetched again.
         onDefaultBranchHead: async (project, sha) => {
           await Promise.all([
-            dependentBranches.sweep(project.projectId),
+            // leftovers7-merge2 (R-conflict): a pull request that stopped merging cleanly was
+            // said (or merges again): the Overview reads its rows again.
+            dependentBranches.sweep(project.projectId).then((said) => {
+              if (said) events.emit("project", { id: project.projectId });
+            }),
             refreshProjectCopy(project.projectId, { head: sha, base: project.branch }),
             // merged-actions: a take-out merged or closed on GitHub is read here (the host is
             // asked only while one is open), so its task's row says "Taken out in #9".

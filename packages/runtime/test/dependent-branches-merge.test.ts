@@ -1,8 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
-import { join, run } from "@forerunner/platform";
+import { join, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
@@ -119,13 +119,31 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     token,
     identity,
   });
+  // The merge step's view of GitHub, on which a test holds one call open (R-lock): the call
+  // waits until the test releases it, then goes to the fake GitHub as it is.
+  const holds = new Map<string, { reached: () => void; released: Promise<void> }>();
+  const mergeHost = new Proxy(github, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        const held = holds.get(String(prop));
+        if (held) {
+          holds.delete(String(prop));
+          held.reached();
+          await held.released;
+        }
+        return value.apply(target, args);
+      };
+    },
+  });
   const merge = new ReviewedPrMerge({
     store: w.store,
     clock: w.clock,
     tokens: w.tokens,
     hooks,
     audit,
-    host: github,
+    host: mergeHost,
     worktreeRoot,
     token,
     identity,
@@ -176,6 +194,7 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     watcher,
     audit,
     writes,
+    worktreeRoot,
     fileOf,
     /** One task through one session: the executor (branch, PR), the critic, the merge step. */
     async runTask(
@@ -281,6 +300,24 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
       const rows = await w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
       return (await requestViews(w.store, rows)).map((v) => ({ title: v.title, body: v.body }));
     },
+    /**
+     * Holds the merge step's next call of `method` on GitHub open (R-lock): `reached` resolves
+     * once the call is made, and nothing reaches GitHub until `release`.
+     */
+    hold(method: string) {
+      let reached!: () => void;
+      let release!: () => void;
+      const was = new Promise<void>((r) => {
+        reached = r;
+      });
+      holds.set(method, {
+        reached,
+        released: new Promise<void>((r) => {
+          release = r;
+        }),
+      });
+      return { reached: was, release: () => release() };
+    },
   };
   return m;
 }
@@ -374,6 +411,51 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     }
     expect(await m.cards(c.id)).toEqual([]);
     // Merged in order, each one cleanly; main has each task's change once.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    await m.poll();
+    expect((await m.mergeByPerson(c.id)).status).toBe("merged");
+    for (const t of [a, b, c])
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf(t.title))).split("\n"),
+      ).toHaveLength(1);
+  });
+
+  it("(c) a chain of three whose middle task's folder is busy when the first is squash-merged: once the middle is free, the third's pull request holds none of the first's original commits (R-chain)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add notes", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.poll();
+    // B's folder holds a change nobody committed: B cannot be rebuilt while it is there.
+    const scratch = join(m.worktreeRoot, safeSegment(b.id), "scratch.txt");
+    writeFileSync(scratch, "trying something\n");
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect(await m.prCommits(prB)).toContain("Add page");
+    // The folder is free again: the next poll rebuilds B, and C follows the rebuilt B.
+    rmSync(scratch);
+    await m.poll();
+    expect(await m.prCommits(prB)).toEqual(["Add footer"]);
+    expect(await m.prCommits(prC)).not.toContain("Add page");
+    expect(await m.prFiles(prC)).toEqual([m.fileOf("Add footer"), m.fileOf("Add notes")].sort());
+    expect((await m.pr(c.id)).body).toContain(`Builds on #${prB} (not merged yet)`);
+    // Neither review is void, nothing is owed: both wait for the person on their new heads.
+    for (const t of [b, c]) {
+      const r = await m.record(t.id);
+      expect(r).toMatchObject({ state: "left_to_you", rebuild_owed_for: null });
+      expect(r.last_outcome).toBe("not_allowed");
+      expect(r.reviewed_head_sha).toBe((await m.pr(t.id)).head.sha);
+    }
+    expect(await m.cards(c.id)).toEqual([]);
+    // A later poll changes nothing more; the chain merges in order, cleanly, each change once.
+    const heads = [(await m.pr(b.id)).head.sha, (await m.pr(c.id)).head.sha];
+    await m.poll();
+    expect([(await m.pr(b.id)).head.sha, (await m.pr(c.id)).head.sha]).toEqual(heads);
     expect((await m.mergeByPerson(b.id)).status).toBe("merged");
     await m.poll();
     expect((await m.mergeByPerson(c.id)).status).toBe("merged");
@@ -706,6 +788,247 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect((await m.record(a.id)).state).toBe("left_to_you");
     await m.poll();
     expect(await m.record(a.id)).toMatchObject({ state: "merged", method: "merge" });
+  });
+
+  /** `p`, or a failure that says what never happened (a real-time wait: never on CI's speed). */
+  const within = <T>(p: Promise<T>, what: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`${what} within 20 s`)), 20_000),
+      ),
+    ]);
+  const withoutA = (prB: number, prA: number) =>
+    `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+
+  it("a dependency closed while the person's Merge brings main into the dependent: the rebuild waits for the merge step's git, and the head that still holds the closed work is never merged (R-lock)", async () => {
+    const m = await chainWorld({ level: 2 });
+    // The branch must be up to date with main: Merge brings main in first, in B's folder.
+    m.host.setBranchRules(FULL, "main", [
+      {
+        type: "required_status_checks",
+        parameters: { strict_required_status_checks_policy: true, required_status_checks: [] },
+      },
+    ]);
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.poll();
+    await m.host.seedCommit(FULL, { "docs/notes.md": "notes\n" }, "main moved", "main");
+    const headB = (await m.pr(b.id)).head.sha;
+    // The person presses Merge on B; the merge step is bringing main into B's folder (it reads
+    // the checks on the head before it merges main in) when the person closes A on GitHub.
+    const held = m.hold("listCheckRuns");
+    const merging = m.mergeByPerson(b.id);
+    await within(held.reached, "the merge step did not start bringing main in");
+    await m.close(a.id);
+    await m.poll();
+    // The watcher's rebuild did not touch B's folder or branch while the merge step works there:
+    // it is owed, and B's merge cannot go ahead before it ran.
+    expect((await m.pr(b.id)).head.sha).toBe(headB);
+    expect((await m.record(b.id)).rebuild_owed_for).toBe(a.id);
+    held.release();
+    const out = await within(merging, "the merge did not end");
+    expect(out.status).not.toBe("merged");
+    expect((await m.pr(b.id)).merged).toBe(false);
+    // The next poll runs the owed rebuild: B holds only its own work, its review is void, one card.
+    await m.poll();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      sentence: withoutA(prB, prA),
+      rebuild_owed_for: null,
+    });
+    expect(await m.cards(b.id)).toEqual([
+      { title: `"Add footer" was rebuilt without pull request #${prA}`, body: withoutA(prB, prA) },
+    ]);
+    // Nothing merges it later by itself.
+    await m.merge.retryWaiting();
+    await m.poll();
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("a dependency closed while the merge call is held open on GitHub: the rebuild pushes first, GitHub refuses the old head, and the record keeps the rebuild's word (R-lock)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.poll();
+    const held = m.hold("mergePullRequest");
+    const merging = m.mergeByPerson(b.id);
+    await within(held.reached, "the merge step did not call GitHub's merge");
+    await m.close(a.id);
+    await m.poll();
+    held.release();
+    const out = await within(merging, "the merge did not end");
+    expect(out.status).not.toBe("merged");
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    // GitHub's refusal of the old head does not replace what the rebuild said.
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      sentence: withoutA(prB, prA),
+    });
+    expect(await m.cards(b.id)).toHaveLength(1);
+  });
+
+  it("an open pull request that conflicts with main once another merges: one card after one poll, none more at the next, Merge no longer offered; once the person resolves it on GitHub, their commit is not the reviewed version, so the row still offers no Merge and the one card says it changed after the review (R-conflict)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+    // The person merges the first; the second now changes the same lines as main.
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    expect((await m.pr(b.id)).mergeable).toBe(false);
+    await m.poll();
+    const sentence = `#${prB} conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.`;
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "conflict",
+      sentence,
+    });
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const views = await requestViews(m.w.store, rows);
+    expect(views.map((v) => ({ title: v.title, body: v.body }))).toEqual([
+      { title: `"Write the other page" conflicts with main`, body: sentence },
+    ]);
+    expect(views[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    // The next poll files nothing more.
+    await m.poll();
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // The person resolves it on GitHub, as the notice says (main's version kept on the branch):
+    // a commit after the review. Before (the review of leftovers7-merge2): the record went back
+    // to no sentence and Merge was offered again, and the person's Merge was then refused ("#N
+    // changed after the review") with a second card.
+    const reviewed = (await m.record(b.id)).reviewed_head_sha;
+    await m.host.seedCommit(
+      FULL,
+      { "index.html": "<h1>one</h1>\n" },
+      "Resolve",
+      (await m.pr(b.id)).head.ref,
+    );
+    const resolved = await m.pr(b.id);
+    expect([resolved.mergeable, resolved.head.sha === reviewed]).toEqual([true, false]);
+    await m.poll();
+    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+    // The head-moved word the merge step itself gives (no Merge on the Overview: `NO_CLICK`).
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: moved,
+      reviewed_head_sha: reviewed,
+    });
+    // Still one card, saying so, with what the person can do now.
+    const open = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const later = await requestViews(m.w.store, open);
+    expect(later.map((v) => ({ title: v.title, body: v.body }))).toEqual([
+      {
+        title: `The critic accepted "Write the other page", but pull request #${prB} was not merged`,
+        body: moved,
+      },
+    ]);
+    expect(later[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    // Its Details say what to do now, not how to resolve a conflict that is gone.
+    expect(later[0]?.details).toEqual([
+      "Look at the commits pushed after the review",
+      "Merge it yourself or ask for a new review",
+    ]);
+    // Nothing more at the next poll, and nothing merged.
+    await m.poll();
+    expect(await m.cards(b.id)).toHaveLength(1);
+    expect((await m.record(b.id)).last_outcome).toBe("head_moved");
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("a conflict that goes away on main (the conflicting change taken out again) leaves the reviewed version as it was: the card closes, Merge is offered again, and the person's Merge merges it (R-conflict fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Retitle the app", { "README.md": "# one\n" });
+    m.writes.set("Retitle the app again", { "README.md": "# two\n" });
+    const a = await m.runTask("Retitle the app");
+    const b = await m.runTask("Retitle the app again");
+    const prB = await m.prNumber(b.id);
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    await m.poll();
+    expect(await m.record(b.id)).toMatchObject({
+      last_outcome: "conflict",
+      sentence: `#${prB} conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.`,
+    });
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // Someone puts main's title back: the reviewed head merges cleanly as it is.
+    const reviewed = (await m.record(b.id)).reviewed_head_sha;
+    await m.host.seedCommit(FULL, { "README.md": "# app\n" }, "Put the title back", "main");
+    const pr = await m.pr(b.id);
+    expect([pr.mergeable, pr.head.sha]).toEqual([true, reviewed]);
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "conflict_resolved",
+      sentence: "",
+      reviewed_head_sha: reviewed,
+    });
+    // The Merge the row offers again works.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    expect((await m.pr(b.id)).merged).toBe(true);
+    expect(await m.hostGit("show", "main:README.md")).toBe("# two");
+  });
+
+  it("the conflict notice's Redo does the task again from main, as its line says: the session it starts ends with the same pull request merging cleanly, no second card, and the person's Merge merges it (R-conflict fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    await m.poll();
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [view] = await requestViews(m.w.store, rows);
+    if (!view || !rows[0]) throw new Error("no conflict card");
+    expect(view.title).toBe(`"Write the other page" conflicts with main`);
+    // The answer the Inbox sends: the card's own option.
+    const redo = view.choices?.find((c) => c.label === "Redo");
+    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    expect((await answerCard(m, rows[0], redo?.label ?? "")).redone).toBe(1);
+    // The stand-in executor names its run by the attempt: the redo is the next one.
+    const ready = await m.w.store.task.mustGet(b.id);
+    expect(ready.status).toBe("ready");
+    await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
+    // The session the Redo starts.
+    await m.session();
+    const after = await m.w.store.task.mustGet(b.id);
+    // Before: the run resumed the open pull request's branch, its rebase onto main conflicted in
+    // index.html, and the task stopped with a second card in git words ("Rebase of fr/... onto
+    // main conflicts in ...", I resolved it / Drop the branch / Cancel the task).
+    expect([after.status, /conflict/i.test(after.reason ?? "")]).toEqual(["done", false]);
+    expect(
+      (await m.cards(b.id)).filter((c) => /conflict|rebase/i.test(`${c.title} ${c.body}`)),
+    ).toEqual([]);
+    // The same pull request, with only the task's own work on main, merging cleanly.
+    expect(await m.prNumber(b.id)).toBe(prB);
+    const pr = await m.pr(b.id);
+    expect([pr.state, pr.merged, pr.mergeable]).toEqual(["open", false, true]);
+    expect(await m.prCommits(prB)).toEqual(["Write the other page"]);
+    expect(await m.hostGit("rev-parse", `${pr.head.sha}^`)).toBe(
+      await m.hostGit("rev-parse", "refs/heads/main"),
+    );
+    // Its record follows the new review and waits for the person's Merge, as any accept does in
+    // "You press Merge"; the poll says nothing more.
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "not_allowed",
+      sentence: `#${prB} waits for you to merge it: press Merge on the Overview.`,
+      reviewed_head_sha: pr.head.sha,
+    });
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    expect(await m.hostGit("show", "main:index.html")).toBe("<h1>two</h1>");
   });
 
   it("two unmerged dependencies that conflict: the dependent waits with one Inbox card naming both pull requests (W6-22)", async () => {

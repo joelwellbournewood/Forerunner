@@ -606,6 +606,7 @@ Carries the common columns (see Invariants).
 | `take_out_pr_number` | int | yes |  |  | The pull request that takes this merge's work out (merged-actions). |
 | `take_out_pr_url` | text | yes |  |  | That pull request's web URL. |
 | `take_out_state` | text | yes |  |  | Where that pull request is: open, merged or closed. |
+| `rebuild_owed_for` | text | yes |  |  | The task this one builds on whose merge, close, redo or cancel its branch has not followed yet: a rebuild that could not run (the task's folder was busy or held uncommitted changes, or a step failed), tried again at every poll; nothing merges the pull request while it is set. |
 
 Indexes:
 

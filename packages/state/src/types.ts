@@ -610,6 +610,13 @@ export interface MergeRecordRow extends BaseRow {
   take_out_pr_number: number | null;
   take_out_pr_url: string | null;
   take_out_state: string | null;
+  /**
+   * R-owed (leftovers7-merge2): the task this one builds on whose merge, close, redo or cancel
+   * the branch has not followed yet (a rebuild that could not run); null when nothing is owed.
+   * The watcher's sweep tries the rebuild again at every poll; nothing merges the pull request
+   * while it is set.
+   */
+  rebuild_owed_for: string | null;
 }
 export type NewMergeRecord = New<
   MergeRecordRow,

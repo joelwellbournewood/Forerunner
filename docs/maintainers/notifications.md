@@ -55,6 +55,7 @@ names a session appends a `notification` event to that session's log.
 | `daily_digest` | normal | the notifier itself (and `POST /notifications/test`) | `/inbox` |
 | `critic_calibration` | normal | `producers.criticCalibration` from the monthly calibration job (ADR 0060): catch rate, pass rate, gate and drift; a failed run names its reason | `/sessions/<id>` or `/inbox` |
 | `handover_report` | normal | `producers.handoverReport` from the monthly handover job (ADR 0060): stuck places, the docs task, the session's end | `/sessions/<id>` |
+| `pr_merged` | normal | `producers.prMerged`, bound in `compose.ts` to `ReviewedPrMerge.onMergedLater` (leftovers7-merge2): a merge the app made by itself, the watcher's retry pass or the resume at the daemon's start, beside its Inbox Update ('Quote page: merged #12', '"Style the page" is merged. Open the project to see it.'); a session's merge is in its session's notification and the person's own click is answered where it was pressed; dedupe key `pr-merged:<record>:<number>` | `/projects/<id>` |
 
 `urgencyOf(n)` is the kind's default raised (never lowered) by `n.urgency`. The four urgent
 kinds (`URGENT_KINDS`) always go through: quiet hours do not hold them and the digest never

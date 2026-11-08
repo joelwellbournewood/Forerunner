@@ -132,7 +132,12 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   Forerunner does that after every merge, the ones it makes and the ones you make on GitHub
   (within about a minute), with no session needed, and the list follows without a reload. The
   copy is Forerunner's own, under its data folder (it does not link your own working folder):
-  keep your own files in its Local only folder, not beside the merged ones.
+  keep your own files in its Local only folder, not beside the merged ones. If you changed a
+  file in the copy that a merge changes too, or left a file where a merge brings one, Forerunner
+  never overwrites it: the copy stops following and the line says so and why ("This computer's
+  copy of o/r, not updated since 14:05. You changed README.md in this copy, and a merge changed it
+  too: move your change out of the way and the copy follows again."). Move your change away and
+  the next merge brings the copy up to date again.
 - **Local only** (on Files, for a repository project): a folder inside this computer's copy,
   "Never uploaded. Agents can read and change it." Put files there that the work may use but
   that must stay out of the repository (notes, data, drafts). An agent reads what its task needs
@@ -337,6 +342,22 @@ never repeats work that is already in the default branch:
   one card says so ("#8 could not be rebuilt without #4, which was closed: both change
   src/page.ts. It waits for you: redo the task, or merge it on GitHub only if you want #4's
   changes too.").
+- While #8's task folder is busy (a run, a merge under way, a change nobody committed), its
+  rebuild waits and is tried again at every check (about a minute), also after Forerunner
+  restarts; until it ran, nothing merges #8, not even your Merge (the row waits). In a chain
+  (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt.
+
+**A pull request that no longer merges cleanly.** When another merge changes the same lines as a
+task's open pull request, Forerunner says so once: the Overview row shows "#8 conflicts with main
+in index.html: resolve the conflict on GitHub, or redo the task." instead of Merge, and one Inbox
+card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from main) and
+**Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
+the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
+If the conflict goes away without a change to the pull request (the other change is taken out of
+main again), the row offers Merge again and the card closes. If you resolve it on GitHub with a
+commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
+after the review: look at the new commits, then merge it yourself or send it back." and offers no
+Merge, and the card says the same; merge it on GitHub, or press **Redo**.
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
@@ -354,7 +375,8 @@ on the Overview under **Waiting for you to merge**, and the task's row on the Ta
 #4." and the task rows say **Merged**. A pull request that builds on others ("Merges #2 and #3
 first.") merges those first, each with a merge commit, so each is marked merged on GitHub. A
 pull request whose checks still run says "#4 merges when its checks pass." and merges by itself
-once they pass, also after a restart; one that builds on it says "#5 merges after #4, once #4's
+once they pass, also after a restart (the Inbox's Updates then say 'Merged #4: "Add the page".'
+and a notification tells you); one that builds on it says "#5 merges after #4, once #4's
 checks pass." (its task row: "Accepted · merges after #4") and follows it. When a Merge stops
 before everything merged, the line above the rows says so ("#4 and #5 are not merged yet: each row
 below says why.") and each row says why. Where Forerunner cannot merge (a rule it cannot meet,

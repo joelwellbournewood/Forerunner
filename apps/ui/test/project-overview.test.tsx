@@ -87,6 +87,46 @@ describe("Files (design §3.10)", () => {
     expect(await screen.findByTestId("files-empty")).toHaveTextContent("Nothing written yet.");
   });
 
+  it("a copy that stopped following what is merged says so and why, never 'As merged'; once it follows again the line says when (R-copystuck)", async () => {
+    const harness = createHarness();
+    const today = new Date();
+    today.setHours(14, 5, 0, 0);
+    const line =
+      "You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.";
+    harness.daemon.state.copies.proj_atlas = {
+      updatedAt: today.toISOString(),
+      localOnly: null,
+      stopped: { reason: "changed", files: ["README.md"], line },
+    };
+    render(
+      <AppProvider
+        client={harness.client}
+        store={harness.store}
+        streamOptions={liveEvents(harness)}
+      >
+        <MemoryRouter initialEntries={["/projects/proj_atlas/files"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    const tab = await screen.findByTestId("files-tab");
+    const said = await within(tab).findByTestId("files-repository");
+    expect(said).toHaveTextContent(
+      `This computer's copy of org/atlas, not updated since 14:05. ${line} Work waiting in a pull request is on the Overview.`,
+    );
+    expect(said).not.toHaveTextContent("As merged");
+    // The person moved their change away; the next merge brought the copy up to date.
+    const later = new Date(today);
+    later.setMinutes(9);
+    harness.daemon.state.copies.proj_atlas = { updatedAt: later.toISOString(), localOnly: null };
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    await waitFor(() =>
+      expect(within(tab).getByTestId("files-repository")).toHaveTextContent(
+        "This computer's copy of org/atlas. As merged on GitHub, updated 14:09.",
+      ),
+    );
+  });
+
   it("a repository project's copy says when it is as merged on GitHub, lists Local only with its line and Open folder, and follows a merge without a reload (merged-copy, U-037)", async () => {
     // Before (2026-11-03, bench): a pull request merged on the git host stayed out of Files
     // until a session ended, the page never said when the copy was brought up to date, and

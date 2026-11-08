@@ -700,6 +700,34 @@ export function handoverReport(humanId: string, f: HandoverFacts): Notification 
   };
 }
 
+/** What `prMerged` says: the merge record's pull request and its task, by name. */
+export interface PrMergedFacts {
+  projectId: string | null;
+  projectName: string | null;
+  taskTitle: string;
+  prNumber: number;
+  /** The merge record's id: one notification per merge. */
+  recordId: string;
+}
+
+/**
+ * leftovers7-merge2: a merge the app made by itself, as its Inbox Update says it (the retry pass
+ * once the checks passed or what it builds on merged, the resume at the daemon's start): "Quote
+ * page: merged #4", '"Add the page" is merged. Open the project to see it.' A session's merge is
+ * in its session's notification; the person's own click is answered where it was pressed.
+ */
+export function prMerged(humanId: string, f: PrMergedFacts): Notification {
+  return {
+    kind: "pr_merged",
+    humanId,
+    title: titled(f.projectName, `merged #${f.prNumber}`),
+    body: bodyOf(`"${f.taskTitle}" is merged.`, "Open the project to see it."),
+    link: f.projectId ? `/projects/${f.projectId}` : "/inbox",
+    ...(f.projectId ? { projectId: f.projectId } : {}),
+    dedupeKey: `pr-merged:${f.recordId}:${f.prNumber}`,
+  };
+}
+
 /** What `bindProducers` needs: `Notifier` satisfies it, so does a fake in tests. */
 export interface NotifierLike {
   notify(n: Notification): Promise<NotificationRecord>;
@@ -744,6 +772,7 @@ export function bindProducers(notifier: NotifierLike) {
       notifier.notify(criticCalibration(humanId, f)),
     handoverReport: (humanId: string, f: HandoverFacts) =>
       notifier.notify(handoverReport(humanId, f)),
+    prMerged: (humanId: string, f: PrMergedFacts) => notifier.notify(prMerged(humanId, f)),
   };
 }
 

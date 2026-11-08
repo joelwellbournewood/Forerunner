@@ -2518,6 +2518,28 @@ export function defineStateSuite(target: SuiteTarget): void {
         });
       });
 
+      it("a rebuild owed stays on the record until it ran, a second one keeps the first, an accept clears it (R-owed)", async () => {
+        const t = await store.task.insert({ project_id: s.project.id, title: "Add the footer" });
+        const other = await store.task.insert({ project_id: s.project.id, title: "Add the page" });
+        expect(await store.mergeRecord.oweRebuild(t.id, other.id)).toBe(false);
+        const first = await pinFor(t.id, s.alice.id, "a".repeat(40));
+        expect(first.rebuild_owed_for).toBeNull();
+        expect(await store.mergeRecord.owedRebuilds(s.project.id)).toEqual([]);
+        expect(await store.mergeRecord.oweRebuild(t.id, other.id)).toBe(true);
+        // A second dependency's rebuild keeps the first: any rebuild reads every one held.
+        await store.mergeRecord.oweRebuild(t.id, "another-task");
+        const owed = await store.mergeRecord.owedRebuilds(s.project.id);
+        expect(owed.map((r) => [r.task_id, r.rebuild_owed_for])).toEqual([[t.id, other.id]]);
+        // Kept as the record moves (the merge step reads it before it merges).
+        await store.mergeRecord.move(first.id, "left_to_you", { sentence: "waits" });
+        expect((await store.mergeRecord.forTask(t.id))?.rebuild_owed_for).toBe(other.id);
+        await store.mergeRecord.oweRebuild(t.id, null);
+        expect(await store.mergeRecord.owedRebuilds(s.project.id)).toEqual([]);
+        // A new accept reads the branch as it is: what was owed before it is not.
+        await store.mergeRecord.oweRebuild(t.id, other.id);
+        expect((await pinFor(t.id, s.alice.id, "d".repeat(40))).rebuild_owed_for).toBeNull();
+      });
+
       it("claim takes a record once; the retry lists only the owning agent's waiting records", async () => {
         const t1 = await store.task.insert({ project_id: s.project.id, title: "One" });
         const t2 = await store.task.insert({ project_id: s.project.id, title: "Two" });

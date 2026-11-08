@@ -10,6 +10,8 @@ import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { JsonObject, MergeRecordRow, StateStore, TaskRow } from "@forerunner/state";
 import {
   fileLeftOpenRequest,
+  headMovedSentence,
+  leftOpenSteps,
   MERGE_LEFT_OPEN_KEY,
   type MergedEvent,
   REBUILD_CARD_OPTIONS,
@@ -41,7 +43,10 @@ import type { WatchedPullRequest } from "./githost-watcher.ts";
  *   change (`ownChangeId`) is unchanged; a rebuild that conflicts leaves the branch as it was
  *   and the record and its card name the pull requests;
  * - the default branch's head, once per poll and project (`sweep`), retries a rebuild that
- *   could not run (the worktree was busy) and catches a dependency redone or cancelled;
+ *   could not run (the worktree was busy) and catches a dependency redone or cancelled; a
+ *   rebuild owed is kept on the dependent's merge record (`rebuild_owed_for`, R-owed), so a
+ *   restart keeps it, and it is set before the rebuild starts, so no merge of that pull request
+ *   goes ahead while its branch may still hold work that went away (`ReviewedPrMerge`, R-lock);
  * - right before an accepted task's merge (`mergePort`), a branch that holds work which went
  *   away while it was reviewed is rebuilt first, and its review is void when that work is gone.
  */
@@ -49,7 +54,25 @@ export interface DependentBranchesDeps {
   store: StateStore;
   clock: Clock;
   merge: Pick<ReviewedPrMerge, "merged">;
-  executor: Pick<PrTaskExecutor, "rebuildDependents" | "rebuildTask" | "mergeMethodOf">;
+  executor: Pick<PrTaskExecutor, "rebuildDependents" | "rebuildTask" | "mergeMethodOf"> &
+    Partial<Pick<PrTaskExecutor, "conflictsWithBase">>;
+}
+
+/**
+ * R-conflict (leftovers7-merge2): an open task pull request that no longer merges cleanly into
+ * main (another merge changed the same lines): "#8 conflicts with main in index.html: resolve
+ * the conflict on GitHub, or redo the task." Polish owns the words.
+ */
+export function conflictNoticeSentence(
+  pr: number | null,
+  base: string,
+  files: readonly string[],
+): string {
+  const where =
+    files.length === 0
+      ? ""
+      : ` in ${files.length <= 3 ? andList(files) : `${files.slice(0, 3).join(", ")} and ${files.length - 3} more`}`;
+  return `${prName(pr)} conflicts with ${base}${where}: resolve the conflict on GitHub, or redo the task.`;
 }
 
 /** "#8" for a pull request number, "its pull request" without one. */
@@ -104,22 +127,43 @@ export function rebuildConflictSentence(
   return `${prName(pr)} could not be rebuilt without ${andList(dropped.map(droppedWords))}: both change ${files}. It waits for you: redo the task, or ${merge}.`;
 }
 
+/** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
+const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed"]);
+
 export class DependentBranches {
   private readonly logger = log("dependent-branches");
-  /** Rebuilds that could not run (the worktree was busy, a step failed): tried at the next sweep. */
+  /**
+   * Rebuilds that could not run for a task with no merge record (one accepted before ADR 0111):
+   * tried at the next sweep. A task with a record keeps it there (`rebuild_owed_for`, R-owed).
+   */
   private readonly owed = new Map<string, { projectId: string; dependencyId: string }>();
+  /**
+   * R-conflict: what this poll read of each open task pull request (its `mergeable` above all),
+   * by task; the sweep at the end of the poll looks at them once the poll's rebuilds ran. A
+   * pull request rebuilt in the poll is dropped (what was read is from before its new head).
+   */
+  private readonly seen = new Map<
+    string,
+    { projectId: string; pr: WatchedPullRequest; info: PullRequestInfo }
+  >();
 
   constructor(private readonly deps: DependentBranchesDeps) {}
 
   /**
-   * The git host watcher's report of one task PR (`onPullRequestState`). Open: nothing here.
-   * Merged: the record is marked merged (with the merge commit and how it was merged) and the
-   * merge is heard like any other (`ReviewedPrMerge.merged`), which rebuilds what built on it.
-   * Closed without a merge: the record is left to the person, and the dependents are rebuilt
-   * without it. Throws when it could not finish, so the watcher reads the PR again.
+   * The git host watcher's report of one task PR (`onPullRequestState`). Open: kept for the
+   * sweep's conflict notice (R-conflict; the watcher reads every open PR each poll anyway, so
+   * GitHub is asked nothing more). Merged: the record is marked merged (with the merge commit
+   * and how it was merged) and the merge is heard like any other (`ReviewedPrMerge.merged`),
+   * which rebuilds what built on it. Closed without a merge: the record is left to the person,
+   * and the dependents are rebuilt without it. Throws when it could not finish, so the watcher
+   * reads the PR again.
    */
   async pullRequestState(pr: WatchedPullRequest, info: PullRequestInfo): Promise<void> {
-    if (info.state === "open") return;
+    if (info.state === "open") {
+      if (pr.projectId) this.seen.set(pr.taskId, { projectId: pr.projectId, pr, info });
+      return;
+    }
+    this.seen.delete(pr.taskId);
     const task = await this.deps.store.task.get(pr.taskId);
     if (!task) return;
     if (info.merged) await this.mergedOnHost(task, info);
@@ -173,9 +217,10 @@ export class DependentBranches {
   /**
    * Once per poll and repository project (`onDefaultBranchHead`): the rebuilds that could not
    * run are tried again, and a done task that waits for one that is no longer done (redone,
-   * cancelled) has that one taken out of its branch.
+   * cancelled) has that one taken out of its branch. True when a conflict notice was given or
+   * taken back (R-conflict): the project's screens read the pull requests again.
    */
-  async sweep(projectId: string): Promise<void> {
+  async sweep(projectId: string): Promise<boolean> {
     const todo = new Map<string, string>();
     for (const [taskId, o] of this.owed)
       if (o.projectId === projectId) todo.set(o.dependencyId, taskId);
@@ -183,6 +228,14 @@ export class DependentBranches {
       limit: 2000,
     });
     const byId = new Map(tasks.map((t) => [t.id, t]));
+    // R-owed: the rebuilds kept on the merge records, after a restart too. One whose task is no
+    // longer done (redone, cancelled) owes nothing: its next run builds its branch again.
+    for (const r of await this.deps.store.mergeRecord.owedRebuilds(projectId)) {
+      const t = byId.get(r.task_id);
+      if (t?.status === "done" && t.branch && r.rebuild_owed_for)
+        todo.set(r.rebuild_owed_for, t.id);
+      else await this.deps.store.mergeRecord.oweRebuild(r.task_id, null);
+    }
     for (const t of tasks) {
       if (t.status !== "done" || !t.branch) continue;
       for (const id of t.depends_on ?? []) {
@@ -191,20 +244,266 @@ export class DependentBranches {
       }
     }
     for (const dependencyId of todo.keys()) await this.rebuildFor(projectId, dependencyId);
+    return this.conflictNotices(projectId);
   }
 
-  /** The dependents of `dependencyId` rebuilt; the busy ones kept for the next sweep. */
+  /**
+   * R-conflict (leftovers7-merge2, ADR 0111): an open task pull request whose `mergeable` turned
+   * false (another merge changed the same lines) and that waits for the person is said once:
+   * its record is left to the person with the sentence (so the Overview offers no Merge that
+   * cannot work) and one card offers Redo and Leave it open. The record's `last_outcome`
+   * ("conflict") keeps it from being said again at the next poll or after a restart. Once GitHub
+   * says it merges cleanly again (the person resolved it), the record says nothing more, Merge
+   * is offered again and a card still open is closed.
+   */
+  private async conflictNotices(projectId: string): Promise<boolean> {
+    let changed = false;
+    for (const [taskId, seen] of [...this.seen]) {
+      if (seen.projectId !== projectId) continue;
+      this.seen.delete(taskId);
+      try {
+        if (await this.conflictNotice(seen.pr, seen.info)) changed = true;
+      } catch (e) {
+        this.logger.warn("conflict notice not filed", { taskId, error: errorMessage(e) });
+      }
+    }
+    return changed;
+  }
+
+  /** True when the record was moved (a notice given or taken back). */
+  private async conflictNotice(pr: WatchedPullRequest, info: PullRequestInfo): Promise<boolean> {
+    if (info.mergeable !== true && info.mergeable !== false) return false;
+    const { store } = this.deps;
+    const task = await store.task.get(pr.taskId);
+    if (task?.status !== "done") return false;
+    const record = await store.mergeRecord.forTask(task.id);
+    if (!record || record.pr_number !== info.number) return false;
+    const ref = { number: info.number, url: info.htmlUrl || pr.url };
+    if (info.mergeable === true) {
+      if (record.state !== "left_to_you" || record.last_outcome !== "conflict") return false;
+      // Merge is offered again only for the version the review read (main changed back, the
+      // conflicting merge taken out). A head that moved since (the person's own resolution on
+      // GitHub, as the notice asks) is not that version: the merge step would refuse it, so the
+      // record says so as the merge step does (`head_moved`, no Merge on the Overview) and the
+      // open conflict card takes those words (the R-conflict review's fix-up).
+      if (record.reviewed_head_sha && info.head.sha !== record.reviewed_head_sha) {
+        const sentence = headMovedSentence(info.number);
+        await store.mergeRecord.move(record.id, "left_to_you", {
+          sentence,
+          last_outcome: "head_moved",
+        });
+        await this.headMovedCard(task, ref, sentence);
+        this.logger.info("pull request merges cleanly again, on a head after the review", {
+          taskId: task.id,
+          pr: info.number,
+        });
+        return true;
+      }
+      await store.mergeRecord.move(record.id, "left_to_you", {
+        sentence: "",
+        last_outcome: "conflict_resolved",
+      });
+      await this.closeConflictCard(task);
+      this.logger.info("pull request merges cleanly again", { taskId: task.id, pr: info.number });
+      return true;
+    }
+    // Said once (also the merge step's own conflict, or a rebuild's); a rebuild owed comes first.
+    if (record.last_outcome === "conflict" || record.last_outcome === "rebuild_conflict")
+      return false;
+    if (record.rebuild_owed_for) return false;
+    // Only what waits for the person: a merge under way, waiting or queued by the person's click
+    // finds the conflict itself and says it.
+    const waits =
+      record.state === "left_to_you" || (record.state === "queued" && record.approval === "none");
+    if (!waits) return false;
+    const files = (await this.deps.executor.conflictsWithBase?.(task)) ?? [];
+    const sentence = conflictNoticeSentence(info.number, info.base.ref, files);
+    const moved = await store.mergeRecord.move(record.id, "left_to_you", {
+      sentence,
+      last_outcome: "conflict",
+    });
+    this.logger.info("pull request conflicts with its base", {
+      taskId: task.id,
+      pr: info.number,
+      files,
+    });
+    await this.conflictCard(task, moved, ref, sentence, info.base.ref);
+    return true;
+  }
+
+  /** One card for the conflict (an open card for the task's merge takes the new words). */
+  private async conflictCard(
+    task: TaskRow,
+    record: MergeRecordRow,
+    pr: { number: number; url: string },
+    sentence: string,
+    base: string,
+  ): Promise<void> {
+    const { store } = this.deps;
+    const options = [...REBUILD_CARD_OPTIONS.conflict];
+    const open = await this.openMergeCard(task.id);
+    if (open) {
+      await store.humanRequest.patch(open.id, {
+        why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+        options,
+        // Its Details follow what it says now (a card that said a head moved, then conflicts).
+        steps: leftOpenSteps("conflict"),
+        change_card: {
+          ...((open.change_card ?? {}) as JsonObject),
+          sentence,
+          status: "conflict",
+          notice: "conflict",
+          base,
+        },
+      });
+      return;
+    }
+    const agentId = record.agent_id || task.owner_agent_id || task.author_agent || "";
+    const humanId = (await store.agent.get(agentId))?.owner_human_id ?? "";
+    if (!humanId) return;
+    await fileLeftOpenRequest(store, {
+      task,
+      sessionId: null,
+      humanId,
+      agentId,
+      outcome: {
+        taskId: task.id,
+        prUrl: pr.url,
+        status: "conflict",
+        reason: `PR left open for you: ${sentence}`,
+        sentence,
+      },
+      card: { notice: "conflict", base },
+      options,
+    });
+  }
+
+  /**
+   * The open conflict card, once the conflict was resolved with a commit after the review: it
+   * says what the record says now (the merge step's head-moved card), with the same options
+   * (Redo does the task again from main; Leave it open). A card already answered stays as it is.
+   */
+  private async headMovedCard(
+    task: TaskRow,
+    pr: { number: number; url: string },
+    sentence: string,
+  ): Promise<void> {
+    const open = await this.openMergeCard(task.id);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (!open || card.notice !== "conflict") return;
+    await this.deps.store.humanRequest.patch(open.id, {
+      why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+      steps: leftOpenSteps("head_moved"),
+      change_card: { ...card, sentence, status: "head_moved", notice: null, base: null },
+    });
+  }
+
+  /** The open card of the task's merge that said a conflict, closed: it no longer needs the person. */
+  private async closeConflictCard(task: TaskRow): Promise<void> {
+    const open = await this.openMergeCard(task.id);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (open && card.status === "conflict" && !card.rebuild)
+      await this.deps.store.humanRequest.withdraw(open.id, open.version);
+  }
+
+  private async openMergeCard(taskId: string) {
+    return (
+      await this.deps.store.humanRequest.list({ task_id: taskId, status: "open" } as never, {
+        limit: 50,
+      })
+    ).find((row) => (row.change_card as JsonObject | null)?.key === MERGE_LEFT_OPEN_KEY);
+  }
+
+  /**
+   * The dependents of `dependencyId` rebuilt; the busy ones kept for the next sweep. Each
+   * dependent's record owes the rebuild from before it starts until it ran (R-owed, R-lock): a
+   * merge of its pull request that is under way then stops before it calls GitHub, and one that
+   * could not run stays owed, after a restart too.
+   */
   async rebuildFor(projectId: string | null, dependencyId: string): Promise<DependentOutcome[]> {
     if (!projectId) return [];
+    const marked = await this.markOwed(projectId, dependencyId);
     const outcomes = await this.deps.executor.rebuildDependents(projectId, dependencyId, {
       beforePush: (r, pr) => this.settleRecord(r, pr),
     });
     for (const o of outcomes) {
-      if (o.result === "busy" || o.result === "held" || o.result === "failed")
-        this.owed.set(o.taskId, { projectId, dependencyId });
-      else this.owed.delete(o.taskId);
+      marked.delete(o.taskId);
+      await this.settleOwed(o, projectId, dependencyId);
+      // R-conflict: what this poll read of its pull request is from before the rebuild.
+      if (o.result !== "unchanged") this.seen.delete(o.taskId);
     }
+    // Marked and not looked at (no longer done meanwhile): nothing is owed for it.
+    for (const taskId of marked)
+      await this.settleOwed(
+        { taskId, prNumber: null, prUrl: null, result: "unchanged" },
+        projectId,
+        dependencyId,
+      );
     return outcomes;
+  }
+
+  /**
+   * The done tasks of the project that build on `dependencyId` (directly or through others) and
+   * have a branch: their records owe the rebuild before it starts. Returns those marked now.
+   */
+  private async markOwed(projectId: string, dependencyId: string): Promise<Set<string>> {
+    const { store } = this.deps;
+    const marked = new Set<string>();
+    try {
+      const tasks = await store.task.list({ project_id: projectId } as never, { limit: 2000 });
+      const byId = new Map(tasks.map((t) => [t.id, t]));
+      const buildsOn = (t: TaskRow): boolean => {
+        const seen = new Set<string>([t.id]);
+        const stack = [...(t.depends_on ?? [])];
+        while (stack.length) {
+          const id = stack.pop() as string;
+          if (id === dependencyId) return true;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          stack.push(...(byId.get(id)?.depends_on ?? []));
+        }
+        return false;
+      };
+      for (const t of tasks) {
+        if (t.id === dependencyId || t.status !== "done" || !t.branch || !buildsOn(t)) continue;
+        const record = await store.mergeRecord.forTask(t.id);
+        if (!record || record.state === "merged" || record.rebuild_owed_for) continue;
+        await store.mergeRecord.oweRebuild(t.id, dependencyId);
+        marked.add(t.id);
+      }
+    } catch (e) {
+      this.logger.warn("owed rebuilds not marked", { projectId, error: errorMessage(e) });
+    }
+    return marked;
+  }
+
+  /**
+   * What a rebuild left owed (R-owed). One that could not run stays owed (in memory for a task
+   * without a record); one that rebuilt or conflicted read every dependency the branch holds,
+   * so nothing is owed; one that found nothing to do settles only what was owed for this
+   * dependency (it may not have read the others).
+   */
+  private async settleOwed(
+    o: DependentOutcome,
+    projectId: string,
+    dependencyId: string,
+  ): Promise<void> {
+    const { store } = this.deps;
+    try {
+      const record = await store.mergeRecord.forTask(o.taskId);
+      if (OWES.has(o.result)) {
+        if (record && record.state !== "merged")
+          await store.mergeRecord.oweRebuild(o.taskId, dependencyId);
+        else this.owed.set(o.taskId, { projectId, dependencyId });
+        return;
+      }
+      this.owed.delete(o.taskId);
+      if (!record?.rebuild_owed_for) return;
+      if (o.result !== "unchanged" || record.rebuild_owed_for === dependencyId)
+        await store.mergeRecord.oweRebuild(o.taskId, null);
+    } catch (e) {
+      this.logger.warn("owed rebuild not recorded", { taskId: o.taskId, error: errorMessage(e) });
+    }
   }
 
   /**

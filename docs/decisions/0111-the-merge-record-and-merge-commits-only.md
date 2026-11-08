@@ -181,7 +181,7 @@ under it.
 
 Known gaps: the rebuilds a busy worktree postponed are kept in memory (after a restart the run's
 own check and the sweep's redo/cancel detection remain); a merge that is already under way when
-a dependency closes can finish before the rebuild pushes.
+a dependency closes can finish before the rebuild pushes. (Both closed by the leftovers7-merge2 amendment below.)
 
 ## Amendment: who merges, and Merge in the app ('merge-in-app', 2026-11-03)
 
@@ -244,7 +244,7 @@ pull request); waiting inside the request for the checks (rejected: a request wo
 ten minutes).
 
 Known gaps: the conflict notice (an open task pull request whose `mergeable` turned false after
-another merge, one card per project) is not built; the rebuild card still offers "I merged it" and
+another merge, one card per project) is not built (closed by the leftovers7-merge2 amendment); the rebuild card still offers "I merged it" and
 "Leave it open" (Merge and Redo would fit); a merge the retry makes outside a session posts no
 Update. (The last two are closed by the leftovers7-merge amendment below.)
 
@@ -270,6 +270,49 @@ Update. (The last two are closed by the leftovers7-merge amendment below.)
    unmerged dependencies' work, C-49) and the open pull request gets the new work, force-pushed.
    This holds for both cards: a Redo after a clean rebuild also starts again rather than adding
    to the rebuilt commit.
+
+## Amendment: the leftovers of wave 7, merge side, part 2 ('leftovers7-merge2', 2026-11-08)
+
+This closes the known gaps of the two amendments above ('dependent-branches' and
+'merge-in-app') and the notification left out of the one before:
+
+1. **Owed rebuilds survive a restart.** The dependent's merge record keeps the task whose change
+   its branch has not followed yet (`rebuild_owed_for`, migration 0008), marked before the
+   rebuild starts and settled by its outcome (a rebuild that could not run, a busy or dirty
+   folder or a failed step, stays owed). The watcher's sweep tries it again at every poll, also
+   the first after a restart; a task no longer done owes nothing. Before, the owed rebuilds were
+   in memory, and a squash-merge seen while the dependent was busy, then a restart, left the
+   dependent's pull request with the dependency's commits for good.
+2. **A rebuild never races a merge.** One lock per task folder (`worktree-lock.ts`) is taken by
+   every git step there, the merge step's included (bringing the base in and pushing it, the
+   reviewed commit, the files of a conflict), so the two never interleave; a rebuild that finds
+   the folder busy is owed. Nothing claims a record that owes a rebuild, and the merge step asks
+   again right before it moves the record to a pushed head and right before GitHub's merge: a
+   record moved meanwhile, or owing a rebuild, is not merged (back to `queued` as approved). A
+   record someone else moved while the call ran keeps that word, whatever GitHub answered.
+   GitHub merges only the head the call names, so a rebuild pushed after the last look makes it
+   refuse. What remains: a merge GitHub completes before the watcher has even read the
+   dependency's close is a merge that happened first, as if the close came after it.
+3. **A chain whose middle could not be rebuilt is rebuilt whole.** A dependency kept in the base
+   whose branch was itself rebuilt since (`rebuiltTo`) is followed onto its new head
+   (`HeldDependency.rebuilt`), and a pass hands each task it rebuilt to the tasks after it.
+   Before, the third task of a chain kept the first task's pre-squash commits until the middle
+   merged.
+4. **The conflict notice** (point 6 of 'merge-in-app''s scope). An open task pull request that
+   waits for the person and that GitHub says no longer merges cleanly is said once, from the
+   watcher's own read of it (no GitHub call added), after the poll's rebuilds: the record is left
+   to the person with one sentence ("#8 conflicts with main in index.html: resolve the conflict
+   on GitHub, or redo the task."), the Overview offers no Merge for it, and one card offers Redo
+   and Leave it open. The record's last outcome keeps it from being said again, after a restart
+   too. Once GitHub says it merges cleanly again with the reviewed head (main changed back),
+   Merge is offered again and an open conflict card is closed. A rebuild owed, or a rebuild's own
+   conflict, comes first. The review found two gaps, closed in its fix-up: the card's Redo resumed
+   the conflicting branch (now it does the task again from main, as the rebuild cards' Redo does,
+   `redo_from_base`), and a resolution with a commit of the person's own offered Merge again
+   although that head was not reviewed, so the Merge was refused. Now such a head is "changed
+   after the review", as the merge step says it: no Merge on the Overview, and the card says so.
+5. **A merge the app made by itself is a notification too** (the retry pass, the resume at the
+   start): one `pr_merged` notification beside its Update, as a session's merge has its session's.
 
 ## Consequences
 

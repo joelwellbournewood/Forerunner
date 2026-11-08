@@ -32,8 +32,15 @@ export function repositoryLine(
   fullName: string,
   updatedAt: string | null | undefined,
   now = new Date(),
+  stopped?: { line: string } | null,
 ): string {
   const where = "Work waiting in a pull request is on the Overview.";
+  // leftovers7-merge2 (R-copystuck): a copy that stopped following what is merged says so and
+  // why (the daemon's line), never "As merged" with a time that no longer moves.
+  if (stopped) {
+    const since = updatedAt ? `, not updated since ${copyUpdatedWords(updatedAt, now)}` : "";
+    return `This computer's copy of ${fullName}${since}. ${stopped.line} ${where}`;
+  }
   if (!updatedAt) return `This computer's copy of ${fullName}. ${where}`;
   return `This computer's copy of ${fullName}. As merged on GitHub, updated ${copyUpdatedWords(updatedAt, now)}. ${where}`;
 }
@@ -97,7 +104,12 @@ export function FilesTab({
           className="text-sm text-neutral-600 dark:text-neutral-400"
           data-testid="files-repository"
         >
-          {repositoryLine(repository.fullName, data.copy?.updatedAt)}
+          {repositoryLine(
+            repository.fullName,
+            data.copy?.updatedAt,
+            undefined,
+            data.copy?.stopped ?? null,
+          )}
         </p>
       ) : null}
       {data.folder ? <FolderPath path={data.folder} /> : null}

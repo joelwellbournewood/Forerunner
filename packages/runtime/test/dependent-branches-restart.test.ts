@@ -1,8 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
-import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { appDirs, join, SimulatedClock, safeSegment } from "@forerunner/platform";
 import type { SessionRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost, FakeProvider } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
@@ -34,170 +34,182 @@ afterEach(async () => {
   for (const r of roots.splice(0)) await rm(r, { recursive: true, force: true });
 });
 
+/** One home, one fake GitHub, the composed daemon; A, then B built on A, both accepted (level 2). */
+async function restartWorld() {
+  const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-dep-restart-"));
+  roots.push(home);
+  const host = await FakeGitHost.start({ rootDir: join(home, "host"), clock });
+  hosts.push(host);
+  host.createUser({ login: "alice", name: "Alice", email: identity.email });
+  await host.createRepo({
+    owner: "alice",
+    name: "app",
+    private: true,
+    defaultBranch: "main",
+    initialFiles: { "README.md": "# app\n" },
+  });
+  const ghToken = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+  const github = new GitHubHost({ token: ghToken, baseUrl: host.baseUrl, clock });
+  // The poll is driven by the test (pollOnce), not by the clock.
+  const env = { FORERUNNER_HOME: home, FORERUNNER_GITHOST_POLL_MS: "86400000" };
+  const dirs = appDirs({ env });
+  const vault = new MemoryVault();
+  await vault.set(SECRET_NAMES.github, ghToken);
+  const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+  const compose = () =>
+    composeRuntime({
+      env,
+      dirs,
+      config: {
+        version: 1,
+        profile: "default",
+        timezone: "UTC",
+        githubApiBase: host.baseUrl,
+        anthropicApiBase: "http://an.test",
+        repos: [],
+        credentials: { github: false, anthropic: false, anthropicSubscription: false },
+        stateUrl,
+      },
+      clock,
+      stateUrl,
+      vault,
+      provider: new FakeProvider({ replies: [], clock, latency: "none" }),
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      recoverSessions: false,
+    });
+
+  // ---- the first daemon: A, then B built on A; both wait for the person (level 2) --------
+  const rt = await compose();
+  apps.push(rt);
+  expect(rt.githostWatcher).not.toBeNull();
+  const project = await rt.store.project.insert({
+    name: "App",
+    goal: "Ship the app",
+    repos: [FULL],
+    stage: "build",
+    status: "active",
+    budget_usd_micro: 10_000_000,
+    autonomy_level: 2,
+    summary_cache: {},
+    data_assets: [],
+    settings: { members: [rt.agent.id] },
+    small_project_mode: false,
+    active: true,
+  });
+  const session = await rt.store.session.insert({
+    agent_id: rt.agent.id,
+    project_id: project.id,
+    trigger: "manual",
+    status: "running",
+    runner: "pc",
+  });
+  const budget = () =>
+    new SessionBudget({
+      sessionId: session.id,
+      budgetUsdMicro: 1_000_000,
+      stepCap: 10,
+      deadlineMs: clock.now() + 3_600_000,
+      reserveShare: 0.1,
+    });
+  const grant = await rt.sessionGrant(project.id);
+  const token = rt.tokens.issue({
+    runId: "run-session",
+    sessionId: session.id,
+    agentId: rt.agent.id,
+    ownerHumanId: rt.human.id,
+    projectId: project.id,
+    allowedTools: grant.allowedTools,
+    allowedPaths: grant.allowedPaths,
+    allowedDomains: grant.allowedDomains,
+    grantedSecrets: grant.grantedSecrets,
+    budgetUsdMicro: 1_000_000,
+    depth: 0,
+    maxDepth: 2,
+    autonomy: 2,
+    planApproved: false,
+    expiresAt: new Date(clock.now() + 3_600_000).toISOString(),
+  });
+  // The daemon's PR executor flow over its own worktrees, with a stand-in for the model.
+  const writer = (
+    file: string,
+    content: string,
+  ): TaskExecutor & { withWorktree: (d: string) => TaskExecutor } => ({
+    execute: async () => ({ outcome: "failed", summary: "no worktree", costUsdMicro: 0 }),
+    withWorktree: (dir) => ({
+      execute: async () => {
+        writeFileSync(join(dir, file), content);
+        return { outcome: "done", summary: `Wrote ${file}.`, costUsdMicro: 1 };
+      },
+    }),
+  });
+  const accepted = async (
+    title: string,
+    file: string,
+    dependsOn: string[] = [],
+    content = `${file}\n`,
+  ) => {
+    let task: TaskRow = await rt.store.task.insert({
+      project_id: project.id,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 1,
+      depends_on: dependsOn,
+      budget_usd_micro: 1_000_000,
+      author_agent: rt.agent.id,
+      owner_agent_id: rt.agent.id,
+    });
+    const res = await new PrTaskExecutor({
+      store: rt.store,
+      clock,
+      host: github,
+      inner: writer(file, content),
+      repoFor: async () => ({ clone: host.cloneUrl(FULL), repo: REPO, base: "main" }),
+      worktreeRoot: dirs.worktrees,
+      token: ghToken,
+      identity,
+    }).execute({
+      task,
+      session: session as SessionRow,
+      token,
+      budget: budget(),
+      item: { taskId: task.id, title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("in_review");
+    await host.settle();
+    task = await rt.store.task.patch(task.id, { pr_url: res.prUrl, branch: res.branch });
+    task = await rt.store.task.transition(task.id, task.version, "in_review", "review", {
+      agentId: rt.agent.id,
+    });
+    task = await rt.store.task.transition(task.id, task.version, "done", "critic accepted", {
+      agentId: rt.agent.id,
+    });
+    // The merge step pins the reviewed commit; level 2 leaves it to the person.
+    const outcome = await rt.merge.mergeReviewed({
+      task,
+      session: session as SessionRow,
+      token,
+      budget: budget(),
+      signal: new AbortController().signal,
+      agentId: rt.agent.id,
+    });
+    expect(outcome?.status).toBe("not_allowed");
+    return task;
+  };
+  const a = await accepted("Add page", "page.html");
+  const b = await accepted("Add footer", "footer.html", [a.id]);
+  return { clock, home, host, github, ghToken, dirs, compose, rt, project, a, b, accepted };
+}
+
 describe("dependent branches across a restart (ADR 0111)", { timeout: 240_000 }, () => {
   it("a dependency squash-merged while the app was closed: the next start's first poll marks it merged and rebuilds the dependent onto main", async () => {
-    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
-    const home = mkdtempSync(join(tmpdir(), "fr-dep-restart-"));
-    roots.push(home);
-    const host = await FakeGitHost.start({ rootDir: join(home, "host"), clock });
-    hosts.push(host);
-    host.createUser({ login: "alice", name: "Alice", email: identity.email });
-    await host.createRepo({
-      owner: "alice",
-      name: "app",
-      private: true,
-      defaultBranch: "main",
-      initialFiles: { "README.md": "# app\n" },
-    });
-    const ghToken = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
-    const github = new GitHubHost({ token: ghToken, baseUrl: host.baseUrl, clock });
-    // The poll is driven by the test (pollOnce), not by the clock.
-    const env = { FORERUNNER_HOME: home, FORERUNNER_GITHOST_POLL_MS: "86400000" };
-    const dirs = appDirs({ env });
-    const vault = new MemoryVault();
-    await vault.set(SECRET_NAMES.github, ghToken);
-    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
-    const compose = () =>
-      composeRuntime({
-        env,
-        dirs,
-        config: {
-          version: 1,
-          profile: "default",
-          timezone: "UTC",
-          githubApiBase: host.baseUrl,
-          anthropicApiBase: "http://an.test",
-          repos: [],
-          credentials: { github: false, anthropic: false, anthropicSubscription: false },
-          stateUrl,
-        },
-        clock,
-        stateUrl,
-        vault,
-        provider: new FakeProvider({ replies: [], clock, latency: "none" }),
-        registryDir: join(process.cwd(), "evals", "registry"),
-        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
-        appVersion: "0.1.0-test",
-        recoverSessions: false,
-      });
-
-    // ---- the first daemon: A, then B built on A; both wait for the person (level 2) --------
-    const rt = await compose();
-    apps.push(rt);
-    expect(rt.githostWatcher).not.toBeNull();
-    const project = await rt.store.project.insert({
-      name: "App",
-      goal: "Ship the app",
-      repos: [FULL],
-      stage: "build",
-      status: "active",
-      budget_usd_micro: 10_000_000,
-      autonomy_level: 2,
-      summary_cache: {},
-      data_assets: [],
-      settings: { members: [rt.agent.id] },
-      small_project_mode: false,
-      active: true,
-    });
-    const session = await rt.store.session.insert({
-      agent_id: rt.agent.id,
-      project_id: project.id,
-      trigger: "manual",
-      status: "running",
-      runner: "pc",
-    });
-    const budget = () =>
-      new SessionBudget({
-        sessionId: session.id,
-        budgetUsdMicro: 1_000_000,
-        stepCap: 10,
-        deadlineMs: clock.now() + 3_600_000,
-        reserveShare: 0.1,
-      });
-    const grant = await rt.sessionGrant(project.id);
-    const token = rt.tokens.issue({
-      runId: "run-session",
-      sessionId: session.id,
-      agentId: rt.agent.id,
-      ownerHumanId: rt.human.id,
-      projectId: project.id,
-      allowedTools: grant.allowedTools,
-      allowedPaths: grant.allowedPaths,
-      allowedDomains: grant.allowedDomains,
-      grantedSecrets: grant.grantedSecrets,
-      budgetUsdMicro: 1_000_000,
-      depth: 0,
-      maxDepth: 2,
-      autonomy: 2,
-      planApproved: false,
-      expiresAt: new Date(clock.now() + 3_600_000).toISOString(),
-    });
-    // The daemon's PR executor flow over its own worktrees, with a stand-in for the model.
-    const writer = (
-      file: string,
-    ): TaskExecutor & { withWorktree: (d: string) => TaskExecutor } => ({
-      execute: async () => ({ outcome: "failed", summary: "no worktree", costUsdMicro: 0 }),
-      withWorktree: (dir) => ({
-        execute: async () => {
-          writeFileSync(join(dir, file), `${file}\n`);
-          return { outcome: "done", summary: `Wrote ${file}.`, costUsdMicro: 1 };
-        },
-      }),
-    });
-    const accepted = async (title: string, file: string, dependsOn: string[] = []) => {
-      let task: TaskRow = await rt.store.task.insert({
-        project_id: project.id,
-        title,
-        outcome: `${title} done`,
-        acceptance_criteria: ["works"],
-        risk_tier: 1,
-        status: "in_progress",
-        priority: 1,
-        depends_on: dependsOn,
-        budget_usd_micro: 1_000_000,
-        author_agent: rt.agent.id,
-        owner_agent_id: rt.agent.id,
-      });
-      const res = await new PrTaskExecutor({
-        store: rt.store,
-        clock,
-        host: github,
-        inner: writer(file),
-        repoFor: async () => ({ clone: host.cloneUrl(FULL), repo: REPO, base: "main" }),
-        worktreeRoot: dirs.worktrees,
-        token: ghToken,
-        identity,
-      }).execute({
-        task,
-        session: session as SessionRow,
-        token,
-        budget: budget(),
-        item: { taskId: task.id, title, specialist: "coder", estimateUsdMicro: 1 },
-        signal: new AbortController().signal,
-      });
-      expect(res.outcome).toBe("in_review");
-      await host.settle();
-      task = await rt.store.task.patch(task.id, { pr_url: res.prUrl, branch: res.branch });
-      task = await rt.store.task.transition(task.id, task.version, "in_review", "review", {
-        agentId: rt.agent.id,
-      });
-      task = await rt.store.task.transition(task.id, task.version, "done", "critic accepted", {
-        agentId: rt.agent.id,
-      });
-      // The merge step pins the reviewed commit; level 2 leaves it to the person.
-      const outcome = await rt.merge.mergeReviewed({
-        task,
-        session: session as SessionRow,
-        token,
-        budget: budget(),
-        signal: new AbortController().signal,
-        agentId: rt.agent.id,
-      });
-      expect(outcome?.status).toBe("not_allowed");
-      return task;
-    };
-    const a = await accepted("Add page", "page.html");
-    const b = await accepted("Add footer", "footer.html", [a.id]);
+    const { github, ghToken, host, compose, rt, a, b } = await restartWorld();
     const prA = Number(/\/pull\/(\d+)/.exec(a.pr_url ?? "")?.[1]);
     const prB = Number(/\/pull\/(\d+)/.exec(b.pr_url ?? "")?.[1]);
     const reviewed = await rt.store.mergeRecord.forTask(b.id);
@@ -237,5 +249,101 @@ describe("dependent branches across a restart (ADR 0111)", { timeout: 240_000 },
       humanId: rt2.human.id,
     });
     expect(merged.status).toBe("merged");
+  });
+
+  it("a squash-merge seen while the dependent's folder was busy is rebuilt after a restart, at the first poll (R-owed)", async () => {
+    const { github, ghToken, host, compose, rt, dirs, a, b } = await restartWorld();
+    const prA = Number(/\/pull\/(\d+)/.exec(a.pr_url ?? "")?.[1]);
+    const prB = Number(/\/pull\/(\d+)/.exec(b.pr_url ?? "")?.[1]);
+    const reviewed = await rt.store.mergeRecord.forTask(b.id);
+    await rt.githostWatcher?.pollOnce();
+    // B's folder holds a change nobody committed (the person tried something there): a rebuild
+    // never sweeps it in, so B cannot be rebuilt now.
+    const folderB = join(dirs.worktrees, safeSegment(b.id));
+    writeFileSync(join(folderB, "scratch.txt"), "trying something\n");
+    // The person squash-merges A on GitHub; the watcher sees it while B's folder is busy.
+    await github.mergePullRequest(REPO, prA, { method: "squash" });
+    await rt.githostWatcher?.pollOnce();
+    await host.settle();
+    expect(await rt.store.mergeRecord.forTask(a.id)).toMatchObject({
+      state: "merged",
+      method: "squash",
+    });
+    const files = async () =>
+      (
+        (await (
+          await fetch(`${host.baseUrl}/repos/${FULL}/pulls/${prB}/files`, {
+            headers: { Authorization: `Bearer ${ghToken}` },
+          })
+        ).json()) as { filename: string }[]
+      )
+        .map((f) => f.filename)
+        .sort();
+    // Not rebuilt: B's pull request still carries A's work.
+    expect(await files()).toEqual(["footer.html", "page.html"]);
+    // The app closes; the person clears the folder meanwhile.
+    await rt.close();
+    apps.splice(apps.indexOf(rt), 1);
+    rmSync(join(folderB, "scratch.txt"));
+
+    // ---- the next start: A is merged and known, so only the owed rebuild can catch B ------
+    const rt2 = await compose();
+    apps.push(rt2);
+    await rt2.githostWatcher?.pollOnce();
+    await host.settle();
+    expect(await files()).toEqual(["footer.html"]);
+    const pr = await github.getPullRequest(REPO, prB);
+    expect(pr.body).not.toContain("Builds on");
+    // Its own change is the one reviewed: the record follows the new head; nothing is owed.
+    expect(await rt2.store.mergeRecord.forTask(b.id)).toMatchObject({
+      state: "left_to_you",
+      reviewed_head_sha: pr.head.sha,
+      own_change_id: reviewed?.own_change_id,
+      rebuild_owed_for: null,
+    });
+    // A later poll changes nothing more.
+    await rt2.githostWatcher?.pollOnce();
+    await host.settle();
+    expect((await github.getPullRequest(REPO, prB)).head.sha).toBe(pr.head.sha);
+  });
+
+  it("a pull request that conflicts with main after another merge is said once: one card after a poll, none more at the next poll or after a restart (R-conflict)", async () => {
+    const { github, host, compose, rt, a, accepted } = await restartWorld();
+    // Another task writes the same file differently; the person merges A in the app.
+    const c = await accepted("Other page", "page.html", [], "<h1>other</h1>\n");
+    const prC = Number(/\/pull\/(\d+)/.exec(c.pr_url ?? "")?.[1]);
+    await rt.githostWatcher?.pollOnce();
+    const recordA = await rt.store.mergeRecord.forTask(a.id);
+    if (!recordA) throw new Error("no record for A");
+    expect(
+      (await rt.merge.mergeRecorded(recordA, { kind: "person", humanId: rt.human.id })).status,
+    ).toBe("merged");
+    await host.settle();
+    expect((await github.getPullRequest(REPO, prC)).mergeable).toBe(false);
+    const cards = async (store: RuntimeApp["store"]) =>
+      (await store.humanRequest.list({ task_id: c.id, status: "open" } as never)).length;
+    await rt.githostWatcher?.pollOnce();
+    const sentence = `#${prC} conflicts with main in page.html: resolve the conflict on GitHub, or redo the task.`;
+    expect(await rt.store.mergeRecord.forTask(c.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "conflict",
+      sentence,
+    });
+    expect(await cards(rt.store)).toBe(1);
+    await rt.githostWatcher?.pollOnce();
+    expect(await cards(rt.store)).toBe(1);
+    await rt.close();
+    apps.splice(apps.indexOf(rt), 1);
+
+    // ---- the next start: the record says it was said; the card stays the one card --------------
+    const rt2 = await compose();
+    apps.push(rt2);
+    await rt2.githostWatcher?.pollOnce();
+    await rt2.githostWatcher?.pollOnce();
+    expect(await cards(rt2.store)).toBe(1);
+    expect(await rt2.store.mergeRecord.forTask(c.id)).toMatchObject({
+      last_outcome: "conflict",
+      sentence,
+    });
   });
 });
