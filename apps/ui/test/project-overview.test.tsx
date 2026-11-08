@@ -761,3 +761,48 @@ describe("the Overview reads its pull requests again only when its own project c
     );
   }, 30_000);
 });
+
+describe("the Overview's 'Research reads:' line follows the project (R-researchreads)", () => {
+  it("after a change from the Overview, a later change made in chat shows on the line while the page is open", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    render(
+      <AppProvider
+        client={harness.client}
+        store={harness.store}
+        streamOptions={liveEvents(harness)}
+      >
+        <MemoryRouter initialEntries={["/projects/proj_atlas/summary"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    const line = await screen.findByTestId("research-reads");
+    await user.click(within(line).getByTestId("research-reads-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    await user.type(within(dialog).getByTestId("web-access-never"), "facebook.com");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await within(dialog).findByTestId("command-done");
+    await user.click(within(dialog).getByTestId("command-close"));
+    await waitFor(() =>
+      expect(screen.getByTestId("research-reads-line")).toHaveTextContent(
+        "Research reads: any public website, never facebook.com",
+      ),
+    );
+    // Then the person narrows it in chat (Talk): the daemon stores the rule and says the project
+    // changed. The line follows the daemon, not the value the Overview set.
+    harness.daemon.state.settingValues["web_access:proj_atlas"] = {
+      mode: "only",
+      only: ["developer.mozilla.org"],
+      never: [],
+    };
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("research-reads-line")).toHaveTextContent(
+          "Research reads: only developer.mozilla.org",
+        ),
+      { timeout: 10_000 },
+    );
+  }, 30_000);
+});
