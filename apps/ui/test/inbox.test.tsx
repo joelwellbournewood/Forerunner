@@ -1237,17 +1237,45 @@ describe("Inbox", () => {
       expect(task?.budget.usdMicro).toBe(1_000_000);
     });
 
-    it("on the Tasks tab it reads Paused at its budget with what to do; Cancel's dialog says its work is set aside", async () => {
-      const user = userEvent.setup();
+    it("on the Tasks tab the task reads Paused at its budget, with Answer, Edit and Cancel (ADR 0112)", async () => {
       const harness = setUp();
-      const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
+      const tasks = await harness.client.tasks("proj_atlas");
+      const view = tasks.find((t) => t.id === "task_3");
       expect(view?.display).toMatchObject({
         key: "answer",
+        // ADR 0112: a stop at a budget is a pause (before: "Needs your decision: its budget is used").
         label: "Paused at its budget",
+        // budget-resume: what to do, in the words of its card (before: "raise its budget").
         detail: "Continue or cancel in the Inbox.",
         blocker: { kind: "card", requestId: "req_budget", cardKind: "budget" },
       });
       expect(actionsFor("answer", view)).toEqual(["answer", "edit", "cancel"]);
+      // What the person sees: the row says it, with Answer and Cancel (Edit is in the drawer);
+      // never "Paused" and Resume, which only started the same stop again (live walk 2, B2).
+      renderApp("/projects/proj_atlas/tasks?task=task_3", harness);
+      const row = (await screen.findAllByTestId("task-row")).find(
+        (r) => r.getAttribute("data-task-id") === "task_3",
+      ) as HTMLElement;
+      expect(within(row).getByTestId("task-status")).toHaveTextContent("Paused at its budget");
+      expect(
+        within(row)
+          .getAllByRole("button")
+          .map((b) => b.textContent)
+          .filter((t) => t !== "Decide the versioning scheme"),
+      ).toEqual(["Answer", "Cancel"]);
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(within(drawer).getByTestId("drawer-action-edit")).toBeInTheDocument();
+      expect(within(drawer).queryByTestId("drawer-action-resume")).toBeNull();
+      // ADR 0112: it says it is paused at its budget (before, the word "Paused" was banned here,
+      // because it read "Paused" with Resume) and what to do; never "Paused by you", never Resume.
+      expect(drawer).toHaveTextContent("Paused at its budget");
+      expect(drawer).toHaveTextContent("Continue or cancel in the Inbox.");
+      expect(drawer).not.toHaveTextContent(/\$|USD|Paused by you|Press Resume/);
+    });
+
+    it("on the Tasks tab Cancel's dialog says its work is set aside, and Undo brings it back", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
       renderApp("/projects/proj_atlas/tasks", harness);
       const row = (await screen.findAllByTestId("task-row")).find(
         (r) => r.getAttribute("data-task-id") === "task_3",
