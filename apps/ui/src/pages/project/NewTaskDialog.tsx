@@ -68,11 +68,25 @@ export function useDockerReady(open: boolean): boolean | null {
 export function useWhoChoices(
   open: boolean,
   projectId?: string,
+  words?: { title: string; outcome: string; criteria: string[] },
 ): { value: string; label: string; limitation?: string | null; runsOn?: string | null }[] {
   const client = useClient();
+  // TR-11: the words typed so far decide the runs-on line too (a task whose words need the
+  // person's answers runs where it can ask them); asked again a moment after typing stops.
+  const typed = useDebounced(
+    words ? JSON.stringify([words.title.trim(), words.outcome.trim(), words.criteria]) : "",
+    WORDS_DEBOUNCE_MS,
+  );
   const models = useAsync(
-    (signal) => (open ? client.modelSettings(signal, projectId) : Promise.resolve(null)),
-    [client, open, projectId],
+    (signal) =>
+      open
+        ? client.modelSettings(
+            signal,
+            projectId,
+            typed ? wordsOf(JSON.parse(typed) as [string, string, string[]]) : undefined,
+          )
+        : Promise.resolve(null),
+    [client, open, projectId, typed],
   );
   const specialists = (models.data?.specialists ?? []).map((s) => ({
     value: s.name,
@@ -87,6 +101,25 @@ export function useWhoChoices(
     ...specialists,
     { value: WHO_PERSON, label: "Me: ask me in the Inbox" },
   ];
+}
+
+/** How long after the last key New task asks again where a task with its words runs. */
+const WORDS_DEBOUNCE_MS = 400;
+
+const wordsOf = ([title, outcome, criteria]: [string, string, string[]]) => ({
+  title,
+  outcome,
+  criteria,
+});
+
+/** `value`, once it has stayed the same for `ms`. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
 }
 
 function firstSentence(text: string): string {
@@ -127,7 +160,11 @@ export function NewTaskDialog({
   const [who, setWho] = useState(WHO_AGENT);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const docker = useDockerReady(open);
-  const whoChoices = useWhoChoices(open, projectId);
+  const whoChoices = useWhoChoices(open, projectId, {
+    title,
+    outcome,
+    criteria: criteria.split("\n"),
+  });
   const whoChoice = whoChoices.find((w) => w.value === who);
   // The chooser's sentence (U-078) says what the limitation would; one note, never both.
   const whoRunsOn = whoChoice?.runsOn ?? null;

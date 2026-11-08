@@ -678,7 +678,15 @@ export interface DaemonClient {
    * accepts one. Changes go through `executeCommands` with `model.settings.set`. With a
    * project, each specialist's `runsOn` (U-078) is for that project (its dependencies).
    */
-  modelSettings(signal?: AbortSignal, projectId?: string): Promise<ModelSettingsView>;
+  /**
+   * `words`: what New task has typed so far (TR-11), so each specialist's `runsOn` says where a
+   * task with those words runs.
+   */
+  modelSettings(
+    signal?: AbortSignal,
+    projectId?: string,
+    words?: { title?: string; outcome?: string; criteria?: string[] },
+  ): Promise<ModelSettingsView>;
   /** Merge a patch into a project's settings with a version check. */
   updateProjectSettings(
     projectId: string,
@@ -1130,13 +1138,20 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { scope: filter?.scope, scopeId: filter?.scopeId },
         signal,
       ),
-    modelSettings: (signal, projectId) =>
-      get(
+    modelSettings: (signal, projectId, words) => {
+      const query: Record<string, string> = {};
+      if (projectId) query.project = projectId;
+      if (words?.title?.trim()) query.title = words.title.trim();
+      if (words?.outcome?.trim()) query.outcome = words.outcome.trim();
+      const criteria = (words?.criteria ?? []).map((c) => c.trim()).filter(Boolean);
+      if (criteria.length) query.criteria = criteria.join("\n");
+      return get(
         routePath("modelSettings"),
         ModelSettingsViewSchema,
-        projectId ? { project: projectId } : undefined,
+        Object.keys(query).length ? query : undefined,
         signal,
-      ),
+      );
+    },
     updateProjectSettings: (projectId, body) =>
       put(routePath("updateProjectSettings", { id: projectId }), ProjectSettingsViewSchema, body),
     mirrorSync: (projectId, full) =>

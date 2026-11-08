@@ -3547,7 +3547,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // U-078 (the credential chooser), as the daemon: where each specialist's task runs here
     // (for `?project=`) and why, and Settings' "What each can do here".
     const projectId = c.req.query("project") || null;
-    for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, null);
+    // leftovers7-tailrun TR-11: the words New task typed so far, as the daemon reads them.
+    const typed = {
+      title: c.req.query("title") ?? "",
+      outcome: c.req.query("outcome") ?? "",
+      acceptance_criteria: (c.req.query("criteria") ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
+    };
+    const words = typed.title || typed.outcome || typed.acceptance_criteria.length ? typed : null;
+    for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, words);
     view.credentials = abilityTable(chooserFactsNow(), savedKinds());
     return c.json(view);
   });

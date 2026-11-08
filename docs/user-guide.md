@@ -812,7 +812,9 @@ ends with a small table, **What each can do here**:
   that need commands** (Settings → Advanced, Other settings) sends them to the API key instead
   ("The API key (runs their tests; costs money)"; Forerunner asks you to confirm).
 
-New task says the same sentence when you pick who does it.
+New task says the same sentence when you pick who does it, for the words you typed: a task whose
+words need your answer ("uses the owner's choice of hosting") says "Runs on your API key: only it
+can ask you questions while it works here." before you press Create.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task

@@ -11049,4 +11049,53 @@ describe("leftovers7-tailrun, wave 13", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("TR-11: New task's runs-on line for words that need the owner's decision is the API key's, before Create", async () => {
+    const key = ["sk-ant-api03-", "newtaskwords", "6".repeat(40)].join(""); // not-a-secret
+    const oauth = ["sk-ant-oat01-", "newtaskwords", "7".repeat(40)].join(""); // not-a-secret
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({
+          [SECRET_NAMES.anthropic]: key,
+          [SECRET_NAMES.anthropicOauth]: oauth,
+        }),
+      },
+    );
+    try {
+      const project = await client.createProject({ name: "Hosting", goal: "A hosting page" });
+      const coderLine = async (words?: { title?: string; outcome?: string; criteria?: string[] }) =>
+        (await client.modelSettings(undefined, project.id, words)).specialists.find(
+          (s) => s.name === "coder",
+        )?.runsOn ?? null;
+      // The specialist alone, or plain words: the subscription first, nothing to say.
+      expect((await coderLine())?.line ?? null).toBeNull();
+      expect(
+        (await coderLine({ title: "Write the hosting page", outcome: "The page lists hosts" }))
+          ?.line ?? null,
+      ).toBeNull();
+      // Words that need the owner's decision: only the API key can ask them while it works.
+      // Before: the route took no words, so New task said nothing and the task ran on the key.
+      expect(
+        await coderLine({
+          title: "Write the hosting page",
+          outcome: "The page names the owner's choice of hosting",
+        }),
+      ).toEqual({
+        kind: "api_key",
+        line: "Runs on your API key: only it can ask you questions while it works here.",
+      });
+      // The criteria count too, one per line.
+      expect(
+        (
+          await coderLine({
+            title: "Write the hosting page",
+            criteria: ["It is reachable", "It uses the owner's choice of host"],
+          })
+        )?.kind,
+      ).toBe("api_key");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });
