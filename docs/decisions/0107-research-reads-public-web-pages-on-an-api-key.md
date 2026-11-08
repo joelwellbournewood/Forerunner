@@ -345,3 +345,17 @@ rewritten.
   these is met.)
 - **Scraping a search engine's result page**: brittle, against most engines' terms, and a search
   results page is reachable through `web_fetch` anyway when a model chooses to read one.
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-web')
+
+1. **The site rule fails closed (R-failopen).** A stored "Only these websites" whose entries the
+   clean-up no longer takes (a list written by another install, or under older rules: a public
+   suffix added to `PUBLIC_SUFFIXES`, say) read as "any public website". Now a stored `only`
+   stays `only`: each entry is its cleaned site where the clean-up takes it and is kept as written
+   otherwise (as a never entry always was), and an only list with nothing usable on it reads no
+   website ("Research reads: no website"). The page reader's `WebReadPolicy` keeps `only` with an
+   empty list too, and `webSearchListsOf` withholds search when no only entry is a domain the
+   server takes (an empty `allowed_domains` would be no list at all). The page reader's own rules
+   (never this computer or the local network) apply to an entry kept as written like to any
+   other. The Settings dialog shows such an entry and refuses it with its reason when the person
+   saves the rule again.

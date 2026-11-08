@@ -84,15 +84,18 @@ export function webSearchListsOf(rule: WebAccess): WebSearchLists {
     // A blocked site inside an allowed one cannot be said in the same request (never both lists):
     // the run gets no search, and its pages are read by address under the whole rule.
     const inside = rule.never.filter((n) => rule.only.some((o) => siteCovers(o, n)));
+    // R-failopen: an empty allowed list would be no list at all to the server (any website), so
+    // an "only" rule with nothing the server can take gives the run no search.
+    const withheld = !allowed.length
+      ? `the project reads only ${rule.only.length ? rule.only.join(", ") : "no website"}, which web search cannot be told as a list of websites`
+      : inside.length
+        ? `the project reads only ${rule.only.join(", ")} but never ${inside.join(", ")}, which web search cannot be told in one request`
+        : null;
     return {
       allowedDomains: allowed,
       dropped,
       key: JSON.stringify({ allowed }),
-      ...(inside.length
-        ? {
-            withheld: `the project reads only ${rule.only.join(", ")} but never ${inside.join(", ")}, which web search cannot be told in one request`,
-          }
-        : {}),
+      ...(withheld ? { withheld } : {}),
     };
   }
   const blocked = serverForm(rule.never);

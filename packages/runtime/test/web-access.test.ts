@@ -368,3 +368,106 @@ describe("'Web pages research may read' survives a restart and an undo ('sites')
     }
   }, 60_000);
 });
+
+/**
+ * R-failopen: a stored "Only these websites" whose entries the clean-up no longer takes (a value
+ * written by another install, or a list cleaned under older rules) stays "only": research never
+ * reads "any public website" because of it, and what it may read is what the stored rule says.
+ */
+describe("a stored 'only' rule never fails open (R-failopen)", () => {
+  it("an entry the clean-up refuses is kept as written; the rule stays 'only'", () => {
+    const v = webAccessOf({ web_access: { mode: "only", only: ["github.io"], never: [] } });
+    expect(v).toEqual({ mode: "only", only: ["github.io"], never: [] });
+    expect(researchReadsLine(v)).toBe("Research reads: only github.io");
+    expect(webAccessWords(v)).toBe("Only these websites: github.io");
+    expect(webSearchListsOf(v).allowedDomains).toEqual(["github.io"]);
+  });
+
+  it("an 'only' list with nothing usable reads no website, and web search is not offered", () => {
+    for (const only of [[], ["10.1.2.3", "localhost"]]) {
+      const v = webAccessOf({ web_access: { mode: "only", only, never: [] } });
+      expect(v.mode).toBe("only");
+      expect(researchReadsLine(v)).not.toMatch(/any public website/);
+      const lists = webSearchListsOf(v);
+      expect(lists.allowedDomains ?? []).toEqual([]);
+      expect(lists.withheld).toBeTruthy();
+    }
+    expect(researchReadsLine(webAccessOf({ web_access: { mode: "only", only: [] } }))).toBe(
+      "Research reads: no website",
+    );
+  });
+
+  it("the project page's line and the page reader keep to it", async () => {
+    const clock = new SimulatedClock(Date.parse("2026-11-08T10:00:00Z"));
+    const home = mkdtempSync(join(tmpdir(), "fr-sites-failopen-"));
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({}),
+      provider: new ScriptedProvider([], clock),
+      gitHost: new MemoryGitHost("alice"),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "1.0.0",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      startServices: false,
+      webReadLoopback: true,
+    });
+    try {
+      const { app, token } = createDaemonApp(rt);
+      const card = async (id: string) =>
+        (await (
+          await app.request(`/projects/${id}`, { headers: { authorization: `Bearer ${token}` } })
+        ).json()) as { researchReads?: string };
+      const read = async (projectId: string) =>
+        rt
+          .toolsForRun()
+          .get(WEB_FETCH_TOOL)
+          ?.execute({ url: "http://127.0.0.1:9/x" }, {
+            runId: "r1",
+            sessionId: "s1",
+            agentId: rt.agent.id,
+            humanId: rt.human.id,
+            projectId,
+            allowedPaths: [],
+            signal: new AbortController().signal,
+          } satisfies ToolExecutionContext);
+      // Written by another install, past the clean-up: a public suffix, then nothing usable.
+      const suffix = await rt.store.project.insert({
+        name: "Pages",
+        goal: "g",
+        repos: [],
+        settings: { web_access: { mode: "only", only: ["github.io"], never: [] } },
+      });
+      expect((await card(suffix.id)).researchReads).toBe("Research reads: only github.io");
+      await expect(read(suffix.id)).rejects.toMatchObject({
+        message:
+          'Refused: 127.0.0.1 is not on this project\'s "only these websites" list (github.io).',
+      });
+      const empty = await rt.store.project.insert({
+        name: "Nothing",
+        goal: "g",
+        repos: [],
+        settings: { web_access: { mode: "only", only: ["10.1.2.3"], never: [] } },
+      });
+      expect((await card(empty.id)).researchReads).not.toMatch(/any public website/);
+      const notOnTheList =
+        /^Refused: 127\.0\.0\.1 is not on this project's "only these websites" list/;
+      await expect(read(empty.id)).rejects.toThrow(notOnTheList);
+      const none = await rt.store.project.insert({
+        name: "None",
+        goal: "g",
+        repos: [],
+        settings: { web_access: { mode: "only", only: [], never: [] } },
+      });
+      expect((await card(none.id)).researchReads).toBe("Research reads: no website");
+      await expect(read(none.id)).rejects.toThrow(notOnTheList);
+    } finally {
+      await rt.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

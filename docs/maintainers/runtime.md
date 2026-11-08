@@ -5380,7 +5380,10 @@ page, a refused page in the log and the file).
 2026-11-08).** One per-project setting, `project.settings.web_access` `{ mode, only, never }`,
 in `src/wiring/web-access.ts` (pure, the UI imports it): `webAccessOf(settings)` is the rule in
 force (`web_access` plus the blocks still under `browser.blockedDomains`, each cleaned where the
-clean-up takes it and kept as written otherwise), `cleanSite`/`cleanSiteList` the one clean-up
+clean-up takes it and kept as written otherwise; R-failopen: a stored "only" stays "only" whatever
+its entries clean to, an only entry the clean-up no longer takes is kept as written too, and an
+only list with nothing on it reads no website: "Research reads: no website", "Only these websites:
+none", never "any public website"), `cleanSite`/`cleanSiteList` the one clean-up
 (lowercase; scheme, path, port, trailing dot, leading `www.` off; punycode; an IP address, a local
 name and, in the only list, a public suffix from `PUBLIC_SUFFIXES` refused with a reason),
 `siteCovers` the matcher (the site and its subdomains), `webAccessNarrows(to, from)` exact over
@@ -5395,7 +5398,9 @@ acts at once, a widening asks a yes. `PUT /projects/:id/settings` refuses `web_a
 `web.proxySetIn(rt.env)`). `browserSettingsOf().blockedDomains` is the same list for the agent
 browser (each site and `*.site`). Server search: `webSearchListsOf(rule)` sends "only" as
 `allowedDomains`, else the never list as `blockedDomains`, never both; `withheld` (a never entry
-inside an only entry) leaves search out of the run with a log line in compose's `listsFor`.
+inside an only entry, or an only rule with no entry the server can take: an empty allowed list
+would be no list at all to the server, R-failopen) leaves search out of the run with a log line in
+compose's `listsFor`.
 
 **The loopback seam.** `ComposeOptions.webReadLoopback` passes `loopback` to the reader; it is set
 only by `cli/main.ts` for `--provider bench` and `bench-api` (`webReadLoopbackFor`, after

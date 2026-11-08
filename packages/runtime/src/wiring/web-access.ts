@@ -434,24 +434,39 @@ export function webAccessOf(settings: Record<string, unknown> | null | undefined
   const raw = settings?.[WEB_ACCESS_SETTING];
   const v =
     raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const only = cleanSiteList(strings(v.only), "only").sites;
-  const mode: WebAccessMode = v.mode === "only" && only.length > 0 ? "only" : "any";
+  // R-failopen: a stored "only" stays "only", whatever its entries clean to. An entry the clean-up
+  // no longer takes (a list written by another install, or under older rules) is kept as written,
+  // as a block is: research reads what the stored rule says, and with nothing usable on the list
+  // it reads no website, never "any public website".
+  const mode: WebAccessMode = v.mode === "only" ? "only" : "any";
+  const only: string[] = [];
+  if (mode === "only")
+    for (const entry of strings(v.only)) {
+      const site = listEntry(entry, "only");
+      if (site && !only.includes(site)) only.push(site);
+    }
   const never: string[] = [];
   for (const entry of [...strings(v.never), ...legacyBlocks(settings)]) {
     const site = blockEntry(entry);
     if (site && !never.includes(site)) never.push(site);
   }
-  return { mode, only: mode === "only" ? only : [], never };
+  return { mode, only, never };
 }
 
 /**
- * A block-list entry as it is read: cleaned where the clean-up takes it, else as written
- * (lowercase, without `*.` or a trailing dot), so the reader still matches it: a block is never
- * lost on the way (an IP address someone blocked before this setting, say).
+ * A stored list entry as it is read: cleaned where the clean-up takes it, else as written
+ * (lowercase, without `*.` or a trailing dot), so the reader still matches it. A block is never
+ * lost on the way (an IP address someone blocked before this setting, say), and an "only" entry
+ * the clean-up no longer takes (a public suffix) still narrows research (R-failopen); the page
+ * reader's own rules (never this computer or the local network) apply to it as to any entry.
  */
-function blockEntry(entry: string): string {
-  const c = cleanSite(entry, "never");
+function listEntry(entry: string, list: SiteList): string {
+  const c = cleanSite(entry, list);
   return c.ok ? c.site : entry.trim().toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+}
+
+function blockEntry(entry: string): string {
+  return listEntry(entry, "never");
 }
 
 /**
@@ -515,7 +530,7 @@ export function webAccessWords(value: unknown): string {
   const v = webAccessOf({ [WEB_ACCESS_SETTING]: value as never });
   if (v.mode === "only") {
     const never = v.never.length ? `; never ${siteNames(v.never)}` : "";
-    return `Only these websites: ${siteNames(v.only, 5)}${never}`;
+    return `Only these websites: ${v.only.length ? siteNames(v.only, 5) : "none"}${never}`;
   }
   return v.never.length
     ? `Any public website, never ${siteNames(v.never, 5)}`
@@ -524,7 +539,10 @@ export function webAccessWords(value: unknown): string {
 
 /** The project page's line: "Research reads: any public website". */
 export function researchReadsLine(v: WebAccess): string {
-  if (v.mode === "only") return `Research reads: only ${siteNames(v.only)}`;
+  if (v.mode === "only")
+    return v.only.length
+      ? `Research reads: only ${siteNames(v.only)}`
+      : "Research reads: no website";
   return v.never.length
     ? `Research reads: any public website, never ${siteNames(v.never)}`
     : "Research reads: any public website";
@@ -536,6 +554,8 @@ export function researchReadsLine(v: WebAccess): string {
  */
 export function webAccessBriefLine(v: WebAccess): string | null {
   const never = v.never.length ? ` It never reads ${v.never.join(", ")}.` : "";
+  if (v.mode === "only" && !v.only.length)
+    return "This project's research reads no website: its list of websites is empty. Use no web source, and say so in the report.";
   if (v.mode === "only")
     return `This project's research reads only these websites and their subdomains: ${v.only.join(", ")}.${never} Use no other source; say in the report which pages you could not read because of this rule.`;
   if (v.never.length)
