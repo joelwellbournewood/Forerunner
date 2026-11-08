@@ -25,8 +25,14 @@ describe("a session a dead daemon left running is ended at the next start (desig
   afterEach(async () => {
     for (const rt of opened.splice(0)) await rt.close().catch(() => undefined);
   });
-  const compose = async (home: string, clock: SimulatedClock, recover: boolean) => {
+  const compose = async (
+    home: string,
+    clock: SimulatedClock,
+    recover: boolean,
+    chfPerUsd?: number,
+  ) => {
     const rt = await composeRuntime({
+      ...(chfPerUsd !== undefined ? { chfPerUsd } : {}),
       env: { FORERUNNER_HOME: home },
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
       config: null,
@@ -490,5 +496,32 @@ describe("a session a dead daemon left running is ended at the next start (desig
     // Persisted: the start after that reads the same amount from the row.
     const again = await compose(home, clock, true);
     expect((await again.store.session.mustGet(ghost.session.id)).spent_usd_micro).toBe(70_000);
+  }, 120_000);
+
+  // The same review: with no ledger rows (the row's own count) the project's last session took
+  // its CHF at the built-in rate (0.8), not the day's rate the session page converts with, so
+  // the chat's "Spent:" for the last session and the session page could differ.
+  it("with no ledger rows, the last session's CHF is at the day's rate, as on the session page", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-recovery-rate-"));
+    const clock = new SimulatedClock("2026-11-01T12:00:00Z");
+    const first = await compose(home, clock, false, 1.25);
+    const ghost = await leaveAGhost(first);
+    await first.store.session.recordSpend(ghost.session.id, 40_000, 3);
+    // The first process dies here.
+    opened.splice(0);
+
+    const rt = await compose(home, clock, true, 1.25);
+    const { app, token } = createDaemonApp(rt);
+    const page = (await (
+      await app.request(`/sessions/${ghost.session.id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()) as { spent: { usdMicro: number; chfMicro: number } };
+    expect(page.spent).toEqual({ usdMicro: 40_000, chfMicro: 50_000 });
+    const project = await rt.store.project.mustGet(ghost.project.id);
+    const last = (
+      project.summary_cache as { last_session?: { outcome?: { spentChfMicro?: number } } }
+    ).last_session;
+    expect(last?.outcome?.spentChfMicro).toBe(page.spent.chfMicro);
   }, 120_000);
 });

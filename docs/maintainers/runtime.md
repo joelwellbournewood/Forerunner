@@ -1075,7 +1075,9 @@ line reads "Interrupted: Forerunner closed: 1 done. CHF 0.03." instead of "nothi
 the runner's own end writes it (the fix-up of R-recovery: the live counter misses what only
 the ledger books, such as the critic's review, so the session page's "Spent of this session's
 budget" and `GET /sessions` read CHF 0.00 above an end line of CHF 0.01; tested across two
-restarts in `session-recovery.test.ts`); and it becomes the project's `summary_cache.last_session` (`recordLastSession`: its
+restarts in `session-recovery.test.ts`; with no ledger rows the CHF it keeps is the row's count
+at the day's rate, `RecoveryDeps.chfPerUsd`, which compose and the Stop routes pass, as the
+session page converts, not the built-in 0.8); and it becomes the project's `summary_cache.last_session` (`recordLastSession`: its
 summary, stop reason and a `LastSessionOutcome` with what it did and left ready) unless a later
 session of the project already ended, so the Overview never reads "No session yet" after a
 crash (`session-recovery.test.ts`, composed twice on one home).
