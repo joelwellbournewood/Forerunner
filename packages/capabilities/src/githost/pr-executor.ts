@@ -705,9 +705,13 @@ export class PrTaskExecutor implements TaskExecutor {
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
     const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
     const git = await this.gitFor(target, dir);
+    // The person's answer to the task's last conflict card, read first (TM-2): after "I resolved
+    // it", a rebase or merge under way in the folder is the person's resolution, which the run
+    // finishes (`continueResolved`), never a crash's leftover to end.
+    const answered = await this.conflictAnswer(task);
     if (existsSync(join(dir, ".git"))) {
       await git.fetch();
-      await this.cleanAfterCutShortRun(git, task);
+      if (answered?.outcome !== "resolved") await this.cleanAfterCutShortRun(git, task);
     } else await git.clone(target.clone);
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
     // .gitignore the project has (the push checks it again: a forced add gets past this). A
@@ -734,7 +738,6 @@ export class PrTaskExecutor implements TaskExecutor {
         return "Start the repository with a README\n\nThe repository was empty; Forerunner made this first commit so its tasks have a branch to start from.";
       },
     });
-    const answered = await this.conflictAnswer(task);
     if (answered?.outcome === "resolved") {
       if (!task.branch) await this.deps.store.task.patch(task.id, { branch });
       return this.continueResolved(ctx, { git, dir, branch, target, answered });
@@ -2190,9 +2193,40 @@ export class PrTaskExecutor implements TaskExecutor {
     s: { git: GitOps; dir: string; branch: string; target: Target; answered: ConflictAnswer },
   ): Promise<TaskExecutionResult> {
     const { git, dir, branch, target, answered } = s;
+    // TM-2: a rebase or merge the person left under way in this folder (the card's steps, the
+    // answer given before its last command) is their resolution: finished here, never aborted.
+    // A file that still holds conflict markers asks again, with the step left under way.
+    const finished = await git.finishUnfinished();
+    if (!finished.ok)
+      return this.conflict(ctx, {
+        git,
+        dir,
+        branch,
+        target,
+        conflicts: finished.conflicts,
+        costUsdMicro: 0,
+        force: false,
+        superseded: answered.row,
+        again: true,
+        merging: finished.step === "merge",
+      });
+    // Anything else a process left half done (a revert, a cherry-pick) is ended, and changes
+    // nobody committed go out of the way, as after a run cut short.
+    await this.cleanAfterCutShortRun(git, ctx.task);
     const remote = await git.hasRef(`origin/${branch}`);
-    if (remote) await git.createBranch(branch, `origin/${branch}`);
-    else if (await git.hasRef(`refs/heads/${branch}`)) await git.checkout(branch);
+    const local = await git.hasRef(`refs/heads/${branch}`);
+    // The person's branch: the host's, unless they resolved it here (a step just finished, or
+    // the base is in the folder's branch and not in the host's: committed, not pushed). Before,
+    // a resolution only in the folder was replaced by the host's branch and conflicted again.
+    const here =
+      local &&
+      (finished.step !== null ||
+        (remote &&
+          (await git.isAncestor(`origin/${target.base}`, `refs/heads/${branch}`)) &&
+          !(await git.isAncestor(`origin/${target.base}`, `origin/${branch}`))));
+    if (here) await git.checkout(branch);
+    else if (remote) await git.createBranch(branch, `origin/${branch}`);
+    else if (local) await git.checkout(branch);
     else {
       await this.consume(answered.row);
       return {
@@ -2259,9 +2293,12 @@ export class PrTaskExecutor implements TaskExecutor {
     } catch {
       // informational, as above
     }
-    if (rebased || brought || !remote) {
+    // A branch resolved here by a rebase replaces the host's (with a lease); one resolved by a
+    // merge, or taken from the host, is pushed as it is.
+    const replaces = remote && !(await git.isAncestor(`origin/${branch}`));
+    if (rebased || brought || !remote || replaces) {
       try {
-        await git.push(branch, { force: rebased && remote, defaultBranch: target.base });
+        await git.push(branch, { force: replaces, defaultBranch: target.base });
       } catch (e) {
         return {
           outcome: "failed",

@@ -1911,7 +1911,11 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     };
     /** The person's answer as the runtime applies it (`syncPrAnswers`). */
     const answer = async (card: { id: string }, outcome: "resolved" | "dropped") => {
-      const row = await w.store.humanRequest.mustGet(card.id);
+      const open = await w.store.humanRequest.mustGet(card.id);
+      const label =
+        outcome === "resolved" ? "I resolved it" : "Drop the branch and retry from scratch";
+      expect(open.options).toContain(label);
+      const row = await w.store.humanRequest.answer(open.id, open.version, label, w.human);
       await w.store.humanRequest.patch(row.id, {
         change_card: {
           ...((row.change_card ?? {}) as Record<string, unknown>),
@@ -1947,6 +1951,61 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     expect(said.map((c) => c.body.split(/\r?\n/)[0])).toEqual([
       "Forerunner did this task again from main and it changed nothing, so this pull request is closed. Its branch is kept.",
     ]);
+    await s.w.store.close();
+  });
+
+  it("'I resolved it' with the rebase still in progress in the task's folder (the card's steps): the person's resolution is kept and goes on to the pull request, never aborted (TM-2)", async () => {
+    const s = await setup();
+    const { branch, card, pr } = await s.conflicted();
+    // The person follows the card in the task's folder: rebases onto main, resolves README.md
+    // (and stages it), and answers "I resolved it" before `git rebase --continue`.
+    await s.gitIn(["fetch", "-q", "origin"]);
+    await s.gitIn(["rebase", "origin/main"]);
+    expect(await s.gitIn(["status"])).toContain("rebase in progress");
+    writeFileSync(join(s.wt, "README.md"), "# sample by main and the task\n");
+    await s.gitIn(["add", "README.md"]);
+    await s.answer(card, "resolved");
+    const next = await s.exec(agent(() => undefined)).execute(await s.ctx());
+    // Before: the run's start aborted the rebase (a crash's leftover, it took it for), so the
+    // resolution was lost, the rebase onto main conflicted again and a second card was filed.
+    expect(next.outcome, next.summary).toBe("in_review");
+    expect(next.prUrl).toBe(pr.htmlUrl);
+    expect(await s.gitIn(["status"])).not.toContain("rebase in progress");
+    expect(await s.lines(["show", `${branch}:README.md`])).toEqual([
+      "# sample by main and the task",
+    ]);
+    expect(await s.lines(["show", `${branch}:notes.md`])).toEqual(["# Notes"]);
+    // It sits on main as it is now: the person's rebase, pushed over the old branch.
+    expect(await s.lines(["merge-base", "--is-ancestor", "main", branch])).toEqual([]);
+    const open = (await s.w.store.humanRequest.list({ task_id: s.task.id } as never)).filter(
+      (r) => r.status === "open",
+    );
+    expect(open).toEqual([]);
+    await s.w.store.close();
+  });
+
+  it("'I resolved it' with the resolution not staged yet, or with conflict markers still in a file: the first goes on, the second asks again and keeps the rebase under way (TM-2)", async () => {
+    const s = await setup();
+    const { card } = await s.conflicted();
+    await s.gitIn(["fetch", "-q", "origin"]);
+    await s.gitIn(["rebase", "origin/main"]);
+    // Markers still there: the person answered too early.
+    await s.answer(card, "resolved");
+    const early = await s.exec(agent(() => undefined)).execute(await s.ctx());
+    expect(early.outcome, early.summary).toBe("needs_human");
+    expect(early.summary).toBe("rebase conflict in README.md");
+    expect(await s.gitIn(["status"])).toContain("rebase in progress");
+    const again = (await s.w.store.humanRequest.list({ task_id: s.task.id } as never)).filter(
+      (r) => r.status === "open",
+    );
+    expect(again).toHaveLength(1);
+    expect(again[0]?.why).toContain("still conflicts with main in README.md");
+    // The person removes the markers (without staging) and answers again: it goes on.
+    writeFileSync(join(s.wt, "README.md"), "# sample, resolved\n");
+    await s.answer(again[0] as { id: string }, "resolved");
+    const next = await s.exec(agent(() => undefined)).execute(await s.ctx());
+    expect(next.outcome, next.summary).toBe("in_review");
+    expect(await s.lines(["show", `${next.branch}:README.md`])).toEqual(["# sample, resolved"]);
     await s.w.store.close();
   });
 

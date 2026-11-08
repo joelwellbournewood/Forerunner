@@ -280,8 +280,17 @@ with their milestone.
   whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
   (U-028): the runtime's `syncPrAnswers` applies the answer (`runtime.md`), and the task's next
   run reads it from the card (`outcome`, then `consumed_at` once a run used it). "I resolved
-  it" takes the person's branch (the host's, else the worktree's; `GitOps.hasRef`), checks the
-  base is in it (rebasing when not; a conflict that is still there files a new request), pushes
+  it" first finishes a rebase or merge the person left under way in the task's folder
+  (`GitOps.finishUnfinished`: a resolved file is staged, a commit the resolution emptied is
+  skipped, a file still holding conflict markers files the card again with the step left under
+  way; git's messages are never parsed), then takes the person's branch: the folder's when a
+  step was just finished there, or when it holds the base and the host's does not (committed
+  here, not pushed), else the host's, else the folder's (`GitOps.hasRef`). The run reads the
+  answer before its start's clean-up, which skips `cleanAfterCutShortRun` while "I resolved it"
+  waits (TM-2, leftovers7-tailmerge: before, the clean-up aborted the person's half-done
+  rebase, the resolution was lost and the same conflict came back as a second card). It then
+  checks the base is in it (rebasing when not; a conflict that is still there files a new
+  request), pushes (with a lease when the person's rebase rewrote it)
   and opens the PR without running the inner executor again (`costUsdMicro: 0`); "Drop the
   branch and retry from scratch" starts the branch again from the base, runs the inner
   executor and replaces the old branch on the host (force with lease); "Cancel the task" is the
@@ -350,7 +359,9 @@ with their milestone.
   the app's close or a crash cut short does neither (both happen only after the inner executor
   returns): the next run first ends a git step left half done (`GitOps.abortUnfinished`: a
   rebase, merge, revert or cherry-pick) and sets uncommitted leftovers aside under the same ref
-  (`cleanAfterCutShortRun`, R-dirtyworktree, leftovers7-merge), before any checkout. Before, it
+  (`cleanAfterCutShortRun`, R-dirtyworktree, leftovers7-merge), before any checkout; while the
+  task's "I resolved it" waits, a step under way is the person's and is finished instead (TM-2,
+  above). Before, it
   carried them into its own work, git refused its `checkout -B` ("untracked working tree files
   would be overwritten"), or a half-done rebase made the next conflict card name no file. In a
   project's folder (`inWorkspace`) a pause is one commit of its own with the same message and

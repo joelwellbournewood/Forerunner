@@ -663,4 +663,52 @@ describe("GitOps", { timeout: 120_000 }, () => {
     });
     expect(existsSync(join(wt, "guide.md"))).toBe(false);
   });
+
+  it("finishUnfinished ends a merge the person resolved, skips a rebase commit the resolution emptied, and leaves one with markers under way (leftovers7-tailmerge, TM-2)", async () => {
+    const { url } = await bareRepo();
+    const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
+    const dir = join(root, "a");
+    const a = new GitOps({ cwd: dir, identity });
+    await a.clone(url);
+    const sh = (args: string[]) =>
+      run(["git", "-C", dir, "-c", "user.name=T", "-c", "user.email=t@x.test", ...args], {
+        allowFailure: true,
+      });
+    expect(await a.finishUnfinished()).toEqual({ step: null, ok: true, conflicts: [] });
+    // Two branches change the same line.
+    await a.createBranch("side");
+    writeFileSync(join(dir, "README.md"), "# side\n");
+    await a.commitAll("side");
+    await a.checkout("main");
+    writeFileSync(join(dir, "README.md"), "# main\n");
+    await a.commitAll("main");
+    // A merge with the conflict resolved but not committed: finished with git's message.
+    await sh(["merge", "side"]);
+    writeFileSync(join(dir, "README.md"), "# both\n");
+    expect(await a.finishUnfinished()).toEqual({ step: "merge", ok: true, conflicts: [] });
+    expect((await a.status()).dirty).toBe(false);
+    expect((await sh(["log", "-1", "--format=%P"])).stdout.trim().split(" ")).toHaveLength(2);
+    // A rebase whose only commit the resolution makes empty (main's version kept): skipped.
+    const seed = (await sh(["rev-list", "--max-parents=0", "main"])).stdout.trim();
+    await a.createBranch("again", seed);
+    writeFileSync(join(dir, "README.md"), "# again\n");
+    await a.commitAll("again");
+    await sh(["rebase", "main"]);
+    expect((await sh(["status"])).stdout).toContain("rebase in progress");
+    writeFileSync(join(dir, "README.md"), "# both\n");
+    await sh(["add", "README.md"]);
+    expect(await a.finishUnfinished()).toEqual({ step: "rebase", ok: true, conflicts: [] });
+    expect(await a.headSha()).toBe((await sh(["rev-parse", "main"])).stdout.trim());
+    // Markers still in the file: not resolved, the rebase stays under way.
+    await a.createBranch("third", seed);
+    writeFileSync(join(dir, "README.md"), "# third\n");
+    await a.commitAll("third");
+    await sh(["rebase", "main"]);
+    expect(await a.finishUnfinished()).toEqual({
+      step: "rebase",
+      ok: false,
+      conflicts: ["README.md"],
+    });
+    expect((await sh(["status"])).stdout).toContain("rebase in progress");
+  });
 });

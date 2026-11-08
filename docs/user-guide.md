@@ -359,6 +359,13 @@ commit of your own, that commit is not what the critic reviewed: the row then sa
 after the review: look at the new commits, then merge it yourself or send it back." and offers no
 Merge, and the card says the same; merge it on GitHub, or press **Redo**.
 
+**A conflict the agent cannot resolve while it works.** Its card offers **I resolved it**, **Drop
+the branch and retry from scratch** and **Cancel the task**. If you resolve it in the task's
+folder the card names, you may answer **I resolved it** before git's last step (the rebase's
+continue, or the merge's commit): Forerunner finishes that step with your resolution and opens or
+updates the pull request. A file that still holds conflict markers brings the card back, with
+your rebase or merge left as it was.
+
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
 the way; the old pull request stays as it was. **Redo** on a rebuild's card (either card above)
