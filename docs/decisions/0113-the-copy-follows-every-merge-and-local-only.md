@@ -37,7 +37,9 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
    missing copy, fetches, puts it on the default branch as the host has it and records when
    (`.git/forerunner-copy.json`). It runs after every merge the app makes or hears of
    (`ReviewedPrMerge.onMerged`: a session's, a retry's, Merge in the app, a merge the watcher saw
-   on GitHub), at the git host watcher's read of the default branch's head each poll (a merge by
+   on GitHub; and at the end of each Merge pressed in the app, so a docs pull request merged on
+   the click, which has no task and no `onMerged`, shows at once too: wired when merge-in-app and
+   merged-copy were merged together), at the git host watcher's read of the default branch's head each poll (a merge by
    anyone, a docs pull request merged on GitHub's website; a copy already at that head is not
    fetched again), when a repository is linked, while the plan from a brief is drafted (part of
    the draft's job, so the copy is there while the plan waits; added by the review of

@@ -2341,6 +2341,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // too), when a repository is linked and after the intake wrote its docs. Under the copy's lock
   // (`ProjectDocs.withCopy`), which every docs write takes too. A refresh that changed the copy
   // tells the project's screens; a failure is logged and the copy is read as it was.
+  /** Copy refreshes nobody awaits (after Merge in the app): the close waits for them. */
+  const copyRefreshes = new Set<Promise<void>>();
   const refreshProjectCopy = async (
     projectId: string,
     at?: { head: string; base: string },
@@ -2417,7 +2419,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ...(opts.gitHost ? {} : { hasToken: async () => !!(await githubTokenNow()) }),
     merge,
     agentId: agent.id,
-    changed: (projectId) => events.emit("project", { id: projectId }),
+    changed: (projectId) => {
+      events.emit("project", { id: projectId });
+      // merged-copy with merge-in-app: a docs pull request merged on the click has no task, so
+      // `merge.onMerged` below does not bring the copy along; this does (a task's merge was
+      // refreshed already, so the copy is where main is and the refresh changes nothing).
+      const refresh: Promise<void> = refreshProjectCopy(projectId).finally(() =>
+        copyRefreshes.delete(refresh),
+      );
+      copyRefreshes.add(refresh);
+    },
   });
   // merged-copy: the copy follows every merge (a session's, a retry's, Merge in the app, one
   // the watcher saw on GitHub).
@@ -4324,6 +4335,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // A Merge pressed in the app finishes its call before the store closes (merge-in-app);
       // the records of the merges not started yet stay queued for the next start.
       await pullRequests.idle();
+      await Promise.allSettled([...copyRefreshes]);
       await browserManager.closeAll().catch((e: unknown) => {
         logger.warn("browser sessions did not close cleanly", { error: errorMessage(e) });
       });

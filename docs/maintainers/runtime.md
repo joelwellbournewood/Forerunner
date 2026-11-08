@@ -5644,7 +5644,9 @@ default branch as the host has it after every merge, not only at a session's end
   there). `localOnlyFolder` is null then, so no run gets it.
 - Callers (compose.ts `refreshProjectCopy`, which emits the project event when the copy moved):
   `merge.onMerged` (a session's merge, a retry's, Merge in the app, and merges the watcher saw
-  on GitHub through `DependentBranches`), the watcher's `onDefaultBranchHead` (beside
+  on GitHub through `DependentBranches`), `ProjectPullRequests`' `changed` at the end of each
+  Merge pressed in the app (a docs pull request merged on the click has no task, so no
+  `onMerged`; the close waits for these refreshes, `copyRefreshes`), the watcher's `onDefaultBranchHead` (beside
   `dependentBranches.sweep`; a merge by anyone, a docs PR merged on GitHub's website),
   `RepoCreator.onLinked`, the intake's background draft (`Intake.enqueue` runs
   `copyWhileDrafting` beside `propose` and waits for it before the job ends, so nothing of it

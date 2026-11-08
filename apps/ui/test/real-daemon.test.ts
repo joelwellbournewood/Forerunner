@@ -8603,6 +8603,43 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
       label: "Merge automatically after review",
     });
   }, 120_000);
+
+  it("Merge in the app on Forerunner's docs pull request: Files lists the docs right after, with no watcher poll and no session (merge-in-app with merged-copy)", async () => {
+    // A docs pull request has no task, so the merge step's onMerged, which brings the copy along
+    // after a task's merge, does not fire for it. Before this wiring (the merge of wave 9), Files
+    // showed docs merged with the app's Merge only at the watcher's next poll (a minute by default).
+    await host.createRepo({
+      owner: "alice",
+      name: "inapp",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# inapp\n" },
+    });
+    const project = await client.createProject({
+      name: "In app",
+      goal: "Docs merged with the app's Merge",
+      repos: ["alice/inapp"],
+    });
+    const paths = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+    expect(await paths()).not.toContain("docs/overview.md");
+    const docs = (await client.projectPullRequests(project.id)).waiting.find(
+      (w) => w.kind === "docs",
+    );
+    expect(docs?.merge).toMatchObject({ canMerge: true });
+    const answer = await client.mergePullRequest(project.id, docs?.number ?? 0);
+    expect(answer).toMatchObject({ state: "queued", order: [docs?.number] });
+    await eventually(
+      async () => (await paths()).includes("docs/overview.md"),
+      "Files to list the docs merged with the app's Merge",
+      async () => JSON.stringify(await paths()),
+      15_000,
+    );
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+    expect(
+      (await github.getPullRequest({ owner: "alice", name: "inapp" }, docs?.number ?? 0)).merged,
+    ).toBe(true);
+    expect(await client.sessions({ projectId: project.id })).toEqual([]);
+  }, 120_000);
 });
 
 describe("the UI client against the real daemon: this computer's copy follows every merge (merged-copy, ADR 0113)", () => {
