@@ -10,6 +10,7 @@ import {
   type Logger,
   log,
   safeSegment,
+  stripAnsi,
 } from "@forerunner/platform";
 import { type BrowserContext, chromium } from "playwright";
 
@@ -188,12 +189,15 @@ export interface LaunchedProfile {
  * The markers are the ones Chromium and Playwright print when the sandbox cannot start; a line
  * that merely mentions the sandbox (Chromium's "InitializeSandbox() called with multiple
  * threads" warning, a profile path in the call log's `<launching>` command line) is not one.
- * Playwright's own first line is never read as the browser's words.
+ * Playwright's own first line is never read as the browser's words. Each line is read without
+ * its terminal escape codes: where colour is forced Playwright dims its call log
+ * ("\u001b[2m  - <launching> ..."), and the `<launching>` filter must hold under colour too
+ * (TR-8); the line said is plain text.
  */
 export function sandboxRefusalOf(e: unknown): string | null {
   const said = errorMessage(e)
     .split("\n")
-    .map((l) => l.trim())
+    .map((l) => stripAnsi(l).trim())
     .filter(Boolean)
     .find(
       (l) => !/^browserType\./.test(l) && !/^-?\s*<launching>/.test(l) && SANDBOX_REFUSED.test(l),
@@ -359,7 +363,7 @@ export async function launchAgentBrowser(opts: LaunchProfileOptions): Promise<La
     } catch (e) {
       throw new ForerunnerError(
         "unavailable",
-        `browser could not be launched: ${errorMessage(e).split("\n")[0]}`,
+        `browser could not be launched: ${stripAnsi(errorMessage(e).split("\n")[0] ?? "")}`,
         {
           details: {
             executablePath: executablePath ?? "(playwright default)",

@@ -311,7 +311,10 @@ agent browser runs without Chromium's own sandbox on this computer", with the br
 drops the sandbox (R-sandbox, `sandboxRefusalOf`): the browser's or Playwright's own markers
 ("No usable sandbox", "Chromium sandboxing failed!", "without --no-sandbox", crbug 638180 or
 357670, the SUID or setuid sandbox, "Failed to move to new namespace"), never Playwright's first
-line or the call log's `<launching>` command line (a profile path may hold the word). Any other
+line or the call log's `<launching>` command line (a profile path may hold the word). Each line is
+read without its terminal escape codes (`stripAnsi`): where colour is forced Playwright dims its
+call log, and the filter holds under colour too (TR-8); the reason said is plain text, as is the
+`unavailable` error's first line. Any other
 first-launch failure (a timeout, a profile another Chromium holds) is the `unavailable` error,
 not retried without the sandbox and with no unsandboxed line in the log.
 `LaunchProfileOptions.launchContext` is the seam (`test/browser-profile.test.ts`). A navigation

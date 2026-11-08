@@ -9,6 +9,7 @@ import {
   log,
   normalize,
   safeSegment,
+  stripAnsi,
 } from "@forerunner/platform";
 import { type Browser, chromium, type LaunchOptions } from "playwright";
 import { resolveChromiumExecutable, sandboxRefusalOf } from "./profile.ts";
@@ -233,8 +234,9 @@ async function launchBrowser(
   }
 }
 
+/** The error's first line, without terminal escape codes (Playwright colours where it is forced). */
 function firstLine(e: unknown): string {
-  return (errorMessage(e).split("\n")[0] ?? "").slice(0, 200);
+  return stripAnsi(errorMessage(e).split("\n")[0] ?? "").slice(0, 200);
 }
 
 async function tryOne(

@@ -174,3 +174,14 @@ is a browser that did not start: the page is "not tried: the browser did not sta
 kinds of review, and the agent browser is unavailable for that call. Playwright's first line and
 the call log's command line are never read as the reason, so a profile path holding the word
 "sandbox" cannot trigger it.
+
+## Amendment 2026-11-09 (the run-side leftovers of waves 12 and 14, 'leftovers7-tailrun'): the filter holds under colour
+
+Where colour is forced (`FORCE_COLOR=1`, as CI and some people's environments set it) Playwright
+dims its call log: the command line arrived as "\u001b[2m  - <launching> …", so the
+`<launching>` filter of the amendment above did not match it and a profile path holding a
+marker's words ("No usable sandbox", "setuid sandbox") would have read as the browser's refusal
+and dropped the sandbox (TR-8). `sandboxRefusalOf` now reads every line without its terminal
+escape codes (`stripAnsi`, 7-bit and 8-bit), so the filter, Playwright's first line and the
+markers are judged on the plain text, and the reason it says carries no escape codes. The
+`unavailable` reasons' first lines (the agent browser's and the tried page's) are plain text too.
