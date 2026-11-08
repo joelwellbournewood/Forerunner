@@ -2647,10 +2647,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // A rejected proposal ends the deferral of a creation with `intake: true` (spec G.5): the
     // standard set from the templates, through the same scaffold the create path runs.
     docs,
-    // U-044, ADR 0107: specialists reach the web on a subscription (the Agent SDK's WebFetch and
-    // WebSearch) and, on an API key, through the web page reader; with neither the intake plans
-    // no task that needs the web.
-    webSpecialists: () => hasOauth || webFetchOn,
+    // U-044, ADR 0107: specialists reach the web through the page reader, on an API key and,
+    // through the Agent SDK's tool server, on a subscription ('sites'); without it the intake
+    // plans no task that needs the web (a subscription alone is not offered search either).
+    webSpecialists: () => webFetchOn,
     // "Approve and start" (design §3.3): the approved plan starts through the scheduler, only
     // while the services run (a one-shot writes the plan and starts nothing).
     ...(opts.startServices !== false

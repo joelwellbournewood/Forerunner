@@ -604,20 +604,34 @@ action), U.9 (run event with counts on a session).
 
 ## Web research (`src/web/`, ADR 0107)
 
-The researcher's and the science-evaluator's page reader on an API key (the owner's decision
-of 2026-11-01): `webFetchTool(opts)` is the `web_fetch` tool the runtime maps `cc:WebFetch` to
-on the loop driver (`packages/runtime/src/registry/tools.ts`, `WEB_FETCH_TOOL`; the name is
-spelled out here because the runtime imports this package). The composition root registers it
-as a built-in unless `FORERUNNER_WEB_FETCH=off`.
+The researcher's and the science-evaluator's page reader on both credentials (the owner's
+decisions of 2026-11-01 and 2026-11-02, 'sites'): `webFetchTool(opts)` is the `web_fetch` tool the
+runtime maps `cc:WebFetch` to on the loop driver and, through the Agent SDK's tool server, on a
+subscription (`packages/runtime/src/registry/tools.ts`, `WEB_FETCH_TOOL`; the name is spelled out
+here because the runtime imports this package). The composition root registers it as a built-in
+unless `FORERUNNER_WEB_FETCH=off`.
 
-- **Rules (`policy.ts`, `WebReadPolicy`).** `checkUrl`: `http:`/`https:` only, at most
-  `WEB_MAX_URL_CHARS` (2,000), no user name or password, a host on the project's block list
-  refused. `addressAllowed(host, address)`: a host on the project's site list (`named`) on any
-  address, any other only on a public one (`isPublicAddress`: a `net.BlockList` of this
-  computer, private, shared, link-local, CGNAT, multicast, documentation, benchmarking and
-  reserved ranges, IPv4 and IPv6, IPv4 inside IPv6 and NAT64 judged as IPv4). Patterns are the
-  token's (`domainCovered`). The lists come per call from `opts.sites(ctx)` (the daemon passes
-  the project's `settings.browser.allowedDomains` and `blockedDomains`).
+- **Rules (`policy.ts`, `WebReadPolicy`, ADR 0107 'sites' amendment).** `checkUrl`:
+  `http:`/`https:` only, at most `WEB_MAX_URL_CHARS` (2,000), no user name or password; a name
+  without a dot or a local name (`localhost`, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`,
+  ... `isLocalName`) refused whatever any list says; then the project's rule
+  (`WebReadRules {mode, only, never}`): a host covered by a never entry refused, and in `only`
+  mode a host no only entry covers refused, each refusal naming the list. `siteCovers` is the
+  reader's own matcher: an entry covers the site and its subdomains, case, `*.`, a leading `www.`
+  and a trailing dot normalised (`hostOfUrl` strips one trailing dot too, C-70); the capability
+  token's `domainCovered` is not used here and is unchanged. `addressAllowed`: only a public
+  address (`isPublicAddress`: a `net.BlockList` of this computer, private, shared, link-local,
+  CGNAT, multicast, documentation, benchmarking and reserved ranges, IPv4 and IPv6; IPv4 inside
+  IPv6, NAT64 and 6to4 `2002::/16` judged as the IPv4 address they carry). No list opens a
+  private address any more. The rule comes per call from `opts.rules(ctx)` (the daemon passes
+  `webAccessOf(project.settings)`, `packages/runtime/src/wiring/web-access.ts`).
+- **The loopback seam.** `opts.loopback` (policy option `loopback`) lets the reader reach this
+  computer's loopback (127.0.0.0/8, `::1`, the name `localhost`), never the local network. Only
+  the composition of the scripted development modes (`fr daemon --provider bench` and
+  `bench-api`) and tests set it; no list, setting or environment variable does.
+- **A proxy.** The reader connects directly. With `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set
+  (`proxySetIn(opts.env ?? process.env)`), a connection that never reached the site (not found,
+  refused, reset, unreachable, timed out) adds `PROXY_SENTENCE` to its words.
 - **The read (`fetch.ts`, `readWebPage`).** A GET over `node:http(s)` with `agent: false` and a
   `lookup` that resolves every address of the host (`opts.resolve`, default `dns.lookup` with
   `all: true`) and refuses the connection when one is not allowed, so the check is on the
@@ -637,8 +651,9 @@ as a built-in unless `FORERUNNER_WEB_FETCH=off`.
   `artifacts` with the address, final address, status, title, type, characters, `truncated`
   (the executor's source log reads them, `runtime.md` "Web research").
 
-Not here: web search (no provider; `cc:WebSearch` stays unmapped on the loop driver), a proxy
-for computers that reach the web only through one (the client connects directly), PDF text.
+Not here: web search (Anthropic's server tool on an API key, Claude Code's WebSearch on a
+subscription: `runtime.md` "Web research"), reading through a proxy (only the sentence above),
+the Windows system proxy setting, robots.txt, PDF text.
 
 ## How it works
 
@@ -650,11 +665,15 @@ for computers that reach the web only through one (the client connects directly)
 as text with its title and the hidden passage apart, text, JSON, gzip and Latin-1 pages, a
 redirect on the same site, the byte and character cuts; this computer and the local network
 refused before any request (each refusal an audit row), a name resolving to a private address
-(also one of several), a private host named on the site list read, the block list winning over
-the site list, every redirect hop checked, other schemes, credentials and long addresses
-refused; error status, non-text page, redirect loop, unknown host, timeout and the run's stop in
-words; the address table. Test host names resolve to the loopback through `opts.resolve`, and
-`opts.isPublic` counts the loopback public only behind them.
+(also one of several), this computer and the local network refused whatever the lists say
+(`localhost`, `127.0.0.1`, IPv4 inside IPv6 and 6to4 on an only list; a dotless name), the
+loopback seam reading the loopback and nothing else, a never entry covering its subdomains with or
+without a trailing dot, only mode reading its sites and subdomains and refusing another with the
+rule named, the never list winning over the only list, every redirect hop checked, other schemes,
+credentials and long addresses refused; error status, non-text page, redirect loop, unknown host
+(with the proxy sentence when a proxy is set), timeout and the run's stop in words; the address
+table with 6to4 and the loopback. Test host names resolve to the loopback through
+`opts.resolve`, and `opts.isPublic` counts the loopback public only behind them.
 
 `github.test.ts` reads commit statuses from the combined-status endpoint, sends the merge's
 `sha` pin to the stub and has `MemoryGitHost` refuse a merge

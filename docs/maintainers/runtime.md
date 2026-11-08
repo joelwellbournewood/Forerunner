@@ -5138,14 +5138,15 @@ order decides among the credentials that meet every hard need; a later group ser
 first cannot now (a 'wait' for a resting first choice holds: its `waitFor` is thrown with every
 group's skipped sources). `capabilitiesOf` is the one place 'web-search' and 'sites' change for
 their kind: the API key reads pages when the page reader is on, searches once `keySearch` is on,
-runs commands (in the sandbox), asks the person; the subscription searches, reads pages once
-`subscriptionPages` is on, runs commands only with host commands, never asks. Its inputs are
+runs commands (in the sandbox), asks the person; the subscription reads pages and searches
+wherever the page reader is registered (`subscriptionPages`, composed as `webFetchOn`, 'sites'),
+runs commands only with host commands, never asks. Its inputs are
 `ChooserFacts` (`RuntimeApp.chooser.facts()`, composed from `webFetchOn`, `sdkHostCommands` and the
 sandbox's readiness; `ComposeOptions.billing.facts` is the test seam). The pick's reason (the
 `billing.pick` audit row) ends with "chooser: only api_key meets webRead (first choice
-subscription); no credential meets every hard need; api_key lacks webSearch" and the like. On a
-subscription an entry that reads pages without web search (the science-evaluator) gets
-`NO_WEB_ACCESS_LINE`, never `SEARCH_ONLY_LINE` (U-078: it has no search there). The person's words
+subscription); no credential meets every hard need; api_key lacks webSearch" and the like. Since
+'sites' both credentials read and search, so research follows the person's order; C-64's
+`SEARCH_ONLY_LINE` and the limitations that went with it are gone. The person's words
 come from the same functions: `RuntimeApp.chooser.forTask({ specialist, projectId, task })`
 (`credentialChoiceFor` over `RouterTaskBilling.savedKinds()`, the saved credentials in the
 person's order, and `hasDependenciesToInstall` of the project's folder) gives `{ kind, line }`, the
@@ -5159,18 +5160,20 @@ with no search on the key and no pages on the subscription runs on the key with 
 sentence; with both on, the order decides; a task that needs the person's answers runs on the
 key; a coder on a project with dependencies stays on the subscription by default with "its tests
 will not run there", and on the key with `code_commands: api_key`; the science-evaluator on a
-subscription alone gets `NO_WEB_ACCESS_LINE`; the table equals `capabilitiesOf`), the C-64 cases
-in `subscription-path.test.ts` (their reason now the chooser's), and the chooser block of
-`apps/ui/test/real-daemon.test.ts`. The intake (the plan writer) is told to plan no web work only when the
-install has neither a subscription nor the page reader (`IntakeDeps.webSpecialists`, composed
-as `hasOauth || webFetchOn`; `NO_WEB_RULE`). Tests: `specialist-handover.test.ts`,
+subscription alone reads pages there through Forerunner's reader; the table equals
+`capabilitiesOf`), the research cases in `subscription-path.test.ts` (research follows the order to
+the subscription), and the chooser block of `apps/ui/test/real-daemon.test.ts`. The intake (the
+plan writer) is told to plan no web work only when the install has no page reader
+(`IntakeDeps.webSpecialists`, composed as `webFetchOn`; `NO_WEB_RULE`), and is told an
+"Only these websites" list (`onlyWebsitesLines` in the planning request: plan no research that
+needs another website). Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
 
 **Web research (`src/session/web-sources.ts`, `src/wiring/web-ports.ts`, ADR 0107).** The
 composition registers `web.webFetchTool` (`packages/capabilities/src/web`, `capabilities.md`)
-among the built-in tools with `webReadSitesResolver(store.project)`: the run's project site
-list and block list (`settings.browser`, the browser's lists) read at every call; `ports.audit`
-takes its refusal rows. The executor wraps the run's `web_fetch` with `withWebSourceLog`: each
+among the built-in tools with `webReadRulesResolver(store.project)`: the run's project's "Web
+pages research may read" (`webAccessOf`, below) read at every call, the loopback seam only with
+`ComposeOptions.webReadLoopback`; `ports.audit` takes its refusal rows. The executor wraps the run's `web_fetch` with `withWebSourceLog`: each
 call's address, final address, status, title and text (redacted, at most `MAX_SOURCE_CHARS`
 8,000) or its error in words go into `TaskExecutionResult.webSources`; the Run row's artifacts
 keep `{ webSources: [{ url, status, title } | { url, error }] }` (`webSourceArtifact`, no text).
@@ -5179,12 +5182,62 @@ The critic port (`loop/critic.ts`) turns them into the review's evidence with
 `MAX_SOURCES` 12 pages), each page not read as an artifact line `web page not read: <address>
 (<words>)`. The session log's step line is "read the web page <host><path>" (`stepLine`).
 Tests: `research-web.test.ts` (the researcher and the science-evaluator keep their tasks on the
-loop driver, the page read through the real tool from a loopback fixture named on the project's
-site list, the refusal in words for a page not on it, the brief's lines, the sources and the
-Run row's artifact, the step line, one tool name), `apps/ui/test/real-daemon.test.ts` ("research
-on an API key reads the web": the daemon with the bench's stand-in, a researcher task writing
-`docs/research.md` from the page, the critic shown the page, a refused page in the log and the
-file).
+loop driver, the page read through the real tool from a loopback fixture through the loopback
+seam, the loopback refused in words without it even with `127.0.0.1` on the old site list, the
+brief's lines, the sources and the Run row's artifact, the step line, one tool name),
+`apps/ui/test/real-daemon.test.ts` ("research on an API key reads the web": the daemon with the
+bench's stand-in, a researcher task writing `docs/research.md` from the page, the critic shown the
+page, a refused page in the log and the file).
+
+**"Web pages research may read" ('sites', the owner's decision of 2026-11-02, ADR 0107 amended
+2026-11-08).** One per-project setting, `project.settings.web_access` `{ mode, only, never }`,
+in `src/wiring/web-access.ts` (pure, the UI imports it): `webAccessOf(settings)` is the rule in
+force (`web_access` plus the blocks still under `browser.blockedDomains`, each cleaned where the
+clean-up takes it and kept as written otherwise), `cleanSite`/`cleanSiteList` the one clean-up
+(lowercase; scheme, path, port, trailing dot, leading `www.` off; punycode; an IP address, a local
+name and, in the only list, a public suffix from `PUBLIC_SUFFIXES` refused with a reason),
+`siteCovers` the matcher (the site and its subdomains), `webAccessNarrows(to, from)` exact over
+sites and subdomains, `moveLegacyBlocks` for the PUT route, and the words: `webAccessWords` (the
+row, the card), `researchReadsLine` (`ProjectCard.researchReads`: "Research reads: any public
+website"), `webAccessBriefLine` (the executor adds it to a run that reads pages when the rule
+limits anything). `settings.set web_access` (`commands.md`) stores the cleaned value; a narrowing
+acts at once, a widening asks a yes. `PUT /projects/:id/settings` refuses `web_access` (403
+`approval_required`, it would skip the yes) and takes a `browser.blockedDomains` it gets into
+`web_access.never` in the same write with a `project.settings` audit row. `GET /settings` has the
+"Web pages research may read" row per project (`settingsView`, with `PROXY_ROW_WORDS` when
+`web.proxySetIn(rt.env)`). `browserSettingsOf().blockedDomains` is the same list for the agent
+browser (each site and `*.site`). Server search: `webSearchListsOf(rule)` sends "only" as
+`allowedDomains`, else the never list as `blockedDomains`, never both; `withheld` (a never entry
+inside an only entry) leaves search out of the run with a log line in compose's `listsFor`.
+
+**The loopback seam.** `ComposeOptions.webReadLoopback` passes `loopback` to the reader; it is set
+only by `cli/main.ts` for `--provider bench` and `bench-api` (`webReadLoopbackFor`, after
+`daemonProvider`/`daemonFetch` loaded testenv/), never for `bench-live`, by an environment
+variable, `config.json` or a setting. Tests: `web-access.test.ts` (the clean-up, the rule from both
+keys, the browser's block list, `domainCovered` unchanged, the server search's lists, narrowing
+and widening, the seam's modes, 127.0.0.1 refused without it whatever the environment, the proxy
+row, a restart and an undo), `apps/ui/test/web-access.test.tsx` (the row, the dialog's clean-up,
+narrowing at once, widening a yes, the Overview line), `apps/ui/test/real-daemon.test.ts` (PUT's
+block list moved and enforced, `settings.set` changing the next page read with the rule named,
+the project card's line, "Only these websites" reaching the planner).
+
+**The subscription's reader ('sites').** On the Agent SDK path `specialistSpecFrom`'s
+`pageReader` maps an entry's `cc:WebFetch` to `web_fetch` (without the reader the entry gets
+neither `cc:WebFetch` nor `cc:WebSearch`). `SdkAgentDriver.run` offers the token's
+`SDK_SERVER_TOOLS` (`web_fetch`) through the SDK's in-process tool server (`createSdkMcpServer`
+with `alwaysLoad`; `SdkDriverDeps.toolServer` / `ComposeOptions.sdkToolServer` is the test seam)
+as `mcp__forerunner__web_fetch`, its handler running the tool in the daemon with the run's
+`ToolExecutionContext`; Claude Code's own WebFetch is off (`disallowedTools: ["WebFetch"]`,
+`CLAUDE_CODE_DISABLE_WEB_FETCH=1`). PreToolUse gives WebSearch the project's rule through
+`updatedInput` (`webSearchInputFor`; `SdkRunRequest.webAccess` from the executor) or refuses it in
+words; PostToolUse replaces outputs through `updatedToolOutput` (WebSearch's `results` become the
+wrapped text, the MCP reader's text with `updatedMCPToolOutput` beside it). The init message's
+`tools` are checked and a missing reader or search is a run `warning`. The executor's SDK branch
+wraps the tools with `withWebSourceLog` and keeps `webSourceArtifact`, so the critic gets the
+pages; its brief carries `SDK_WEB_SEARCH_LINE` and `SEARCH_INFO_LINE`. Tests:
+`sites-subscription.test.ts` (composed, a fake SDK and tool server: the options, the lists, both
+wrappers, the critic's page; `webSearchInputFor`), `sdk-driver.test.ts` (the init check),
+`security-sdk.test.ts` (WebFetch's replacement shape).
 
 **Web search on an API key ('web-search', the owner's decision of 2026-11-02, ADR 0107
 amended 2026-11-08).** Anthropic's web search (`web_search_20250305`, called directly: no
@@ -5447,14 +5500,11 @@ chat opus, raised by nothing; planning, the specialists and the critic the proje
 model (`critic_ceiling`, opus unless set), which Settings shows per project as "Highest model".
 Each specialist also carries `limitation` (ADR 0107): what it cannot do on this install, in
 words, or null. The route passes `RuntimeApp.webAccess()` (a subscription or the web page
-reader); without either, an entry that names a web tool gets `NO_WEB_LIMITATION` ("Cannot read
-the web on this computer"), which the plan card shows beside its tasks and New task beside the
-choice; with `RuntimeApp.webSearchOnly()` (a subscription and no API key whose page reader could
-take research, C-64) an entry that names `cc:WebFetch` and `cc:WebSearch` gets
-`SEARCH_ONLY_LIMITATION` ("Searches the web but opens no page on a Claude subscription", defined
-in `api-types.ts` for the UI, whose New task adds "Save an API key to let it read pages."), and
-one that names `cc:WebFetch` without search (the science-evaluator) `NO_PAGES_LIMITATION` ("Reads
-no web page on a Claude subscription", U-078; before, it was said to search). Each specialist
+reader; since 'sites' the reader alone, on both credentials); without it, an entry that names a
+web tool gets `NO_WEB_LIMITATION` ("Cannot read the web on this computer"), which the plan card
+shows beside its tasks and New task beside the choice. C-64's `SEARCH_ONLY_LIMITATION` and
+`NO_PAGES_LIMITATION` (a subscription without an API key) are gone with `RuntimeApp.webSearchOnly`:
+the subscription reads pages too. Each specialist
 also carries `runsOn` (U-078, `RuntimeApp.chooser.forTask`, for the project `?project=` names):
 where its task runs here and the chooser's sentence, which the plan card and New task show in
 place of the limitation when there is one; the view's `credentials` is Settings' "What each can

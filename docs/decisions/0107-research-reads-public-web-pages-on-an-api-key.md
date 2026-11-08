@@ -215,6 +215,99 @@ step, `pause_turn`, the "not enabled" and domain-list 400s and the search usage
 Known gaps: the task drawer lists the pages read, not the search results never opened (the
 critic is told); the subscription's page reader is 'sites'.
 
+**Amendment (2026-11-08, the owner's decision of 2026-11-02, 'sites'; supersedes point 2's site
+list, points 7 to 9's search-only words and the subscription's half of point 4).** "Q6 fix it: any
+public website by default; per-project 'only these' or 'never these' lists, same on both
+credentials; never this PC or the home network; fix the inverted list, subdomains, silent drops,
+localhost hole; a settings row and a project-page line." With "Q5: Forerunner's page reader on
+both credentials ... information wrapper on the subscription path too", this amendment builds the
+rules, the setting and the subscription's reader.
+
+1. **The rules** (`capabilities/src/web/policy.ts`). Never this computer or the home or office
+   network, whatever any list says: a name without a dot or a local name (`localhost`,
+   `*.local`, `*.internal`, `*.lan`, `*.home.arpa`, ...) is refused before any lookup, and every
+   address that is not public is refused at connect time, IPv4 inside IPv6, NAT64 and 6to4
+   (`2002::/16`) judged as the IPv4 address they carry. Before, a host on the project's site list
+   (`settings.browser.allowedDomains`) was read on any address: `localhost` or `127.0.0.1` there
+   opened this computer, Forerunner's daemon included (the bench walk read
+   `http://localhost:<port>/health`). The site list no longer opens anything.
+2. **The project's rule, "Web pages research may read"** (`project.settings.web_access`,
+   `{ mode, only, never }`, read by `wiring/web-access.ts` `webAccessOf`): any public website
+   (`any`, the default) except the never list, or only the websites on the only list (`only`,
+   never empty), still minus the never list. Each entry covers the site and its subdomains, in
+   the reader's own matcher (`siteCovers`); trailing dots and case are normalised (C-70:
+   `example.com.` was read although `example.com` was blocked). The capability token's
+   `domainCovered`, which the hooks, the agent browser and the token use, is unchanged. A refusal
+   names the rule: `<host> is on this project's "never these websites" list`, `<host> is not on
+   this project's "only these websites" list (<sites>)`.
+3. **One clean-up for every entry** (`cleanSite`, `cleanSiteList`; the daemon's `settings.set`
+   and the UI's dialog use the same module): lowercase; scheme, path, port, a trailing dot and a
+   leading `www.` taken off; an international name in its ASCII form; an IP address, a local name,
+   and in the only list a public suffix (`co.uk`, `github.io`, a curated part of the Public
+   Suffix List) refused with the reason. Nothing is dropped silently: before, a pasted
+   `https://example.com/page` was dropped without a word (`browser-ports.ts`).
+4. **The setting.** `settings.set web_access` stores the cleaned value; a narrowing (judged
+   against the rule in force when the change is made, `webAccessNarrows`) acts at once and a
+   widening asks a yes (new `SettingSpec.narrowingActsAtOnce`). A Settings row (Per project,
+   "Web pages research may read", saying in one sentence that the agent browser's own site list
+   is separate) and one line on the Overview ("Research reads: any public website · Change",
+   `ProjectCard.researchReads`, its own component in `SummaryTab.tsx`) open the same dialog,
+   which shows each entry as it will be saved, each one changed and each one refused before Save.
+5. **One stored block list.** `web_access.never` is it. A write of `browser.blockedDomains`
+   through `PUT /projects/:id/settings` is taken into it in the same write, with an audit row
+   (`project.settings`); until a project's settings are written, the reader and the row read both
+   keys, so every block in force is enforced and shown; `browserSettingsOf`'s `blockedDomains`
+   is the same list (each site and `*.site`) for the agent browser. The PUT refuses `web_access`
+   itself (it would skip the yes). `browser.allowedDomains` stays the agent browser's and the
+   sandbox's network list; it changes nothing the reader does and never becomes "only".
+6. **The server search** (point 2 of the 'web-search' amendment): "only" is sent as
+   `allowed_domains`, otherwise the never list as `blocked_domains`, never both; a never entry
+   inside an only entry cannot be said in one request, so that run gets no search (one log line)
+   and reads pages by address under the whole rule. `WebSearchLists.key` names the rule sent, so
+   a refused-lists mark follows the list.
+7. **The brief and the plan.** A run that reads pages is told the rule when it limits anything
+   and to say in its report what it could not read because of it; the planning request names an
+   only list and asks for no research that needs another website (`onlyWebsitesLines`).
+8. **The subscription's reader.** On the Agent SDK path an entry's `cc:WebFetch` is Forerunner's
+   `web_fetch` (`specialistSpecFrom`'s `pageReader`), offered through the SDK's in-process tool
+   server with `alwaysLoad` (without it the SDK defers the tool behind its tool search, whose own
+   step the hooks refuse); the handler runs the tool in the daemon with the run's context, after
+   the hooks' PreToolUse, and `withWebSourceLog` keeps every page for the critic as on the loop
+   driver. Claude Code's own WebFetch is switched off (`disallowedTools`,
+   `CLAUDE_CODE_DISABLE_WEB_FETCH`). Claude Code's WebSearch gets the rule through PreToolUse's
+   `updatedInput` (`webSearchInputFor`: the never sites added to `blocked_domains` and taken out
+   of its own `allowed_domains`; in only mode the overlap of its list with the rule; a search with
+   nothing left, or one that cannot keep a never site out of an allowed one, refused in words).
+   PostToolUse replaces the output with the data envelope through `updatedToolOutput`, which
+   Claude Code applies to every tool, in each tool's own shape (WebSearch's `results`); before,
+   the hook set `updatedMCPToolOutput`, which Claude Code applies to MCP tools only, so search
+   results reached the model without the "information, not instructions" wrapper. The run says
+   plainly when Claude Code's init message lacks the reader or the search. Without the reader
+   (`FORERUNNER_WEB_FETCH=off`) the subscription gets neither (a search alone sources nothing).
+9. **The chooser.** The subscription's entry of `capabilitiesOf` reads pages and searches
+   wherever the reader is registered (`ChooserFacts.subscriptionPages`), so research follows the
+   person's order where both credentials can search and read (the owner's "your credential order
+   applies again"). C-64's search-only state is gone with its words (`SEARCH_ONLY_LINE`,
+   `SEARCH_ONLY_LIMITATION`, `NO_PAGES_LIMITATION`, `RuntimeApp.webSearchOnly`).
+10. **The loopback seam.** Tests and the bench reach a local page server; no list does that any
+    more. `ComposeOptions.webReadLoopback` opens this computer's loopback (never the local
+    network) and is set only by the scripted development modes (`fr daemon --provider bench` and
+    `bench-api`, `cli/main.ts` `webReadLoopbackFor`) and by tests; never by
+    `--provider bench-live`, an environment variable (`FORERUNNER_BENCH_LIVE_API` included),
+    `config.json` or a setting. A bench-live dry run against a local stand-in is replaced by
+    bench-api.
+11. **A proxy.** The reader connects directly. On a computer with `HTTPS_PROXY`/`HTTP_PROXY` set,
+    a connection that never reached the site says "This computer reaches the internet through a
+    proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search
+    still works.", and the Settings row says it too. Reading through the proxy, and reading the
+    Windows system proxy setting, are left for later.
+
+Not verified live (no subscription token in the cloud): the SDK's tool server with `alwaysLoad`,
+`updatedToolOutput` on WebSearch and the MCP reader, and WebSearch honouring the lists set by the
+hook; the owner's checklist step 6 has what to look for. Known gaps: the drawer lists the pages
+read, not the search results never opened; a built-in file tool's read is still flagged, not
+rewritten.
+
 ## Consequences
 
 - A plan from a brief on an API key may include research; the researcher and the

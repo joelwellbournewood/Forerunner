@@ -266,7 +266,7 @@ describe("the page reader's loopback seam: the scripted bench modes only ('sites
     const rows = (await res.json()) as { key: string; description: string }[];
     const row = rows.find((r) => r.key === "project.web_access");
     expect(row?.description).toContain(
-      "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works",
+      "This computer names a proxy for the internet, which Forerunner's page reader does not use yet: where the internet is reached only through it, pages cannot be read here; web search still works",
     );
     const plain = await compose({});
     const { app: app2, token: token2 } = createDaemonApp(plain.rt);

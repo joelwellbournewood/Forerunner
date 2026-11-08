@@ -474,7 +474,7 @@ export function onlyWebsitesLines(project: Pick<ProjectRow, "settings">): string
 
 /** The planning rule when no specialist reaches the web on this install (U-044, ADR 0107). */
 export const NO_WEB_RULE =
-  "Web access: no specialist on this install can read the web (no Claude subscription, and the web page reader is turned off). Plan no task that needs the web: research works only from the sources the project already holds, and the decision record says what had to be assumed.";
+  "Web access: no specialist on this install can read the web (the web page reader is turned off). Plan no task that needs the web: research works only from the sources the project already holds, and the decision record says what had to be assumed.";
 
 /**
  * What a small plan is (design §3.3: a one-line brief gets one to three tasks and a README, the

@@ -35,14 +35,15 @@ export interface SettingsViewInput {
   pricing: PricingTable;
   /**
    * This computer names a proxy for its web traffic, which the page reader does not use yet
-   * ('sites'): the "Web pages research may read" row says so.
+   * ('sites'): the "Web pages research may read" row says so, as a condition (a computer that
+   * names a proxy may still reach sites directly; a page read that fails says it for certain).
    */
   proxied?: boolean;
 }
 
 /** The page reader on a computer that reaches the internet only through a proxy ('sites'). */
 export const PROXY_ROW_WORDS =
-  "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works";
+  "This computer names a proxy for the internet, which Forerunner's page reader does not use yet: where the internet is reached only through it, pages cannot be read here; web search still works";
 
 /** Whether the project's first repository is one on a git host (not a folder on this PC). */
 function onHostRepository(p: ProjectRow): boolean {

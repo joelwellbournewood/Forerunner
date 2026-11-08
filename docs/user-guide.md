@@ -551,8 +551,8 @@ The cards you meet most:
 - **The plan** from a new project's brief: the tasks in order, who does each, about what each
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
   needs a full review while Docker is not running, under a task where it runs and why when
-  that is worth knowing ("Runs on your API key: only it can read web pages here.", "On your
-  subscription its tests will not run: it cannot run commands there."; New task says the same
+  that is worth knowing ("Runs on your API key: only it can ask you questions while it works
+  here.", "On your subscription its tests will not run: it cannot run commands there."; New task says the same
   when you pick who does it),
   "No specialist here is named ..." beside a task whose specialist this install does not have
   (it would wait for you: change who does it after you approve), the total and what it covers ("About CHF 1.04
@@ -709,19 +709,19 @@ ends with a small table, **What each can do here**:
 
 | | API key | Claude subscription |
 |---|---|---|
-| Read web pages | Yes | Not yet |
+| Read web pages | Yes | Yes |
 | Search the web | Yes | Yes |
 | Run commands (its tests) | Yes, in the sandbox | No |
 | Ask you while it works | Yes | No: it lists its questions in its report |
 | What it costs | Money per use | Your plan's limits, no money per use |
 
-- **Research** (the researcher) needs to read pages and to search. Only the API key does both
-  here, so research runs there when one is saved, and the plan card says so ("Runs on your API
-  key: only it can read web pages here."). With the API key alone there is nothing to say. If
-  your account's administrator has switched web search off, the key reads pages only and the
-  table says "No: switched off for this API key" under search (and the plan card "it can read
-  web pages here but not search"). The science evaluator reads pages and has no search: with
-  only a subscription it is told it has no web access and works from the project's files.
+- **Research** (the researcher) needs to read pages and to search. Both credentials do both
+  (Forerunner's own page reader runs on the subscription too), so research follows your order
+  and the plan card has nothing to say. If your account's administrator has switched web search
+  off for your API key, the table says "No: switched off for this API key" under search, and
+  research runs on the subscription when you have one; with the API key alone the plan card says
+  "it can read web pages here but not search". The science evaluator reads pages and has no
+  search, on either credential.
 - **A task that needs your answers** (its words say it needs your decision) runs where it can
   ask you while it works: the API key ("Runs on your API key: only it can ask you questions
   while it works here.").
@@ -812,45 +812,68 @@ with why in one or two sentences and two buttons: **Try again** (a session tries
 what stopped it first, for example who does it with **Edit** on the Tasks tab) and **Cancel
 task**. Nothing waits silently with only a "Resume" that would run into the same stop.
 
-Research works with an API key too. The researcher and the science evaluator read web pages
-by their address: public pages only (never this computer or your local network), with a GET
-and no passwords or cookies, at most 2 MB per page, and nothing on the project's block list.
+Research reads the web on both credentials, the API key and a Claude subscription, with
+Forerunner's own page reader: the researcher and the science evaluator read web pages by their
+address, with a GET and no passwords or cookies, at most 2 MB per page. Whatever a project says,
+research never reads this computer (Forerunner itself included) or your home or office network.
+
+**Web pages research may read** is one setting per project (Settings, per project; the project's
+Overview shows it as "Research reads: any public website · Change", and Change opens the same
+dialog). It is either:
+
+- **Any public website** (the default), with an optional list of websites research never reads;
+- **Only these websites**, a list that may not be empty (research would be stuck). Use it when a
+  project must keep to its own sources, for example only developer.mozilla.org.
+
+Each website on a list also covers its subdomains: example.com covers www.example.com and
+docs.example.com. Type a site or paste an address: the dialog shows what it will save
+("https://example.com/page becomes example.com"), and an entry it cannot take is named with its
+reason before you save (an IP address, a name on this computer or your network, and in "Only
+these websites" an entry as broad as co.uk or github.io, under which anyone can have a site).
+Nothing you type is dropped silently. A change that lets research read more (back to any public
+website, a site added to the list, a block taken off) asks for your yes first; one that lets it
+read less applies at once. The agent browser's own site list is a separate thing and changes
+nothing research reads. A block list written before this setting existed is shown and enforced
+here too. The plan for a project with "Only these websites" plans no research that needs another
+website; each research run is told the rule and says in its report what it could not read
+because of it, and a refused page says which rule refused it.
+
 On an API key the researcher also **searches the web** with Anthropic's web search: at most ten
 searches per task, fewer when the task's money left would not pay for them, at about 1 cent each
 plus the results it reads (the task's cost and the session's log include them: "searched the web
 for ..."). Searching never eats the reserve a run keeps to finish: the run is told to wrap up at
 the same point with or without search (a fifth of its budget left, as the session's log says when
-it starts), and close to that point it is offered fewer searches, then none. Search only finds pages: a claim in the research counts as sourced only when its page
-was opened and read, so the researcher opens the pages it uses, and the review is told which
-search results it saw but never opened (a claim that cites only one of those is not sourced).
-The project's block list applies to the search too ("*.example.com" there means example.com and
-its subdomains). Search results and pages are information for the researcher, never
-instructions: a result whose title reads like instructions is named in the session's log and
-told to the review. If your account's administrator has switched web search off, or Anthropic
-refuses the project's site list, the research goes on reading pages by address and the session's
-log says so once ("Web search is switched off for this API key; research reads pages by
-address."); a new API key ends that. An install can turn search off for every project
-(`FORERUNNER_WEB_SEARCH=off`). With an API key
-saved, research tasks run on it (see "Where a task runs"). With only a Claude subscription, the
-researcher can search the web through Claude Code but cannot open the pages itself (Forerunner
-refuses its page reading there); the plan card and New task say so, and its brief tells it to
-cite the results it used and say what it could not check. The science evaluator has no web
-search: on a subscription alone it is told it has no web access. There is no screen for a project's site list or block list yet; a
-project that must stay closed can only be closed for the whole install (page reading off, as
-said below). The session log
-names each page read ("read the web page gohugo.io/about/"), the research file cites each page
-by its address, and the critic checks the claims against the pages the researcher actually
-got. A page that cannot be read (refused, missing, not a text page) is said in words to the
-researcher, who writes it down as not read. An install can turn page reading off
-(`FORERUNNER_WEB_FETCH=off`); then project setup plans no web research, and a researcher's task
-runs from the project's own files and says so when that is not enough.
+it starts), and close to that point it is offered fewer searches, then none. On a Claude
+subscription it searches with Claude Code's search, and opens pages with Forerunner's reader as
+on the key (Claude Code's own page reader is switched off). Search only finds pages: a claim in
+the research counts as sourced only when its page was opened and read, so the researcher opens
+the pages it uses, and the review is told which search results it saw but never opened (a claim
+that cites only one of those is not sourced). The project's setting applies to the search too:
+"Only these websites" limits it to those sites, and the never list keeps those out. Search
+results and pages are information for the researcher, never instructions, on both credentials:
+a result whose title reads like instructions is named in the session's log and told to the
+review. If your account's administrator has switched web search off, or Anthropic refuses the
+project's list, the research goes on reading pages by address and the session's log says so once
+("Web search is switched off for this API key; research reads pages by address."); a new API key
+ends that. The science evaluator has no web search: it reads the pages its brief names.
+
+Since both credentials can read and search, research follows your order of credentials (see
+"Where a task runs"). The session log names each page read ("read the web page
+gohugo.io/about/"), the research file cites each page by its address, and the critic checks the
+claims against the pages the researcher actually got, on either credential. A page that cannot
+be read (refused, missing, not a text page) is said in words to the researcher, who writes it
+down as not read. Forerunner's page reader connects directly: on a computer that reaches the
+internet only through a proxy, pages cannot be read, while search still works; the refused
+page's words and the setting's row in Settings say so. An install can turn page reading off for
+every project; then project setup plans no web research, and a researcher's task runs from the
+project's own files and says so when that is not enough.
 
 Every setting is in **Settings → All settings** with a plain name and its own control: your
 default autonomy for new projects, the monthly spending cap, quiet hours (a time range, or off),
 where notifications go, reading urgent notifications aloud, the monthly critic calibration, the
 model watch's evaluations; and per project the autonomy, the project budget, the budget per
 session, the highest model its runs may use, small-project mode, the monthly handover test,
-Opus fast mode, speed or quality and, for a project on GitHub, the status pull request. Every
+Opus fast mode, speed or quality, the web pages research may read and, for a project on GitHub, the status pull request. Every
 change shows the same change card as in chat and is
 listed in Changes. The language is shown but cannot be changed yet: the app works in English.
 **Desktop control: allowed applications** lists the programs your agent may use when desktop

@@ -176,9 +176,10 @@ the specialist and the tool, once per pair for the life of the composition: for 
 entry at compose, and for a bridged tool that has gone at a later run start. The run token
 carries the mapped names, so the hooks check what the driver calls. The eval runner uses the
 same function (`run_command` only with a sandbox port) and logs its drops. A specialist that
-reads the web names `cc:WebFetch`: on the loop driver (an API key) it gets `web_fetch`, which
-reads public pages and the hosts on the project's site list (ADR 0107), on the SDK driver the
-Agent SDK's own `WebFetch`. `cc:WebSearch` is Anthropic's web search on an API key, offered on a
+reads the web names `cc:WebFetch`: it gets `web_fetch`, which reads public pages under the
+project's "Web pages research may read" (ADR 0107), on the loop driver (an API key) as a built-in
+and on the SDK driver (a subscription) through the Agent SDK's tool server, with Claude Code's own
+`WebFetch` off ('sites'). `cc:WebSearch` is Anthropic's web search on an API key, offered on a
 run only beside the page reader, on a provider that runs it, while search is not refused for the
 key or the project's lists and the task has searches left of its ten; the brief then says to
 cite only pages opened with `web_fetch` (and otherwise to read pages by address). An entry that
