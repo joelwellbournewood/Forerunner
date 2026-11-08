@@ -1982,3 +1982,12 @@ const STEPS: Partial<Record<MergeStatus, string[]>> = {
   ],
   failed: ["Open the pull request", "Merge it yourself or leave it open"],
 };
+
+/**
+ * The Details of a left-open card for this outcome (`fileLeftOpenRequest`'s steps). A card whose
+ * words change later (dependent-branches: a conflict notice, then a head that moved) takes the
+ * steps of what it says now.
+ */
+export function leftOpenSteps(status: MergeStatus): string[] {
+  return [...(STEPS[status] ?? [])];
+}

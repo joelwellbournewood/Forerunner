@@ -867,6 +867,11 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
       },
     ]);
     expect(later[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    // Its Details say what to do now, not how to resolve a conflict that is gone.
+    expect(later[0]?.details).toEqual([
+      "Look at the commits pushed after the review",
+      "Merge it yourself or ask for a new review",
+    ]);
     // Nothing more at the next poll, and nothing merged.
     await m.poll();
     expect(await m.cards(b.id)).toHaveLength(1);

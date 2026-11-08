@@ -11,6 +11,7 @@ import type { JsonObject, MergeRecordRow, StateStore, TaskRow } from "@forerunne
 import {
   fileLeftOpenRequest,
   headMovedSentence,
+  leftOpenSteps,
   MERGE_LEFT_OPEN_KEY,
   type MergedEvent,
   REBUILD_CARD_OPTIONS,
@@ -345,6 +346,8 @@ export class DependentBranches {
       await store.humanRequest.patch(open.id, {
         why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
         options,
+        // Its Details follow what it says now (a card that said a head moved, then conflicts).
+        steps: leftOpenSteps("conflict"),
         change_card: {
           ...((open.change_card ?? {}) as JsonObject),
           sentence,
@@ -390,6 +393,7 @@ export class DependentBranches {
     if (!open || card.notice !== "conflict") return;
     await this.deps.store.humanRequest.patch(open.id, {
       why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+      steps: leftOpenSteps("head_moved"),
       change_card: { ...card, sentence, status: "head_moved", notice: null, base: null },
     });
   }

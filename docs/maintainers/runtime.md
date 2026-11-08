@@ -3222,7 +3222,8 @@ reviewed version, so the record says what the merge step would (`last_outcome` `
 `headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
 then merge it yourself or send it back."), the Overview offers no Merge, and the open conflict
 card takes those words (`notice` cleared, so it is titled as the merge step's left-open card; its
-options stay Redo and Leave it open). Before (the review's fix-up), the row offered Merge again and
+options stay Redo and Leave it open; its Details become the head-moved steps, `leftOpenSteps`
+from `loop/merge.ts`, as an open card the notice takes over gets the conflict's). Before (the review's fix-up), the row offered Merge again and
 the person's Merge was refused with a second card. The card's **Redo** goes through `applyRedo`
 (`pr-answers.ts`), which marks the card `redo_from_base`: the next run starts the branch from main
 and the open pull request gets the new work (before, it resumed the conflicting branch and stopped

@@ -10698,6 +10698,10 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
       },
     ]);
     expect(open[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    expect(open[0]?.details).toEqual([
+      "Look at the commits pushed after the review",
+      "Merge it yourself or ask for a new review",
+    ]);
     await rt.githostWatcher?.pollOnce();
     expect(await cards()).toHaveLength(1);
     expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(false);
