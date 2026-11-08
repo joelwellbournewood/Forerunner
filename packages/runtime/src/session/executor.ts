@@ -1465,6 +1465,16 @@ export class LoopTaskExecutor implements TaskExecutor {
     const errorArtifact = result.error
       ? [{ error: failureWords({ ...result.error, message: redact(result.error.message) }) }]
       : [];
+    // The credential stopped the run (U-078, decided below): its usage limit or Anthropic's
+    // refusal. Known before the Run row is written, so the row never reads "Failed" for it (the
+    // leftovers of wave 7: the task's drawer listed such a run as failed while the task went
+    // back to ready).
+    const credentialStop =
+      result.error?.code === USAGE_LIMIT_CODE
+        ? ("limit" as const)
+        : result.error?.code === "provider_auth" && choice.pick
+          ? ("refused" as const)
+          : null;
     try {
       await store.run.patch(run.id, {
         tokens_in: result.usage.input_tokens,
@@ -1477,7 +1487,15 @@ export class LoopTaskExecutor implements TaskExecutor {
         duration_ms: wholeMs(result.durationMs),
         // A graceful pause is "paused" (written here, not the driver's "completed"); a hard stop
         // stays "budget_exceeded". The estimates' learner skips both (a pause is a lower bound).
-        outcome: handoff?.stoppedBy === "wrap_up" ? "paused" : result.outcome,
+        // A credential's stop is `usage_limit` or `credential_refused`, never the driver's error.
+        outcome:
+          handoff?.stoppedBy === "wrap_up"
+            ? "paused"
+            : credentialStop === "limit"
+              ? "usage_limit"
+              : credentialStop === "refused"
+                ? "credential_refused"
+                : result.outcome,
         timed_out: result.outcome === "timeout",
         tokens_before_compression: result.context?.tokensBefore ?? 0,
         tokens_after_compression: result.context?.tokensAfter ?? 0,
@@ -1504,12 +1522,6 @@ export class LoopTaskExecutor implements TaskExecutor {
     // the task goes back to ready without counting a try, no critic reviews it, and it is never
     // tried again at once as a passing error. What comes next is said as it is: the credential
     // that takes over now, or the wait and that it starts by itself.
-    const credentialStop =
-      result.error?.code === USAGE_LIMIT_CODE
-        ? ("limit" as const)
-        : result.error?.code === "provider_auth" && choice.pick
-          ? ("refused" as const)
-          : null;
     if (credentialStop && result.error) {
       const source = choice.pick?.source;
       const failedOn = result.error;

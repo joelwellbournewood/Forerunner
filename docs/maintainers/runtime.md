@@ -510,7 +510,10 @@ audit row; one Inbox card per source, `CREDENTIAL_REFUSED_KEY` "credential:refus
 planning and reviews and makes the call once more on the next source. `VaultLedgerProbe`
 reports `refused` while the vault holds the refused credential (`refusedSince`), so the router
 skips it (`refused`). (2) Both a usage limit and a refusal return outcome `usage_limit` with
-`stoppedRunSentence` (what is really scheduled) and, when no credential may take the task now
+`stoppedRunSentence` (what is really scheduled; the Run row's outcome is `usage_limit` or
+`credential_refused`, decided before the row is written, so the task's drawer reads "Stopped at
+the usage limit" or "Stopped: Anthropic refused the credential", never "Failed": the leftovers
+of wave 7, `credential-wait-session.test.ts`) and, when no credential may take the task now
 (`nextCredential`: the same pick, which only reads the sources), `credentialWait`; the runner
 releases the claim (no try counted, never a passing error), and either lets the task wait
 (reason `CREDENTIAL_WAIT_REASON`, `notAgain`; the session goes on with the rest of its queue,

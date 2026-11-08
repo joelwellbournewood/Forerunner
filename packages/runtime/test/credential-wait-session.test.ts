@@ -42,7 +42,10 @@ function world(clock: SimulatedClock) {
   );
   let reviewLimitMs: number | null = null;
   let limitedUntil: number | null = null;
+  /** Every call from now on: Anthropic refuses the key. */
+  let refused = false;
   const answerFor = (_key: string, nowMs: number): KeyAnswer => {
+    if (refused) return { kind: "refused" };
     if (limitedUntil === null || nowMs >= limitedUntil) return { kind: "ok" };
     // The API names the minute access comes back.
     const reset = new Date(Math.ceil(limitedUntil / 60_000) * 60_000).toISOString();
@@ -95,6 +98,13 @@ function world(clock: SimulatedClock) {
     reviewCalls,
     limitReviews: (ms: number) => {
       reviewLimitMs = ms;
+    },
+    /** Every call meets the key's usage limit for `ms` from now. */
+    limitAll: (ms: number) => {
+      limitedUntil = clock.now() + ms;
+    },
+    refuseAll: () => {
+      refused = true;
     },
   };
 }
@@ -359,5 +369,57 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
     expect((await second.rt.store.task.mustGet(task.id)).attempt).toBe(0);
     const sessions = await second.rt.store.session.forProject(project.id);
     expect(sessions.map((s) => s.trigger).sort()).toEqual(["budget_reset", "manual"]);
+  }, 120_000);
+});
+
+/**
+ * R-failedrun (the leftovers of wave 7): the task's drawer listed a run that a usage limit or a
+ * refused key stopped as "Failed", although the task went back to ready without a try: the
+ * executor wrote the driver's `error` to the Run row before it knew the credential stopped it.
+ */
+describe("a run a credential stopped is never 'Failed' in the task's runs (U-078)", () => {
+  it("a usage limit reads 'Stopped at the usage limit'; a refused key 'Stopped: Anthropic refused the credential'", async () => {
+    const clock = new SimulatedClock("2026-11-03T14:00:00Z");
+    const w = world(clock);
+    await w.vault.set(SECRET_NAMES.anthropic, KEY);
+    const { rt, req } = await w.start();
+    const project = await rt.store.project.insert({
+      name: "Notes",
+      goal: "Notes",
+      autonomy_level: 2,
+    });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write note A",
+      outcome: "Write note A is written",
+      acceptance_criteria: ["it is written"],
+      risk_tier: 0,
+      status: "ready",
+      priority: 5,
+      est_cost_usd_micro: 50_000,
+      reason: "seed",
+    });
+    type Detail = { task: { status: string }; runs: { kind: string; outcome: string }[] };
+    // The key's usage limit stops the run.
+    w.limitAll(100 * 60_000);
+    await run(rt, project.id);
+    const a = await json<Detail>(req(`/tasks/${task.id}`));
+    expect(a.task.status).toBe("ready");
+    expect(a.runs.filter((r) => r.kind === "work").map((r) => r.outcome)).toEqual([
+      "Stopped at the usage limit",
+    ]);
+    // After the reset Anthropic refuses the key: the next run stops on the refusal.
+    clock.set(Date.parse("2026-11-03T15:41:00Z"));
+    w.refuseAll();
+    await run(rt, project.id);
+    const b = await json<Detail>(req(`/tasks/${task.id}`));
+    expect(b.task.status).toBe("ready");
+    expect(
+      b.runs
+        .filter((r) => r.kind === "work")
+        .map((r) => r.outcome)
+        .sort(),
+    ).toEqual(["Stopped at the usage limit", "Stopped: Anthropic refused the credential"]);
+    expect(b.runs.map((r) => r.outcome)).not.toContain("Failed");
   }, 120_000);
 });
