@@ -34,93 +34,85 @@ afterEach(async () => {
   for (const r of roots.splice(0)) await rm(r, { recursive: true, force: true });
 });
 
-describe("this computer's copy follows a merge the app makes (merged-copy)", {
-  timeout: 180_000,
-}, () => {
-  it("a reviewed PR merged by the session: Files lists its file at once and says when the copy was updated; after a restart it still does, with Local only", async () => {
-    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
-    const home = mkdtempSync(join(tmpdir(), "fr-merged-copy-"));
-    roots.push(home);
-    const host = await FakeGitHost.start({ rootDir: join(home, "host"), clock });
-    hosts.push(host);
-    host.createUser({ login: "alice", name: "Alice", email: identity.email });
-    await host.createRepo({
-      owner: "alice",
-      name: "app",
-      private: true,
-      defaultBranch: "main",
-      initialFiles: { "README.md": "# app\n" },
-    });
-    const ghToken = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
-    const github = new GitHubHost({ token: ghToken, baseUrl: host.baseUrl, clock });
-    const env = { FORERUNNER_HOME: home, FORERUNNER_MERGE_CHECKS_WAIT_MS: "0" };
-    const dirs = appDirs({ env });
-    const vault = new MemoryVault();
-    await vault.set(SECRET_NAMES.github, ghToken);
-    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
-    const compose = () =>
-      composeRuntime({
-        env,
-        dirs,
-        config: {
-          version: 1,
-          profile: "default",
-          timezone: "UTC",
-          githubApiBase: host.baseUrl,
-          anthropicApiBase: "http://an.test",
-          repos: [],
-          credentials: { github: false, anthropic: false, anthropicSubscription: false },
-          stateUrl,
-        },
-        clock,
+/** A composed daemon's home with a fake GitHub that has `alice/app` (main: README.md). */
+async function setup() {
+  const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-merged-copy-"));
+  roots.push(home);
+  const host = await FakeGitHost.start({ rootDir: join(home, "host"), clock });
+  hosts.push(host);
+  host.createUser({ login: "alice", name: "Alice", email: identity.email });
+  await host.createRepo({
+    owner: "alice",
+    name: "app",
+    private: true,
+    defaultBranch: "main",
+    initialFiles: { "README.md": "# app\n" },
+  });
+  const ghToken = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+  const github = new GitHubHost({ token: ghToken, baseUrl: host.baseUrl, clock });
+  const env = { FORERUNNER_HOME: home, FORERUNNER_MERGE_CHECKS_WAIT_MS: "0" };
+  const dirs = appDirs({ env });
+  const vault = new MemoryVault();
+  await vault.set(SECRET_NAMES.github, ghToken);
+  const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+  /** The daemon composed on this home (again after a close: a restart). */
+  const compose = async (): Promise<RuntimeApp> => {
+    const rt = await composeRuntime({
+      env,
+      dirs,
+      config: {
+        version: 1,
+        profile: "default",
+        timezone: "UTC",
+        githubApiBase: host.baseUrl,
+        anthropicApiBase: "http://an.test",
+        repos: [],
+        credentials: { github: false, anthropic: false, anthropicSubscription: false },
         stateUrl,
-        vault,
-        provider: new FakeProvider({ replies: [], clock, latency: "none" }),
-        registryDir: join(process.cwd(), "evals", "registry"),
-        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
-        appVersion: "0.1.0-test",
-        startServices: false,
-        recoverSessions: false,
-      });
-    const files = async (rt: RuntimeApp, projectId: string): Promise<ProjectFilesView> => {
-      const { app, token } = createDaemonApp(rt);
-      const res = await app.request(`/projects/${projectId}/files`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
-      expect(res.status).toBe(200);
-      return (await res.json()) as ProjectFilesView;
-    };
-
-    const rt = await compose();
+      },
+      clock,
+      stateUrl,
+      vault,
+      provider: new FakeProvider({ replies: [], clock, latency: "none" }),
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      recoverSessions: false,
+    });
     apps.push(rt);
-    const project = await rt.store.project.insert({
+    return rt;
+  };
+  /** `GET /projects/:id/files`, as the Files tab reads it. */
+  const files = async (rt: RuntimeApp, projectId: string): Promise<ProjectFilesView> => {
+    const { app, token } = createDaemonApp(rt);
+    const res = await app.request(`/projects/${projectId}/files`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as ProjectFilesView;
+  };
+  /** A repository project on `alice/app` at the autonomy level given. */
+  const projectAt = (rt: RuntimeApp, autonomy: number) =>
+    rt.store.project.insert({
       name: "App",
       goal: "Ship the app",
       repos: [FULL],
       stage: "build",
       status: "active",
       budget_usd_micro: 10_000_000,
-      autonomy_level: 3,
+      autonomy_level: autonomy,
       summary_cache: {},
       data_assets: [],
       settings: { members: [rt.agent.id] },
       small_project_mode: false,
       active: true,
     });
-    // The copy as the scaffold or an earlier refresh left it: main with the README only.
-    await rt.docs.refreshCopy(project);
-    const before = await files(rt, project.id);
-    expect(before.entries.map((e) => e.path)).toEqual(["Local only", "README.md"]);
-    const firstUpdate = before.copy?.updatedAt;
-    expect(firstUpdate).toBe("2026-11-03T09:00:00.000Z");
-    expect(before.copy?.localOnly).toEqual({
-      folder: join(rt.docs.copyDir(project.id), "Local only"),
-      line: "Never uploaded. Agents can read and change it.",
-    });
-
-    // A task accepted by the critic, its PR open with its reviewed commit in its worktree.
+  /** A task accepted by the critic, its PR open with its reviewed commit in its worktree. */
+  const acceptedTask = async (rt: RuntimeApp, projectId: string) => {
     const task = await rt.store.task.insert({
-      project_id: project.id,
+      project_id: projectId,
       title: "Add feature",
       outcome: "feature.ts exports the feature",
       acceptance_criteria: ["works"],
@@ -149,6 +141,30 @@ describe("this computer's copy follows a merge the app makes (merged-copy)", {
       base: "main",
     });
     await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch: "fr/feature" });
+    return { task, pr, head: await git.headSha() };
+  };
+  return { clock, github, compose, files, projectAt, acceptedTask };
+}
+
+describe("this computer's copy follows a merge the app makes (merged-copy)", {
+  timeout: 180_000,
+}, () => {
+  it("a reviewed PR merged by the session: Files lists its file at once and says when the copy was updated; after a restart it still does, with Local only", async () => {
+    const { clock, github, compose, files, projectAt, acceptedTask } = await setup();
+    const rt = await compose();
+    const project = await projectAt(rt, 3);
+    // The copy as the scaffold or an earlier refresh left it: main with the README only.
+    await rt.docs.refreshCopy(project);
+    const before = await files(rt, project.id);
+    expect(before.entries.map((e) => e.path)).toEqual(["Local only", "README.md"]);
+    const firstUpdate = before.copy?.updatedAt;
+    expect(firstUpdate).toBe("2026-11-03T09:00:00.000Z");
+    expect(before.copy?.localOnly).toEqual({
+      folder: join(rt.docs.copyDir(project.id), "Local only"),
+      line: "Never uploaded. Agents can read and change it.",
+    });
+
+    const { task, pr } = await acceptedTask(rt, project.id);
     clock.advance(5 * 60_000);
     const grant = await rt.sessionGrant(project.id);
     const sessionToken = rt.tokens.issue({
@@ -194,7 +210,6 @@ describe("this computer's copy follows a merge the app makes (merged-copy)", {
     await rt.close();
     apps.splice(apps.indexOf(rt), 1);
     const rt2 = await compose();
-    apps.push(rt2);
     const again = await files(rt2, project.id);
     expect(again.entries.map((e) => e.path)).toEqual([
       "feature.ts",
@@ -206,5 +221,40 @@ describe("this computer's copy follows a merge the app makes (merged-copy)", {
     expect(rt2.docs.localOnlyFolder(project)).toBe(
       join(rt2.docs.copyDir(project.id), "Local only"),
     );
+  });
+
+  it("the person's Merge (the gated entry Merge in the app takes, at autonomy 0): Files lists the merged file at once, and the person's Local only file stays", async () => {
+    const { clock, github, compose, files, projectAt, acceptedTask } = await setup();
+    const rt = await compose();
+    // Autonomy 0: nothing merges unattended; only the person's click does.
+    const project = await projectAt(rt, 0);
+    await rt.docs.refreshCopy(project);
+    writeFileSync(join(rt.docs.copyDir(project.id), "Local only", "notes.txt"), "mine\n");
+    const { task, pr, head } = await acceptedTask(rt, project.id);
+    clock.advance(7 * 60_000);
+    const record = await rt.store.mergeRecord.pin({
+      task_id: task.id,
+      project_id: project.id,
+      agent_id: rt.agent.id,
+      pr_number: pr.number,
+      pr_url: pr.htmlUrl,
+      reviewed_head_sha: head,
+      author_agent: rt.agent.id,
+    });
+    const outcome = await rt.merge.mergeRecorded(record, {
+      kind: "person",
+      humanId: rt.human.id,
+    });
+    expect(outcome).toMatchObject({ status: "merged" });
+    expect((await github.getPullRequest(REPO, pr.number)).merged).toBe(true);
+    // No session ended and no watcher poll ran: the merge itself brought the copy to main.
+    const after = await files(rt, project.id);
+    expect(after.entries.map((e) => e.path)).toEqual([
+      "feature.ts",
+      "Local only",
+      "Local only/notes.txt",
+      "README.md",
+    ]);
+    expect(after.copy?.updatedAt).toBe("2026-11-03T09:07:00.000Z");
   });
 });
