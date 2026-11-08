@@ -1929,7 +1929,8 @@ returns `paused` too (ADR 0112, below; before, `needs_human` at the task's own c
 `budget_exceeded` at the session's). `taskView(t, chf, specialistLimit)` carries the cap to the Tasks tab
 (`cap`, `capSource`: `task_budget`, `specialist_limit`, or `unknown` when neither a budget nor
 a runnable specialist is known), which shows "of CHF x budget" or "no budget; each run stops
-at CHF y (coder limit)". Tests: `task-budget-cap.test.ts` (past the estimate within the
+at CHF y (the coder's limit)" (polish-words, later #74: the specialist as the session log names
+it, `specialistName`; none for Agent's choice). Tests: `task-budget-cap.test.ts` (past the estimate within the
 budget, no budget, the budget reached mid-run, a spent budget, the session's own stop),
 `real-daemon.test.ts` and `tasks.test.tsx` in `apps/ui`.
 
@@ -2889,7 +2890,11 @@ waits on you" while 4 tasks waited on it).
 - **The Tasks tab** reads which card holds a task (`cardKindOf`, `TaskDisplay.blocker.cardKind`):
   a task waiting on its retry card is "Needs your decision: tried 4 times" and offers Answer, Try
   again (now offered from `needs_human` too; it withdraws the card) and Cancel, never Go ahead
-  without.
+  without. A task waiting on its sign-off (`critic:signoff` with `reason: "verdict"`, a deploy or
+  a migration the critic accepted) is its own kind, `signoff` (C-21, L-9, polish-words): "Needs
+  your sign-off" with "Its card is in the Inbox: accept the work, send it back, or cancel it.",
+  offering Answer and Cancel; before, it read as a retry card and its Try again withdrew the
+  sign-off and ran the accepted work again.
 
 Tests: `apps/ui/test/real-daemon.test.ts` ("a task that fails gets one card, and answering it
 resumes work": one card after the in-session retries, its title, the specialist's words, what
@@ -6012,7 +6017,11 @@ each accepting review; per task, per specialist and per model). `runs` counts ru
 ledger's entries (one per model call): a task's work runs, a model's runs; the planning run is
 "planning" and, like the critic's reviews, has no accepted count. Without a period asked for,
 `from` and `to` are the first and the last entry's time, which the Costs tab says in words
-("1 Nov to 3 Nov"). Before, tasks were listed by id, every specialist as "(none)", Accepted "—"
+("1 Nov to 3 Nov"). A specialist reads as the session log names it ("the writer", `saidByName`,
+not "writer-marketing"), and a model's `runs` are its work runs when it did any, so its accepted
+count compares like with like (later #91, polish-words: "Accepted 3 / 16" counted the critic's
+reviews and the planning call; a model only the critic used keeps its runs and no accepted
+figure). Before, tasks were listed by id, every specialist as "(none)", Accepted "—"
 and the period "— → —".
 
 ### Session counts (U-072)
@@ -6045,15 +6054,21 @@ card for the phone and the state service). `projectCard` adds, computed when rea
 
 - `statusLine {kind, text, action}` from the pure `projectStatusLine`, first match wins: the
   plan waiting for approval or an open card ("Waiting for you: approve the plan", 'Waiting for
-  you: "X"', "Waiting for you: 2 questions"; the Docker card asks nothing, `holdsTask`); a
+  you: "X"', "Waiting for you: 2 questions", or the kinds of the cards, "Waiting for you: 1
+  sign-off and 1 paused task" (L-13a), with Answer opening the oldest card,
+  `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
   waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
   the Start dialog; only when that dialog would start: without Claude "Ready: 3 tasks. Claude is
   not connected." with Connect Claude, and under Stop all "Ready: 3 tasks. Sessions are
   stopped." with no button, the header's stopped bar having Allow sessions again; the card's
-  facts `hasModel` and `stopped`, later #62, #49); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
-  files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
+  facts `hasModel` and `stopped`, later #62, #49); the plan being drafted, failed or rejected; "Done: all 7 tasks."
+  with Open your files (the folder's path, with the project's id in it, stays in `folder`, which
+  the Overview shows: later #53, #54), or for a repository project "Done: all 6 tasks. 2 pull
+  requests wait for you to merge." with Open Overview (the rows reading `WAITING_FOR_YOUR_MERGE`,
+  C-58) and "; 2 taken out" when tasks were taken out (the owner question's recommendation, built
+  meanwhile); then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
 - A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
   §5.1; review of fix/progress-navigation: Home showed the intake's whole error, about 170
@@ -6090,7 +6105,9 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   not connected" bar reads it.
 - `SessionView.statusText` of a session that completed with tasks waiting for the person
   (`handoff.blocked`: needs an answer or failed) reads "Ended: 1 task needs you", not "Done"
-  (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`;
+  (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`; the routes count only the
+  tasks that still wait now, `stillBlocked` in `views.ts`, so a page read after the person
+  answered the card or the task moved on no longer says it, L-21, polish-words;
   `test/session-status-words.test.ts`).
 
 ### The project's files (design §3.10; `daemon/docs-routes.ts`)

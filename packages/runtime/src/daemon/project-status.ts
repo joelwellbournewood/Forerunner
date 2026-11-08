@@ -1,19 +1,23 @@
 import type { HumanRequestRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import type { ProjectCard, TaskDisplay } from "./api-types.ts";
-import { holdsTask, shortTitle } from "./task-words.ts";
+import { cardKindOf, holdsTask, shortTitle, WAITING_FOR_YOUR_MERGE } from "./task-words.ts";
 
 /**
  * A project's state in one sentence (design §2, "Project status"), the line the project header,
  * its Overview and its row on Home show instead of the stage, health, status and autonomy
  * badges. Computed when shown, from the tasks as they are now (§5 rule 4), first match wins:
  *
- * 1. "Waiting for you: approve the plan" / "Waiting for you: 2 questions"
+ * 1. "Waiting for you: approve the plan" / "Waiting for you: 2 questions" / "Waiting for you:
+ *    1 sign-off and 1 paused task" (the cards' kinds, linking the oldest card)
  * 2. "Working on "Style the page" (3 of 7 done)"
  * 3. "Stuck: "Style the page" failed; 4 tasks wait on it" / "Waiting for Docker: 1 task"
  * 4. "Ready to continue: 3 tasks ready"
  * 5. "Drafting the plan…" / "Planning failed: <short reason>" [Try again] / "You rejected the
  *    plan. Nothing was written." [Draft a new plan]; without Claude the button is Connect Claude
- * 6. "Done: all 7 tasks. Your files: <path>"
+ * 6. "Done: all 7 tasks." [Open your files]; a repository project: "Done: all 6 tasks. 6 pull
+ *    requests wait for you to merge." [Open Overview]; "; 2 taken out" when some were taken out
+ *    (later #53/#54, C-58: the folder's path, with the project's id in it, was in the sentence;
+ *    the Overview and Files show it)
  *
  * The pure part (`projectStatusLine`) takes what was read; `projectFacts` reads it.
  */
@@ -75,6 +79,38 @@ export interface ProjectStatusInput {
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What a card asks of the person, in a word the status line counts (L-13a). */
+function cardWord(card: { change_card?: unknown }): string {
+  const key = (card.change_card as { key?: unknown } | null | undefined)?.key;
+  switch (cardKindOf(card)) {
+    case "signoff":
+      return "sign-off";
+    case "budget":
+      return "paused task";
+    case "questions":
+      return typeof key === "string" && key.startsWith("merge:") ? "pull request" : "question";
+    default:
+      return "decision";
+  }
+}
+
+/**
+ * "2 questions", "1 sign-off and 1 paused task", "2 decisions, 1 question and 1 more" (L-13a:
+ * before, every card was counted as a question, a sign-off and a budget card too); the
+ * kinds in the order of their oldest card, at most two named.
+ */
+function cardKindsWords(cards: readonly { change_card?: unknown }[]): string {
+  const counts = new Map<string, number>();
+  for (const c of cards) {
+    const w = cardWord(c);
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  const parts = [...counts.entries()].map(([w, n]) => plural(n, w));
+  if (parts.length <= 2) return parts.join(" and ");
+  const rest = [...counts.values()].slice(2).reduce((a, b) => a + b, 0);
+  return `${parts.slice(0, 2).join(", ")} and ${rest} more`;
+}
 
 /** Status sentence length (design §5 rule 1). */
 const STATUS_MAX = 80;
@@ -173,12 +209,18 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
   if (asking.length > 0) {
     const only = asking.length === 1 ? asking[0] : undefined;
     const task = only?.task_id ? byId.get(only.task_id) : undefined;
+    // later #55: Answer opens the oldest card, as Home's Needs you rows do (`/inbox#card-<id>`).
+    const oldest = asking[0];
     return {
       kind: "waiting",
       text: task
         ? `Waiting for you: "${shortTitle(task.title)}"`
-        : `Waiting for you: ${plural(asking.length, "question")}`,
-      action: { kind: "link", label: "Answer", to: "/inbox" },
+        : `Waiting for you: ${cardKindsWords(asking)}`,
+      action: {
+        kind: "link",
+        label: "Answer",
+        to: oldest ? `/inbox#card-${encodeURIComponent(oldest.id)}` : "/inbox",
+      },
     };
   }
 
@@ -289,15 +331,35 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
           : { kind: "retry", label: "Draft a new plan", to: null },
     };
 
-  // 6. Done.
-  if (total > 0 && done === total)
+  // 6. Done. The folder's path stays on the Overview and in Files (later #53: with the project's
+  // id in it, it pushed Start session onto a second line); a repository project says what
+  // waits for the person's Merge (C-58), and how many were taken out (the owner question's
+  // recommendation (b), built meanwhile: taken-out tasks still count as done).
+  if (total > 0 && done === total) {
+    const labels = input.tasks.map((t) => input.displays.get(t.id)?.label ?? "");
+    const takenOut = labels.filter((l) => /^Taken out in #\d+/.test(l)).length;
+    const toMerge = labels.filter((l) => l === WAITING_FOR_YOUR_MERGE).length;
+    const merges = toMerge
+      ? ` ${plural(toMerge, "pull request waits", "pull requests wait")} for you to merge.`
+      : "";
     return {
       kind: "done",
-      text: `Done: all ${plural(total, "task")}.${input.folder ? ` Your files: ${input.folder}` : ""}`,
-      action: input.folder
-        ? { kind: "link", label: "Open Files", to: `/projects/${input.projectId}/files` }
-        : null,
+      text: `Done: all ${plural(total, "task")}${takenOut ? `; ${takenOut} taken out` : ""}.${merges}`,
+      action: toMerge
+        ? {
+            kind: "link",
+            label: "Open Overview",
+            to: `/projects/${encodeURIComponent(input.projectId)}`,
+          }
+        : input.folder
+          ? {
+              kind: "link",
+              label: "Open your files",
+              to: `/projects/${encodeURIComponent(input.projectId)}/files`,
+            }
+          : null,
     };
+  }
 
   if (total === 0)
     return {

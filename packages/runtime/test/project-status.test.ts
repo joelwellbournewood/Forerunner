@@ -120,15 +120,16 @@ describe("project status sentence (design §2)", () => {
         change_card: null,
         author_agent: agent,
       });
-    await ask(a);
+    const first = await ask(a);
     expect((await card()).statusLine?.text).toBe(
       'Waiting for you: "Decide where the page is published"',
     );
     await ask(null);
+    // Answer opens the oldest card, as Home's Needs you rows do (polish-words, later #55).
     expect((await card()).statusLine).toMatchObject({
       kind: "waiting",
       text: "Waiting for you: 2 questions",
-      action: { label: "Answer", to: "/inbox" },
+      action: { label: "Answer", to: `/inbox#card-${first.id}` },
     });
   });
 
@@ -388,15 +389,18 @@ describe("project status sentence (design §2)", () => {
       expect(l.text.length).toBeLessThanOrEqual(80);
   });
 
-  it("6. every task done: 'Done: all 3 tasks. Your files: <path>' (cancelled ones not counted)", async () => {
+  it("6. every task done: 'Done: all 3 tasks.' with Open your files; the path stays on the card (cancelled ones not counted)", async () => {
     await task("Create index.html", "done");
     await task("Style the page", "done");
     await task("Write the README", "done");
     await task("An idea dropped", "cancelled");
     const c = await card();
+    // polish-words (later #53, #54): the path, with the project's id in it, is not in the
+    // sentence; the Overview's Your files shows it (`folder`).
     expect(c.statusLine).toMatchObject({
       kind: "done",
-      text: "Done: all 3 tasks. Your files: /work/quote",
+      text: "Done: all 3 tasks.",
+      action: { kind: "link", label: "Open your files" },
     });
     expect(c.progress).toEqual({ done: 3, total: 3 });
     expect(c.folder).toBe("/work/quote");

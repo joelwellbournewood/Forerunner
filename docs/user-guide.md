@@ -161,7 +161,9 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
   and the row offers **Answer**, **Try again** and **Cancel**), **Paused at its budget** (or
   at the limit that stopped it: **Paused at this month's cap**, **Paused at the project's
-  budget**) and **Needs your decision: it could not run** (its card in the Inbox says
+  budget**), **Needs your sign-off** (a deploy or a migration the critic accepted waits for
+  your OK: its card offers **Accept the work**, **Send it back** and **Cancel task**; the row
+  offers **Answer** and **Cancel**) and **Needs your decision: it could not run** (its card in the Inbox says
   why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Needs your
   decision** on a task whose review could not finish or found something still open (its card
   offers **Try again**, **Mark done anyway** and **Cancel task**; the row offers **Answer** and
@@ -812,7 +814,8 @@ New task says the same sentence when you pick who does it.
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
-run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
+run stops at CHF 2.40 (the coder's limit)"; a task you left to the agent's choice names no
+specialist there); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
 forecast. It starts from what that kind of work cost on the real model (a page or a coder
 task a few centimes, a test task a little more, a research task that reads web pages about

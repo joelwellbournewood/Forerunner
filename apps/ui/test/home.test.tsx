@@ -13,7 +13,8 @@ describe("Home", () => {
     // Two open cards wait on the person: that comes first (design §2, §5 rule 2).
     expect(atlas.getByTestId("project-status")).toHaveTextContent("Waiting for you: 2 questions");
     expect(atlas.getByTestId("project-status-action")).toHaveTextContent("Answer");
-    expect(atlas.getByTestId("project-status-action")).toHaveAttribute("href", "/inbox");
+    // polish-words (later #55): Answer opens the oldest card, as the Needs you rows do.
+    expect(atlas.getByTestId("project-status-action")).toHaveAttribute("href", "/inbox#card-req_2");
     expect(atlas.getByTestId("progress")).toHaveTextContent("1 of 3 done");
     const beacon = within(cards[1] as HTMLElement);
     expect(beacon.getByTestId("project-status")).toHaveTextContent(

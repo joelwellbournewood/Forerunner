@@ -194,6 +194,7 @@ import {
   reviewsView,
   runView,
   sessionView,
+  stillBlocked,
   taskView,
 } from "./views.ts";
 
@@ -1431,7 +1432,15 @@ export function createDaemonApp(
     for (const s of rows.filter((r) => r.summary !== "conversation")) {
       if (!names.has(s.agent_id))
         names.set(s.agent_id, (await rt.store.agent.get(s.agent_id))?.name ?? s.agent_id);
-      out.push(sessionView(s, names.get(s.agent_id) ?? s.agent_id, chf()));
+      out.push(
+        sessionView(
+          s,
+          names.get(s.agent_id) ?? s.agent_id,
+          chf(),
+          null,
+          await stillBlocked(rt.store, s.handoff),
+        ),
+      );
     }
     return c.json(out);
   });
@@ -1540,7 +1549,8 @@ export function createDaemonApp(
             specialist: String((last.payload as { specialist: string }).specialist),
           }
         : null;
-    return sessionView(s, name, chf(), current);
+    // L-21: "Ended: 1 task needs you" only while that task still waits on the person.
+    return sessionView(s, name, chf(), current, await stillBlocked(rt.store, s.handoff));
   };
 
   app.get("/sessions/:id/events", async (c) => {

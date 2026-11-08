@@ -52,6 +52,20 @@ export async function loadTaskDisplayContext(
   }
   const runs = new Map<string, RunRow>();
   const agentNames = new Map<string, string>();
+  // P7-20: a ready task whose last work run paused at a budget (Continue, or a Reopen after a
+  // cancel) holds that work in progress: its Cancel sets it aside, and the dialog says so.
+  const heldWork = new Set<string>();
+  for (const t of projectTasks) {
+    if (t.status !== "ready") continue;
+    const latest = (
+      await store.run.list({ task_id: t.id } as never, {
+        orderBy: [{ column: "created_at", direction: "desc" }],
+        limit: 5,
+      })
+    ).find((r) => r.specialist !== "critic");
+    if (latest && (latest.outcome === "paused" || latest.outcome === "budget_exceeded"))
+      heldWork.add(t.id);
+  }
   for (const t of projectTasks) {
     if (t.status !== "claimed" && t.status !== "in_progress") continue;
     const latest = await store.run.list({ task_id: t.id } as never, {
@@ -90,6 +104,7 @@ export async function loadTaskDisplayContext(
     agentNames,
     reviews,
     merges,
+    ...(heldWork.size ? { heldWork } : {}),
     // R-queuedwords: a queued accept merges by itself in the automatic mode.
     ...(project ? { mergeMode: mergeModeOf(project.settings) } : {}),
     ...(credentialWait ? { credentialWait } : {}),

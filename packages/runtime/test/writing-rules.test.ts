@@ -441,3 +441,35 @@ describe("writing rules (design §5)", () => {
     expect(violations('Quote page: "Style the page in…" needs your decision', 60)).toEqual([]);
   });
 });
+
+describe("polish-words, wave 13: the words a person reads (design §5)", () => {
+  it("withoutIds keeps a parenthesis of words and still takes out ids (later #94)", async () => {
+    const { withoutIds } = await import("../src/daemon/task-words.ts");
+    expect(withoutIds("The check failed (run node --check).")).toBe(
+      "The check failed (run node --check).",
+    );
+    expect(withoutIds("Pick one (task list) first.")).toBe("Pick one (task list) first.");
+    expect(withoutIds(`Stopped (task 01a196fe…) at its budget.`)).toBe("Stopped at its budget.");
+    expect(withoutIds(`Stopped (run ${ID}) here.`)).toBe("Stopped here.");
+    expect(withoutIds(`Answer request ${ID} now.`)).toBe("Answer now.");
+    expect(withoutIds(`It is ${ID}.`)).toBe("It is .");
+  });
+
+  it("a failure reason reads plain: no markdown asterisks, no backticks, cut at a word (L-18)", async () => {
+    const { plainReason } = await import("../src/daemon/task-words.ts");
+    const said = plainReason(
+      "**Result: the check fails.** The page links `styles.css`, which `README.md` names, but this branch doesn't have it, so the check cannot pass.",
+    );
+    expect(said).not.toMatch(/\*\*|`/);
+    expect(said).toMatch(/^Result: the check fails\. The page links styles\.css/);
+    expect(violations(said, 100)).toEqual([]);
+  });
+
+  it("a sign-off card is its own kind; a failed-task card stays a retry card (C-21, L-9)", async () => {
+    const { cardKindOf } = await import("../src/daemon/task-words.ts");
+    const signoff = (reason: string) => ({ change_card: { key: "critic:signoff", reason } });
+    expect(cardKindOf(signoff("verdict"))).toBe("signoff");
+    expect(cardKindOf(signoff("failed"))).toBe("retry");
+    expect(cardKindOf(signoff("retry_ladder_exhausted"))).toBe("retry");
+  });
+});

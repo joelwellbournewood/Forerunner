@@ -1,0 +1,166 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import { reviewLevelChoices, specialistName } from "../src/lib/task-actions.ts";
+import { TASKS } from "./fixtures.ts";
+import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
+
+/**
+ * polish-words (wave 13): what the screens say, read where the person reads it, with the fake
+ * daemon wording the rows through the daemon's own `task-words` (design §5: one sentence read
+ * at a glance, true when read, names not ids). Each case clicks what the person clicks.
+ */
+
+const rowOf = async (id: string) =>
+  (await screen.findAllByTestId("task-row")).find(
+    (r) => r.getAttribute("data-task-id") === id,
+  ) as HTMLElement;
+const actionsOf = (row: HTMLElement) =>
+  within(row)
+    .queryAllByTestId(/^action-/)
+    .map((b) => b.textContent);
+
+function addTask(
+  harness: Harness,
+  id: string,
+  title: string,
+  extra: Partial<(typeof TASKS)[number]> = {},
+) {
+  harness.daemon.state.tasks.push({
+    ...(TASKS[2] as (typeof TASKS)[number]),
+    id,
+    title,
+    riskTier: 1,
+    prUrl: null,
+    ...extra,
+  });
+}
+
+function addCard(harness: Harness, id: string, taskId: string, changeCard: object) {
+  harness.daemon.state.requests.push({
+    ...(harness.daemon.state.requests[0] as (typeof harness.daemon.state.requests)[number]),
+    id,
+    taskId,
+    projectId: "proj_atlas",
+    status: "open",
+    why: "seed",
+    changeCard: changeCard as never,
+  });
+}
+
+describe("polish-words, wave 13: the Tasks screen", () => {
+  it("a task waiting on its sign-off reads 'Needs your sign-off' and offers Answer and Cancel, row and drawer (C-21, L-9)", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_deploy", "Deploy the page", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+      riskTier: 3,
+    });
+    addCard(harness, "req_signoff", "t_deploy", {
+      key: "critic:signoff",
+      task_id: "t_deploy",
+      reason: "verdict",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_deploy", harness);
+    const row = await rowOf("t_deploy");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Needs your sign-off");
+    expect(row).not.toHaveTextContent(/decision|try again/i);
+    expect(actionsOf(row)).toEqual(["Answer", "Cancel"]);
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(drawer).toHaveTextContent(
+      "Its card is in the Inbox: accept the work, send it back, or cancel it.",
+    );
+    expect(within(drawer).queryByTestId("drawer-action-try_again")).toBeNull();
+    expect(within(drawer).getByTestId("drawer-action-answer")).toBeInTheDocument();
+    expect(within(drawer).getByTestId("drawer-action-cancel")).toBeInTheDocument();
+  });
+
+  it("Cancel on a paused task says its work is set aside in the drawer as in the dialog (P7-21)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_paused", "Write the long guide", { status: "needs_human" });
+    addCard(harness, "req_budget", "t_paused", {
+      key: "task:budget_stop",
+      task_id: "t_paused",
+      source: "task",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_paused", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const line =
+      "Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.";
+    expect(within(drawer).getByTestId("drawer-explain-cancel")).toHaveTextContent(line);
+    // The row's button says the same, and the dialog.
+    const row = await rowOf("t_paused");
+    expect(within(row).getByTestId("action-cancel")).toHaveAttribute("title", line);
+    await user.click(within(row).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(line);
+  });
+
+  it("Cancel on a ready task holding work in progress says it is set aside (row, dialog and drawer), and the line after says so (P7-20)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_held", "Write the guide in guide.md", { status: "ready" });
+    harness.daemon.state.taskMeta.heldWork?.add("t_held");
+    addTask(harness, "t_plain", "Write the notes", { status: "ready" });
+    renderApp("/projects/proj_atlas/tasks?task=t_held", harness);
+    const line =
+      "Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.";
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(within(drawer).getByTestId("drawer-explain-cancel")).toHaveTextContent(line);
+    // A ready task with no work in progress: Drops it, and nothing else.
+    expect(within(await rowOf("t_plain")).getByTestId("action-cancel")).toHaveAttribute(
+      "title",
+      "Drops it.",
+    );
+    const row = await rowOf("t_held");
+    expect(within(row).getByTestId("action-cancel")).toHaveAttribute("title", line);
+    await user.click(within(row).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(line);
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      'Cancelled "Write the guide in guide.md": its work so far is set aside; Undo brings it back.',
+    );
+    expect(postedCalls(harness, "/tasks/t_held/action").map((c) => c.body)).toEqual([
+      { version: 1, action: "cancel" },
+    ]);
+  });
+
+  it("the cap line names the specialist as the log does, and none for Agent's choice (later #74)", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_writer", "Write the launch post", {
+      status: "ready",
+      specialist: "writer-marketing",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("t_writer");
+    const cap = within(row).getByTestId("task-cap");
+    expect(cap).toHaveTextContent("(the writer's limit)");
+    expect(cap).not.toHaveTextContent("writer-marketing");
+    // The UI's names are the critic's (the session log's and the cards'): real-daemon.test.ts's
+    // polish-words block holds them equal to `saidByName`.
+    expect(specialistName("writer-marketing")).toBe("writer");
+    expect(specialistName(null)).toBeNull();
+  });
+
+  it("New task's light review says what is true now, with no tier or checks words (C-23)", async () => {
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas/tasks");
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const level = within(dialog).getByTestId("task-risk-tier") as HTMLSelectElement;
+    const labels = [...level.options].map((o) => o.textContent ?? "");
+    expect(labels).toContain(
+      "Light review: the critic reads the work and tries it here; nothing runs in Docker",
+    );
+    for (const l of reviewLevelChoices(null).map((c) => c.label)) {
+      expect(l).not.toMatch(/tier|checks|isolation/i);
+      expect(l.length).toBeLessThanOrEqual(100);
+    }
+  });
+});
+
+// Keep `render` imported for later cases of this file (the Inbox card, the session page).
+void render;

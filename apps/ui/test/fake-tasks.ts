@@ -76,8 +76,15 @@ export interface FakeTaskMeta {
       take_out_pr_number?: number | null;
       take_out_pr_url?: string | null;
       take_out_state?: string | null;
+      /** The last attempt's outcome: "conflict" for a pull request that conflicts (W14-5). */
+      last_outcome?: string | null;
     }
   >;
+  /**
+   * Ready tasks holding work in progress from a run that paused at a budget (polish-words,
+   * P7-20; the daemon reads the task's last run): a Cancel sets it aside. A test adds them.
+   */
+  heldWork?: Set<string>;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
@@ -88,6 +95,7 @@ export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
     credentialWaits: new Map(),
     ownFolder: new Set(),
     merges: new Map(),
+    heldWork: new Set(),
   };
 }
 
@@ -150,6 +158,7 @@ export function projectTaskViews(
     credentialWait: meta.credentialWaits.get(projectId) ?? null,
     ...(meta.ownFolder?.has(projectId) ? { ownFolder: true } : {}),
     ...(meta.merges?.size ? { merges: meta.merges } : {}),
+    ...(meta.heldWork?.size ? { heldWork: meta.heldWork } : {}),
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
   return runOrder(rows).map((row, i) => ({
@@ -223,7 +232,10 @@ export function actionSentence(
       ? cancelWorkKind({
           running: ran && ["claimed", "in_progress"].includes(from),
           liveReview: ran && from === "in_review",
-          paused: (extra.shown ?? task.display)?.blocker?.cardKind === "budget",
+          // A paused task's work, or a ready one's work in progress (P7-20): set aside.
+          paused:
+            (extra.shown ?? task.display)?.blocker?.cardKind === "budget" ||
+            (extra.shown ?? task.display)?.cancelWork === cancelWorkLine("paused"),
           pullRequest: !!task.prUrl,
           ownFolder: (extra.shown ?? task.display)?.cancelWork === cancelWorkLine("own_folder"),
         })

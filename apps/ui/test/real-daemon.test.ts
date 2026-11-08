@@ -30,6 +30,7 @@ import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
+import { saidByName } from "../../../packages/critic/src/followup.ts";
 import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import {
@@ -52,7 +53,7 @@ import {
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
-import { reviewLevelName, reviewLevelValue } from "../src/lib/task-actions.ts";
+import { reviewLevelName, reviewLevelValue, specialistName } from "../src/lib/task-actions.ts";
 import { intakeCardOf } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
@@ -10916,4 +10917,333 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     );
     expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(true);
   }, 120_000);
+});
+
+describe("polish-words, wave 13", () => {
+  // The words the routes serve (design §5), read through the UI's own client against the real
+  // daemon: the project's status line, the Tasks rows, the costs, the reviews, a session's end.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let bench: BenchOptions;
+
+  beforeAll(async () => {
+    ({ rt, client, bench } = await composeWithRolePlayer({}));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const seedTask = (
+    projectId: string,
+    title: string,
+    over: Record<string, unknown> = {},
+  ): Promise<{ id: string; version: number }> =>
+    rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} is done`,
+      acceptance_criteria: ["it is done"],
+      risk_tier: 1,
+      status: "done",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+      ...over,
+    } as never) as never;
+
+  const card = async (
+    projectId: string,
+    taskId: string,
+    changeCard: Record<string, unknown>,
+    options: string[],
+  ) => {
+    const me = await client.me();
+    return rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: projectId,
+      task_id: taskId,
+      session_id: null,
+      kind: "approval",
+      why: "seed",
+      steps: [],
+      options,
+      blocking: true,
+      risk: "medium",
+      change_card: changeCard,
+      author_agent: rt.agent.id,
+    } as never);
+  };
+
+  it("a finished folder project's line is 'Done: all N tasks.' with no path; Open your files opens Files (later #53, #54)", async () => {
+    const project = await client.createProject({ name: "Notes", goal: "A notes page" });
+    await seedTask(project.id, "Write the notes in notes.md");
+    await seedTask(project.id, "Check the notes");
+    const line = (await client.project(project.id)).statusLine;
+    expect(line?.text).toBe("Done: all 2 tasks.");
+    expect(line?.text.length).toBeLessThanOrEqual(80);
+    expect(line?.text).not.toContain(project.id);
+    expect(line?.action).toEqual({
+      kind: "link",
+      label: "Open your files",
+      to: `/projects/${project.id}/files`,
+    });
+    // The Overview keeps the path (FolderPath reads `folder`).
+    expect((await client.project(project.id)).folder).toContain(project.id);
+  });
+
+  it("a finished repository project says how many pull requests wait for the Merge and how many were taken out (C-58)", async () => {
+    const project = await client.createProject({ name: "Guides", goal: "Two guides" });
+    await rt.store.project.patch(project.id, { repos: ["o/guides"] } as never);
+    const agentId = rt.agent.id;
+    for (const [i, title] of ["Write the guide", "Write the notes"].entries()) {
+      const url = `https://github.com/o/guides/pull/${i + 2}`;
+      const t = await seedTask(project.id, title, { pr_url: url });
+      const record = await rt.store.mergeRecord.pin({
+        task_id: t.id,
+        project_id: project.id,
+        agent_id: agentId,
+        pr_number: i + 2,
+        pr_url: url,
+        reviewed_head_sha: "a".repeat(40),
+      } as never);
+      await rt.store.mergeRecord.move(record.id, "left_to_you", {
+        sentence: `#${i + 2} waits for you: press Merge on the Overview.`,
+      });
+    }
+    // One merged and taken out again in #9 (merged-actions).
+    const url = "https://github.com/o/guides/pull/1";
+    const out = await seedTask(project.id, "Write the intro", { pr_url: url });
+    const merged = await rt.store.mergeRecord.pin({
+      task_id: out.id,
+      project_id: project.id,
+      agent_id: agentId,
+      pr_number: 1,
+      pr_url: url,
+      reviewed_head_sha: "b".repeat(40),
+    } as never);
+    await rt.store.mergeRecord.patch(merged.id, {
+      state: "merged",
+      take_out_pr_number: 9,
+      take_out_pr_url: "https://github.com/o/guides/pull/9",
+      take_out_state: "merged",
+    } as never);
+    const line = (await client.project(project.id)).statusLine;
+    expect(line?.text).toBe(
+      "Done: all 3 tasks; 1 taken out. 2 pull requests wait for you to merge.",
+    );
+    expect(line?.text.length).toBeLessThanOrEqual(80);
+    expect(line?.action).toEqual({
+      kind: "link",
+      label: "Open Overview",
+      to: `/projects/${project.id}`,
+    });
+  });
+
+  it("Answer opens the oldest card; two cards of different kinds are named by kind, not '2 questions' (later #55, L-13a)", async () => {
+    const project = await client.createProject({ name: "Deploys", goal: "A deploy" });
+    const deploy = await seedTask(project.id, "Deploy the page", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+    });
+    const signoff = await card(
+      project.id,
+      deploy.id,
+      {
+        key: "critic:signoff",
+        task_id: deploy.id,
+        review_id: null,
+        run_id: null,
+        finding_ids: [],
+        reason: "verdict",
+        applied_at: null,
+      },
+      ["accept", "revise", "cancel"],
+    );
+    const one = (await client.project(project.id)).statusLine;
+    expect(one?.text).toBe('Waiting for you: "Deploy the page"');
+    expect(one?.action).toEqual({
+      kind: "link",
+      label: "Answer",
+      to: `/inbox#card-${signoff.id}`,
+    });
+    const long = await seedTask(project.id, "Write the long guide", { status: "needs_human" });
+    await card(
+      project.id,
+      long.id,
+      { key: "task:budget_stop", task_id: long.id, source: "task" },
+      ["Continue", "Cancel task"],
+    );
+    const two = (await client.project(project.id)).statusLine;
+    expect(two?.text).toBe("Waiting for you: 1 sign-off and 1 paused task");
+    expect(two?.action?.to).toBe(`/inbox#card-${signoff.id}`);
+  });
+
+  it("a task waiting on its sign-off reads 'Needs your sign-off' with its card's own choices; the card is unchanged (C-21, L-9)", async () => {
+    const project = await client.createProject({ name: "Sign-offs", goal: "A deploy" });
+    const deploy = await seedTask(project.id, "Deploy the page to the server", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+    });
+    const request = await card(
+      project.id,
+      deploy.id,
+      {
+        key: "critic:signoff",
+        task_id: deploy.id,
+        review_id: null,
+        run_id: null,
+        finding_ids: [],
+        reason: "verdict",
+        applied_at: null,
+      },
+      ["accept", "revise", "cancel"],
+    );
+    const row = (await client.tasks(project.id)).find((t) => t.id === deploy.id);
+    expect(row?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your sign-off",
+      detail: "Its card is in the Inbox: accept the work, send it back, or cancel it.",
+      blocker: { kind: "card", requestId: request.id, cardKind: "signoff" },
+    });
+    expect(row?.display?.label).not.toMatch(/decision/);
+    // The card itself: Accept the work, Send it back, Cancel task (unchanged).
+    const me = await client.me();
+    const shown = (await client.inbox(me.id)).requests.find((r) => r.id === request.id);
+    expect(shown?.choices?.map((c) => c.label)).toEqual([
+      "Accept the work",
+      "Send it back",
+      "Cancel task",
+    ]);
+  });
+
+  it("an accepted info note shows no 'To fix' line (L-13e)", async () => {
+    const project = await client.createProject({ name: "Notes review", goal: "A page" });
+    const task = await seedTask(project.id, "Write the page");
+    const review = await rt.store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 90,
+      confidence: 0.9,
+      verdict: "accept",
+      evidence: [],
+      summary: "Accepted: the changed file matches the brief.",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    await rt.store.finding.insert({
+      review_id: review.id,
+      task_id: task.id,
+      severity: "info",
+      description: "The page has no favicon.",
+      required_action: "Resolve it and show the evidence",
+      status: "open",
+      fingerprint: "fp-favicon",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    await rt.store.finding.insert({
+      review_id: review.id,
+      task_id: task.id,
+      severity: "medium",
+      description: "The title is missing.",
+      required_action: "Resolve it and show the evidence",
+      status: "open",
+      fingerprint: "fp-title",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    const view = await client.reviews(project.id);
+    const findings = view.reviews.flatMap((r) => r.findings);
+    expect(findings.find((f) => f.severity === "info")?.requiredAction).toBe("");
+    // A finding that asks for a fix keeps it.
+    expect(findings.find((f) => f.severity === "medium")?.requiredAction).toBe(
+      "Resolve it and show the evidence",
+    );
+  });
+
+  it("the Tasks screen names a specialist as the session log and the cards do (later #74)", () => {
+    for (const id of [
+      "writer-marketing",
+      "migration-specialist",
+      "data-analyst",
+      "ops-deploy",
+      "science-evaluator",
+      "coder",
+      "some_new-kind",
+    ])
+      expect(specialistName(id)).toBe(saidByName(id));
+  });
+
+  it("Costs name the specialist as the log does, and a model's accepted runs compare with its work runs (later #91)", async () => {
+    const project = await client.createProject({ name: "Writer costs", goal: "A README" });
+    const task = await client.createTask(project.id, {
+      title: "Write the README in README.md",
+      outcome: "README.md says what the project is",
+      riskTier: 1,
+      specialist: "writer-marketing",
+    });
+    const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () => !["planned", "running"].includes((await client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () => `${(await client.task(task.id)).task.status}`,
+      60_000,
+    );
+    expect((await client.task(task.id)).task.status).toBe("done");
+    const costs = await client.costs({ projectId: project.id });
+    const labels = costs.bySpecialist.map((s) => s.label);
+    expect(labels).toContain("the writer");
+    expect(labels).toContain("the critic");
+    expect(labels).not.toContain("writer-marketing");
+    // One work run, accepted: the critic's review and the planning call are not runs to accept.
+    const model = costs.byModel.find((b) => b.accepted !== null);
+    expect(model?.runs).toBe(1);
+    expect(model?.accepted).toBe(1);
+  }, 90_000);
+
+  it("a session's page stops saying '1 task needs you' once the person answered its card (L-21)", async () => {
+    const project = await client.createProject({ name: "Answered", goal: "A page" });
+    const task = await client.createTask(project.id, {
+      title: "Write the broken page in page.html",
+      outcome: "page.html exists",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["broken page"];
+    let sessionId = "";
+    try {
+      const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => !["planned", "running"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => `${(await client.task(task.id)).task.status}`,
+        60_000,
+      );
+    } finally {
+      bench.fail = [];
+    }
+    expect((await client.session(sessionId)).statusText).toBe("Ended: 1 task needs you");
+    const me = await client.me();
+    const open = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    expect(open).toBeTruthy();
+    await client.answerRequest(open?.id ?? "", {
+      version: open?.version ?? 0,
+      answer: "Cancel task",
+    });
+    await eventually(
+      async () => (await client.task(task.id)).task.status === "cancelled",
+      "the card's Cancel task to cancel it",
+    );
+    const after = await client.session(sessionId);
+    expect(after.statusText).not.toMatch(/needs you/);
+    expect((await client.sessions({ projectId: project.id }))[0]?.statusText).not.toMatch(
+      /needs you/,
+    );
+  }, 90_000);
 });
