@@ -2092,7 +2092,8 @@ export class SessionRunner {
               });
               if (stopEndsSession(source)) {
                 stopReason = budgetStopReasonOf(source);
-                stopCapUsdMicro = stop.capUsdMicro;
+                // The subscription's share is a fraction, not money: no amount is kept.
+                stopCapUsdMicro = source === "plan" ? null : stop.capUsdMicro;
                 skipped.push(...queue.map((i) => i.taskId));
                 queue.length = 0;
                 break;
@@ -2309,7 +2310,10 @@ export class SessionRunner {
               // The session names the limit that ended it (review of budget-stop): before, it
               // said "the session's budget is used" at 1% of its own budget.
               stopReason = budgetStopReasonOf(result.budgetStop.source);
-              stopCapUsdMicro = result.budgetStop.capUsdMicro;
+              // The subscription's share is a fraction (0..1), not money: no amount is kept (the
+              // leftovers of wave 7: it was stored converted as if it were USD).
+              stopCapUsdMicro =
+                result.budgetStop.source === "plan" ? null : result.budgetStop.capUsdMicro;
               skipped.push(...queue.map((i) => i.taskId));
               queue.length = 0;
               break;

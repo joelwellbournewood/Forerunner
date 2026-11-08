@@ -509,6 +509,39 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
       CREDENTIAL_WAIT_REASON,
     );
   });
+
+  // The leftovers of wave 7 (R-planunit): a stop at the share of the subscription stored the
+  // share's cap (a fraction, 0..1, carried as the run's cap) converted as if it were USD in
+  // `stopCapChfMicro`, on the result and on the project's last session: wrong-unit state that
+  // only the readers' care kept off the screen.
+  it("a stop at the subscription's share keeps no CHF amount; a stop at the project's budget keeps its amount", async () => {
+    const pausedAt =
+      (source: "plan" | "project", capUsdMicro: number): TaskExecutor["execute"] =>
+      async () => ({
+        outcome: "paused",
+        summary: "The run stopped at a limit.",
+        costUsdMicro: 0,
+        budgetStop: { capUsdMicro, spentUsdMicro: 0, source, specialist: "coder" },
+        handoff: { stopped: "", leftToDo: [], stoppedBy: "budget" },
+      });
+    await add("Write the changelog");
+    const plan = await start(runner({ executor: { execute: pausedAt("plan", 1) } }));
+    expect(plan.stopReason).toBe("budget_plan");
+    expect(plan.stopCapChfMicro).toBeUndefined();
+    const cache = async () =>
+      (
+        (await w.store.project.mustGet(w.project)).summary_cache as {
+          last_session: { outcome: Record<string, unknown> };
+        }
+      ).last_session.outcome;
+    expect((await cache()).stopCapChfMicro).toBeUndefined();
+
+    await add("Write the release notes");
+    const project = await start(runner({ executor: { execute: pausedAt("project", 2_000_000) } }));
+    expect(project.stopReason).toBe("budget_project");
+    expect(project.stopCapChfMicro).toBeGreaterThan(0);
+    expect((await cache()).stopCapChfMicro).toBe(project.stopCapChfMicro);
+  });
 });
 
 function outcomeOf(task: TaskRow, decision: TaskReviewOutcome["decision"], n: number) {

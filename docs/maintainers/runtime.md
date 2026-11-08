@@ -1996,7 +1996,9 @@ budget-stop; the owner's decision of 2026-11-02).**
   last three then end the session (`stopEndsSession`) with the limit's own stop reason
   (`budgetStopReasonOf` in `session/stop-words.ts`: `budget_month`, `budget_project`,
   `budget_plan`; `isBudgetStopReason` says whether a reason is a budget stop) and its amount
-  (`LastSessionOutcome.stopCapChfMicro`, `SessionResult.stopCapChfMicro`). The session's words
+  (`LastSessionOutcome.stopCapChfMicro`, `SessionResult.stopCapChfMicro`; none for the
+  subscription's share, a fraction and no amount: before the leftovers of wave 7 the share was
+  stored converted as if it were USD). The session's words
   name it: the badge "Stopped at this month's cap" (`sessionStatusText`, also the log's end
   line), the result's "Stopped at this month's cap of CHF 0.23." (`stopWords`, also the Inbox
   Update and the chat's facts), a stopped review's "the session stopped at this month's cap"
