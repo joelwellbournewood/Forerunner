@@ -1374,8 +1374,15 @@ function criticAnswer(
 // Chat
 // ---------------------------------------------------------------------------------------
 
-/** The person's own words in a chat turn: the text after the facts and retrieved blocks. */
+/**
+ * The person's own words in a chat turn. Since the leftovers of wave 7 the turn's message is the
+ * line, then the facts and retrieved blocks: its stable start (`stableChars`). An older message
+ * (the facts first, no stable start) ends with the line.
+ */
 export function chatLine(req: ModelRequest): string {
+  const lastUser = [...req.messages].reverse().find((m) => m.role === "user");
+  if (lastUser && typeof lastUser.content === "string" && typeof lastUser.stableChars === "number")
+    return lastUser.content.slice(0, lastUser.stableChars).trim();
   const last = lastUserText(req.messages);
   const parts = last.split("\n\n");
   return (parts.at(-1) ?? last).trim();

@@ -850,7 +850,9 @@ wires it, with the root config's projects naming none of their own. `apps/ui/tes
   the blocks the Anthropic adapter sends: a string message is one text block, and a message
   with a stable start (`ChatMessage.stableChars`, the chat's line before its facts of now) is
   two, marked on the start, so a later turn that replays the line alone reads its entry (the
-  leftovers of wave 7). Without it
+  leftovers of wave 7). The bench's chat stand-in (`chatLine`, `testenv/src/bench/role-player.ts`)
+  reads the person's line from that stable start, and from the message's end only for a message
+  without one. Without it
   `cache_read_input_tokens` and `cache_creation_input_tokens` are 0 unless a reply overrides
   them. The bench's role-player always plays the cache ('cost'), and its model-call log line
   carries the request's `cache` flags.

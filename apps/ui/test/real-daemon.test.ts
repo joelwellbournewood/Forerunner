@@ -7467,6 +7467,9 @@ describe("the UI client against the real daemon: the credential chooser says whe
           title: "Draw the logo",
           specialist: null,
           unknown: "illustrator",
+          // The plan's first session names no figure for it (leftovers7-session: each plan task
+          // carries the figure the Start dialog will show; none here).
+          estimateUsdMicro: null,
           runsOn: null,
         },
         // The plan's "Coder" is the registry's coder; on the API key alone nothing is said.
@@ -7475,6 +7478,7 @@ describe("the UI client against the real daemon: the credential chooser says whe
           title: "Build the page",
           specialist: "coder",
           unknown: null,
+          estimateUsdMicro: null,
           runsOn: { kind: "api_key", line: null },
         },
       ]);
