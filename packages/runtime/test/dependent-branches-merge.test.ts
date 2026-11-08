@@ -807,6 +807,51 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(await m.cards(b.id)).toHaveLength(1);
   });
 
+  it("an open pull request that conflicts with main once another merges: one card after one poll, none more at the next, Merge no longer offered; once the conflict is gone the card closes and Merge is offered again (R-conflict)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+    // The person merges the first; the second now changes the same lines as main.
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    expect((await m.pr(b.id)).mergeable).toBe(false);
+    await m.poll();
+    const sentence = `#${prB} conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.`;
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "conflict",
+      sentence,
+    });
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const views = await requestViews(m.w.store, rows);
+    expect(views.map((v) => ({ title: v.title, body: v.body }))).toEqual([
+      { title: `"Write the other page" conflicts with main`, body: sentence },
+    ]);
+    expect(views[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    // The next poll files nothing more.
+    await m.poll();
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // The person resolves it on GitHub (main's version kept on the branch): the card closes and
+    // the record no longer says it conflicts.
+    await m.host.seedCommit(
+      FULL,
+      { "index.html": "<h1>one</h1>\n" },
+      "Resolve",
+      (await m.pr(b.id)).head.ref,
+    );
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+    const after = await m.record(b.id);
+    expect(after.state).toBe("left_to_you");
+    expect(after.last_outcome).not.toBe("conflict");
+    expect(after.sentence).toBe("");
+  });
+
   it("two unmerged dependencies that conflict: the dependent waits with one Inbox card naming both pull requests (W6-22)", async () => {
     const m = await chainWorld({ level: 2 });
     m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });

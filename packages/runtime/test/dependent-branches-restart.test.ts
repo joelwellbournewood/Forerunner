@@ -133,16 +133,24 @@ async function restartWorld() {
     expiresAt: new Date(clock.now() + 3_600_000).toISOString(),
   });
   // The daemon's PR executor flow over its own worktrees, with a stand-in for the model.
-  const writer = (file: string): TaskExecutor & { withWorktree: (d: string) => TaskExecutor } => ({
+  const writer = (
+    file: string,
+    content: string,
+  ): TaskExecutor & { withWorktree: (d: string) => TaskExecutor } => ({
     execute: async () => ({ outcome: "failed", summary: "no worktree", costUsdMicro: 0 }),
     withWorktree: (dir) => ({
       execute: async () => {
-        writeFileSync(join(dir, file), `${file}\n`);
+        writeFileSync(join(dir, file), content);
         return { outcome: "done", summary: `Wrote ${file}.`, costUsdMicro: 1 };
       },
     }),
   });
-  const accepted = async (title: string, file: string, dependsOn: string[] = []) => {
+  const accepted = async (
+    title: string,
+    file: string,
+    dependsOn: string[] = [],
+    content = `${file}\n`,
+  ) => {
     let task: TaskRow = await rt.store.task.insert({
       project_id: project.id,
       title,
@@ -160,7 +168,7 @@ async function restartWorld() {
       store: rt.store,
       clock,
       host: github,
-      inner: writer(file),
+      inner: writer(file, content),
       repoFor: async () => ({ clone: host.cloneUrl(FULL), repo: REPO, base: "main" }),
       worktreeRoot: dirs.worktrees,
       token: ghToken,
@@ -196,7 +204,7 @@ async function restartWorld() {
   };
   const a = await accepted("Add page", "page.html");
   const b = await accepted("Add footer", "footer.html", [a.id]);
-  return { clock, home, host, github, ghToken, dirs, compose, rt, project, a, b };
+  return { clock, home, host, github, ghToken, dirs, compose, rt, project, a, b, accepted };
 }
 
 describe("dependent branches across a restart (ADR 0111)", { timeout: 240_000 }, () => {
@@ -297,5 +305,45 @@ describe("dependent branches across a restart (ADR 0111)", { timeout: 240_000 },
     await rt2.githostWatcher?.pollOnce();
     await host.settle();
     expect((await github.getPullRequest(REPO, prB)).head.sha).toBe(pr.head.sha);
+  });
+
+  it("a pull request that conflicts with main after another merge is said once: one card after a poll, none more at the next poll or after a restart (R-conflict)", async () => {
+    const { github, host, compose, rt, a, accepted } = await restartWorld();
+    // Another task writes the same file differently; the person merges A in the app.
+    const c = await accepted("Other page", "page.html", [], "<h1>other</h1>\n");
+    const prC = Number(/\/pull\/(\d+)/.exec(c.pr_url ?? "")?.[1]);
+    await rt.githostWatcher?.pollOnce();
+    const recordA = await rt.store.mergeRecord.forTask(a.id);
+    if (!recordA) throw new Error("no record for A");
+    expect(
+      (await rt.merge.mergeRecorded(recordA, { kind: "person", humanId: rt.human.id })).status,
+    ).toBe("merged");
+    await host.settle();
+    expect((await github.getPullRequest(REPO, prC)).mergeable).toBe(false);
+    const cards = async (store: RuntimeApp["store"]) =>
+      (await store.humanRequest.list({ task_id: c.id, status: "open" } as never)).length;
+    await rt.githostWatcher?.pollOnce();
+    const sentence = `#${prC} conflicts with main in page.html: resolve the conflict on GitHub, or redo the task.`;
+    expect(await rt.store.mergeRecord.forTask(c.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "conflict",
+      sentence,
+    });
+    expect(await cards(rt.store)).toBe(1);
+    await rt.githostWatcher?.pollOnce();
+    expect(await cards(rt.store)).toBe(1);
+    await rt.close();
+    apps.splice(apps.indexOf(rt), 1);
+
+    // ---- the next start: the record says it was said; the card stays the one card --------------
+    const rt2 = await compose();
+    apps.push(rt2);
+    await rt2.githostWatcher?.pollOnce();
+    await rt2.githostWatcher?.pollOnce();
+    expect(await cards(rt2.store)).toBe(1);
+    expect(await rt2.store.mergeRecord.forTask(c.id)).toMatchObject({
+      last_outcome: "conflict",
+      sentence,
+    });
   });
 });

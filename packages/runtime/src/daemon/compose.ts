@@ -4123,7 +4123,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         // PR merged on GitHub's website); a copy already there is not fetched again.
         onDefaultBranchHead: async (project, sha) => {
           await Promise.all([
-            dependentBranches.sweep(project.projectId),
+            // leftovers7-merge2 (R-conflict): a pull request that stopped merging cleanly was
+            // said (or merges again): the Overview reads its rows again.
+            dependentBranches.sweep(project.projectId).then((said) => {
+              if (said) events.emit("project", { id: project.projectId });
+            }),
             refreshProjectCopy(project.projectId, { head: sha, base: project.branch }),
             // merged-actions: a take-out merged or closed on GitHub is read here (the host is
             // asked only while one is open), so its task's row says "Taken out in #9".

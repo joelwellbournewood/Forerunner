@@ -359,7 +359,7 @@ export interface GitHostWatcherDeps {
   onDefaultBranchHead?: (
     project: { projectId: string; repo: RepoRef; branch: string },
     sha: string,
-  ) => void | Promise<void>;
+  ) => unknown;
   pollMs?: number;
 }
 

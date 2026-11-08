@@ -10430,3 +10430,146 @@ describe("the UI client against the real daemon: the plan card's figure is the S
     }
   }, 120_000);
 });
+
+// leftovers7-merge2 (ADR 0111 amended): an open task pull request that stopped merging cleanly
+// into main after another merge is said once (R-conflict): one card after the watcher's poll,
+// none more later, and the Overview offers no Merge that cannot work.
+describe("the UI client against the real daemon: leftovers of wave 7, merge side, part 2 (leftovers7-merge2)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let github: GitHubHost;
+  let token = "";
+  let work = "";
+  const FULL = "alice/l7m2";
+  const REPO = { owner: "alice", name: "l7m2" };
+  const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    work = mkdtempSync(join(tmpdir(), "fr-ui-real-l7m2-"));
+    const clock = new SystemClock();
+    host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    await host.createRepo({
+      owner: "alice",
+      name: "l7m2",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# l7m2\n" },
+    });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const vault = new MemoryVault();
+    await vault.set(SECRET_NAMES.github, token);
+    ({ rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: github,
+        vault,
+        config: {
+          version: 1,
+          profile: "default",
+          timezone: "UTC",
+          githubApiBase: host.baseUrl,
+          anthropicApiBase: "http://an.test",
+          repos: [],
+          credentials: { github: true, anthropic: false, anthropicSubscription: false },
+          stateUrl: "sqlite::memory:",
+        },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /** A done task with its pull request on the host, as a session leaves it (level 2: it waits). */
+  async function doneTask(projectId: string, title: string, file: string, content: string) {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "done",
+      priority: 1,
+      depends_on: [],
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      author_agent: rt.agent.id,
+    });
+    const dir = join(work, `wt-${task.id}`);
+    const ops = new GitOps({ cwd: dir, identity, auth: { token } });
+    await ops.clone(host.cloneUrl(FULL));
+    const branch = `fr/${title.toLowerCase().replace(/\W+/g, "-")}-${task.id.slice(-6).toLowerCase()}`;
+    await ops.createBranch(branch, "origin/main");
+    writeFileSync(join(dir, file), content);
+    await ops.commitAll(title);
+    await ops.push(branch);
+    const pr = await github.createPullRequest(REPO, {
+      title,
+      body: "",
+      head: branch,
+      base: "main",
+    });
+    await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch });
+    const pinned = await rt.store.mergeRecord.pin({
+      task_id: task.id,
+      project_id: projectId,
+      agent_id: rt.agent.id,
+      pr_number: pr.number,
+      pr_url: pr.htmlUrl,
+      reviewed_head_sha: pr.head.sha,
+      author_agent: rt.agent.id,
+    });
+    await rt.store.mergeRecord.move(pinned.id, "left_to_you", {
+      sentence: `#${pr.number} waits for you to merge it: press Merge on the Overview.`,
+      last_outcome: "not_allowed",
+    });
+    return { task, pr, branch };
+  }
+
+  it("two open pull requests on one file, one merged on GitHub: one conflict card after one poll, none more at the next; the Overview no longer offers Merge on the conflicted row (R-conflict)", async () => {
+    const project = await client.createProject({ name: "Two pages", goal: "x", repos: [FULL] });
+    const a = await doneTask(project.id, "Write the page", "index.html", "<h1>one</h1>\n");
+    const b = await doneTask(project.id, "Write the other page", "index.html", "<h1>two</h1>\n");
+    const rowOf = async (n: number) =>
+      (await client.projectPullRequests(project.id)).waiting.find((w) => w.number === n);
+    expect((await rowOf(b.pr.number))?.merge).toMatchObject({
+      state: "left_to_you",
+      canMerge: true,
+    });
+    await rt.githostWatcher?.pollOnce();
+    const cards = async () =>
+      (await client.inbox(rt.human.id)).requests.filter(
+        (r) => r.taskId === b.task.id && r.status === "open",
+      );
+    expect(await cards()).toEqual([]);
+    // The person merges the first pull request on GitHub's website.
+    expect((await github.mergePullRequest(REPO, a.pr.number, { method: "merge" })).merged).toBe(
+      true,
+    );
+    await rt.githostWatcher?.pollOnce();
+    const sentence = `#${b.pr.number} conflicts with main: resolve the conflict on GitHub, or redo the task.`;
+    const open = await cards();
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({
+      title: `"Write the other page" conflicts with main`,
+      body: sentence,
+    });
+    expect(open[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    // The Overview offers no Merge that cannot work, and says why on the row.
+    expect((await rowOf(b.pr.number))?.merge).toMatchObject({
+      state: "blocked",
+      canMerge: false,
+      sentence,
+    });
+    // The next poll files nothing more.
+    await rt.githostWatcher?.pollOnce();
+    expect(await cards()).toHaveLength(1);
+  }, 120_000);
+});

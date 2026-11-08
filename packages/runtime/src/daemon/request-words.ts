@@ -858,9 +858,15 @@ function mergeLeftOpenCard(
     confirm: null,
     input: null,
   }));
+  // R-conflict (leftovers7-merge2): an open pull request that stopped merging cleanly into main.
+  const conflictTitle =
+    card.notice === "conflict" && ctx.taskTitle
+      ? `${q(ctx.taskTitle)} conflicts with ${str(card.base) ?? "main"}`
+      : null;
   return {
     title: ctx.taskTitle
-      ? (rebuildTitle(card, ctx.taskTitle) ??
+      ? (conflictTitle ??
+        rebuildTitle(card, ctx.taskTitle) ??
         `The critic accepted ${q(ctx.taskTitle)}, but ${prOfCard(card)} was not merged`)
       : firstSentence(r.why),
     body: str(card.sentence) ?? afterFirstSentence(r.why),

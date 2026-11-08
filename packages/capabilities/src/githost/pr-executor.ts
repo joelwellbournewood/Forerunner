@@ -1601,6 +1601,29 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
+   * R-conflict (leftovers7-merge2): the files the task's branch, as the host has it, conflicts
+   * in with the base branch now, read in its worktree (fetched first). Null when the folder is
+   * gone or busy, or git could not tell: the caller says it without the files.
+   */
+  async conflictsWithBase(task: TaskRow): Promise<string[] | null> {
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    const branch = task.branch;
+    if (!branch || !existsSync(join(dir, ".git"))) return null;
+    try {
+      return await tryWorktree(dir, async () => {
+        const target = await this.deps.repoFor(task);
+        if (!target) return null;
+        const git = await this.gitFor(target, dir);
+        await git.fetch();
+        return git.conflictFiles(`origin/${branch}`, `origin/${target.base}`);
+      });
+    } catch (e) {
+      this.logger.warn("conflicting files not read", { taskId: task.id, error: errorMessage(e) });
+      return null;
+    }
+  }
+
+  /**
    * How a task's pull request was merged on the host, read from git in its worktree (ADR 0111):
    * a merge commit with two parents is "merge"; one parent is "rebase" when the pull request
    * had several commits and the merge commit repeats its last one, else "squash". Null when it
