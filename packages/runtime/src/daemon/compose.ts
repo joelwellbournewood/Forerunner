@@ -4405,6 +4405,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         humanId: human.id,
         principalId: agent.id,
         isLive: (sessionId) => kill.activeCount({ sessionId }) > 0,
+        chfPerUsd,
       }).catch((e: unknown) => {
         logger.warn("interrupted sessions not ended", { error: errorMessage(e) });
       });
