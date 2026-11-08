@@ -893,6 +893,11 @@ export class ReviewedPrMerge implements MergePort {
       for (const record of waiting) {
         if (this.inFlight.has(record.task_id)) continue;
         try {
+          const still = await this.stillWaiting(record);
+          if (still) {
+            out.push(this.outcomeOf(still, "checks_pending"));
+            continue;
+          }
           out.push(await this.mergeRecorded(record, { kind: "retry" }));
         } catch (e) {
           this.logger.warn("merge retry failed", {
@@ -903,6 +908,57 @@ export class ReviewedPrMerge implements MergePort {
       }
     }
     return out;
+  }
+
+  /**
+   * R-mergeretry (leftovers7-merge): a record that waits for its checks is looked at before a
+   * gated call is made. While the checks on its reviewed commit still run (and the pull request
+   * is open, on that commit and not in conflict), the pass counts the attempt and moves on: no
+   * token, no audit row, two reads of GitHub instead of a full `merge_pr` call every minute.
+   * Anything else (green, failed, no checks, another head, closed, GitHub silent, the day's last
+   * attempt) goes through the gated call as before. Returns the record when it still waits.
+   */
+  private async stillWaiting(record: MergeRecordRow): Promise<MergeRecordRow | null> {
+    if (record.state !== "waiting_checks" || record.last_outcome !== "checks_pending") return null;
+    if (!record.reviewed_head_sha || record.attempts + 1 >= MAX_MERGE_ATTEMPTS) return null;
+    const ref = parsePullUrl(record.pr_url);
+    if (!ref) return null;
+    try {
+      const pr = await this.deps.host.getPullRequest(ref.repo, ref.number);
+      if (pr.merged || pr.state !== "open" || pr.mergeable === false) return null;
+      if (pr.head.sha !== record.reviewed_head_sha) return null;
+      const ci = await ciOf(this.deps.host, ref.repo, pr.head.sha);
+      if (judgeChecks(ci.runs, [], ci.statuses).state !== "pending") return null;
+    } catch {
+      return null;
+    }
+    return this.deps.store.mergeRecord.move(record.id, "waiting_checks", {
+      attempts: record.attempts + 1,
+    });
+  }
+
+  /**
+   * R-mergeretry: a merge the app made by itself (the retry pass, the resume at the daemon's
+   * start) is one Update in the Inbox (design 3.8); a session's merge is in its result and the
+   * person's own click is answered where they pressed it, so neither adds one.
+   */
+  private async tellMerged(task: TaskRow, record: MergeRecordRow): Promise<void> {
+    try {
+      const owner = await this.ownerOf(record.agent_id);
+      if (!owner) return;
+      await this.deps.store.message.send({
+        from_agent_id: record.agent_id,
+        to_human_id: owner,
+        project_id: record.project_id ?? task.project_id,
+        task_id: task.id,
+        type: "info",
+        body: mergedUpdateWords(record.pr_number, task.title),
+        requires_ack: false,
+        author_agent: record.agent_id,
+      });
+    } catch (e) {
+      this.logger.warn("merge update not sent", { taskId: task.id, error: errorMessage(e) });
+    }
   }
 
   /**
@@ -925,8 +981,10 @@ export class ReviewedPrMerge implements MergePort {
             });
             this.logger.info("merge record resumed", { taskId: record.task_id, state: "merged" });
             const task = await this.deps.store.task.get(record.task_id);
-            if (task)
+            if (task) {
               await this.merged({ task, record: done, mergeSha: done.merge_sha, method: "merge" });
+              await this.tellMerged(task, done);
+            }
           } else if (pr && pr.state !== "open") {
             await this.deps.store.mergeRecord.move(record.id, "left_to_you", {
               sentence: `${prName(record.pr_number)} was closed without merging.`,
@@ -1216,7 +1274,12 @@ export class ReviewedPrMerge implements MergePort {
           a = await this.call(record, token, session, worktree, gate, level);
         }
       }
-      return await this.finish(record, task, session, owner, gate, a);
+      const outcome = await this.finish(record, task, session, owner, gate, a);
+      // What the app merged by itself (a retry, the resume) is news; a session's merge and the
+      // person's own click are not (R-mergeretry).
+      if (outcome.status === "merged" && !session && authority.kind !== "person")
+        await this.tellMerged(task, record);
+      return outcome;
     } catch (e) {
       // A stop is the session's, never the level's refusal; a stop or anything unexpected leaves
       // the record waiting as it was (never `merging` for good), and the retry tries it again
@@ -1675,6 +1738,14 @@ function hostOf(url: string): string | null {
  * `reason` names the PR and the person; the task stays `done`, which is where an accepted task
  * is), "Leave it open" records that the person keeps it open.
  */
+/**
+ * The Update for a merge the app made by itself (R-mergeretry): one line, the pull request and
+ * the task's title (design section 5). Polish owns the wording.
+ */
+export function mergedUpdateWords(prNumber: number, title: string): string {
+  return `Merged ${prName(prNumber)}: "${title.replace(/\s+/g, " ").trim()}".`;
+}
+
 export const MERGE_LEFT_OPEN_KEY = "merge:left_open";
 export const MERGE_LEFT_OPEN_OPTIONS = ["I merged it", "Leave it open"] as const;
 

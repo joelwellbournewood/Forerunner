@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { GitOps } from "@forerunner/capabilities";
 import { join } from "@forerunner/platform";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_MERGE_ATTEMPTS, MERGE_PR_TOOL } from "../src/loop/merge.ts";
 import {
   FULL,
@@ -11,6 +11,7 @@ import {
   LEFT_OPEN_CHOICES,
   mergeLogLines,
   mergeRows,
+  REPO,
   recordWorld,
 } from "./merge-world.ts";
 
@@ -151,8 +152,10 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
       taskId: t.id,
     });
     expect(retry[0]?.sessionId).not.toBe(m.calls[0]?.sessionId);
+    // The session's call and the merge's: the pass that found the checks still running read
+    // them first and made no gated call (R-mergeretry; before, it wrote a row of its own).
     const rows = mergeRows(m.audit);
-    expect(rows.map((r) => r.allowed)).toEqual([true, true, true]);
+    expect(rows.map((r) => r.allowed)).toEqual([true, true]);
     expect(rows.at(-1)?.tokenId).toBe(retry[0]?.id);
     expect(await m.w.store.mergeRecord.mustGet(theirs.id)).toMatchObject({
       state: "waiting_checks",
@@ -441,5 +444,77 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
     expect(unknown.state).toBe("left_to_you");
     expect(unknown.sentence).toMatch(/does not know which version/);
     expect((await m.pr(t.id)).merged).toBe(false);
+  });
+});
+
+/**
+ * leftovers7-merge (R-mergeretry): the watcher's retry pass made a full gated `merge_pr` call
+ * for every waiting record at every poll (its own token, one audit row, about five GitHub
+ * calls; up to 1440 tries a record), and a merge it or the start-up resume made told the
+ * person nothing (design §3.8: what the app did by itself is an Update).
+ */
+describe("the retry pass reads the checks first and says what it merged (R-mergeretry)", {
+  timeout: 180_000,
+}, () => {
+  const updates = async (m: Awaited<ReturnType<typeof recordWorld>>) =>
+    (await m.w.store.message.inbox({ humanId: m.w.human }, { limit: 100 })).map((x) => x.body);
+
+  it("checks still running: no token, no audit row, the attempt counted; once green one audit row, the merge, and one Update 'Merged #N'", async () => {
+    const m = await recordWorld({ level: 2, mode: "after_review" });
+    const t = await m.runTask("Add feature", {
+      afterPr: (pr) => m.check(pr.headSha, "ci/test", "in_progress"),
+    });
+    const pr = await m.pr(t.id);
+    expect(await m.record(t.id)).toMatchObject({ state: "waiting_checks", attempts: 1 });
+    const before = await updates(m);
+    const issued = vi.spyOn(m.w.tokens, "issue");
+    const rows = mergeRows(m.audit).length;
+    for (let i = 0; i < 3; i++) await m.merge.retryWaiting();
+    expect(issued).not.toHaveBeenCalled();
+    expect(mergeRows(m.audit)).toHaveLength(rows);
+    expect(await m.record(t.id)).toMatchObject({
+      state: "waiting_checks",
+      attempts: 4,
+      last_outcome: "checks_pending",
+    });
+    expect((await m.pr(t.id)).merged).toBe(false);
+    await m.check(pr.head.sha, "ci/test", "completed", "success");
+    await m.merge.retryWaiting();
+    expect(issued).toHaveBeenCalledTimes(1);
+    expect(mergeRows(m.audit)).toHaveLength(rows + 1);
+    expect(await m.record(t.id)).toMatchObject({ state: "merged", method: "merge" });
+    const added = (await updates(m)).filter((b) => !before.includes(b));
+    expect(added).toEqual([`Merged #${pr.number}: "Add feature".`]);
+    const message = (await m.w.store.message.inbox({ humanId: m.w.human }, { limit: 100 })).find(
+      (x) => x.body === added[0],
+    );
+    expect(message).toMatchObject({ project_id: m.w.project, task_id: t.id, type: "info" });
+    // A later pass has nothing to do and says nothing more.
+    await m.merge.retryWaiting();
+    expect((await updates(m)).filter((b) => !before.includes(b))).toHaveLength(1);
+    issued.mockRestore();
+  });
+
+  it("a merge inside a session adds no Update: the session's result says it", async () => {
+    const m = await recordWorld({ level: 2, mode: "after_review" });
+    const t = await m.runTask("Add feature");
+    expect((await m.record(t.id)).state).toBe("merged");
+    expect((await updates(m)).filter((b) => b.startsWith("Merged #"))).toEqual([]);
+  });
+
+  it("the start-up resume: a record a dead process left merging that GitHub merged meanwhile posts the Update once", async () => {
+    const m = await recordWorld({ level: 2, mode: "after_review" });
+    const t = await m.runTask("Add feature", {
+      afterPr: (pr) => m.check(pr.headSha, "ci/test", "in_progress"),
+    });
+    const pr = await m.pr(t.id);
+    const record = await m.record(t.id);
+    await m.w.store.mergeRecord.move(record.id, "merging");
+    await m.github.mergePullRequest(REPO, pr.number, { method: "merge" });
+    await m.merge.resumeAtStart();
+    expect((await m.record(t.id)).state).toBe("merged");
+    expect((await updates(m)).filter((b) => b.startsWith("Merged #"))).toEqual([
+      `Merged #${pr.number}: "Add feature".`,
+    ]);
   });
 });

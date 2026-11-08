@@ -87,11 +87,13 @@ describe("the merge mode and the person's Merge in the app (merge-in-app)", {
     expect((await m.record(a.id)).state).toBe("waiting_checks");
     expect(await m.record(b.id)).toMatchObject({ state: "queued", approval: "person" });
     // The watcher's retry while A's checks run: A waits, B waits its turn (not merged, no row).
+    // A's checks are read first, so its waiting adds no audit row either (R-mergeretry; before,
+    // every pass made a full gated call: one row per record per minute).
     const rowsBefore = mergeRows(m.audit).length;
     await m.merge.retryWaiting();
     expect((await m.pr(b.id)).merged).toBe(false);
     expect((await m.record(b.id)).state).toBe("queued");
-    expect(mergeRows(m.audit).length).toBe(rowsBefore + 1);
+    expect(mergeRows(m.audit).length).toBe(rowsBefore);
     await m.check(prA.head.sha, "ci/test", "completed", "success");
     await m.merge.retryWaiting();
     const [ra, rb] = [await m.record(a.id), await m.record(b.id)];

@@ -2871,7 +2871,18 @@ store never merge one PR twice), and one `merge_pr` call goes through the hooks 
 worktree only, budget 0); outside one on its own narrow token (`tokens.issue`: `merge_pr` only,
 the worktree only, the PR's host only when it is the git host's (`allowedDomains`), no secret,
 budget 0, ten minutes, the project's level as it is now, `sessionId` `merge-<record id>`),
-revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. While Stop all
+revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. **The retry
+pass reads the checks first** (R-mergeretry, leftovers7-merge): a `waiting_checks` record whose
+last outcome was `checks_pending` is looked at with two reads (`stillWaiting`: the pull request,
+then the runs and statuses on its reviewed commit); while they still run (the pull request open,
+on that commit, not in conflict) the attempt is counted (`attempts + 1`, so a day of waiting still
+reaches `MAX_MERGE_ATTEMPTS` and the person's card) and nothing else happens: no token, no audit
+row. Anything else, and the day's last attempt, takes the gated call as before. Before, every
+pass made the full call for every waiting record, every minute (a token, an audit row and about
+five GitHub calls each). **A merge the app made by itself is an Update**: one Inbox message
+(`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
+for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
+says it) and the person's own click (answered where they pressed it) add none. While Stop all
 holds the agent (`stopped`, the daemon's `kill.isFrozen`) the retry pass tries nothing and writes
 no row; a stop or an unexpected error during an attempt puts the record back to
 `waiting_checks`, never `merging` for good. A record
