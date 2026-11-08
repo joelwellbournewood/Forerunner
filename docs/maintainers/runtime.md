@@ -2682,7 +2682,9 @@ next session (when the limit changed, or the credential serves: `wakeBudgetWaits
 `RuntimeApp.billing.waits.wake`) and the critic reviews it once. A credential refusal with
 nothing known to wait for still files the review-failed card. Tests: `budget-pause.test.ts` "a
 review refused at the project's budget pauses the task", `credential-wait-session.test.ts` "a
-review that meets a credential's usage limit waits for it". The sign-off ends with the human the same way
+review that meets a credential's usage limit waits for it" (the usage limit, and the key
+Anthropic refuses: Run row `credential_refused`, the row "Waits for a new API key", only the
+key's own card, and `POST /setup/anthropic` with a new key reviews it once). The sign-off ends with the human the same way
 (`syncSignoffAnswers`, same file; phase 5 follow-up RT-P5-1): every `human` decision (a
 tier 3 review, a `human` verdict, the ladder's last rung, filed by `CriticService`,
 `applyVerdict` or the loop's ladder branch) carries a `change_card` keyed `critic:signoff`

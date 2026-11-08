@@ -21,6 +21,8 @@ import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
 const REGISTRY = join(process.cwd(), "evals", "registry");
 // Credential-shaped fixture, built by concatenation so no scanner sees a token.
 const KEY = ["sk-ant-api03-", "cred-good-", "3".repeat(40)].join(""); // not-a-secret
+/** The key the person saves after Anthropic refused `KEY`. */
+const NEW_KEY = ["sk-ant-api03-", "cred-new-", "4".repeat(40)].join(""); // not-a-secret
 /** The critic's tool: a request that offers it is a review's call. */
 const SUBMIT_REVIEW = "submit_review";
 
@@ -44,8 +46,14 @@ function world(clock: SimulatedClock) {
   let limitedUntil: number | null = null;
   /** Every call from now on: Anthropic refuses the key. */
   let refused = false;
-  const answerFor = (_key: string, nowMs: number): KeyAnswer => {
+  /** A review's call on this key: Anthropic refuses it (`refuseReviewsOn`). */
+  let refusedReviewKey: string | null = null;
+  /** Whether the call being answered is a review's (calls run one at a time here). */
+  let reviewing = false;
+  const answerFor = (key: string, nowMs: number): KeyAnswer => {
     if (refused) return { kind: "refused" };
+    if (reviewing && refusedReviewKey !== null && key === refusedReviewKey)
+      return { kind: "refused" };
     if (limitedUntil === null || nowMs >= limitedUntil) return { kind: "ok" };
     // The API names the minute access comes back.
     const reset = new Date(Math.ceil(limitedUntil / 60_000) * 60_000).toISOString();
@@ -59,12 +67,18 @@ function world(clock: SimulatedClock) {
   const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const request = new Request(input, init);
     const body = request.method === "POST" ? await request.clone().text() : "";
-    if (body.includes(`"name":"${SUBMIT_REVIEW}"`)) {
+    const review = body.includes(`"name":"${SUBMIT_REVIEW}"`);
+    if (review) {
       reviewCalls.push(clock.nowIso());
       if (reviewLimitMs !== null && limitedUntil === null)
         limitedUntil = clock.now() + reviewLimitMs;
     }
-    return inner(request);
+    reviewing = review;
+    try {
+      return await inner(request);
+    } finally {
+      reviewing = false;
+    }
   }) as typeof fetch;
   const start = async () => {
     const rt = await composeRuntime({
@@ -83,10 +97,12 @@ function world(clock: SimulatedClock) {
     });
     runtimes.push(rt);
     const { app, token } = createDaemonApp(rt);
-    const req = (path: string) =>
+    const req = (path: string, body?: unknown) =>
       Promise.resolve(
         app.request(path, {
+          method: body === undefined ? "GET" : "POST",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }),
       );
     return { rt, req };
@@ -105,6 +121,10 @@ function world(clock: SimulatedClock) {
     },
     refuseAll: () => {
       refused = true;
+    },
+    /** Every review's call on `key`: Anthropic refuses it; the work's calls are served. */
+    refuseReviewsOn: (key: string) => {
+      refusedReviewKey = key;
     },
   };
 }
@@ -369,6 +389,72 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
     expect((await second.rt.store.task.mustGet(task.id)).attempt).toBe(0);
     const sessions = await second.rt.store.session.forProject(project.id);
     expect(sessions.map((s) => s.trigger).sort()).toEqual(["budget_reset", "manual"]);
+  }, 120_000);
+
+  // The review of leftovers7-session: the refused-key branch had no test (a critic call that
+  // Anthropic refuses is `provider_auth`: the Run row `credential_refused`, the task waits for a
+  // new key, and saving one reviews it).
+  it("a review whose key Anthropic refuses is no verdict either: the task waits for a new key, and saving one reviews it", async () => {
+    const clock = new SimulatedClock("2026-11-03T14:00:00Z");
+    const w = world(clock);
+    await w.vault.set(SECRET_NAMES.anthropic, KEY);
+    const { rt, req } = await w.start();
+    const project = await rt.store.project.insert({
+      name: "Notes",
+      goal: "A note",
+      autonomy_level: 2,
+    });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write note A",
+      outcome: "Write note A is written",
+      acceptance_criteria: ["it is written"],
+      risk_tier: 0,
+      status: "ready",
+      priority: 5,
+      est_cost_usd_micro: 50_000,
+      reason: "seed",
+    });
+    // The work's calls are served; Anthropic refuses the review's call on this key.
+    w.refuseReviewsOn(KEY);
+
+    const result = await run(rt, project.id);
+    expect(w.reviewCalls).toHaveLength(1);
+    const row = await rt.store.task.mustGet(task.id);
+    expect([row.status, row.attempt]).toEqual(["ready", 0]);
+    expect(result.failed).toEqual([]);
+    expect(await rt.store.review.latestForTask(task.id)).toBeUndefined();
+    expect(await rt.store.finding.openFor(task.id)).toEqual([]);
+    const critic = (await rt.store.run.forTask(task.id)).filter((r) => r.specialist === "critic");
+    expect(critic.map((r) => r.outcome)).toEqual(["credential_refused"]);
+    // The Inbox has the key's own card only: no review-failed or "failed N times" card.
+    const inbox = await json<InboxView>(req("/inbox"));
+    expect(inbox.requests.filter((r) => r.status === "open").map((r) => r.title)).toEqual([
+      "Anthropic refused your API key",
+    ]);
+    // The Tasks tab says what it waits for; the drawer never says Failed.
+    const rows = await json<TaskView[]>(req(`/projects/${project.id}/tasks`));
+    expect(rows.map((t) => [t.status, t.display?.label])).toEqual([
+      ["ready", "Waits for a new API key"],
+    ]);
+    const detail = await json<{ runs: { outcome: string }[] }>(req(`/tasks/${task.id}`));
+    expect(detail.runs.map((r) => r.outcome)).not.toContain("Failed");
+
+    // The person saves a new key: the work goes on by itself and the critic reviews it once.
+    const saved = await json<{ ok: boolean }>(req("/setup/anthropic", { value: NEW_KEY }));
+    expect(saved.ok).toBe(true);
+    await until("the task to be reviewed after the new key", async () => {
+      const now = await rt.store.task.mustGet(task.id);
+      const sessions = await rt.store.session.forProject(project.id);
+      return now.status === "done" &&
+        sessions.every((s) => ["completed", "stopped", "failed", "killed"].includes(s.status))
+        ? null
+        : `${now.status}; sessions ${sessions.map((s) => s.status).join(", ")}`;
+    });
+    expect((await rt.store.review.latestForTask(task.id))?.verdict).toBe("accept");
+    expect((await rt.store.task.mustGet(task.id)).attempt).toBe(0);
+    const closed = await json<InboxView>(req("/inbox"));
+    expect(closed.requests.filter((r) => r.status === "open")).toEqual([]);
   }, 120_000);
 });
 
