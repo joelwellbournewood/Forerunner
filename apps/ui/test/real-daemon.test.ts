@@ -10091,3 +10091,180 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect(new Set(rows.map((w) => w.branch)).size).toBe(2);
   }, 150_000);
 });
+
+describe("the UI client against the real daemon: leftovers of wave 7, merge side, on the fake GitHub (leftovers7-merge)", () => {
+  // Real git on the testenv fake GitHub (its REST API and git smart HTTP) behind the daemon's
+  // GitHub client, as the Merge in the app block above.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let token = "";
+  let work = "";
+  const FULL = "alice/l7m";
+  const REPO = { owner: "alice", name: "l7m" };
+  const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    work = mkdtempSync(join(tmpdir(), "fr-ui-real-l7m-gh-"));
+    const clock = new SystemClock();
+    host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    await host.createRepo({
+      owner: "alice",
+      name: "l7m",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# l7m\n" },
+    });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const vault = new MemoryVault();
+    await vault.set(SECRET_NAMES.github, token);
+    ({ rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+        vault,
+        config: {
+          version: 1,
+          profile: "default",
+          timezone: "UTC",
+          githubApiBase: host.baseUrl,
+          anthropicApiBase: "http://an.test",
+          repos: [],
+          credentials: { github: true, anthropic: false, anthropicSubscription: false },
+          stateUrl: "sqlite::memory:",
+        },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /** A done task with its pull request on the host, as a session leaves it. */
+  async function doneTask(
+    projectId: string,
+    title: string,
+    file: string,
+    opts: { from?: string; dependsOn?: string[]; record?: boolean; content?: string } = {},
+  ) {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "done",
+      priority: 1,
+      depends_on: opts.dependsOn ?? [],
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      author_agent: rt.agent.id,
+    });
+    const dir = join(work, `wt-${task.id}`);
+    const git = new GitOps({ cwd: dir, identity, auth: { token } });
+    await git.clone(host.cloneUrl(FULL));
+    const branch = `fr/${file.replace(/\W+/g, "-")}-${task.id.slice(-6).toLowerCase()}`;
+    await git.createBranch(branch, opts.from ? `origin/${opts.from}` : "origin/main");
+    writeFileSync(join(dir, file), opts.content ?? `export const f = "${file}";\n`);
+    await git.commitAll(`Add ${file}`);
+    await git.push(branch);
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+    const pr = await github.createPullRequest(REPO, {
+      title,
+      body: "",
+      head: branch,
+      base: "main",
+    });
+    await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch });
+    if (opts.record !== false)
+      await rt.store.mergeRecord.pin({
+        task_id: task.id,
+        project_id: projectId,
+        agent_id: rt.agent.id,
+        pr_number: pr.number,
+        pr_url: pr.htmlUrl,
+        reviewed_head_sha: pr.head.sha,
+        author_agent: rt.agent.id,
+      });
+    return { task, pr, branch };
+  }
+
+  const checkRun = async (
+    sha: string,
+    status: "in_progress" | "completed",
+    conclusion?: string,
+  ) => {
+    const res = await fetch(`${host.baseUrl}/repos/${FULL}/check-runs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "ci/test",
+        head_sha: sha,
+        status,
+        ...(conclusion ? { conclusion } : {}),
+      }),
+    });
+    expect(res.status).toBe(201);
+  };
+  const setMode = async (projectId: string, mode: "you" | "after_review") => {
+    const p = await rt.store.project.mustGet(projectId);
+    await rt.store.project.patch(projectId, { settings: { ...p.settings, merge_mode: mode } });
+  };
+
+  it("'Merge automatically after review': an accepted task whose merge has not run reads the same on the Tasks tab and the Overview, and neither says it waits for you (R-queuedwords)", async () => {
+    const project = await client.createProject({ name: "Auto words", goal: "x", repos: [FULL] });
+    await setMode(project.id, "after_review");
+    const a = await doneTask(project.id, "Add the queue page", "queue.ts");
+    expect((await rt.store.mergeRecord.forTask(a.task.id))?.state).toBe("queued");
+    const label = (await client.task(a.task.id)).task.display?.label;
+    const row = (await client.projectPullRequests(project.id)).waiting.find(
+      (w) => w.number === a.pr.number,
+    );
+    expect(row?.merge?.state).toBe("merging");
+    expect(label).toBe("Accepted · merging");
+    expect(label).not.toMatch(/waiting for you/);
+    expect((await client.tasks(project.id)).find((t) => t.id === a.task.id)?.display?.label).toBe(
+      "Accepted · merging",
+    );
+    // "You press Merge" (the default): both say it waits for the click.
+    await setMode(project.id, "you");
+    expect((await client.task(a.task.id)).task.display?.label).toBe(
+      "Accepted · waiting for you to merge",
+    );
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.find((w) => w.number === a.pr.number)
+        ?.merge,
+    ).toMatchObject({ state: "ready", canMerge: true });
+  }, 120_000);
+
+  it("a Merge that waited for its checks and merged later by the retry pass is one Update in GET /inbox (R-mergeretry)", async () => {
+    const project = await client.createProject({ name: "Merged later", goal: "x", repos: [FULL] });
+    const c = await doneTask(project.id, "Add the late notes", "late-notes.ts");
+    await checkRun(c.pr.head.sha, "in_progress");
+    expect((await client.mergePullRequest(project.id, c.pr.number)).state).toBe("queued");
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(c.task.id))?.state === "waiting_checks",
+      "the record to wait for its checks",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(c.task.id)),
+      30_000,
+    );
+    const merged = `Merged #${c.pr.number}: "Add the late notes".`;
+    // While the checks run, the retry pass says nothing.
+    await rt.merge.retryWaiting();
+    expect((await client.inbox()).messages.map((m) => m.body)).not.toContain(merged);
+    await checkRun(c.pr.head.sha, "completed", "success");
+    await rt.merge.retryWaiting();
+    expect((await rt.store.mergeRecord.forTask(c.task.id))?.state).toBe("merged");
+    const bodies = (await client.inbox()).messages.map((m) => m.body);
+    expect(bodies.filter((b) => b === merged)).toHaveLength(1);
+  }, 120_000);
+});

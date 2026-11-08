@@ -10,6 +10,7 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { mergeModeOf } from "../loop/merge-mode.ts";
 import { type CredentialWaitWords, waitRowWords } from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
@@ -79,7 +80,8 @@ export async function loadTaskDisplayContext(
   const credentialWait = projectId ? await credentialWaitRow(store, projectId) : null;
   // C-37: a project linked to the person's own folder (its first repo is a path on this
   // computer) keeps what a cancelled run wrote: the Cancel dialog says so.
-  const linked = projectId ? (await store.project.get(projectId))?.repos[0]?.trim() : undefined;
+  const project = projectId ? await store.project.get(projectId) : undefined;
+  const linked = project?.repos[0]?.trim();
   return {
     tasks,
     cards,
@@ -88,6 +90,8 @@ export async function loadTaskDisplayContext(
     agentNames,
     reviews,
     merges,
+    // R-queuedwords: a queued accept merges by itself in the automatic mode.
+    ...(project ? { mergeMode: mergeModeOf(project.settings) } : {}),
     ...(credentialWait ? { credentialWait } : {}),
     ...(linked && isAbsolute(linked) ? { ownFolder: true } : {}),
   };

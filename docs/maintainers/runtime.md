@@ -3014,7 +3014,11 @@ waiting for you to merge" (the record's sentence as its detail where it says mor
 Merge"); a record the person's Merge queued behind tasks whose pull requests wait for their checks
 reads "Accepted · merges after #5" with the Overview row's sentence as its detail (`mergesAfterLabel`;
 `mergesBehind` walks `depends_on` through `TaskDisplayContext.tasks` and `merges`, whose `pr_number`
-names them); a task without a record stays "Done". The session result's builder "merges when its checks
+names them); a task without a record stays "Done". A `queued` record the person did not approve
+reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTaskDisplayContext`):
+"Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
+and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
+mode read "waiting for you", although the retry merges it by itself). The session result's builder "merges when its checks
 pass" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges when its checks
 pass." and "Left N reviewed pull requests for you to merge." counts only what waits for the person
 (`ResultFacts.waitingPrs`, `openPrs`). The Overview's Last result gets "Since then: merged #2, #3

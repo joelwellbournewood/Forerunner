@@ -6,7 +6,7 @@ import type {
   TaskRow,
   TaskStatus,
 } from "@forerunner/state";
-import { mergesAfterLabel, mergesAfterSentence } from "../loop/merge-mode.ts";
+import { type MergeMode, mergesAfterLabel, mergesAfterSentence } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
@@ -113,6 +113,12 @@ export interface TaskDisplayContext {
         >
       >
   >;
+  /**
+   * The project's merge mode (`project.settings.merge_mode`): a queued record the person did not
+   * approve merges by itself in `after_review` ("Accepted · merging"), else it waits for the
+   * click. Absent: "You press Merge", the default.
+   */
+  mergeMode?: MergeMode;
   /**
    * Whether a review of the task goes on in this app now (the kill switch holds it): a task
    * being reviewed's `live` (L-7). Absent: not said. A running task is not asked: its run goes
@@ -415,8 +421,13 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         case "merging":
           return display("done", "Accepted · merging", "good");
         case "queued": {
+          // An accept whose merge has not run yet: the automatic mode merges it by itself, as
+          // the Overview's row says ("merging"); "You press Merge" leaves it for the click
+          // (R-queuedwords, leftovers7-merge: before, every mode read "waiting for you").
           if (merge.approval !== "person")
-            return display("done", "Accepted · waiting for you to merge", "good");
+            return ctx.mergeMode === "after_review"
+              ? display("done", "Accepted · merging", "good")
+              : display("done", "Accepted · waiting for you to merge", "good");
           // The person's Merge, waiting its turn behind pull requests whose checks still run
           // (review, 2026-11-08: "Accepted · merging" for as long as those checks ran).
           const behind = mergesBehind(task, ctx);
