@@ -1768,4 +1768,37 @@ describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_00
     expect(card?.why).toContain("conflicts in README.md");
     await s.w.store.close();
   });
+
+  it("after the repository starts tracking 'Local only/', a reused worktree commits a new file there (R-exclude)", async () => {
+    const s = await setup();
+    const task = await s.newTask("Write the page");
+    const wt = join(s.w.root, "wt", task.id);
+    const first = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n")))
+      .execute(await s.ctx(task.id));
+    expect(first.outcome, first.summary).toBe("in_review");
+    expect(readFileSync(join(wt, ".git", "info", "exclude"), "utf8")).toContain("/Local only/");
+    // The repository then tracks a folder of that name: it is the repository's own.
+    const seed = new GitOps({ cwd: join(s.w.root, "seed"), identity });
+    mkdirSync(join(s.w.root, "seed", "Local only"), { recursive: true });
+    writeFileSync(join(s.w.root, "seed", "Local only", "a.txt"), "the repository's\n");
+    await seed.commitAll("a folder named Local only");
+    await seed.push("main");
+    const next = await s
+      .exec(
+        agent((dir) => {
+          mkdirSync(join(dir, "Local only"), { recursive: true });
+          writeFileSync(join(dir, "Local only", "b.txt"), "the task's\n");
+        }),
+      )
+      .execute(await s.ctx(task.id));
+    expect(next.outcome, next.summary).toBe("in_review");
+    expect(await s.onHost(next.branch ?? "")).toContain("Local only/b.txt");
+    expect(next.changedFiles).toContain("Local only/b.txt");
+    // Forerunner's own line for it is gone; the try folder's stays.
+    const exclude = readFileSync(join(wt, ".git", "info", "exclude"), "utf8");
+    expect(exclude).not.toContain("/Local only/");
+    expect(exclude).toContain("/.forerunner-try/");
+    await s.w.store.close();
+  });
 });

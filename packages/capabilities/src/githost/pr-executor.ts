@@ -704,9 +704,8 @@ export class PrTaskExecutor implements TaskExecutor {
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
     // .gitignore the project has (the push checks it again: a forced add gets past this). A
     // repository that tracks a folder named Local only keeps it as its own: only the try's.
-    const tracksLocalOnly = !!(await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]))
-      ?.length;
-    excludeNeverPushed(dir, tracksLocalOnly ? [TRY_DIR] : NEVER_PUSHED);
+    const excluded = await this.excludedFolders(git, target);
+    excludeNeverPushed(dir, excluded);
     // An empty repository (just created on GitHub) gets its first commit, a README with the
     // project's name and goal, so the task has a branch to start from (ADR 0106).
     await ensureBaseBranch({
@@ -932,8 +931,9 @@ export class PrTaskExecutor implements TaskExecutor {
       changedFiles = (await git.hasRef(DEPS_BASE_REF))
         ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
-      // Never the work's: Local only and a review's try folder (merged-copy).
-      changedFiles = changedFiles.filter((f) => underNeverPushed([f]).length === 0);
+      // Never the work's: Local only and a review's try folder (merged-copy); a Local only the
+      // repository tracks is its own, and a file the task wrote there is its work (R-exclude).
+      changedFiles = changedFiles.filter((f) => underNeverPushed([f], excluded).length === 0);
     } catch {
       // the diff is informational (peer overlap detection); never fail the PR for it
     }
@@ -989,13 +989,24 @@ export class PrTaskExecutor implements TaskExecutor {
     return null;
   }
 
+  /**
+   * The folders a task branch of this repository never stages (merged-copy, W6-26): Local only
+   * and a review's try folder, or only the try's when the base tracks a folder named Local only
+   * (the repository's own, R-exclude).
+   */
+  private async excludedFolders(git: GitOps, target: Target): Promise<readonly string[]> {
+    const tracked = await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]);
+    return tracked?.length ? [TRY_DIR] : NEVER_PUSHED;
+  }
+
   /** The task's own files on its branch: from the base its work started on, never Local only. */
   private async ownFiles(git: GitOps, target: Target): Promise<string[]> {
     try {
       const files = (await git.hasRef(DEPS_BASE_REF))
         ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
-      return files.filter((f) => underNeverPushed([f]).length === 0);
+      const excluded = await this.excludedFolders(git, target);
+      return files.filter((f) => underNeverPushed([f], excluded).length === 0);
     } catch {
       return [];
     }
