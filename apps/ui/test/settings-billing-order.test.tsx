@@ -46,7 +46,7 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
     // U-078 (the owner's decision of 2026-11-02, which replaced C-64's "research on the API key
     // first"): the person's order decides; another one only when the first cannot do a task.
     expect(section).toHaveTextContent(
-      "A task goes to another one only when the first cannot do it properly (research that must read web pages, a task that must ask you while it works); the plan card and New task say so.",
+      "A task goes to another one only when the first cannot do it properly (a task that must ask you while it works); the plan card and New task say so.",
     );
     expect(section).not.toHaveTextContent("research task uses the API key first");
     expect(await within(section).findByTestId("billing-order-default")).toHaveTextContent(
@@ -185,7 +185,8 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
       .getAllByTestId("credential-table-row")
       .map((r) => [...r.querySelectorAll("th, td")].map((c) => c.textContent));
     expect(rows).toEqual([
-      ["Read web pages", "Yes", "Not yet"],
+      // Forerunner's page reader on the subscription too ('sites'; before: "Not yet").
+      ["Read web pages", "Yes", "Yes"],
       // Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02).
       ["Search the web", "Yes", "Yes"],
       ["Run commands (its tests)", "Yes, in the sandbox", "No"],

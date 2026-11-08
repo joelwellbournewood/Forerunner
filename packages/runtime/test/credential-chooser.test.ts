@@ -11,12 +11,7 @@ import { SessionBudget } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { BILLING_PICK_AUDIT_TOOL, CODE_COMMANDS_SETTING } from "../src/session/billing.ts";
 import { abilityTable, credentialChoiceFor } from "../src/session/credential-choice.ts";
-import {
-  NO_WEB_ACCESS_LINE,
-  NO_WEB_SEARCH_LINE,
-  planItemFor,
-  SEARCH_ONLY_LINE,
-} from "../src/session/executor.ts";
+import { NO_WEB_ACCESS_LINE, NO_WEB_SEARCH_LINE, planItemFor } from "../src/session/executor.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import {
   type ChooserFacts,
@@ -158,8 +153,8 @@ describe("the credential chooser with both credentials, the subscription first (
   const clock = new SimulatedClock("2026-11-03T09:00:00Z");
   const sdk = fakeSdk();
   const provider = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
-  // The state between 'web-search' and 'sites': search on the key, no pages on the subscription
-  // (the composition's defaults); the test turns pages on for one case.
+  // Since 'sites' the composition reads pages and searches on both credentials; a case turns the
+  // subscription's page reader off through this seam to see the chooser send research to the key.
   const facts: Partial<ChooserFacts> = {};
   let rt: RuntimeApp;
   let home: string;
@@ -208,8 +203,13 @@ describe("the credential chooser with both credentials, the subscription first (
     };
   }
 
-  it("a researcher runs on the API key, the one that both reads pages and searches here, and the plan card says so", async () => {
-    const r = await run("researcher", { title: "Compare two static site generators" });
+  it("a researcher runs on the API key when only it reads pages and searches (the subscription's reader off), and the plan card says so", async () => {
+    facts.subscriptionPages = false;
+    const r = await run("researcher", { title: "Compare two static site generators" }).finally(
+      () => {
+        delete facts.subscriptionPages;
+      },
+    );
     expect(r.res.outcome).toBe("done");
     expect(r.kind).toBe("api_key");
     expect(r.onLoop).toBe(true);
@@ -218,17 +218,23 @@ describe("the credential chooser with both credentials, the subscription first (
     // is not offered web search, and its brief says so ('web-search').
     expect(r.loopBrief).toContain(NO_WEB_SEARCH_LINE.slice(0, 40));
     // The pick says why, in its audit row: only the key reads pages, and it meets every need.
-    expect(r.reason).toContain("chooser: only api_key meets webRead (first choice subscription)");
+    expect(r.reason).toContain(
+      "chooser: only api_key meets webRead, webSearch (first choice subscription)",
+    );
     expect(r.reason).not.toContain("lacks webSearch");
     // The plan card's and New task's sentence (the same words).
-    expect(await rt.chooser.forTask({ specialist: "researcher", projectId })).toEqual({
-      kind: "api_key",
-      line: "Runs on your API key: only it can read web pages here.",
-    });
+    facts.subscriptionPages = false;
+    try {
+      expect(await rt.chooser.forTask({ specialist: "researcher", projectId })).toEqual({
+        kind: "api_key",
+        line: "Runs on your API key: only it can read web pages and search the web here.",
+      });
+    } finally {
+      delete facts.subscriptionPages;
+    }
   });
 
-  it("with search and page reading on both credentials, the person's order decides: the subscription", async () => {
-    facts.subscriptionPages = true;
+  it("with search and page reading on both credentials (the default since 'sites'), the person's order decides: the subscription", async () => {
     try {
       const r = await run("researcher", { title: "Compare two hosting offers" });
       expect(r.res.outcome).toBe("done");
@@ -316,7 +322,8 @@ describe("the credential chooser with both credentials, the subscription first (
       ]);
     }
     expect(table.rows.map((r) => [r.label, ...r.cells.map((c) => c.words)])).toEqual([
-      ["Read web pages", "Yes", "Not yet"],
+      // 'sites': Forerunner's page reader on the subscription too (before: "Not yet").
+      ["Read web pages", "Yes", "Yes"],
       ["Search the web", "Yes", "Yes"],
       [
         "Run commands (its tests)",
@@ -350,8 +357,9 @@ describe("an API key whose web search is off ('web-search')", () => {
   });
 
   it("the plan card says research reads pages by address on the key, without 'yet'", () => {
+    // Only the key saved: since 'sites' a subscription would read and search itself.
     const choice = credentialChoiceFor({
-      kindsInOrder: ["subscription", "api_key"],
+      kindsInOrder: ["api_key"],
       needs: { hard: ["webRead", "webSearch"], better: [] },
       facts: facts({ keySearch: false, keySearchOff: true }),
       specialist: "researcher",
@@ -386,7 +394,7 @@ describe("the science-evaluator on a Claude subscription alone (U-078)", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it("is told it has no web access there, never that it searches (it has no web search)", async () => {
+  it("reads pages there through Forerunner's reader ('sites'), and is never told that it searches (it has no web search)", async () => {
     const w = await seedTask(rt, clock, projectId, {
       title: "Check the survey's response rate",
       outcome: "evaluation.md says whether the 64% response rate holds",
@@ -399,13 +407,17 @@ describe("the science-evaluator on a Claude subscription alone (U-078)", () => {
     expect(res.outcome).toBe("done");
     const prompt = sdk.calls[sdk.calls.length - 1]?.prompt ?? "";
     // Before: "Web pages cannot be opened on this run (a Claude subscription): use web search, …".
-    expect(prompt).not.toContain(SEARCH_ONLY_LINE);
+    expect(prompt).not.toContain("Web pages cannot be opened on this run");
     expect(prompt).not.toContain("use web search");
-    expect(prompt).toContain(NO_WEB_ACCESS_LINE);
-    // The plan card and New task say the same.
-    expect(await rt.chooser.forTask({ specialist: "science-evaluator", projectId })).toEqual({
-      kind: "subscription",
-      line: "Runs on your Claude subscription, where it cannot read web pages: the science-evaluator works from the project's files and the sources the brief gives.",
-    });
+    expect(prompt).not.toContain("WebSearch");
+    // Before 'sites': NO_WEB_ACCESS_LINE, and the plan card "where it cannot read web pages".
+    expect(prompt).not.toContain(NO_WEB_ACCESS_LINE);
+    const options = sdk.calls[sdk.calls.length - 1]?.options ?? {};
+    expect(options.allowedTools).toContain("mcp__forerunner__web_fetch");
+    expect(options.allowedTools).not.toContain("WebSearch");
+    // The plan card and New task: nothing it cannot do about the web there.
+    expect(
+      (await rt.chooser.forTask({ specialist: "science-evaluator", projectId }))?.line ?? "",
+    ).not.toContain("web pages");
   });
 });

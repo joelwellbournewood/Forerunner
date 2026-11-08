@@ -24,14 +24,12 @@ import {
 import { DEFAULT_PROVIDER_CAPABILITIES, type ProviderCapabilities } from "../provider/types.ts";
 import { needsWeb } from "../registry/alternates.ts";
 import type { SpecialistDef } from "../registry/types.ts";
-import {
-  type CredentialRunsOn,
-  type CredentialTableView,
-  type ModelSettingsView,
-  type ModelSettingValueView,
-  NO_PAGES_LIMITATION,
-  type RunSettingsView,
-  SEARCH_ONLY_LIMITATION,
+import type {
+  CredentialRunsOn,
+  CredentialTableView,
+  ModelSettingsView,
+  ModelSettingValueView,
+  RunSettingsView,
 } from "./api-types.ts";
 
 export interface ModelSettingsViewInput {
@@ -61,12 +59,6 @@ export interface ModelSettingsViewInput {
    */
   webAccess?: boolean;
   /**
-   * Research here only searches (`RuntimeApp.webSearchOnly`, C-64): an entry that reads pages
-   * and searches (`cc:WebFetch` and `cc:WebSearch`) carries `SEARCH_ONLY_LIMITATION`; one that
-   * reads pages without search (the science-evaluator) `NO_PAGES_LIMITATION` (U-078).
-   */
-  webSearchOnly?: boolean;
-  /**
    * Where a task of each specialist runs here and why (U-078, `RuntimeApp.chooser.forTask`), by
    * the specialist's name. Absent: no `runsOn`.
    */
@@ -74,9 +66,6 @@ export interface ModelSettingsViewInput {
   /** Settings' "What each can do here" (`RuntimeApp.chooser.table`). */
   credentials?: CredentialTableView | null;
 }
-
-/** C-64: a specialist that reads pages searches only on a subscription (`api-types.ts`). */
-export { SEARCH_ONLY_LIMITATION };
 
 /**
  * What a specialist that works from the web (its entry names `cc:WebFetch` or `cc:WebSearch`)
@@ -198,14 +187,11 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
       maxEffort: d.max_effort,
       overridesAgentId: input.principal.id,
       limitation:
+        // 'sites': the page reader runs on both credentials, so a subscription no longer limits
+        // research (C-64's "searches but opens no page" is gone).
         input.webAccess === false && needsWeb({ registryTools: d.allowed_tools ?? [] })
           ? NO_WEB_LIMITATION
-          : input.webSearchOnly && (d.allowed_tools ?? []).includes("cc:WebFetch")
-            ? // U-078: only an entry with web search searches there.
-              (d.allowed_tools ?? []).includes("cc:WebSearch")
-              ? SEARCH_ONLY_LIMITATION
-              : NO_PAGES_LIMITATION
-            : null,
+          : null,
       ...(input.runsOn ? { runsOn: input.runsOn.get(d.name) ?? null } : {}),
       settings: settingsView(
         resolveRunSettings({

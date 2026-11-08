@@ -1,3 +1,4 @@
+import { researchReadsLine, webAccessOf } from "@forerunner/runtime/wiring/web-access";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type {
@@ -5,6 +6,7 @@ import type {
   ProjectCard,
   ProjectPullRequestsView,
   ProjectPullRequestView,
+  SettingView,
 } from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { FolderPath } from "../../components/FolderPath.tsx";
@@ -14,6 +16,7 @@ import { relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { elapsedWords, useNow } from "../../shell/ShellBars.tsx";
 import { useClient, useUiState } from "../../store/context.tsx";
+import { commandForSetting, SettingChangeDialog } from "../SettingsPage.tsx";
 import { DecisionsSection } from "./DecisionsSection.tsx";
 import { PeersSection } from "./PeersSection.tsx";
 import { QueueSection } from "./QueueSection.tsx";
@@ -31,6 +34,7 @@ export function SummaryTab({ projectId, project }: { projectId: string; project?
       <ProjectCards projectId={projectId} />
       {project?.working ? <WorkingNow project={project} /> : null}
       <SummaryCard projectId={projectId} project={project} />
+      <ResearchReads projectId={projectId} project={project} />
       <DecisionsSection projectId={projectId} />
       <QueueSection projectId={projectId} />
       <PeersSection projectId={projectId} />
@@ -227,6 +231,62 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
         </section>
       ) : null}
     </div>
+  );
+}
+
+/** The Settings row this project's research rule is changed on ('sites'). */
+const WEB_ACCESS_ROW = "project.web_access";
+
+/**
+ * 'sites' (the owner's decision of 2026-11-02): one line on the Overview saying what research
+ * may read on the web, "Research reads: any public website · Change". Change opens the same
+ * dialog as the Settings row (Per project, "Web pages research may read"), with the same change
+ * card; the line is the daemon's (`ProjectCard.researchReads`) and, after a change, the same
+ * words from the row's new value.
+ */
+function ResearchReads({ projectId, project }: { projectId: string; project?: ProjectCard }) {
+  const client = useClient();
+  const [changed, setChanged] = useState<string | null>(null);
+  const [row, setRow] = useState<SettingView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const line = changed ?? project?.researchReads ?? null;
+  if (!line) return null;
+  const rowOf = async () =>
+    (await client.settings({ scope: "project", scopeId: projectId })).find(
+      (s) => s.key === WEB_ACCESS_ROW && s.scopeId === projectId,
+    ) ?? null;
+  const command = row ? commandForSetting(row) : null;
+  return (
+    <section className="text-sm" data-testid="research-reads">
+      <span data-testid="research-reads-line">{line}</span>
+      {" · "}
+      <button
+        type="button"
+        className="text-blue-700 hover:underline dark:text-blue-300"
+        onClick={() => {
+          setError(null);
+          void rowOf()
+            .then((r) => (r ? setRow(r) : setError("This project's setting was not found.")))
+            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+        }}
+        data-testid="research-reads-change"
+      >
+        Change
+      </button>
+      {error ? <ErrorBanner message={error} /> : null}
+      {row && command ? (
+        <SettingChangeDialog
+          setting={row}
+          command={command}
+          onClose={() => setRow(null)}
+          onChanged={() => {
+            void rowOf().then((r) => {
+              if (r) setChanged(researchReadsLine(webAccessOf({ web_access: r.value as never })));
+            });
+          }}
+        />
+      ) : null}
+    </section>
   );
 }
 

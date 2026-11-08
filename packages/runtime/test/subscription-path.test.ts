@@ -25,7 +25,7 @@ import {
   MID_SESSION_LIMIT_SETTING,
   planShareAfter,
 } from "../src/session/billing.ts";
-import { planItemFor, SDK_RUN_PROVIDER } from "../src/session/executor.ts";
+import { planItemFor, SDK_RUN_PROVIDER, SDK_WEB_SEARCH_LINE } from "../src/session/executor.ts";
 import {
   DEFAULT_PLAN_USD_MONTHLY,
   describePlanAllowance,
@@ -353,9 +353,9 @@ describe("the subscription path (ADR 0044)", () => {
     expect(JSON.stringify(logs)).not.toContain(API_KEY);
   });
 
-  it("a researcher's task goes to the API key although the subscription comes first, so it can read pages (C-64)", async () => {
-    // Before: with both credentials and no order chosen, the researcher ran on the subscription,
-    // where the hooks refuse every page (its domain list is empty) and only search works.
+  it("a researcher's task follows the person's order to the subscription, where it reads pages through Forerunner's reader ('sites', was C-64)", async () => {
+    // C-64 sent research to the API key whenever one was saved (the subscription read no page);
+    // since 'sites' both credentials read pages and search, so the order decides.
     const w = await seedTask("Compare two static site generators");
     const sdkCallsBefore = sdk.calls.length;
     const providerCallsBefore = provider.calls.length;
@@ -368,30 +368,22 @@ describe("the subscription path (ADR 0044)", () => {
       signal: new AbortController().signal,
     });
     expect(res.outcome).toBe("done");
-    expect(sdk.calls).toHaveLength(sdkCallsBefore);
-    expect(provider.calls.length).toBeGreaterThan(providerCallsBefore);
-    const key = (await rt.billing.sources()).find((s) => s.kind === "api_key");
+    expect(sdk.calls).toHaveLength(sdkCallsBefore + 1);
+    expect(provider.calls).toHaveLength(providerCallsBefore);
+    const subscription = (await rt.billing.sources()).find((s) => s.kind === "subscription");
     const run = (await rt.store.run.forTask(w.task.id))[0];
-    expect(run).toMatchObject({ specialist: "researcher", billing_source_id: key?.id });
-    // The loop run offers the page reader; this test's scripted provider runs no server tool, so
-    // the run is not offered web search and its brief says so ('web-search').
-    const req = provider.calls[provider.calls.length - 1];
-    expect((req?.tools ?? []).map((t) => t.name)).toContain("web_fetch");
-    expect(JSON.stringify(req?.messages)).toContain("Web search is not available on this run");
-    // The pick's audit row says why the API key came first: the chooser (U-078, which replaced
-    // C-64's "research reads web pages on the API key first") found that only the key reads
-    // pages; since 'web-search' the key also searches, so it meets every hard need.
+    expect(run).toMatchObject({ specialist: "researcher", billing_source_id: subscription?.id });
+    // Forerunner's page reader through the tool server; Claude Code's own reader off.
+    const options = sdk.calls[sdk.calls.length - 1]?.options ?? {};
+    expect(options.allowedTools).toContain("mcp__forerunner__web_fetch");
+    expect(options.allowedTools).not.toContain("WebFetch");
+    expect(options.disallowedTools).toEqual(["WebFetch"]);
+    expect(sdk.calls[sdk.calls.length - 1]?.prompt).toContain(SDK_WEB_SEARCH_LINE);
+    // The pick's audit row: no move away from the person's first choice.
     const pick = (await rt.store.auditLog.list({ runId: res.runId })).find(
       (r) => r.tool === BILLING_PICK_AUDIT_TOOL,
     );
-    expect(pick?.result_summary).toMatch(
-      /chooser: only api_key meets webRead \(first choice subscription\)$/,
-    );
-    // A coder's task keeps the subscription first (no order chosen): only web work moves.
-    const coder = await seedTask("Add a footer");
-    const sdkBefore = sdk.calls.length;
-    expect((await execute(coder)).outcome).toBe("done");
-    expect(sdk.calls).toHaveLength(sdkBefore + 1);
+    expect(pick?.result_summary).not.toContain("only api_key meets");
   });
 
   it("the hooks refuse a tool outside the allowlist and a path outside the run's directory on the SDK path too", async () => {
@@ -737,7 +729,7 @@ describe("the subscription path (ADR 0044)", () => {
   });
 });
 
-describe("research on a Claude subscription alone searches, and says so (C-64)", () => {
+describe("research on a Claude subscription alone searches and reads pages ('sites', was C-64)", () => {
   let rt: RuntimeApp;
   let home: string;
   const sdk = fakeSdk();
@@ -769,9 +761,8 @@ describe("research on a Claude subscription alone searches, and says so (C-64)",
     rmSync(home, { recursive: true, force: true });
   });
 
-  it("the researcher runs on the subscription and its brief says it can search but not open pages", async () => {
+  it("the researcher runs on the subscription and its brief says to search, then open pages with Forerunner's reader", async () => {
     expect(rt.webAccess()).toBe(true);
-    expect(rt.webSearchOnly()).toBe(true);
     const projectId = (await rt.store.project.insert({ name: "Docs", goal: "g", repos: [] })).id;
     const task = await rt.store.task.insert({
       project_id: projectId,
@@ -821,10 +812,11 @@ describe("research on a Claude subscription alone searches, and says so (C-64)",
     });
     expect(res.outcome).toBe("done");
     expect(sdk.calls).toHaveLength(1);
-    expect(sdk.calls[0]?.prompt).toContain(
-      "Web pages cannot be opened on this run (a Claude subscription)",
-    );
+    // Before ('sites'): "Web pages cannot be opened on this run (a Claude subscription)".
+    expect(sdk.calls[0]?.prompt).toContain(SDK_WEB_SEARCH_LINE);
+    expect(sdk.calls[0]?.prompt).not.toContain("Web pages cannot be opened on this run");
     expect(sdk.calls[0]?.prompt).not.toContain("Web search is not available");
+    expect(sdk.calls[0]?.options.allowedTools).toContain("mcp__forerunner__web_fetch");
   });
 });
 

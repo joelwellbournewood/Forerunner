@@ -2740,6 +2740,10 @@ async function composeWithRolePlayer(
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",
     sandboxDetection: NO_ENGINE,
+    // The role-player is the bench's stand-in: composed as `fr daemon --provider bench` is, with
+    // the page reader's loopback seam, so a research task reads the test's pages on 127.0.0.1
+    // ('sites': no list opens this computer any more).
+    webReadLoopback: true,
     ...over,
   });
   const { app, token } = createDaemonApp(rt);
@@ -3593,6 +3597,33 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(reply.pendingConfirmation).toBeNull();
     expect(reply.actions).toEqual([]);
     expect(await client.sessions({ projectId: project.id })).toHaveLength(before);
+  }, 60_000);
+
+  it("'Only these websites' reaches the planner: it is told to plan no research that needs another website ('sites')", async () => {
+    const project = await client.createProject({ name: "Docs only", goal: "Explain CSS grid" });
+    const set = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "only", only: ["developer.mozilla.org"], never: [] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to Only these websites",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(set.status).toBe("done");
+    const before = intakeCalls.length;
+    await client.retryIntake(project.id);
+    await rt.intake.inFlight(project.id);
+    const request = String(intakeCalls[before]?.messages[0]?.content);
+    expect(request).toContain(
+      "Web access: this project's research reads only these websites and their subdomains: developer.mozilla.org. Plan no research that needs another website",
+    );
   }, 60_000);
 
   it("a one-line brief without a Goal: the dialog's goal, a small plan, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
@@ -5153,13 +5184,8 @@ describe("the UI client against the real daemon: research on an API key reads th
   it("a researcher task fetches the page, writes docs/research.md citing it, and the critic is shown the page", async () => {
     const agentId = (await client.agents())[0]?.id ?? "";
     const project = await client.createProject({ name: "Docs site", goal: "Pick a generator" });
-    // The fixture runs on this computer: the project names its host on its site list, as a
-    // person names an intranet page (a public site needs no entry).
-    const before = await rt.store.project.mustGet(project.id);
-    await client.updateProjectSettings(project.id, {
-      version: before.version,
-      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
-    });
+    // The fixture runs on this computer: the daemon reads it through the bench's loopback seam
+    // (`webReadLoopback`, as `--provider bench` composes it); no list opens this computer.
     const task = await client.createTask(project.id, {
       title: "Compare two static site generators",
       outcome: `docs/research.md says how fast Hugo builds and which Node.js Eleventy needs, citing ${pageUrl}`,
@@ -5215,6 +5241,117 @@ describe("the UI client against the real daemon: research on an API key reads th
     // This install reads the web: Settings' specialists list says nothing is missing.
     const models = await client.modelSettings();
     expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
+  }, 120_000);
+
+  it("'Web pages research may read' ('sites'): PUT's old block list becomes the one never list, settings.set changes the next page read, and the Overview carries the line", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Rules", goal: "Read only one site" });
+    const rowOf = async () =>
+      (await client.settings({ scope: "project", scopeId: project.id })).find(
+        (s) => s.key === "project.web_access" && s.scopeId === project.id,
+      );
+    // The default: any public website, on the row and on the Overview's line.
+    expect((await rowOf())?.value).toEqual({ mode: "any", only: [], never: [] });
+    expect((await rowOf())?.label).toBe("Web pages research may read");
+    expect((await client.project(project.id)).researchReads).toBe(
+      "Research reads: any public website",
+    );
+    // A block written the old way (PUT /projects/:id/settings, browser.blockedDomains) is taken
+    // into the one never list in the same write, with an audit row: enforced and shown.
+    const row = await rt.store.project.mustGet(project.id);
+    const put = await client.updateProjectSettings(project.id, {
+      version: row.version,
+      settings: { browser: { blockedDomains: ["*.example.org", "https://www.facebook.com/x"] } },
+    });
+    expect(put.settings).toMatchObject({
+      web_access: { mode: "any", only: [], never: ["example.org", "facebook.com"] },
+    });
+    expect(put.settings.browser).toBeUndefined();
+    expect((await rowOf())?.value).toEqual({
+      mode: "any",
+      only: [],
+      never: ["example.org", "facebook.com"],
+    });
+    const moved = await rt.store.auditLog.list({ tool: "project.settings" } as never);
+    expect(moved.map((r) => r.result_summary)).toEqual([
+      "browser.blockedDomains taken into web_access.never: example.org, facebook.com",
+    ]);
+    // The rule itself is not written through that route: it skips the yes a widening needs.
+    const sneak = await rt.store.project.mustGet(project.id);
+    await expect(
+      client.updateProjectSettings(project.id, {
+        version: sneak.version,
+        settings: { web_access: { mode: "any", only: [], never: [] } },
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    // "Only these websites" through settings.set (the Settings row's command): a narrowing,
+    // done at once.
+    const set = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "only", only: ["https://example.com/docs"], never: ["example.org"] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to Only these websites: example.com",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(set.status).toBe("done");
+    expect((await rowOf())?.value).toEqual({
+      mode: "only",
+      only: ["example.com"],
+      never: ["example.org"],
+    });
+    expect((await client.project(project.id)).researchReads).toBe(
+      "Research reads: only example.com",
+    );
+    // Back to any public website is a widening: a yes first.
+    const widen = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "any", only: [], never: [] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to Any public website",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(widen.status).toBe("pending");
+    if (widen.pendingId) await client.confirmCommand(widen.pendingId, { answer: "no" });
+    // The next page read follows the rule: the stand-in page is not on the "only" list, and the
+    // words the researcher got (and wrote) name the rule.
+    hits.length = 0;
+    const task = await client.createTask(project.id, {
+      title: "Compare two static site generators",
+      outcome: `docs/research.md says how fast Hugo builds, citing ${pageUrl}`,
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      60_000,
+    );
+    expect(hits).toEqual([]);
+    const file = await client.projectFile(project.id, "docs/research.md");
+    expect(file.content).toContain(
+      `${pageUrl} was not read: Refused: 127.0.0.1 is not on this project's "only these websites" list (example.com).`,
+    );
+    const drawer = await client.task(task.id);
+    expect(JSON.stringify(drawer.runs)).toContain("only these websites");
   }, 120_000);
 
   it("an install without web access says so for the researcher, and its task still runs from the project's files", async () => {
@@ -5815,11 +5952,6 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
 
   it("GET /tasks/:id: each run names its session, its files open on the Files tab, its step lines are in that session's log, a research run names the pages it read (later #46, C-72)", async () => {
     const project = await client.createProject({ name: "Drawer links", goal: "Open what ran" });
-    const before = await rt.store.project.mustGet(project.id);
-    await client.updateProjectSettings(project.id, {
-      version: before.version,
-      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
-    });
     const page = await client.createTask(project.id, {
       title: "Build the quote page in index.html",
       outcome: "index.html shows a quote",
@@ -7118,12 +7250,12 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
   }, 120_000);
 });
 
-describe("the UI client against the real daemon: research on a Claude subscription alone searches, and the screens say so (C-64)", () => {
+describe("the UI client against the real daemon: research on a Claude subscription alone reads pages too ('sites', was C-64)", () => {
   // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
   const oauth = ["sk-ant-oat01-", "subscription", "0".repeat(40)].join(""); // not-a-secret
   const apiKey = ["sk-ant-api03-", "apikey", "0".repeat(40)].join(""); // not-a-secret
 
-  it("a subscription and no API key: the researcher and the science-evaluator search but open no page", async () => {
+  it("a subscription and no API key: the researcher and the science-evaluator read pages there, so the screens say nothing is missing", async () => {
     const sub = await composeWithRolePlayer(
       {},
       { vault: new MemoryVault({ anthropic_subscription_token: oauth }) },
@@ -7131,20 +7263,16 @@ describe("the UI client against the real daemon: research on a Claude subscripti
     try {
       const models = await sub.client.modelSettings();
       const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
-      expect(limits.researcher).toBe("Searches the web but opens no page on a Claude subscription");
-      // U-078: the science-evaluator has no web search; before, it was said to search there.
-      expect(limits["science-evaluator"]).toBe("Reads no web page on a Claude subscription");
+      // Before 'sites': "Searches the web but opens no page on a Claude subscription" and
+      // "Reads no web page on a Claude subscription"; Forerunner's reader runs there now.
+      expect(limits.researcher).toBeNull();
+      expect(limits["science-evaluator"]).toBeNull();
       expect(limits.coder).toBeNull();
       // Where each runs and why, the chooser's words (the plan card's and New task's).
       const runsOn = Object.fromEntries(models.specialists.map((x) => [x.name, x.runsOn]));
-      expect(runsOn.researcher).toEqual({
-        kind: "subscription",
-        line: "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
-      });
-      expect(runsOn["science-evaluator"]).toEqual({
-        kind: "subscription",
-        line: "Runs on your Claude subscription, where it cannot read web pages: the science-evaluator works from the project's files and the sources the brief gives.",
-      });
+      expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
+      expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
+      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
     } finally {
       await sub.rt.close();
     }
@@ -7173,8 +7301,9 @@ describe("the UI client against the real daemon: the credential chooser says whe
   // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
   const oauth = ["sk-ant-oat01-", "chooser", "0".repeat(40)].join(""); // not-a-secret
   const apiKey = ["sk-ant-api03-", "chooser", "0".repeat(40)].join(""); // not-a-secret
-  // Since 'web-search' the API key reads pages and searches: only it does both here.
-  const RESEARCH_LINE = "Runs on your API key: only it can read web pages here.";
+  // Since 'sites' both credentials read pages and search: research follows the person's order
+  // (the subscription first here), and nothing needs saying. Before: "Runs on your API key: only
+  // it can read web pages here."
 
   it("both credentials, the subscription first: the plan card, New task and Settings say the same words", async () => {
     const both = await composeWithRolePlayer(
@@ -7204,7 +7333,7 @@ describe("the UI client against the real daemon: the credential chooser says whe
       if (!card?.planTasks) throw new Error(`no plan card with planTasks: ${JSON.stringify(card)}`);
       // The plan card's tasks, as the Inbox reads them, each with the daemon's view.
       const research = card.planTasks.find((t) => t.specialist === "researcher");
-      expect(research?.runsOn).toEqual({ kind: "api_key", line: RESEARCH_LINE });
+      expect(research?.runsOn).toEqual({ kind: "subscription", line: null });
       // A new project has no dependencies to install yet: the coder stays on the subscription,
       // with nothing to say.
       const coder = card.planTasks.find((t) => t.specialist === "coder");
@@ -7213,11 +7342,9 @@ describe("the UI client against the real daemon: the credential chooser says whe
       // New task and Settings: the same words, from GET /settings/models.
       const models = await client.modelSettings(undefined, project.id);
       const runsOn = Object.fromEntries(models.specialists.map((s) => [s.name, s.runsOn]));
-      expect(runsOn.researcher).toEqual({ kind: "api_key", line: RESEARCH_LINE });
-      expect(runsOn["science-evaluator"]).toEqual({
-        kind: "api_key",
-        line: "Runs on your API key: only it can read web pages here.",
-      });
+      expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
+      expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
+      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
       // Settings' "What each can do here": the capability function's output.
       expect(models.credentials?.columns).toEqual([
         { kind: "api_key", name: "API key", saved: true },
@@ -7226,7 +7353,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
       expect(
         models.credentials?.rows.map((r) => [r.label, ...r.cells.map((c) => c.words)]),
       ).toEqual([
-        ["Read web pages", "Yes", "Not yet"],
+        // Forerunner's page reader on the subscription too ('sites'; before: "Not yet").
+        ["Read web pages", "Yes", "Yes"],
         // Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02).
         ["Search the web", "Yes", "Yes"],
         [
@@ -9212,6 +9340,8 @@ describe("the UI client against the real daemon: research searches the web on th
     const standIn = messagesApiStandIn({ model, clock: new SystemClock(), search: {} });
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
+      // As `fr daemon --provider bench-api` composes it: the pages are on 127.0.0.1.
+      webReadLoopback: true,
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
       config: null,
       clock: new ShiftedClock("2026-03-05T08:00:00Z"),
@@ -9245,14 +9375,12 @@ describe("the UI client against the real daemon: research searches the web on th
         "Yes",
       );
       const project = await client.createProject({ name: "Hosts", goal: "Pick a host" });
-      // The pages are on this computer: the site list names it, as for an intranet page; the
-      // block list holds a "*." entry, which web search takes as the bare domain.
+      // The pages are on this computer (the bench's loopback seam reads them); the block list
+      // holds a "*." entry, which web search takes as the bare domain.
       const row = await rt.store.project.mustGet(project.id);
       await client.updateProjectSettings(project.id, {
         version: row.version,
-        settings: {
-          browser: { allowedDomains: ["127.0.0.1"], blockedDomains: ["*.example.org"] },
-        },
+        settings: { browser: { blockedDomains: ["*.example.org"] } },
       });
       const task = await client.createTask(project.id, {
         title: "Compare the free tiers of static site hosts",

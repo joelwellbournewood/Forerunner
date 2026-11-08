@@ -18,7 +18,7 @@ import {
 } from "../src/session/executor.ts";
 import { stepLine } from "../src/session/runner.ts";
 import { webSourceEvidence } from "../src/session/web-sources.ts";
-import { webReadSitesResolver } from "../src/wiring/web-ports.ts";
+import { webReadRulesResolver } from "../src/wiring/web-ports.ts";
 import {
   flatPricing,
   harness,
@@ -67,17 +67,29 @@ afterEach(async () => {
   for (const s of stores.splice(0)) await s.close();
 });
 
-/** The test tools plus, unless `noWeb`, the web capability's page reader as the daemon registers it. */
+/**
+ * The test tools plus, unless `noWeb`, the web capability's page reader as the daemon registers
+ * it. The fixture runs on this computer, so the reader is built with the development seam
+ * (`loopback`, as `fr daemon --provider bench` composes it) unless a test leaves it out to see
+ * the real rule refuse the loopback.
+ */
 function toolsWith(
   store: StateStore,
   audit: MemoryAudit,
   h: ReturnType<typeof harness>,
   noWeb: boolean,
+  loopback: boolean,
 ): ToolRegistry {
   const tools = registry();
   if (!noWeb)
     tools.register(
-      web.webFetchTool({ sites: webReadSitesResolver(store.project), audit, clock: h.clock }),
+      web.webFetchTool({
+        rules: webReadRulesResolver(store.project),
+        audit,
+        clock: h.clock,
+        env: {},
+        ...(loopback ? { loopback: true } : {}),
+      }),
     );
   return tools;
 }
@@ -88,18 +100,20 @@ async function world(opts: {
   noWeb?: boolean;
   settings?: JsonObject;
   title?: string;
+  /** The reader's development seam (default on: the fixture is on 127.0.0.1). */
+  loopback?: boolean;
 }) {
   const h = harness();
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
   stores.push(store);
   const human = (await store.human.insert({ name: "J", email: "j@x.test" })).id;
   const agent = (await store.agent.insert({ name: "Alice", owner_human_id: human })).id;
-  // The fixture runs on this computer, so the project names it on its site list, as a person
-  // names an intranet page; a public site needs no entry.
+  // The fixture runs on this computer: the reader reaches it through the development seam
+  // (`loopback`), never through a list ('sites': no list opens this computer).
   const project = (
     await store.project.insert({
       name: "Docs site",
-      settings: opts.settings ?? { browser: { allowedDomains: ["127.0.0.1"] } },
+      settings: opts.settings ?? {},
     })
   ).id;
   const session = await store.session.insert({
@@ -118,7 +132,7 @@ async function world(opts: {
     budget_usd_micro: 2_000_000,
   });
   const audit = new MemoryAudit();
-  const tools = toolsWith(store, audit, h, opts.noWeb ?? false);
+  const tools = toolsWith(store, audit, h, opts.noWeb ?? false, opts.loopback ?? true);
   const specs = specialistSpecFrom(shipped, { driver: "loop", tools: () => tools.names() });
   const provider = new ScriptedProvider(opts.replies, h.clock);
   const events: string[] = [];
@@ -206,9 +220,12 @@ describe("the researcher runs on an API key and reads the web (ADR 0107)", () =>
 
   it("a page the network rules refuse comes back to the researcher in words, and the critic sees it was not read", async () => {
     hits.length = 0;
+    // Without the development seam, as in an installed app: the loopback is this computer, and
+    // no list opens it (before 'sites', '127.0.0.1' on the site list did).
     const w = await world({
       specialist: "researcher",
-      settings: {},
+      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
+      loopback: false,
       replies: [
         { tools: [{ name: WEB_FETCH_TOOL, input: { url: pageUrl } }] },
         { text: "The page could not be read." },
@@ -271,7 +288,7 @@ describe("one name for the page reader (ADR 0107)", () => {
   it("the capability's tool is the name the registry maps cc:WebFetch to", () => {
     expect(web.WEB_FETCH_TOOL_NAME).toBe(WEB_FETCH_TOOL);
     const tool = web.webFetchTool({
-      sites: () => ({ allowed: [], blocked: [] }),
+      rules: () => web.ANY_PUBLIC_WEBSITE,
       audit: new MemoryAudit(),
       clock: harness().clock,
     });

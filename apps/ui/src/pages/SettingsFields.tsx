@@ -1,8 +1,10 @@
+import { webAccessWords } from "@forerunner/runtime/wiring/web-access";
 import type { SettingView } from "../api/client.ts";
 import { Field, INPUT_CLASS } from "../components/ui.tsx";
 import { chfToMicro } from "../lib/money.ts";
 import { AUTONOMY_LEVELS } from "../lib/plain-words.ts";
 import { reviewLevelName, reviewLevelValue } from "../lib/task-actions.ts";
+import { webAccessDisplay, webAccessInitial, webAccessParams } from "./WebAccessInput.tsx";
 
 /**
  * The review levels in words (ADR 0104: no tier numbers on a person's screen; a light review is
@@ -72,6 +74,7 @@ export const SETTING_LABELS: Record<string, string> = {
   speed_quality_offset: "Speed or quality",
   mid_session_limit: "When my first choice runs out mid-session",
   code_commands: "Code tasks that need commands",
+  web_access: "Web pages research may read",
 };
 
 export function leafOf(key: string): string {
@@ -191,6 +194,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v === "after_review" ? MERGE_MODES[1].label : MERGE_MODES[0].label;
     case "code_commands":
       return v === "api_key" ? CODE_COMMANDS[1].label : CODE_COMMANDS[0].label;
+    case "web_access":
+      return webAccessWords(v);
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":
@@ -229,7 +234,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
 /** The command and control behind a structured or listed setting; null for the rest. */
 export interface StructuredCommand {
   name: "settings.set" | "budget.set" | "autonomy.set";
-  inputType: "number" | "text" | "fields" | "money";
+  /** `sites`: "Web pages research may read" ('sites'), its own control (`WebAccessInput`). */
+  inputType: "number" | "text" | "fields" | "money" | "sites";
   options?: readonly { value: string; label: string }[];
   fields?: readonly FieldSpec[];
   min?: number;
@@ -354,6 +360,15 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         (c) => (c === "after_review" ? "after_review" : "you"),
         projectParam,
       );
+    case "web_access":
+      // 'sites': the mode and the two lists, cleaned and shown back before saving.
+      return {
+        name: "settings.set",
+        inputType: "sites",
+        initial: webAccessInitial,
+        params: (v) => webAccessParams(v, projectParam),
+        display: webAccessDisplay,
+      };
     case "critic_ceiling":
       return select(
         leaf,

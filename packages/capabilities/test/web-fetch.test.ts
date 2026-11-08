@@ -4,15 +4,20 @@ import { gzipSync } from "node:zlib";
 import { SimulatedClock } from "@forerunner/platform";
 import { MemoryAudit, type ToolExecutionContext } from "@forerunner/runtime";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { webFetchTool } from "../src/web/fetch.ts";
-import { isPublicAddress, WebReadPolicy } from "../src/web/policy.ts";
+import { PROXY_SENTENCE, webFetchTool } from "../src/web/fetch.ts";
+import {
+  isLoopbackAddress,
+  isPublicAddress,
+  WebReadPolicy,
+  type WebReadRules,
+} from "../src/web/policy.ts";
 
 /**
  * `web_fetch` (ADR 0107): the researcher's and the science-evaluator's page reader on the loop
  * driver, against a real HTTP server on this computer. The fixture plays both a public site
  * (`pages.example.test`, resolved to the loopback by the test's resolver and counted public by
  * the test's address rule) and the private network (the loopback itself, which the real rule
- * refuses unless the project names it).
+ * always refuses, whatever the project's lists say; only the development seam `loopback` opens it).
  */
 interface Hit {
   method: string;
@@ -101,6 +106,8 @@ const PUBLIC_TEST_HOSTS = new Set([
   "pages.example.test",
   "blocked.example.test",
   "other.example.test",
+  "www.blocked.example.test",
+  "docs.pages.example.test",
 ]);
 const resolveTest = async (host: string) => {
   if (PUBLIC_TEST_HOSTS.has(host)) return [{ address: "127.0.0.1", family: 4 }];
@@ -119,15 +126,24 @@ const resolveTest = async (host: string) => {
 };
 
 function world(
-  sites: { allowed?: string[]; blocked?: string[] } = {},
-  over: { maxBytes?: number; timeoutMs?: number; realAddresses?: boolean } = {},
+  rules: Partial<WebReadRules> = {},
+  over: {
+    maxBytes?: number;
+    timeoutMs?: number;
+    realAddresses?: boolean;
+    loopback?: boolean;
+    env?: NodeJS.ProcessEnv;
+  } = {},
 ) {
   const audit = new MemoryAudit();
   let lastHost = "";
   const tool = webFetchTool({
-    sites: () => ({ allowed: sites.allowed ?? [], blocked: sites.blocked ?? [] }),
+    rules: () => ({ mode: rules.mode ?? "any", only: rules.only ?? [], never: rules.never ?? [] }),
     audit,
     clock: new SimulatedClock(),
+    // No proxy unless a test names one: the words of a failed connection depend on it.
+    env: over.env ?? {},
+    ...(over.loopback ? { loopback: true } : {}),
     resolve: async (host) => {
       lastHost = host;
       return resolveTest(host);
@@ -221,7 +237,7 @@ describe("web_fetch reads a public page as text (ADR 0107)", () => {
   });
 });
 
-describe("web_fetch keeps to the network rules (ADR 0107)", () => {
+describe("web_fetch keeps to the network rules (ADR 0107, 'sites')", () => {
   it("refuses this computer and the local network, in words, before any request", async () => {
     const { tool, audit } = world({}, { realAddresses: true });
     hits.length = 0;
@@ -236,7 +252,7 @@ describe("web_fetch keeps to the network rules (ADR 0107)", () => {
       const r = await refusal(tool.execute({ url }, ctx()));
       expect(r.code, url).toBe("domain_not_allowed");
       expect(r.message, url).toMatch(
-        /^Refused: .* private or local network address; research reads public web pages only/,
+        /^Refused: .* (private or local network address|name on this computer or the local network); research reads public web pages only\.$/,
       );
     }
     expect(hits).toHaveLength(0);
@@ -255,7 +271,7 @@ describe("web_fetch keeps to the network rules (ADR 0107)", () => {
       tool.execute({ url: `http://intranet.example.test:${port}/page.html` }, ctx()),
     );
     expect(r.message).toBe(
-      "Refused: intranet.example.test resolves to 127.0.0.1, a private or local network address; research reads public web pages only (a host on the project's site list is the exception).",
+      "Refused: intranet.example.test resolves to 127.0.0.1, a private or local network address; research reads public web pages only.",
     );
     const r2 = await refusal(
       tool.execute({ url: `http://rebind.example.test:${port}/page.html` }, ctx()),
@@ -264,30 +280,97 @@ describe("web_fetch keeps to the network rules (ADR 0107)", () => {
     expect(hits).toHaveLength(0);
   });
 
-  it("reads a private host the project names on its site list", async () => {
+  it("never reads this computer or the local network, whatever the project's lists say", async () => {
+    // Before 'sites', a host on the site list was read on any address: 'localhost' or
+    // '127.0.0.1' on it opened this computer, Forerunner's own daemon included.
     const { tool } = world(
-      { allowed: ["intranet.example.test", "127.0.0.1"] },
+      { mode: "only", only: ["intranet.example.test", "127.0.0.1", "localhost"] },
       { realAddresses: true },
     );
-    const r = await tool.execute({ url: `http://intranet.example.test:${port}/page.html` }, ctx());
-    expect(r.content).toContain("Hugo builds");
-    const r2 = await tool.execute({ url: `http://127.0.0.1:${port}/notes.txt` }, ctx());
-    expect(r2.content).toContain("plain notes");
+    hits.length = 0;
+    for (const url of [
+      `http://intranet.example.test:${port}/page.html`,
+      `http://127.0.0.1:${port}/notes.txt`,
+      `http://localhost:${port}/notes.txt`,
+      `http://[::ffff:127.0.0.1]:${port}/notes.txt`,
+      `http://[2002:7f00:1::1]:${port}/notes.txt`,
+    ]) {
+      const r = await refusal(tool.execute({ url }, ctx()));
+      expect(r.code, url).toBe("domain_not_allowed");
+    }
+    expect(hits).toHaveLength(0);
+    // A name without a dot is never a website, on any list.
+    const dotless = await refusal(tool.execute({ url: "http://router/admin" }, ctx()));
+    expect(dotless.message).toBe(
+      "Refused: router is a name on this computer or the local network; research reads public web pages only.",
+    );
   });
 
-  it("refuses a host on the project's block list, even when it is also on the site list", async () => {
-    const { tool } = world({ allowed: ["*.example.test"], blocked: ["blocked.example.test"] });
-    const r = await refusal(
-      tool.execute({ url: `http://blocked.example.test:${port}/page.html` }, ctx()),
+  it("the development seam opens this computer's loopback only, never the local network", async () => {
+    const { tool } = world({}, { realAddresses: true, loopback: true });
+    const r = await tool.execute({ url: `http://127.0.0.1:${port}/notes.txt` }, ctx());
+    expect(r.content).toContain("plain notes");
+    const r2 = await tool.execute({ url: `http://localhost:${port}/notes.txt` }, ctx());
+    expect(r2.content).toContain("plain notes");
+    for (const url of ["http://10.0.0.7/admin", "http://192.168.1.1/", "http://169.254.169.254/"]) {
+      expect((await refusal(tool.execute({ url }, ctx()))).code, url).toBe("domain_not_allowed");
+    }
+  });
+
+  it("a never-list entry covers the site and its subdomains, with or without a trailing dot", async () => {
+    const { tool } = world({ never: ["blocked.example.test"] });
+    for (const url of [
+      `http://blocked.example.test:${port}/page.html`,
+      `http://www.blocked.example.test:${port}/page.html`,
+      `http://blocked.example.test.:${port}/page.html`,
+      `http://BLOCKED.example.test:${port}/page.html`,
+    ]) {
+      const r = await refusal(tool.execute({ url }, ctx()));
+      expect(r.code, url).toBe("domain_not_allowed");
+      expect(r.message, url).toMatch(
+        /^Refused: (www\.)?blocked\.example\.test is on this project's "never these websites" list\.$/,
+      );
+    }
+    // Another site still reads.
+    const ok = await tool.execute({ url: `http://pages.example.test:${port}/notes.txt` }, ctx());
+    expect(ok.content).toContain("plain notes");
+  });
+
+  it("'only these websites' reads its sites and their subdomains and refuses every other one, naming the rule", async () => {
+    const { tool } = world({ mode: "only", only: ["pages.example.test"] });
+    const r = await tool.execute({ url: `http://pages.example.test:${port}/notes.txt` }, ctx());
+    expect(r.content).toContain("plain notes");
+    const sub = await tool.execute(
+      { url: `http://docs.pages.example.test:${port}/notes.txt` },
+      ctx(),
     );
-    expect(r).toEqual({
+    expect(sub.content).toContain("plain notes");
+    const other = await refusal(
+      tool.execute({ url: `http://other.example.test:${port}/page.html` }, ctx()),
+    );
+    expect(other).toEqual({
       code: "domain_not_allowed",
-      message: "Refused: blocked.example.test is on this project's block list.",
+      message:
+        'Refused: other.example.test is not on this project\'s "only these websites" list (pages.example.test).',
     });
   });
 
-  it("checks every redirect hop: to the private network or the block list is refused before the hop", async () => {
-    const { tool } = world({ blocked: ["blocked.example.test"] });
+  it("the never list wins over the only list", async () => {
+    const { tool } = world({
+      mode: "only",
+      only: ["example.test"],
+      never: ["blocked.example.test"],
+    });
+    const r = await refusal(
+      tool.execute({ url: `http://blocked.example.test:${port}/page.html` }, ctx()),
+    );
+    expect(r.message).toBe(
+      'Refused: blocked.example.test is on this project\'s "never these websites" list.',
+    );
+  });
+
+  it("checks every redirect hop: to the private network or the never list is refused before the hop", async () => {
+    const { tool } = world({ never: ["blocked.example.test"] });
     hits.length = 0;
     const toPrivate = await refusal(
       tool.execute({ url: `http://pages.example.test:${port}/to-private` }, ctx()),
@@ -299,7 +382,7 @@ describe("web_fetch keeps to the network rules (ADR 0107)", () => {
       tool.execute({ url: `http://pages.example.test:${port}/to-blocked` }, ctx()),
     );
     expect(toBlocked.message).toBe(
-      "Refused: blocked.example.test is on this project's block list.",
+      'Refused: blocked.example.test is on this project\'s "never these websites" list.',
     );
     // Only the two first hops reached the fixture.
     expect(hits.map((h) => h.url)).toEqual(["/to-private", "/to-blocked"]);
@@ -349,6 +432,23 @@ describe("web_fetch says what went wrong with a page (ADR 0107)", () => {
     ).toBe("nowhere.example.test was not found (no such host, or no network).");
   });
 
+  it("on a computer with a proxy set, a failed connection says the reader does not use it", async () => {
+    const { tool } = world({}, { env: { HTTPS_PROXY: "http://proxy.example.test:3128" } });
+    const r = await refusal(tool.execute({ url: "http://nowhere.example.test/" }, ctx()));
+    expect(r).toEqual({
+      code: "unavailable",
+      message: `nowhere.example.test was not found (no such host, or no network). ${PROXY_SENTENCE}`,
+    });
+    expect(PROXY_SENTENCE).toBe(
+      "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works.",
+    );
+    // An answer from the site itself is not the proxy's doing.
+    const missing = await refusal(
+      tool.execute({ url: `http://pages.example.test:${port}/missing` }, ctx()),
+    );
+    expect(missing.message).not.toContain("proxy");
+  });
+
   it("a page that never answers ends at the time limit, in words", async () => {
     const { tool } = world({}, { timeoutMs: 300 });
     const r = await refusal(tool.execute({ url: `http://pages.example.test:${port}/slow` }, ctx()));
@@ -394,6 +494,10 @@ describe("which addresses are public (ADR 0107)", () => {
       "::ffff:10.0.0.1",
       "::ffff:a00:1",
       "64:ff9b::a9fe:a9fe",
+      // 6to4 carrying a private or loopback IPv4 address ('sites').
+      "2002:7f00:1::1",
+      "2002:a00:1::",
+      "2002:c0a8:101::5",
       "[::1]",
       "not-an-address",
     ])
@@ -404,18 +508,42 @@ describe("which addresses are public (ADR 0107)", () => {
       "172.32.0.1",
       "2606:4700:4700::1111",
       "::ffff:1.1.1.1",
+      "2002:5db8:d822::1",
     ])
       expect(isPublicAddress(a), a).toBe(true);
+    for (const a of ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1", "2002:7f00:1::"])
+      expect(isLoopbackAddress(a), a).toBe(true);
+    for (const a of ["10.0.0.1", "192.168.1.1", "::", "fe80::1", "93.184.216.34"])
+      expect(isLoopbackAddress(a), a).toBe(false);
   });
 
-  it("a named host is allowed on any address; the block list wins over the site list", () => {
-    const p = new WebReadPolicy({ allowed: ["*.corp.example"], blocked: ["secret.corp.example"] });
-    expect(p.addressAllowed("wiki.corp.example", "10.0.0.5")).toBe(true);
-    expect(p.addressAllowed("example.org", "10.0.0.5")).toBe(false);
+  it("no list opens a private address; entries cover subdomains; legacy '*.' entries read the same", () => {
+    const p = new WebReadPolicy({
+      mode: "only",
+      only: ["*.corp.example", "WWW.Example.org."],
+      never: ["secret.corp.example"],
+    });
+    expect(p.addressAllowed("wiki.corp.example", "10.0.0.5")).toBe(false);
+    expect(p.addressAllowed("example.org", "93.184.216.34")).toBe(true);
     expect(p.checkUrl("https://secret.corp.example/x")).toMatchObject({
       ok: false,
-      reason: "blocked",
+      reason: "never",
     });
-    expect(p.checkUrl("https://wiki.corp.example/x")).toMatchObject({ ok: true, named: true });
+    expect(p.checkUrl("https://a.secret.corp.example/x")).toMatchObject({
+      ok: false,
+      reason: "never",
+    });
+    expect(p.checkUrl("https://wiki.corp.example/x")).toMatchObject({ ok: true });
+    expect(p.checkUrl("https://corp.example/x")).toMatchObject({ ok: true });
+    expect(p.checkUrl("https://docs.example.org/x")).toMatchObject({ ok: true });
+    expect(p.checkUrl("https://example.org./x")).toMatchObject({ ok: true, host: "example.org" });
+    expect(p.checkUrl("https://notexample.org/x")).toMatchObject({
+      ok: false,
+      reason: "not_only",
+    });
+    expect(p.checkUrl("https://intranet/x")).toMatchObject({ ok: false, reason: "local" });
+    expect(p.checkUrl("https://printer.local/x")).toMatchObject({ ok: false, reason: "local" });
+    // "only" with nothing on it reads as the default: any public website.
+    expect(new WebReadPolicy({ mode: "only", only: [], never: [] }).mode).toBe("any");
   });
 });

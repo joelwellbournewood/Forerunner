@@ -291,7 +291,10 @@ export interface ChooserFacts {
    * `keySearch` is then false): only the words read it, to say why ('web-search', review).
    */
   keySearchOff?: boolean;
-  /** Forerunner's page reader on the subscription: not yet ('sites' turns it on there). */
+  /**
+   * Forerunner's page reader on the subscription ('sites', the owner's decision of 2026-11-02):
+   * offered through the Agent SDK's tool server wherever the page reader is registered.
+   */
   subscriptionPages: boolean;
   /** `cc:Bash` on the SDK path (`FORERUNNER_SDK_HOST_COMMANDS`): commands outside the sandbox. */
   hostCommands: boolean;
@@ -306,7 +309,7 @@ export interface ChooserFacts {
 export const DEFAULT_CHOOSER_FACTS: ChooserFacts = Object.freeze({
   webFetch: true,
   keySearch: true,
-  subscriptionPages: false,
+  subscriptionPages: true,
   hostCommands: false,
   dockerReady: null,
 });
@@ -331,7 +334,9 @@ export function capabilitiesOf(kind: BillingSourceKind, facts: ChooserFacts): Cr
   if (kind === "subscription")
     return {
       webRead: facts.subscriptionPages,
-      webSearch: true,
+      // 'sites': Claude Code's search is offered only beside the page reader, as on the key: a
+      // search result alone sources nothing.
+      webSearch: facts.subscriptionPages,
       commands: facts.hostCommands,
       askPerson: false,
     };

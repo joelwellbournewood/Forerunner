@@ -1,4 +1,5 @@
 import { type Clock, errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
+import { z } from "zod";
 import { type SessionBudget, wrapUpLineIn } from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -10,8 +11,10 @@ import {
   rejectedRateLimitOf,
   USAGE_LIMIT_CODE,
 } from "../provider/usage-limit.ts";
+import { siteCovers, type WebAccess } from "../wiring/web-access.ts";
+import { serverDomainOf } from "../wiring/web-ports.ts";
 import type { RunEvent, RunOutcome, RunPricing } from "./loop.ts";
-import type { ToolRegistry, ToolSpec } from "./tools.ts";
+import type { ToolExecutionContext, ToolRegistry, ToolSpec } from "./tools.ts";
 
 /**
  * Claude Agent SDK driver. Used for specialists that need the Claude Code tool set inside a
@@ -62,6 +65,11 @@ export interface SdkRunRequest {
    * call would take it past its wrap-up line (`WRAP_UP_TEXT`, ADR 0112).
    */
   wrapUp?: string;
+  /**
+   * The project's "Web pages research may read" ('sites'): Claude Code's WebSearch is given it
+   * through PreToolUse's `updatedInput` (`webSearchInputFor`). Absent: any public website.
+   */
+  webAccess?: WebAccess;
 }
 
 export interface SdkRunResult {
@@ -107,7 +115,36 @@ export interface SdkDriverDeps {
   clock: Clock;
   /** Test seam: replaces the SDK's query function. */
   queryImpl?: QueryLike;
+  /** Test seam: replaces the SDK's in-process tool server (`createSdkMcpServer` + `tool`). */
+  toolServer?: SdkToolServerFactory;
 }
+
+/**
+ * One Forerunner tool as the Agent SDK's in-process tool server offers it to Claude Code
+ * ('sites'): the hooks check every call (PreToolUse, PostToolUse) as for any tool, and the
+ * handler runs the tool here, in the daemon, with the run's context.
+ */
+export interface SdkServerTool {
+  name: string;
+  description: string;
+  shape: Record<string, z.ZodType>;
+  handler: (
+    args: Record<string, unknown>,
+  ) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>;
+}
+
+/** Builds the in-process tool server Claude Code is given (`options.mcpServers`). */
+export type SdkToolServerFactory = (name: string, tools: SdkServerTool[]) => Promise<unknown>;
+
+/** The tool server's name: Claude Code calls its tools `mcp__forerunner__<name>`. */
+export const SDK_TOOL_SERVER = "forerunner";
+
+/**
+ * The Forerunner tools a subscription run is offered through the tool server ('sites'): the page
+ * reader, so research reads pages under Forerunner's own rules on both credentials. Claude Code's
+ * own WebFetch is switched off (`disallowedTools`, `CLAUDE_CODE_DISABLE_WEB_FETCH`).
+ */
+export const SDK_SERVER_TOOLS: ReadonlySet<string> = new Set(["web_fetch"]);
 
 // A structural subset of the SDK's query() so tests can inject a fake without the real module.
 // The real one returns a `Query`, whose `close()` ends the Claude Code process at once.
@@ -208,12 +245,29 @@ export class SdkAgentDriver {
       cwd: req.cwd,
     };
     const emit = (ev: RunEvent) => req.onEvent?.(ev);
+    // Claude Code's own page reader never runs ('sites'): pages are read by Forerunner's.
     const ccTools = claims.allowedTools
       .filter((t) => t.startsWith(CC_TOOL_PREFIX))
-      .map((t) => t.slice(CC_TOOL_PREFIX.length));
+      .map((t) => t.slice(CC_TOOL_PREFIX.length))
+      .filter((t) => t !== "WebFetch");
     const mcpTools = claims.allowedTools.filter((t) => !t.startsWith(CC_TOOL_PREFIX));
+    // The Forerunner tools Claude Code is offered through the in-process tool server.
+    const serverTools = mcpTools.filter((t) => SDK_SERVER_TOOLS.has(t) && !!req.tools.get(t));
+    const toolCtx: ToolExecutionContext = {
+      runId: claims.runId,
+      sessionId: claims.sessionId,
+      agentId: claims.agentId,
+      humanId: claims.ownerHumanId,
+      ...(claims.projectId ? { projectId: claims.projectId } : {}),
+      ...(claims.taskId ? { taskId: claims.taskId } : {}),
+      allowedPaths: claims.allowedPaths,
+      signal: controller.signal,
+      cwd: req.cwd,
+    };
 
     let outcome: RunOutcome = "completed";
+    // The web tools the run needs from Claude Code's init message ('sites'); set below.
+    let expected: string[] = [];
     let finalText = "";
     let usage: Usage = { ...ZERO_USAGE };
     let cost = 0;
@@ -263,8 +317,21 @@ export class SdkAgentDriver {
      */
     const handle = async (msg: Record<string, unknown>, enforce: boolean): Promise<void> => {
       const type = msg.type as string;
-      if (type === "system" && msg.subtype === "init")
+      if (type === "system" && msg.subtype === "init") {
         sessionId = (msg.session_id as string) ?? null;
+        // 'sites': the init message lists the tools Claude Code has; one this run needs for the
+        // web and does not have is said plainly, once.
+        const offered = Array.isArray(msg.tools) ? (msg.tools as unknown[]).map(String) : null;
+        if (offered)
+          for (const t of expected.filter((x) => !offered.includes(x)))
+            emit({
+              type: "warning",
+              message:
+                t === "WebSearch"
+                  ? "Claude Code did not offer web search on this run, so research cannot search here"
+                  : "Claude Code did not load Forerunner's page reader on this run, so research cannot read web pages here",
+            });
+      }
       if (type === "stream_event") {
         const ev = msg.event as
           | { type?: string; delta?: { type?: string; text?: string } }
@@ -383,10 +450,23 @@ export class SdkAgentDriver {
       const env: Record<string, string | undefined> = {
         ...scrubEnv(process.env),
         CLAUDE_CODE_OAUTH_TOKEN: req.credential.value,
+        // 'sites': Claude Code's own page reader off; pages go through Forerunner's reader.
+        CLAUDE_CODE_DISABLE_WEB_FETCH: "1",
         ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
         ...withoutClaudeCodeAuth(req.env ?? {}),
       };
-      const hooks = this.sdkHooks(ctx, req.tools, emit, wrap);
+      const hooks = this.sdkHooks(ctx, req.tools, emit, wrap, req.webAccess);
+      const server = serverTools.length
+        ? await (this.deps.toolServer ?? sdkToolServer)(
+            SDK_TOOL_SERVER,
+            serverTools.map((name) => serverToolOf(req.tools.get(name) as ToolSpec, toolCtx)),
+          )
+        : undefined;
+      // The run says plainly when Claude Code was not given the reader or the search it needs.
+      expected = [
+        ...serverTools.map((t) => `mcp__${SDK_TOOL_SERVER}__${t}`),
+        ...(ccTools.includes("WebSearch") ? ["WebSearch"] : []),
+      ];
       const options: Record<string, unknown> = {
         abortController: controller,
         cwd: req.cwd,
@@ -394,7 +474,10 @@ export class SdkAgentDriver {
         model: req.model,
         effort: req.effort,
         systemPrompt: { type: "custom", prompt: req.systemPrompt },
-        allowedTools: [...ccTools, ...mcpTools.map((t) => `mcp__forerunner__${t}`)],
+        allowedTools: [...ccTools, ...mcpTools.map((t) => `mcp__${SDK_TOOL_SERVER}__${t}`)],
+        // 'sites': Claude Code's own page reader is never offered (Forerunner's is, below).
+        disallowedTools: ["WebFetch"],
+        ...(server ? { mcpServers: { [SDK_TOOL_SERVER]: server } } : {}),
         permissionMode: "dontAsk",
         maxTurns: req.maxTurns ?? 60,
         maxBudgetUsd: claudeCodeBudgetUsd(claims.budgetUsdMicro),
@@ -605,6 +688,7 @@ export class SdkAgentDriver {
     tools: ToolRegistry,
     emit: (ev: RunEvent) => void,
     wrap: WrapUpState = { due: false, sent: false },
+    webAccess?: WebAccess,
   ) {
     // PostToolUse reports the input the tool ran with, which is the `updatedInput` PreToolUse
     // returned: the resolved secret values. The audit row must carry the model's input (the
@@ -632,6 +716,28 @@ export class SdkAgentDriver {
             },
           };
         }
+        // 'sites': Claude Code's search keeps to the project's "Web pages research may read".
+        let updated = d.input;
+        if (toolName === "WebSearch" && webAccess) {
+          const lists = webSearchInputFor(webAccess, d.input);
+          if ("refused" in lists) {
+            emit({
+              type: "tool_denied",
+              id: String(input.tool_use_id ?? ""),
+              name: toolName,
+              code: "domain_not_allowed",
+              reason: lists.refused,
+            });
+            return {
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: lists.refused,
+              },
+            };
+          }
+          updated = lists.input;
+        }
         remember(String(input.tool_use_id ?? ""), input.tool_input);
         emit({
           type: "tool_call",
@@ -643,7 +749,7 @@ export class SdkAgentDriver {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "allow",
-            updatedInput: d.input,
+            updatedInput: updated,
           },
         };
       } catch (e) {
@@ -678,16 +784,18 @@ export class SdkAgentDriver {
           ? input.tool_response
           : JSON.stringify(input.tool_response ?? "");
       const toolInput = input.tool_input as { url?: string; file_path?: string; path?: string };
-      // What came from outside the run is data (spec S.2): a page or search result, and a
-      // repository file the subprocess read (the loop driver's read_file marks the same).
-      const untrusted = isExternalCcTool(toolName)
-        ? ({ source: "web_page", origin: String(toolInput?.url ?? toolName) } as const)
-        : isRepoReadCcTool(toolName)
-          ? ({
-              source: "repo_file",
-              origin: String(toolInput?.file_path ?? toolInput?.path ?? toolName),
-            } as const)
-          : undefined;
+      // What came from outside the run is data (spec S.2): a page or search result (Forerunner's
+      // page reader through the tool server too, 'sites'), and a repository file the subprocess
+      // read (the loop driver's read_file marks the same).
+      const untrusted =
+        isExternalCcTool(toolName) || isServerWebTool(toolName)
+          ? ({ source: "web_page", origin: String(toolInput?.url ?? toolName) } as const)
+          : isRepoReadCcTool(toolName)
+            ? ({
+                source: "repo_file",
+                origin: String(toolInput?.file_path ?? toolInput?.path ?? toolName),
+              } as const)
+            : undefined;
       let r: Awaited<ReturnType<EnforcementHooks["afterToolCall"]>>;
       try {
         r = await this.deps.hooks.afterToolCall(ctx, spec, modelInput, {
@@ -710,9 +818,11 @@ export class SdkAgentDriver {
         durationMs: 0,
       });
       // The subprocess sees what the loop driver would feed back: the redacted content, with
-      // the data envelope where the source is untrusted. The SDK applies the replacement to
-      // MCP tool outputs; for the web tools it is handed over as before. A built-in file tool's
-      // output cannot be rewritten from a hook: its read is scanned and flagged, not changed.
+      // the data envelope where the source is untrusted ('sites': `updatedToolOutput`, which
+      // Claude Code applies to every tool; `updatedMCPToolOutput` covers MCP tools only, so web
+      // search results reached Claude without the "information, not instructions" wrapper). A
+      // built-in tool's replacement must keep its output's shape: WebSearch's results become the
+      // one wrapped text. A built-in file tool's read is scanned and flagged, not changed.
       // The wrap-up (ADR 0112) goes with the first result after the hooks said so, once, as
       // context beside the result, never inside it.
       const wrapUp = wrap.due && wrap.text && !wrap.sent ? wrap.text : undefined;
@@ -725,8 +835,12 @@ export class SdkAgentDriver {
           capUsdMicro: ctx.token.claims.budgetUsdMicro,
         });
       }
-      const replaced = untrusted || isMcpTool(toolName) ? { updatedMCPToolOutput: r.content } : {};
-      return wrapUp || "updatedMCPToolOutput" in replaced
+      const replaced: Record<string, unknown> = isMcpTool(toolName)
+        ? { updatedMCPToolOutput: r.content, updatedToolOutput: r.content }
+        : untrusted
+          ? { updatedToolOutput: builtInOutput(toolName, input.tool_response, r.content) }
+          : {};
+      return wrapUp || "updatedToolOutput" in replaced
         ? {
             hookSpecificOutput: {
               hookEventName: "PostToolUse",
@@ -768,6 +882,137 @@ const RAW_INPUTS_MAX = 1_000;
 
 function isExternalCcTool(name: string): boolean {
   return /^(WebFetch|WebSearch)$/.test(name);
+}
+
+/** Forerunner's page reader as Claude Code names it on the tool server ('sites'). */
+function isServerWebTool(name: string): boolean {
+  return name === `mcp__${SDK_TOOL_SERVER}__web_fetch`;
+}
+
+/**
+ * A built-in web tool's output with the wrapped text in place of what it returned, in the
+ * output's own shape (Claude Code ignores a replacement that does not match it): WebSearch's
+ * `results` (strings are allowed there), WebFetch's `result`.
+ */
+function builtInOutput(toolName: string, response: unknown, wrapped: string): unknown {
+  const base =
+    response && typeof response === "object" && !Array.isArray(response)
+      ? (response as Record<string, unknown>)
+      : {};
+  if (toolName === "WebSearch") return { ...base, results: [wrapped] };
+  if (toolName === "WebFetch") return { ...base, result: wrapped };
+  return wrapped;
+}
+
+/**
+ * Claude Code's WebSearch input with the project's "Web pages research may read" ('sites'):
+ * "only these websites" keeps the overlap of the search's own `allowed_domains` with the list
+ * (the list itself when the search names none), and a search with nothing left is refused in
+ * words; otherwise the never list joins `blocked_domains`, and the never sites are taken out of
+ * the search's own `allowed_domains`. Never both lists (the search refuses that): a blocked site
+ * inside an allowed one cannot be said, so that search is refused in words too.
+ */
+export function webSearchInputFor(
+  rule: WebAccess,
+  input: unknown,
+): { input: Record<string, unknown> } | { refused: string } {
+  const base =
+    input && typeof input === "object" && !Array.isArray(input)
+      ? { ...(input as Record<string, unknown>) }
+      : {};
+  const list = (v: unknown) =>
+    Array.isArray(v)
+      ? v.map((x) => serverDomainOf(String(x))).filter((x): x is string => x !== null)
+      : [];
+  const asked = list(base.allowed_domains);
+  const blocked = list(base.blocked_domains);
+  const never = rule.never.map((n) => serverDomainOf(n)).filter((x): x is string => x !== null);
+  delete base.allowed_domains;
+  delete base.blocked_domains;
+  const blockedIn = (allowed: string[]) =>
+    never.filter((n) => allowed.some((a) => siteCovers(a, n) && a !== n));
+  if (rule.mode === "only") {
+    const only = rule.only.map((o) => serverDomainOf(o)).filter((x): x is string => x !== null);
+    const overlap = asked.length
+      ? [
+          ...new Set(
+            asked.flatMap((a) =>
+              only.some((o) => siteCovers(o, a)) ? [a] : only.filter((o) => siteCovers(a, o)),
+            ),
+          ),
+        ]
+      : only;
+    const allowed = overlap.filter((a) => !never.some((n) => siteCovers(n, a)));
+    if (!allowed.length)
+      return {
+        refused: `This search asked for no website on this project's "only these websites" list (${only.join(", ")}); search within those.`,
+      };
+    const inside = blockedIn(allowed);
+    if (inside.length)
+      return {
+        refused: `This search cannot keep out ${inside.join(", ")}, which this project's research never reads; search for one of its sites by name instead.`,
+      };
+    return { input: { ...base, allowed_domains: allowed } };
+  }
+  if (asked.length) {
+    const allowed = asked.filter((a) => !never.some((n) => siteCovers(n, a)));
+    if (!allowed.length)
+      return {
+        refused: `Every website this search asked for is on this project's "never these websites" list.`,
+      };
+    const inside = blockedIn(allowed);
+    if (inside.length)
+      return {
+        refused: `This search cannot keep out ${inside.join(", ")}, which this project's research never reads; search without naming sites instead.`,
+      };
+    return { input: { ...base, allowed_domains: allowed } };
+  }
+  const all = [...new Set([...blocked, ...never])];
+  return { input: all.length ? { ...base, blocked_domains: all } : base };
+}
+
+/** A tool spec as the SDK's tool server offers it: the handler runs it with the run's context. */
+function serverToolOf(spec: ToolSpec, ctx: ToolExecutionContext): SdkServerTool {
+  const schema = spec.schema as unknown;
+  const shape = schema instanceof z.ZodObject ? (schema.shape as Record<string, z.ZodType>) : {};
+  return {
+    name: spec.name,
+    description: spec.description,
+    shape,
+    async handler(args) {
+      try {
+        const r = await spec.execute(args as never, ctx);
+        return {
+          content: [{ type: "text", text: r.content }],
+          ...(r.isError ? { isError: true } : {}),
+        };
+      } catch (e) {
+        return { content: [{ type: "text", text: errorMessage(e) }], isError: true };
+      }
+    },
+  };
+}
+
+/**
+ * The SDK's in-process tool server (`createSdkMcpServer`), with `alwaysLoad` so its tools are in
+ * the first prompt: without it the SDK defers them behind its tool search, whose own step the
+ * hooks refuse (`provider/claude-code.ts` does the same).
+ */
+async function sdkToolServer(name: string, tools: SdkServerTool[]): Promise<unknown> {
+  const sdk = (await import("@anthropic-ai/claude-agent-sdk")) as unknown as {
+    createSdkMcpServer(o: { name: string; tools: unknown[]; alwaysLoad?: boolean }): unknown;
+    tool(
+      n: string,
+      d: string,
+      shape: Record<string, z.ZodType>,
+      h: (args: Record<string, unknown>) => Promise<unknown>,
+    ): unknown;
+  };
+  return sdk.createSdkMcpServer({
+    name,
+    alwaysLoad: true,
+    tools: tools.map((t) => sdk.tool(t.name, t.description, t.shape, t.handler)),
+  });
 }
 
 function isRepoReadCcTool(name: string): boolean {

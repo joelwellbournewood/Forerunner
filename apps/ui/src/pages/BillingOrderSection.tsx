@@ -177,10 +177,10 @@ export function BillingOrderSection() {
       <h2 className="font-semibold">Claude: which to use first</h2>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Forerunner uses your Claude credentials in this order for tasks, Chat, project setup and
-        reviews. A task goes to another one only when the first cannot do it properly (research that
-        must read web pages, a task that must ask you while it works); the plan card and New task
-        say so. When one cannot be used, the next one is. A subscription always runs through Claude
-        Code; an API key always goes straight to the API, where promotional credits apply.
+        reviews. A task goes to another one only when the first cannot do it properly (a task that
+        must ask you while it works); the plan card and New task say so. When one cannot be used,
+        the next one is. A subscription always runs through Claude Code; an API key always goes
+        straight to the API, where promotional credits apply.
       </p>
       {missing === "billingOrder" ? (
         <RouteMissing route="billingOrder" what="the order of your Claude credentials" />

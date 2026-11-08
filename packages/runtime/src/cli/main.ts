@@ -362,6 +362,8 @@ export function buildProgram(deps: CliDeps = {}): Command {
         exit,
         ...(injected ? { provider: injected } : {}),
         ...(standIn ? { fetchImpl: standIn } : {}),
+        // 'sites': the page reader's loopback seam, for the scripted bench modes only.
+        ...(webReadLoopbackFor(opts.provider) ? { webReadLoopback: true } : {}),
       });
       // Quit in the desktop shell (U-018, ADR 0094) asks over HTTP, which works the same on
       // Windows, where a process started without a console gets no SIGTERM.
@@ -663,6 +665,18 @@ export async function daemonFetch(
   if (name !== "bench-api") return undefined;
   const bench = await loadBench(name, benchEntry);
   return bench.benchApiFetch({ env, priceOf: await benchPriceOf(env) });
+}
+
+/**
+ * Whether `fr daemon --provider <name>` composes with the page reader's loopback seam ('sites'):
+ * only the scripted development modes, `bench` and `bench-api`, which load testenv/ from a
+ * repository checkout (`daemonProvider` / `daemonFetch` refuse them without it, before this is
+ * read) and play a scripted model whose stand-in pages run on 127.0.0.1. Never `bench-live`
+ * (the real API), `fake`, `anthropic` or an installed app; no environment variable (not even
+ * `FORERUNNER_BENCH_LIVE_API`), `config.json` field or setting turns it on.
+ */
+export function webReadLoopbackFor(provider: string | undefined): boolean {
+  return provider === "bench" || provider === "bench-api";
 }
 
 export function billingSourcesLine(sources: SetupReport["sources"]): string {

@@ -250,15 +250,23 @@ policy at every network exit, hidden-text extraction, the per-element approval g
 `browser.md`; the email command gate (DKIM, SPF, alignment, marker, thread, replay) and the
 owner-only settings routes are in `email.md`.
 
-Web research on an API key (`web_fetch`, ADR 0107, `capabilities.md` "Web research") is the one
-network reach that does not go through a token's domain list: only registry entries that name
-`cc:WebFetch` get the tool, and its own rules apply in code before any byte leaves (GET, no
-credentials, http(s), the project's block list, any host on a public address only unless the
-project names it, checked on the addresses the connection uses; redirects hop by hop; size and
-time caps). Every page is untrusted data, every call an audit row, every refusal a row with
-its reason. The residual risk, a manipulated model putting project words into an address it
-reads, is named in the ADR with its mitigations; a project that must stay closed uses its block
-list, an install `FORERUNNER_WEB_FETCH=off`.
+Web research (`web_fetch`, ADR 0107, `capabilities.md` "Web research") is the one network
+reach that does not go through a token's domain list: only registry entries that name
+`cc:WebFetch` get the tool, on the API key and, through the Agent SDK's in-process tool server,
+on a subscription ('sites'; Claude Code's own WebFetch is switched off there), and its own rules
+apply in code before any byte leaves (GET, no credentials, http(s), never a local name or a
+non-public address whatever any list says, checked on the addresses the connection uses, 6to4
+included; the project's "Web pages research may read": only its sites, never its never list;
+redirects hop by hop; size and time caps). No list opens this computer or the home network:
+before 'sites', `localhost` or `127.0.0.1` on the project's site list let research read this
+computer, Forerunner's daemon included. The loopback seam (`ComposeOptions.webReadLoopback`) is
+set only by `--provider bench` and `bench-api` and by tests, never by a variable, a file or a
+setting. Every page is untrusted data on both credentials (on the subscription through
+PostToolUse's `updatedToolOutput`, which Claude Code applies to every tool; the MCP-only
+`updatedMCPToolOutput` used before left search results unwrapped), every call an audit row,
+every refusal a row with its reason. The residual risk, a manipulated model putting project words
+into an address it reads, is named in the ADR with its mitigations; a project that must stay
+closed uses "Only these websites", an install `FORERUNNER_WEB_FETCH=off`.
 
 Web search on an API key ('web-search', ADR 0107 amended 2026-11-08) is Anthropic's server
 tool: the searches run inside the API, outside the hooks' per-call gate, and their results reach

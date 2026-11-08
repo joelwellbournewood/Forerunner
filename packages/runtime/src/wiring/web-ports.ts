@@ -1,14 +1,17 @@
 /**
  * The daemon's side of web research (ADR 0107): whether this install offers the web page reader
- * (`web_fetch`, the loop driver's `cc:WebFetch`) and Anthropic's web search on an API key (the
- * loop driver's `cc:WebSearch`, 'web-search'), and the project's site list and block list a call
- * is checked against or sent with. The lists are the project's `settings.browser` ones, the same
- * the browser capability reads (ADR 0047), read at every run so a change applies to the next.
+ * (`web_fetch`, the loop driver's `cc:WebFetch`, and on a subscription the same reader through
+ * the Agent SDK's tool server, 'sites') and Anthropic's web search on an API key (the loop
+ * driver's `cc:WebSearch`, 'web-search'), and the project's rule a call is checked against or
+ * sent with: "Web pages research may read" (`project.settings.web_access`, `webAccessOf`, which
+ * also reads the blocks still under `browser.blockedDomains`), read at every run so a change
+ * applies to the next. `browser.allowedDomains` is the agent browser's list and changes nothing
+ * here.
  */
 import type { web } from "@forerunner/capabilities";
 import type { JsonObject } from "@forerunner/state";
 import type { ToolExecutionContext } from "../agent/tools.ts";
-import { browserSettingsOf } from "./browser-ports.ts";
+import { siteCovers, type WebAccess, webAccessOf } from "./web-access.ts";
 
 /** `FORERUNNER_WEB_FETCH=off` (or `0`, `false`): no web page reader on this install. */
 export const WEB_FETCH_ENV = "FORERUNNER_WEB_FETCH";
@@ -35,16 +38,20 @@ function isOff(raw: string | undefined): boolean {
 }
 
 /**
- * The project's lists as Anthropic's web search takes them ('web-search'): never both lists in
- * one request (the server refuses that), each entry a bare domain. `key` names the lists sent,
- * so a refusal of them is kept until they change; `dropped` holds each entry the server cannot
- * take, left out (one log line names them).
+ * The project's lists as Anthropic's web search takes them ('web-search', 'sites'): never both
+ * lists in one request (the server refuses that), each entry a bare domain. "Only these
+ * websites" is sent as `allowedDomains`, otherwise the "never" list as `blockedDomains`. `key`
+ * names the rule sent, so a refusal of it is kept until it changes; `dropped` holds each entry
+ * the server cannot take, left out (one log line names them). `withheld`: the rule cannot be sent
+ * as one list (a "never" entry inside an "only" entry), so the run is offered no search (one log
+ * line says why) and reads pages by address under the full rule.
  */
 export interface WebSearchLists {
   allowedDomains?: string[];
   blockedDomains?: string[];
   dropped: string[];
   key: string;
+  withheld?: string;
 }
 
 /**
@@ -60,44 +67,66 @@ export function serverDomainOf(entry: string): string | null {
   return host;
 }
 
+/** A rule in the server's form (`webSearchListsResolver`): "only" as allowed, else "never" as blocked. */
+export function webSearchListsOf(rule: WebAccess): WebSearchLists {
+  const dropped: string[] = [];
+  const serverForm = (entries: readonly string[]) => {
+    const out: string[] = [];
+    for (const entry of entries) {
+      const d = serverDomainOf(entry);
+      if (d === null) dropped.push(entry);
+      else if (!out.includes(d)) out.push(d);
+    }
+    return out;
+  };
+  if (rule.mode === "only") {
+    const allowed = serverForm(rule.only);
+    // A blocked site inside an allowed one cannot be said in the same request (never both lists):
+    // the run gets no search, and its pages are read by address under the whole rule.
+    const inside = rule.never.filter((n) => rule.only.some((o) => siteCovers(o, n)));
+    return {
+      allowedDomains: allowed,
+      dropped,
+      key: JSON.stringify({ allowed }),
+      ...(inside.length
+        ? {
+            withheld: `the project reads only ${rule.only.join(", ")} but never ${inside.join(", ")}, which web search cannot be told in one request`,
+          }
+        : {}),
+    };
+  }
+  const blocked = serverForm(rule.never);
+  return {
+    ...(blocked.length ? { blockedDomains: blocked } : {}),
+    dropped,
+    key: JSON.stringify({ blocked }),
+  };
+}
+
 /**
- * The lists a run's web search is sent with: today the project's block list as
- * `blocked_domains` (the site list names hosts the page reader may reach on a private address,
- * which is no restriction of where research reads, so it is not sent; 'sites' adds the "Only
- * these websites" list here as `allowed_domains`, never with the block list).
+ * The lists a run's web search is sent with: the project's rule in the server's form
+ * (`webSearchListsOf`): "Only these websites" as `allowed_domains`, otherwise the "never" list as
+ * `blocked_domains`, never both.
  */
 export function webSearchListsResolver(projects: {
   get(id: string): Promise<{ settings: JsonObject } | undefined>;
 }): (projectId: string | undefined) => Promise<WebSearchLists> {
   return async (projectId) => {
     const project = projectId ? await projects.get(projectId) : undefined;
-    const s = browserSettingsOf(project?.settings);
-    const blocked: string[] = [];
-    const dropped: string[] = [];
-    for (const entry of s.blockedDomains) {
-      const d = serverDomainOf(entry);
-      if (d === null) dropped.push(entry);
-      else if (!blocked.includes(d)) blocked.push(d);
-    }
-    return {
-      ...(blocked.length ? { blockedDomains: blocked } : {}),
-      dropped,
-      key: JSON.stringify({ blocked }),
-    };
+    return webSearchListsOf(webAccessOf(project?.settings));
   };
 }
 
 /**
- * The sites a run's `web_fetch` is checked against: its project's site list (hosts the person
- * named, allowed even on a private address) and block list (refused whatever else says). A run
- * without a project, or a project without the setting, has empty lists: public pages only.
+ * The rule a run's `web_fetch` is checked against: its project's "Web pages research may read"
+ * (`webAccessOf`, with the blocks still under `browser.blockedDomains`). A run without a project,
+ * or a project without the setting: any public website.
  */
-export function webReadSitesResolver(projects: {
+export function webReadRulesResolver(projects: {
   get(id: string): Promise<{ settings: JsonObject } | undefined>;
-}): (ctx: ToolExecutionContext) => Promise<web.WebReadSites> {
+}): (ctx: ToolExecutionContext) => Promise<web.WebReadRules> {
   return async (ctx) => {
     const project = ctx.projectId ? await projects.get(ctx.projectId) : undefined;
-    const s = browserSettingsOf(project?.settings);
-    return { allowed: s.allowedDomains, blocked: s.blockedDomains };
+    return webAccessOf(project?.settings);
   };
 }

@@ -2642,6 +2642,10 @@ real UI dev server, and gives Playwright scripts a recorder (`recorder.cjs`: `op
 screenshots and visible text, `api`, problems from the console and the network). `--githost
 <port>` adds the fake git host as the bench's GitHub (`githost-server.ts`: `bench/empty` with no
 commit and `bench/seeded`, its token stored with `fr setup`; tested in `bench-scripts.test.ts`).
+`--provider bench` and `bench-api` compose the page reader's loopback seam
+(`ComposeOptions.webReadLoopback`, `cli/main.ts` `webReadLoopbackFor`; 'sites'), so a research
+task reads a stand-in page on 127.0.0.1; `bench-live` never does, and no list, setting or
+variable opens this computer to research (tests that read a local page pass the option).
 Usage, the
 failure-injection variables and where everything lands are in `scripts/bench/README.md`; the
 smoke journey is `scripts/bench/journeys/smoke.cjs` (after Start it clicks the dialog's "Open the

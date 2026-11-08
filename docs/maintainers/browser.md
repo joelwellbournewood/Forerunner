@@ -303,6 +303,16 @@ an exception. The runtime's critic loop calls it through `TryItPort` (compose: s
 `<data>/evidence/<task>/<review key>/`). Test: `test/try-page.integration.test.ts` (a real
 Chromium, skipped with the reason without one).
 
+The agent browser (`profile.ts` `launchAgentBrowser`, W6-30, the same class as C-17) starts
+its persistent context with `chromiumSandbox: true` too; where Chromium cannot start with it, it
+runs without it for that and every later launch of the profile, the log says why ("the agent
+browser runs without Chromium's own sandbox on this computer", with the browser's line) and
+`LaunchedProfile.unsandboxed` carries the reason (null with the sandbox).
+`LaunchProfileOptions.launchContext` is the seam (`test/browser-profile.test.ts`). A navigation
+that another one interrupts is asked for again when the other went to Chromium's error page or
+to the very same address (R-9, `navigationInterruptedRetry`), at most `GOTO_INTERRUPTED_TRIES`
+(3) times in all.
+
 Chromium's own sandbox (C-17, ADR 0110): `launchBrowser` starts it with `chromiumSandbox: true`
 (Playwright's default turns it off and adds `--no-sandbox`). Where it cannot start with it
 (Linux as root, no user namespaces) a light review's page is opened without it and every try's
@@ -380,16 +390,23 @@ nothing or the launch fails. Chromium is expected to be installed where Playwrig
   `not_supported` after the hooks and the gate decided on them. The mode is decided at
   compose; a Chromium that exists but fails to launch is not demoted to the reader at run time
   (the navigation fails with the launch error, audited).
-- The block list is the project's (`settings.browser.blockedDomains`); a per-agent block list
-  is not read. `settings.browser` is written through `PUT /projects/:id/settings`; no UI
-  screen edits it yet.
+- The block list is the project's one block list ('sites'): "Web pages research may read"'s never
+  list (`settings.web_access.never`, each site with `*.site`) with the blocks still under
+  `settings.browser.blockedDomains` until the project's settings are written
+  (`browserSettingsOf`); a pasted address on either list is read as its host. A per-agent block list
+  is not read. `settings.browser` is written through `PUT /projects/:id/settings`, which takes a
+  `blockedDomains` it gets into `web_access.never` in the same write (with a `project.settings`
+  audit row); the block list is edited in Settings ("Web pages research may read"), the
+  browser's own `allowedDomains` has no screen yet.
 - The registry's researcher names `cc:WebFetch` and `cc:WebSearch`; on the loop path its
   `cc:WebFetch` is the web capability's `web_fetch` (ADR 0107, `capabilities.md` "Web
-  research"), not the browser, and `cc:WebSearch` has no equivalent. A registry entry gets the
+  research"), not the browser, and `cc:WebSearch` is Anthropic's server search ('web-search').
+  A registry entry gets the
   browser by naming `browser_navigate` and `browser_read` (dropped with a
   `registry.tool_unmapped` row while the capability is off, offered once it is on).
-  `web_fetch` reads the same `settings.browser` lists: the site list as hosts it may read even
-  on a private address, the block list as hosts it never reads.
+  `web_fetch` reads "Web pages research may read" (`webAccessOf`), the same block list, and
+  never `browser.allowedDomains` ('sites': that list once let a named host be read on a private
+  address; it is the browser binding's and the sandbox's network list only).
 - `tests/e2e/src/scenario-capabilities.ts` keeps its own copy of the static reader and its own
   wiring; the scenario is not yet pointed at `composeRuntime`.
 - An installed `browser` capability row is not re-synced from the catalog: a row installed

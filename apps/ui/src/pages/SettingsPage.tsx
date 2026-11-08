@@ -40,6 +40,7 @@ import {
 } from "./SettingsFields.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
 import { VoiceSettingsCard } from "./VoiceSettingsCard.tsx";
+import { WebAccessInput } from "./WebAccessInput.tsx";
 
 type Scope = SettingView["scope"];
 const SCOPES: readonly Scope[] = ["global", "human", "agent", "project"];
@@ -98,6 +99,7 @@ export const SETTING_KEYS = [
   "notify_channel",
   "mid_session_limit",
   "code_commands",
+  "web_access",
   "voice_alerts",
   "default_autonomy",
   "language",
@@ -155,7 +157,7 @@ export interface SettingCommand {
    * `slider`: a range over `positions` (the speed-versus-quality slider), not a typed value;
    * `fields`: labelled inputs (`fields`) for a structured value such as quiet hours (U-060).
    */
-  inputType: "number" | "text" | "slider" | "fields" | "money";
+  inputType: "number" | "text" | "slider" | "fields" | "money" | "sites";
   /** The labelled inputs of a `fields` setting; the dialog keeps their values as JSON. */
   fields?: readonly FieldSpec[];
   /** The named stops of a slider, lowest first. */
@@ -472,6 +474,8 @@ export function SettingChangeDialog({
               />
             ) : command.inputType === "fields" ? (
               <FieldsInput specs={command.fields ?? []} value={value} onChange={setValue} />
+            ) : command.inputType === "sites" ? (
+              <WebAccessInput value={value} onChange={setValue} />
             ) : (
               <Field
                 label={`New value${command.unit ? ` (${command.unit})` : ""}`}
