@@ -297,8 +297,13 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    to the person with one sentence ("#8 conflicts with main in index.html: resolve the conflict
    on GitHub, or redo the task."), the Overview offers no Merge for it, and one card offers Redo
    and Leave it open. The record's last outcome keeps it from being said again, after a restart
-   too. Once GitHub says it merges cleanly again, Merge is offered again and an open conflict card
-   is closed. A rebuild owed, or a rebuild's own conflict, comes first.
+   too. Once GitHub says it merges cleanly again with the reviewed head (main changed back),
+   Merge is offered again and an open conflict card is closed. A rebuild owed, or a rebuild's own
+   conflict, comes first. The review found two gaps, closed in its fix-up: the card's Redo resumed
+   the conflicting branch (now it does the task again from main, as the rebuild cards' Redo does,
+   `redo_from_base`), and a resolution with a commit of the person's own offered Merge again
+   although that head was not reviewed, so the Merge was refused. Now such a head is "changed
+   after the review", as the merge step says it: no Merge on the Overview, and the card says so.
 5. **A merge the app made by itself is a notification too** (the retry pass, the resume at the
    start): one `pr_merged` notification beside its Update, as a session's merge has its session's.
 

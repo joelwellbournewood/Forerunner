@@ -654,6 +654,15 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     });
     // Their file is kept as they left it.
     expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# my own notes\n");
+    // Across a restart (a new ProjectDocs over the same folders): the copy still says it
+    // stopped and why, also after the first refresh of the new daemon (the review's rule 4).
+    const { docs: restarted } = await docsFor(w, root, bare);
+    expect(restarted.copyView(project)?.stopped).toEqual(changed?.stopped);
+    await restarted.refreshCopy(project, { head: await seed.headSha(), base: "main" });
+    expect(restarted.copyView(project)).toMatchObject({
+      updatedAt: first?.updatedAt,
+      stopped: changed?.stopped,
+    });
     // The person puts README.md back; a file of theirs is now in the way of the next merge.
     writeFileSync(join(clone, "README.md"), "# sample\n");
     writeFileSync(join(clone, "notes.md"), "my notes\n");

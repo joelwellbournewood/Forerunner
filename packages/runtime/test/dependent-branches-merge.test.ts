@@ -807,7 +807,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(await m.cards(b.id)).toHaveLength(1);
   });
 
-  it("an open pull request that conflicts with main once another merges: one card after one poll, none more at the next, Merge no longer offered; once the conflict is gone the card closes and Merge is offered again (R-conflict)", async () => {
+  it("an open pull request that conflicts with main once another merges: one card after one poll, none more at the next, Merge no longer offered; once the person resolves it on GitHub, their commit is not the reviewed version, so the row still offers no Merge and the one card says it changed after the review (R-conflict)", async () => {
     const m = await chainWorld({ level: 2 });
     m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
     m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
@@ -835,21 +835,76 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     // The next poll files nothing more.
     await m.poll();
     expect(await m.cards(b.id)).toHaveLength(1);
-    // The person resolves it on GitHub (main's version kept on the branch): the card closes and
-    // the record no longer says it conflicts.
+    // The person resolves it on GitHub, as the notice says (main's version kept on the branch):
+    // a commit after the review. Before (the review of leftovers7-merge2): the record went back
+    // to no sentence and Merge was offered again, and the person's Merge was then refused ("#N
+    // changed after the review") with a second card.
+    const reviewed = (await m.record(b.id)).reviewed_head_sha;
     await m.host.seedCommit(
       FULL,
       { "index.html": "<h1>one</h1>\n" },
       "Resolve",
       (await m.pr(b.id)).head.ref,
     );
-    expect((await m.pr(b.id)).mergeable).toBe(true);
+    const resolved = await m.pr(b.id);
+    expect([resolved.mergeable, resolved.head.sha === reviewed]).toEqual([true, false]);
+    await m.poll();
+    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+    // The head-moved word the merge step itself gives (no Merge on the Overview: `NO_CLICK`).
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: moved,
+      reviewed_head_sha: reviewed,
+    });
+    // Still one card, saying so, with what the person can do now.
+    const open = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const later = await requestViews(m.w.store, open);
+    expect(later.map((v) => ({ title: v.title, body: v.body }))).toEqual([
+      {
+        title: `The critic accepted "Write the other page", but pull request #${prB} was not merged`,
+        body: moved,
+      },
+    ]);
+    expect(later[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    // Nothing more at the next poll, and nothing merged.
+    await m.poll();
+    expect(await m.cards(b.id)).toHaveLength(1);
+    expect((await m.record(b.id)).last_outcome).toBe("head_moved");
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("a conflict that goes away on main (the conflicting change taken out again) leaves the reviewed version as it was: the card closes, Merge is offered again, and the person's Merge merges it (R-conflict fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Retitle the app", { "README.md": "# one\n" });
+    m.writes.set("Retitle the app again", { "README.md": "# two\n" });
+    const a = await m.runTask("Retitle the app");
+    const b = await m.runTask("Retitle the app again");
+    const prB = await m.prNumber(b.id);
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    await m.poll();
+    expect(await m.record(b.id)).toMatchObject({
+      last_outcome: "conflict",
+      sentence: `#${prB} conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.`,
+    });
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // Someone puts main's title back: the reviewed head merges cleanly as it is.
+    const reviewed = (await m.record(b.id)).reviewed_head_sha;
+    await m.host.seedCommit(FULL, { "README.md": "# app\n" }, "Put the title back", "main");
+    const pr = await m.pr(b.id);
+    expect([pr.mergeable, pr.head.sha]).toEqual([true, reviewed]);
     await m.poll();
     expect(await m.cards(b.id)).toEqual([]);
-    const after = await m.record(b.id);
-    expect(after.state).toBe("left_to_you");
-    expect(after.last_outcome).not.toBe("conflict");
-    expect(after.sentence).toBe("");
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "conflict_resolved",
+      sentence: "",
+      reviewed_head_sha: reviewed,
+    });
+    // The Merge the row offers again works.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    expect((await m.pr(b.id)).merged).toBe(true);
+    expect(await m.hostGit("show", "main:README.md")).toBe("# two");
   });
 
   it("the conflict notice's Redo does the task again from main, as its line says: the session it starts ends with the same pull request merging cleanly, no second card, and the person's Merge merges it (R-conflict fix-up)", async () => {

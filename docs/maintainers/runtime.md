@@ -3201,7 +3201,7 @@ the outcome: `busy`/`held`/`failed` stays owed, a rebuild or a conflict read eve
 branch holds and clears it, "unchanged" clears only what was owed for this dependency (a record
 that owes one keeps it when a second dependency changes). `sweep` reads the owed records at every
 poll, also the first after a restart (A merged and known by then, so nothing else would catch B),
-and clears those whose task is no longer done; an accept (`pin`) keeps the mark. A task without a
+and clears those whose task is no longer done; an accept (`pin`) clears the mark (a new review reads the branch as it is). A task without a
 record (accepted before ADR 0111) keeps the old in-memory fallback. While a record owes a rebuild,
 nothing merges its pull request (`ReviewedPrMerge`, below). **The conflict notice** (R-conflict):
 `pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
@@ -3214,8 +3214,21 @@ main in index.html: resolve the conflict on GitHub, or redo the task.", the file
 options Redo and Leave it open, `REBUILD_CARD_OPTIONS.conflict`; an open merge card takes the new
 words). `last_outcome` keeps it from being said twice, across polls and restarts; a record that
 owes a rebuild, or whose rebuild conflicted, is not noticed (that comes first). Once GitHub says
-it merges cleanly again, the record goes back to `left_to_you` with no sentence
-(`conflict_resolved`), the Overview offers Merge again and an open conflict card is withdrawn. The
+it merges cleanly again, and its head is still the reviewed commit (main changed back, the
+conflicting change taken out), the record goes back to `left_to_you` with no sentence
+(`conflict_resolved`), the Overview offers Merge again and an open conflict card is withdrawn. A
+head that moved since (the person resolved it on GitHub with a commit of their own) is not the
+reviewed version, so the record says what the merge step would (`last_outcome` `head_moved`,
+`headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
+then merge it yourself or send it back."), the Overview offers no Merge, and the open conflict
+card takes those words (`notice` cleared, so it is titled as the merge step's left-open card; its
+options stay Redo and Leave it open). Before (the review's fix-up), the row offered Merge again and
+the person's Merge was refused with a second card. The card's **Redo** goes through `applyRedo`
+(`pr-answers.ts`), which marks the card `redo_from_base`: the next run starts the branch from main
+and the open pull request gets the new work (before, it resumed the conflicting branch and stopped
+at its rebase onto main with a second card in git words). Tests: `dependent-branches-merge.test.ts`
+(the R-conflict cases: resolved on GitHub, gone on main, and the notice's Redo run to its merge)
+and `real-daemon.test.ts` (the leftovers7-merge2 describe). The
 Overview's row is blocked with the sentence through `pull-requests.ts`' `NO_CLICK`. No GitHub call
 is added: the watcher reads each open pull request every poll already; `sweep` answers true when a
 notice was given or taken back, and compose sends the project event then. `mergePort(merge)` is the runner's merge port:

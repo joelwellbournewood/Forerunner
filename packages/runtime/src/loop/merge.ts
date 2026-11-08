@@ -617,6 +617,16 @@ function hostRefused(name: string, message: string): Omit<MergePrArtifacts, "upd
   };
 }
 
+/**
+ * The record's sentence for a pull request whose head is not the reviewed commit (ADR 0111):
+ * "#8 changed after the review: look at the new commits, then merge it yourself or send it
+ * back." The Overview offers no Merge for it (`head_moved`). Also the conflict notice's, once
+ * the person resolved the conflict on GitHub with a commit of their own (dependent-branches).
+ */
+export function headMovedSentence(pr: number): string {
+  return `${prName(pr)} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+}
+
 function headMoved(name: string, now: string, reviewed: string): MergePrArtifacts {
   return {
     status: "head_moved",

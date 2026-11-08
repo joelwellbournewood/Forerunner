@@ -351,7 +351,13 @@ never repeats work that is already in the default branch:
 task's open pull request, Forerunner says so once: the Overview row shows "#8 conflicts with main
 in index.html: resolve the conflict on GitHub, or redo the task." instead of Merge, and one Inbox
 card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from main) and
-**Leave it open**. Once you resolve it on GitHub, the row offers Merge again and the card closes.
+**Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
+the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
+If the conflict goes away without a change to the pull request (the other change is taken out of
+main again), the row offers Merge again and the card closes. If you resolve it on GitHub with a
+commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
+after the review: look at the new commits, then merge it yourself or send it back." and offers no
+Merge, and the card says the same; merge it on GitHub, or press **Redo**.
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in

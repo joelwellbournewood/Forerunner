@@ -10657,4 +10657,88 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     await rt.merge.retryWaiting();
     expect(merged()).toHaveLength(1);
   }, 120_000);
+
+  it("a conflict the person resolves on GitHub with a commit of their own: the row still offers no Merge and says the pull request changed after the review, and the one card says so too (R-conflict fix-up)", async () => {
+    const project = await client.createProject({
+      name: "Resolved there",
+      goal: "x",
+      repos: [FULL],
+    });
+    const a = await doneTask(project.id, "Write the about page", "about.html", "<h1>one</h1>\n");
+    const b = await doneTask(project.id, "Write another about page", "about.html", "<h1>2</h1>\n");
+    const rowOf = async (n: number) =>
+      (await client.projectPullRequests(project.id)).waiting.find((w) => w.number === n);
+    const cards = async () =>
+      (await client.inbox(rt.human.id)).requests.filter(
+        (r) => r.taskId === b.task.id && r.status === "open",
+      );
+    expect((await github.mergePullRequest(REPO, a.pr.number, { method: "merge" })).merged).toBe(
+      true,
+    );
+    await rt.githostWatcher?.pollOnce();
+    expect((await rowOf(b.pr.number))?.merge).toMatchObject({ state: "blocked", canMerge: false });
+    expect(await cards()).toHaveLength(1);
+    // The person resolves it on GitHub, as the notice says (main's version kept on the branch).
+    await host.seedCommit(FULL, { "about.html": "<h1>one</h1>\n" }, "Resolve", b.branch);
+    expect((await github.getPullRequest(REPO, b.pr.number)).mergeable).toBe(true);
+    await rt.githostWatcher?.pollOnce();
+    // Before (the review of leftovers7-merge2): the row offered Merge again, and pressing it was
+    // refused ("changed after the review") with a second card.
+    const moved = `#${b.pr.number} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+    expect((await rowOf(b.pr.number))?.merge).toMatchObject({
+      state: "blocked",
+      canMerge: false,
+      sentence: moved,
+    });
+    const open = await cards();
+    expect(open.map((r) => ({ title: r.title, body: r.body }))).toEqual([
+      {
+        title: `The critic accepted "Write another about page", but pull request #${b.pr.number} was not merged`,
+        body: moved,
+      },
+    ]);
+    expect(open[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
+    await rt.githostWatcher?.pollOnce();
+    expect(await cards()).toHaveLength(1);
+    expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(false);
+  }, 120_000);
+
+  it("a conflict that goes away on main leaves the reviewed version as it was: the card closes, the row offers Merge again, and pressing it merges the pull request (R-conflict fix-up)", async () => {
+    const project = await client.createProject({ name: "Gone again", goal: "x", repos: [FULL] });
+    await host.seedCommit(FULL, { "title.txt": "base\n" }, "Add a title", "main");
+    const a = await doneTask(project.id, "Retitle it", "title.txt", "one\n");
+    const b = await doneTask(project.id, "Retitle it again", "title.txt", "two\n");
+    const rowOf = async (n: number) =>
+      (await client.projectPullRequests(project.id)).waiting.find((w) => w.number === n);
+    const cards = async () =>
+      (await client.inbox(rt.human.id)).requests.filter(
+        (r) => r.taskId === b.task.id && r.status === "open",
+      );
+    expect((await github.mergePullRequest(REPO, a.pr.number, { method: "merge" })).merged).toBe(
+      true,
+    );
+    await rt.githostWatcher?.pollOnce();
+    expect((await rowOf(b.pr.number))?.merge).toMatchObject({ state: "blocked", canMerge: false });
+    expect(await cards()).toHaveLength(1);
+    // Main's title goes back: the reviewed head merges cleanly as it is.
+    await host.seedCommit(FULL, { "title.txt": "base\n" }, "Put the title back", "main");
+    const pr = await github.getPullRequest(REPO, b.pr.number);
+    expect([pr.mergeable, pr.head.sha]).toEqual([true, b.pr.head.sha]);
+    await rt.githostWatcher?.pollOnce();
+    expect(await cards()).toEqual([]);
+    expect((await rowOf(b.pr.number))?.merge).toMatchObject({
+      state: "left_to_you",
+      canMerge: true,
+      sentence: null,
+    });
+    // The person presses Merge on the row: it merges.
+    await client.mergePullRequest(project.id, b.pr.number);
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(b.task.id))?.state === "merged",
+      "the pull request merged after the person's Merge (at least 10 s)",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(b.task.id)),
+      30_000,
+    );
+    expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(true);
+  }, 120_000);
 });

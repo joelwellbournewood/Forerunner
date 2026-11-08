@@ -10,6 +10,7 @@ import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { JsonObject, MergeRecordRow, StateStore, TaskRow } from "@forerunner/state";
 import {
   fileLeftOpenRequest,
+  headMovedSentence,
   MERGE_LEFT_OPEN_KEY,
   type MergedEvent,
   REBUILD_CARD_OPTIONS,
@@ -279,6 +280,24 @@ export class DependentBranches {
     const ref = { number: info.number, url: info.htmlUrl || pr.url };
     if (info.mergeable === true) {
       if (record.state !== "left_to_you" || record.last_outcome !== "conflict") return false;
+      // Merge is offered again only for the version the review read (main changed back, the
+      // conflicting merge taken out). A head that moved since (the person's own resolution on
+      // GitHub, as the notice asks) is not that version: the merge step would refuse it, so the
+      // record says so as the merge step does (`head_moved`, no Merge on the Overview) and the
+      // open conflict card takes those words (the R-conflict review's fix-up).
+      if (record.reviewed_head_sha && info.head.sha !== record.reviewed_head_sha) {
+        const sentence = headMovedSentence(info.number);
+        await store.mergeRecord.move(record.id, "left_to_you", {
+          sentence,
+          last_outcome: "head_moved",
+        });
+        await this.headMovedCard(task, ref, sentence);
+        this.logger.info("pull request merges cleanly again, on a head after the review", {
+          taskId: task.id,
+          pr: info.number,
+        });
+        return true;
+      }
       await store.mergeRecord.move(record.id, "left_to_you", {
         sentence: "",
         last_outcome: "conflict_resolved",
@@ -353,6 +372,25 @@ export class DependentBranches {
       },
       card: { notice: "conflict", base },
       options,
+    });
+  }
+
+  /**
+   * The open conflict card, once the conflict was resolved with a commit after the review: it
+   * says what the record says now (the merge step's head-moved card), with the same options
+   * (Redo does the task again from main; Leave it open). A card already answered stays as it is.
+   */
+  private async headMovedCard(
+    task: TaskRow,
+    pr: { number: number; url: string },
+    sentence: string,
+  ): Promise<void> {
+    const open = await this.openMergeCard(task.id);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (!open || card.notice !== "conflict") return;
+    await this.deps.store.humanRequest.patch(open.id, {
+      why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+      change_card: { ...card, sentence, status: "head_moved", notice: null, base: null },
     });
   }
 
