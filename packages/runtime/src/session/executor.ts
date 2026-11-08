@@ -106,6 +106,7 @@ import {
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
 import { pricingFor as tablePricingFor } from "../wiring/billing-ports.ts";
+import { webAccessBriefLine, webAccessOf } from "../wiring/web-access.ts";
 import type { WebSearchLists } from "../wiring/web-ports.ts";
 import {
   WEB_SEARCH_LISTS_LINE,
@@ -188,17 +189,6 @@ export const NO_WEB_ACCESS_LINE =
 export const LESSONS_CONSTRAINT =
   "Lessons go only in your final message, never in a file: end that message with one line per lesson worth keeping, as 'Lesson: ...'. Leave no scratch notes in the project: every file you leave there is part of the work.";
 
-/** The registry's page reader on the Agent SDK path (C-64). */
-const WEB_FETCH_CC = `${CLAUDE_CODE_PREFIX}WebFetch`;
-
-/**
- * The brief's line for a specialist that reads the web on a Claude subscription with no API key
- * (C-64, ADR 0107): its page reading is refused there, so it searches and says what it could not
- * check on a page itself.
- */
-export const SEARCH_ONLY_LINE =
-  "Web pages cannot be opened on this run (a Claude subscription): use web search, cite each result you use by its address, and say in the report what you could not check on the page itself.";
-
 /**
  * The brief's line for a researcher on an API key whose run is offered no search (ADR 0107): the
  * install or the account switched search off, the server refused the project's lists, or the
@@ -215,6 +205,15 @@ export const NO_WEB_SEARCH_LINE =
  */
 export const WEB_SEARCH_LINE =
   "Use web_search to find pages, then open each page you use with web_fetch. Cite only pages you opened with web_fetch, never a search result on its own: a search result is not a source.";
+
+/**
+ * The brief's line for a researcher on a Claude subscription ('sites', the owner's decision of
+ * 2026-11-02): Claude Code's WebSearch finds pages, Forerunner's page reader (offered through the
+ * Agent SDK's tool server; Claude Code's own reader is off) opens them, and only an opened page
+ * is a source, as on the API key.
+ */
+export const SDK_WEB_SEARCH_LINE =
+  "Use WebSearch to find pages, then open each page you use with the web_fetch tool (mcp__forerunner__web_fetch). Cite only pages you opened with web_fetch, never a search result on its own: a search result is not a source.";
 
 /** The brief's line on what search results and pages are ('web-search', security). */
 export const SEARCH_INFO_LINE =
@@ -976,26 +975,22 @@ export class LoopTaskExecutor implements TaskExecutor {
       });
       webLines.push(NO_WEB_ACCESS_LINE);
     } else if (
-      choice.driver !== "sdk" &&
       profile.registryTools.includes(WEB_SEARCH_CC) &&
       spec.allowedTools.includes(WEB_FETCH_TOOL)
     ) {
       // 'web-search': search finds pages, only an opened page is a source, and both are
-      // information; where search is off for the run, the page reader only (ADR 0107).
-      if (search) webLines.push(WEB_SEARCH_LINE, SEARCH_INFO_LINE);
+      // information; where search is off for the run, the page reader only (ADR 0107). 'sites':
+      // on a subscription the same reader, through the Agent SDK's tool server, beside Claude
+      // Code's WebSearch (C-64's "pages cannot be opened" is gone).
+      if (choice.driver === "sdk") webLines.push(SDK_WEB_SEARCH_LINE, SEARCH_INFO_LINE);
+      else if (search) webLines.push(WEB_SEARCH_LINE, SEARCH_INFO_LINE);
       else webLines.push(NO_WEB_SEARCH_LINE);
-    } else if (
-      choice.driver === "sdk" &&
-      profile.registryTools.includes(WEB_FETCH_CC) &&
-      (spec.allowedDomains ?? []).length === 0
-    ) {
-      // C-64: on a subscription the hooks refuse every page of an entry with no domains (ADR
-      // 0044, the token's domain check); only search works, and the brief says so up front. An
-      // entry without web search (the science-evaluator) has no web at all there (U-078): it is
-      // told so, never that it searches.
-      webLines.push(
-        profile.registryTools.includes(WEB_SEARCH_CC) ? SEARCH_ONLY_LINE : NO_WEB_ACCESS_LINE,
-      );
+    }
+    // 'sites': a run that reads pages is told the project's "Web pages research may read" when
+    // it limits anything, and to say in its report what it could not read because of it.
+    if (spec.allowedTools.includes(WEB_FETCH_TOOL)) {
+      const rule = webAccessBriefLine(webAccessOf(project?.settings));
+      if (rule) webLines.push(rule);
     }
     // A run with no worktree on the SDK path still needs a working directory: its own,
     // under the executor's work root, and that is the only path the token allows.
@@ -1286,7 +1281,13 @@ export class LoopTaskExecutor implements TaskExecutor {
           systemPrompt: spec.prompt,
           prompt: userText,
           cwd,
-          tools: withClaudeCodeTools(this.deps.toolsFor?.() ?? this.deps.tools),
+          // 'sites': the page reader runs here, through the SDK's tool server, and every page it
+          // reads is kept for the critic as on the loop driver (`withWebSourceLog`).
+          tools: withWebSourceLog(
+            withClaudeCodeTools(this.deps.toolsFor?.() ?? this.deps.tools),
+            webSources,
+          ),
+          webAccess: webAccessOf(project?.settings),
           pricing: sdk.pricing(model),
           timeoutMs,
           maxTurns: spec.maxTurns,
@@ -1317,6 +1318,7 @@ export class LoopTaskExecutor implements TaskExecutor {
               // The SDK's own list-price figure, kept beside the ledger's per-call estimate.
               sdk_cost_usd_micro: Math.round(r.sdkCostUsd * 1_000_000),
             },
+            ...(webSources.length ? [webSourceArtifact(webSources)] : []),
           ],
         };
       } else {

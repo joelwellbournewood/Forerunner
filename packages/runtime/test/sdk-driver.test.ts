@@ -1,5 +1,6 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   CLAUDE_CODE_PROMPT_TOKENS,
   type QueryLike,
@@ -694,5 +695,65 @@ describe("SdkAgentDriver: the pre-call worst case on the subscription (cost)", (
     // The next call sends at least the whole prompt of the last one (20,040 tokens, all but 40
     // of them from the cache) and that call's reply; before, only the 40 plain tokens counted.
     expect(asked[1]).toEqual({ input: 20_040 + 300, out: 4096, cached: 20_000 });
+  });
+});
+
+describe("SdkAgentDriver: the web tools a subscription run needs ('sites')", () => {
+  it("says plainly when Claude Code's init message lacks Forerunner's page reader or web search", async () => {
+    const h = harness();
+    const tools = registry().register({
+      name: "web_fetch",
+      description: "Read one public web page",
+      schema: z.object({ url: z.string() }),
+      actionClass: "read",
+      risk: "low",
+      async execute() {
+        return { content: "page" };
+      },
+    });
+    const served: string[][] = [];
+    const { q, seen } = fakeQuery(() => [
+      { type: "system", subtype: "init", session_id: "s", tools: ["Read", "Write"] },
+      assistant("done"),
+      { type: "result", subtype: "success", is_error: false, result: "done", total_cost_usd: 0 },
+    ]);
+    const driver = new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+      toolServer: async (name, list) => {
+        served.push(list.map((t) => t.name));
+        return { name };
+      },
+    });
+    const warnings: string[] = [];
+    await driver.run({
+      token: issue(h, {
+        allowedTools: ["web_fetch", "cc:WebSearch", "cc:WebFetch"],
+        budgetUsdMicro: 1_000_000,
+      }),
+      budget: budget("sess-1", 5_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "oauth_token", value: "oat-value" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "sys",
+      prompt: "p",
+      cwd: process.cwd(),
+      tools,
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+      onEvent: (ev) => {
+        if (ev.type === "warning") warnings.push(ev.message);
+      },
+    });
+    // The reader is offered through the tool server; Claude Code's own reader never is.
+    expect(served).toEqual([["web_fetch"]]);
+    expect(seen[0]?.allowedTools).toEqual(["WebSearch", "mcp__forerunner__web_fetch"]);
+    expect(seen[0]?.disallowedTools).toEqual(["WebFetch"]);
+    expect(warnings).toEqual([
+      "Claude Code did not load Forerunner's page reader on this run, so research cannot read web pages here",
+      "Claude Code did not offer web search on this run, so research cannot search here",
+    ]);
   });
 });

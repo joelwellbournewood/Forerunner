@@ -74,7 +74,7 @@ import {
 } from "@forerunner/vault";
 import { claudeCodeToolNames } from "../agent/cc-tools.ts";
 import { LoopAgentDriver, type RunEvent, type RunPricing } from "../agent/loop.ts";
-import { type QueryLike, SdkAgentDriver } from "../agent/sdk.ts";
+import { type QueryLike, SdkAgentDriver, type SdkToolServerFactory } from "../agent/sdk.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import {
   DEFAULT_HEADROOM_PORT,
@@ -193,6 +193,8 @@ import {
   WEB_SEARCH_TOOL,
 } from "../registry/index.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
+import { WEB_FETCH_TOOL } from "../registry/tools.ts";
+import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import type { EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
@@ -584,6 +586,11 @@ export interface ComposeOptions {
   };
   sdkQuery?: QueryLike;
   /**
+   * Test seam ('sites'): replaces the Agent SDK's in-process tool server, through which a
+   * subscription run is offered Forerunner's page reader, so a test can call its tools.
+   */
+  sdkToolServer?: SdkToolServerFactory;
+  /**
    * The sandboxed browser (ADR 0047): `mode` ahead of `FORERUNNER_BROWSER_MODE` and the
    * Chromium probe (`static` never launches Chromium: the page reader over HTTP; tests pass
    * it), `fetch` the static mode's fetch (tests reach their loopback servers; default
@@ -731,18 +738,12 @@ export interface RuntimeApp {
    */
   specialists: (name: string, driver?: SpecialistDriver) => SpecialistSpec | undefined;
   /**
-   * Whether a specialist can read the web on this install (ADR 0107): a Claude subscription
-   * (the Agent SDK's web tools) or the web page reader (`web_fetch`, unless
-   * `FORERUNNER_WEB_FETCH=off`). False: the intake plans no web work, and Settings and the plan
-   * card say which specialists cannot do their work here.
+   * Whether a specialist can read the web on this install (ADR 0107): the web page reader
+   * (`web_fetch`, unless `FORERUNNER_WEB_FETCH=off`), on the API key and, through the Agent
+   * SDK's tool server, on a Claude subscription ('sites'). False: the intake plans no web work,
+   * and Settings and the plan card say which specialists cannot do their work here.
    */
   webAccess: () => boolean;
-  /**
-   * Whether research here only searches (C-64, ADR 0107): a Claude subscription and no API key
-   * whose page reader could take research (no key, or `FORERUNNER_WEB_FETCH=off`). The plan card
-   * and New task then say the researcher searches but opens no page.
-   */
-  webSearchOnly: () => boolean;
   /**
    * The credential chooser here (U-078, the owner's decision of 2026-11-02, ADR 0100 amended):
    * `facts()` what this install offers each credential (`capabilitiesOf`'s inputs); `forTask`
@@ -1126,6 +1127,13 @@ export interface SpecialistSpecOptions {
   tools: () => readonly string[];
   /** Tools the provider runs itself that this runtime offers ('web-search': `web_search`). */
   serverTools?: () => readonly string[];
+  /**
+   * 'sites': whether this runtime's page reader (`web_fetch`) is registered. On the "sdk" form an
+   * entry's `cc:WebFetch` is then Forerunner's reader (offered through the SDK's tool server,
+   * Claude Code's own reader off); without it the entry gets neither `cc:WebFetch` nor
+   * `cc:WebSearch` (a search alone sources nothing). Absent: the "sdk" form as written.
+   */
+  pageReader?: () => boolean;
   /** Whether the entry may get `run_command` (`cc:Bash`); default: when it requires a sandbox. */
   commands?: (d: SpecialistDef) => boolean;
   /** Told at every lookup about each name the loop driver will not offer; never silent. */
@@ -1170,6 +1178,12 @@ export function specialistSpecFrom(
       });
       for (const drop of mapping.dropped) opts.onDropped?.(d.name, drop);
       allowedTools = mapping.tools;
+    } else if (opts.pageReader && allowedTools.includes(`${CLAUDE_CODE_PREFIX}WebFetch`)) {
+      allowedTools = opts.pageReader()
+        ? allowedTools.map((t) => (t === `${CLAUDE_CODE_PREFIX}WebFetch` ? WEB_FETCH_TOOL : t))
+        : allowedTools.filter(
+            (t) => t !== `${CLAUDE_CODE_PREFIX}WebFetch` && t !== `${CLAUDE_CODE_PREFIX}WebSearch`,
+          );
     }
     const extra = opts.extraDomains?.(d, allowedTools) ?? [];
     return {
@@ -1552,7 +1566,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // 'web-search': the API key searches unless this install or the account switched it off.
     keySearch: webSearchOn && !webSearchMarks.keySearchOff(),
     keySearchOff: webSearchMarks.keySearchOff(),
-    subscriptionPages: false,
+    // 'sites': the page reader runs on the subscription too, through the SDK's tool server.
+    subscriptionPages: webFetchOn,
     hostCommands: sdkHostCommands,
     dockerReady: (() => {
       try {
@@ -1839,6 +1854,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     kill,
     clock,
     ...(opts.sdkQuery ? { queryImpl: opts.sdkQuery } : {}),
+    ...(opts.sdkToolServer ? { toolServer: opts.sdkToolServer } : {}),
   });
   // The driver specialists run on by default (ADR 0004, ADR 0043): the in-process loop
   // driver built above, on an API-style source. The registry names Claude Code tools and
@@ -2113,6 +2129,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // 'web-search': `cc:WebSearch` is Anthropic's web search on an API key, offered while this
     // install has it on; the executor grants it per run only where the run can search.
     serverTools: () => (webSearchOn ? [WEB_SEARCH_TOOL] : []),
+    // 'sites': on a subscription the entry's page reader is Forerunner's own.
+    pageReader: () => toolsForRun().get(WEB_FETCH_TOOL) !== undefined,
     onDropped: droppedTools.onDropped,
     extraDomains: (_d, mapped) =>
       mapped.some((t) => browserToolNames.has(t)) ? browserDomains : [],
@@ -4303,8 +4321,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     registry,
     specialistDriver,
     specialists,
-    webAccess: () => hasOauth || webFetchOn,
-    webSearchOnly: () => hasOauth && !(hasKey && webFetchOn),
+    // 'sites': the page reader runs on both credentials; without it no specialist reads the web
+    // (a search alone sources nothing, so the subscription is not offered one either).
+    webAccess: () => webFetchOn,
     chooser: {
       facts: chooserFacts,
       forTask: async ({ specialist, projectId, task }) => {

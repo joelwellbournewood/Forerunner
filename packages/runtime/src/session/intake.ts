@@ -59,6 +59,7 @@ import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
+import { webAccessOf } from "../wiring/web-access.ts";
 import { markAnswer } from "./answer-mark.ts";
 import {
   type CredentialWait,
@@ -456,6 +457,19 @@ export interface IntakeDeps {
    * sentence ("Drafting the plan…" to "Planning failed: …") without a reload.
    */
   onDrafted?: (projectId: string) => void;
+}
+
+/**
+ * The planning request's line when the project's "Web pages research may read" is "Only these
+ * websites" ('sites', the owner's decision of 2026-11-02): the planner plans no research that
+ * needs other sites. None for any public website.
+ */
+export function onlyWebsitesLines(project: Pick<ProjectRow, "settings">): string[] {
+  const rule = webAccessOf(project.settings);
+  if (rule.mode !== "only") return [];
+  return [
+    `Web access: this project's research reads only these websites and their subdomains: ${rule.only.join(", ")}. Plan no research that needs another website; where the brief needs one, say in the decision record that it is outside this project's websites.`,
+  ];
 }
 
 /** The planning rule when no specialist reaches the web on this install (U-044, ADR 0107). */
@@ -1911,6 +1925,8 @@ export class IntakeService {
           ? "small (a short brief: see Size in your instructions)"
           : "what the brief needs"
       }`,
+      // 'sites': "Only these websites" limits what research can read, so the plan keeps to it.
+      ...onlyWebsitesLines(project),
       "",
       brief ? "Brief (data, between the markers):" : "No brief was given; plan from the goal.",
     ];

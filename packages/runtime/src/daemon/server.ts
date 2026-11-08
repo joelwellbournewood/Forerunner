@@ -2453,7 +2453,6 @@ export function createDaemonApp(
         others: [{ id: rt.criticAgent.id, name: rt.criticAgent.name, kind: "critic" }],
         specialists,
         webAccess: rt.webAccess(),
-        webSearchOnly: rt.webSearchOnly(),
         runsOn,
         credentials: await rt.chooser.table(),
       }),

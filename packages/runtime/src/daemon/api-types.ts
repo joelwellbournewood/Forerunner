@@ -1736,20 +1736,6 @@ export const RunSettingsView = z.object({
 });
 export type RunSettingsView = z.infer<typeof RunSettingsView>;
 
-/**
- * What a specialist that reads web pages cannot do on a Claude subscription without an API key
- * (C-64, ADR 0107): the hooks refuse its pages there, so it searches only. The plan card shows
- * it beside such a task; New task adds what lifts it.
- */
-export const SEARCH_ONLY_LIMITATION = "Searches the web but opens no page on a Claude subscription";
-
-/**
- * What a specialist that reads web pages but has no web search (the science-evaluator) cannot do
- * on a Claude subscription without an API key (U-078): it reads no page there and has no search,
- * so it has no web at all. Before, it was told it "searches the web", which is not true.
- */
-export const NO_PAGES_LIMITATION = "Reads no web page on a Claude subscription";
-
 /** Settings' "What each can do here" (U-078): `abilityTable` in `session/credential-choice.ts`. */
 export const CredentialTableView = z.object({
   columns: z.array(
@@ -1803,8 +1789,8 @@ export const ModelSettingsView = z.object({
       overridesAgentId: z.string(),
       /**
        * What this specialist cannot do on this install, in words (ADR 0107: "Cannot read the web
-       * on this computer" when it works from the web and the install has no web access;
-       * `SEARCH_ONLY_LIMITATION` on a Claude subscription without an API key, C-64); null
+       * on this computer" when it works from the web and the install has no web access; since
+       * 'sites' the page reader runs on both credentials, so a subscription limits nothing); null
        * when nothing is missing. The plan card and New task show it.
        */
       limitation: z.string().nullable().default(null),

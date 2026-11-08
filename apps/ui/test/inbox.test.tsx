@@ -420,27 +420,23 @@ describe("Inbox", () => {
       'Build the docs site · coder · about CHF 0.40 · after "Compare two static site generators"',
     );
     expect(within(card).queryByTestId("intake-task-cannot-run")).toBeNull();
-    // C-64: a Claude subscription and no API key: the researcher searches but opens no page.
+    // A Claude subscription and no API key: since 'sites' the researcher reads pages there too
+    // (Forerunner's reader through the Agent SDK's tool server), so nothing needs saying. Before
+    // (C-64): "it can search the web here but not open pages yet".
     view.unmount();
-    const searchOnly = renderApp("/inbox", withPlan(createHarness({ webSearchOnly: true })));
+    const subscription = renderApp("/inbox", withPlan(createHarness({ subscriptionOnly: true })));
     card = await screen.findByTestId("intake-card");
-    await waitFor(() =>
-      expect(runsOnLines(card)[0]).toBe(
-        "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
-      ),
-    );
-    // Both credentials, the subscription first (no order chosen): research goes to the API key,
-    // the only one that reads pages here (and, since 'web-search', searches too), and the card
-    // says so before the person approves.
-    searchOnly.unmount();
+    await waitFor(() => expect(within(card).getAllByTestId("intake-task")).toHaveLength(2));
+    expect(runsOnLines(card)).toEqual([null, null]);
+    expect(within(card).queryByTestId("intake-task-cannot-run")).toBeNull();
+    // Both credentials, the subscription first (no order chosen): both read pages and search
+    // now, so the person's order decides and the card needs no line. Before ('web-search'):
+    // "Runs on your API key: only it can read web pages here."
+    subscription.unmount();
     renderApp("/inbox", withPlan(createHarness()));
     card = await screen.findByTestId("intake-card");
-    await waitFor(() =>
-      expect(runsOnLines(card)).toEqual([
-        "Runs on your API key: only it can read web pages here.",
-        null,
-      ]),
-    );
+    await waitFor(() => expect(within(card).getAllByTestId("intake-task")).toHaveLength(2));
+    expect(runsOnLines(card)).toEqual([null, null]);
     expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toContain(
       "Compare two static site generators · researcher · about CHF 0.40",
     );

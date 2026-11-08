@@ -3592,6 +3592,33 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     expect(await client.sessions({ projectId: project.id })).toHaveLength(before);
   }, 60_000);
 
+  it("'Only these websites' reaches the planner: it is told to plan no research that needs another website ('sites')", async () => {
+    const project = await client.createProject({ name: "Docs only", goal: "Explain CSS grid" });
+    const set = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "only", only: ["developer.mozilla.org"], never: [] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to Only these websites",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(set.status).toBe("done");
+    const before = intakeCalls.length;
+    await client.retryIntake(project.id);
+    await rt.intake.inFlight(project.id);
+    const request = String(intakeCalls[before]?.messages[0]?.content);
+    expect(request).toContain(
+      "Web access: this project's research reads only these websites and their subdomains: developer.mozilla.org. Plan no research that needs another website",
+    );
+  }, 60_000);
+
   it("a one-line brief without a Goal: the dialog's goal, a small plan, a first reply without tasks asked for once more, one card (live check of 2026-11-01)", async () => {
     bench.intakeBad = "missing-tasks";
     try {
@@ -5214,7 +5241,7 @@ describe("the UI client against the real daemon: research on an API key reads th
     const project = await client.createProject({ name: "Rules", goal: "Read only one site" });
     const rowOf = async () =>
       (await client.settings({ scope: "project", scopeId: project.id })).find(
-        (s) => s.key === "project.web_access",
+        (s) => s.key === "project.web_access" && s.scopeId === project.id,
       );
     // The default: any public website, on the row and on the Overview's line.
     expect((await rowOf())?.value).toEqual({ mode: "any", only: [], never: [] });
@@ -7216,12 +7243,12 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
   }, 120_000);
 });
 
-describe("the UI client against the real daemon: research on a Claude subscription alone searches, and the screens say so (C-64)", () => {
+describe("the UI client against the real daemon: research on a Claude subscription alone reads pages too ('sites', was C-64)", () => {
   // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
   const oauth = ["sk-ant-oat01-", "subscription", "0".repeat(40)].join(""); // not-a-secret
   const apiKey = ["sk-ant-api03-", "apikey", "0".repeat(40)].join(""); // not-a-secret
 
-  it("a subscription and no API key: the researcher and the science-evaluator search but open no page", async () => {
+  it("a subscription and no API key: the researcher and the science-evaluator read pages there, so the screens say nothing is missing", async () => {
     const sub = await composeWithRolePlayer(
       {},
       { vault: new MemoryVault({ anthropic_subscription_token: oauth }) },
@@ -7229,20 +7256,16 @@ describe("the UI client against the real daemon: research on a Claude subscripti
     try {
       const models = await sub.client.modelSettings();
       const limits = Object.fromEntries(models.specialists.map((x) => [x.name, x.limitation]));
-      expect(limits.researcher).toBe("Searches the web but opens no page on a Claude subscription");
-      // U-078: the science-evaluator has no web search; before, it was said to search there.
-      expect(limits["science-evaluator"]).toBe("Reads no web page on a Claude subscription");
+      // Before 'sites': "Searches the web but opens no page on a Claude subscription" and
+      // "Reads no web page on a Claude subscription"; Forerunner's reader runs there now.
+      expect(limits.researcher).toBeNull();
+      expect(limits["science-evaluator"]).toBeNull();
       expect(limits.coder).toBeNull();
       // Where each runs and why, the chooser's words (the plan card's and New task's).
       const runsOn = Object.fromEntries(models.specialists.map((x) => [x.name, x.runsOn]));
-      expect(runsOn.researcher).toEqual({
-        kind: "subscription",
-        line: "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
-      });
-      expect(runsOn["science-evaluator"]).toEqual({
-        kind: "subscription",
-        line: "Runs on your Claude subscription, where it cannot read web pages: the science-evaluator works from the project's files and the sources the brief gives.",
-      });
+      expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
+      expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
+      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
     } finally {
       await sub.rt.close();
     }
@@ -7271,8 +7294,9 @@ describe("the UI client against the real daemon: the credential chooser says whe
   // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
   const oauth = ["sk-ant-oat01-", "chooser", "0".repeat(40)].join(""); // not-a-secret
   const apiKey = ["sk-ant-api03-", "chooser", "0".repeat(40)].join(""); // not-a-secret
-  // Since 'web-search' the API key reads pages and searches: only it does both here.
-  const RESEARCH_LINE = "Runs on your API key: only it can read web pages here.";
+  // Since 'sites' both credentials read pages and search: research follows the person's order
+  // (the subscription first here), and nothing needs saying. Before: "Runs on your API key: only
+  // it can read web pages here."
 
   it("both credentials, the subscription first: the plan card, New task and Settings say the same words", async () => {
     const both = await composeWithRolePlayer(
@@ -7302,7 +7326,7 @@ describe("the UI client against the real daemon: the credential chooser says whe
       if (!card?.planTasks) throw new Error(`no plan card with planTasks: ${JSON.stringify(card)}`);
       // The plan card's tasks, as the Inbox reads them, each with the daemon's view.
       const research = card.planTasks.find((t) => t.specialist === "researcher");
-      expect(research?.runsOn).toEqual({ kind: "api_key", line: RESEARCH_LINE });
+      expect(research?.runsOn).toEqual({ kind: "subscription", line: null });
       // A new project has no dependencies to install yet: the coder stays on the subscription,
       // with nothing to say.
       const coder = card.planTasks.find((t) => t.specialist === "coder");
@@ -7311,11 +7335,9 @@ describe("the UI client against the real daemon: the credential chooser says whe
       // New task and Settings: the same words, from GET /settings/models.
       const models = await client.modelSettings(undefined, project.id);
       const runsOn = Object.fromEntries(models.specialists.map((s) => [s.name, s.runsOn]));
-      expect(runsOn.researcher).toEqual({ kind: "api_key", line: RESEARCH_LINE });
-      expect(runsOn["science-evaluator"]).toEqual({
-        kind: "api_key",
-        line: "Runs on your API key: only it can read web pages here.",
-      });
+      expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
+      expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
+      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
       // Settings' "What each can do here": the capability function's output.
       expect(models.credentials?.columns).toEqual([
         { kind: "api_key", name: "API key", saved: true },
@@ -7324,7 +7346,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
       expect(
         models.credentials?.rows.map((r) => [r.label, ...r.cells.map((c) => c.words)]),
       ).toEqual([
-        ["Read web pages", "Yes", "Not yet"],
+        // Forerunner's page reader on the subscription too ('sites'; before: "Not yet").
+        ["Read web pages", "Yes", "Yes"],
         // Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02).
         ["Search the web", "Yes", "Yes"],
         [

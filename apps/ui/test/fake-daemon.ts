@@ -57,7 +57,6 @@ import {
   isStorableSecretName,
   KILL_ACTIVE_START_MESSAGE,
   KillBody,
-  NO_PAGES_LIMITATION,
   RenameAgentBody,
   RunnerUnlockWrapBody,
   SetTaskDependenciesBody,
@@ -85,10 +84,7 @@ import {
 import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
-import {
-  NO_WEB_LIMITATION,
-  SEARCH_ONLY_LIMITATION,
-} from "@forerunner/runtime/daemon/model-settings-view";
+import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
 import {
   blockedTaskIds,
@@ -273,11 +269,10 @@ export interface FakeDaemonOptions {
    */
   noWebAccess?: boolean;
   /**
-   * Research here only searches (C-64: a Claude subscription and no API key): `GET
-   * /settings/models` names `SEARCH_ONLY_LIMITATION` for the researcher and the
-   * science-evaluator, as the daemon does for every entry that reads pages.
+   * Only a Claude subscription is saved (no API key). Since 'sites' research reads pages there
+   * too (Forerunner's reader through the Agent SDK's tool server), so nothing is limited.
    */
-  webSearchOnly?: boolean;
+  subscriptionOnly?: boolean;
   /**
    * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
    * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
@@ -919,23 +914,13 @@ function initialVoiceStatus(options: FakeDaemonOptions): VoiceStatusView {
 /** The specialists of the fixture that work from the web (the registry's researcher and science-evaluator). */
 const WEB_SPECIALISTS = new Set(["researcher", "science-evaluator"]);
 
-/** `GET /settings/models` as the daemon answers it with or without web access (ADR 0107). */
-function withWebAccess(
-  view: ModelSettingsView,
-  web: boolean,
-  searchOnly = false,
-): ModelSettingsView {
+/**
+ * `GET /settings/models` as the daemon answers it with or without web access (ADR 0107; since
+ * 'sites' the page reader runs on both credentials, so only an install without it is limited).
+ */
+function withWebAccess(view: ModelSettingsView, web: boolean): ModelSettingsView {
   for (const s of view.specialists)
-    s.limitation = !WEB_SPECIALISTS.has(s.name)
-      ? null
-      : !web
-        ? NO_WEB_LIMITATION
-        : searchOnly
-          ? // U-078: the science-evaluator has no web search: it reads no page there at all.
-            s.name === "science-evaluator"
-            ? NO_PAGES_LIMITATION
-            : SEARCH_ONLY_LIMITATION
-          : null;
+    s.limitation = WEB_SPECIALISTS.has(s.name) && !web ? NO_WEB_LIMITATION : null;
   return view;
 }
 
@@ -1028,11 +1013,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speedQuality: {},
     settingValues: {},
     desktopAllowlist: [{ app: "code" }],
-    modelSettings: withWebAccess(
-      clone(MODEL_SETTINGS),
-      !options.noWebAccess,
-      options.webSearchOnly ?? false,
-    ),
+    modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
     nextVoiceLine: null,
@@ -6163,10 +6144,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     plan_credits: "Plan credits",
   };
   // The saved credentials: both by default; only the API key on an install without web access
-  // (no subscription, ADR 0107), only the subscription where research only searches (C-64).
+  // (no subscription, ADR 0107), only the subscription with `subscriptionOnly`.
   const defaultSources: Partial<BillingOrderSourceView>[] = options.noWebAccess
     ? [{ kind: "api_key" }]
-    : options.webSearchOnly
+    : options.subscriptionOnly
       ? [{ kind: "subscription" }]
       : [{ kind: "subscription" }, { kind: "api_key" }];
   const billingSources: BillingOrderSourceView[] = (
@@ -6208,6 +6189,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const chooserFactsNow = (): ChooserFacts => ({
     ...DEFAULT_CHOOSER_FACTS,
     webFetch: !options.noWebAccess,
+    // 'sites': as the daemon's chooserFacts, the page reader runs on the subscription too.
+    subscriptionPages: !options.noWebAccess,
     ...(options.chooserFacts ?? {}),
   });
   const savedKinds = () =>

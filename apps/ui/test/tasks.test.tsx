@@ -859,9 +859,9 @@ describe("Tasks tab (design §3.5)", () => {
     });
   });
 
-  it("New task on a subscription without an API key says the researcher searches but opens no page (C-64)", async () => {
+  it("New task on a subscription without an API key says nothing is missing for the researcher ('sites')", async () => {
     const user = userEvent.setup();
-    const harness = createHarness({ webSearchOnly: true });
+    const harness = createHarness({ subscriptionOnly: true });
     renderApp("/projects/proj_atlas/tasks", harness);
     await screen.findAllByTestId("task-row");
     await user.click(screen.getByTestId("new-task"));
@@ -871,11 +871,11 @@ describe("Tasks tab (design §3.5)", () => {
       expect([...who.options].map((o) => o.value)).toEqual(expect.arrayContaining(["researcher"])),
     );
     await user.selectOptions(who, "researcher");
-    // Before, the note ended "works only from the project's files", which is not true there.
-    // The plan card's words (U-078, the credential chooser).
-    expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
-      "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
-    );
+    // Since 'sites' the researcher reads pages on the subscription too (Forerunner's reader).
+    // Before (C-64): "it can search the web here but not open pages yet, so the researcher works
+    // from search results".
+    await waitFor(() => expect(who.value).toBe("researcher"));
+    expect(within(dialog).queryByTestId("task-who-note")).toBeNull();
   });
 
   it("New task says where the chosen specialist runs for this project and why, as the plan card does (U-078)", async () => {
@@ -893,10 +893,10 @@ describe("Tasks tab (design §3.5)", () => {
       ),
     );
     await user.selectOptions(who, "researcher");
-    // Since 'web-search' the API key reads pages and searches: only it does both here.
-    expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
-      "Runs on your API key: only it can read web pages here.",
-    );
+    // Since 'sites' both credentials read pages and search: the person's order decides (the
+    // subscription first), and nothing needs saying. Before: "Runs on your API key: only it can
+    // read web pages here."
+    expect(within(dialog).queryByTestId("task-who-note")).toBeNull();
     // Only this project has dependencies to install, so the line shows that the dialog asked for
     // the project's view (`?project=`).
     await user.selectOptions(who, "coder");
