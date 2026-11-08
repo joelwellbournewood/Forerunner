@@ -855,6 +855,11 @@ export const ENTITIES: Record<string, EntityDef> = {
       text("take_out_state", "Where that pull request is: open, merged or closed.", {
         nullable: true,
       }),
+      text(
+        "rebuild_owed_for",
+        "The task this one builds on whose merge, close, redo or cancel its branch has not followed yet: a rebuild that could not run (the task's folder was busy or held uncommitted changes, or a step failed), tried again at every poll; nothing merges the pull request while it is set.",
+        { nullable: true },
+      ),
     ],
     indexes: [{ columns: ["task_id"], unique: true }, { columns: ["agent_id", "state"] }],
   },

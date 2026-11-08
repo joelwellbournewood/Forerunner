@@ -56,6 +56,8 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
       approved_by: null,
       sentence: "",
       last_outcome: null,
+      // An accept reads the branch as it is now: a rebuild owed before it is not owed by it.
+      rebuild_owed_for: null,
       ...(current.state === "merged"
         ? {
             merge_sha: null,
@@ -99,6 +101,37 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
       if (e instanceof ForerunnerError && e.code === "version_conflict") return null;
       throw e;
     }
+  }
+
+  /**
+   * R-owed (leftovers7-merge2, ADR 0111): a rebuild of the task's branch that could not run
+   * (its folder was busy, held changes nobody committed, or a step failed) is kept on its record,
+   * so the watcher's sweep tries it again after a restart too, and nothing merges the pull
+   * request meanwhile. `dependencyId` is the task whose change the branch has not followed;
+   * null says nothing is owed. A record that already owes one keeps it: the rebuild of any
+   * dependency reads every one the branch holds. False when the task has no record (one accepted
+   * before ADR 0111): the caller keeps that one in memory.
+   */
+  async oweRebuild(taskId: string, dependencyId: string | null): Promise<boolean> {
+    const current = await this.forTask(taskId);
+    if (!current) return false;
+    if (dependencyId === null) {
+      if (current.rebuild_owed_for !== null)
+        await this.patch(current.id, { rebuild_owed_for: null });
+      return true;
+    }
+    if (current.rebuild_owed_for === null)
+      await this.patch(current.id, { rebuild_owed_for: dependencyId });
+    return true;
+  }
+
+  /** The records of a project whose branch still owes a rebuild (R-owed), oldest first. */
+  async owedRebuilds(projectId: string): Promise<MergeRecordRow[]> {
+    const rows = await this.list(
+      { project_id: projectId },
+      { orderBy: "created_at asc", limit: 2000 },
+    );
+    return rows.filter((r) => r.rebuild_owed_for !== null);
   }
 
   /** The records of `agentId` in these states, oldest first. */

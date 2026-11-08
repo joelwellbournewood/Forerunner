@@ -41,7 +41,10 @@ import type { WatchedPullRequest } from "./githost-watcher.ts";
  *   change (`ownChangeId`) is unchanged; a rebuild that conflicts leaves the branch as it was
  *   and the record and its card name the pull requests;
  * - the default branch's head, once per poll and project (`sweep`), retries a rebuild that
- *   could not run (the worktree was busy) and catches a dependency redone or cancelled;
+ *   could not run (the worktree was busy) and catches a dependency redone or cancelled; a
+ *   rebuild owed is kept on the dependent's merge record (`rebuild_owed_for`, R-owed), so a
+ *   restart keeps it, and it is set before the rebuild starts, so no merge of that pull request
+ *   goes ahead while its branch may still hold work that went away (`ReviewedPrMerge`, R-lock);
  * - right before an accepted task's merge (`mergePort`), a branch that holds work which went
  *   away while it was reviewed is rebuilt first, and its review is void when that work is gone.
  */
@@ -104,9 +107,15 @@ export function rebuildConflictSentence(
   return `${prName(pr)} could not be rebuilt without ${andList(dropped.map(droppedWords))}: both change ${files}. It waits for you: redo the task, or ${merge}.`;
 }
 
+/** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
+const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed"]);
+
 export class DependentBranches {
   private readonly logger = log("dependent-branches");
-  /** Rebuilds that could not run (the worktree was busy, a step failed): tried at the next sweep. */
+  /**
+   * Rebuilds that could not run for a task with no merge record (one accepted before ADR 0111):
+   * tried at the next sweep. A task with a record keeps it there (`rebuild_owed_for`, R-owed).
+   */
   private readonly owed = new Map<string, { projectId: string; dependencyId: string }>();
 
   constructor(private readonly deps: DependentBranchesDeps) {}
@@ -183,6 +192,14 @@ export class DependentBranches {
       limit: 2000,
     });
     const byId = new Map(tasks.map((t) => [t.id, t]));
+    // R-owed: the rebuilds kept on the merge records, after a restart too. One whose task is no
+    // longer done (redone, cancelled) owes nothing: its next run builds its branch again.
+    for (const r of await this.deps.store.mergeRecord.owedRebuilds(projectId)) {
+      const t = byId.get(r.task_id);
+      if (t?.status === "done" && t.branch && r.rebuild_owed_for)
+        todo.set(r.rebuild_owed_for, t.id);
+      else await this.deps.store.mergeRecord.oweRebuild(r.task_id, null);
+    }
     for (const t of tasks) {
       if (t.status !== "done" || !t.branch) continue;
       for (const id of t.depends_on ?? []) {
@@ -193,18 +210,94 @@ export class DependentBranches {
     for (const dependencyId of todo.keys()) await this.rebuildFor(projectId, dependencyId);
   }
 
-  /** The dependents of `dependencyId` rebuilt; the busy ones kept for the next sweep. */
+  /**
+   * The dependents of `dependencyId` rebuilt; the busy ones kept for the next sweep. Each
+   * dependent's record owes the rebuild from before it starts until it ran (R-owed, R-lock): a
+   * merge of its pull request that is under way then stops before it calls GitHub, and one that
+   * could not run stays owed, after a restart too.
+   */
   async rebuildFor(projectId: string | null, dependencyId: string): Promise<DependentOutcome[]> {
     if (!projectId) return [];
+    const marked = await this.markOwed(projectId, dependencyId);
     const outcomes = await this.deps.executor.rebuildDependents(projectId, dependencyId, {
       beforePush: (r, pr) => this.settleRecord(r, pr),
     });
     for (const o of outcomes) {
-      if (o.result === "busy" || o.result === "held" || o.result === "failed")
-        this.owed.set(o.taskId, { projectId, dependencyId });
-      else this.owed.delete(o.taskId);
+      marked.delete(o.taskId);
+      await this.settleOwed(o, projectId, dependencyId);
     }
+    // Marked and not looked at (no longer done meanwhile): nothing is owed for it.
+    for (const taskId of marked)
+      await this.settleOwed(
+        { taskId, prNumber: null, prUrl: null, result: "unchanged" },
+        projectId,
+        dependencyId,
+      );
     return outcomes;
+  }
+
+  /**
+   * The done tasks of the project that build on `dependencyId` (directly or through others) and
+   * have a branch: their records owe the rebuild before it starts. Returns those marked now.
+   */
+  private async markOwed(projectId: string, dependencyId: string): Promise<Set<string>> {
+    const { store } = this.deps;
+    const marked = new Set<string>();
+    try {
+      const tasks = await store.task.list({ project_id: projectId } as never, { limit: 2000 });
+      const byId = new Map(tasks.map((t) => [t.id, t]));
+      const buildsOn = (t: TaskRow): boolean => {
+        const seen = new Set<string>([t.id]);
+        const stack = [...(t.depends_on ?? [])];
+        while (stack.length) {
+          const id = stack.pop() as string;
+          if (id === dependencyId) return true;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          stack.push(...(byId.get(id)?.depends_on ?? []));
+        }
+        return false;
+      };
+      for (const t of tasks) {
+        if (t.id === dependencyId || t.status !== "done" || !t.branch || !buildsOn(t)) continue;
+        const record = await store.mergeRecord.forTask(t.id);
+        if (!record || record.state === "merged" || record.rebuild_owed_for) continue;
+        await store.mergeRecord.oweRebuild(t.id, dependencyId);
+        marked.add(t.id);
+      }
+    } catch (e) {
+      this.logger.warn("owed rebuilds not marked", { projectId, error: errorMessage(e) });
+    }
+    return marked;
+  }
+
+  /**
+   * What a rebuild left owed (R-owed). One that could not run stays owed (in memory for a task
+   * without a record); one that rebuilt or conflicted read every dependency the branch holds,
+   * so nothing is owed; one that found nothing to do settles only what was owed for this
+   * dependency (it may not have read the others).
+   */
+  private async settleOwed(
+    o: DependentOutcome,
+    projectId: string,
+    dependencyId: string,
+  ): Promise<void> {
+    const { store } = this.deps;
+    try {
+      const record = await store.mergeRecord.forTask(o.taskId);
+      if (OWES.has(o.result)) {
+        if (record && record.state !== "merged")
+          await store.mergeRecord.oweRebuild(o.taskId, dependencyId);
+        else this.owed.set(o.taskId, { projectId, dependencyId });
+        return;
+      }
+      this.owed.delete(o.taskId);
+      if (!record?.rebuild_owed_for) return;
+      if (o.result !== "unchanged" || record.rebuild_owed_for === dependencyId)
+        await store.mergeRecord.oweRebuild(o.taskId, null);
+    } catch (e) {
+      this.logger.warn("owed rebuild not recorded", { taskId: o.taskId, error: errorMessage(e) });
+    }
   }
 
   /**

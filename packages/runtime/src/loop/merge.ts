@@ -1181,7 +1181,10 @@ export class ReviewedPrMerge implements MergePort {
     session: SessionContext | null,
   ): Promise<MergeOutcome> {
     const { store, clock, tokens } = this.deps;
-    let record = pinned;
+    // The record as it is now: a caller's row may be older than a write since (the retry pass
+    // lists its rows once; a rebuild marks a record owed meanwhile, R-owed), and the claim below
+    // takes only the version it read.
+    let record = (await store.mergeRecord.get(pinned.id)) ?? pinned;
     const task = await store.task.mustGet(record.task_id);
     if (record.state === "merged") return this.outcomeOf(record, "merged");
     const prUrl = record.pr_url;
