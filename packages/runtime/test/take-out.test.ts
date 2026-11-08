@@ -65,7 +65,7 @@ describe("TaskTakeOut", () => {
       },
     };
     const takeOut = new TaskTakeOut({ store, host, git, humanId: human.id, agentId: agent.id });
-    return { store, task, later, takeOut, opened, release };
+    return { store, task, later, takeOut, opened, release, host };
   }
 
   it("a second press while the first runs is refused; one pull request is opened, naming the task built on it; a record is made for a merge that had none", async () => {
@@ -105,5 +105,11 @@ describe("TaskTakeOut", () => {
     expect((await w.takeOut.takeOut(w.task.id)).sentence).toBe(
       '"Add the cart" is being taken out in #9: merge #9 to finish it.',
     );
+    // Merged on GitHub: the watcher's read of main's head settles it (no list of open pull
+    // requests at hand: each open take-out is read from the host).
+    (w.host as unknown as { getPullRequest: () => Promise<PullRequestInfo> }).getPullRequest =
+      async () => ({ number: 9, merged: true, state: "closed" }) as unknown as PullRequestInfo;
+    await w.takeOut.settle(w.task.project_id, null);
+    expect((await w.store.mergeRecord.forTask(w.task.id))?.take_out_state).toBe("merged");
   });
 });

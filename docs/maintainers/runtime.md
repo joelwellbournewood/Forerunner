@@ -2964,7 +2964,11 @@ merge)" (`open`), "Taken out in #9" (`merged`); a take-out closed without mergin
 `ProjectPullRequests.view` lists each open take-out (`TaskTakeOut.openOf`) as a `take_out` row
 (title "Take out: <title>", `taskId` the task, no review) whose Merge merges it as it is through
 `mergeAsIs`, then marks it merged (`TaskTakeOut.merged`); before listing, `TaskTakeOut.settle`
-reads each open take-out the host no longer lists as open and marks it merged or closed. Tests:
+reads each open take-out the host no longer lists as open and marks it merged or closed, and the
+git host watcher's `onDefaultBranchHead` calls `settle(project, null)` (each open take-out read
+from the host, only while one is open), so a take-out merged on GitHub is read within a poll.
+One take-out runs per task at a time (a second press: "Its work is being taken out now: the
+answer comes in a moment."; `packages/runtime/test/take-out.test.ts`). Tests:
 `packages/capabilities/test/take-out.test.ts` (merge, squash and rebase merges on the fake
 GitHub: main's tree after merging the take-out equals main's before the merge; a conflict pushes
 nothing; an unknown shape and a commit not in main), `apps/ui/test/real-daemon.test.ts` "Take this

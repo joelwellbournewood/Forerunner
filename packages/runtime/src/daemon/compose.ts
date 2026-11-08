@@ -4078,6 +4078,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           await Promise.all([
             dependentBranches.sweep(project.projectId),
             refreshProjectCopy(project.projectId, { head: sha, base: project.branch }),
+            // merged-actions: a take-out merged or closed on GitHub is read here (the host is
+            // asked only while one is open), so its task's row says "Taken out in #9".
+            takeOut.settle(project.projectId, null).catch((e: unknown) =>
+              logger.warn("take-outs not settled", {
+                projectId: project.projectId,
+                error: errorMessage(e),
+              }),
+            ),
           ]);
         },
         onInjection: async (report, origin, projectId) => {

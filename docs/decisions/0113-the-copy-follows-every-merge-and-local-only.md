@@ -183,9 +183,10 @@ session's plan and from the chat.
    `repo.create` is medium for every actor, so no level creates a repository without a yes; the
    offer holds no work and is not counted as a question in the project's line (C-60).
 
-Known gaps: the take-out's merged or closed state is read when the Overview lists the pull
-requests (a merge in the app marks it at once); a take-out merged or closed on GitHub while the
-Overview is not opened keeps the row's "(waiting for you to merge)" until then. A Redo of a task
+Known gaps: a take-out's merge is marked at once by the app's Merge, at the git host watcher's
+read of main's head after a merge on GitHub, and at the Overview's next read of the pull requests;
+a take-out closed on GitHub without merging (main does not move) is read only at that next
+Overview read, so its row keeps "(waiting for you to merge)" until then. A Redo of a task
 whose take-out is still open starts its record again and forgets that take-out (its pull request
 stays open on GitHub, no longer listed as a take-out). A dependent pull request merged with a merge
 commit that carried its dependency's commits (a dependency merged by GitHub through it) is
