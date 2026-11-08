@@ -15,7 +15,7 @@ import { Button, buttonClassName, ErrorBanner, Loading } from "../../components/
 import { relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { elapsedWords, useNow } from "../../shell/ShellBars.tsx";
-import { useClient, useUiState } from "../../store/context.tsx";
+import { refreshProjects, useClient, useUiState, useUiStore } from "../../store/context.tsx";
 import { commandForSetting, SettingChangeDialog } from "../SettingsPage.tsx";
 import { DecisionsSection } from "./DecisionsSection.tsx";
 import { PeersSection } from "./PeersSection.tsx";
@@ -247,13 +247,16 @@ const WEB_ACCESS_ROW = "project.web_access";
  */
 function ResearchReads({ projectId, project }: { projectId: string; project?: ProjectCard }) {
   const client = useClient();
-  // The line a change from here set, and the card's line it replaced: kept only while the card
-  // still says that, so a newer card (any later change, wherever it was made) wins.
-  const [changed, setChanged] = useState<{ line: string; over: string | null } | null>(null);
+  const store = useUiStore();
+  // The line a change from here set, shown only until the project's card is read again after
+  // it (TR-9): the card is the one place of the fact. Before, the local line stayed while the
+  // card still said the line it replaced, so a later change elsewhere that restored exactly
+  // that line (Chat undoing the change) left the stale one showing.
+  const [changed, setChanged] = useState<string | null>(null);
   const [row, setRow] = useState<SettingView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cardLine = project?.researchReads ?? null;
-  const line = (changed && changed.over === cardLine ? changed.line : null) ?? cardLine;
+  const line = changed ?? cardLine;
   if (!line) return null;
   const rowOf = async () =>
     (await client.settings({ scope: "project", scopeId: projectId })).find(
@@ -284,13 +287,13 @@ function ResearchReads({ projectId, project }: { projectId: string; project?: Pr
           command={command}
           onClose={() => setRow(null)}
           onChanged={() => {
-            void rowOf().then((r) => {
-              if (r)
-                setChanged({
-                  line: researchReadsLine(webAccessOf({ web_access: r.value as never })),
-                  over: cardLine,
-                });
-            });
+            void rowOf()
+              .then((r) => {
+                if (r) setChanged(researchReadsLine(webAccessOf({ web_access: r.value as never })));
+              })
+              .then(() => refreshProjects(client, store))
+              .catch(() => undefined)
+              .finally(() => setChanged(null));
           }}
         />
       ) : null}

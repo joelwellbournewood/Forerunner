@@ -846,3 +846,52 @@ describe("the Overview's 'Research reads:' line follows the project (R-researchr
     );
   }, 30_000);
 });
+
+/**
+ * leftovers7-tailrun, wave 13 (TR-9): the Overview kept its own line while the card still said
+ * the line it had replaced; a later change elsewhere that restored exactly that earlier line
+ * (Chat undoing the Overview's change) left the stale line showing.
+ */
+describe("leftovers7-tailrun, wave 13: the 'Research reads:' line shows a restored rule (TR-9)", () => {
+  it("Overview change, then Chat restores the earlier rule: the line shows the restored rule", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    render(
+      <AppProvider
+        client={harness.client}
+        store={harness.store}
+        streamOptions={liveEvents(harness)}
+      >
+        <MemoryRouter initialEntries={["/projects/proj_atlas/summary"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    const line = await screen.findByTestId("research-reads");
+    expect(within(line).getByTestId("research-reads-line")).toHaveTextContent(
+      /^Research reads: any public website$/,
+    );
+    await user.click(within(line).getByTestId("research-reads-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    await user.type(within(dialog).getByTestId("web-access-never"), "facebook.com");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await within(dialog).findByTestId("command-done");
+    await user.click(within(dialog).getByTestId("command-close"));
+    await waitFor(() =>
+      expect(screen.getByTestId("research-reads-line")).toHaveTextContent(
+        /^Research reads: any public website, never facebook\.com$/,
+      ),
+    );
+    // Chat undoes it: the rule is the earlier one again, and the project changed.
+    delete harness.daemon.state.settingValues["web_access:proj_atlas"];
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    // Before: the Overview's own line stayed, since the card said what it had replaced.
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("research-reads-line")).toHaveTextContent(
+          /^Research reads: any public website$/,
+        ),
+      { timeout: 10_000 },
+    );
+  }, 30_000);
+});
