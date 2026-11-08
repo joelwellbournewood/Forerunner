@@ -220,7 +220,8 @@ session stopped at once; a session-budget stop filed nothing the first time (C-3
 5. **One card per pause, at the first stop of any kind.** '"X" paused at its budget of CHF 0.40'
    (the real limit), "Done: ...; left: ..." from the run's note, and **Continue (CHF N more)**:
    the same amount again (the task's budget, the specialist's limit per run, the session's
-   budget), at least the task's estimate; it raises the task's budget (or gives the session that
+   budget), at least the task's estimate, rounded up to whole CHF 0.01 so the button says what it
+   adds; it raises the task's budget (or gives the session that
    continues it that much, for a stop at the session's budget) and starts the next session at
    once (`resumeWork` with `budgetUsdMicro`); and **Cancel task**. A stop at the session's budget
    pauses with the same card at the first stop and ends the session (C-36's count and its

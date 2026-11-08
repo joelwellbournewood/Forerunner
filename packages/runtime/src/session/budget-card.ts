@@ -1,4 +1,4 @@
-import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
+import { chfToUsdMicro, DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   HumanRequestRow,
@@ -41,8 +41,8 @@ export const BUDGET_STOP_KEY = ANSWER_CARD_KEYS.budgetStop;
 export const CANCEL_TASK_OPTION = "Cancel task";
 /** `change_card.source` of a card a session's budget filed before budget-resume (C-36). */
 export const LEGACY_SESSION_BUDGET_SOURCE = "session_budget";
-/** Continue adds whole steps of USD 0.01, at least one. */
-const CONTINUE_STEP_USD_MICRO = 10_000;
+/** Continue adds whole steps of CHF 0.01 (what its button shows), at least one. */
+const CONTINUE_STEP_CHF_MICRO = 10_000;
 
 /** The limits whose card offers Continue: those a bigger budget lifts. */
 export function offersContinue(source: unknown): boolean {
@@ -51,15 +51,19 @@ export function offersContinue(source: unknown): boolean {
 
 /**
  * How much Continue adds: the same amount again (the budget, the specialist's limit per run or
- * the session's budget it paused at), at least the task's estimate, in whole steps of USD 0.01.
+ * the session's budget it paused at), at least the task's estimate, in whole steps of CHF 0.01 so
+ * the button says what it adds: a task paused at its budget of CHF 0.01 gets "Continue (CHF 0.01
+ * more)" (rounding in USD steps made that CHF 0.02).
  */
 export function continueUsdMicro(
   task: Pick<TaskRow, "est_cost_usd_micro">,
   stop: Pick<BudgetStop, "capUsdMicro" | "source">,
+  rate: number = DEFAULT_CHF_PER_USD,
 ): number {
   const same = offersContinue(stop.source) ? Math.max(0, stop.capUsdMicro) : 0;
-  const room = Math.max(same, task.est_cost_usd_micro, CONTINUE_STEP_USD_MICRO);
-  return Math.ceil(room / CONTINUE_STEP_USD_MICRO) * CONTINUE_STEP_USD_MICRO;
+  const room = usdToChfMicro(Math.max(same, Math.max(0, task.est_cost_usd_micro)), rate);
+  const steps = Math.max(1, Math.ceil(room / CONTINUE_STEP_CHF_MICRO));
+  return chfToUsdMicro(steps * CONTINUE_STEP_CHF_MICRO, rate);
 }
 
 const chfText = (usdMicro: number, rate: number) =>
@@ -148,7 +152,7 @@ export async function fileBudgetStopCard(
   ).find((r) => keyOf(r) === BUDGET_STOP_KEY);
   if (open) return { request: open, reused: true };
   const rate = input.chfPerUsd ?? DEFAULT_CHF_PER_USD;
-  const more = offersContinue(stop.source) ? continueUsdMicro(task, stop) : null;
+  const more = offersContinue(stop.source) ? continueUsdMicro(task, stop, rate) : null;
   const title = budgetStopTitle(task, stop, rate);
   const left = cardHandoff(input.handoff);
   const request = await store.humanRequest.insert({
@@ -352,7 +356,7 @@ export async function wakeBudgetWaits(deps: {
   for (const row of cards) {
     const card = (row.change_card ?? {}) as JsonObject;
     const task = row.task_id ? await store.task.get(row.task_id) : undefined;
-    if (!task || task.status !== "needs_human") continue;
+    if (task?.status !== "needs_human") continue;
     const resets = typeof card.resets_at === "string" ? card.resets_at : null;
     const room =
       card.source === "plan"

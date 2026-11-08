@@ -354,14 +354,20 @@ describe("phase 1 gate", () => {
     expect(
       (await w.store.costLedger.sum({ sessionId: res.sessionId })).usd_micro,
     ).toBeLessThanOrEqual(w.sessionCap);
-    // The session's budget, not the task, stopped the run: nothing waits for the person, and
-    // the task is ready for the next session, its attempt count unchanged (design §4.2; before,
-    // it waited in needs_human with no card while the result pointed at the Inbox).
-    expect(res.needsHuman).toEqual([]);
-    expect(res.skipped).toHaveLength(2);
+    // The session's budget, not the task, stopped the run: the task paused there, its attempt
+    // count unchanged, with one card at this first stop that offers to continue it (budget-resume,
+    // ADR 0112 amended; before, C-36: the first stop put it back to ready with no card and only a
+    // second stop filed one). The task after it was not reached.
     const stopped = (await w.store.task.forProject(w.project)).find((t) => t.title === "Runaway");
-    expect(stopped?.status).toBe("ready");
+    expect(res.needsHuman).toEqual([stopped?.id]);
+    expect(res.skipped).toHaveLength(1);
+    expect(stopped?.status).toBe("needs_human");
     expect(stopped?.attempt).toBe(0);
+    const card = await w.store.humanRequest.list(
+      { task_id: stopped?.id, status: "open" } as never,
+      { limit: 10 },
+    );
+    expect(card.map((c) => c.options)).toEqual([["Continue (CHF 0.12 more)", "Cancel task"]]);
     expect(res.stopReason).toBe("budget_exceeded");
     expect(res.handoff).toMatchObject({ stop_reason: "budget_exceeded" });
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(0);
@@ -393,11 +399,13 @@ describe("phase 1 gate", () => {
     // reason in dollars told the person to edit the budget, press Resume and Start).
     const after = await w.store.task.mustGet(over.id);
     expect(after.status).toBe("needs_human");
-    expect(after.reason).toBe('"Runaway" stopped at its budget of CHF 0.05.');
+    // budget-resume (ADR 0112 amended): it paused, and the card's Continue names the amount (the
+    // same budget again: before, "stopped at" and "Raise the budget").
+    expect(after.reason).toBe('"Runaway" paused at its budget of CHF 0.05.');
     const cards = await w.store.humanRequest.list({ task_id: over.id, status: "open" } as never, {
       limit: 10,
     });
-    expect(cards.map((c) => c.options)).toEqual([["Raise the budget", "Cancel task"]]);
+    expect(cards.map((c) => c.options)).toEqual([["Continue (CHF 0.05 more)", "Cancel task"]]);
     // The session went on: the next task ran to the end and the session completed.
     expect(runs.filter((r) => r.task_id !== over.id).map((r) => r.outcome)).toEqual(["completed"]);
     expect(res.stopReason).toBe("completed");

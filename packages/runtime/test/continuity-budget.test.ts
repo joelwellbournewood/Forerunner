@@ -6,7 +6,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { continueUsdMicro } from "../src/session/budget-card.ts";
+import { continueLabel, continueUsdMicro } from "../src/session/budget-card.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -292,7 +292,7 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
 });
 
 describe("how much Continue adds (budget-resume)", () => {
-  it("the same amount again: the budget, the specialist's limit per run or the session's budget, at least the estimate, in steps of USD 0.01", () => {
+  it("the same amount again: the budget, the specialist's limit per run or the session's budget, at least the estimate, in steps of CHF 0.01", () => {
     // A budget of USD 0.50: USD 0.50 more.
     expect(
       continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 500_000, source: "task_budget" }),
@@ -309,15 +309,23 @@ describe("how much Continue adds (budget-resume)", () => {
     expect(
       continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 2_500_000, source: "session" }),
     ).toBe(2_500_000);
-    // A tiny budget: at least the estimate, rounded up to a step of USD 0.01.
+    // A tiny budget: at least the estimate (CHF 0.9872), rounded up to a step of CHF 0.01 at the
+    // default rate of CHF 0.80 per USD: CHF 0.99, USD 1.2375.
     expect(
       continueUsdMicro(
         { est_cost_usd_micro: 1_234_000 },
         { capUsdMicro: 12_500, source: "task_budget" },
       ),
-    ).toBe(1_240_000);
+    ).toBe(1_237_500);
+    // A budget of CHF 0.01 (USD 0.0125): CHF 0.01 more, as its button says (USD steps made the
+    // button say CHF 0.02).
     expect(
       continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 12_500, source: "task_budget" }),
-    ).toBe(20_000);
+    ).toBe(12_500);
+    expect(continueLabel(12_500, 0.8)).toBe("Continue (CHF 0.01 more)");
+    // At least one step.
+    expect(
+      continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 0, source: "task_budget" }),
+    ).toBe(12_500);
   });
 });

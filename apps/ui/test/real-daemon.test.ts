@@ -4539,7 +4539,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     return client.session(started.session?.id ?? "");
   };
 
-  it("a task stopped at its budget: one card in CHF that the session's result and the Tasks tab agree with; Raise the budget runs it to done (live walk 2, B2)", async () => {
+  it("a task paused at its budget: one card in CHF that the session's result and the Tasks tab agree with; Continue runs it to done (live walk 2, B2; budget-resume)", async () => {
     const me = await client.me();
     const project = await client.createProject({ name: "Budget card", goal: "Asked once" });
     // What New task sends with a budget of CHF 0.01 (USD 0.0125 at the test's rate).
@@ -4555,8 +4555,12 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       riskTier: 1,
     });
     // Earlier runs spent the whole budget (setup, not under test): the next run stops before it
-    // calls the model, as the live walk's run did "after spending $0.00".
-    await rt.store.task.patch(created.id, { actual_cost_usd_micro: 12_500 });
+    // calls the model, as the live walk's run did "after spending $0.00". Its estimate is USD
+    // 0.10 (CHF 0.08), more than its budget: Continue adds at least that.
+    await rt.store.task.patch(created.id, {
+      actual_cost_usd_micro: 12_500,
+      est_cost_usd_micro: 100_000,
+    });
     const session = await runSession(project.id);
 
     const cardsOf = async () =>
@@ -4566,19 +4570,24 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     const cards = await cardsOf();
     expect(cards).toHaveLength(1);
     const card = cards[0];
-    expect(card?.title).toBe('"Contact page" stopped at its budget of CHF 0.01');
-    expect(card?.body).toBe("So far it spent CHF 0.01.");
+    // budget-resume (ADR 0112 amended): it paused, and Continue adds the same budget again, at
+    // least its estimate (before: "stopped at", "So far it spent", "Raise the budget" to CHF 0.44).
+    expect(card?.title).toBe('"Contact page" paused at its budget of CHF 0.01');
+    expect(card?.body).toBe(
+      "It stopped before it could say where it stood; its work so far is kept.",
+    );
     expect(card?.choices?.map((c) => [c.label, c.explain, c.tone])).toEqual([
-      // What it spent (USD 0.0125) plus USD 0.50 of room, in steps of USD 0.05: USD 0.55.
       [
-        "Raise the budget",
-        "Sets its budget to CHF 0.44 and starts a session that tries again.",
+        "Continue (CHF 0.08 more)",
+        "Adds CHF 0.08 to its budget and starts a session that goes on from where it stopped.",
         "primary",
       ],
-      ["Cancel task", "Drops it. Nothing waits on it.", "danger"],
+      ["Cancel task", "Drops it; its work is set aside until you reopen it.", "danger"],
     ]);
     // The session's result points at the card that is there; the Tasks tab says the same.
-    expect(session.summary).toContain('"Contact page" needs your decision (Inbox).');
+    expect(session.summary).toContain(
+      '"Contact page" paused at its budget of CHF 0.01: continue or cancel it in the Inbox.',
+    );
     const view = (await client.tasks(project.id)).find((t) => t.id === created.id);
     expect(view?.display).toMatchObject({
       key: "answer",
@@ -4593,10 +4602,10 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     // The click sends the button's words; the budget is raised and a session runs the task.
     const answered = await client.answerRequest(card?.id ?? "", {
       version: card?.version ?? 0,
-      answer: "Raise the budget",
+      answer: "Continue (CHF 0.08 more)",
     });
     expect(answered.outcome).toMatch(
-      /^Raised the budget of "Contact page" to CHF 0\.44: (a session started|it runs after the current session)\.$/,
+      /^Gave "Contact page" CHF 0\.08 more: (a session started|it runs after the current session)\.$/,
     );
     await eventually(
       async () =>
@@ -4609,7 +4618,8 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       20_000,
     );
     const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
-    expect(done?.budget.usdMicro).toBe(550_000);
+    // What it had spent (USD 0.0125) plus USD 0.10.
+    expect(done?.budget.usdMicro).toBe(112_500);
     expect(await cardsOf()).toEqual([]);
     // Nothing left running for the next case.
     await allEnded();
