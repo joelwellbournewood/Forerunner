@@ -382,8 +382,10 @@ with their milestone.
   computer and that agents can use. `LOCAL_ONLY_DIR` ("Local only"), `TRY_DIR`
   (".forerunner-try", a review's try folder, W6-26) and `NEVER_PUSHED` (both).
   `excludeNeverPushed(dir, folders)` appends `/<folder>/` to the clone's `.git/info/exclude`
-  (idempotent; `.gitignore` untouched) and removes Forerunner's line for a `NEVER_PUSHED`
-  folder not in `folders` (R-exclude, leftovers7-merge: a reused worktree kept `/Local only/`
+  (idempotent; `.gitignore` untouched); with `{ dropOthers: true }` (the PR executor's task
+  worktrees only: this computer's copy keeps the person's own files there out of git) it also
+  removes Forerunner's line for a `NEVER_PUSHED` folder not in `folders` (R-exclude,
+  leftovers7-merge: a reused worktree kept `/Local only/`
   after the repository started tracking a folder of that name, so the agent's new files there
   were silently left out of the commit). The PR executor's `excludedFolders(git, target)` is
   `[TRY_DIR]` when the base tracks Local only, else both, for the exclude and for the files a

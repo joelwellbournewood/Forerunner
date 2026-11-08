@@ -705,7 +705,7 @@ export class PrTaskExecutor implements TaskExecutor {
     // .gitignore the project has (the push checks it again: a forced add gets past this). A
     // repository that tracks a folder named Local only keeps it as its own: only the try's.
     const excluded = await this.excludedFolders(git, target);
-    excludeNeverPushed(dir, excluded);
+    excludeNeverPushed(dir, excluded, { dropOthers: true });
     // An empty repository (just created on GitHub) gets its first commit, a README with the
     // project's name and goal, so the task has a branch to start from (ADR 0106).
     await ensureBaseBranch({
