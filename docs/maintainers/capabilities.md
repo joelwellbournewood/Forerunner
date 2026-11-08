@@ -317,7 +317,13 @@ with their milestone.
   rebase-conflict card); "Drop the branch and retry from scratch" and the fresh path drop the
   marker, and a run that went to review removes it; a pushed work in progress with no pull
   request is replaced by a force-with-lease push. A `failed` or `timeout` result's leftovers go
-  to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. In a
+  to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. A run
+  the app's close or a crash cut short does neither (both happen only after the inner executor
+  returns): the next run first ends a git step left half done (`GitOps.abortUnfinished`: a
+  rebase, merge, revert or cherry-pick) and sets uncommitted leftovers aside under the same ref
+  (`cleanAfterCutShortRun`, R-dirtyworktree, leftovers7-merge), before any checkout. Before, it
+  carried them into its own work, git refused its `checkout -B` ("untracked working tree files
+  would be overwritten"), or a half-done rebase made the next conflict card name no file. In a
   project's folder (`inWorkspace`) a pause is one commit of its own with the same message and
   marker; the task's next run keeps that commit's files out of its snapshot
   (`GitOps.commitAllExcept`, while `builtOnBy` finds no later task's "Workspace before" or work

@@ -697,8 +697,10 @@ export class PrTaskExecutor implements TaskExecutor {
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
     const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
     const git = await this.gitFor(target, dir);
-    if (existsSync(join(dir, ".git"))) await git.fetch();
-    else await git.clone(target.clone);
+    if (existsSync(join(dir, ".git"))) {
+      await git.fetch();
+      await this.cleanAfterCutShortRun(git, task);
+    } else await git.clone(target.clone);
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
     // .gitignore the project has (the push checks it again: a forced add gets past this). A
     // repository that tracks a folder named Local only keeps it as its own: only the try's.
@@ -1065,6 +1067,32 @@ export class PrTaskExecutor implements TaskExecutor {
    * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
    * next run's checkout carried the files over, or git refused when main had changed them.
    */
+  /**
+   * R-dirtyworktree (W6-24 for a crash): a run the app's close or a crash cut short leaves its
+   * files uncommitted in the task's worktree, with no work-in-progress commit (that and the
+   * leftovers set aside happen only after the inner executor returns). Before, the next run
+   * carried them into its work, or git refused its checkout ("untracked working tree files
+   * would be overwritten"). Now a step left half done (a rebase, a merge) is ended and the
+   * leftovers are set aside under the failed ref, as a failed run's are, so the run starts clean
+   * and nothing is lost. A work-in-progress commit is untouched: it is committed, not leftovers.
+   */
+  private async cleanAfterCutShortRun(git: GitOps, task: TaskRow): Promise<void> {
+    try {
+      const ended = await git.abortUnfinished();
+      if (ended.length)
+        this.logger.info("a cut-short run's unfinished git step was ended", {
+          taskId: task.id,
+          ended,
+        });
+      if ((await git.status()).dirty) await this.setLeftoversAside(git, task);
+    } catch (e) {
+      this.logger.warn("a cut-short run's leftovers were not set aside", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+  }
+
   private async setLeftoversAside(git: GitOps, task: TaskRow): Promise<void> {
     try {
       const files = await git.setAside(

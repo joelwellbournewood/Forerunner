@@ -1689,4 +1689,83 @@ describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_00
     expect(await s.w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1)).toEqual([]);
     await s.w.store.close();
   });
+
+  it("a run the app's close or a crash cut short leaves files with no marker; the next run is not refused by git, starts clean and keeps them under the failed ref (R-dirtyworktree, W6-24)", async () => {
+    const s = await setup();
+    const task = await s.newTask("Write the guide");
+    const wt = join(s.w.root, "wt", task.id);
+    // The first run writes an untracked file and changes a tracked one, then the app goes away
+    // before anything after the run (no work-in-progress commit, no leftovers set aside).
+    await expect(
+      s
+        .exec(
+          agent(() => {
+            writeFileSync(join(wt, "guide.md"), "half a guide\n");
+            writeFileSync(join(wt, "README.md"), "# sample, half edited\n");
+            throw new Error("the app was closed");
+          }),
+        )
+        .execute(await s.ctx(task.id)),
+    ).rejects.toThrow("the app was closed");
+    expect(await s.gitIn(wt, ["status", "--porcelain"])).not.toBe("");
+    // Meanwhile main gets a guide.md of its own (someone else's merge).
+    const seed = new GitOps({ cwd: join(s.w.root, "seed"), identity });
+    writeFileSync(join(s.w.root, "seed", "guide.md"), "main's guide\n");
+    await seed.commitAll("main adds guide.md");
+    await seed.push("main");
+    let saw: { guide: string; readme: string } | null = null;
+    const next = await s
+      .exec(
+        agent((dir) => {
+          saw = {
+            guide: readFileSync(join(dir, "guide.md"), "utf8"),
+            readme: readFileSync(join(dir, "README.md"), "utf8"),
+          };
+          writeFileSync(join(dir, "notes.md"), "# Notes\n");
+        }),
+      )
+      .execute(await s.ctx(task.id));
+    expect(next.outcome, next.summary).toBe("in_review");
+    // It started from main as it is now, without the cut-short run's files.
+    expect(saw).toEqual({ guide: "main's guide\n", readme: "# sample\n" });
+    expect(await s.onHost(next.branch ?? "")).toEqual(["README.md", "guide.md", "notes.md"]);
+    expect(next.changedFiles).toEqual(["notes.md"]);
+    // The leftovers are kept, not lost: the failed ref holds both files as they were left.
+    const failed = `refs/forerunner/failed/${task.id}`;
+    expect(await s.gitIn(wt, ["show", `${failed}:guide.md`])).toBe("half a guide");
+    expect(await s.gitIn(wt, ["show", `${failed}:README.md`])).toBe("# sample, half edited");
+    await s.w.store.close();
+  });
+
+  it("a rebase a crash left half done in the task's worktree is ended before the next run, which updates its pull request (R-dirtyworktree)", async () => {
+    const s = await setup();
+    const task = await s.newTask("Write the guide");
+    const wt = join(s.w.root, "wt", task.id);
+    const first = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "README.md"), "# sample by the task\n")))
+      .execute(await s.ctx(task.id));
+    expect(first.outcome, first.summary).toBe("in_review");
+    // main changes the same line; the app went away in the middle of the rebase onto it.
+    const seed = new GitOps({ cwd: join(s.w.root, "seed"), identity });
+    writeFileSync(join(s.w.root, "seed", "README.md"), "# sample by main\n");
+    await seed.commitAll("main changes README.md");
+    await seed.push("main");
+    await s.gitIn(wt, ["fetch", "-q", "origin"]);
+    await s.gitIn(wt, ["rebase", "origin/main"]);
+    expect(await s.gitIn(wt, ["status"])).toContain("rebase in progress");
+    const next = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(task.id));
+    // The rebase was ended first, so the run's own rebase onto main names its conflict, in
+    // README.md, on the person's conflict card (before: "rebase conflict in " with no file,
+    // and the task's commit was lost with the half-done rebase).
+    expect(next.outcome).toBe("needs_human");
+    expect(next.summary).toBe("rebase conflict in README.md");
+    expect(await s.gitIn(wt, ["status"])).not.toContain("rebase in progress");
+    const card = (await s.w.store.humanRequest.list({ status: "open" } as never)).find(
+      (r) => r.task_id === task.id,
+    );
+    expect(card?.why).toContain("conflicts in README.md");
+    await s.w.store.close();
+  });
 });
