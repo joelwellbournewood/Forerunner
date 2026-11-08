@@ -271,7 +271,11 @@ with their milestone.
   and opens the PR without running the inner executor again (`costUsdMicro: 0`); "Drop the
   branch and retry from scratch" starts the branch again from the base, runs the inner
   executor and replaces the old branch on the host (force with lease); "Cancel the task" is the
-  runtime's alone. A request filed before the key (the same options) is read the same way. No
+  runtime's alone. A request filed before the key (the same options) is read the same way. A
+  later card of the task that the runtime marked `REDO_FROM_BASE_FIELD` (`redo_from_base`: a
+  rebuild card's Redo, R-rebuildcard's fix-up) is read as "dropped" (`conflictAnswer`), so its
+  next run starts again from the base and the open pull request gets the new work; before, that
+  redo resumed the open branch, rebuilt it again and hit the same conflict. No
   changes means `failed`. A task without a repository runs in the folder `workspaceFor` names
   (U-037, ADR 0097: the runtime passes the project's workspace for a project with no repository
   link), kept as a local git repository: `inWorkspace` writes a `.gitignore` for caches when the

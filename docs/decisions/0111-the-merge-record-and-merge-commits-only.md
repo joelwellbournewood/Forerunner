@@ -262,7 +262,14 @@ Update. (The last two are closed by the leftovers7-merge amendment below.)
    conflicted rebuild: Redo and Leave it open), never "I merged it" while the pull request is
    open. Merge is the Overview's Merge for that pull request (the person's approval, through the
    gated step); Redo makes the task ready again and starts a session, as every answer that makes
-   a task runnable does.
+   a task runnable does. The review found that Redo resumed the open pull request's branch, so on
+   a conflicted rebuild it rebuilt it again and stopped at the same conflict with a second card.
+   Now Redo does the task again from the default branch, as its line says: the answered card
+   carries `redo_from_base` (`REDO_FROM_BASE_FIELD`), which the PR executor reads as "Drop the
+   branch and retry from scratch", so the next run starts the branch from the base (with any
+   unmerged dependencies' work, C-49) and the open pull request gets the new work, force-pushed.
+   This holds for both cards: a Redo after a clean rebuild also starts again rather than adding
+   to the rebuilt commit.
 
 ## Consequences
 

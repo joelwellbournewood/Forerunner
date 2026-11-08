@@ -508,6 +508,72 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(after?.outcome).toBe("Redone: the task is ready again and a session runs it.");
   });
 
+  it("the rebuilt card's Redo also does the task again from main: one new commit of the task's own on main, not the old commit with the new one on top (fix-up of R-rebuildcard)", async () => {
+    const { m, b, prB, row, view } = await rebuiltWithout();
+    const redo = view.choices?.find((c) => c.label === "Redo");
+    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    const oldHead = (await m.pr(b.id)).head.sha;
+    expect((await answerCard(m, row, redo?.label ?? "")).redone).toBe(1);
+    const ready = await m.w.store.task.mustGet(b.id);
+    await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
+    m.writes.set("Add footer", { [m.fileOf("Add footer")]: 'export const v = "redone";\n' });
+    await m.session();
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("done");
+    const pr = await m.pr(b.id);
+    expect(pr.number).toBe(prB);
+    expect(pr.head.sha).not.toBe(oldHead);
+    // Resumed, the branch would hold the rebuilt commit and the redo's on top of it.
+    expect(await m.prCommits(prB)).toEqual(["Add footer"]);
+    expect(await m.hostGit("rev-parse", `${pr.head.sha}^`)).toBe(
+      await m.hostGit("rev-parse", "refs/heads/main"),
+    );
+  });
+
+  it("the conflict rebuild card's Redo does the task again from main, as its line says: the next run starts the branch from main, the open pull request gets only the task's own work, and no second conflict card (fix-up of R-rebuildcard)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    // The dependent edits its dependency's own file: the common chain.
+    m.writes.set("Fix the page", { [m.fileOf("Add page")]: 'export const v = "fixed";\n' });
+    const b = await m.runTask("Fix the page", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    await m.poll();
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [view] = await requestViews(m.w.store, rows);
+    if (!view || !rows[0]) throw new Error("no rebuild card");
+    expect(view.title).toBe(`"Fix the page" could not be rebuilt without pull request #${prA}`);
+    const redo = view.choices?.find((c) => c.label === "Redo");
+    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    const answered = await answerCard(m, rows[0], redo?.label ?? "");
+    expect(answered.redone).toBe(1);
+    // The stand-in executor names its run by the attempt: the redo is the next one.
+    const ready = await m.w.store.task.mustGet(b.id);
+    await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
+    // The session the Redo starts.
+    await m.session();
+    const after = await m.w.store.task.mustGet(b.id);
+    // Before: the run resumed the open pull request's branch, rebuilt it again, hit the same
+    // conflict and stopped: needs_human, "merge conflict in src/add-page.ts", a second card.
+    expect([after.status, /conflict/.test(after.reason ?? "")]).toEqual(["done", false]);
+    const open = await m.cards(b.id);
+    expect(
+      open.filter((c) => /conflict|could not be rebuilt/i.test(`${c.title} ${c.body}`)),
+    ).toEqual([]);
+    // The same pull request, now with only the task's own work on main.
+    expect(await m.prNumber(b.id)).toBe(prB);
+    const pr = await m.pr(b.id);
+    expect(pr.state).toBe("open");
+    expect(await m.prCommits(prB)).toEqual(["Fix the page"]);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add page")]);
+    expect(await m.hostGit("rev-parse", `${pr.head.sha}^`)).toBe(
+      await m.hostGit("rev-parse", "refs/heads/main"),
+    );
+    // Its merge record follows the new review: nothing is merged unattended.
+    expect(pr.merged).toBe(false);
+    expect((await m.record(b.id)).reviewed_head_sha).toBe(pr.head.sha);
+  });
+
   it("(d) a dependency redone: the dependent is rebuilt without it at the next poll, its review is void", async () => {
     const m = await chainWorld({ level: 2 });
     const a = await m.runTask("Add page");

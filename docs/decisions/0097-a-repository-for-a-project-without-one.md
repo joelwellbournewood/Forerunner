@@ -100,3 +100,11 @@ no longer needs you."), an offer answered after a link changes nothing and warns
 a `repo.create` from Chat or voice while the offer is open is refused in one sentence that points
 to the offer (the project page's own Create goes on and withdraws the offer). The command's card
 reads as its question with Yes and No, not as the generic "a GitHub repository for X".
+
+The review found the other order still gave two cards: a `repo.create` card filed first (Chat, or
+one the project page's dialog previewed and the person closed) and the agent's offer filed beside
+it at the next plan. So, whatever the order: the agent files no offer while a `repo.create` card
+for the project waits in the Inbox (that card is the one card), and a repository linked by any
+path closes every open card that asks for one, the offer and the `repo.create` cards alike
+("Closed: it no longer needs you."), with the confirmation waiting behind such a card dropped, so
+no later Yes runs it and none posts a warning.

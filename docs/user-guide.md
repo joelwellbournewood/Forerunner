@@ -340,7 +340,10 @@ never repeats work that is already in the default branch:
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
-the way; the old pull request stays as it was.
+the way; the old pull request stays as it was. **Redo** on a rebuild's card (either card above)
+does the task again from the default branch: its next run starts the branch afresh from there
+(as "Drop the branch and retry from scratch" does), and #8 gets the new work, with only the
+task's own commit on top of the default branch.
 
 **Merging: you press Merge, or Forerunner merges after review.** Each repository project has a
 setting **Who merges accepted work** (Settings, Other settings; the Overview's line "Merging: you
@@ -427,7 +430,10 @@ the same. When a session plans code work for such a project, your agent asks in 
 autonomy level, Autopilot too, and so does a "create a repository" the agent decides on in
 Chat: nothing is created under your GitHub account without your yes. The offer does not hold
 any work, so the project's line does not count it as a question. A public repository always
-needs your confirmation on this device.
+needs your confirmation on this device. There is one card per repository, whichever way you
+ask first: while a card for it waits in the Inbox (from Chat, the agent, or a **Preview** on the
+project page you closed), no second one is filed, and once the project has a repository every
+card still asking for one closes ("Closed: it no longer needs you.").
 
 **Note for the next session** on the Overview is one box: type what the agent should know
 and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note

@@ -3102,6 +3102,19 @@ refused with 'A card in your Inbox already asks to create a repository for "X": 
 there.' (the project page's own Create, `source: "ui"`, goes on); the command's card has an `ask`
 ('Create the private GitHub repository o/x for "X"? Its tasks then run on branches with pull
 requests.'), so a chat answer waits as that question with Yes and No that say what they do.
+The other order (the fix-up after the review): a `repo.create` change card filed first (Chat,
+voice, or one the project page's dialog previewed and the person closed) is the one card, so
+`consider` files no offer while one is open (`asksForRepository`, which also finds it inside a
+composed plan), and a link by any path withdraws the open `repo.create` change cards of the
+project as well as the offer (`withdrawRepoOffers`, `repoCardProject`). The executor's closure
+behind a withdrawn or expired `repo.create` card is dropped (`RepoProposals.withdrawLinked` →
+`dropClosedClosures`, through the optional `RepoCommandRunner.pending`/`cancel`, which the
+`CommandLoop` has), at once when `RepoCreator` linked it (`whenLinked`, registered by
+`RepoProposals`) and at the next sync otherwise, so Chat no longer reads it back as waiting and a
+late Yes is refused. Before, the offer was filed beside such a card and, once either was answered,
+the other's Yes posted 'Your answer to the change card "…" was not applied: … already has a
+repository'. Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
+offer's Yes closing a previewed card, a link made another way).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull
@@ -4081,7 +4094,18 @@ dep, the daemon's `ReviewedPrMerge`, `approveInOrder` then `mergeApproved`, the 
 through the gated step; the card's outcome "Merged #8." or the record's sentence; without the
 dep the record is approved and queued for the retry pass) and **Redo** ("The task is done again
 from main; a session starts for it.": `TaskRepo.reopen` to `ready`, then `resumeWork` through the
-`start` dep); one that conflicted offers **Redo** and **Leave it open**. A left-open card already
+`start` dep); one that conflicted offers **Redo** and **Leave it open**. Redo marks the answered
+card `redo_from_base` (`REDO_FROM_BASE_FIELD` from `@forerunner/capabilities`), which
+`PrTaskExecutor.conflictAnswer` reads as a "dropped" conflict answer: the next run starts the
+branch from the base (with any unmerged dependencies' work), the open pull request gets the new
+work by a forced push, and the mark is consumed once a run reaches review or files a new conflict
+card. Before (the review's fix-up), the run resumed `origin/<branch>`, rebuilt it again and, on
+the conflict card, stopped at the same conflict with a second card. Tests:
+`dependent-branches-merge.test.ts` "the conflict rebuild card's Redo does the task again from
+main ..." and "the rebuilt card's Redo also does the task again from main ..." (the next session
+run; one own commit on main, the same pull request, no conflict card), and
+`rebuild-redo-restart.test.ts` (validation rule 4: the Redo answered, the daemon composed again
+on the same home before the run, and the run still starts from main). A left-open card already
 open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
