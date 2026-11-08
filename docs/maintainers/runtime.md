@@ -4010,7 +4010,16 @@ dep, the daemon's `ReviewedPrMerge`, `approveInOrder` then `mergeApproved`, the 
 through the gated step; the card's outcome "Merged #8." or the record's sentence; without the
 dep the record is approved and queued for the retry pass) and **Redo** ("The task is done again
 from main; a session starts for it.": `TaskRepo.reopen` to `ready`, then `resumeWork` through the
-`start` dep); one that conflicted offers **Redo** and **Leave it open**. A left-open card already
+`start` dep); one that conflicted offers **Redo** and **Leave it open**. Redo marks the answered
+card `redo_from_base` (`REDO_FROM_BASE_FIELD` from `@forerunner/capabilities`), which
+`PrTaskExecutor.conflictAnswer` reads as a "dropped" conflict answer: the next run starts the
+branch from the base (with any unmerged dependencies' work), the open pull request gets the new
+work by a forced push, and the mark is consumed once a run reaches review or files a new conflict
+card. Before (the review's fix-up), the run resumed `origin/<branch>`, rebuilt it again and, on
+the conflict card, stopped at the same conflict with a second card. Tests:
+`dependent-branches-merge.test.ts` "the conflict rebuild card's Redo does the task again from
+main ..." and "the rebuilt card's Redo also does the task again from main ..." (the next session
+run; one own commit on main, the same pull request, no conflict card). A left-open card already
 open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,

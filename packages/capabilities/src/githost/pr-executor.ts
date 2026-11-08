@@ -67,6 +67,16 @@ export type RebaseConflictAnswer = "resolved" | "drop" | "cancel";
 /** The card's `outcome` once the runtime applied the answer; the next run reads the first two. */
 export type RebaseConflictOutcome = "resolved" | "dropped" | "cancelled";
 
+/**
+ * A change-card field the runtime sets on a task's answered card when the answer redoes the task
+ * from the base (a rebuild card's Redo, `syncPrAnswers`; the fix-up of R-rebuildcard): the
+ * task's next run starts its branch again from the base, as "Drop the branch and retry from
+ * scratch" does, and the open pull request gets the new work. Before, the redo resumed the open
+ * pull request's branch, rebuilt it again and stopped at the same conflict. Used once, as a
+ * conflict answer is (`consumed_at`, once a run reached review or filed a new conflict card).
+ */
+export const REDO_FROM_BASE_FIELD = "redo_from_base";
+
 /** The answer of a rebase conflict request as one of its options, or null. */
 export function rebaseConflictAnswer(answer: JsonValue | null): RebaseConflictAnswer | null {
   const v = answerText(answer);
@@ -2255,7 +2265,10 @@ export class PrTaskExecutor implements TaskExecutor {
     };
   }
 
-  /** The task's last rebase conflict request, when its answer was applied and no run used it. */
+  /**
+   * The task's last rebase conflict request, when its answer was applied and no run used it; or
+   * a later card answered with a redo from the base (`REDO_FROM_BASE_FIELD`), read as "dropped".
+   */
   private async conflictAnswer(task: TaskRow): Promise<ConflictAnswer | null> {
     const rows = await this.deps.store.humanRequest.list({ task_id: task.id } as never, {
       orderBy: [
@@ -2264,9 +2277,12 @@ export class PrTaskExecutor implements TaskExecutor {
       ],
       limit: 50,
     });
-    const last = rows.find((r) => isRebaseConflictRequest(r));
+    const redoFromBase = (r: HumanRequestRow) =>
+      (r.change_card as JsonObject | null)?.[REDO_FROM_BASE_FIELD] === true;
+    const last = rows.find((r) => isRebaseConflictRequest(r) || redoFromBase(r));
     const card = (last?.change_card ?? null) as JsonObject | null;
     if (!last || !card || card.consumed_at) return null;
+    if (redoFromBase(last)) return { row: last, outcome: "dropped" };
     return card.outcome === "resolved" || card.outcome === "dropped"
       ? { row: last, outcome: card.outcome }
       : null;

@@ -1,6 +1,7 @@
 import {
   isRebaseConflictRequest,
   REBASE_CONFLICT_KEY,
+  REDO_FROM_BASE_FIELD,
   rebaseConflictAnswer,
 } from "@forerunner/capabilities";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
@@ -33,7 +34,9 @@ import { resumeWork, type StartPort } from "./resume-work.ts";
  *   request is still open, so no "I merged it"): "Merge" approves the merge as the Overview's
  *   Merge does (the person's approval, through the merge step: merged now, or by the watcher's
  *   retry once it can), "Redo" makes the done task ready again and starts a session for it, as
- *   every answer that makes a task runnable does (design 3.8); "Leave it open" as above.
+ *   every answer that makes a task runnable does (design 3.8), and its next run starts the
+ *   branch again from main (`REDO_FROM_BASE_FIELD`, as "Drop the branch and retry from scratch"
+ *   does; the open pull request gets the new work); "Leave it open" as above.
  *
  * Each answer is applied once: the card records `applied_at` and the `outcome`, in the same
  * transaction as the task's move. A card filed before it had a key (the same options on a
@@ -307,8 +310,11 @@ async function applyRebuildMerge(
 /**
  * A rebuild card's Redo (R-rebuildcard): the done task is ready again, with the card's sentence
  * as why, and a session starts (or queues) for it, as every answer that makes a task runnable
- * does (design 3.8). Its next run starts a fresh branch from main (`freshBranch` once its pull
- * request is closed, else its own branch, rebuilt).
+ * does (design 3.8). Its next run does the task again from main, as the card's line says: the
+ * card carries `REDO_FROM_BASE_FIELD`, which `PrTaskExecutor` reads as "Drop the branch and
+ * retry from scratch" (the branch starts again from main, the open pull request gets the new
+ * work). Before (the review's fix-up), the run resumed the open pull request's branch and
+ * rebuilt it again, so the conflict variant stopped at the same conflict with a second card.
  */
 async function applyRedo(
   deps: PrAnswersDeps,
@@ -327,7 +333,10 @@ async function applyRedo(
       actor,
     );
     await tx.humanRequest.patch(row.id, {
-      change_card: markOf(row, MERGE_LEFT_OPEN_KEY, deps.clock, "redone"),
+      change_card: {
+        ...markOf(row, MERGE_LEFT_OPEN_KEY, deps.clock, "redone"),
+        [REDO_FROM_BASE_FIELD]: true,
+      },
     });
   });
   await resumeWork(store, deps.start, {
