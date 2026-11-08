@@ -18,6 +18,8 @@ export * from "./peers.ts";
 export * from "./plan-approval.ts";
 /** Small-project mode (spec B.6): the default tier of a new task and the plan writer. */
 export * from "./project-plan.ts";
+/** A task review a limit or a credential refused: a pause or a wait, never a verdict. */
+export * from "./review-refusal.ts";
 export * from "./runner.ts";
 /** What a session started now would plan, and what it would not (U-040): the Start dialog. */
 export * from "./start-check.ts";

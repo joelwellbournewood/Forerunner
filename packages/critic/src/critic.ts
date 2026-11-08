@@ -2,6 +2,7 @@ import type { BillingSourceKind, PricingTable } from "@forerunner/billing";
 import { BUILTIN_PRICING } from "@forerunner/billing";
 import {
   type Clock,
+  type ErrorCode,
   errorMessage,
   ForerunnerError,
   log,
@@ -10,6 +11,7 @@ import {
 } from "@forerunner/platform";
 import {
   type ContextPipeline,
+  CREDENTIAL_REFUSAL_CODES,
   decideFastMode,
   type EffortLevel,
   FAST_MODE_AUDIT_TOOL,
@@ -22,6 +24,7 @@ import {
   type ModeDefault,
   type ModelTier,
   type ProviderRegistry,
+  REVIEW_REFUSED,
   RUN_PERSIST_FAILED_AUDIT_TOOL,
   type RunEvent,
   type RunPricing,
@@ -143,6 +146,53 @@ const REFUSALS_AFTER_VERDICT: ReadonlySet<RunResult["outcome"]> = new Set([
   "step_cap_exceeded",
   "max_turns",
 ]);
+
+/**
+ * A task review whose run a limit or a credential refused before the critic gave a verdict
+ * (ADR 0112 point 5, ADR 0100 point 9; leftovers of wave 7): no review of the work happened, so
+ * there is nothing to judge it by. Before, it became an "escalate" verdict with the finding
+ * "Critic review did not complete (budget_exceeded)": the retry ladder counted it as a failed
+ * try of the work, ran the specialist again up to four times and filed '"X" failed 4 times'
+ * (a refused credential the same, beside the credential's own card). Now the review throws this
+ * error (its Run row is kept, no Review or finding is written) and the session pauses the task
+ * at that limit or lets it wait for the credential (`reviewRefusalOf` in the runtime). A
+ * credential's refusal reaches here only when the routed provider found no other credential for
+ * the call. Null for any other run.
+ */
+export function refusedReviewError(result: RunResult): ForerunnerError | null {
+  const budget = result.outcome === "budget_exceeded";
+  const code = result.error?.code;
+  const credential = result.outcome === "error" && !!code && CREDENTIAL_REFUSAL_CODES.has(code);
+  if (!budget && !credential) return null;
+  const e = result.error;
+  return new ForerunnerError(
+    budget ? "budget_exceeded" : (code as ErrorCode),
+    e?.message ?? "the review's call was refused",
+    {
+      details: {
+        review: REVIEW_REFUSED,
+        runId: result.runId,
+        spentUsdMicro: result.costUsdMicro,
+        ...(e?.level ? { level: e.level } : {}),
+        ...(e?.source ? { source: e.source } : {}),
+        ...(typeof e?.capUsdMicro === "number" ? { capUsdMicro: e.capUsdMicro } : {}),
+        ...(e?.resetAt ? { resetAt: e.resetAt } : {}),
+        ...(e?.sourceId ? { sourceId: e.sourceId } : {}),
+      },
+    },
+  );
+}
+
+/**
+ * The Run row's outcome of a run a limit or a credential refused: a budget's stays
+ * `budget_exceeded`; a credential's is `usage_limit` (its limit, or none that may serve) or
+ * `credential_refused` (Anthropic refused it), never the driver's `error`, which reads "Failed".
+ */
+export function credentialRunOutcome(result: Pick<RunResult, "outcome" | "error">): string {
+  if (result.outcome !== "error") return result.outcome;
+  if (result.error?.code === "provider_auth") return "credential_refused";
+  return result.error && CREDENTIAL_REFUSAL_CODES.has(result.error.code) ? "usage_limit" : "error";
+}
 
 export interface CriticPromptSource {
   /** The markdown role prompt (registry critic/critic.md body). */
@@ -515,6 +565,10 @@ export class CriticService {
 
     const verdictCaptured = (captured as SubmitReview | null) !== null;
     const submitted: SubmitReview | null = captured ?? parseReviewFromText(result.finalText);
+    // A task review a limit or a credential refused before any verdict is no review (see
+    // `refusedReviewError`): its Run row is written below, then the refusal goes to the caller.
+    const refused =
+      persist && taskId && !submitted && !ctx.signal?.aborted ? refusedReviewError(result) : null;
     // A limit that refused a call after the verdict was captured refused a call the review did
     // not need: the review completed with that verdict.
     const refusedAfterVerdict = verdictCaptured && REFUSALS_AFTER_VERDICT.has(result.outcome);
@@ -586,7 +640,8 @@ export class CriticService {
         // Integers only: the timing columns are INTEGER and the store rejects a fraction.
         ttft_ms: wholeMs(result.ttftMs[0]),
         duration_ms: wholeMs(result.durationMs),
-        outcome: result.outcome,
+        // A credential that could not serve the review is no failure of it (ADR 0100).
+        outcome: refused ? credentialRunOutcome(result) : result.outcome,
         depth: token.claims.depth,
         timed_out: result.outcome === "timeout",
         tokens_before_compression: rendered.compression.reduce((s, r) => s + r.tokensBefore, 0),
@@ -627,6 +682,9 @@ export class CriticService {
     // accepted"; a stopped one would have read as escalated with an open finding).
     if (ctx.signal?.aborted)
       throw new ForerunnerError("killed", "the review was stopped before it finished");
+    // A review a limit or a credential refused before its verdict records no Review and no
+    // finding: the caller pauses the task at that limit or lets it wait for the credential.
+    if (refused) throw refused;
     return this.persist(input, ctx, output, {
       openFindings,
       resolved: submitted?.resolved ?? [],

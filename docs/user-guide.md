@@ -724,7 +724,11 @@ closes, the mark goes, and the waiting work starts by itself: the tasks run, and
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
-new API key: 2 tasks").
+new API key: 2 tasks"). A review waits the same way: when the critic's review of a finished
+task meets a limit or a refusal and no other credential can do it, the task goes back to Ready
+without counting as a failed try, its row reads "Waits until 15:40, ...", no card is filed
+beside the credential's own, and at that time its session runs it again and the critic reviews
+it.
 
 Until you choose an order, tasks use the subscription first and Chat, project setup
 and reviews use the API key first.
@@ -806,6 +810,10 @@ subscription's share the card offers no Continue (a bigger task budget would not
 how the task goes on ("It goes on by itself once you raise the monthly cap in Settings, or on 1
 December."), links Settings, and the task goes on by itself once you raised that limit (or
 removed it) in Settings, or the new month began; until then it stays paused with its card.
+The same holds when the limit is reached by the critic's review rather than by the run: the
+task pauses at that limit with the same card ('"Contact page" paused before its review: the
+project's budget of CHF 0.01 has no room for it.' in the log), it does not count as a failed
+try, and once it goes on its next session finishes it and the critic reviews it once.
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the
 agent did with the wrap-up: in a project linked to a GitHub repository it is one commit on the

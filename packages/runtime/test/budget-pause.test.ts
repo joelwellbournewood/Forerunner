@@ -81,6 +81,12 @@ function provider(clock: SimulatedClock, calls: ModelRequest[]) {
         when: coderOn("Members chart"),
         times: Number.POSITIVE_INFINITY,
       }),
+      // One cheap call that finishes: its review is what meets the project's budget.
+      textReply("Wrote review-page.html.\n\nLeft to do: nothing", {
+        when: coderOn("Review page"),
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 500, output_tokens: 20 },
+      }),
     ],
   });
   const stream = fake.stream.bind(fake);
@@ -690,5 +696,120 @@ describe("a task paused at the project's budget goes on only once that budget ch
     } finally {
       await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 0 });
     }
+  }, 120_000);
+});
+
+/**
+ * The leftovers of wave 7 (R-criticbudget, ADR 0112 point 6): a task whose run fit the project's
+ * budget but whose review did not. Before, the critic made the refused review an "escalate"
+ * verdict ("Critic review did not complete (budget_exceeded)"): the retry ladder ran the coder
+ * again three more times, each review refused the same way, and filed '"Review page" failed 4
+ * times' with Try again / Mark done anyway / Cancel task. A review a limit refused is no verdict
+ * and no failed try: the task pauses at the project's budget with that limit's one card, and
+ * goes on once the person raises the budget, where the critic reviews it once.
+ */
+describe("a review refused at the project's budget pauses the task (leftovers of wave 7)", () => {
+  const clock = new SimulatedClock("2026-11-02T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-budget-review-"));
+  const calls: ModelRequest[] = [];
+  const fake = provider(clock, calls);
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const cardsOf = async (taskId: string) =>
+    ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+      (q) => q.taskId === taskId,
+    );
+
+  it("no verdict and no failed try: paused at the project's budget with one card; raising the budget reviews it once", async () => {
+    // A project's budget of USD 0.01 (CHF 0.01): the coder's one call fits, the critic's first
+    // call's worst case does not.
+    const r = await runOne(req, rt, "Review page", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 10_000,
+    });
+    const task = await rt.store.task.mustGet(r.taskId);
+    expect(task.status).toBe("needs_human");
+    expect(task.attempt).toBe(0);
+    expect(r.view.display).toMatchObject({
+      label: "Paused at the project's budget",
+      blocker: { kind: "card", cardKind: "budget" },
+    });
+    // The coder ran once; the critic's run was refused before its verdict: no review, no
+    // finding, no retry.
+    expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+    const reviews = (await rt.store.run.forTask(r.taskId)).filter((x) => x.specialist === "critic");
+    expect(reviews.map((x) => x.outcome)).toEqual(["budget_exceeded"]);
+    expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
+    expect(await rt.store.finding.openFor(r.taskId)).toEqual([]);
+    // One card, the project's budget's: Cancel task and Open Settings; no "failed 4 times".
+    const cards = await cardsOf(r.taskId);
+    expect(cards.map((q) => [q.title, q.status])).toEqual([
+      ['"Review page" paused at the project\'s budget of CHF 0.01', "open"],
+    ]);
+    expect(((cards[0]?.choices ?? []) as Json[]).map((c) => c.label)).toEqual(["Cancel task"]);
+    expect(((cards[0]?.links ?? []) as Json[]).map((l) => l.label)).toEqual(["Open Settings"]);
+    // The session log says the review paused, never that the critic sent it back.
+    const said = lines(r.events);
+    expect(said).toContain(
+      '"Review page" paused before its review: the project\'s budget of CHF 0.01 has no room for it.',
+    );
+    expect(said.join(" | ")).not.toMatch(
+      /sent "Review page" back|failed \d times|did not complete/,
+    );
+    // The project's budget ended the session there (ADR 0112 point 6).
+    expect(r.session.status).toBe("stopped");
+    expect(r.session.statusText).toBe("Stopped at the project's budget");
+
+    // The person raises the project's budget in Settings: the next tick goes on with it, and the
+    // critic reviews it once.
+    const set = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: r.projectId } },
+        ],
+        wordsUsed: "Settings: Project budget to 5",
+        source: "ui",
+        projectId: r.projectId,
+      }),
+    });
+    let result = (await set.json()) as Json;
+    if (result.status === "pending")
+      result = (await (
+        await req(`/commands/${String(result.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        })
+      ).json()) as Json;
+    expect(result.status, JSON.stringify(result)).toBe("done");
+    await rt.scheduler.tick();
+    const sessions = async () => rt.store.session.forProject(r.projectId);
+    await waitFor(
+      async () => {
+        const t = await rt.store.task.mustGet(r.taskId);
+        const all = await sessions();
+        return t.status === "done" &&
+          all.every((s) => ["completed", "stopped", "failed", "killed"].includes(s.status))
+          ? true
+          : undefined;
+      },
+      async () =>
+        `"Review page" to be done and its sessions to end (${(await rt.store.task.mustGet(r.taskId)).status}, ${(await sessions()).map((s) => s.status).join(", ")})`,
+    );
+    expect((await sessions()).length).toBe(2);
+    const after = (await rt.store.run.forTask(r.taskId)).filter((x) => x.specialist === "critic");
+    // (Both rows carry the simulated clock's one moment: their order is not the run order.)
+    expect(after.map((x) => x.outcome).sort()).toEqual(["budget_exceeded", "completed"]);
+    expect((await rt.store.review.latestForTask(r.taskId))?.verdict).toBe("accept");
+    expect((await rt.store.task.mustGet(r.taskId)).attempt).toBe(0);
+    expect((await cardsOf(r.taskId)).map((q) => q.status)).toEqual(["withdrawn"]);
   }, 120_000);
 });

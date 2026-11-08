@@ -56,6 +56,8 @@ export interface RoutedProviderDeps {
     rest?(sourceId: string, resetAt: string | undefined, why: string): Promise<string>;
     /** Anthropic refused the source's credential (U-078): marked, skipped, one card. */
     refuse?(sourceId: string, why: string): Promise<void>;
+    /** A project's work waits for the source (its reset, a new credential; U-078). */
+    noteWait?(sourceId: string, projectId: string, agentId: string): Promise<void>;
   };
   /** The provider a source's calls run on; null when none can (no credential, the fake row). */
   providerFor: (source: BillingSource) => Promise<ModelProvider | null>;
@@ -158,6 +160,15 @@ export class RoutedProvider implements ModelProvider {
     } catch (e) {
       return credentialWaitOf(e);
     }
+  }
+
+  /**
+   * A project's work waits for this source (U-078): kept on it (`limits.waiting`), so the
+   * project's session starts by itself once the source serves again. The critic's review of a
+   * task that no credential could serve asks it (the task runs again then and is reviewed).
+   */
+  async noteWait(sourceId: string, projectId: string, agentId: string): Promise<void> {
+    await this.deps.billing.noteWait?.(sourceId, projectId, agentId);
   }
 
   async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {

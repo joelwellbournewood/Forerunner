@@ -246,3 +246,28 @@ Consequences: a paused task's history shows its work in progress (and a merge of
 pull request; the WIP and failed refs are local to the task's worktree and the project's folder.
 Not built here: pricing Claude Code's `modelUsage` at each model's own price, and booking usage a
 stopped run reports after its token was revoked (both still logged, as before).
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-session'): a refused review pauses too
+
+Point 5 said a paused run gets no critic and no failed try, but a review the budget refused was
+still a verdict: when a task's run fit and its critic review did not (the project's budget, the
+month's cap, the session's own), the critic made the refused run an `escalate` with the finding
+"Critic review did not complete (budget_exceeded)", the retry ladder ran the specialist again,
+each review was refused the same way, and the task ended on '"X" failed 4 times' with Try again /
+Mark done anyway / Cancel task (bench, project budget USD 0.01: four coder runs, four refused
+reviews).
+
+1. **A review a budget refused before its verdict is no review.** The critic writes its Run row
+   (`budget_exceeded`) and no Review or finding, and throws the refusal (`refusedReviewError`);
+   a refusal after the verdict was recorded still completes the review, as before.
+2. **The task pauses at that limit, as a run does.** The session moves it to `needs_human` with
+   the limit's title, files point 6's one card (at the project's budget, the month's cap or the
+   subscription's share: Cancel task and Open Settings, it goes on by itself once the limit
+   changed; at the session's budget: Continue), says '"X" paused before its review: the
+   project's budget of CHF 0.01 has no room for it.', counts no try and ends the session at a
+   stop that ends sessions (the critic's own run cap is the session's budget). When the task goes
+   on, its next session runs it again (it continues from its work) and the critic reviews it
+   once.
+
+Not built: a session that reviews a paused task without running it again (its run's result is
+not kept for a later review); the run costs one more specialist call.

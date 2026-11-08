@@ -270,3 +270,22 @@ choice). A manual Start while the credential still rests ends at once with the s
 bench exercises all of it with no real key (`--provider bench-api`: the routed provider over the
 vault's keys, the Messages API stand-in in testenv answering a refused key with 401 and a limited
 one with the spend cap until its reset).
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-session'): reviews wait too
+
+Point 9 says work waits and never fails for want of a credential, and point 12 says the same for
+planning; a critic review that met a credential at its limit or refused, with no other credential
+to serve it (the routed provider moves a review once, point 4), still became an `escalate`
+verdict (or, when the critic threw, a "could not be reviewed" card beside the credential's own),
+the retry ladder counted it as a failed try, and nothing reviewed the task at the reset.
+
+16. **A review a credential refused waits like the work.** The critic writes its Run row
+    (`usage_limit`, or `credential_refused` for a refusal) and no Review or finding, and throws
+    the refusal; the critic port asks the routed provider what a review would wait for now
+    (`waitNow`), else reads the refused call's source, and keeps the task's project on that
+    source (`RoutedProvider.noteWait`, `limits.waiting`). The session gives the task back to ready
+    without a try, says the wait's sentence ("Your API key reached its usage limit; "X" waits
+    until 16:40 (your API key's limit) and starts by itself."), and files no card; at the reset,
+    or once a new credential is saved, the wake (point 9) starts a session that runs the task
+    again and the critic reviews it once. A refusal with nothing known to wait for keeps the
+    review-failed card.

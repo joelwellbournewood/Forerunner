@@ -31,6 +31,7 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.blocked_by_findings",
   "critic.verdict",
   "critic.review_failed",
+  "critic.review_paused",
   "pr.merged",
   "pr.left_open",
   "pr.merge_failed",

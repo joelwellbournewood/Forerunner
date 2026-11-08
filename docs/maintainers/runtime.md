@@ -2635,7 +2635,25 @@ and the phone's Reviews tab maps approve to `accept` and reject to `rework`. Tes
 each option answered with `requestView(row).options` through the daemon's answer route; a typed
 answer refused; a second failure reuses the card). A task left in review by a failed review
 before this change has no card; the person moves it on the Tasks tab (Mark done, Needs me,
-Mark failed, Cancel). The sign-off ends with the human the same way
+Mark failed, Cancel). **A review a limit or a credential refused (the leftovers of wave 7)** is
+neither a verdict nor a failure: the critic throws the refusal (`critic.md`), the critic port
+adds what a credential refusal waits for (`withReviewWait` in `session/review-refusal.ts`: the
+routed provider's `waitNow` for the critic's purpose, else the refused call's source read from
+the store, kept for the task's project through `RoutedProvider.noteWait`), and `reviewTask`
+returns `{ refused }` (`reviewRefusalOf`). A budget's refusal pauses the task as a run's pause
+does (ADR 0112 point 6): `needs_human` with `budgetStopTitle`, one card (`fileBudgetStopCard`,
+the limit from the refusal's level: `reviewStopSource`, the critic's own run cap being the
+session's), the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
+of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the session's budget or an
+outer limit ends the session there; no try is counted and no ladder card is filed. A
+credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the
+wait's `billing.fallback` sentence (`stoppedRunSentence`), as a run a credential stopped; no
+review-failed card is filed beside the credential's own. Either way the task runs again in the
+next session (when the limit changed, or the credential serves: `wakeBudgetWaits`,
+`RuntimeApp.billing.waits.wake`) and the critic reviews it once. A credential refusal with
+nothing known to wait for still files the review-failed card. Tests: `budget-pause.test.ts` "a
+review refused at the project's budget pauses the task", `credential-wait-session.test.ts` "a
+review that meets a credential's usage limit waits for it". The sign-off ends with the human the same way
 (`syncSignoffAnswers`, same file; phase 5 follow-up RT-P5-1): every `human` decision (a
 tier 3 review, a `human` verdict, the ladder's last rung, filed by `CriticService`,
 `applyVerdict` or the loop's ladder branch) carries a `change_card` keyed `critic:signoff`

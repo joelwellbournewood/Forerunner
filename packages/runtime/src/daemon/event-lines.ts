@@ -238,6 +238,8 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       if (typeof p.couldNot === "string")
         return `${couldNotLine(p, p.couldNot)} Its review did not run; it waits in the Inbox.`;
       return `The review of ${taskName(p)} did not run; it waits in the Inbox.`;
+    // A limit refused the review before its verdict (ADR 0112): the runner's line names it.
+    case "critic.review_paused":
     case "task.retrying":
     case "session.stopped":
       return s("text") ? cutAtWord(plainLine(s("text")), 200) : null;
