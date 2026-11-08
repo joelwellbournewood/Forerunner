@@ -418,6 +418,11 @@ export interface SessionResult {
    */
   skipped: string[];
   needsHuman: string[];
+  /**
+   * Of `needsHuman`, the tasks paused at a budget with their card open at the end (budget-resume):
+   * the budget-stop notification says to continue them from it.
+   */
+  paused?: string[];
   /** Tasks a person cancelled while they ran (U-039). */
   cancelled: string[];
   /**
@@ -2851,6 +2856,7 @@ export class SessionRunner {
       failed,
       skipped: notStarted,
       needsHuman,
+      ...(outcome.paused?.length ? { paused: outcome.paused.map((t) => t.id) } : {}),
       cancelled,
       movedWhileRunning,
       reviewFailed,

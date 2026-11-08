@@ -199,6 +199,19 @@ describe("a task the session's budget stops pauses at the first stop with one ca
       '"Long report" paused at this session\'s budget of CHF 2.00: continue or cancel it in the Inbox.',
     );
     expect(String(ended.summary)).not.toContain("needs your decision");
+    // The session's urgent notification says to continue it from its card (the runner's
+    // `paused`, through the daemon's session end): never a larger session budget.
+    const stop = await waitFor(
+      async () =>
+        (
+          (await (await req("/notifications/recent?limit=200")).json()) as {
+            notifications: Json[];
+          }
+        ).notifications.find((n) => n.kind === "budget_stop" && n.sessionId === ended.id),
+      async () => "the session's budget_stop notification",
+    );
+    expect(String(stop.body)).toContain("Continue it from its card in the Inbox.");
+    expect(String(stop.body)).not.toContain("larger budget");
     const view = await taskView();
     expect(view.status).toBe("needs_human");
     expect(view.attempt).toBe(0);

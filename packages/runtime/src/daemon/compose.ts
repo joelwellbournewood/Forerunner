@@ -3163,6 +3163,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...(result.spentChfMicro !== undefined ? { spentChfMicro: result.spentChfMicro } : {}),
         completed: result.completed,
         needsHuman: result.needsHuman,
+        ...(result.paused ? { paused: result.paused } : {}),
         failed: result.failed,
         retried: result.retried,
         inReview: result.inReview,

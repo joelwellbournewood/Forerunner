@@ -151,6 +151,12 @@ export interface SessionEndFacts {
   spentChfMicro?: number;
   completed: string[];
   needsHuman: string[];
+  /**
+   * Of `needsHuman`, the tasks paused at a budget whose card offers Continue (budget-resume): the
+   * stop says to continue them from their card. A task that needs the person for another reason
+   * (a question) has no Continue, so the stop says what helps instead.
+   */
+  paused?: string[];
   /** Failed tasks; the title names them (U-017: "0 done, 0 need you" hid a failed task). */
   failed?: string[];
   /** Sent back by the critic, in review, not started: the summary's categories (U-072). */
@@ -325,7 +331,7 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
             .filter(Boolean)
             .join(" ")
         : said,
-      goOnAfter(r.stopReason, r.needsHuman.length > 0),
+      goOnAfter(r.stopReason, (r.paused?.length ?? 0) > 0),
     ),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
