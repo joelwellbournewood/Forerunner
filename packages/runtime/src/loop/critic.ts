@@ -438,7 +438,9 @@ export class CriticLoop implements CriticPort {
     };
     // The web pages the run read (ADR 0107): the critic checks each cited claim against the
     // text the specialist got, as data, and sees which pages could not be read.
-    const sources = webSourceEvidence(result.webSources);
+    // 'web-search': the search results it saw but did not open are listed beside the pages, and a
+    // claim whose only source is one of them is not sourced.
+    const sources = webSourceEvidence(result.webSources, result.searchSeen);
     if (sources.inputFiles.length)
       evidence.inputFiles = [...(evidence.inputFiles ?? []), ...sources.inputFiles];
     if (sources.artifacts.length)

@@ -31,7 +31,8 @@ const CODER_TOOLS = ["cc:Read", "cc:Edit", "cc:Glob"];
 
 /**
  * The repository registry with the coder on three Claude Code tools and a widget naming
- * cc:WebFetch (the web page reader on the loop driver, ADR 0107) and cc:WebSearch (none).
+ * cc:WebFetch (the web page reader on the loop driver, ADR 0107), cc:WebSearch (Anthropic's web
+ * search on an API key, 'web-search') and cc:TodoWrite (none on the loop driver).
  */
 function patchedRegistry(root: string): string {
   const dir = join(root, "registry");
@@ -59,6 +60,7 @@ allowed_tools:
   - cc:Read
   - cc:WebFetch
   - cc:WebSearch
+  - cc:TodoWrite
 allowed_domains: []
 max_budget_usd: 0.5
 max_turns: 4
@@ -114,35 +116,41 @@ describe("cc:* tools on the daemon's loop path", () => {
     expect(rt.registry.specialist("coder").allowed_tools).toEqual(CODER_TOOLS);
     expect(rt.specialists("coder")?.allowedTools).toEqual(["read_file", "write_file", "list_dir"]);
     // cc:Read never yields write_file; no cc:Bash, no run_command; cc:WebFetch is the web
-    // page reader the daemon registers (ADR 0107)
-    expect(rt.specialists("widget")?.allowedTools).toEqual(["read_file", "web_fetch"]);
-    // the repository researcher (unchanged in the copy) keeps its read and write tools and
-    // reads the web on an API key (before ADR 0107 its cc:WebFetch was dropped here)
+    // page reader the daemon registers (ADR 0107); cc:WebSearch is Anthropic's web search on an
+    // API key ('web-search'), which the executor grants per run only where the run can search
+    expect(rt.specialists("widget")?.allowedTools).toEqual([
+      "read_file",
+      "web_fetch",
+      "web_search",
+    ]);
+    // the repository researcher (unchanged in the copy) keeps its read and write tools, reads
+    // the web on an API key (before ADR 0107 its cc:WebFetch was dropped here) and searches it
+    // (before 'web-search' its cc:WebSearch was dropped here)
     expect(rt.specialists("researcher")?.allowedTools).toEqual([
       "read_file",
       "list_dir",
       "write_file",
       "web_fetch",
+      "web_search",
     ]);
   });
 
   it("a name the loop driver cannot offer is an audit row at compose naming the specialist and the tool, once", async () => {
     const before = await rt.store.auditLog.list({ tool: TOOL_UNMAPPED_AUDIT });
     const pairs = before.map((r) => r.input_summary).sort();
-    expect(pairs).toEqual(
-      expect.arrayContaining(["widget: cc:WebSearch", "researcher: cc:WebSearch"]),
-    );
+    expect(pairs).toEqual(expect.arrayContaining(["widget: cc:TodoWrite"]));
     expect(pairs.filter((p) => p.startsWith("coder:"))).toEqual([]);
-    // cc:WebFetch is offered now (ADR 0107): no row for it
+    // cc:WebFetch (ADR 0107) and cc:WebSearch ('web-search') are offered now: no row for them
     expect(pairs.filter((p) => p.endsWith(": cc:WebFetch"))).toEqual([]);
-    const widget = before.find((r) => r.input_summary === "widget: cc:WebSearch");
+    expect(pairs.filter((p) => p.endsWith(": cc:WebSearch"))).toEqual([]);
+    const widget = before.find((r) => r.input_summary === "widget: cc:TodoWrite");
     expect(widget).toMatchObject({
       allowed: false,
       agent_id: rt.agent.id,
       human_id: rt.human.id,
       result_summary: "dropped (unmapped)",
     });
-    expect(widget?.denied_reason).toMatch(/^tool_not_allowed: cc:WebSearch has no equivalent/);
+    expect(widget?.denied_reason).toMatch(/^tool_not_allowed: cc:TodoWrite has no equivalent/);
     // later lookups (every run start) add nothing for a pair already on record
     rt.specialists("widget");
     rt.specialists("researcher");

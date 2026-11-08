@@ -867,8 +867,9 @@ describe("Tasks tab (design §3.5)", () => {
       ),
     );
     await user.selectOptions(who, "researcher");
+    // Since 'web-search' the API key reads pages and searches: only it does both here.
     expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
-      "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.",
+      "Runs on your API key: only it can read web pages here.",
     );
     // Only this project has dependencies to install, so the line shows that the dialog asked for
     // the project's view (`?project=`).

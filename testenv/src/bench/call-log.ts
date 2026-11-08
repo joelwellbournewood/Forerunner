@@ -24,6 +24,8 @@ import { detectRole, type RoleGuess } from "./roles.ts";
 export interface LoggedReply {
   text: string;
   toolCalls: { name: string; input: Record<string, unknown> }[];
+  /** Web searches the model ran in the reply ('web-search'), with their results' addresses. */
+  searches?: { query: string; urls: string[]; pending?: boolean }[];
   stopReason: StopReason | null;
   usage?: Usage;
   error?: { code: string; message: string };
@@ -56,6 +58,12 @@ export interface ModelCallRecord {
   durationMs: number;
   /** `ModelRequest.speed` when the request set one (fast mode is priced on its own row). */
   speed?: string;
+  /**
+   * Anthropic's web search the request offered ('web-search'): its `max_uses` and the project's
+   * list in the server's form. With `messages` (each turn's `raw` blocks, sent back unchanged)
+   * and `reply.searches` / `reply.usage.server_tool_use` it shows the whole search path.
+   */
+  webSearch?: { maxUses: number; allowedDomains?: string[]; blockedDomains?: string[] };
   /**
    * What the request asked the provider's prompt cache to keep (`ModelRequest.cache`: the
    * system prompt, the tools, the conversation), when it asked ('cost', L-15). With
@@ -245,6 +253,7 @@ export function requestFields(
   | "tools"
   | "speed"
   | "cache"
+  | "webSearch"
 > {
   const guess = detectRole(req);
   return {
@@ -264,6 +273,7 @@ export function requestFields(
     tools: (req.tools ?? []).map((t) => t.name),
     ...(req.speed ? { speed: req.speed } : {}),
     ...(req.cache ? { cache: { ...req.cache } } : {}),
+    ...(req.webSearch ? { webSearch: { ...req.webSearch } } : {}),
   };
 }
 
@@ -276,6 +286,8 @@ export function withModelCallLog(inner: ModelProvider, log: ModelCallLog): Model
     name: inner.name,
     ...(inner.fastMode !== undefined ? { fastMode: inner.fastMode } : {}),
     ...(inner.capabilities ? { capabilities: inner.capabilities } : {}),
+    // 'web-search': the real adapter runs Anthropic's web search on its key.
+    ...(inner.serverWebSearch !== undefined ? { serverWebSearch: inner.serverWebSearch } : {}),
     listModels: () => inner.listModels(),
     countTokens: (t) => inner.countTokens(t),
     ...(inner.maxOutputTokens
@@ -296,7 +308,15 @@ export function withModelCallLog(inner: ModelProvider, log: ModelCallLog): Model
             const name = pendingNames.get(ev.id) ?? "";
             reply.toolCalls.push({ name, input: ev.input });
           } else if (ev.type === "tool_use_start") pendingNames.set(ev.id, ev.name);
-          else if (ev.type === "message_end") {
+          else if (ev.type === "server_tool_use") {
+            const searches = reply.searches ?? [];
+            searches.push({ query: String(ev.input.query ?? ""), urls: [] });
+            reply.searches = searches;
+          } else if (ev.type === "server_tool_result") {
+            const last = reply.searches?.at(-1);
+            if (last) last.urls = ev.results.map((r) => r.url);
+            else reply.searches = [{ query: "", urls: ev.results.map((r) => r.url) }];
+          } else if (ev.type === "message_end") {
             reply.stopReason = ev.stop_reason;
             reply.usage = ev.usage;
           } else if (ev.type === "error") {

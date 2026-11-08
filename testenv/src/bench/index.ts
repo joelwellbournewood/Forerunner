@@ -1,6 +1,11 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "@forerunner/platform";
-import { keyRuleFromEnv, messagesApiStandIn, standInFetch } from "../provider/messages-api.ts";
+import {
+  keyRuleFromEnv,
+  messagesApiStandIn,
+  searchRuleFromEnv,
+  standInFetch,
+} from "../provider/messages-api.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { ModelCallLog, modelCallLogPath, type PriceOf, withModelCallLog } from "./call-log.ts";
 import { benchOptionsFromEnv, createRolePlayer } from "./role-player.ts";
@@ -49,6 +54,7 @@ export function benchApiFetch(opts: { env: NodeJS.ProcessEnv; priceOf?: PriceOf 
   const standIn = messagesApiStandIn({
     model,
     answerFor: keyRuleFromEnv(opts.env),
+    search: searchRuleFromEnv(opts.env),
     onRequest: (entry) => appendFileSync(file, `${JSON.stringify(entry)}\n`),
   });
   console.log(`[bench] Messages API stand-in; request log: ${file}`);

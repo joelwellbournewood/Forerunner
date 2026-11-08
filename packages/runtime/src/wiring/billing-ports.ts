@@ -16,6 +16,7 @@ import {
   type SavingsSession,
   type SessionSource,
   type StoredLedgerEntry,
+  webSearchWorstCaseUsdMicro,
 } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 import type { RunRow, SessionRow, StateStore } from "@forerunner/state";
@@ -203,6 +204,8 @@ export function pricingFor(modelId: string, table: PricingTable = BUILTIN_PRICIN
   return {
     estimate: (inputTokens, maxOutputTokens, cachedInputTokens = 0) =>
       estimateUsdMicro({ inputTokens, maxOutputTokens, cachedInputTokens }, modelId, table),
+    // 'web-search': the searches' worst case on top of a call's, and their price in its cost.
+    searches: (n) => webSearchWorstCaseUsdMicro(n, modelId, table),
     cost: (u) =>
       costOf(
         {
@@ -210,6 +213,7 @@ export function pricingFor(modelId: string, table: PricingTable = BUILTIN_PRICIN
           tokens_out: u.output_tokens,
           cache_read_tokens: u.cache_read_input_tokens,
           cache_write_tokens: u.cache_creation_input_tokens,
+          web_search_requests: u.server_tool_use?.web_search_requests ?? 0,
         },
         modelId,
         table,

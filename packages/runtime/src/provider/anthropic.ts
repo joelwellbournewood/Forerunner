@@ -21,6 +21,12 @@ import {
   type ProviderDeclaredCapabilities,
   type StopReason,
   type StreamEvent,
+  type Usage,
+  WEB_SEARCH_LISTS_CODE,
+  WEB_SEARCH_OFF_CODE,
+  WEB_SEARCH_SERVER_TOOL,
+  type WebSearchHit,
+  type WebSearchOptions,
 } from "./types.ts";
 import { USAGE_LIMIT_CODE, usageLimitOfApiError } from "./usage-limit.ts";
 
@@ -149,6 +155,15 @@ export class AnthropicMessagesProvider implements ModelProvider {
     return !!this.opts.apiKey;
   }
 
+  /**
+   * Anthropic's web search runs on an API key ('web-search', the owner's decision of
+   * 2026-11-02): `ModelRequest.webSearch` becomes the server tool. Not on a gateway's bearer
+   * token, which may not pass server tools on.
+   */
+  get serverWebSearch(): boolean {
+    return !!this.opts.apiKey && !this.opts.authToken;
+  }
+
   /** Never a temperature: current Claude models reject one (ADR 0072). */
   get capabilities(): ProviderDeclaredCapabilities {
     return { acceptsTemperature: false };
@@ -245,6 +260,8 @@ export class AnthropicMessagesProvider implements ModelProvider {
       messages: req.messages.map(toApiMessage),
       stream: true,
     };
+    // The search is offered only where this adapter can run it ('web-search').
+    const search = req.webSearch && this.serverWebSearch ? req.webSearch : undefined;
     if (req.system) {
       params.system = req.cache?.system
         ? [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }]
@@ -260,10 +277,17 @@ export class AnthropicMessagesProvider implements ModelProvider {
           : {}),
       }));
     }
+    // After the app's own tools (and their cache mark), so a change of the search's `max_uses`
+    // leaves the tools' cached entry as it is.
+    if (search) params.tools = [...(params.tools ?? []), webSearchTool(search)];
     if (req.cache?.messages) {
       const used =
         (req.system && req.cache.system ? 1 : 0) + (req.tools?.length && req.cache.tools ? 1 : 0);
-      cacheHistory(params.messages, MAX_CACHE_BREAKPOINTS - used);
+      cacheHistory(
+        params.messages,
+        MAX_CACHE_BREAKPOINTS - used,
+        req.messages.map((m) => m.raw !== undefined),
+      );
     }
     if (req.effort) params.output_config = { effort: req.effort };
     if (req.thinking === "off") {
@@ -294,13 +318,21 @@ export class AnthropicMessagesProvider implements ModelProvider {
         ...(fast ? { headers: { "anthropic-beta": FAST_MODE_BETA } } : {}),
       });
     } catch (e) {
-      yield req.signal?.aborted ? aborted() : mapError(e, this.secrets(), this.clock.now());
+      yield req.signal?.aborted
+        ? aborted()
+        : mapError(e, this.secrets(), this.clock.now(), { webSearch: !!search });
       return;
     }
     const open = new Map<number, { id: string; name: string; json: string }>();
+    // The server tools' calls ('web-search'), by block index, and every block of the turn as the
+    // API sent it, kept when the turn holds a server tool's blocks or paused.
+    const serverOpen = new Map<number, { id: string; name: string; json: string }>();
+    const raw: Record<string, unknown>[] = [];
+    const rawJson = new Map<number, string>();
+    let serverBlocks = false;
     let stopReason: StopReason = "end_turn";
     let stopped = false;
-    const usage = {
+    const usage: Usage = {
       input_tokens: 0,
       output_tokens: 0,
       cache_read_input_tokens: 0,
@@ -317,43 +349,70 @@ export class AnthropicMessagesProvider implements ModelProvider {
             // still has it on record (the live harness's spend ledger reads it).
             yield { type: "message_start", model: ev.message.model, usage: { ...usage } };
             break;
-          case "content_block_start":
-            if (ev.content_block.type === "tool_use") {
-              open.set(ev.index, {
-                id: ev.content_block.id,
-                name: ev.content_block.name,
-                json: "",
-              });
-              yield {
-                type: "tool_use_start",
-                id: ev.content_block.id,
-                name: ev.content_block.name,
-              };
+          case "content_block_start": {
+            // The block as the API sent it; deltas fill it below ('web-search').
+            raw[ev.index] = structuredClone(ev.content_block) as unknown as Record<string, unknown>;
+            const b = ev.content_block;
+            if (b.type === "tool_use") {
+              open.set(ev.index, { id: b.id, name: b.name, json: "" });
+              yield { type: "tool_use_start", id: b.id, name: b.name };
+            } else if (b.type === "server_tool_use") {
+              serverBlocks = true;
+              serverOpen.set(ev.index, { id: b.id, name: b.name, json: "" });
+            } else if (isServerToolResult(b.type)) {
+              // A result arrives whole in its start event.
+              serverBlocks = true;
+              const r = serverResultOf(raw[ev.index] as Record<string, unknown>);
+              if (r) yield { type: "server_tool_result", ...r };
             }
             break;
-          case "content_block_delta":
-            if (ev.delta.type === "text_delta") yield { type: "text_delta", text: ev.delta.text };
-            else if (ev.delta.type === "thinking_delta")
+          }
+          case "content_block_delta": {
+            const block = raw[ev.index];
+            if (ev.delta.type === "text_delta") {
+              if (block) block.text = `${String(block.text ?? "")}${ev.delta.text}`;
+              yield { type: "text_delta", text: ev.delta.text };
+            } else if (ev.delta.type === "thinking_delta") {
+              if (block) block.thinking = `${String(block.thinking ?? "")}${ev.delta.thinking}`;
               yield { type: "thinking_delta", text: ev.delta.thinking };
-            else if (ev.delta.type === "input_json_delta") {
+            } else if (ev.delta.type === "signature_delta") {
+              if (block) block.signature = ev.delta.signature;
+            } else if (ev.delta.type === "citations_delta") {
+              if (block)
+                block.citations = [
+                  ...(Array.isArray(block.citations) ? block.citations : []),
+                  ev.delta.citation,
+                ];
+            } else if (ev.delta.type === "input_json_delta") {
+              rawJson.set(ev.index, `${rawJson.get(ev.index) ?? ""}${ev.delta.partial_json}`);
               const t = open.get(ev.index);
               if (t) {
                 t.json += ev.delta.partial_json;
                 yield { type: "tool_use_delta", id: t.id, partial_json: ev.delta.partial_json };
               }
+              const st = serverOpen.get(ev.index);
+              if (st) st.json += ev.delta.partial_json;
             }
             break;
+          }
           case "content_block_stop": {
+            const block = raw[ev.index];
+            const json = rawJson.get(ev.index);
+            if (block && json !== undefined) block.input = parseInput(json);
             const t = open.get(ev.index);
             if (t) {
               open.delete(ev.index);
-              let input: Record<string, unknown> = {};
-              try {
-                input = t.json ? (JSON.parse(t.json) as Record<string, unknown>) : {};
-              } catch {
-                input = { _unparsed: t.json };
-              }
-              yield { type: "tool_use_end", id: t.id, input };
+              yield { type: "tool_use_end", id: t.id, input: parseInput(t.json) };
+            }
+            const st = serverOpen.get(ev.index);
+            if (st) {
+              serverOpen.delete(ev.index);
+              yield {
+                type: "server_tool_use",
+                id: st.id,
+                name: st.name,
+                input: parseInput(st.json),
+              };
             }
             break;
           }
@@ -365,6 +424,11 @@ export class AnthropicMessagesProvider implements ModelProvider {
               usage.cache_read_input_tokens = ev.usage.cache_read_input_tokens;
             if (ev.usage.cache_creation_input_tokens != null)
               usage.cache_creation_input_tokens = ev.usage.cache_creation_input_tokens;
+            // Each web search is billed apart ('web-search'); its results are in input_tokens.
+            if (ev.usage.server_tool_use?.web_search_requests)
+              usage.server_tool_use = {
+                web_search_requests: ev.usage.server_tool_use.web_search_requests,
+              };
             break;
           case "message_stop":
             stopped = true;
@@ -373,7 +437,9 @@ export class AnthropicMessagesProvider implements ModelProvider {
       }
     } catch (e) {
       if (!stopped) {
-        yield req.signal?.aborted ? aborted() : mapError(e, this.secrets(), this.clock.now());
+        yield req.signal?.aborted
+          ? aborted()
+          : mapError(e, this.secrets(), this.clock.now(), { webSearch: !!search });
         return;
       }
     }
@@ -384,6 +450,10 @@ export class AnthropicMessagesProvider implements ModelProvider {
       yield aborted();
       return;
     }
+    // A turn with a server tool's blocks, or a paused one, goes back exactly as it came
+    // ('web-search': sealed results changed or missing make the next request a 400).
+    if (serverBlocks || stopReason === "pause_turn")
+      yield { type: "raw_content", blocks: raw.filter((b) => b !== undefined) };
     yield { type: "message_end", stop_reason: stopReason, usage };
   }
 
@@ -410,16 +480,26 @@ export const MAX_CACHE_BREAKPOINTS = 4;
  * stays byte for byte (the bench-api walk: the brief went as a block when marked and as a
  * string the call after); an empty text block never carries a mark (the API refuses it).
  */
-function cacheHistory(messages: Anthropic.MessageParam[], slots: number): void {
+function cacheHistory(
+  messages: Anthropic.MessageParam[],
+  slots: number,
+  raw: readonly boolean[] = [],
+): void {
   for (const [i, m] of messages.entries())
     if (typeof m.content === "string")
       messages[i] = { role: m.role, content: [{ type: "text", text: m.content }] };
+  // A turn kept as the provider sent it ('web-search': a search, its sealed results, a paused
+  // turn) is never marked: it goes back exactly as it came. Its mark falls on the message before.
+  const markable = (i: number) => i >= 0 && !raw[i];
   const marks: number[] = [];
-  const last = messages.length - 1;
+  let last = messages.length - 1;
+  while (last >= 0 && !markable(last)) last--;
   if (last >= 0) marks.push(last);
   const lastAssistant = messages.findLastIndex((m) => m.role === "assistant");
   if (lastAssistant > 0) {
-    const previousEnd = messages.findLastIndex((m, i) => i < lastAssistant && m.role === "user");
+    const previousEnd = messages.findLastIndex(
+      (m, i) => i < lastAssistant && m.role === "user" && markable(i),
+    );
     if (previousEnd >= 0 && previousEnd !== last) marks.push(previousEnd);
   }
   for (const i of marks.slice(0, Math.max(0, slots))) {
@@ -437,6 +517,13 @@ function cacheHistory(messages: Anthropic.MessageParam[], slots: number): void {
 }
 
 function toApiMessage(m: ChatMessage): Anthropic.MessageParam {
+  // The provider's own blocks go back exactly as they came ('web-search'): a copy, so nothing
+  // added to the request (a cache mark) ever reaches the kept turn.
+  if (m.raw)
+    return {
+      role: m.role,
+      content: structuredClone(m.raw) as unknown as Anthropic.ContentBlockParam[],
+    };
   if (typeof m.content === "string") return { role: m.role, content: m.content };
   const blocks: Anthropic.ContentBlockParam[] = [];
   for (const b of m.content as ContentBlock[]) {
@@ -450,9 +537,77 @@ function toApiMessage(m: ChatMessage): Anthropic.MessageParam {
         content: b.content,
         is_error: b.is_error,
       });
-    // thinking blocks from our own transcript are not replayed (the API requires signatures)
+    // thinking blocks from our own transcript are not replayed (the API requires signatures);
+    // a server tool's blocks without the turn's `raw` copy cannot be (their content is sealed)
   }
   return { role: m.role, content: blocks };
+}
+
+/**
+ * Anthropic's web search as the request's server tool ('web-search'): the basic version, which
+ * the model calls directly (no dynamic filtering, so no code execution and no container), with
+ * the run's `max_uses` and at most one of the project's lists, in the server's form.
+ */
+export function webSearchTool(o: WebSearchOptions): Anthropic.WebSearchTool20250305 {
+  return {
+    type: "web_search_20250305",
+    name: WEB_SEARCH_SERVER_TOOL,
+    max_uses: Math.max(1, Math.floor(o.maxUses)),
+    ...(o.allowedDomains?.length
+      ? { allowed_domains: [...o.allowedDomains] }
+      : o.blockedDomains?.length
+        ? { blocked_domains: [...o.blockedDomains] }
+        : {}),
+  };
+}
+
+/** A server tool's result block (`web_search_tool_result`, ...), never the app's `tool_result`. */
+function isServerToolResult(type: string): boolean {
+  return type !== "tool_result" && type.endsWith("_tool_result");
+}
+
+/** The plain fields of a server tool's result block, as the app reads them; sealed parts stay out. */
+function serverResultOf(block: Record<string, unknown>): {
+  tool_use_id: string;
+  name: string;
+  results: WebSearchHit[];
+  errorCode?: string;
+} | null {
+  const id = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
+  if (!id) return null;
+  const name = String(block.type).replace(/_tool_result$/, "");
+  const content = block.content;
+  if (Array.isArray(content)) {
+    const results: WebSearchHit[] = [];
+    for (const r of content as Record<string, unknown>[]) {
+      if (!r || typeof r !== "object" || typeof r.url !== "string") continue;
+      results.push({
+        url: r.url,
+        title: typeof r.title === "string" ? r.title : "",
+        ...(typeof r.page_age === "string" ? { pageAge: r.page_age } : {}),
+      });
+    }
+    return { tool_use_id: id, name, results };
+  }
+  const code =
+    content && typeof content === "object"
+      ? (content as { error_code?: unknown }).error_code
+      : undefined;
+  return {
+    tool_use_id: id,
+    name,
+    results: [],
+    errorCode: typeof code === "string" ? code : "unavailable",
+  };
+}
+
+/** A tool call's input from its streamed JSON; a broken one is kept as text. */
+function parseInput(json: string): Record<string, unknown> {
+  try {
+    return json ? (JSON.parse(json) as Record<string, unknown>) : {};
+  } catch {
+    return { _unparsed: json };
+  }
 }
 
 function mapStop(s: string | null | undefined): StopReason {
@@ -463,12 +618,34 @@ function mapStop(s: string | null | undefined): StopReason {
       return "max_tokens";
     case "stop_sequence":
       return "stop_sequence";
+    // A long server-tool turn paused ('web-search'): the loop sends it back to continue it.
+    case "pause_turn":
+      return "pause_turn";
     default:
       return "end_turn";
   }
 }
 
-function mapError(e: unknown, secrets: string[], nowMs: number): StreamEvent {
+/**
+ * A 400 that refuses the request's web search ('web-search', ADR 0107 amended): the account's
+ * administrator switched it off ("web search is not enabled"), or the server tool refused the
+ * project's lists (a wildcard domain, an allowed list outside the organisation's). Read only
+ * when the request carried the tool; null for any other 400.
+ */
+export function webSearchRefusal(message: string): "off" | "lists" | null {
+  const m = message.toLowerCase();
+  const search = /web[ _-]?search/.test(m);
+  if (search && /not (been )?enabled|disabled|not available|turned off/.test(m)) return "off";
+  if (/domain/.test(m)) return "lists";
+  return null;
+}
+
+function mapError(
+  e: unknown,
+  secrets: string[],
+  nowMs: number,
+  opts: { webSearch?: boolean } = {},
+): StreamEvent {
   const status = (e as { status?: number }).status;
   // No answer at all (the SDK's "Connection error."): the cause says what failed (U-053), the
   // credential cut out of it (a key the runtime cannot put in a header is quoted there).
@@ -494,6 +671,16 @@ function mapError(e: unknown, secrets: string[], nowMs: number): StreamEvent {
       retryable: false,
       ...(limit.resetAt ? { resetAt: limit.resetAt } : {}),
     };
+  if (status === 400 && opts.webSearch) {
+    const refusal = webSearchRefusal(message);
+    if (refusal)
+      return {
+        type: "error",
+        code: refusal === "off" ? WEB_SEARCH_OFF_CODE : WEB_SEARCH_LISTS_CODE,
+        message,
+        retryable: false,
+      };
+  }
   if (status === 429)
     return { type: "error", code: "provider_rate_limit", message, retryable: true };
   if (status === 529 || (status && status >= 500))

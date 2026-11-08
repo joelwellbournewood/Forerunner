@@ -35,6 +35,12 @@ export interface TokenUsage {
   tokens_out: number;
   cache_read_tokens?: number;
   cache_write_tokens?: number;
+  /**
+   * Web searches the call ran ('web-search': Anthropic's server tool, the provider's
+   * `usage.server_tool_use.web_search_requests`), each billed at `WEB_SEARCH_USD_MICRO` on top of
+   * the tokens; their results are already in `tokens_in`.
+   */
+  web_search_requests?: number;
 }
 
 export const PRICING_FILE_NAME = "pricing.json";
@@ -207,12 +213,49 @@ export function costOf(
   const tokensOut = assertTokens(usage.tokens_out, "tokens_out");
   const cacheRead = assertTokens(usage.cache_read_tokens, "cache_read_tokens");
   const cacheWrite = assertTokens(usage.cache_write_tokens, "cache_write_tokens");
+  const searches = assertTokens(usage.web_search_requests, "web_search_requests");
   const micro =
     tokensIn * p.input_per_mtok_usd +
     tokensOut * p.output_per_mtok_usd +
     cacheRead * p.cache_read_per_mtok_usd +
     cacheWrite * p.cache_write_per_mtok_usd;
-  return roundHalfUp(micro);
+  return roundHalfUp(micro) + searches * WEB_SEARCH_USD_MICRO;
+}
+
+/**
+ * Anthropic's web search ('web-search', the owner's decision of 2026-11-02): USD 10 per 1,000
+ * searches, billed on top of the tokens; a search that fails is not billed. Source: the web
+ * search tool's "Usage and pricing" (platform.claude.com, read 2026-11-02).
+ */
+export const WEB_SEARCH_USD_MICRO = 10_000;
+
+/**
+ * The result tokens one web search may add to its call ('web-search'). The results arrive inside
+ * the call, counted as input ("in search iterations run during a single turn"), before the app
+ * sees anything, so the pre-call worst case reserves this much per search: the provider's own
+ * examples bill about 7,000 tokens for one search's results, and the turn's later iterations
+ * re-read the conversation at the cache-read price; 20,000 is about three times the example.
+ * A call that used more is seen at the next precheck and named in the run's log.
+ */
+export const WEB_SEARCH_RESULT_TOKENS = 20_000;
+
+/**
+ * The worst case of `searches` web searches in one call, on top of the call's own
+ * (`estimateUsdMicro`): each search's price plus `WEB_SEARCH_RESULT_TOKENS` of results at the
+ * price a new input token can cost (the cache-write price, which the conversation's cache mark
+ * may make it; never below the input price). The loop sets `max_uses` so this fits the money
+ * left; 0 searches cost nothing.
+ */
+export function webSearchWorstCaseUsdMicro(
+  searches: number,
+  modelId: string,
+  table: PricingTable = BUILTIN_PRICING,
+): number {
+  const n = assertTokens(searches, "searches");
+  if (n === 0) return 0;
+  const p = priceFor(modelId, table);
+  const writePrice = Math.max(p.cache_write_per_mtok_usd, p.input_per_mtok_usd);
+  return n * WEB_SEARCH_USD_MICRO + roundHalfUp(n * WEB_SEARCH_RESULT_TOKENS * writePrice);
 }
 
 /**

@@ -1,12 +1,26 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { lastUserText } from "./tokens.ts";
-import type { ModelRequest, StopReason, Usage } from "./types.ts";
+import type { ModelRequest, StopReason, Usage, WebSearchHit } from "./types.ts";
 
 /** One tool call the fake "model" asks for. `id` is set by recordings; scripts leave it out. */
 export interface ToolCallReply {
   name: string;
   input: Record<string, unknown>;
   id?: string;
+}
+
+/**
+ * A web search the fake "model" ran inside the call ('web-search'): Anthropic's server tool, as
+ * a `server_tool_use` and its result. `pending`: the provider deferred it because the same turn
+ * asks for the app's tools (a mixed step); the Messages API stand-in runs it at the start of the
+ * next request. `errorCode`: the search failed (`max_uses_exceeded`, ...), billed as nothing.
+ */
+export interface ReplySearch {
+  id?: string;
+  query: string;
+  results?: WebSearchHit[];
+  errorCode?: string;
+  pending?: boolean;
 }
 
 /** A provider failure the fake reproduces. `code` is mapped by {@link mapErrorCode}. */
@@ -22,6 +36,8 @@ export interface ReplyBody {
   /** Emitted as thinking_delta events before the text. */
   thinking?: string;
   toolCalls?: ToolCallReply[];
+  /** Web searches the provider ran in this call, after the text and before the tool calls. */
+  searches?: ReplySearch[];
   /** Defaults to "tool_use" when there are tool calls, else "end_turn". */
   stopReason?: StopReason;
   /** Overrides the computed usage field by field. */

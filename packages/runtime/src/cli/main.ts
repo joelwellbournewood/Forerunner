@@ -582,6 +582,7 @@ export async function benchPriceOf(env: NodeJS.ProcessEnv): Promise<BenchPriceOf
           tokens_out: usage.output_tokens,
           cache_read_tokens: usage.cache_read_input_tokens,
           cache_write_tokens: usage.cache_creation_input_tokens,
+          web_search_requests: usage.server_tool_use?.web_search_requests ?? 0,
         },
         id,
         table,
