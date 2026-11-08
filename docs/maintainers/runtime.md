@@ -3588,8 +3588,15 @@ in one project cancelled a task in another. Now:
 - **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
   alternating user and assistant messages within `historyMaxTokens` (default
   `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
-  first), then the turn's own message: the volatile facts and blocks and the line, last, so the
-  cached prefix (tools, system, the earlier turns) holds.
+  first), then the turn's own message: the line, then the volatile facts and blocks. The line is
+  the message's stable start (`ChatMessage.stableChars`): the Anthropic adapter sends it as its
+  own text block with the cache breakpoint (`stableSplit`, `cacheHistory`), so the entry the
+  turn writes ends at the line, and the next turn, whose history replays the line alone, reads
+  it (the leftovers of wave 7: with the facts in front of the line every turn wrote its whole
+  history again at 1.25 times the input price and read only the tools and the system prompt;
+  `conversation.test.ts` "chat turns read their history from the prompt cache",
+  `anthropic-provider.test.ts`; testenv's `PromptCacheSim` keys a prefix by the blocks the
+  adapter sends).
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,

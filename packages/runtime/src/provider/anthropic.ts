@@ -287,6 +287,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
         params.messages,
         MAX_CACHE_BREAKPOINTS - used,
         req.messages.map((m) => m.raw !== undefined),
+        req.messages.map((m) => stableSplit(m) !== null),
       );
     }
     if (req.effort) params.output_config = { effort: req.effort };
@@ -471,6 +472,17 @@ export class AnthropicMessagesProvider implements ModelProvider {
 export const MAX_CACHE_BREAKPOINTS = 4;
 
 /**
+ * A message's stable start and changing end (`ChatMessage.stableChars`), or null when it has
+ * none: string content, both parts non-empty (the API refuses an empty text block).
+ */
+export function stableSplit(m: ChatMessage): [string, string] | null {
+  const n = m.stableChars;
+  if (m.raw || typeof m.content !== "string" || typeof n !== "number") return null;
+  if (!(n > 0 && n < m.content.length)) return null;
+  return [m.content.slice(0, n), m.content.slice(n)];
+}
+
+/**
  * Marks the conversation for prompt caching ('cost', L-15), with at most `slots` breakpoints:
  * the last block of the last message, so this call writes what is new to the cache, and the
  * last block of the last user message before the last assistant message, where an agent loop's
@@ -484,6 +496,8 @@ function cacheHistory(
   messages: Anthropic.MessageParam[],
   slots: number,
   raw: readonly boolean[] = [],
+  /** Messages sent as a stable start and a changing end (`ChatMessage.stableChars`). */
+  stable: readonly boolean[] = [],
 ): void {
   for (const [i, m] of messages.entries())
     if (typeof m.content === "string")
@@ -506,7 +520,13 @@ function cacheHistory(
     const m = messages[i] as Anthropic.MessageParam;
     const blocks: Anthropic.ContentBlockParam[] =
       typeof m.content === "string" ? [{ type: "text", text: m.content }] : [...m.content];
-    const at = blocks.findLastIndex((b) => b.type !== "text" || b.text.length > 0);
+    // A message with a changing end (the chat's facts of now): the mark goes on its stable
+    // start, so the next turn, which replays only that start, reads this entry (the leftovers
+    // of wave 7: each chat turn wrote its history again at 1.25 times the input price).
+    const at =
+      stable[i] && blocks.length === 2
+        ? 0
+        : blocks.findLastIndex((b) => b.type !== "text" || b.text.length > 0);
     if (at < 0) continue;
     blocks[at] = {
       ...(blocks[at] as Anthropic.ContentBlockParam),
@@ -523,6 +543,15 @@ function toApiMessage(m: ChatMessage): Anthropic.MessageParam {
     return {
       role: m.role,
       content: structuredClone(m.raw) as unknown as Anthropic.ContentBlockParam[],
+    };
+  const split = stableSplit(m);
+  if (split)
+    return {
+      role: m.role,
+      content: [
+        { type: "text", text: split[0] },
+        { type: "text", text: split[1] },
+      ],
     };
   if (typeof m.content === "string") return { role: m.role, content: m.content };
   const blocks: Anthropic.ContentBlockParam[] = [];

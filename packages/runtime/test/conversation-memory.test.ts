@@ -184,9 +184,10 @@ describe("the chat remembers the conversation (design §3.9)", () => {
     expect(second.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
     expect(second[0]?.content).toBe("what is going on?");
     expect(second[1]?.content).toBe("Two tasks are done; one is waiting.");
-    // The facts and the line are the turn's own last message, after the history.
+    // The line and the facts are the turn's own last message, after the history.
     expect(second[2]?.content).toContain("# Now");
-    expect(second[2]?.content.endsWith("what did I just ask?")).toBe(true);
+    // The line first, then the facts (the leftovers of wave 7: the line is the cached start).
+    expect(second[2]?.content.startsWith("what did I just ask?")).toBe(true);
     await w.store.close();
   });
 

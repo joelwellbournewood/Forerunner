@@ -128,6 +128,14 @@ export interface ChatMessage {
    * marks and the Headroom proxy keep off it). `content` is the app's own reading of the turn.
    */
   raw?: readonly Record<string, unknown>[];
+  /**
+   * Prompt caching of a message whose end changes on every call (the chat's facts of now, the
+   * leftovers of wave 7): the length of its string `content`'s stable start. The Anthropic
+   * adapter sends the message as two text blocks split there and puts the message's cache
+   * breakpoint on the first, so a later call that replays this message without the changing
+   * part (the conversation's history) reads the entry this call wrote. Other providers ignore it.
+   */
+  stableChars?: number;
 }
 
 /**

@@ -180,7 +180,9 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
       `- open_requests: ${request.id.slice(0, 8)}: [Game] Pick a database. Options: postgres / sqlite.`,
     );
     expect(turn).toContain("- running_sessions: 1");
-    expect(turn.endsWith(text)).toBe(true);
+    // The line first, then the facts of now (the leftovers of wave 7: the line is the cached
+    // start the next turn replays).
+    expect(turn.startsWith(text)).toBe(true);
     // The same logs as the principal: the transcript is a session of Alice's, with the cost.
     const sessions = await w.store.session.list(
       { agent_id: w.alice, trigger: "manual", summary: "conversation" } as never,
