@@ -15,11 +15,11 @@ import { SECRET_NAMES } from "../src/setup/wizard.ts";
 
 /**
  * merged-copy (ADR 0113, the owner's decision of 2026-11-02), in the composed daemon: a merge
- * the app makes (a session's at level 3, a retry's, Merge in the app: all go through
- * `ReviewedPrMerge.onMerged`) brings this computer's copy of the repository to main at once, so
- * `GET /projects/:id/files` lists the merged file with no session ending and no watcher poll;
- * and what the copy holds (its record, its Local only folder) is read again after a restart.
- * Before: the copy moved only when a session ended.
+ * the app makes (a session's in the mode "Merge automatically after review", a retry's, Merge in
+ * the app: all go through `ReviewedPrMerge.onMerged`) brings this computer's copy of the
+ * repository to main at once, so `GET /projects/:id/files` lists the merged file with no session
+ * ending and no watcher poll; and what the copy holds (its record, its Local only folder) is read
+ * again after a restart. Before: the copy moved only when a session ended.
  */
 const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
 const REPO = { owner: "alice", name: "app" };
@@ -93,8 +93,11 @@ async function setup() {
     expect(res.status).toBe(200);
     return (await res.json()) as ProjectFilesView;
   };
-  /** A repository project on `alice/app` at the autonomy level given. */
-  const projectAt = (rt: RuntimeApp, autonomy: number) =>
+  /**
+   * A repository project on `alice/app` at the autonomy level given, in the merge mode given
+   * (merge-in-app: the mode, not level 3, frees a merge; "You press Merge" by default).
+   */
+  const projectAt = (rt: RuntimeApp, autonomy: number, mergeMode?: "after_review") =>
     rt.store.project.insert({
       name: "App",
       goal: "Ship the app",
@@ -105,7 +108,7 @@ async function setup() {
       autonomy_level: autonomy,
       summary_cache: {},
       data_assets: [],
-      settings: { members: [rt.agent.id] },
+      settings: { members: [rt.agent.id], ...(mergeMode ? { merge_mode: mergeMode } : {}) },
       small_project_mode: false,
       active: true,
     });
@@ -152,7 +155,8 @@ describe("this computer's copy follows a merge the app makes (merged-copy)", {
   it("a reviewed PR merged by the session: Files lists its file at once and says when the copy was updated; after a restart it still does, with Local only", async () => {
     const { clock, github, compose, files, projectAt, acceptedTask } = await setup();
     const rt = await compose();
-    const project = await projectAt(rt, 3);
+    // The session merges by itself only in "Merge automatically after review" (merge-in-app).
+    const project = await projectAt(rt, 3, "after_review");
     // The copy as the scaffold or an earlier refresh left it: main with the README only.
     await rt.docs.refreshCopy(project);
     const before = await files(rt, project.id);
