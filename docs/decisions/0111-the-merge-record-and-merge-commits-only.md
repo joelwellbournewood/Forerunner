@@ -355,3 +355,15 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    force-pushed to the branch, the empty pull request went to review, and the app offered it
    for Merge (bench, wave 14: it merged with no diff). The same reading keeps a run that
    continues a paused task's work, and adds nothing more, out of "no changes".
+2. **A person's resolution in the task's folder is used, never aborted.** "I resolved it"
+   given while the person's rebase or merge is still under way in the task's folder (the
+   conflict card's steps) has that step finished with their resolution (resolved files staged,
+   a commit the resolution emptied skipped), and the folder's branch is taken over the host's
+   when the person resolved it there. A file that still holds conflict markers brings the card
+   back with the step left as it was. Before, the run's start-up clean-up for a crash's
+   leftovers aborted the step and the same conflict came back as a second card.
+3. **A paused redo keeps its work.** The drop (or a card's Redo) stays in force until a run
+   reaches review, as before, so the old conflicting branch is never brought back; but a run
+   after the drop that pauses (a budget, a question) marks its work in progress as made from
+   the base, and the next run continues that work instead of starting from the base again. Its
+   push replaces the host's branch, so the pull request never carries the dropped commits.

@@ -452,6 +452,15 @@ export function setAsideRef(taskId: string): string {
 export function wipRef(taskId: string): string {
   return `refs/forerunner/wip/${safeSegment(taskId)}`;
 }
+/**
+ * TM-3 (leftovers7-tailmerge): set beside `wipRef` when the work in progress was made by a run
+ * that started from the base after the person dropped the branch ("Drop the branch and retry
+ * from scratch", a card's Redo): the next run continues it, never the dropped branch, and its
+ * push replaces the host's branch. Removed with `wipRef` once the work goes to review.
+ */
+export function wipFromBaseRef(taskId: string): string {
+  return `refs/forerunner/wip-from-base/${safeSegment(taskId)}`;
+}
 /** A cancelled task's work in progress (its commits), kept until Undo brings it back. */
 export function setAsideWipRef(taskId: string): string {
   return `refs/forerunner/set-aside-wip/${safeSegment(taskId)}`;
@@ -762,8 +771,15 @@ export class PrTaskExecutor implements TaskExecutor {
     if (branch !== task.branch) await this.deps.store.task.patch(task.id, { branch });
     // budget-resume: the task's own work in progress (a pause, a question, a stop) on its local
     // branch: this run continues from it. "Drop the branch and retry from scratch" drops it.
-    const wip = dropped ? null : await this.workInProgress(git, task, branch);
+    // TM-3 (leftovers7-tailmerge): after the drop, work in progress a run made from the base
+    // (`wipFromBaseRef`, a redo that paused before review) is continued, never dropped again;
+    // the host's branch, which holds the work the person dropped, is never brought into it, and
+    // the push replaces it. Before, the drop stayed in force until a run reached review, so each
+    // run after a pause started from the base again and lost the work since the redo.
+    const restarted = dropped ? await this.workInProgressFromBase(git, task, branch) : null;
+    const wip = dropped ? restarted : await this.workInProgress(git, task, branch);
     if (!wip) await git.setRef(wipRef(task.id), null);
+    if (!restarted) await git.setRef(wipFromBaseRef(task.id), null);
     const resume = (!!existingPr && !dropped) || !!wip;
     // C-49 (ADR 0106): the done tasks this one waits for whose pull requests are not merged
     // yet. Their branches are merged into this task's before it runs, so it sees their work;
@@ -774,7 +790,11 @@ export class PrTaskExecutor implements TaskExecutor {
         // The local branch as the last run left it (never `checkout -B` from the host); what a
         // person pushed to the host's copy meanwhile is brought in by a merge.
         await git.checkout(wip);
-        if ((await git.hasRef(`origin/${branch}`)) && !(await git.isAncestor(`origin/${branch}`))) {
+        if (
+          !restarted &&
+          (await git.hasRef(`origin/${branch}`)) &&
+          !(await git.isAncestor(`origin/${branch}`))
+        ) {
           const merged = await git.mergeFrom(`origin/${branch}`, `Bring in ${branch}`);
           if (!merged.ok)
             return this.conflict(ctx, {
@@ -784,7 +804,7 @@ export class PrTaskExecutor implements TaskExecutor {
               target,
               conflicts: merged.conflicts,
               costUsdMicro: 0,
-              force: false,
+              force: !!restarted,
               superseded: answered?.row ?? null,
               merging: true,
             });
@@ -802,7 +822,7 @@ export class PrTaskExecutor implements TaskExecutor {
           target,
           conflicts: rebuilt.conflicts,
           costUsdMicro: 0,
-          force: false,
+          force: !!restarted,
           superseded: answered?.row ?? null,
           merging: true,
           rebuild: rebuilt,
@@ -827,7 +847,7 @@ export class PrTaskExecutor implements TaskExecutor {
               target,
               conflicts: merged.conflicts,
               costUsdMicro: 0,
-              force: false,
+              force: !!restarted,
               superseded: answered?.row ?? null,
               merging: true,
             });
@@ -846,7 +866,7 @@ export class PrTaskExecutor implements TaskExecutor {
             target,
             conflicts: merged.conflicts,
             costUsdMicro: 0,
-            force: false,
+            force: !!restarted,
             superseded: answered?.row ?? null,
             merging: true,
           });
@@ -879,7 +899,7 @@ export class PrTaskExecutor implements TaskExecutor {
     // task's own branch (its next run continues from it); a failed run's leftovers are set
     // aside, so the next attempt starts clean (W6-24).
     if (WIP_OUTCOMES.has(result.outcome))
-      return this.saveWorkInProgress(ctx, { git, dir, branch, target, result });
+      return this.saveWorkInProgress(ctx, { git, dir, branch, target, result, fromBase: dropped });
     if (result.outcome === "failed" || result.outcome === "timeout") {
       await this.setLeftoversAside(git, task);
       return result;
@@ -990,6 +1010,7 @@ export class PrTaskExecutor implements TaskExecutor {
     if (answered) await this.consume(answered.row);
     // The work went to review: nothing of it is in progress any more.
     await git.setRef(wipRef(task.id), null);
+    await git.setRef(wipFromBaseRef(task.id), null);
     this.logger.info("pull request ready", {
       taskId: task.id,
       branch,
@@ -1010,6 +1031,22 @@ export class PrTaskExecutor implements TaskExecutor {
     if (local && (await git.isAncestor(marker, local))) return branch;
     await git.setRef(wipRef(task.id), null);
     return null;
+  }
+
+  /**
+   * TM-3: the task's work in progress when a run made it from the base after the person's drop
+   * (`wipFromBaseRef` marks the same commit as `wipRef`, on the task's local branch), else null.
+   * Work in progress from before the drop is never this: the first run after the drop removes
+   * its marker before anything else.
+   */
+  private async workInProgressFromBase(
+    git: GitOps,
+    task: TaskRow,
+    branch: string,
+  ): Promise<string | null> {
+    const fromBase = await git.resolveRef(wipFromBaseRef(task.id));
+    if (!fromBase || fromBase !== (await git.resolveRef(wipRef(task.id)))) return null;
+    return this.workInProgress(git, task, branch);
   }
 
   /**
@@ -1116,15 +1153,26 @@ export class PrTaskExecutor implements TaskExecutor {
    */
   private async saveWorkInProgress(
     ctx: ExecuteCtx,
-    s: { git: GitOps; dir: string; branch: string; target: Target; result: TaskExecutionResult },
+    s: {
+      git: GitOps;
+      dir: string;
+      branch: string;
+      target: Target;
+      result: TaskExecutionResult;
+      /** The run started from the base after a drop (TM-3): its work is marked as such. */
+      fromBase?: boolean;
+    },
   ): Promise<TaskExecutionResult> {
     const { task } = ctx;
     const { git, dir, branch, target, result } = s;
     let committed = false;
     try {
       committed = (await git.commitAll(workInProgressMessage(task, result))).committed;
-      if (committed || (await git.hasRef(wipRef(task.id))))
-        await git.setRef(wipRef(task.id), await git.headSha());
+      if (committed || (await git.hasRef(wipRef(task.id)))) {
+        const head = await git.headSha();
+        await git.setRef(wipRef(task.id), head);
+        if (s.fromBase) await git.setRef(wipFromBaseRef(task.id), head);
+      }
     } catch (e) {
       this.logger.warn("work in progress not committed", {
         taskId: task.id,

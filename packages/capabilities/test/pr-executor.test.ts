@@ -2009,6 +2009,48 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     await s.w.store.close();
   });
 
+  it("a redo from main whose run pauses before review: the next run continues the work done since the redo, and the pull request never gets the old conflicting commits (TM-3)", async () => {
+    const s = await setup();
+    const { branch, card, pr } = await s.conflicted();
+    const old = await s.lines(["log", "--format=%H", `main..${branch}`]);
+    await s.answer(card, "dropped");
+    // The redo's run does part of the work and stops at its budget.
+    const paused = await s
+      .exec(
+        agent((dir) => writeFileSync(join(dir, "README.md"), "# sample, redone\n"), {
+          outcome: "paused",
+          summary: "Where I stopped: the readme.\nLeft to do: the notes.",
+        }),
+      )
+      .execute(await s.ctx());
+    expect(paused.outcome).toBe("paused");
+    // Continue: the next run finishes it.
+    let saw = "";
+    const next = await s
+      .exec(
+        agent((dir) => {
+          saw = readFileSync(join(dir, "README.md"), "utf8");
+          writeFileSync(join(dir, "notes.md"), "# Notes, redone\n");
+        }),
+      )
+      .execute(await s.ctx());
+    // Before: the drop was still unused, so the next run started from main again and the
+    // paused run's README.md was gone.
+    expect(saw).toBe("# sample, redone\n");
+    expect(next.outcome, next.summary).toBe("in_review");
+    expect(next.prUrl).toBe(pr.htmlUrl);
+    expect(await s.lines(["show", `${branch}:README.md`])).toEqual(["# sample, redone"]);
+    expect(await s.lines(["show", `${branch}:notes.md`])).toEqual(["# Notes, redone"]);
+    // Only the redo's commits on main: none of the old conflicting branch's.
+    const now = await s.lines(["log", "--format=%H", `main..${branch}`]);
+    expect(now.filter((sha) => old.includes(sha))).toEqual([]);
+    expect(await s.lines(["log", "--format=%s", `main..${branch}`])).toEqual([
+      "Edit the readme",
+      "Work in progress: Edit the readme (paused at its budget)",
+    ]);
+    await s.w.store.close();
+  });
+
   it("a run that continues a paused task's work and adds nothing more goes to review with that work, never 'no changes' (TM-1's sibling)", async () => {
     const s = await setup();
     const paused = await s

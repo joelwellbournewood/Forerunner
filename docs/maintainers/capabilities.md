@@ -353,7 +353,12 @@ with their milestone.
   -B` from the host), merges in what a person pushed to the host's copy and the base when it
   moved (`Bring in main`; never a rebase, ADR 0111), and a conflict goes to `conflict` (the
   rebase-conflict card); "Drop the branch and retry from scratch" and the fresh path drop the
-  marker, and a run that went to review removes it; a pushed work in progress with no pull
+  marker, and a run that went to review removes it. A run after the drop that pauses before
+  review marks its work in progress as made from the base (`wipFromBaseRef`, beside `wipRef`):
+  the next run continues it while the drop is still unused (`workInProgressFromBase`), never
+  brings the host's branch (the dropped work) into it, and its pushes replace the host's branch
+  (TM-3, leftovers7-tailmerge; before, every run after such a pause started from the base again
+  and lost the work since the redo); a pushed work in progress with no pull
   request is replaced by a force-with-lease push. A `failed` or `timeout` result's leftovers go
   to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. A run
   the app's close or a crash cut short does neither (both happen only after the inner executor
