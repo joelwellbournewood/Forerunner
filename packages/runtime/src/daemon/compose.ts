@@ -208,13 +208,7 @@ import {
   StoreSharedSecretService,
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
-import {
-  CODE_COMMANDS_SETTING,
-  codeCommandsOf,
-  MID_SESSION_LIMIT_SETTING,
-  midSessionLimitOf,
-  type TaskBillingPort,
-} from "../session/billing.ts";
+import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
@@ -3508,32 +3502,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   /**
    * Whether a task of the project would run now, as its own pick would decide (R-refusedstays,
-   * R-startcred): the billing pick of each ready task (its specialist's needs and its words, the
-   * person's 'When my first choice runs out mid-session'), read-only. The wait the first of them
-   * meets when none can run; null when one can (or the project has no ready task).
+   * R-startcred): the billing pick of each ready task, read-only, with the request its next run
+   * makes (TR-3: the executor's `nextRunBillingRequest`: its specialist and the ladder's
+   * stand-in, the tier that attempt starts on, its needs with the person's answers, the person's
+   * 'When my first choice runs out mid-session'). The wait the first of them meets when none can
+   * run; null when one can, or when a task runs without a pick (a task for the person), or the
+   * project has no ready task.
    */
+  const nextRunProbe = makeLoop(undefined, false);
   const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> => {
     const ready = await store.task.readyTasks(projectId, { limit: 20 }).catch(() => []);
-    const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
-    const mode = midSessionLimitOf(prefs?.[MID_SESSION_LIMIT_SETTING]);
     let first: CredentialWait | null = null;
     for (const task of ready) {
-      const spec = specialists(canonicalSpecialistName(task.specialist ?? "coder"));
-      const needs = needsOf({
-        registryTools: spec?.registryTools ?? spec?.allowedTools ?? [],
-        task,
-        codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-      });
+      const request = await nextRunProbe
+        .nextRunBillingRequest(task, { agentId: agent.id, ownerHumanId: human.id })
+        .catch(() => null);
+      if (!request) return null;
       try {
-        await taskBilling.pick({
-          agentId: agent.id,
-          agentOwnerHumanId: human.id,
-          runner: "pc",
-          modelTier: "sonnet",
-          purpose: "session",
-          needs,
-          ...(mode === "wait" ? { waitOnRest: true } : {}),
-        });
+        await taskBilling.pick(request);
         return null;
       } catch (e) {
         const wait = credentialWaitOf(e);

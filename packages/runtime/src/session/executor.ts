@@ -17,7 +17,7 @@ import {
   newId,
   redact,
 } from "@forerunner/platform";
-import type { JsonObject, JsonValue, StateStore, TaskRow } from "@forerunner/state";
+import type { JsonObject, JsonValue, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
 import { withClaudeCodeTools } from "../agent/cc-tools.ts";
 import {
@@ -151,10 +151,9 @@ import {
   answersBlockFor,
   filePersonQuestions,
   isPersonTask,
-  needsPersonsAnswers,
+  personAnswered,
   questionsAskedByRun,
   WITHOUT_ANSWERS_NOTE,
-  wentAheadWithout,
 } from "./person-questions.ts";
 import {
   lessonsFromReport,
@@ -780,28 +779,15 @@ export class LoopTaskExecutor implements TaskExecutor {
     // specialist's mode, then its registry file, then the agent's `model_config` override.
     const modelConfig = this.deps.modelConfig?.();
     const mode = specialistMode(defaultSpec.name);
-    const capabilities = providerCapabilities(this.deps.provider);
-    const agentConfig = parseAgentModelConfig(
-      (await store.agent.get(session.agent_id))?.model_config,
+    const { settings, error: agentConfigError } = await this.runSettingsOf(
+      defaultSpec,
+      session.agent_id,
     );
-    if (agentConfig.error)
+    if (agentConfigError)
       this.deps.onEvent?.(task.id, {
         type: "warning",
-        message: `the agent's model settings are malformed and were ignored (${agentConfig.error}); the registry and effort-table defaults apply`,
+        message: `the agent's model settings are malformed and were ignored (${agentConfigError}); the registry and effort-table defaults apply`,
       });
-    const settings = resolveRunSettings({
-      mode,
-      modeDefaults: modelConfig?.modeDefaults,
-      specialist: {
-        tier: defaultSpec.defaultTier,
-        timeoutMs: defaultSpec.timeoutMs,
-        ...(defaultSpec.maxTokens !== undefined ? { maxTokens: defaultSpec.maxTokens } : {}),
-        ...(defaultSpec.speedMode !== undefined ? { speedMode: defaultSpec.speedMode } : {}),
-        ...(defaultSpec.temperature !== undefined ? { temperature: defaultSpec.temperature } : {}),
-      },
-      override: specialistOverride(agentConfig.config, defaultSpec.name),
-      capabilities,
-    });
     const timeoutMs = settings.timeoutMs;
     // Memory (spec G): lessons for this task, as data, under the task budget.
     let lessonsBlock = "";
@@ -910,13 +896,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     // composition's `projectCeiling` or, without one, read here; the static `ceiling` is the
     // fallback for a project without the setting, then the ladder's default. A project capped
     // at sonnet therefore never escalates a retry to opus, whichever composition built this.
-    const readCeiling = this.deps.projectCeiling ?? projectCeilingOf;
-    const ceiling = readCeiling(project?.settings) ?? this.deps.ceiling;
-    const tier = tierForAttempt(
-      startingTier(settings.tier, brief.riskTier, ceiling),
-      task.attempt,
-      ceiling,
-    );
+    const tier = this.tierOf(task, settings.tier, project);
     const worktree = await this.deps.worktreeFor?.(task);
     const runId = newId(clock.now());
 
@@ -928,7 +908,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     // their answers, commands as the person's setting says) against what each credential can do
     // here; the person's order decides among the ones that can. It replaced C-64's "research on
     // the API key first" (ADR 0107 points 7 to 9 amended).
-    const needs = await this.taskNeeds(ctx, defaultSpec);
+    const needs = await this.taskNeeds(task, token.claims.ownerHumanId, defaultSpec);
     const choice = await this.pickBilling(ctx, tier, runId, needs);
     const spec =
       choice.driver === "sdk"
@@ -1778,19 +1758,34 @@ export class LoopTaskExecutor implements TaskExecutor {
    * moves on).
    */
   private async billingRequest(
-    ctx: Parameters<TaskExecutor["execute"]>[0],
+    ctx: Pick<Parameters<TaskExecutor["execute"]>[0], "session" | "token">,
     tier: ModelTier,
     needs: TaskNeeds | undefined,
   ): Promise<TaskBillingRequest> {
-    const { session, token } = ctx;
-    const agent = await this.deps.store.agent.get(session.agent_id);
-    const ownerId = agent?.owner_human_id ?? token.claims.ownerHumanId;
+    return this.billingRequestOf(
+      {
+        agentId: ctx.session.agent_id,
+        ownerHumanId: ctx.token.claims.ownerHumanId,
+        runner: ctx.session.runner === "cloud" ? "cloud" : "pc",
+      },
+      tier,
+      needs,
+    );
+  }
+
+  private async billingRequestOf(
+    who: { agentId: string; ownerHumanId: string; runner: "pc" | "cloud" },
+    tier: ModelTier,
+    needs: TaskNeeds | undefined,
+  ): Promise<TaskBillingRequest> {
+    const agent = await this.deps.store.agent.get(who.agentId);
+    const ownerId = agent?.owner_human_id ?? who.ownerHumanId;
     const human = await this.deps.store.human.get(ownerId).catch(() => undefined);
     const mode = midSessionLimitOf(human?.notify_prefs?.[MID_SESSION_LIMIT_SETTING]);
     return {
-      agentId: session.agent_id,
+      agentId: who.agentId,
       agentOwnerHumanId: ownerId,
-      runner: session.runner === "cloud" ? "cloud" : "pc",
+      runner: who.runner,
       modelTier: tier,
       purpose: "session",
       ...(needs ? { needs } : {}),
@@ -1805,23 +1800,90 @@ export class LoopTaskExecutor implements TaskExecutor {
    * commands" (`code_commands`).
    */
   private async taskNeeds(
-    ctx: Parameters<TaskExecutor["execute"]>[0],
+    task: TaskRow,
+    ownerHumanId: string,
     spec: SpecialistSpec,
   ): Promise<TaskNeeds> {
     const { store } = this.deps;
-    const { task, token } = ctx;
-    const human = await store.human.get(token.claims.ownerHumanId).catch(() => undefined);
-    const wouldAsk = needsPersonsAnswers(task);
-    const answered = wouldAsk
-      ? (await wentAheadWithout(store, task.id).catch(() => false)) ||
-        (await answersBlockFor(store, task.id).catch(() => "")) !== ""
-      : false;
+    const human = await store.human.get(ownerHumanId).catch(() => undefined);
     return needsOf({
       registryTools: spec.registryTools ?? spec.allowedTools,
       task,
-      answered,
+      answered: await personAnswered(store, task),
       codeCommands: codeCommandsOf(human?.notify_prefs?.[CODE_COMMANDS_SETTING]),
     });
+  }
+
+  /**
+   * The model settings of `spec`'s runs for the agent (spec D.4, ADR 0072): the effort table row
+   * of the specialist's mode, then its registry file, then the agent's `model_config` override;
+   * `error` names a malformed override, which is ignored.
+   */
+  private async runSettingsOf(spec: SpecialistSpec, agentId: string) {
+    const modelConfig = this.deps.modelConfig?.();
+    const agentConfig = parseAgentModelConfig(
+      (await this.deps.store.agent.get(agentId))?.model_config,
+    );
+    const settings = resolveRunSettings({
+      mode: specialistMode(spec.name),
+      modeDefaults: modelConfig?.modeDefaults,
+      specialist: {
+        tier: spec.defaultTier,
+        timeoutMs: spec.timeoutMs,
+        ...(spec.maxTokens !== undefined ? { maxTokens: spec.maxTokens } : {}),
+        ...(spec.speedMode !== undefined ? { speedMode: spec.speedMode } : {}),
+        ...(spec.temperature !== undefined ? { temperature: spec.temperature } : {}),
+      },
+      override: specialistOverride(agentConfig.config, spec.name),
+      capabilities: providerCapabilities(this.deps.provider),
+    });
+    return { settings, error: agentConfig.error };
+  }
+
+  /**
+   * The tier `task`'s next attempt starts on (spec D.2/D.3): the settings' tier under the
+   * project's ceiling (`critic_ceiling`, through the composition's `projectCeiling` or read
+   * here; the static `ceiling` for a project without the setting), escalated by the attempts.
+   */
+  private tierOf(task: TaskRow, settingsTier: ModelTier, project: ProjectRow | undefined) {
+    const readCeiling = this.deps.projectCeiling ?? projectCeilingOf;
+    const ceiling = readCeiling(project?.settings) ?? this.deps.ceiling;
+    return tierForAttempt(
+      startingTier(settingsTier, task.risk_tier as 0 | 1 | 2 | 3, ceiling),
+      task.attempt,
+      ceiling,
+    );
+  }
+
+  /**
+   * What the next run of `task` asks the billing pick, without running it (leftovers7-tailrun
+   * TR-3): the specialist `execute` gives it (a canonical name, the retry ladder's stand-in),
+   * the tier that attempt starts on and what it needs of its credential (its words, the
+   * person's answers). The Start check asks the pick with this request, so its verdict is the
+   * run's; before, it asked with tier "sonnet" and without the answers, so a task whose
+   * questions were answered still needed the person and the check could say "Nothing can run
+   * yet" while the run went to the subscription. Null when no run would pick (a task for the
+   * person, a specialist no entry names, a ladder with no stand-in).
+   */
+  async nextRunBillingRequest(
+    task: TaskRow,
+    who: { agentId: string; ownerHumanId: string; runner?: "pc" | "cloud" },
+  ): Promise<TaskBillingRequest | null> {
+    const named = task.specialist ?? "coder";
+    if (isPersonTask(task, named)) return null;
+    let spec =
+      this.deps.specialists(named) ?? this.deps.specialists(canonicalSpecialistName(named));
+    if (!spec) return null;
+    const standIn = await this.ladderStandIn(task, spec);
+    if (standIn === "none") return null;
+    if (standIn && !("keptAcross" in standIn)) spec = standIn;
+    const project = task.project_id
+      ? await this.deps.store.project.get(task.project_id)
+      : undefined;
+    const { settings } = await this.runSettingsOf(spec, who.agentId);
+    const tier = this.tierOf(task, settings.tier, project);
+    const needs = await this.taskNeeds(task, who.ownerHumanId, spec);
+    return this.billingRequestOf({ runner: "pc", ...who }, tier, needs);
   }
 
   /**

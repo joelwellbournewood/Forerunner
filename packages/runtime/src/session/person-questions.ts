@@ -658,6 +658,23 @@ export async function withoutAnswersOn(
   return found ? { questions: questions.slice(0, MAX_PERSON_QUESTIONS) } : null;
 }
 
+/**
+ * Whether the person already answered what `task`'s words ask of them (its questions answered
+ * in the Inbox, or "Go ahead without" pressed), so its runs no longer need a credential that
+ * can ask (`needsOf`'s `answered`). False for a task whose words ask nothing. The run's pick and
+ * the Start check read it here, so they agree (leftovers7-tailrun TR-3).
+ */
+export async function personAnswered(
+  store: WithoutStore,
+  task: Parameters<typeof needsPersonsAnswers>[0] & { id: string },
+): Promise<boolean> {
+  if (!needsPersonsAnswers(task)) return false;
+  return (
+    (await wentAheadWithout(store, task.id).catch(() => false)) ||
+    (await answersBlockFor(store, task.id).catch(() => "")) !== ""
+  );
+}
+
 /** Whether the person went ahead without answering on this task (`withoutAnswersOn`). */
 export async function wentAheadWithout(store: WithoutStore, taskId: string): Promise<boolean> {
   return (await withoutAnswersOn(store, taskId)) !== null;

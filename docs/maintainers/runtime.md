@@ -548,8 +548,11 @@ ended is cleared with its card, judged in the copy each version-checked write wo
 the credential the vault holds, so a refusal written between its list and its write is kept,
 TR-4; and, R-refusedstays, a project kept on a source that cannot serve
 whose work another credential serves now, asked through `credentialWaitNow`: the billing pick of
-each ready task, read-only, so 'Wait' still holds work to a first choice that rests or was
-refused) and requests one session start each (`budget_reset`) while the project has ready work.
+each ready task, read-only, with the request its next run makes (TR-3:
+`LoopTaskExecutor.nextRunBillingRequest`, the specialist and the ladder's stand-in, the tier that
+attempt starts on, its needs with the person's answers read by `personAnswered`; before, tier
+"sonnet" and no answers, so a task whose questions were answered still needed the person), so
+'Wait' still holds work to a first choice that rests or was refused) and requests one session start each (`budget_reset`) while the project has ready work.
 `credentialSaved` also seeds a billing row for a credential of a kind the install had none of
 (`seedBillingSources`: a subscription saved while only a refused key was could serve nothing
 until a restart). R-wakeorder: the wait leaves the source only once its start is known to run:
