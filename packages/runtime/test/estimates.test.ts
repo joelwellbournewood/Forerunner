@@ -2,19 +2,23 @@ import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  boundedPlanEstimate,
   DEFAULT_COLD_START_BUDGET_SHARE,
   DEFAULT_COLD_START_TIMEOUT_SHARE,
   DEFAULT_FALLBACK_USD_MICRO,
   DEFAULT_FALLBACK_WALL_MS,
   DEFAULT_FOLD_OVERLAP_MS,
+  DEFAULT_STARTING_ESTIMATE_USD_MICRO,
   EstimateModel,
   type EstimateModelSnapshot,
   type EstimatePort,
   type EstimateSample,
   kindOfTask,
+  PLAN_ESTIMATE_BOUND,
   planEstimateUsdMicro,
   RATIO_MAX,
   type SpecialistDefaults,
+  STARTING_ESTIMATES_USD_MICRO,
 } from "../src/estimates/model.ts";
 import { EstimateAccuracyViewSchema, estimateAccuracyView } from "../src/estimates/view.ts";
 import { cutPlanToBudget, type SessionPlan } from "../src/session/runner.ts";
@@ -38,9 +42,64 @@ function sample(over: Partial<EstimateSample> & { i: number }): EstimateSample {
   };
 }
 
+describe("estimate model: the calibrated starting estimates (cost, L-22)", () => {
+  it("a task with no estimate of its own starts at what its kind of work cost on the real model", () => {
+    const m = new EstimateModel({ defaults });
+    for (const [specialist, usdMicro] of Object.entries(STARTING_ESTIMATES_USD_MICRO)) {
+      expect(m.estimate({ specialist, risk_tier: 1 }), specialist).toMatchObject({
+        basis: "calibrated",
+        usdMicro,
+        samples: 0,
+      });
+    }
+    // Ordinary specialist work cost USD 0.01-0.10 a task on 2026-11-01/02 (Sonnet 5.5); a
+    // research task, which reads pages, about ten times that.
+    for (const s of ["coder", "tester", "writer-marketing", "designer", "reviewer"])
+      expect(STARTING_ESTIMATES_USD_MICRO[s], s).toBeLessThanOrEqual(100_000);
+    expect(STARTING_ESTIMATES_USD_MICRO.researcher).toBeGreaterThan(300_000);
+    // Before, a coder task a person made started at half the registry's cap: USD 1.50, and the
+    // Start dialog said a CHF 0.50 session could run nothing.
+    expect(m.estimate({ specialist: "coder", risk_tier: 1 }).usdMicro).toBeLessThan(100_000);
+    // A specialist the table does not name starts at the typical figure, not at a cap.
+    expect(m.estimate({ specialist: "illustrator", risk_tier: 0 })).toMatchObject({
+      basis: "calibrated",
+      usdMicro: DEFAULT_STARTING_ESTIMATE_USD_MICRO,
+    });
+  });
+
+  it("the plan model's guess is kept within the calibrated band of its kind", () => {
+    const coder = STARTING_ESTIMATES_USD_MICRO.coder as number;
+    // The live plans guessed USD 0.15 for a quote page that cost about USD 0.01-0.03.
+    expect(boundedPlanEstimate(150_000, "coder")).toBe(Math.round(coder * PLAN_ESTIMATE_BOUND));
+    expect(boundedPlanEstimate(1, "coder")).toBe(Math.round(coder / PLAN_ESTIMATE_BOUND));
+    expect(boundedPlanEstimate(coder, "coder")).toBe(coder);
+    // No guess: the calibrated figure itself; a research guess stays within research's band.
+    expect(boundedPlanEstimate(0, "tester")).toBe(STARTING_ESTIMATES_USD_MICRO.tester);
+    expect(boundedPlanEstimate(1_200_000, "researcher")).toBe(
+      Math.round((STARTING_ESTIMATES_USD_MICRO.researcher as number) * PLAN_ESTIMATE_BOUND),
+    );
+    expect(boundedPlanEstimate(150_000, null)).toBe(Math.round(coder * PLAN_ESTIMATE_BOUND));
+  });
+
+  it("converges on a ten-times over-estimate: within x2 after 3 tasks of the kind, within x1.25 after 10", () => {
+    const m = new EstimateModel({ defaults });
+    const query = { specialist: "coder", risk_tier: 1, est_cost_usd_micro: 1_000_000 };
+    const off = () => m.estimate(query).usdMicro / 100_000;
+    for (let i = 0; i < 3; i++) m.observe(sample({ i, actualUsdMicro: 100_000 }));
+    expect(off()).toBeLessThanOrEqual(2);
+    for (let i = 3; i < 10; i++) m.observe(sample({ i, actualUsdMicro: 100_000 }));
+    expect(off()).toBeLessThanOrEqual(1.25);
+    // And the other way: a five-times under-estimate is caught as fast.
+    const low = new EstimateModel({ defaults });
+    for (let i = 0; i < 3; i++) low.observe(sample({ i, actualUsdMicro: 5_000_000 }));
+    expect(5_000_000 / low.estimate(query).usdMicro).toBeLessThanOrEqual(2);
+  });
+});
+
 describe("estimate model: cold start and bases", () => {
   it("cold start uses the registry defaults scaled by the documented share, else the fallback", () => {
-    const m = new EstimateModel({ defaults });
+    // Without the calibrated table (a caller that passes none): the registry path.
+    const m = new EstimateModel({ defaults, startingEstimates: null });
     const coder = m.estimate({ specialist: "coder", risk_tier: 1 });
     expect(coder).toMatchObject({
       basis: "registry_default",
@@ -238,6 +297,10 @@ async function finishedTask(
     runs?: number;
     /** The model the runs name (a fast-mode variant for an urgent run, ADR 0057). */
     model?: string;
+    /** Each work run's outcome (default "completed"); "paused" as budget-stop writes it. */
+    outcomes?: string[];
+    /** A review by the critic of this cost (its own Run row and ledger row). */
+    reviewUsdMicro?: number;
   },
 ): Promise<TaskRow> {
   await w.clock.advance(60_000);
@@ -266,7 +329,7 @@ async function finishedTask(
       effort: "medium",
       cost_usd_micro: Math.round(over.actual / runs),
       duration_ms: Math.round((over.durationMs ?? 300_000) / runs),
-      outcome: "completed",
+      outcome: over.outcomes?.[i] ?? "completed",
     });
     if (over.ledger) {
       await w.store.costLedger.record({
@@ -278,6 +341,32 @@ async function finishedTask(
         run_id: run.id,
         kind: "api",
         usd_micro: Math.round(over.actual / runs),
+        model: "fake-sonnet",
+      });
+    }
+  }
+  if (over.reviewUsdMicro) {
+    const review = await w.store.run.insert({
+      task_id: task.id,
+      session_id: w.session,
+      specialist: "critic",
+      model: "fake-sonnet",
+      provider: "fake",
+      effort: "medium",
+      cost_usd_micro: over.reviewUsdMicro,
+      duration_ms: 60_000,
+      outcome: "completed",
+    });
+    if (over.ledger) {
+      await w.store.costLedger.record({
+        human_id: w.human,
+        agent_id: w.agent,
+        project_id: w.project,
+        session_id: w.session,
+        task_id: task.id,
+        run_id: review.id,
+        kind: "api",
+        usd_micro: over.reviewUsdMicro,
         model: "fake-sonnet",
       });
     }
@@ -369,16 +458,71 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
         specialist: "researcher",
         riskTier: 2,
         estimate: 0,
-        actual: 250_000,
+        actual: 100_000,
         durationMs: 600_000,
       });
     const m = await EstimateModel.fromStore(w.store, { defaults });
     const r = m.estimate({ specialist: "researcher", risk_tier: 2 });
-    // registry cold start: 2 USD * 0.5 = 1 USD; actuals at 0.25 USD pull the ratio well below 1.
+    // The calibrated start (USD 0.50 for research); actuals at USD 0.10 pull the ratio well
+    // below 1.
+    const start = STARTING_ESTIMATES_USD_MICRO.researcher as number;
     expect(r.basis).toBe("learned");
     expect(r.costRatio).toBeLessThan(0.5);
-    expect(r.usdMicro).toBe(Math.round(1_000_000 * r.costRatio));
+    expect(r.usdMicro).toBe(Math.round(start * r.costRatio));
     expect(r.wallRatio).toBeLessThan(1);
+  });
+
+  it("a task with a run stopped at a budget is no sample, and its reviews are no part of its work's cost (cost)", async () => {
+    const w = await world();
+    worlds.push(w);
+    for (let i = 0; i < 3; i++)
+      await finishedTask(w, { estimate: 100_000, actual: 200_000, ledger: true });
+    // Paused at its budget (the Run row budget-stop writes), continued, then done: what it spent
+    // is a lower bound of what the work costs, never a full sample.
+    const paused = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 900_000,
+      runs: 2,
+      outcomes: ["paused", "completed"],
+      ledger: true,
+    });
+    // Stopped at the hard line and cancelled afterwards.
+    const stopped = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 900_000,
+      outcomes: ["budget_exceeded"],
+      status: "cancelled",
+      ledger: true,
+    });
+    // Reviewed twice by the critic for USD 0.50: the work cost USD 0.20, as its budget saw it.
+    const reviewed = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 200_000,
+      ledger: true,
+      reviewUsdMicro: 500_000,
+    });
+    // And without ledger rows (a subscription's runs): the work runs only, too.
+    const unbooked = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 200_000,
+      reviewUsdMicro: 500_000,
+    });
+    const m = await EstimateModel.fromStore(w.store, { defaults });
+    const sampled = m.recentSamples().map((s) => s.taskId);
+    expect(sampled).not.toContain(paused.id);
+    expect(sampled).not.toContain(stopped.id);
+    expect(m.stats()[0]?.samples).toBe(5);
+    const of = (id: string) => m.recentSamples().find((s) => s.taskId === id)?.actualUsdMicro;
+    expect(of(reviewed.id)).toBe(200_000);
+    expect(of(unbooked.id)).toBe(200_000);
+    // Every sample says twice the estimate: the learned ratio is 2, not pulled up by the stops
+    // or the reviews.
+    expect(m.estimate({ specialist: "coder", risk_tier: 1 }).costRatio).toBeCloseTo(
+      2 ** (5 / 6),
+      3,
+    );
+    // Folded once and skipped: a refresh neither counts them nor reads them again.
+    expect(await m.refresh(w.store)).toBe(0);
   });
 
   it("feeds the planner through EstimatePort and cutPlanToBudget", async () => {
@@ -475,6 +619,95 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
       });
     }
     expect(looped.estimate(query).costRatio).toBeLessThan(truth - 0.3);
+  });
+
+  // Review of 'cost': the live feed skipped only a call that itself paused, so a task raised or
+  // continued after a budget stop was learned from until the next restart, whose fold left it
+  // out. The live feed now reads the task's Run rows and leaves out what the fold leaves out.
+  it("the live feed leaves out every task the fold leaves out: a budget stop before a raise, a fast-mode run, no finished work run (cost)", async () => {
+    const w = await world();
+    worlds.push(w);
+    const plain = await finishedTask(w, { estimate: 100_000, actual: 200_000, ledger: true });
+    // Stopped at its budget (hard or graceful), raised or continued, then done.
+    const raised = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 300_000,
+      runs: 2,
+      outcomes: ["budget_exceeded", "completed"],
+      ledger: true,
+    });
+    const continued = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 300_000,
+      runs: 2,
+      outcomes: ["paused", "completed"],
+      ledger: true,
+    });
+    const fast = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 400_000,
+      model: "fake-opus-fast",
+      ledger: true,
+    });
+    // A call that met a resting credential ran nothing: the task has no finished work run yet.
+    const waited = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 0,
+      runs: 1,
+      outcomes: ["running"],
+      status: "ready",
+    });
+    // A run that ended before its first model call (a refused sandbox lease, a provider error on
+    // the first request) spent nothing, and the person cancelled the task: a cost of 0 says
+    // nothing about what the work costs (it read as a tenth of the estimate, the clamp).
+    const spentNothing = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 0,
+      outcomes: ["error"],
+      status: "cancelled",
+      ledger: true,
+    });
+    // Reviewed for USD 0.50 and booked: the work's cost is what the task's budget saw.
+    const reviewed = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 300_000,
+      ledger: true,
+      reviewUsdMicro: 500_000,
+      durationMs: 420_000,
+    });
+    // The critic accepts it two minutes after its run ended: the task row moves on, the run not.
+    await w.clock.advance(120_000);
+    await w.store.task.patch(reviewed.id, { reason: "Reviewed" });
+    const live = new EstimateModel({ defaults });
+    // The hook's moment is later still; a sample's time is when its work ended, in both feeds.
+    await w.clock.advance(60_000);
+    const feed = (t: TaskRow, outcome = "done") =>
+      live.observeTaskRuns(w.store, t, w.clock.nowIso(), outcome);
+    expect(await feed(plain)).toBe(true);
+    // The finishing call of a raised or continued task: it did the rest of the work only.
+    expect(await feed(raised)).toBe(false);
+    expect(await feed(continued)).toBe(false);
+    expect(await feed(fast)).toBe(false);
+    expect(await feed(waited, "usage_limit")).toBe(false);
+    // A call that itself stopped at a budget, before its Run row says so.
+    const fresh = await finishedTask(w, { estimate: 100_000, actual: 50_000, status: "ready" });
+    expect(await feed(fresh, "paused")).toBe(false);
+    expect(await feed(fresh, "budget_exceeded")).toBe(false);
+    // A retry a credential stopped before it spent anything: the try before it finished, but
+    // this call is no measure of the task's cost (a sample of 0 would read as a tenth).
+    expect(await feed(fresh, "usage_limit")).toBe(false);
+    expect(await feed(spentNothing, "failed")).toBe(false);
+    expect(await feed(reviewed)).toBe(true);
+    expect(live.recentSamples().map((s) => s.taskId)).toEqual([plain.id, reviewed.id]);
+    // The sample is the fold's, figure for figure: the work's cost (the ledger less the review)
+    // and its runs' wall time, so a restart changes nothing the Performance screen shows.
+    expect(live.recentSamples().find((s) => s.taskId === reviewed.id)).toMatchObject({
+      actualUsdMicro: 300_000,
+      actualWallMs: 420_000,
+    });
+    const restarted = await EstimateModel.fromStore(w.store, { defaults });
+    expect(live.recentSamples()).toEqual(restarted.recentSamples());
+    expect(live.stats()).toEqual(restarted.stats());
   });
 
   it("a task observed live is not folded again by a refresh inside the overlap window", async () => {

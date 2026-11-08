@@ -86,14 +86,31 @@ describe("billing wiring", () => {
   it("prices runs from the table and reads sources and credentials", async () => {
     const p = pricingFor("claude-sonnet-5-5");
     expect(p.estimate(1_000_000, 1_000)).toBeGreaterThan(0);
-    expect(
+    const plain = p.cost({
+      input_tokens: 1_000_000,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    // The worst case prices the input as the loop's history breakpoint writes it ('cost'): a
+    // cache write, never below plain input; a prefix expected from the cache, at the read price.
+    expect(p.estimate(1_000_000, 0)).toBe(
       p.cost({
-        input_tokens: 1_000_000,
+        input_tokens: 0,
         output_tokens: 0,
         cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 1_000_000,
+      }),
+    );
+    expect(p.estimate(1_000_000, 0)).toBeGreaterThan(plain);
+    expect(p.estimate(1_000_000, 0, 1_000_000)).toBe(
+      p.cost({
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 1_000_000,
         cache_creation_input_tokens: 0,
       }),
-    ).toBe(p.estimate(1_000_000, 0));
+    );
     expect(() =>
       pricingFor("no-such-model").cost({
         input_tokens: 1,

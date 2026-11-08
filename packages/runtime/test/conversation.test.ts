@@ -951,9 +951,10 @@ describe("conversation agent cacheable prefix", () => {
     expect(b.origin?.sessionId).toBe(a.origin?.sessionId);
     // D.9: chat turns run at effort low (the text_chat mode's default).
     expect([a.effort, b.effort]).toEqual(["low", "low"]);
-    // Cache flags reach the provider request on both turns.
-    expect(a.cache).toEqual({ system: true, tools: true });
-    expect(b.cache).toEqual({ system: true, tools: true });
+    // Cache flags reach the provider request on both turns; the conversation is cached too
+    // ('cost', L-15), so a turn's tool steps read what the step before sent.
+    expect(a.cache).toEqual({ system: true, tools: true, messages: true });
+    expect(b.cache).toEqual({ system: true, tools: true, messages: true });
     // Tools: same names, order, descriptions and schemas, byte for byte.
     expect((a.tools ?? []).length).toBeGreaterThan(0);
     expect((b.tools ?? []).map((t) => t.name)).toEqual((a.tools ?? []).map((t) => t.name));

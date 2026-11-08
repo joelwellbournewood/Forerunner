@@ -321,13 +321,36 @@ function toModelRequest(body: MessagesBody, signal: AbortSignal): ModelRequest {
     description: t.description ?? "",
     input_schema: t.input_schema ?? {},
   }));
+  const cache = cacheMarks(body);
   return {
     model: body.model,
     ...(body.system ? { system: textOf(body.system) } : {}),
     messages,
     ...(tools.length ? { tools } : {}),
     max_tokens: body.max_tokens ?? 4096,
+    ...(cache ? { cache } : {}),
     signal,
+  };
+}
+
+/**
+ * The prompt-cache breakpoints the body carries (`cache_control` on the system prompt, a tool,
+ * a message block), as the request's `cache` flags ('cost'): the role-player bills them as the
+ * API would and the model-call log shows what the Anthropic adapter asked for.
+ */
+function cacheMarks(body: MessagesBody): ModelRequest["cache"] | undefined {
+  const marked = (b: unknown) =>
+    !!b && typeof b === "object" && (b as { cache_control?: unknown }).cache_control != null;
+  const system = Array.isArray(body.system) && body.system.some(marked);
+  const tools = (body.tools ?? []).some(marked);
+  const messages = (body.messages ?? []).some(
+    (m) => Array.isArray(m.content) && (m.content as unknown[]).some(marked),
+  );
+  if (!system && !tools && !messages) return undefined;
+  return {
+    ...(system ? { system: true } : {}),
+    ...(tools ? { tools: true } : {}),
+    ...(messages ? { messages: true } : {}),
   };
 }
 

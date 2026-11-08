@@ -841,8 +841,15 @@ wires it, with the root config's projects naming none of their own. `apps/ui/tes
   (`waitFor` on the sent log) instead of reading once; a P2 flake, not a product defect.
 ### Fake provider
 
-- Prompt caching is not simulated: `cache_read_input_tokens` and `cache_creation_input_tokens`
-  are 0 unless a reply overrides them.
+- Prompt caching is simulated only when asked: `new FakeProvider({ promptCache: true })` (or
+  its options: `minTokens`, `ttlMs`) bills each request as Anthropic's cache would
+  (`PromptCacheSim`, `testenv/src/provider/prompt-cache.ts`): the marks the request's `cache`
+  flags place (tools, system, the last message and where the previous call ended) are read when a
+  request of the same model wrote or read them less than five minutes ago on the fake's clock,
+  the rest past them is written, a prefix under the minimum is plain input. Without it
+  `cache_read_input_tokens` and `cache_creation_input_tokens` are 0 unless a reply overrides
+  them. The bench's role-player always plays the cache ('cost'), and its model-call log line
+  carries the request's `cache` flags.
 - With the default `latency: "simulated"` on the system clock a script waits 300 ms of real
   time per call; unit tests pass a `SimulatedClock` or `latency: "none"`.
 - `complete()` throws on provider errors while the runtime's `collectStream` returns

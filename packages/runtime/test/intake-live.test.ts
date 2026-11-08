@@ -6,6 +6,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { chfText } from "../src/money-words.ts";
 import type {
   ModelProvider,
   ModelRef,
@@ -347,6 +348,84 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
       expect(t.reason).toMatch(/ …$/);
     }
   });
+
+  // Review of 'cost': the plan's estimates are kept within their kind's calibrated band, and the
+  // bound gave the person's questions (estimate 0 in every live reply: no specialist runs,
+  // nothing is billed) the typical USD 0.06 of a specialist's task. The card priced the
+  // questions at "~CHF 0.05", counted them in the first session's total, and their task's row
+  // carried the figure.
+  for (const line of [1, 25]) {
+    it(`live reply ${line}: the person's questions cost nothing on the card and in their task's row (cost)`, async () => {
+      const project = await createProject(LIST_BRIEF);
+      provider.queue.push({ text: live(line).reply_text });
+      const res = await req(`/projects/${project.id}/intake`, { method: "POST", body: "{}" });
+      expect(res.status).toBe(202);
+      const raw = JSON.parse(live(line).reply_text) as {
+        plan: { milestones: { tasks: { key: string; title: string; specialist?: string }[] }[] };
+      };
+      const planned = raw.plan.milestones.flatMap((m) => m.tasks);
+      const isPerson = (key: string) =>
+        planned.some((t) => t.key === key && t.specialist === "person");
+      // What the Inbox shows of the card (`GET /inbox`: why and steps are the phone's text and
+      // the chat's open-card context; the proposal is what the desktop card reads).
+      const inbox = (await json(await req("/inbox"))) as {
+        requests: {
+          projectId: string | null;
+          status: string;
+          why: string;
+          steps: string[];
+          changeCard: {
+            proposal: { firstSession: { items: { key: string; estimateUsdMicro: number }[] } };
+          };
+        }[];
+      };
+      const card = inbox.requests.find((r) => r.projectId === project.id && r.status === "open");
+      if (!card) throw new Error("no plan card");
+      const items = card.changeCard.proposal.firstSession.items;
+      const asked = items.filter((i) => isPerson(i.key));
+      expect(asked, "the person's questions are in the first session").toHaveLength(1);
+      for (const i of asked) expect(i.estimateUsdMicro, i.key).toBe(0);
+      const agents = items.filter((i) => !isPerson(i.key));
+      for (const i of agents) expect(i.estimateUsdMicro, i.key).toBeGreaterThan(0);
+      const total = agents.reduce((s, i) => s + i.estimateUsdMicro, 0);
+      expect(card.why).toContain(
+        `a first-session plan of ${items.length} task(s) (~${chfText(total)})`,
+      );
+      const first = card.steps.find((s) => s.startsWith("First session: ")) ?? "";
+      for (const i of asked) {
+        const title = planned.find((t) => t.key === i.key)?.title ?? "";
+        expect(first).toContain(`${title} (~CHF 0.00)`);
+      }
+      // Reply 25's agent work all waits on the person's answers, so approving it starts a
+      // session with nothing to run: the person's task is written with no estimate.
+      if (line !== 25) return;
+      const [row] = await rt.store.humanRequest.open({
+        humanId: rt.human.id,
+        projectId: project.id,
+      });
+      if (!row) throw new Error("no plan card row");
+      const answered = await req(`/requests/${row.id}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: row.version, answer: "Approve and start" }),
+      });
+      expect(answered.status, await answered.clone().text()).toBe(200);
+      const tasks = await rt.store.task.list({ project_id: project.id } as never);
+      const people = tasks.filter((t) => t.specialist === "person");
+      expect(people).toHaveLength(1);
+      for (const t of people) expect(t.est_cost_usd_micro, t.title).toBe(0);
+      // Leave nothing running for the next test (it queues replies of its own).
+      const deadline = Date.now() + 20_000;
+      while ((await rt.store.session.active(rt.agent.id)).length > 0) {
+        if (Date.now() > deadline)
+          throw new Error(
+            `a session was still running 20 s after the approval: ${JSON.stringify(
+              (await rt.store.session.active(rt.agent.id)).map((s) => s.status),
+            )}`,
+          );
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    });
+  }
 
   it("a reply that does not validate is asked for once more, with the problems in words, and its plan lands as the card", async () => {
     const project = await createProject("A page that shows a random quote");

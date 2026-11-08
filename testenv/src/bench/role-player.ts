@@ -6,6 +6,7 @@ import {
   FAKE_MODELS,
   FAKE_PROVIDER_NAME,
 } from "../provider/fake-provider.ts";
+import { PromptCacheSim } from "../provider/prompt-cache.ts";
 import type {
   ModelProvider,
   ModelRequest,
@@ -204,6 +205,15 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
   /** Task titles seen in specialist runs: the critic's brief is "<title>: <outcome>". */
   const titles = new Set<string>();
   let callSeq = 0;
+  /**
+   * Anthropic's prompt cache, as the stand-in plays it ('cost'): the model-call log shows cache
+   * reads growing turn by turn as on the real API, and the app's pre-call estimate meets a
+   * realistic bill. The stand-in counts a message as its JSON, as it always has.
+   */
+  const promptCache = new PromptCacheSim({
+    clock,
+    messageText: (m) => JSON.stringify(m),
+  });
 
   /** Whether this run is one of the first `times` runs of `key` picked for an injection. */
   const pick = (runs: Map<string, Set<string>>, key: string, runId: string, times: number) => {
@@ -249,6 +259,7 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
     countTokens: (t) => Math.ceil(t.length / 4),
     async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
       const started = clock.monotonic();
+      const startedAt = clock.now();
       const time = clock.nowIso();
       const guess = detectRole(req);
       callSeq += 1;
@@ -261,16 +272,14 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           `${STAND_IN} the stand-in failed to build a reply: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
+      // The input side as the API bills it with its prompt cache ('cost'): what the request's
+      // `cache` flags mark is read or written, the rest is plain input.
       const usage: Usage = {
-        input_tokens: Math.ceil(
-          ((req.system ?? "").length + JSON.stringify(req.messages).length) / 4,
-        ),
+        ...promptCache.bill(req, startedAt),
         output_tokens: Math.max(
           1,
           Math.ceil((a.text.length + JSON.stringify(a.toolCalls).length) / 4),
         ),
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
       };
       const stop: StopReason = a.error ? "error" : a.toolCalls.length ? "tool_use" : "end_turn";
       const logged: LoggedReply = {

@@ -540,3 +540,55 @@ describe("FakeProvider models and helpers", () => {
     expect(() => new FakeProvider({ mode: "record" })).toThrow(/inner provider/);
   });
 });
+
+describe("FakeProvider prompt cache ('cost')", () => {
+  const long = "A system prompt long enough to cache. ".repeat(100); // ~950 tokens
+  const marked = (messages: ModelRequest["messages"]): ModelRequest => ({
+    model: "fake-sonnet",
+    system: long,
+    messages,
+    tools,
+    max_tokens: 256,
+    cache: { system: true, tools: true, messages: true },
+  });
+  const usage = async (p: FakeProvider, r: ModelRequest) => (await p.complete(r)).usage;
+
+  it("is off unless asked: every input token is plain input, as before", async () => {
+    const p = new FakeProvider({ latency: "none" });
+    const u = await usage(p, marked([{ role: "user", content: "hi" }]));
+    expect(u.cache_read_input_tokens).toBe(0);
+    expect(u.cache_creation_input_tokens).toBe(0);
+  });
+
+  it("writes the marked prefix, reads it on the next call, and an entry lives five minutes from its last use", async () => {
+    const clock = new SimulatedClock("2026-11-03T10:00:00Z");
+    const p = new FakeProvider({ latency: "none", clock, promptCache: true });
+    const brief = { role: "user" as const, content: "the brief" };
+    const first = await usage(p, marked([brief]));
+    expect(first.cache_read_input_tokens).toBe(0);
+    expect(first.cache_creation_input_tokens).toBeGreaterThan(900);
+    expect(first.input_tokens).toBe(0);
+    await clock.advance(4 * 60_000);
+    const again = await usage(p, marked([brief]));
+    expect(again.cache_read_input_tokens).toBe(first.cache_creation_input_tokens);
+    expect(again.cache_creation_input_tokens).toBe(0);
+    // Four more minutes: eight since the write, four since the read that renewed it.
+    await clock.advance(4 * 60_000);
+    expect((await usage(p, marked([brief]))).cache_read_input_tokens).toBe(
+      first.cache_creation_input_tokens,
+    );
+    // Six minutes of quiet: the entry is gone and everything is written again.
+    await clock.advance(6 * 60_000);
+    const cold = await usage(p, marked([brief]));
+    expect(cold.cache_read_input_tokens).toBe(0);
+    expect(cold.cache_creation_input_tokens).toBe(first.cache_creation_input_tokens);
+  });
+
+  it("a prefix below the minimum cacheable length is not written: plain input", async () => {
+    const p = new FakeProvider({ latency: "none", promptCache: { minTokens: 4096 } });
+    const u = await usage(p, marked([{ role: "user", content: "hi" }]));
+    expect(u.cache_creation_input_tokens).toBe(0);
+    expect(u.cache_read_input_tokens).toBe(0);
+    expect(u.input_tokens).toBeGreaterThan(900);
+  });
+});

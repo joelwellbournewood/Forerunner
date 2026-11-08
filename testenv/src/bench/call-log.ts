@@ -57,6 +57,12 @@ export interface ModelCallRecord {
   /** `ModelRequest.speed` when the request set one (fast mode is priced on its own row). */
   speed?: string;
   /**
+   * What the request asked the provider's prompt cache to keep (`ModelRequest.cache`: the
+   * system prompt, the tools, the conversation), when it asked ('cost', L-15). With
+   * `reply.usage.cache_read_input_tokens` it shows the conversation cached turn by turn.
+   */
+  cache?: { system?: boolean; tools?: boolean; messages?: boolean };
+  /**
    * What the call cost in USD by the app's own price table (`packages/billing/src/pricing.ts`
    * and `<config>/pricing.json`, through `ModelCallLogOptions.priceOf`): null when the model has
    * no price row (the stand-in's `fake-*` rungs) or the reply carried no usage.
@@ -238,6 +244,7 @@ export function requestFields(
   | "messages"
   | "tools"
   | "speed"
+  | "cache"
 > {
   const guess = detectRole(req);
   return {
@@ -256,6 +263,7 @@ export function requestFields(
     messages: req.messages,
     tools: (req.tools ?? []).map((t) => t.name),
     ...(req.speed ? { speed: req.speed } : {}),
+    ...(req.cache ? { cache: { ...req.cache } } : {}),
   };
 }
 

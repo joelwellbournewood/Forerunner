@@ -1,6 +1,12 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import { type QueryLike, SDK_STOP_WAIT_MS, SdkAgentDriver, scrubEnv } from "../src/agent/sdk.ts";
+import {
+  CLAUDE_CODE_PROMPT_TOKENS,
+  type QueryLike,
+  SDK_STOP_WAIT_MS,
+  SdkAgentDriver,
+  scrubEnv,
+} from "../src/agent/sdk.ts";
 import { budget, flatPricing, harness, issue, registry, until } from "./helpers.ts";
 
 function fakeQuery(script: (opts: Record<string, unknown>) => Record<string, unknown>[]): {
@@ -627,5 +633,66 @@ describe("SdkAgentDriver: a budget stop really stops Claude Code (budget-stop)",
     const max = seen[0]?.maxBudgetUsd as number;
     expect(max).toBeGreaterThan(1);
     expect(max).toBeLessThanOrEqual(1.2);
+  });
+});
+
+describe("SdkAgentDriver: the pre-call worst case on the subscription (cost)", () => {
+  it("prices the first call from the brief and Claude Code's own prompt, and each next one from the whole prompt its last call sent", async () => {
+    const h = harness();
+    const asked: { input: number; out: number; cached: number }[] = [];
+    const pricing = {
+      estimate: (input: number, out: number, cached = 0) => {
+        asked.push({ input, out, cached });
+        return flatPricing.estimate(input, out);
+      },
+      cost: flatPricing.cost,
+    };
+    const turn = {
+      type: "assistant",
+      message: {
+        id: "m1",
+        content: [{ type: "text", text: "reading" }],
+        // Claude Code caches its prompt: the plain remainder is small, the prompt is not.
+        usage: {
+          input_tokens: 40,
+          output_tokens: 300,
+          cache_read_input_tokens: 18_000,
+          cache_creation_input_tokens: 2_000,
+        },
+      },
+    };
+    const { q } = fakeQuery(() => [
+      turn,
+      { type: "result", subtype: "success", is_error: false, result: "done", total_cost_usd: 0 },
+    ]);
+    const driver = new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    });
+    const brief = "Write the home page. ".repeat(400); // ~2k tokens
+    await driver.run({
+      token: issue(h, { allowedTools: ["cc:Read"], budgetUsdMicro: 2_500_000 }),
+      budget: budget("sess-1", 5_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "oauth_token", value: "oat-value" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "You are the coder.",
+      prompt: brief,
+      cwd: process.cwd(),
+      tools: registry(),
+      pricing,
+      timeoutMs: 60_000,
+    });
+    // Before: the step cap (200) stood for the first call's input, so its worst case, and with
+    // it the run's wrap-up reserve, was almost only the output ceiling.
+    expect(asked[0]?.input).toBeGreaterThanOrEqual(
+      CLAUDE_CODE_PROMPT_TOKENS + Math.ceil(brief.length / 4),
+    );
+    expect(asked[0]?.cached ?? 0).toBe(0);
+    // The next call sends at least the whole prompt of the last one (20,040 tokens, all but 40
+    // of them from the cache) and that call's reply; before, only the 40 plain tokens counted.
+    expect(asked[1]).toEqual({ input: 20_040 + 300, out: 4096, cached: 20_000 });
   });
 });

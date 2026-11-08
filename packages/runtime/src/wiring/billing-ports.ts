@@ -201,8 +201,8 @@ export class BillingCaps implements CapsPort {
 /** Pricing for one model, as the loop driver wants it. */
 export function pricingFor(modelId: string, table: PricingTable = BUILTIN_PRICING): RunPricing {
   return {
-    estimate: (inputTokens, maxOutputTokens) =>
-      estimateUsdMicro({ inputTokens, maxOutputTokens }, modelId, table),
+    estimate: (inputTokens, maxOutputTokens, cachedInputTokens = 0) =>
+      estimateUsdMicro({ inputTokens, maxOutputTokens, cachedInputTokens }, modelId, table),
     cost: (u) =>
       costOf(
         {

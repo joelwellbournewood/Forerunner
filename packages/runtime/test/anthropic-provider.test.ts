@@ -130,6 +130,175 @@ describe("AnthropicMessagesProvider", () => {
     });
   });
 
+  describe("caching the conversation (cost, L-15)", () => {
+    type Block = { type: string; cache_control?: unknown; text?: string };
+    type Msg = { role: string; content: string | Block[] };
+    const capture = () => {
+      const bodies: Record<string, unknown>[] = [];
+      const fetchImpl: typeof fetch = async (_input, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return sse(happyEvents);
+      };
+      return {
+        bodies,
+        p: new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 }),
+      };
+    };
+    const tools = [
+      { name: "read_file", description: "d", input_schema: { type: "object", properties: {} } },
+      { name: "write_file", description: "d", input_schema: { type: "object", properties: {} } },
+    ];
+    /** Every breakpoint of a request body: system, tools and message blocks. */
+    const breakpoints = (body: Record<string, unknown>) => {
+      const out: string[] = [];
+      for (const [i, b] of ((body.system as Block[] | undefined) ?? []).entries())
+        if (b.cache_control) out.push(`system[${i}]`);
+      for (const [i, t] of ((body.tools as Block[] | undefined) ?? []).entries())
+        if (t.cache_control) out.push(`tools[${i}]`);
+      for (const [i, m] of (body.messages as Msg[]).entries()) {
+        if (typeof m.content === "string") continue;
+        for (const [j, b] of m.content.entries())
+          if (b.cache_control) out.push(`messages[${i}][${j}]`);
+      }
+      return out;
+    };
+    // An agent loop's third call: the brief, a step, its tool results and the wrap-up line.
+    const thirdCall = [
+      { role: "user" as const, content: "the brief" },
+      {
+        role: "assistant" as const,
+        content: [
+          { type: "text" as const, text: "reading" },
+          { type: "tool_use" as const, id: "tu_1", name: "read_file", input: { path: "a" } },
+        ],
+      },
+      {
+        role: "user" as const,
+        content: [{ type: "tool_result" as const, tool_use_id: "tu_1", content: "file a" }],
+      },
+      {
+        role: "assistant" as const,
+        content: [
+          { type: "tool_use" as const, id: "tu_2", name: "read_file", input: { path: "b" } },
+          { type: "tool_use" as const, id: "tu_3", name: "read_file", input: { path: "c" } },
+        ],
+      },
+      {
+        role: "user" as const,
+        content: [
+          { type: "tool_result" as const, tool_use_id: "tu_2", content: "file b" },
+          { type: "tool_result" as const, tool_use_id: "tu_3", content: "file c" },
+          { type: "text" as const, text: "About a fifth of this task's budget is left." },
+        ],
+      },
+    ];
+
+    it("marks the last block of the last message and where the previous call ended, keeping the system and tools marks: four breakpoints", async () => {
+      const { bodies, p } = capture();
+      await p.complete({
+        model: "claude-sonnet-5-5",
+        system: "sys",
+        messages: thirdCall,
+        tools,
+        max_tokens: 100,
+        cache: { system: true, tools: true, messages: true },
+      });
+      const body = bodies[0] as Record<string, unknown>;
+      expect(breakpoints(body)).toEqual([
+        "system[0]",
+        "tools[1]",
+        // The previous call's last block (its tool result): its cache entry is read exactly.
+        "messages[2][0]",
+        // This call's last block (after the tool results, the wrap-up text): what is new is written.
+        "messages[4][2]",
+      ]);
+      const lastBlocks = ((body.messages as Msg[])[4]?.content ?? []) as Block[];
+      expect(lastBlocks[2]?.cache_control).toEqual({ type: "ephemeral" });
+      // The messages keep their order and their text: only the marks are added.
+      expect(lastBlocks.map((b) => b.type)).toEqual(["tool_result", "tool_result", "text"]);
+    });
+
+    it("a first call marks its brief (a plain string becomes a text block), and never more than four marks", async () => {
+      const { bodies, p } = capture();
+      await p.complete({
+        model: "claude-sonnet-5-5",
+        system: "sys",
+        messages: [{ role: "user", content: "the brief" }],
+        tools,
+        max_tokens: 100,
+        cache: { system: true, tools: true, messages: true },
+      });
+      const first = bodies[0] as Record<string, unknown>;
+      expect(breakpoints(first)).toEqual(["system[0]", "tools[1]", "messages[0][0]"]);
+      expect((first.messages as Msg[])[0]?.content).toEqual([
+        { type: "text", text: "the brief", cache_control: { type: "ephemeral" } },
+      ]);
+      // A chat history of many turns: still only the last message and the turn before it.
+      const long = [
+        ...thirdCall,
+        { role: "assistant" as const, content: [{ type: "text" as const, text: "done" }] },
+        { role: "user" as const, content: "and now?" },
+      ];
+      await p.complete({
+        model: "claude-sonnet-5-5",
+        system: "sys",
+        messages: long,
+        tools,
+        max_tokens: 100,
+        cache: { system: true, tools: true, messages: true },
+      });
+      const second = bodies[1] as Record<string, unknown>;
+      expect(breakpoints(second)).toEqual([
+        "system[0]",
+        "tools[1]",
+        "messages[4][2]",
+        "messages[6][0]",
+      ]);
+    });
+
+    it("a message keeps one form from call to call, marked or not, so the cached prefix stays byte for byte (bench-api walk)", async () => {
+      const { bodies, p } = capture();
+      const ask = (messages: typeof thirdCall) =>
+        p.complete({
+          model: "claude-sonnet-5-5",
+          system: "sys",
+          messages,
+          tools,
+          max_tokens: 100,
+          cache: { system: true, tools: true, messages: true },
+        });
+      // Call 2 marks the brief (where call 1 ended); call 3 marks the first tool result instead.
+      await ask(thirdCall.slice(0, 3));
+      await ask(thirdCall);
+      const unmarked = (body: Record<string, unknown>) =>
+        JSON.stringify((body.messages as Msg[]).slice(0, 3), (k, v) =>
+          k === "cache_control" ? undefined : v,
+        );
+      // Before: the brief went as a block when marked and as a plain string when not, so the
+      // prompt call 2 cached was not the start of call 3's.
+      expect(unmarked(bodies[1] as Record<string, unknown>)).toBe(
+        unmarked(bodies[0] as Record<string, unknown>),
+      );
+    });
+
+    it("without `messages` the history carries no mark (planning and chat callers that ask for none)", async () => {
+      const { bodies, p } = capture();
+      await p.complete({
+        model: "claude-sonnet-5-5",
+        system: "sys",
+        messages: thirdCall,
+        tools,
+        max_tokens: 100,
+        cache: { system: true, tools: true },
+      });
+      expect(breakpoints(bodies[0] as Record<string, unknown>)).toEqual(["system[0]", "tools[1]"]);
+      // The brief stays a plain string when nothing marks it.
+      expect(((bodies[0] as Record<string, unknown>).messages as Msg[])[0]?.content).toBe(
+        "the brief",
+      );
+    });
+  });
+
   it("asks thinking off only where the model accepts it at that effort, and never sends it otherwise", async () => {
     // Haiku 5.5 thinks by default (adaptive, display omitted) and its thinking tokens count
     // toward max_tokens: the real-audio run of 2026-10-26 lost most of a 400-token chat cap to

@@ -260,6 +260,11 @@ export class AnthropicMessagesProvider implements ModelProvider {
           : {}),
       }));
     }
+    if (req.cache?.messages) {
+      const used =
+        (req.system && req.cache.system ? 1 : 0) + (req.tools?.length && req.cache.tools ? 1 : 0);
+      cacheHistory(params.messages, MAX_CACHE_BREAKPOINTS - used);
+    }
     if (req.effort) params.output_config = { effort: req.effort };
     if (req.thinking === "off") {
       const off = anthropicThinkingOff(req.model, req.effort);
@@ -389,6 +394,45 @@ export class AnthropicMessagesProvider implements ModelProvider {
       () => t0,
       () => this.clock.monotonic(),
     );
+  }
+}
+
+/** The Messages API takes at most four `cache_control` breakpoints a request. */
+export const MAX_CACHE_BREAKPOINTS = 4;
+
+/**
+ * Marks the conversation for prompt caching ('cost', L-15), with at most `slots` breakpoints:
+ * the last block of the last message, so this call writes what is new to the cache, and the
+ * last block of the last user message before the last assistant message, where an agent loop's
+ * previous call ended, so its entry is read exactly however many blocks the step added (the
+ * API's own lookback reaches only 20 positions). Every plain-string message is sent as one text
+ * block, marked or not, so a message has the same form in every call and the cached prefix
+ * stays byte for byte (the bench-api walk: the brief went as a block when marked and as a
+ * string the call after); an empty text block never carries a mark (the API refuses it).
+ */
+function cacheHistory(messages: Anthropic.MessageParam[], slots: number): void {
+  for (const [i, m] of messages.entries())
+    if (typeof m.content === "string")
+      messages[i] = { role: m.role, content: [{ type: "text", text: m.content }] };
+  const marks: number[] = [];
+  const last = messages.length - 1;
+  if (last >= 0) marks.push(last);
+  const lastAssistant = messages.findLastIndex((m) => m.role === "assistant");
+  if (lastAssistant > 0) {
+    const previousEnd = messages.findLastIndex((m, i) => i < lastAssistant && m.role === "user");
+    if (previousEnd >= 0 && previousEnd !== last) marks.push(previousEnd);
+  }
+  for (const i of marks.slice(0, Math.max(0, slots))) {
+    const m = messages[i] as Anthropic.MessageParam;
+    const blocks: Anthropic.ContentBlockParam[] =
+      typeof m.content === "string" ? [{ type: "text", text: m.content }] : [...m.content];
+    const at = blocks.findLastIndex((b) => b.type !== "text" || b.text.length > 0);
+    if (at < 0) continue;
+    blocks[at] = {
+      ...(blocks[at] as Anthropic.ContentBlockParam),
+      cache_control: { type: "ephemeral" },
+    } as Anthropic.ContentBlockParam;
+    messages[i] = { role: m.role, content: blocks };
   }
 }
 

@@ -4407,7 +4407,8 @@ describe("the UI client against the real daemon: work continues correctly (phase
 
   it("GET /projects/:id/start-check prices a task at most at what is left of its own budget (live walk 2, B3)", async () => {
     const project = await client.createProject({ name: "Estimates", goal: "Priced right" });
-    // As New task sends it: a budget of USD 0.20, below what the planner would estimate.
+    // As New task sends it: a budget of USD 0.02, below what the planner would estimate (a
+    // coder task starts at its calibrated USD 0.04 since 'cost', L-22; it was USD 1.50).
     await client.createTask(project.id, {
       title: "About page",
       outcome: "about.html",
@@ -4415,13 +4416,77 @@ describe("the UI client against the real daemon: work continues correctly (phase
       priority: "medium",
       status: "ready",
       dependsOn: [],
-      budgetUsdMicro: 200_000,
+      budgetUsdMicro: 20_000,
       specialist: "coder",
     });
     const check = await client.startCheck(project.id, { budgetUsdMicro: 5_000_000 });
     expect(check.runnable.map((t) => [t.title, t.estimate.usdMicro])).toEqual([
-      ["About page", 200_000],
+      ["About page", 20_000],
     ]);
+  });
+});
+
+describe("the UI client against the real daemon: estimates start where the work costs ('cost', L-22)", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-cost-"));
+    const clock = new SimulatedClock("2026-11-03T08:00:00Z");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "ok" }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("GET /projects/:id/start-check runs three tasks a person made in a CHF 0.50 session", async () => {
+    const project = await client.createProject({ name: "Notes site", goal: "A notes site" });
+    // As New task sends them: no estimate and no budget of their own.
+    for (const title of ["Write the home page", "Write the about page", "Write the contact page"])
+      await client.createTask(project.id, {
+        title,
+        outcome: `${title} in plain HTML`,
+        acceptanceCriteria: [],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        specialist: "coder",
+      });
+    // The Start dialog's CHF 0.50 at about the day's rate (USD 0.61).
+    const check = await client.startCheck(project.id, { budgetUsdMicro: 610_000 });
+    // Before: each started at half the coder's registry cap and "needs about CHF 0.82, more
+    // than this session's work budget of CHF 0.40": nothing could run.
+    expect(check.overBudget).toEqual([]);
+    expect(check.runnable.map((t) => t.title)).toEqual([
+      "Write the home page",
+      "Write the about page",
+      "Write the contact page",
+    ]);
+    for (const t of check.runnable) expect(t.estimate.usdMicro).toBeLessThanOrEqual(100_000);
   });
 });
 

@@ -1,6 +1,7 @@
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
 import { collectFakeStream, isFirstTokenEvent, type StreamErrorEvent } from "./collect.ts";
 import { requestFingerprint, requestHash } from "./hash.ts";
+import { type PromptCacheOptions, PromptCacheSim } from "./prompt-cache.ts";
 import type { RecordingStore } from "./recording-store.ts";
 import {
   errorRetryable,
@@ -57,6 +58,13 @@ export interface FakeProviderOptions {
    * fake records whatever request it gets; the loop decides what to send.
    */
   capabilities?: Partial<ProviderCapabilities>;
+  /**
+   * Bill requests as Anthropic's prompt cache would ('cost'): `true` or the cache's options
+   * (`PromptCacheSim`). A request whose `cache` flags mark the conversation then reports cache
+   * reads and writes beside its plain input, on this fake's clock. Default: no cache, every
+   * input token is plain input (a reply's own `usage` still wins).
+   */
+  promptCache?: boolean | PromptCacheOptions;
 }
 
 /** One request the fake received, kept for assertions. `request` is a copy without `signal`. */
@@ -178,6 +186,8 @@ export class FakeProvider implements ModelProvider {
   private readonly chunkChars: number;
   private readonly initialScript: ScriptedReply[];
   private script: ScriptEntry[];
+  /** The prompt cache stand-in, when `promptCache` asked for one. */
+  readonly promptCache: PromptCacheSim | undefined;
 
   constructor(opts: FakeProviderOptions = {}) {
     this.mode = opts.mode ?? "script";
@@ -194,6 +204,12 @@ export class FakeProvider implements ModelProvider {
     this.initialScript = [...(opts.replies ?? [])];
     validateScript(this.initialScript);
     this.script = FakeProvider.toEntries(this.initialScript);
+    this.promptCache = opts.promptCache
+      ? new PromptCacheSim({
+          clock: this.clock,
+          ...(typeof opts.promptCache === "object" ? opts.promptCache : {}),
+        })
+      : undefined;
     if (this.mode === "replay" && !this.store) {
       throw new ForerunnerError("validation", "FakeProvider replay mode needs a RecordingStore");
     }
@@ -425,7 +441,7 @@ export class FakeProvider implements ModelProvider {
     yield {
       type: "message_end",
       stop_reason: stopReasonOf(reply),
-      usage: this.usageOf(req, reply),
+      usage: this.usageOf(req, reply, startedWall),
     };
   }
 
@@ -449,16 +465,17 @@ export class FakeProvider implements ModelProvider {
     return out;
   }
 
-  private usageOf(req: ModelRequest, reply: ReplyBody): Usage {
+  private usageOf(req: ModelRequest, reply: ReplyBody, startedWall: number): Usage {
     let output = countTokens((reply.thinking ?? "") + (reply.text ?? ""));
     for (const t of reply.toolCalls ?? []) output += countTokens(t.name + JSON.stringify(t.input));
-    return {
-      input_tokens: countTokens(requestText(req)),
-      output_tokens: output,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      ...reply.usage,
-    };
+    const input = this.promptCache
+      ? this.promptCache.bill(req, startedWall)
+      : {
+          input_tokens: countTokens(requestText(req)),
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        };
+    return { ...input, output_tokens: output, ...reply.usage };
   }
 
   /** Sleeps on the clock until `due` (wall ms). False when the signal aborted meanwhile. */

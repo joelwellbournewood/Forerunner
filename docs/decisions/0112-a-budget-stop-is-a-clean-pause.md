@@ -126,3 +126,58 @@ the resume and the card are 'budget-resume''s, the better estimates and the cach
   API key only; later, as a measured trial.
 - Pause on every run that heard the wrap-up, whatever it listed: a resumed run that finishes would
   be paused again and never reviewed.
+
+## Amendment 2026-11-03 ('cost'): better estimates and caching
+
+The owner's decision of 2026-11-02 on budgets ("Q3 yes") included better estimates and caching;
+this builds them. The live checks of 2026-11-02 found one research task at USD 1.32, its
+conversation (with the fetched pages) re-sent uncached on every turn (L-15), and plan and start
+estimates about ten times what coder and tester tasks cost, so the Start dialog left out tasks
+that would fit (L-22).
+
+1. **The agent loop caches its conversation.** Every call asks for `cache: { system, tools,
+   messages }`. The Anthropic adapter marks the last block of the last message (what is new is
+   written) and the last block of the last user message before the last assistant message (where
+   the previous call ended, so its entry is read exactly, whatever the API's 20-block lookback
+   would find), beside the system and tools marks: at most four breakpoints.
+2. **The pre-call worst case prices what the cache does, never below the bill.** The prefix the
+   previous call of the run read from and wrote to the cache, while that call started less than
+   five minutes less a 30 s margin ago (an entry lives five minutes from the start of the request
+   that wrote or read it), is priced at the cache-read price; the rest of the input at the
+   cache-write price (1.25 times input; below the minimum cacheable length nothing is written and
+   the input price applies, which the write price covers); the output ceiling at the output
+   price. With nothing expected from the cache the whole input is priced at the write price.
+   Before, the whole input was priced at the input price on the premise that cache hits only make
+   the actual cheaper, which a cache write disproves. The input counted is never less than the
+   cached prefix plus what was added since. Every budget check (the hooks, this ADR's two-call
+   reserve, the run cap) uses the same estimate and follows without a change.
+3. **A long write gets its tokens the first time.** A run that can write files and names no
+   output ceiling of its own may ask up to 16,384 output tokens a call, as far as its room allows
+   and never more than keeps two calls within the fifth of its budget kept to wrap up, so a small
+   budget keeps 4,096 and its reserve does not grow.
+4. **Estimates start where the real model's work cost.** A task with no estimate of its own starts
+   at a calibrated figure per specialist (`STARTING_ESTIMATES_USD_MICRO`, from the runs of
+   2026-11-01 and 2026-11-02: coder USD 0.04, tester 0.06, research 0.50, ...), not half the
+   registry's per-run cap (USD 1.50 for a coder). The plan model's guess is kept within 1.5 times
+   of its kind's figure; the person's questions (a task for the person) cost nothing and keep 0,
+   whatever the reply guessed. The learner's multiplier may go from x0.1 to x10 (was x0.25 to x4)
+   and one pseudo-sample holds it (was five): a consistent error is within x2 after three tasks of
+   the kind. A task with a run that stopped at a budget (`paused`, `budget_exceeded`) is no
+   sample, also once its budget was raised or it was continued and it finished: a pause is a lower
+   bound. The work's cost excludes the critic's reviews, which the session's review reserve pays.
+   The live feed measures against the task's own estimate (ADR 0019's amendment of 2026-10-20; the
+   composed hook had drifted back to the corrected figure) and reads the task's Run rows to leave
+   out what the fold leaves out (`observeTaskRuns`), so a restart changes no figure; a call a
+   credential stopped (`usage_limit`) is no sample either.
+5. **The subscription's estimates.** The Agent SDK path prices its first call from the brief and
+   Claude Code's own prompt (about 20,000 tokens) instead of the step cap, and each next call from
+   the whole prompt the last one sent (cached) and its reply.
+
+Alternatives considered: trimming page text once it was used (it rewrites the cached history, so
+every later turn writes it all again; with the cache the text costs a tenth of the input price a
+turn); the one-hour cache (twice the write price, for turns seconds apart); top-level automatic
+caching alone (one moving breakpoint, read only through the 20-block lookback). Consequences: a
+call can still cost more than its estimate if the provider drops a cache entry early, or a routed
+provider moves a run to another credential mid-run (another cache); the next call's estimate
+reads what happened. The calibration is Sonnet 5.5's; another model's prices move the cost, and
+the learner corrects it per kind.
