@@ -499,10 +499,11 @@ try is one line, and "The writer takes over …" says when another specialist tr
 after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
 adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
 notifications sent), each line's event type, the level filters and the raw output; escalations
-are highlighted. A session
-that has ended
-shows **finished**: its log is complete and the
-page no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
+are highlighted. The page's title says when the session began ("Quote page · session at
+14:05"); every time on it is written in 24 hours, the log's too. While it runs, a badge says
+how the page follows it: **Live**, or **Updates every 5 s** when live updates do not work in
+this window. A session that has ended shows its status only: its log is complete and the page
+no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
 
 A start while your agent is in another session waits its turn: waiting starts (yours, an

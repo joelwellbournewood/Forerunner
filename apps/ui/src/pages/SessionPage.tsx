@@ -32,12 +32,34 @@ const ACTIVE = new Set(["planned", "running", "paused"]);
 /** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
 export const ENDED = ENDED_SESSION;
 
-/** "14:05": when a session began, for its title (design §3.7). */
+/**
+ * "14:05": when a session began, for its title (design §3.7), 24 hours as every time on the
+ * screen (later #66: an en-US browser wrote "12:01 AM").
+ */
 export function startedAtWords(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return formatTime(iso);
+}
+
+/**
+ * The stream badge in plain words (P7-4): "Live", "Updates every 5 s" while it polls,
+ * "Connecting…"; nothing once the session ended (its status says so) or the stream closed.
+ * Before: "finished", "live", "polling every 5 s" or the raw mode value.
+ */
+export function streamWords(mode: StreamMode, ended: boolean): string | null {
+  if (ended) return null;
+  switch (mode) {
+    case "sse":
+      return "Live";
+    case "polling":
+      return "Updates every 5 s";
+    case "connecting":
+      return "Connecting…";
+    default:
+      return null;
+  }
 }
 
 /** A pull request a task of this session opened or updated, with its branch. */
@@ -251,6 +273,7 @@ export function SessionPage() {
   if (!session) return null;
 
   const ended = ENDED.has(session.status);
+  const stream = streamWords(mode, ended);
   const at = startedAtWords(session.startedAt);
   // Design §3.7: "Quote page · session at 14:05", never the session's id.
   const title = `${projectName ?? "Session"}${at ? `${projectName ? " · session" : ""} at ${at}` : ""}`;
@@ -284,18 +307,14 @@ export function SessionPage() {
             </Link>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
-            <Badge
-              tone={mode === "sse" ? "good" : mode === "polling" ? "warn" : "neutral"}
-              testId="stream-mode"
-            >
-              {ENDED.has(session.status)
-                ? "finished"
-                : mode === "sse"
-                  ? "live"
-                  : mode === "polling"
-                    ? "polling every 5 s"
-                    : mode}
-            </Badge>
+            {stream ? (
+              <Badge
+                tone={mode === "sse" ? "good" : mode === "polling" ? "warn" : "neutral"}
+                testId="stream-mode"
+              >
+                {stream}
+              </Badge>
+            ) : null}
             {session.status === "running" ? (
               <Button
                 onClick={() => void stop("after_task")}

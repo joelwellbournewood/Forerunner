@@ -189,9 +189,9 @@ describe("Live session view", () => {
     expect(within(header).getByTestId("session-status")).toHaveTextContent("Working");
     // jsdom has no EventSource: the helper must say so and poll instead of spinning silently.
     await waitFor(() =>
-      expect(screen.getByTestId("stream-mode")).toHaveTextContent("polling every 5 s"),
+      expect(screen.getByTestId("stream-mode")).toHaveTextContent("Updates every 5 s"),
     );
-    expect(screen.getByTestId("stream-notice")).toHaveTextContent(/polling every 5 s/);
+    expect(screen.getByTestId("stream-notice")).toHaveTextContent(/checks every 5 s/);
     // Stop now asks once, with what it does, before anything is sent.
     await user.click(screen.getByTestId("stop-now"));
     expect(screen.getByTestId("stop-now-confirm")).toHaveTextContent(
@@ -273,10 +273,11 @@ describe("a finished session's page (U-071)", () => {
     );
     const header = await screen.findByTestId("session-header");
     expect(within(header).getByTestId("session-status")).toHaveTextContent("completed");
-    expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished");
+    // P7-4: the status says it ended; no stream badge ("finished" said it twice).
+    expect(screen.queryByTestId("stream-mode")).toBeNull();
     await new Promise((r) => setTimeout(r, 150));
     expect(h.gets.filter((p) => p === "/sessions/sess_1/events")).toHaveLength(1);
-    expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished");
+    expect(screen.queryByTestId("stream-mode")).toBeNull();
     expect(screen.queryByTestId("stream-notice")).not.toBeInTheDocument();
   });
 
@@ -304,7 +305,8 @@ describe("a finished session's page (U-071)", () => {
     );
     await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Working"));
     await waitFor(() => expect(screen.getByTestId("session-status")).toHaveTextContent("Done"));
-    await waitFor(() => expect(screen.getByTestId("stream-mode")).toHaveTextContent("finished"));
+    // P7-4: once ended, the stream badge goes (the status says Done).
+    await waitFor(() => expect(screen.queryByTestId("stream-mode")).toBeNull());
     // The whole log was read: the person lines, and all six events under Details (the step
     // line is a detail, design §3.7).
     expect(screen.getAllByTestId("event-row").length).toBeGreaterThanOrEqual(5);

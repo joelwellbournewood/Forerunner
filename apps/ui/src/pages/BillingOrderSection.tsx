@@ -10,7 +10,7 @@ import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Button, ErrorBanner } from "../components/ui.tsx";
 import { formatShare } from "../lib/format.ts";
 import { formatChf } from "../lib/money.ts";
-import { formatDateTime } from "../lib/time.ts";
+import { formatClock } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient } from "../store/context.tsx";
 
@@ -32,7 +32,7 @@ export function usableNow(s: BillingOrderSourceView): string {
       return "Not now: its monthly cap is reached";
     // U-078: the work that waits for it starts by itself at the reset.
     case "resting":
-      return `Resting until ${formatDateTime(s.restingUntil)} (its usage limit); waiting work starts by itself then`;
+      return `Resting until ${formatClock(s.restingUntil)} (its usage limit); waiting work starts by itself then`;
     // U-078: Anthropic refused it; a new one saved under Accounts and keys starts the work.
     case "refused":
       return s.kind === "subscription"
