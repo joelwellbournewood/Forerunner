@@ -9039,6 +9039,12 @@ describe("the UI client against the real daemon: research searches the web on th
       const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
       expect(lines).toContain("searched the web for compare the free tiers of static site hosts");
       expect(lines).toContain(`read the web page ${new URL(base).host}/hosts/alpha`);
+      // Offering search leaves the run's wrap-up line where it is (review of 'web-search': ten
+      // searches' worst case had moved it to CHF 0.77, a reserve of CHF 1.23).
+      expect(lines).toContain(
+        "This run may spend CHF 2.00: at CHF 1.60 it is told to wrap up, keeping a reserve of CHF 0.40 to finish.",
+      );
+      expect(lines.some((l) => l?.startsWith("Told the researcher to wrap up"))).toBe(false);
       // The run's cost holds the search's USD 0.01, and its row counts the task's searches.
       const work = (await rt.store.run.forTask(task.id)).find((r) => r.specialist === "researcher");
       expect(work?.artifacts).toContainEqual({ webSearches: 1 });

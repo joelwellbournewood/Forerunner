@@ -1529,6 +1529,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     webFetch: webFetchOn,
     // 'web-search': the API key searches unless this install or the account switched it off.
     keySearch: webSearchOn && !webSearchMarks.keySearchOff(),
+    keySearchOff: webSearchMarks.keySearchOff(),
     subscriptionPages: false,
     hostCommands: sdkHostCommands,
     dockerReady: (() => {

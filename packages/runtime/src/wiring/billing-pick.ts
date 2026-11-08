@@ -286,6 +286,11 @@ export interface ChooserFacts {
    * mark `wiring/web-search.ts` keeps on the key's billing source).
    */
   keySearch: boolean;
+  /**
+   * The account switched web search off for every saved API key (the mark a refusal leaves;
+   * `keySearch` is then false): only the words read it, to say why ('web-search', review).
+   */
+  keySearchOff?: boolean;
   /** Forerunner's page reader on the subscription: not yet ('sites' turns it on there). */
   subscriptionPages: boolean;
   /** `cc:Bash` on the SDK path (`FORERUNNER_SDK_HOST_COMMANDS`): commands outside the sandbox. */

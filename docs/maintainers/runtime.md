@@ -1922,6 +1922,12 @@ budget-stop; the owner's decision of 2026-11-02).**
   `details.line` (`wrapUpLineIn` reads it), so both drivers still emit `budget_line` before the
   run ends. Before (review of budget-stop), such a run said no line at all: live check 3's
   CHF 0.02 on the coder's Sonnet is one, since 4 096 output tokens alone cost USD 0.041.
+  `precheck`'s optional `lineEstimateUsdMicro` (the loop's tokens-only worst case, passed as
+  `beforeModelCall`'s third argument) fixes the line and decides the wrap-up while every cap gets
+  the whole estimate, web searches included ('web-search', ADR 0107 point 4 amended 2026-11-08:
+  ten searches' worst case had moved a research run's line to about 40% of its cap); without it
+  both are the whole estimate. `lineFor(runId, cap, firstCallUsdMicro, phase)` reads the run's
+  line, or the one its first call would fix, without fixing it.
 - *The message.* Only a run that asks for it hears it (`RunRequest.wrapUp` /
   `SdkRunRequest.wrapUp`: the executor sets `WRAP_UP_TEXT` for a task's run, never chat,
   planning or reviews). The loop appends it as one text block after the last tool results of
@@ -5101,8 +5107,8 @@ come from the same functions: `RuntimeApp.chooser.forTask({ specialist, projectI
 (`credentialChoiceFor` over `RouterTaskBilling.savedKinds()`, the saved credentials in the
 person's order, and `hasDependenciesToInstall` of the project's folder) gives `{ kind, line }`, the
 sentence the plan card (`GET /inbox` `planTasks`, `daemon/plan-tasks.ts`), New task and Settings
-show (`choiceLine`: "Runs on your API key: it can read web pages here but not search yet, so the
-researcher reads pages whose address it knows.", "Runs on your API key: only it can read web
+show (`choiceLine`: "Runs on your API key: it can read web pages here but not search, so the
+researcher reads pages whose address it knows." when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your
 subscription its tests will not run: it cannot run commands there."); `chooser.table()` is
 Settings' "What each can do here" (`abilityTable`). Tests: `credential-chooser.test.ts` (research
@@ -5159,9 +5165,12 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   is used while the token grants `web_search` (`WEB_SEARCH_TOOL`), the provider runs it and the
   pricing has `searches`. Each call's `max_uses` is the smaller of the searches left (`limit` less
   those made) and what the hooks' room pays after the call's own worst case at
-  `pricing.searches(1)`; 0 leaves the tool out; a search the last turn left pending
-  (`pendingServerToolUses`) keeps the tool and is counted. The call's estimate adds
-  `pricing.searches(maxUses)`. The assistant message keeps `response.raw`; a `pause_turn` is
+  `pricing.searches(1)`, and, for a work run, what is left below its wrap-up line
+  (`SessionBudget.lineFor`) after that worst case; none once the wrap-up is due; 0 leaves the
+  tool out; a search the last turn left pending (`pendingServerToolUses`) keeps the tool and is
+  counted. The call's estimate adds `pricing.searches(maxUses)` for every cap; the line and the
+  wrap-up use the tokens' worst case alone (`beforeModelCall`'s third argument), so offering
+  search never moves them (review of 'web-search'). The assistant message keeps `response.raw`; a `pause_turn` is
   continued (at most `MAX_PAUSE_CONTINUATIONS` in a row, then an error that says so); a
   mixed step is answered with the tool results only, and ADR 0112's wrap-up text waits while a
   search is pending or the last message is a paused turn. A refusal (the two codes above) turns
@@ -5181,11 +5190,14 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   refusal is kept (`deps.webSearch.refused`). Otherwise the token drops `web_search` and the brief
   keeps `NO_WEB_SEARCH_LINE`. The session log gets "searched the web for <query>" (`stepLine`,
   also for Claude Code's `WebSearch` on a subscription), the refusal's line once
-  (`WEB_SEARCH_OFF_LINE`, `WEB_SEARCH_LISTS_LINE`), the overshoot and a flagged result as notes.
+  (`WEB_SEARCH_OFF_LINE`, `WEB_SEARCH_LISTS_LINE`), the overshoot ("Web search results were
+  larger than planned: this step cost CHF X, more than the CHF Y planned. ...") and a flagged
+  result ("A web search result reads like instructions; the researcher and the critic were told
+  it is information only.", without the scan's rule names) as notes.
   The Run row's artifacts count `{ webSearches }`; `TaskExecutionResult.searchSeen` (url, title,
   flagged rules: `searchSeenOf`) goes to the critic, whose evidence (`webSourceEvidence`) lists
-  each result whose page was not opened under `UNOPENED_SEARCH_RESULTS_RULE` and names a flagged
-  one.
+  each result whose page was not opened under `UNOPENED_SEARCH_RESULTS_RULE` (its title
+  JSON-quoted, so it stays on its line) and names a flagged one.
 - *Composition* (`daemon/compose.ts`, `wiring/web-ports.ts`, `wiring/web-search.ts`):
   `webSearchEnabled(env)`; the session grant names `web_search` while it is on;
   `webSearchListsResolver(store.project)` gives the project's block list as `blocked_domains`
@@ -5195,18 +5207,23 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   by project, each with the key's fingerprint), audits them (`web_search.refused`) and gives the
   chooser `keySearchOff()` (read at start, after a refusal, at each research run, at the screens'
   chooser reads and on the scheduler's tick). `chooserFacts.keySearch` is
-  `webSearchOn && !keySearchOff()`; `capabilitiesOf` searches on the key only beside the page
-  reader.
+  `webSearchOn && !keySearchOff()` and `keySearchOff` the mark itself, which only the words read
+  (Settings: "No: switched off for this API key", else "No: search is off here"; the plan card:
+  "it can read web pages here but not search"); `capabilitiesOf` searches on the key only beside
+  the page reader.
 Tests: `web-search-provider.test.ts` (the adapter through the Messages API stand-in: the tool
 sent, the blocks back byte for byte, a changed result refused, the mixed step, `pause_turn`,
 the two 400s, a gateway), `loop-web-search.test.ts` (one step with a search and a page, the
 mixed step, pauses and their cap, both refusals, `max_uses` from the money left, the allowance
-and the overshoot, the scan, the wrap-up waiting, Stop now), `executor-web-search.test.ts`
+and the overshoot, the scan, the wrap-up waiting, the wrap-up line and the wrap-up at the same
+spend with or without search offered, Stop now), `budget.test.ts` (the line estimate and
+`lineFor`), `executor-web-search.test.ts`
 (which run is offered search, the brief, the per-task cap, the Headroom bypass, the log line,
-the lists' server form, the marks, the critic's evidence), `research-search.test.ts` (the
-composed daemon with search off for the account: the task done, said once, the mark kept after a
-restart, a new key ending it), and the real-daemon case "research searches the web on the API
-key".
+the lists' server form, the marks, the critic's evidence, the flagged and overshoot notes),
+`research-search.test.ts` (the composed daemon with search off for the account: the task done,
+said once, the mark kept after a restart with Settings saying why, a new key ending it),
+`credential-chooser.test.ts` ("an API key whose web search is off"), and the real-daemon case
+"research searches the web on the API key" (with the run's budget line: a fifth in reserve).
 
 **The approval gate (`approval.ts`, spec C.5, [ADR 0071](../decisions/0071-specialist-approval-gate.md)).**
 `SpecialistApprovals` (composed as `RuntimeApp.specialistApprovals`) is the only way a proposal

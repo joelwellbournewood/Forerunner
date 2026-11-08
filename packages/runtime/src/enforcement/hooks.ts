@@ -134,10 +134,14 @@ export class EnforcementHooks {
    * `wrap_up` (once per work run, ADR 0112): this call takes the run past its wrap-up line, so
    * the driver tells the agent to wrap up; it outranks `finish_current`, whose no-new-work state
    * the session's budget keeps anyway. `line`: the run's wrap-up line, on its first call.
+   * `lineEstimateUsdMicro`: the call's worst case without its web searches ('web-search'), which
+   * fixes the run's line and decides the wrap-up (`SessionBudget.precheck`); every cap gets
+   * `estimateUsdMicro`, the searches included. Absent: the whole estimate.
    */
   async beforeModelCall(
     ctx: RunContext,
     estimateUsdMicro: number,
+    lineEstimateUsdMicro?: number,
   ): Promise<{ decision: "allow" | "finish_current" | "wrap_up"; line?: RunWrapUpLine }> {
     const claims = this.claims(ctx);
     const now = this.deps.clock.now();
@@ -153,6 +157,7 @@ export class EnforcementHooks {
       claims.budgetUsdMicro,
       estimateUsdMicro,
       ctx.phase,
+      lineEstimateUsdMicro,
     );
     const outer = await this.deps.caps.check(this.capScope(claims), estimateUsdMicro, {
       phase: ctx.phase,

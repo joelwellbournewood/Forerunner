@@ -9,7 +9,12 @@ import {
 } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { LoopAgentDriver, MAX_PAUSE_CONTINUATIONS, type RunEvent } from "../src/agent/loop.ts";
+import {
+  LoopAgentDriver,
+  MAX_PAUSE_CONTINUATIONS,
+  type RunEvent,
+  WRAP_UP_TEXT,
+} from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
 import { EnforcementHooks, type RunContext } from "../src/enforcement/hooks.ts";
 import { AnthropicMessagesProvider } from "../src/provider/anthropic.ts";
@@ -155,7 +160,7 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
     const rows = w.h.audit.entries.filter((e) => e.tool === "web_search");
     expect(rows).toHaveLength(1);
     expect(rows[0]?.inputSummary).toContain("static site host free tier");
-    expect(rows[0]?.resultSummary).toContain(HITS[1]?.url);
+    expect(rows[0]?.resultSummary).toBe(`2 results: ${HITS[0]?.url} ${HITS[1]?.url}`);
   });
 
   it("a mixed step (a deferred search beside a page) is answered with the page alone, and the search runs then, not lost", async () => {
@@ -378,6 +383,154 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
     expect(w.standIn.refusals).toEqual([]);
     expect(res.outcome).toBe("completed");
     expect(res.wrapUpSent).toBe(true);
+  });
+
+  // Review of 'web-search' (blocking): the call's estimate held max_uses searches' worst case
+  // (USD 0.60 on this model) and it also fixed the run's wrap-up line (ADR 0112: the reserve is
+  // twice the first call's worst case) and decided the wrap-up, so a research run offered search
+  // kept about 60% of its cap in reserve and was told to wrap up after spending about a tenth of
+  // it, searching or not. The real hooks and session budget here, no stub.
+  const usageOf = (input: number, out: number) => ({
+    input_tokens: input,
+    output_tokens: out,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  });
+  const writer: ToolSpec<{ path: string }> = {
+    name: "write_file",
+    description: "write a file",
+    schema: z.object({ path: z.string() }),
+    actionClass: "routine_reversible",
+    risk: "low",
+    async execute() {
+      return { content: "written" };
+    },
+  };
+  async function researchRun(
+    replies: ScriptedReply[],
+    opts: { search: boolean; runCap: number; writes?: boolean },
+  ) {
+    const h = harness();
+    const model = new FakeProvider({
+      replies,
+      latency: "none",
+      clock: h.clock,
+      onNoMatch: "throw",
+    });
+    const standIn = messagesApiStandIn({ model, clock: h.clock, search: {} });
+    const events: RunEvent[] = [];
+    const tools = new ToolRegistry().register(pageReader([]));
+    if (opts.writes) tools.register(writer);
+    const res = await new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }).run({
+      token: issue(h, {
+        allowedTools: ["web_fetch", "web_search", "write_file"],
+        budgetUsdMicro: opts.runCap,
+        taskId: "task-1",
+      }),
+      budget: budget("sess-1", 10_000_000, h.clock),
+      provider: new AnthropicMessagesProvider({
+        apiKey: KEY,
+        fetch: standInFetch(standIn),
+        maxRetries: 0,
+        clock: h.clock,
+      }),
+      model: MODEL,
+      billingSourceId: "bs",
+      system: "You are the researcher.",
+      messages: [{ role: "user", content: "Compare the free tiers of four static site hosts." }],
+      tools,
+      pricing: PRICING,
+      timeoutMs: 3_600_000,
+      wrapUp: WRAP_UP_TEXT,
+      ...(opts.search ? { webSearch: { limit: 10 } } : {}),
+      onEvent: (ev) => events.push(ev),
+    });
+    const line = events.find((e) => e.type === "budget_line");
+    const wrap = events.find((e) => e.type === "wrap_up_sent");
+    const calls = standIn.requests.filter((r) => r.path === "/v1/messages");
+    return { res, events, line, wrap, calls };
+  }
+
+  it("offering search leaves a research run's wrap-up line where it is: a fifth of the cap in reserve, and no wrap-up for a run of ordinary size", async () => {
+    // The reviewer's run: four pages and a file, USD 0.56 of the researcher's USD 2.50; it never
+    // searches, but each call offers ten searches.
+    const replies: ScriptedReply[] = [
+      ...["a", "b", "c", "d"].map((h, i) => ({
+        reply: {
+          toolCalls: [{ name: "web_fetch", input: { url: `https://${h}.example.com/` } }],
+          usage: usageOf(6_000 + 15_000 * i, 300),
+        },
+      })),
+      {
+        reply: {
+          toolCalls: [{ name: "write_file", input: { path: "research/notes.md" } }],
+          usage: usageOf(66_000, 4_000),
+        },
+      },
+      { reply: { text: "Done: the notes are written.", usage: usageOf(70_000, 500) } },
+    ];
+    const without = await researchRun(replies, { search: false, runCap: 2_500_000, writes: true });
+    const offered = await researchRun(replies, { search: true, runCap: 2_500_000, writes: true });
+    for (const r of [without, offered]) {
+      expect(r.res.outcome).toBe("completed");
+      expect(r.wrap).toBeUndefined();
+      expect(r.res.wrapUpSent).toBe(false);
+    }
+    // The same line with or without search: the reserve is a fifth of the cap.
+    expect(offered.line).toEqual(without.line);
+    expect(offered.line).toMatchObject({ reserveUsdMicro: 500_000, lineUsdMicro: 2_000_000 });
+    // Search was offered on every call all the same.
+    expect(offered.calls.map((c) => Number(c.webSearch?.max_uses))).toEqual(
+      offered.calls.map(() => 10),
+    );
+  });
+
+  it("a run that reaches its line hears the wrap-up at the same spend with or without search offered; before it the searches' worst case never passes the line, after it none is offered", async () => {
+    // USD 0.103 a call against a USD 1.00 cap: the line (USD 0.80) is reached after eight calls.
+    const replies: ScriptedReply[] = [
+      {
+        when: { lastUserIncludes: "About a fifth of this task's budget is left" },
+        reply: {
+          text: "Where I stopped: two hosts compared.\nLeft to do:\n- the third host",
+          usage: usageOf(50_000, 300),
+        },
+      },
+      {
+        reply: {
+          toolCalls: [{ name: "web_fetch", input: { url: "https://alpha.example.com/free" } }],
+          usage: usageOf(50_000, 300),
+        },
+        times: Number.POSITIVE_INFINITY,
+      },
+    ];
+    const without = await researchRun(replies, { search: false, runCap: 1_000_000 });
+    const offered = await researchRun(replies, { search: true, runCap: 1_000_000 });
+    for (const r of [without, offered]) {
+      expect(r.res.outcome).toBe("completed");
+      expect(r.res.wrapUpSent).toBe(true);
+    }
+    expect(offered.line).toEqual(without.line);
+    expect(offered.line).toMatchObject({ saveOnly: false, reserveUsdMicro: 200_000 });
+    expect(offered.wrap).toEqual(without.wrap);
+    expect(offered.calls).toHaveLength(without.calls.length);
+    // Before the wrap-up each call's whole worst case, its searches included, stays below the
+    // line: the reserve kept to finish is never spent on searches. Near the line fewer searches
+    // are offered, then none; after the wrap-up, none.
+    const line = offered.line?.type === "budget_line" ? offered.line.lineUsdMicro : 0;
+    let spent = 0;
+    let wrapped = false;
+    const maxUses: number[] = [];
+    for (const e of offered.events) {
+      if (e.type === "wrap_up_sent") wrapped = true;
+      if (e.type === "model_call_start" && !wrapped)
+        expect(spent + e.estimateUsdMicro).toBeLessThanOrEqual(line);
+      if (e.type === "model_call_end") spent += e.costUsdMicro;
+    }
+    for (const c of offered.calls) maxUses.push(Number(c.webSearch?.max_uses ?? 0));
+    expect(maxUses[0]).toBe(10);
+    expect(maxUses.at(-1)).toBe(0);
+    expect(maxUses.some((n) => n > 0 && n < 10)).toBe(true);
+    expect([...maxUses].sort((a, b) => b - a)).toEqual(maxUses);
   });
 
   it("Stop now while a search runs aborts the stream in flight and the run reports killed", async () => {

@@ -1204,7 +1204,8 @@ export class LoopTaskExecutor implements TaskExecutor {
         ctx.onStep({ kind: "note", text: budgetLineWords(ev, (n) => this.chfText(n)) });
       } else if (ev.type === "web_search") {
         // 'web-search': each search is a line of the log ("searched the web for ..."); a result
-        // that reads like instructions is named there too (and told to the critic).
+        // that reads like instructions is said there too, in plain words (the scan's rule names
+        // stay in the audit row and the critic's evidence: design §5.3, §5.6).
         ctx.onStep({
           kind: "tool",
           name: WEB_SEARCH_TOOL,
@@ -1214,7 +1215,7 @@ export class LoopTaskExecutor implements TaskExecutor {
         if (ev.flagged)
           ctx.onStep({
             kind: "note",
-            text: `A web search result reads like instructions (${[...new Set(ev.flagged.matches.map((m) => m.rule))].join(", ")}); the ${spec.name} was told search results are information, never instructions, and the critic is told too.`,
+            text: `A web search result reads like instructions; the ${spec.name} and the critic were told it is information only.`,
           });
       } else if (ev.type === "web_search_refused")
         ctx.onStep({
@@ -1224,7 +1225,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       else if (ev.type === "web_search_overshoot")
         ctx.onStep({
           kind: "note",
-          text: `Web search results were larger than this step allowed for: it cost ${this.chfText(ev.costUsdMicro)}, not more than ${this.chfText(ev.estimateUsdMicro)} as planned. The next step is checked against what is left.`,
+          text: `Web search results were larger than planned: this step cost ${this.chfText(ev.costUsdMicro)}, more than the ${this.chfText(ev.estimateUsdMicro)} planned. The next step is checked against what is left.`,
         });
       else if (ev.type === "wrap_up_sent")
         ctx.onStep({

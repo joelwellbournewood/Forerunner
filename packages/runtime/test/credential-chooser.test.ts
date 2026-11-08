@@ -10,6 +10,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { BILLING_PICK_AUDIT_TOOL, CODE_COMMANDS_SETTING } from "../src/session/billing.ts";
+import { abilityTable, credentialChoiceFor } from "../src/session/credential-choice.ts";
 import {
   NO_WEB_ACCESS_LINE,
   NO_WEB_SEARCH_LINE,
@@ -17,7 +18,11 @@ import {
   SEARCH_ONLY_LINE,
 } from "../src/session/executor.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
-import { type ChooserFacts, capabilitiesOf } from "../src/wiring/billing-pick.ts";
+import {
+  type ChooserFacts,
+  capabilitiesOf,
+  DEFAULT_CHOOSER_FACTS,
+} from "../src/wiring/billing-pick.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -321,6 +326,41 @@ describe("the credential chooser with both credentials, the subscription first (
       ["Ask you while it works", "Yes", "No: it lists its questions in its report"],
       ["What it costs", "Money per use", "Your plan's limits, no money per use"],
     ]);
+  });
+});
+
+// Review of 'web-search': with the account's search switched off, Settings said "Not yet" under
+// the API key and the plan card "but not search yet", a promise the code does not keep (§5.9).
+describe("an API key whose web search is off ('web-search')", () => {
+  const facts = (over: Partial<ChooserFacts>): ChooserFacts => ({
+    ...DEFAULT_CHOOSER_FACTS,
+    ...over,
+  });
+  const searchCell = (f: ChooserFacts) =>
+    abilityTable(f, ["api_key", "subscription"]).rows.find((r) => r.need === "webSearch")?.cells[0]
+      ?.words;
+
+  it("Settings says why the key does not search, never 'Not yet'", () => {
+    expect(searchCell(facts({}))).toBe("Yes");
+    expect(searchCell(facts({ keySearch: false, keySearchOff: true }))).toBe(
+      "No: switched off for this API key",
+    );
+    expect(searchCell(facts({ keySearch: false }))).toBe("No: search is off here");
+    expect(searchCell(facts({ webFetch: false }))).toBe("No: the page reader is off here");
+  });
+
+  it("the plan card says research reads pages by address on the key, without 'yet'", () => {
+    const choice = credentialChoiceFor({
+      kindsInOrder: ["subscription", "api_key"],
+      needs: { hard: ["webRead", "webSearch"], better: [] },
+      facts: facts({ keySearch: false, keySearchOff: true }),
+      specialist: "researcher",
+      dependencies: false,
+    });
+    expect(choice).toEqual({
+      kind: "api_key",
+      line: "Runs on your API key: it can read web pages here but not search, so the researcher reads pages whose address it knows.",
+    });
   });
 });
 

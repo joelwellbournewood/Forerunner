@@ -170,11 +170,16 @@ are counted as input inside the same call. `TokenUsage.web_search_requests` (the
 hold it. `webSearchWorstCaseUsdMicro(n, model)` is what `n` searches may add to a call before it
 is made: `n` x (the search price + `WEB_SEARCH_RESULT_TOKENS` (20,000) at the price a new input
 token can cost, the cache-write price, never below the input price); the agent loop adds it to
-the call's `estimateUsdMicro` and sets the call's `max_uses` so it fits the money left. The
-allowance is about three times the provider's own example of one search's results; a call that
-used more is seen by the next precheck, and the run's log names it. Live check 4 measures it.
-Tests: `loop-web-search.test.ts` ("the run's cost holds the search", "max_uses never lets the
-searches' worst case pass the money left", the allowance and the overshoot).
+the call's `estimateUsdMicro` and sets the call's `max_uses` so it fits the money left, for a
+work run only the money below its wrap-up line (ADR 0112). The whole estimate goes to every cap;
+the run's wrap-up line and its wrap-up use the tokens' worst case alone, so offering search moves
+neither (review of 'web-search': ten searches' worst case had moved a research run's reserve to
+about 60% of its cap). The allowance is about three times the provider's own example of one
+search's results; a call that used more is seen by the next precheck, and the run's log names
+it. Live check 4 measures it. Tests: `loop-web-search.test.ts` ("the run's cost holds the
+search", "max_uses never lets the searches' worst case pass the money left", the allowance and
+the overshoot, "offering search leaves a research run's wrap-up line where it is", "a run that
+reaches its line hears the wrap-up at the same spend").
 
 **Fast mode rows (spec D.20, ADR 0057):** Opus fast mode is the same model requested with
 the provider's speed parameter, priced apart under its own row named for the variant:

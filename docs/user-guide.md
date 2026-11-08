@@ -721,7 +721,8 @@ ends with a small table, **What each can do here**:
   here, so research runs there when one is saved, and the plan card says so ("Runs on your API
   key: only it can read web pages here."). With the API key alone there is nothing to say. If
   your account's administrator has switched web search off, the key reads pages only and the
-  table says "Not yet" under search. The science evaluator reads pages and has no search: with
+  table says "No: switched off for this API key" under search (and the plan card "it can read
+  web pages here but not search"). The science evaluator reads pages and has no search: with
   only a subscription it is told it has no web access and works from the project's files.
 - **A task that needs your answers** (its words say it needs your decision) runs where it can
   ask you while it works: the API key ("Runs on your API key: only it can ask you questions
@@ -797,7 +798,9 @@ and no passwords or cookies, at most 2 MB per page, and nothing on the project's
 On an API key the researcher also **searches the web** with Anthropic's web search: at most ten
 searches per task, fewer when the task's money left would not pay for them, at about 1 cent each
 plus the results it reads (the task's cost and the session's log include them: "searched the web
-for ..."). Search only finds pages: a claim in the research counts as sourced only when its page
+for ..."). Searching never eats the reserve a run keeps to finish: the run is told to wrap up at
+the same point with or without search (a fifth of its budget left, as the session's log says when
+it starts), and close to that point it is offered fewer searches, then none. Search only finds pages: a claim in the research counts as sourced only when its page
 was opened and read, so the researcher opens the pages it uses, and the review is told which
 search results it saw but never opened (a claim that cites only one of those is not sourced).
 The project's block list applies to the search too ("*.example.com" there means example.com and

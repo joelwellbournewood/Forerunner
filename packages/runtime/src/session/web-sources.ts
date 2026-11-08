@@ -165,9 +165,11 @@ export function webSourceEvidence(
   const unopened = searched.filter((r) => !opened.has(sameAddress(r.url)));
   if (unopened.length) {
     artifacts.push(UNOPENED_SEARCH_RESULTS_RULE);
+    // The title is the page's own words: quoted as data, so a line break in it cannot start a
+    // line of its own in the review's evidence (review of 'web-search').
     for (const r of unopened.slice(0, MAX_SEARCH_RESULTS_LISTED))
       artifacts.push(
-        `web search result, page not opened: ${r.url}${r.title ? ` (${r.title})` : ""}`,
+        `web search result, page not opened: ${r.url}${r.title ? ` (${JSON.stringify(r.title)})` : ""}`,
       );
     if (unopened.length > MAX_SEARCH_RESULTS_LISTED)
       artifacts.push(

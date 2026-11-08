@@ -555,20 +555,39 @@ export class LoopAgentDriver {
         // 'web-search': the call's `max_uses`, set here from the money left after the call's own
         // worst case and the searches the run may still make; a search the last turn left pending
         // runs at the start of this call whatever, so the tool stays and its price is counted.
+        // The searches are paid only from the money below the run's wrap-up line (ADR 0112, its
+        // amendment in ADR 0107 of 2026-11-08): offering them never eats the reserve kept to
+        // finish, so near the line fewer are offered, and none once past it or told to wrap up.
         const pendingSearches = pendingServerToolUses(messages).length;
+        const tokensWorstCase = priceAt(maxOut);
         let maxUses = 0;
         if (searchOn || pendingSearches > 0) {
           const left = Math.max(0, (req.webSearch?.limit ?? 0) - searchesMade);
           const per = req.pricing.searches?.(1) ?? 0;
-          if (searchOn && left > 0) {
-            const spare = (await this.deps.hooks.callRoomUsdMicro(ctx)) - priceAt(maxOut);
+          if (searchOn && left > 0 && !wrapUpDue) {
+            let spare = (await this.deps.hooks.callRoomUsdMicro(ctx)) - tokensWorstCase;
+            const line = req.budget.lineFor(
+              claims.runId,
+              claims.budgetUsdMicro,
+              tokensWorstCase,
+              ctx.phase,
+            );
+            if (line)
+              spare = Math.min(
+                spare,
+                line.lineUsdMicro - req.budget.spentByRunId(claims.runId) - tokensWorstCase,
+              );
             maxUses = Math.min(left, per > 0 ? Math.max(0, Math.floor(spare / per)) : left);
           }
           maxUses = Math.max(maxUses, pendingSearches);
         }
         const searchUsdMicro = maxUses > 0 ? (req.pricing.searches?.(maxUses) ?? 0) : 0;
-        const estimate = priceAt(maxOut) + searchUsdMicro;
-        const pre = await this.deps.hooks.beforeModelCall(ctx, estimate);
+        const estimate = tokensWorstCase + searchUsdMicro;
+        // Every cap gets the whole worst case, the searches included; the run's wrap-up line is
+        // fixed and checked on the tokens' worst case alone, so offering search moves neither
+        // (review of 'web-search': ten searches' worst case kept 60% of a research run's cap in
+        // reserve and told it to wrap up after a tenth).
+        const pre = await this.deps.hooks.beforeModelCall(ctx, estimate, tokensWorstCase);
         if (pre.line) emit({ type: "budget_line", ...pre.line });
         if (pre.decision === "finish_current" && !finishCurrent) {
           finishCurrent = true;
@@ -1020,7 +1039,7 @@ export class LoopAgentDriver {
         {
           summary: b.errorCode
             ? `failed: ${b.errorCode} (not billed)`
-            : `${b.results.length} result(s): ${b.results.map((r) => r.url).join(" ")}`,
+            : `${b.results.length === 1 ? "1 result" : `${b.results.length} results`}: ${b.results.map((r) => r.url).join(" ")}`,
           ...(report?.suspicious ? { flagged: report } : {}),
         },
       );

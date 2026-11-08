@@ -134,6 +134,15 @@ describe("web search switched off for the account ('web-search')", () => {
     runtimes.splice(runtimes.indexOf(first.rt), 1);
     const second = await w.start();
     expect(second.rt.chooser.facts().keySearch).toBe(false);
+    // Settings' "What each can do here" says why, never "Not yet" (review of 'web-search': it
+    // promised what the code does not do).
+    const searchCell = async () =>
+      (
+        await second.get<{
+          credentials?: { rows: { need: string; cells: { words: string }[] }[] };
+        }>("/settings/models")
+      ).credentials?.rows.find((r) => r.need === "webSearch")?.cells[0]?.words;
+    expect(await searchCell()).toBe("No: switched off for this API key");
     const before = w.standIn.requests.length;
     const two = await research(second.rt, "Compare hosting offers");
     expect((await second.rt.store.task.mustGet(two.task.id)).status).toBe("done");
@@ -150,6 +159,7 @@ describe("web search switched off for the account ('web-search')", () => {
     const offered = w.standIn.requests.slice(from).filter((r) => r.webSearch !== undefined);
     expect(offered.length).toBeGreaterThan(0);
     expect(second.rt.chooser.facts().keySearch).toBe(true);
+    expect(await searchCell()).toBe("Yes");
     expect(w.standIn.searches.length).toBeGreaterThan(0);
   }, 60_000);
 });

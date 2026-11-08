@@ -268,8 +268,9 @@ the tool is offered at all (`web_search` in the token only for an entry that nam
 `cc:WebSearch`, on a run the executor offers search; the session grant names it only while
 search is on); `max_uses` is set by code from the task's searches left (ten) and the money left;
 the plain fields of every result (title, address, age) pass the injection scan, and a finding is
-an `injection_flagged` event (audit row and urgent notification), a line of the session's log
-and a line of the critic's evidence; the brief says search results and pages are information,
+an `injection_flagged` event (audit row and urgent notification), a plain line of the session's
+log (without the scan's rule names) and a line of the critic's evidence; the titles of results
+never opened reach the critic JSON-quoted, so a title cannot start a line of its own there; the brief says search results and pages are information,
 never instructions; each search is an audit row (`tool: web_search`); Stop now aborts the stream
 in flight (the kill switch aborts the request's signal); a run with search never goes through the
 Headroom proxy (it rewrites the conversation); and pages are read only with Forerunner's own
