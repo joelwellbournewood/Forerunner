@@ -1338,7 +1338,7 @@ export class ReviewedPrMerge implements MergePort {
         return this.outcomeOf(await store.mergeRecord.mustGet(record.id), "checks_pending");
       record = claimed;
       const level = project?.autonomy_level ?? 0;
-      let a = await this.call(record, token, session, worktree, gate, level);
+      let a = await this.call(record, token, session, worktree, gate, level, true);
       if (!(a.status === "merged" || a.alreadyMerged)) {
         // R-lock: a record moved by someone else while the call ran (a rebuild voided it, or
         // moved it to a rebuilt head) keeps that word, whatever GitHub answered the call (it
@@ -1369,7 +1369,7 @@ export class ReviewedPrMerge implements MergePort {
           record = await store.mergeRecord.move(record.id, "merging", {
             reviewed_head_sha: a.headSha,
           });
-          a = await this.call(record, token, session, worktree, gate, level);
+          a = await this.call(record, token, session, worktree, gate, level, true);
         }
       }
       const outcome = await this.finish(record, task, session, owner, gate, a);
@@ -1403,6 +1403,8 @@ export class ReviewedPrMerge implements MergePort {
     worktree: string | null,
     gate: Extract<MergeGate, { allowed: true }>,
     level: number,
+    /** The merge of a task's stored record (`run`): the R-lock checks below apply. */
+    fenced = false,
   ): Promise<CallResult> {
     const { clock, hooks, store } = this.deps;
     const pollMs = Math.max(1, this.deps.checksPollMs ?? DEFAULT_CHECKS_POLL_MS);
@@ -1419,6 +1421,8 @@ export class ReviewedPrMerge implements MergePort {
     // since (a rebuild voided it, or moved it to the rebuilt head) or marked owed: no merge.
     let expected = record.reviewed_head_sha;
     const ours = async (head: string): Promise<boolean> => {
+      // A pull request merged as it is (`mergeAsIs`: a docs or take-out one) has no record.
+      if (!fenced) return true;
       const now = await store.mergeRecord.get(record.id);
       return (
         !!now &&
