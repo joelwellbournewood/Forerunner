@@ -2391,6 +2391,9 @@ function sizes(p: IntakeProposal, shaped: ShapedPlan | null): IntakeProposalOutc
  * model guessed about USD 0.15 for a page whose work cost USD 0.01 to 0.03, so the plan card
  * and the Start dialog left out work that would fit. What the card shows, the task's estimate
  * and the first session's plan all use the bounded figure; the learner corrects it from there.
+ * The person's questions cost nothing (no specialist runs, nothing is billed): their item is 0,
+ * whatever the reply guessed (review of 'cost': the bound gave them a specialist's USD 0.06, so
+ * the card priced the questions and counted them in the first session's total).
  */
 function withBoundedEstimates(p: IntakeProposal): IntakeProposal {
   const named = keyedTasks(p.plan);
@@ -2403,7 +2406,10 @@ function withBoundedEstimates(p: IntakeProposal): IntakeProposal {
         const specialist = t?.specialist ? canonicalSpecialistName(t.specialist) : null;
         return {
           ...item,
-          estimateUsdMicro: boundedPlanEstimate(item.estimateUsdMicro, specialist),
+          estimateUsdMicro:
+            specialist === PERSON_SPECIALIST
+              ? 0
+              : boundedPlanEstimate(item.estimateUsdMicro, specialist),
         };
       }),
     },
