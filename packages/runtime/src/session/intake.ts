@@ -1160,6 +1160,11 @@ export class IntakeService {
   enqueue(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
     const running = this.jobs.get(projectId);
     if (running) return running;
+    // W6-25 (review of merged-copy): this computer's copy of the project's repository is made
+    // while the plan is drafted, so the Docs and Files tabs read it while the plan waits (before,
+    // only from the watcher's first poll, up to a minute later). Part of the job, so nothing of
+    // it keeps running once the job is done; a failure is logged and the plan goes on.
+    const copy = this.copyWhileDrafting(projectId);
     const job = this.propose(projectId, opts)
       .catch(async (e: unknown) => {
         const wait = await this.waitFor(e, projectId);
@@ -1178,7 +1183,8 @@ export class IntakeService {
         }
         throw e;
       })
-      .finally(() => {
+      .finally(async () => {
+        await copy;
         this.jobs.delete(projectId);
         // After the delete: the status read on the announcement is no longer "drafting".
         try {
@@ -1231,6 +1237,21 @@ export class IntakeService {
     const read = planRead(changed?.change_card as JsonObject | undefined);
     void this.enqueue(projectId, changes.length ? { changes, read } : {}).catch(() => undefined);
     return this.status(projectId);
+  }
+
+  /** The project's copy of its repository, brought to what is merged; never throws. */
+  private async copyWhileDrafting(projectId: string): Promise<void> {
+    const refresh = this.deps.docs?.refreshCopy;
+    if (!refresh) return;
+    try {
+      const project = await this.deps.store.project.get(projectId);
+      if (project?.repos[0]) await refresh.call(this.deps.docs, project);
+    } catch (e) {
+      this.logger.warn("this computer's copy not made while the plan is drafted", {
+        projectId,
+        error: errorMessage(e),
+      });
+    }
   }
 
   /** The background job of a project while it runs (tests await it), else null. */

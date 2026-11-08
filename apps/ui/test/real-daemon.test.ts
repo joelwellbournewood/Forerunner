@@ -7879,7 +7879,7 @@ describe("the UI client against the real daemon: this computer's copy follows ev
     home = mkdtempSync(join(tmpdir(), "fr-ui-real-copy-"));
     host = await FakeGitHost.start({ rootDir: join(home, "host") });
     host.createUser({ login: "alice", name: "Alice", email: identity.email });
-    for (const name of ["copy", "brief", "local"])
+    for (const name of ["copy", "brief", "local", "taken"])
       await host.createRepo({
         owner: "alice",
         name,
@@ -7913,7 +7913,9 @@ describe("the UI client against the real daemon: this computer's copy follows ev
     const git = new GitOps({ cwd: dir, identity, auth: { token } });
     await git.clone(host.cloneUrl(`alice/${name}`));
     await git.createBranch(branch, "origin/main");
-    writeFileSync(join(dir, file), text);
+    const parts = file.split("/");
+    if (parts.length > 1) mkdirSync(join(dir, ...parts.slice(0, -1)), { recursive: true });
+    writeFileSync(join(dir, ...parts), text);
     await git.commitAll(`Add ${file}`);
     await git.push(branch);
     const pr = await github.createPullRequest(
@@ -7975,7 +7977,7 @@ describe("the UI client against the real daemon: this computer's copy follows ev
     expect(await paths(project.id)).toContain("page.html");
   }, 120_000);
 
-  it("a project made from a brief has its copy while its plan waits: one watcher poll clones it (W6-25)", async () => {
+  it("a project made from a brief has its copy while its plan waits, with no watcher poll: the draft makes it (W6-25)", async () => {
     const brief = "A page that greets the visitor";
     const project = await client.createProject({
       name: "Brief copy",
@@ -7992,9 +7994,9 @@ describe("the UI client against the real daemon: this computer's copy follows ev
       ),
       "the plan waits for the person",
     ).toBe(true);
-    // Before: no copy, so the Docs tab read README.md as not written yet.
-    expect((await client.projectFiles(project.id)).folder).toBeNull();
-    await rt.githostWatcher?.pollOnce();
+    // Before: no copy until a session ended, then (merged-copy) until the watcher's first poll,
+    // up to a minute later; the Docs tab read README.md as not written yet meanwhile. Now the
+    // draft makes it: no poll runs here (the watcher's are driven by the cases).
     const files = await client.projectFiles(project.id);
     expect(files.folder).not.toBeNull();
     expect(files.entries.map((e) => e.path)).toContain("README.md");
@@ -8069,5 +8071,42 @@ describe("the UI client against the real daemon: this computer's copy follows ev
       "the person's own notes\n",
     );
     expect(readdirSync(join(rt.dirs.worktrees, task.id))).not.toContain("Local only");
+  }, 120_000);
+
+  it("a collaborator commits a file into Local only on GitHub: after one watcher poll the person's own file is still in Files as '(yours)', and the line says so (review of merged-copy)", async () => {
+    // Before (bench W8): the watcher's refresh replaced the person's Local only/notes.txt with
+    // the repository's without a word; Files said only that the repository has such a folder.
+    const project = await client.createProject({
+      name: "Taken",
+      goal: "Notes the team starts to share",
+      repos: ["alice/taken"],
+    });
+    const folder = (await client.projectFiles(project.id)).copy?.localOnly?.folder ?? "";
+    expect(folder, "the Local only folder").not.toBe("");
+    writeFileSync(join(folder, "notes.txt"), "the person's own notes\n");
+    writeFileSync(join(folder, "drafts.txt"), "the person's drafts\n");
+    await mergeOnHost("taken", "team/notes", "Local only/notes.txt", "the team's notes\n");
+    await rt.githostWatcher?.pollOnce();
+    const after = await client.projectFiles(project.id);
+    expect(after.entries.map((e) => e.path)).toEqual(
+      expect.arrayContaining([
+        "Local only/notes.txt",
+        "Local only/notes (yours).txt",
+        "Local only/drafts.txt",
+      ]),
+    );
+    expect((await client.projectFile(project.id, "Local only/notes (yours).txt")).content).toBe(
+      "the person's own notes\n",
+    );
+    expect((await client.projectFile(project.id, "Local only/notes.txt")).content).toBe(
+      "the team's notes\n",
+    );
+    expect((await client.projectFile(project.id, "Local only/drafts.txt")).content).toBe(
+      "the person's drafts\n",
+    );
+    expect(after.copy?.localOnly).toEqual({
+      folder: null,
+      line: 'No Local only folder here any more: this repository now has a folder of that name. Your files in it stay on this computer; the one named like the repository\'s is now "notes (yours).txt".',
+    });
   }, 120_000);
 });

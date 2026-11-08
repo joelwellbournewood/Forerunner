@@ -24,7 +24,9 @@ export function copyUpdatedWords(iso: string, now = new Date()): string {
 
 /**
  * The line above a repository project's files: whose copy it is, since when it is as merged
- * on GitHub (once it was brought there), and where the work in pull requests is.
+ * on GitHub (once it was brought there), and where the work in pull requests is. Before the
+ * copy was first brought there (a copy made by an earlier version, until its first refresh) it
+ * claims nothing about merges (review of merged-copy: "as merged" was not true then).
  */
 export function repositoryLine(
   fullName: string,
@@ -32,7 +34,7 @@ export function repositoryLine(
   now = new Date(),
 ): string {
   const where = "Work waiting in a pull request is on the Overview.";
-  if (!updatedAt) return `This computer's copy of ${fullName} as merged. ${where}`;
+  if (!updatedAt) return `This computer's copy of ${fullName}. ${where}`;
   return `This computer's copy of ${fullName}. As merged on GitHub, updated ${copyUpdatedWords(updatedAt, now)}. ${where}`;
 }
 

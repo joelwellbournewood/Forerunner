@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, type RunOptions, type RunResult, run } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
@@ -9,7 +16,13 @@ import {
   redactToken,
   tokenHeaderKey,
 } from "../src/githost/git.ts";
-import { excludeNeverPushed, isNeverPushed, NEVER_PUSHED } from "../src/githost/local-only.ts";
+import {
+  dropKeptSame,
+  excludeNeverPushed,
+  isNeverPushed,
+  keepLocalOnlyFromCheckout,
+  NEVER_PUSHED,
+} from "../src/githost/local-only.ts";
 
 const identity = { name: "Test", email: "test@example.test" };
 
@@ -178,6 +191,60 @@ describe("GitOps", { timeout: 120_000 }, () => {
     await tracked.commitAll("change it");
     await tracked.push("fr/other", { defaultBranch: "main" });
     expect(await tracked.neverPushedIn("fr/other", "main")).toEqual([]);
+  });
+
+  it("a checkout never replaces the person's ignored file: Local only's in the way are kept as '(yours)' first, and with keepIgnored anything else stops the checkout (review of merged-copy)", async () => {
+    // Before: `checkout -B main origin/main` replaced the ignored `Local only/notes.txt` with
+    // the repository's new file without a word (git's default for ignored files).
+    const { url } = await bareRepo();
+    const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
+    const dir = join(root, "copy");
+    const copy = new GitOps({ cwd: dir, identity });
+    await copy.clone(url);
+    excludeNeverPushed(dir);
+    mkdirSync(join(dir, "Local only"), { recursive: true });
+    writeFileSync(join(dir, "Local only", "notes.txt"), "mine\n");
+    writeFileSync(join(dir, "Local only", "same.txt"), "shared\n");
+    // The repository's .gitignore leaves out secrets.env; the person keeps one in the copy.
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    await seed.clone(url);
+    writeFileSync(join(root, "seed", ".gitignore"), "secrets.env\n");
+    await seed.commitAll("ignore secrets.env");
+    await seed.push("main");
+    await copy.fetch();
+    await copy.createBranch("main", "origin/main", { keepIgnored: true });
+    writeFileSync(join(dir, "secrets.env"), "MINE=1\n");
+    // A collaborator commits files at both paths.
+    mkdirSync(join(root, "seed", "Local only"), { recursive: true });
+    writeFileSync(join(root, "seed", "Local only", "notes.txt"), "the team's\n");
+    writeFileSync(join(root, "seed", "Local only", "same.txt"), "shared\n");
+    writeFileSync(join(root, "seed", "secrets.env"), "TEAM=1\n");
+    await run(["git", "add", "-f", "secrets.env"], { cwd: join(root, "seed") });
+    await seed.commitAll("the team's files");
+    await seed.push("main");
+    await copy.fetch();
+    const before = await copy.headSha();
+    // Local only's are moved out of the way; secrets.env is not Local only's to move.
+    const kept = await keepLocalOnlyFromCheckout(copy, dir, "origin/main");
+    expect(kept).toEqual([
+      { path: "Local only/notes.txt", kept: "Local only/notes (yours).txt" },
+      { path: "Local only/same.txt", kept: "Local only/same (yours).txt" },
+    ]);
+    // So the checkout that keeps ignored files stops on secrets.env, and nothing is replaced.
+    await expect(copy.createBranch("main", "origin/main", { keepIgnored: true })).rejects.toThrow(
+      /checkout -B main/,
+    );
+    expect(await copy.headSha()).toBe(before);
+    expect(readFileSync(join(dir, "secrets.env"), "utf8")).toBe("MINE=1\n");
+    // Once the person moves theirs, it goes through; a kept file the repository's matches
+    // byte for byte is dropped, the other stays beside.
+    renameSync(join(dir, "secrets.env"), join(root, "secrets.env"));
+    await copy.createBranch("main", "origin/main", { keepIgnored: true });
+    expect(dropKeptSame(dir, kept)).toEqual([kept[0]]);
+    expect(readFileSync(join(dir, "Local only", "notes.txt"), "utf8")).toBe("the team's\n");
+    expect(readFileSync(join(dir, "Local only", "notes (yours).txt"), "utf8")).toBe("mine\n");
+    expect(existsSync(join(dir, "Local only", "same (yours).txt"))).toBe(false);
+    expect(readFileSync(join(dir, "Local only", "same.txt"), "utf8")).toBe("shared\n");
   });
 
   it("passes the token to git through the environment, never on the command line", async () => {

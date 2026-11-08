@@ -478,9 +478,17 @@ export class PrTaskExecutor implements TaskExecutor {
    * The inner executor with the project's Local only folder in the worktree for its run
    * (merged-copy, ADR 0113): a copy an earlier run left is recovered first, the folder is
    * copied in, and back after the run whatever it returned or threw; the sentence for a file
-   * the person changed meanwhile is kept for the task's result.
+   * the person changed meanwhile is kept for the task's result. A task branch that tracks a
+   * folder named Local only (the repository started tracking one before the copy's next
+   * refresh said so) gets none: its folder is the repository's, which the copy in would have
+   * replaced and the pull request then deleted (review of merged-copy).
    */
-  private withLocalOnly(task: TaskRow, dir: string, inner: TaskExecutor): TaskExecutor {
+  private withLocalOnly(
+    task: TaskRow,
+    dir: string,
+    inner: TaskExecutor,
+    git: GitOps,
+  ): TaskExecutor {
     const folderFor = this.deps.localOnlyFor;
     if (!folderFor) return inner;
     const back = () => {
@@ -497,6 +505,11 @@ export class PrTaskExecutor implements TaskExecutor {
         if (hasLocalOnlyCopy(dir)) back();
         const source = await folderFor(task);
         if (!source) return inner.execute(c);
+        if ((await git.trackedUnder("HEAD", [LOCAL_ONLY_DIR]))?.length) {
+          const why = "Local only: the task's branch has a folder of that name; none copied in";
+          this.logger.info(why, { taskId: task.id });
+          return inner.execute(c);
+        }
         try {
           copyLocalOnlyIn({
             source,
@@ -662,6 +675,7 @@ export class PrTaskExecutor implements TaskExecutor {
       task,
       dir,
       this.deps.inner.withWorktree ? this.deps.inner.withWorktree(dir) : this.deps.inner,
+      git,
     );
     const result = await inner.execute({ ...ctx, task: { ...task, branch } });
     if (result.outcome !== "done" && result.outcome !== "in_review") return result;

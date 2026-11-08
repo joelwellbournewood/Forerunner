@@ -142,7 +142,11 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   you change a file there while a run uses it, your version stays and the agent's is kept beside
   it as "notes (from <task title>).txt", and the task's result says so. Forerunner never uploads
   it: a branch that holds any of it is not pushed, and the task says so. A repository that
-  already has a folder called "Local only" gets none ("No Local only folder here: …").
+  already has a folder called "Local only" gets none ("No Local only folder here: …"). If the
+  repository starts to have one later (someone commits a file into "Local only" on GitHub), none
+  of your files there is lost: they stay on this computer and are never uploaded, a file of yours
+  with the same name as one of the repository's is renamed "notes (yours).txt", and Files says
+  which. Agents no longer get them then.
 - **Plan** (under More): milestones and their dependencies.
 - **Tasks**: every task, in the order a session runs them (a task after the tasks it waits for,
   then by priority), with its status in words, who does it, its cost and the critic's call. The

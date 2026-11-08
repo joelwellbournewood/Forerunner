@@ -321,11 +321,26 @@ with their milestone.
   the next run recover a copy a crash left by the same rules (`recoverLocalOnlyCopies`). The
   worktree excludes both folders (only the try's when the repository tracks a folder named Local
   only), `inWorkspace` excludes the try's, the executor's GitOps sets `neverPush`, and the
-  changed files leave them out. Tests: `test/pr-executor.test.ts` "Local only" (read and written
-  in the run, copied back, never pushed or in the PR or the changed files; the person's change
-  kept with the agent's beside it and the sentence; an agent's own commit refused at the push; a
-  link out of the folder, a junction on Windows, never followed; a run killed after the copy in
-  recovered) and `test/git.test.ts` "a push never carries Local only".
+  changed files leave them out. A task branch whose HEAD tracks anything under `Local only/` (the
+  repository started tracking such a folder before the copy's next refresh said so) gets no copy
+  in, with a log line: the copy in would have replaced the repository's files and the pull
+  request deleted them (review of merged-copy). `besideName` and `yoursName` count up until a
+  name is free (no clock). The repository taking the folder over (review of merged-copy, bench
+  W8; runtime.md `switchCopy`): `keepLocalOnlyFromCheckout(git, dir, ref)` renames, before a
+  checkout of `ref`, each file or folder of the person's under `Local only/` that a file `ref`
+  tracks would replace (the file at the path, a file where a folder goes, a folder where a file
+  goes; a path HEAD tracks is the repository's and left to git; links moved as links) to
+  `yoursName` ("notes (yours).txt", "data (yours)"), returning `KeptYours[]`; `dropKeptSame`
+  drops a kept file the checked-out one matches byte for byte; `localOnlyTakenLine(kept)` is the
+  Files tab's sentence. `GitOps.createBranch(name, from, { keepIgnored })` adds
+  `--no-overwrite-ignore`, so an ignored file still in the way stops the checkout instead of
+  being replaced (git's default replaces it without a word). Tests: `test/pr-executor.test.ts`
+  "Local only" (read and written in the run, copied back, never pushed or in the PR or the
+  changed files; the person's change kept with the agent's beside it and the sentence; an agent's
+  own commit refused at the push; a link out of the folder, a junction on Windows, never
+  followed; a run killed after the copy in recovered; a task branch that tracks a folder named
+  Local only gets none and its PR keeps the repository's) and `test/git.test.ts` "a push never
+  carries Local only" and "a checkout never replaces the person's ignored file".
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
   of callers.
 - Project operations on the same contract (`ensureProject`, `ensureFields`, `listProjectItems`,

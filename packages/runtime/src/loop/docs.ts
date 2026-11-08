@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import {
+  dropKeptSame,
   ensureBaseBranch,
   ensureWorkspaceGitignore,
   excludeNeverPushed,
@@ -8,11 +9,14 @@ import {
   GitOps,
   type GitTokenSource,
   gitAuthFor,
+  keepLocalOnlyFromCheckout,
   LOCAL_ONLY_DIR,
   LOCAL_ONLY_LINE,
   LOCAL_ONLY_TRACKED_LINE,
+  localOnlyTakenLine,
   NEVER_PUSHED,
   type RepoRef,
+  regularFilesUnder,
   resolveGitToken,
   TRY_DIR,
   WORKSPACE_IDENTITY,
@@ -160,14 +164,18 @@ export const STATUS_STATE_LIMIT = 15;
 /**
  * What this computer's copy holds, kept in the clone's `.git` (never in the work): when it was
  * last brought to the default branch as the host has it, at which commit, and whether it has
- * its Local only folder (`tracked`: the repository already has files under `Local only/`).
+ * its Local only folder (`tracked`: the repository already has files under `Local only/`;
+ * `taken`: it started tracking some after the copy made the folder while the person's own files
+ * are still in it, with `kept` naming those moved out of the repository's way).
  */
 export const COPY_RECORD = "forerunner-copy.json";
 
 export interface CopyRecord {
   updatedAt: string;
   head: string | null;
-  localOnly: "folder" | "tracked" | "none";
+  localOnly: "folder" | "tracked" | "taken" | "none";
+  /** The person's files renamed "(yours)" for the repository's, relative to the copy. */
+  kept?: string[];
 }
 
 /** What the Files tab says about a repository project's copy (`GET /projects/:id/files`). */
@@ -186,6 +194,11 @@ export function readCopyRecord(dir: string): CopyRecord | null {
   } catch {
     return null;
   }
+}
+
+/** The kept paths (relative to the copy) that are still there. */
+function stillThere(dir: string, kept: readonly string[] | undefined): string[] {
+  return (kept ?? []).filter((k) => existsSync(join(dir, ...k.split("/"))));
 }
 
 /** A project's repository as `owner/name` from its first entry; null for a folder or none. */
@@ -334,7 +347,8 @@ export class ProjectDocs implements ProjectDocsPort {
    */
   copyView(project: ProjectRow): CopyView | null {
     if (!repositoryOf(project)) return null;
-    const record = readCopyRecord(this.copyDir(project.id));
+    const dir = this.copyDir(project.id);
+    const record = readCopyRecord(dir);
     const folder = this.localOnlyFolder(project);
     return {
       updatedAt: record?.updatedAt ?? null,
@@ -342,7 +356,17 @@ export class ProjectDocs implements ProjectDocsPort {
         ? { folder, line: LOCAL_ONLY_LINE }
         : record?.localOnly === "tracked"
           ? { folder: null, line: LOCAL_ONLY_TRACKED_LINE }
-          : null,
+          : record?.localOnly === "taken"
+            ? {
+                folder: null,
+                // True now: the kept files still there, named inside the folder.
+                line: localOnlyTakenLine(
+                  stillThere(dir, record.kept).map((k) =>
+                    k.startsWith(`${LOCAL_ONLY_DIR}/`) ? k.slice(LOCAL_ONLY_DIR.length + 1) : k,
+                  ),
+                ),
+              }
+            : null,
     };
   }
 
@@ -742,9 +766,11 @@ export class ProjectDocs implements ProjectDocsPort {
       (await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch }))[0] ??
       null;
     const fresh = opts.fresh ? await opts.fresh(!!existingPr) : false;
-    if (!fresh && (await git.hasRef(`origin/${branch}`)))
-      await git.createBranch(branch, `origin/${branch}`);
-    else await git.createBranch(branch, `origin/${target.base}`);
+    const from =
+      !fresh && (await git.hasRef(`origin/${branch}`))
+        ? `origin/${branch}`
+        : `origin/${target.base}`;
+    await this.switchCopy(git, dir, branch, from);
     return {
       git,
       dir,
@@ -782,12 +808,16 @@ export class ProjectDocs implements ProjectDocsPort {
     const hasBase = await git.hasRef(base);
     // A copy that could not be put on the default branch (a file the person changed in it that
     // the merge also changed) keeps the time of its last real update.
-    const moved = hasBase && opts.checkout !== false ? await this.backToBase(git, target) : true;
+    const moved =
+      hasBase && opts.checkout !== false ? await this.backToBase(git, dir, target) : true;
     const before = readCopyRecord(dir);
     const tracked = hasBase ? ((await git.trackedUnder(base, [LOCAL_ONLY_DIR])) ?? []) : [];
+    // Never removes the Local only line an earlier settle wrote: when the repository starts
+    // tracking such a folder, the person's own files left in it stay out of git.
     excludeNeverPushed(dir, tracked.length ? [TRY_DIR] : NEVER_PUSHED);
     let localOnly: CopyRecord["localOnly"] = "none";
-    if (tracked.length) localOnly = "tracked";
+    if (tracked.length)
+      localOnly = (await this.personsFilesIn(git, dir, tracked)) ? "taken" : "tracked";
     else {
       try {
         mkdirSync(join(dir, LOCAL_ONLY_DIR), { recursive: true });
@@ -796,14 +826,18 @@ export class ProjectDocs implements ProjectDocsPort {
         this.logger.warn("the Local only folder was not made", { error: errorMessage(e) });
       }
     }
-    const record: CopyRecord =
-      moved || !before
+    // The person's files kept beside the repository's are named while the folder is taken.
+    const kept = localOnly === "taken" ? stillThere(dir, before?.kept) : [];
+    const record: CopyRecord = {
+      ...(moved || !before
         ? {
             updatedAt: this.deps.clock.nowIso(),
             head: hasBase ? await git.resolveRef(base) : null,
-            localOnly,
           }
-        : { ...before, localOnly };
+        : { updatedAt: before.updatedAt, head: before.head }),
+      localOnly,
+      ...(kept.length ? { kept } : {}),
+    };
     try {
       writeFileSync(join(dir, ".git", COPY_RECORD), JSON.stringify(record), "utf8");
     } catch (e) {
@@ -816,14 +850,63 @@ export class ProjectDocs implements ProjectDocsPort {
    * Docs and Files tabs, the chat's docs search) sees what is merged, not the last branch a
    * docs write used (before, the clone stayed on whichever PR branch was written last).
    */
-  private async backToBase(git: GitOps, target: Pick<ProjectRepoTarget, "base">): Promise<boolean> {
+  private async backToBase(
+    git: GitOps,
+    dir: string,
+    target: Pick<ProjectRepoTarget, "base">,
+  ): Promise<boolean> {
     try {
-      await git.createBranch(target.base, `origin/${target.base}`);
+      await this.switchCopy(git, dir, target.base, `origin/${target.base}`);
       return true;
     } catch (e) {
       this.logger.warn("docs clone not back on the default branch", { error: errorMessage(e) });
       return false;
     }
+  }
+
+  /**
+   * `checkout -B branch from` in the copy without losing a file of the person's (review of
+   * merged-copy): what of Local only the checkout would replace is renamed "(yours)" first
+   * (`keepLocalOnlyFromCheckout`); the checkout keeps ignored files, so anything still in the
+   * way stops it (the copy then keeps the time of its last real update); a kept file the
+   * repository's now matches byte for byte is dropped; the rest is recorded for the Files tab's
+   * sentence. Every caller holds the copy's lock.
+   */
+  private async switchCopy(git: GitOps, dir: string, branch: string, from: string): Promise<void> {
+    const moved = await keepLocalOnlyFromCheckout(git, dir, from);
+    try {
+      await git.createBranch(branch, from, { keepIgnored: true });
+    } finally {
+      const kept = dropKeptSame(dir, moved);
+      const record = kept.length ? readCopyRecord(dir) : null;
+      if (record) {
+        const all = [...new Set([...(record.kept ?? []), ...kept.map((k) => k.kept)])];
+        try {
+          writeFileSync(
+            join(dir, ".git", COPY_RECORD),
+            JSON.stringify({ ...record, kept: all }),
+            "utf8",
+          );
+        } catch (e) {
+          this.logger.warn("the copy's record was not written", { error: errorMessage(e) });
+        }
+      }
+    }
+  }
+
+  /**
+   * Whether the copy's Local only folder holds a file of the person's (one neither its HEAD nor
+   * the default branch tracks) while the repository tracks a folder of that name: the folder
+   * was "taken", and the Files tab says the person's files in it stay on this computer.
+   */
+  private async personsFilesIn(git: GitOps, dir: string, tracked: string[]): Promise<boolean> {
+    const theirs = new Set([
+      ...tracked,
+      ...((await git.trackedUnder("HEAD", [LOCAL_ONLY_DIR])) ?? []),
+    ]);
+    for (const rel of regularFilesUnder(join(dir, LOCAL_ONLY_DIR)).files.keys())
+      if (!theirs.has(`${LOCAL_ONLY_DIR}/${rel}`)) return true;
+    return false;
   }
 
   /**

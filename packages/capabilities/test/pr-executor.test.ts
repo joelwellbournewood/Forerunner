@@ -1112,4 +1112,34 @@ describe("Local only: the person's folder the run can use and that never leaves 
     expect(next.recoverLocalOnly()).toBe(0);
     await w.store.close();
   });
+
+  it("a task branch whose repository now tracks a folder named Local only gets none of the person's files, and its pull request keeps the repository's (review of merged-copy)", async () => {
+    // Before: the copy's record still said "folder" until its next refresh, so the run got the
+    // person's folder in place of the repository's: the copy in removed the repository's files,
+    // the copy back removed the folder, and the pull request deleted them.
+    const { w, source, exec, ctx, onHost, wt } = await setup();
+    const seed = new GitOps({ cwd: join(w.root, "seed"), identity });
+    mkdirSync(join(w.root, "seed", "Local only"), { recursive: true });
+    writeFileSync(join(w.root, "seed", "Local only", "readme.md"), "the repository's own\n");
+    await seed.commitAll("a folder of that name");
+    await seed.push("main");
+    let sawTheirs = "";
+    let sawMine = true;
+    const res = await exec(
+      agent((dir) => {
+        sawTheirs = readFileSync(join(dir, "Local only", "readme.md"), "utf8");
+        sawMine = existsSync(join(dir, "Local only", "notes.txt"));
+        writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n");
+      }),
+    ).execute(await ctx());
+    expect(res.outcome).toBe("in_review");
+    expect(sawTheirs).toBe("the repository's own\n");
+    expect(sawMine).toBe(false);
+    expect(res.changedFiles).toEqual(["page.html"]);
+    expect(await onHost(res.branch)).toEqual(["Local only/readme.md", "README.md", "page.html"]);
+    expect(readFileSync(join(source, "notes.txt"), "utf8")).toBe("the person's notes\n");
+    expect(existsSync(join(source, "readme.md"))).toBe(false);
+    expect(existsSync(join(wt, ".git", "forerunner-local-only.json"))).toBe(false);
+    await w.store.close();
+  });
 });

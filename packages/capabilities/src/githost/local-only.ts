@@ -23,6 +23,7 @@ import {
   join,
   log,
 } from "@forerunner/platform";
+import type { GitOps } from "./git.ts";
 
 /**
  * "Local only" (the owner's decision of 2026-11-02, ADR 0113): one folder inside a repository
@@ -329,16 +330,136 @@ function titlePart(title: string): string {
   return cleaned || "a task";
 }
 
-/** `notes (from Write the notes).txt`, or `... 2.txt` when that name is taken. */
+/**
+ * `notes (from Write the notes).txt`, or `... 2.txt` when that name is taken. A folder holds
+ * finitely many names, so the count ends (no clock: AGENTS.md keeps `Date.now` in platform).
+ */
 export function besideName(name: string, taskTitle: string, taken: (n: string) => boolean): string {
   const ext = extname(name);
   const stem = ext ? name.slice(0, -ext.length) : name;
   const base = `${stem} (from ${titlePart(taskTitle)})`;
-  for (let i = 1; i < 1000; i++) {
+  for (let i = 1; ; i++) {
     const n = `${base}${i === 1 ? "" : ` ${i}`}${ext}`;
     if (!taken(n)) return n;
   }
-  return `${base} ${Date.now()}${ext}`;
+}
+
+/**
+ * `notes (yours).txt`, `data (yours)` for a folder, or `notes (yours 2).txt` when the name is
+ * taken: the name a file or folder of the person's gets when the repository's would replace it.
+ */
+export function yoursName(name: string, folder: boolean, taken: (n: string) => boolean): string {
+  const ext = folder ? "" : extname(name);
+  const stem = ext ? name.slice(0, -ext.length) : name;
+  for (let i = 1; ; i++) {
+    const n = `${stem} (yours${i === 1 ? "" : ` ${i}`})${ext}`;
+    if (!taken(n)) return n;
+  }
+}
+
+/** A file or folder of the person's moved out of the way of the repository's. */
+export interface KeptYours {
+  /** Where it was, relative to the copy with forward slashes: `Local only/notes.txt`. */
+  path: string;
+  /** Where it is now: `Local only/notes (yours).txt`. */
+  kept: string;
+}
+
+/**
+ * Before a checkout of `ref` in this computer's copy of a repository (review of merged-copy,
+ * ADR 0113): every file or folder of the person's under `Local only/` that a file `ref` tracks
+ * would replace is renamed `<name> (yours)<ext>` first. git replaces ignored files without a
+ * word, and the person's Local only files are ignored ones: a repository that started tracking
+ * `Local only/notes.txt` (a collaborator's commit on GitHub) took the person's own notes.txt.
+ * A path the copy's HEAD tracks is the repository's own and is left to git (a change the person
+ * made to one stops the checkout). Links are moved as links, never followed. The checkout then
+ * runs with `keepIgnored`, so anything still in the way stops it instead of being lost.
+ */
+export async function keepLocalOnlyFromCheckout(
+  git: GitOps,
+  dir: string,
+  ref: string,
+): Promise<KeptYours[]> {
+  const incoming = (await git.trackedUnder(ref, [LOCAL_ONLY_DIR])) ?? [];
+  if (!incoming.length) return [];
+  const own = new Set((await git.trackedUnder("HEAD", [LOCAL_ONLY_DIR])) ?? []);
+  const ownUnder = (q: string) => [...own].some((p) => p.startsWith(`${q}/`));
+  const wanted = (q: string) => incoming.some((p) => p === q || p.startsWith(`${q}/`));
+  const kept: KeptYours[] = [];
+  for (const path of incoming) {
+    const parts = path.split("/");
+    for (let i = 1; i <= parts.length; i++) {
+      const q = parts.slice(0, i).join("/");
+      const abs = join(dir, ...parts.slice(0, i));
+      let st: ReturnType<typeof lstatSync>;
+      try {
+        st = lstatSync(abs);
+      } catch {
+        break; // nothing of the person's on the way
+      }
+      // The repository's own file here: git replaces it (or stops on the person's change).
+      if (own.has(q)) break;
+      const folder = st.isDirectory() && !st.isSymbolicLink();
+      // A folder the repository's file goes into: look further down.
+      if (i < parts.length && folder) continue;
+      // A folder that holds files of the repository's: the checkout stops if it would lose one.
+      if (folder && ownUnder(q)) break;
+      const parent = parts.slice(0, i - 1).join("/");
+      const name = yoursName(parts[i - 1] as string, folder, (n) => {
+        const rel = parent ? `${parent}/${n}` : n;
+        return wanted(rel) || existsSync(join(dir, ...rel.split("/")));
+      });
+      const to = parent ? `${parent}/${name}` : name;
+      renameSync(abs, join(dir, ...to.split("/")));
+      // The folder itself out of the way (the repository tracks a file named "Local only"):
+      // its new name stays out of git too.
+      if (i === 1) excludeNeverPushed(dir, [to]);
+      kept.push({ path: q, kept: to });
+      logger.info("Local only: a file of the person's kept out of the repository's way", {
+        path: q,
+        kept: to,
+      });
+      break;
+    }
+  }
+  return kept;
+}
+
+/**
+ * After the checkout: a kept file the repository's now matches byte for byte is removed (the
+ * person shared it as it was), so only real differences stay beside. Returns what is left.
+ */
+export function dropKeptSame(dir: string, kept: readonly KeptYours[]): KeptYours[] {
+  return kept.filter((k) => {
+    const was = join(dir, ...k.path.split("/"));
+    const now = join(dir, ...k.kept.split("/"));
+    try {
+      const a = lstatSync(was);
+      const b = lstatSync(now);
+      if (!a.isFile() || !b.isFile() || a.size !== b.size) return true;
+      if (!readFileSync(was).equals(readFileSync(now))) return true;
+      rmSync(now, { force: true });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+}
+
+/**
+ * The sentence for a repository that started tracking a folder named Local only after the copy
+ * made one, while the person's own files are still in it: they stay on this computer (never
+ * staged, never uploaded), and the ones the repository's would have replaced carry "(yours)".
+ * `kept` names them relative to the folder (`notes (yours).txt`).
+ */
+export function localOnlyTakenLine(kept: readonly string[]): string {
+  const head = "No Local only folder here any more: this repository now has a folder of that name.";
+  if (!kept.length) return `${head} Your files in it stay on this computer.`;
+  const which =
+    kept.length === 1
+      ? `the one named like the repository's is now ${namesText(kept)}`
+      : `the ones named like the repository's are now ${namesText(kept)}`;
+  return `${head} Your files in it stay on this computer; ${which}.`;
 }
 
 /**

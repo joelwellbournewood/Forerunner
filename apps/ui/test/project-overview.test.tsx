@@ -50,11 +50,14 @@ describe("Files (design §3.10)", () => {
     expect(within(tab).getByTestId("folder-path")).toHaveTextContent(
       "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
     );
-    // Atlas is linked to org/atlas: the folder is this computer's copy of what is merged, and
-    // the page says where the work in pull requests is (ADR 0106).
-    expect(await within(tab).findByTestId("files-repository")).toHaveTextContent(
-      "This computer's copy of org/atlas as merged. Work waiting in a pull request is on the Overview.",
+    // Atlas is linked to org/atlas: the folder is this computer's copy, and the page says where
+    // the work in pull requests is (ADR 0106). Not brought to what is merged yet (no time):
+    // it claims nothing about merges (review of merged-copy).
+    const line = await within(tab).findByTestId("files-repository");
+    expect(line).toHaveTextContent(
+      "This computer's copy of org/atlas. Work waiting in a pull request is on the Overview.",
     );
+    expect(line).not.toHaveTextContent("as merged");
     // In a browser the path is to copy; Open folder is the desktop app's.
     expect(within(tab).getByTestId("folder-copy")).toHaveTextContent("Copy path");
     expect(within(tab).queryByTestId("folder-open")).toBeNull();
@@ -190,9 +193,10 @@ describe("Files (design §3.10)", () => {
       "No Local only folder here: this repository already has a folder of that name.",
     );
     expect(within(local).queryByTestId("local-only-folder")).toBeNull();
-    // Not brought up to date yet: the line says what the folder is, without a time.
+    // Not brought up to date yet: the line says what the folder is, without a time or a claim
+    // about merges.
     expect(screen.getByTestId("files-repository")).toHaveTextContent(
-      "This computer's copy of org/atlas as merged. Work waiting in a pull request is on the Overview.",
+      "This computer's copy of org/atlas. Work waiting in a pull request is on the Overview.",
     );
   });
 

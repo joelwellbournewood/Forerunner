@@ -642,4 +642,95 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     });
     await w.close();
   });
+
+  it("a repository that starts tracking files in Local only after the copy made the folder: the refresh loses none of the person's files, keeps the ones in the way as '(yours)', and Files says so (review of merged-copy)", async () => {
+    // Before: the refresh's `checkout -B main origin/main` overwrote the person's ignored
+    // `Local only/notes.txt` with the repository's without a word (git's default for ignored
+    // files), and Files said only that the repository has a folder of that name.
+    const w = await loopWorld();
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    await docs.refreshCopy(project);
+    const clone = join(root, "worktrees", w.project);
+    const local = join(clone, "Local only");
+    expect(docs.localOnlyFolder(project)).toBe(local);
+    // The person's files: one at a path the repository will take, one in a folder's way, a
+    // folder where the repository puts a file, one the repository has the same, one of its own.
+    writeFileSync(join(local, "notes.txt"), "mine\n");
+    writeFileSync(join(local, "data"), "my data file\n");
+    await mkdir(join(local, "sub"), { recursive: true });
+    writeFileSync(join(local, "sub", "inner.txt"), "my inner\n");
+    writeFileSync(join(local, "same.txt"), "shared\n");
+    writeFileSync(join(local, "other.txt"), "only mine\n");
+    // A collaborator commits files under "Local only/" on the default branch.
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    const theirs = join(root, "seed", "Local only");
+    await mkdir(join(theirs, "data"), { recursive: true });
+    writeFileSync(join(theirs, "notes.txt"), "the team's shared note\n");
+    writeFileSync(join(theirs, "data", "y.csv"), "a,b\n");
+    writeFileSync(join(theirs, "sub"), "the team's sub\n");
+    writeFileSync(join(theirs, "same.txt"), "shared\n");
+    await seed.commitAll("the team's Local only");
+    await seed.push("main");
+    const head = await seed.headSha();
+    expect(await docs.refreshCopy(project, { head, base: "main" })).toEqual({ refreshed: true });
+    const git = new GitOps({ cwd: clone, identity });
+    expect(await git.headSha()).toBe(head);
+    expect(await readFile(join(local, "notes.txt"), "utf8")).toBe("the team's shared note\n");
+    expect(await readFile(join(local, "notes (yours).txt"), "utf8")).toBe("mine\n");
+    expect(await readFile(join(local, "data", "y.csv"), "utf8")).toBe("a,b\n");
+    expect(await readFile(join(local, "data (yours)"), "utf8")).toBe("my data file\n");
+    expect(await readFile(join(local, "sub"), "utf8")).toBe("the team's sub\n");
+    expect(await readFile(join(local, "sub (yours)", "inner.txt"), "utf8")).toBe("my inner\n");
+    expect(await readFile(join(local, "same.txt"), "utf8")).toBe("shared\n");
+    expect(existsSync(join(local, "same (yours).txt"))).toBe(false);
+    expect(await readFile(join(local, "other.txt"), "utf8")).toBe("only mine\n");
+    // The person's files stay out of git: nothing for a docs commit to stage.
+    expect((await git.status()).files).toEqual([]);
+    expect(docs.localOnlyFolder(project)).toBeNull();
+    const line =
+      'No Local only folder here any more: this repository now has a folder of that name. Your files in it stay on this computer; the ones named like the repository\'s are now "data (yours)", "notes (yours).txt" and "sub (yours)".';
+    expect(docs.copyView(project)?.localOnly).toEqual({ folder: null, line });
+    // The next poll moves nothing again, and the line is still true; across a restart too.
+    expect(await docs.refreshCopy(project, { head, base: "main" })).toEqual({ refreshed: false });
+    const { docs: again } = await docsFor(w, root, bare);
+    expect(again.copyView(project)?.localOnly).toEqual({ folder: null, line });
+    expect(await readFile(join(local, "notes (yours).txt"), "utf8")).toBe("mine\n");
+    await w.close();
+  });
+
+  it("a docs write whose branch starts from a default branch that now tracks the person's Local only file keeps it (review of merged-copy)", async () => {
+    const w = await loopWorld();
+    const project = await w.store.project.patch(w.project, {
+      repos: ["o/sample"],
+      settings: { status_pull_request: true },
+    });
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    await docs.refreshCopy(project);
+    const clone = join(root, "worktrees", w.project);
+    const local = join(clone, "Local only");
+    writeFileSync(join(local, "notes.txt"), "mine\n");
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    await mkdir(join(root, "seed", "Local only"), { recursive: true });
+    writeFileSync(join(root, "seed", "Local only", "notes.txt"), "the team's shared note\n");
+    await seed.commitAll("the team's Local only");
+    await seed.push("main");
+    // No refresh in between: the status write's own checkout of fr/status meets it first.
+    await docs.writeSessionStatus({
+      project,
+      session: { id: "s-3" } as SessionRow,
+      update: update("s-3"),
+    });
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain("session s-3");
+    expect(await show(bare, STATUS_BRANCH, "Local only/notes.txt")).toBe(
+      "the team's shared note\n",
+    );
+    expect(await show(bare, STATUS_BRANCH, "Local only/notes (yours).txt")).toBeNull();
+    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("main");
+    expect(await readFile(join(local, "notes.txt"), "utf8")).toBe("the team's shared note\n");
+    expect(await readFile(join(local, "notes (yours).txt"), "utf8")).toBe("mine\n");
+    await w.close();
+  });
 });

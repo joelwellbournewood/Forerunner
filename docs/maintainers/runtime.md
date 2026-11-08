@@ -5491,13 +5491,30 @@ default branch as the host has it after every merge, not only at a session's end
   on that branch, nothing is fetched and the host is not asked (no `repoFor`, which calls
   `getRepo`); the record is written as checked. A checkout that fails (a
   file the person changed in the copy that the merge changed too) keeps the old `updatedAt`.
+- Every checkout in the copy (`backToBase`, and `checkout`'s switch to a docs branch) goes
+  through `switchCopy` (review of merged-copy, bench W8): git replaces ignored files without a
+  word, and a repository that started tracking `Local only/notes.txt` (a collaborator's commit
+  on GitHub) took the person's own notes.txt. So first `keepLocalOnlyFromCheckout` renames each
+  file or folder of the person's that the target would replace to "<name> (yours)<ext>"
+  (capabilities.md), then the checkout runs with `keepIgnored` (`--no-overwrite-ignore`), so any
+  other ignored file in the way (one outside Local only) stops it instead of being lost and the
+  copy keeps its old time, then `dropKeptSame` drops a kept file the repository's now matches byte
+  for byte, and the rest goes in the record's `kept`. `settle` records `localOnly: "taken"` while
+  the repository tracks the folder and the person's own files are still in it (neither the
+  default branch nor HEAD tracks them; `.git/info/exclude` keeps its Local only line, so they
+  stay out of git), and `copyView` gives "No Local only folder here any more: this repository
+  now has a folder of that name. Your files in it stay on this computer; the one named like the
+  repository's is now "notes (yours).txt"." (`localOnlyTakenLine`, naming only kept files still
+  there). `localOnlyFolder` is null then, so no run gets it.
 - Callers (compose.ts `refreshProjectCopy`, which emits the project event when the copy moved):
   `merge.onMerged` (a session's merge, a retry's, Merge in the app, and merges the watcher saw
   on GitHub through `DependentBranches`), the watcher's `onDefaultBranchHead` (beside
   `dependentBranches.sweep`; a merge by anyone, a docs PR merged on GitHub's website),
-  `RepoCreator.onLinked`, and the intake after it wrote its docs to the repository (W6-25: a
-  project made from a brief has its copy while its plan waits; the watcher's first poll clones a
-  missing copy too). The session's end still refreshes it (C-57).
+  `RepoCreator.onLinked`, the intake's background draft (`Intake.enqueue` runs
+  `copyWhileDrafting` beside `propose` and waits for it before the job ends, so nothing of it
+  keeps running; W6-25: a project made from a brief has its copy while its plan waits, not only
+  from the watcher's first poll) and the intake after it wrote its docs to the repository; the
+  watcher's first poll clones a missing copy too. The session's end still refreshes it (C-57).
 - One lock per copy (`ProjectDocs.withCopy(projectId, fn)`, a promise chain per folder in this
   process): `refreshCopy`, the scaffold (`scaffoldInCopy`), the status pull request write and
   `docsInPullRequests`' fetch take it, so git never runs twice at once in the clone and a
@@ -5523,11 +5540,13 @@ working folder (the owner's decision: no); the copy stays under Forerunner's dat
 
 Tests: `test/loop-docs.test.ts` (the lock: a watcher refresh during a status write waits and both
 end on main; the folder survives a docs write and a refresh; a tracked folder gets the
-sentence), `test/merged-copy.test.ts` (a merge the session makes is in Files at once; the record
+sentence; a repository that starts tracking files in Local only: none of the person's lost, the
+ones in the way "(yours)", the line across a restart; the same for a docs write's checkout of
+fr/status), `test/merged-copy.test.ts` (a merge the session makes is in Files at once; the record
 and Local only across a restart), `test/local-only-evidence.test.ts`, `test/executor-brief.test.ts`,
 and the real-daemon block "this computer's copy follows every merge" (a PR and a docs PR merged on
-the fake GitHub, one watcher poll, no session; a project made from a brief; Local only through a
-whole session on the fake GitHub).
+the fake GitHub, one watcher poll, no session; a project made from a brief, with no poll; Local
+only through a whole session on the fake GitHub; a collaborator's commit into Local only).
 
 ## How to change it
 

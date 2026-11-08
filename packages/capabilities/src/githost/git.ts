@@ -425,8 +425,18 @@ export class GitOps {
     return false;
   }
 
-  async createBranch(name: string, from = "HEAD"): Promise<void> {
-    this.must(await this.git(["checkout", "-B", name, from]), `checkout -B ${name}`);
+  /**
+   * `checkout -B name from`. With `keepIgnored` (merged-copy, ADR 0113) an ignored file the
+   * checkout would replace stops it instead (`--no-overwrite-ignore`): by default git overwrites
+   * ignored files without a word, and the person's Local only files are ignored ones.
+   */
+  async createBranch(
+    name: string,
+    from = "HEAD",
+    opts: { keepIgnored?: boolean } = {},
+  ): Promise<void> {
+    const keep = opts.keepIgnored ? ["--no-overwrite-ignore"] : [];
+    this.must(await this.git(["checkout", ...keep, "-B", name, from]), `checkout -B ${name}`);
   }
 
   async checkout(ref: string): Promise<void> {

@@ -39,8 +39,10 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
    (`ReviewedPrMerge.onMerged`: a session's, a retry's, Merge in the app, a merge the watcher saw
    on GitHub), at the git host watcher's read of the default branch's head each poll (a merge by
    anyone, a docs pull request merged on GitHub's website; a copy already at that head is not
-   fetched again), when a repository is linked, after the intake wrote its docs to the
-   repository, and at a session's end as before. A refresh that moved the copy tells the
+   fetched again), when a repository is linked, while the plan from a brief is drafted (part of
+   the draft's job, so the copy is there while the plan waits; added by the review of
+   merged-copy, which found it came only at the watcher's first poll, up to a minute later),
+   after the intake wrote its docs to the repository, and at a session's end as before. A refresh that moved the copy tells the
    project's screens, and the Files tab reads it again. Nothing is pushed.
 2. **One lock per copy.** `ProjectDocs.withCopy`: the refresh, the scaffold, the status pull
    request's write, the fetch of the Docs tab's waiting docs and 'merged-actions''s preview run
@@ -55,6 +57,20 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
    with one line, "Never uploaded. Agents can read and change it.", and its own Open folder. A
    repository whose default branch already tracks a path under `Local only/` gets no such folder;
    the tab says "No Local only folder here: this repository already has a folder of that name."
+   A repository that **starts** tracking such a folder after the copy made one (a collaborator
+   commits `Local only/notes.txt` on GitHub) never takes a file of the person's (amended by the
+   review of merged-copy, 2026-11-08; bench W8 found the refresh's `checkout -B` replacing the
+   person's notes.txt without a word, because git replaces ignored files by default). Before
+   every checkout in the copy, each file or folder of the person's that the incoming branch would
+   replace is renamed "<name> (yours)<ext>" (`keepLocalOnlyFromCheckout`), and the checkout runs
+   with `--no-overwrite-ignore`, so any other ignored file in the way stops it instead (the copy
+   then keeps the time of its last real update). A kept file the repository's matches byte for
+   byte is dropped. The person's files left in the folder stay out of git (the copy's exclude keeps
+   its line) and no run gets them; the tab says "No Local only folder here any more: this
+   repository now has a folder of that name. Your files in it stay on this computer; the one
+   named like the repository's is now "notes (yours).txt"." A task branch that already tracks a
+   folder named Local only (before the copy's next refresh) gets no copy in either, so its pull
+   request never replaces or deletes the repository's files.
 5. **Each run gets it and gives it back** (`local-only.ts`, the PR executor around the inner
    run). Copied in: regular files only; a link or a junction is skipped with a log line; a path
    whose real location is outside the folder is refused. A marker in the worktree's `.git`
@@ -104,9 +120,14 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
   and the person's is kept beside it, or (c) the folder is read-only for the person while a run
   uses it.
 - Known limits: the brief's line is given to every repository task, also for a repository that
-  already tracks a folder named Local only (rare); a repository that starts tracking such a
-  folder after the copy made one keeps the person's folder until its checkout conflicts, and then
-  the copy's time stops moving (the refresh logs it).
+  already tracks a folder named Local only (rare). A file the person put elsewhere in the copy
+  (not in Local only) that the repository's `.gitignore` leaves out and that a merge then adds
+  stops the copy's checkout rather than being replaced: the copy keeps its old time until the
+  person moves the file, and the refresh logs it (the same as a tracked file the person changed
+  that the merge changes too). The Files tab does not say why the time stopped moving. (Until the
+  review of merged-copy this said a repository that starts tracking a folder named Local only
+  "keeps the person's folder until its checkout conflicts": it did not, git replaced the
+  person's ignored files without a conflict. Decision 4 now keeps them.)
 
 ## Alternatives considered
 
