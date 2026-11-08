@@ -238,6 +238,10 @@ function runOutcomeWords(outcome: string): string {
       return "Ran out of time";
     case "usage_limit":
       return "Stopped at the usage limit";
+    // The leftovers of wave 7: a run (or a review) Anthropic's refusal of the credential stopped
+    // is no failed run; the task went back to ready and waits for a new one.
+    case "credential_refused":
+      return "Stopped: Anthropic refused the credential";
     // ADR 0112: a run that wrapped up with work left, and one a budget stopped.
     case "paused":
       return "Paused";

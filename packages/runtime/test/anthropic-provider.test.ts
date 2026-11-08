@@ -281,6 +281,50 @@ describe("AnthropicMessagesProvider", () => {
       );
     });
 
+    // The leftovers of wave 7 (R-chatcache): a chat turn's line went with the facts of now in
+    // one block, so the next turn, whose history replays the line alone, never read the entry.
+    it("a message with a stable start goes as two blocks, marked on the start; the next turn's replay of the start reads that entry", async () => {
+      const { bodies, p } = capture();
+      const line = "what's next on the game?";
+      await p.complete({
+        model: "claude-sonnet-5-5",
+        system: "sys",
+        messages: [{ role: "user", content: `${line}\n\nfacts of now`, stableChars: line.length }],
+        tools,
+        max_tokens: 100,
+        cache: { system: true, tools: true, messages: true },
+      });
+      await p.complete({
+        model: "claude-sonnet-5-5",
+        system: "sys",
+        messages: [
+          { role: "user", content: line },
+          { role: "assistant", content: "Polish the menu." },
+          { role: "user", content: "and then?\n\nnewer facts", stableChars: "and then?".length },
+        ],
+        tools,
+        max_tokens: 100,
+        cache: { system: true, tools: true, messages: true },
+      });
+      const first = bodies[0] as Record<string, unknown>;
+      const second = bodies[1] as Record<string, unknown>;
+      expect((first.messages as Msg[])[0]?.content).toEqual([
+        { type: "text", text: line, cache_control: { type: "ephemeral" } },
+        { type: "text", text: "\n\nfacts of now" },
+      ]);
+      expect(breakpoints(first)).toEqual(["system[0]", "tools[1]", "messages[0][0]"]);
+      // The replayed line is the same block, marked: the prefix the first call cached.
+      expect((second.messages as Msg[])[0]?.content).toEqual([
+        { type: "text", text: line, cache_control: { type: "ephemeral" } },
+      ]);
+      expect(breakpoints(second)).toEqual([
+        "system[0]",
+        "tools[1]",
+        "messages[0][0]",
+        "messages[2][0]",
+      ]);
+    });
+
     it("without `messages` the history carries no mark (planning and chat callers that ask for none)", async () => {
       const { bodies, p } = capture();
       await p.complete({

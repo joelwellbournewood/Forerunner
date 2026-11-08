@@ -1,3 +1,4 @@
+import { CREDENTIAL_WAIT_REASON } from "@forerunner/runtime/session/credential-wait";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -207,7 +208,9 @@ describe("Tasks tab (design §3.5)", () => {
 
   it("a ready task that waits for a Claude credential says until when, and that it starts by itself (U-078)", async () => {
     const harness = createHarness();
-    addTask(harness, "t_wait", "Write note A");
+    // The session put the task back to ready because it waits (leftovers7-session: only such a
+    // task says it waits).
+    addTask(harness, "t_wait", "Write note A", { reason: CREDENTIAL_WAIT_REASON });
     harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
       label: "Waits until 16:40, your API key's limit",
       detail: "It starts by itself then.",
@@ -234,7 +237,7 @@ describe("Tasks tab (design §3.5)", () => {
     const others = harness.daemon.state.requests.filter((r) => r.projectId !== "proj_atlas");
     harness.daemon.state.requests.splice(0, Infinity, ...others);
     harness.daemon.state.sessions.splice(0, Infinity);
-    addTask(harness, "t_wait", "Write note A");
+    addTask(harness, "t_wait", "Write note A", { reason: CREDENTIAL_WAIT_REASON });
     harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
       label: "Waits for a new API key",
       detail: "Save one in Settings; it starts by itself then.",

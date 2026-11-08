@@ -592,7 +592,9 @@ The cards you meet most:
   and address"), the plan starts with a task for you ("Give the real menu, hours and address",
   "you: answer its questions") and the work that uses it waits for your answers instead of
   using placeholders. What your project gives its own people ("we will send subscribers a
-  weekly email") is the work, not something you give. **Approve and start** writes the tasks and
+  weekly email") is the work, not something you give. Each task's "about CHF ..." is what the
+  Start dialog will say for it: once Forerunner has seen what tasks of that kind really cost,
+  both use what it learned. **Approve and start** writes the tasks and
   starts working on them now (or, when the work waits for your answers first, says so and puts
   their card in your Inbox: "the work starts once you answer its questions in the Inbox").
   **Change the plan** opens a box: say what to change and the agent drafts a new plan
@@ -702,10 +704,13 @@ hour when it gives none), and the session log says so in one sentence. For tasks
 **When my first choice runs out mid-session** (Settings → Advanced, Other settings) decides:
 
 - **Wait** (the default): nothing moves onto your other credential. The task goes back to
-  Ready without counting as a failed attempt, the session ends with "Waits until 15:40 (your
-  subscription's limit) and starts by itself.", each task's row reads "Waits until 15:40, your
+  Ready without counting as a failed attempt, and so does every other task whose first choice
+  is that credential; the session goes on with the tasks whose first choice can serve (a
+  research task on your API key, say) and ends with "Waits until 15:40 (your subscription's
+  limit) and starts by itself.". Each waiting task's row reads "Waits until 15:40, your
   subscription's limit", and at that time a session of the project starts by itself, also
-  after Forerunner was closed and opened again.
+  after Forerunner was closed and opened again. The session log names a task as started only
+  once its run really starts, with the specialist that runs it.
 - **Use the other one**: the task goes on at once, in the same session, on your other
   credential ("continues on your API key now"). This moves work from your plan's limits onto
   money, so Forerunner asks you to confirm the change.
@@ -726,7 +731,11 @@ closes, the mark goes, and the waiting work starts by itself: the tasks run, and
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
-new API key: 2 tasks").
+new API key: 2 tasks"). A review waits the same way: when the critic's review of a finished
+task meets a limit or a refusal and no other credential can do it, the task goes back to Ready
+without counting as a failed try, its row reads "Waits until 15:40, ...", no card is filed
+beside the credential's own, and at that time its session runs it again and the critic reviews
+it.
 
 Until you choose an order, tasks use the subscription first and Chat, project setup
 and reviews use the API key first.
@@ -808,6 +817,10 @@ subscription's share the card offers no Continue (a bigger task budget would not
 how the task goes on ("It goes on by itself once you raise the monthly cap in Settings, or on 1
 December."), links Settings, and the task goes on by itself once you raised that limit (or
 removed it) in Settings, or the new month began; until then it stays paused with its card.
+The same holds when the limit is reached by the critic's review rather than by the run: the
+task pauses at that limit with the same card ('"Contact page" paused before its review: the
+project's budget of CHF 0.01 has no room for it.' in the log), it does not count as a failed
+try, and once it goes on its next session finishes it and the critic reviews it once.
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the
 agent did with the wrap-up: in a project linked to a GitHub repository it is one commit on the

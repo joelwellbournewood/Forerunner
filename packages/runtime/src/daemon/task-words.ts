@@ -8,6 +8,7 @@ import type {
 } from "@forerunner/state";
 import { type MergeMode, mergesAfterLabel, mergesAfterSentence } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
+import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 import { cancelWorkKind, cancelWorkLine } from "./cancel-words.ts";
@@ -620,7 +621,9 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         });
       // U-078: no Claude credential that may run it can now; it starts by itself at the
       // credential's reset, or once a new key is saved (never "Failed: no billing source").
-      if (ctx.credentialWait)
+      // Only a task that waited says so (the leftovers of wave 7): under "Wait" a task whose
+      // first choice can serve runs, so the project's wait is not every ready task's.
+      if (ctx.credentialWait && task.reason === CREDENTIAL_WAIT_REASON)
         return display("waiting", ctx.credentialWait.label, "warn", {
           detail: ctx.credentialWait.detail,
         });

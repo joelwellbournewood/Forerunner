@@ -510,11 +510,25 @@ audit row; one Inbox card per source, `CREDENTIAL_REFUSED_KEY` "credential:refus
 planning and reviews and makes the call once more on the next source. `VaultLedgerProbe`
 reports `refused` while the vault holds the refused credential (`refusedSince`), so the router
 skips it (`refused`). (2) Both a usage limit and a refusal return outcome `usage_limit` with
-`stoppedRunSentence` (what is really scheduled) and, when no credential may take the task now
+`stoppedRunSentence` (what is really scheduled; the Run row's outcome is `usage_limit` or
+`credential_refused`, decided before the row is written, so the task's drawer reads "Stopped at
+the usage limit" or "Stopped: Anthropic refused the credential", never "Failed": the leftovers
+of wave 7, `credential-wait-session.test.ts`) and, when no credential may take the task now
 (`nextCredential`: the same pick, which only reads the sources), `credentialWait`; the runner
-releases the claim (no try counted, never a passing error), and either ends the session on
-the wait (`CREDENTIAL_WAIT_STOP`, the rest of the queue left ready) or puts the task back at
-the head of the queue for the credential that takes over (at most `MAX_CREDENTIAL_MOVES`).
+releases the claim (no try counted, never a passing error), and either lets the task wait
+(reason `CREDENTIAL_WAIT_REASON`, `notAgain`; the session goes on with the rest of its queue,
+where each task's own pick decides whether it runs now or waits too, and ends
+`CREDENTIAL_WAIT_STOP` once nothing else runs: the leftovers of wave 7, ADR 0100 point 17;
+before, it ended at the first wait and skipped the queue) or puts the task back at the head of
+the queue for the credential that takes over (at most `MAX_CREDENTIAL_MOVES`). Only a ready task
+with that reason reads the project's wait on its row (`taskDisplay`), and a second task waiting
+for the same credential logs its `billing.fallback` line as a detail (`repeat: true`). The
+session log's `task.started` is written when the executor says the run starts
+(`TaskExecutor.execute`'s `onStarted`, after the credential pick and any web hand-over, with the
+specialist that runs; else at the first step, or when `execute` returns unless it returned
+`usage_limit`), so a task whose pick waited has no start line and a run handed to the web-reader
+names it (W5-20; `session-keeps-going.test.ts`, `specialist-handover.test.ts`,
+`credential-wait-session.test.ts` "under 'Wait' only the tasks whose first choice rests wait").
 (3) The router's "no source" no longer fails a task: `executor.pickBilling` turns an
 `unavailable` that `credentialWaitOf` reads as a wait (the 'wait' rule's `waitFor`, a resting
 source's `until`, a refused source) into `ForerunnerError("unavailable")` with `details.wait`
@@ -1053,7 +1067,14 @@ a background job's row on no project (the critic's monthly calibration) is ended
 so a crash during it never reads "Your last session was interrupted". `POST /sessions/:id/stop`
 on a row nothing in this process runs ends it the same way (`endDeadSession`, stop reason
 `you`). The runner's refusal of a second session says it in words, never with the other
-session's id.
+session's id. What the ended session did before it died is kept (the leftovers of wave 7):
+its `session.ended` event carries `completed` (the tasks its runs worked on that are done) and
+`spentUsdMicro` (the cost ledger's rows for the session, else the row's count), so its last
+line reads "Interrupted: Forerunner closed: 1 done. CHF 0.03." instead of "nothing done. CHF
+0.00."; and it becomes the project's `summary_cache.last_session` (`recordLastSession`: its
+summary, stop reason and a `LastSessionOutcome` with what it did and left ready) unless a later
+session of the project already ended, so the Overview never reads "No session yet" after a
+crash (`session-recovery.test.ts`, composed twice on one home).
 
 **The inbox before the session-end writes (spec E.4).** Step 4 of `runner.ts` starts with one
 more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is
@@ -1975,7 +1996,9 @@ budget-stop; the owner's decision of 2026-11-02).**
   last three then end the session (`stopEndsSession`) with the limit's own stop reason
   (`budgetStopReasonOf` in `session/stop-words.ts`: `budget_month`, `budget_project`,
   `budget_plan`; `isBudgetStopReason` says whether a reason is a budget stop) and its amount
-  (`LastSessionOutcome.stopCapChfMicro`, `SessionResult.stopCapChfMicro`). The session's words
+  (`LastSessionOutcome.stopCapChfMicro`, `SessionResult.stopCapChfMicro`; none for the
+  subscription's share, a fraction and no amount: before the leftovers of wave 7 the share was
+  stored converted as if it were USD). The session's words
   name it: the badge "Stopped at this month's cap" (`sessionStatusText`, also the log's end
   line), the result's "Stopped at this month's cap of CHF 0.23." (`stopWords`, also the Inbox
   Update and the chat's facts), a stopped review's "the session stopped at this month's cap"
@@ -2635,7 +2658,25 @@ and the phone's Reviews tab maps approve to `accept` and reject to `rework`. Tes
 each option answered with `requestView(row).options` through the daemon's answer route; a typed
 answer refused; a second failure reuses the card). A task left in review by a failed review
 before this change has no card; the person moves it on the Tasks tab (Mark done, Needs me,
-Mark failed, Cancel). The sign-off ends with the human the same way
+Mark failed, Cancel). **A review a limit or a credential refused (the leftovers of wave 7)** is
+neither a verdict nor a failure: the critic throws the refusal (`critic.md`), the critic port
+adds what a credential refusal waits for (`withReviewWait` in `session/review-refusal.ts`: the
+routed provider's `waitNow` for the critic's purpose, else the refused call's source read from
+the store, kept for the task's project through `RoutedProvider.noteWait`), and `reviewTask`
+returns `{ refused }` (`reviewRefusalOf`). A budget's refusal pauses the task as a run's pause
+does (ADR 0112 point 6): `needs_human` with `budgetStopTitle`, one card (`fileBudgetStopCard`,
+the limit from the refusal's level: `reviewStopSource`, the critic's own run cap being the
+session's), the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
+of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the session's budget or an
+outer limit ends the session there; no try is counted and no ladder card is filed. A
+credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the
+wait's `billing.fallback` sentence (`stoppedRunSentence`), as a run a credential stopped; no
+review-failed card is filed beside the credential's own. Either way the task runs again in the
+next session (when the limit changed, or the credential serves: `wakeBudgetWaits`,
+`RuntimeApp.billing.waits.wake`) and the critic reviews it once. A credential refusal with
+nothing known to wait for still files the review-failed card. Tests: `budget-pause.test.ts` "a
+review refused at the project's budget pauses the task", `credential-wait-session.test.ts` "a
+review that meets a credential's usage limit waits for it". The sign-off ends with the human the same way
 (`syncSignoffAnswers`, same file; phase 5 follow-up RT-P5-1): every `human` decision (a
 tier 3 review, a `human` verdict, the ladder's last rung, filed by `CriticService`,
 `applyVerdict` or the loop's ladder branch) carries a `change_card` keyed `critic:signoff`
@@ -3583,8 +3624,15 @@ in one project cancelled a task in another. Now:
 - **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
   alternating user and assistant messages within `historyMaxTokens` (default
   `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
-  first), then the turn's own message: the volatile facts and blocks and the line, last, so the
-  cached prefix (tools, system, the earlier turns) holds.
+  first), then the turn's own message: the line, then the volatile facts and blocks. The line is
+  the message's stable start (`ChatMessage.stableChars`): the Anthropic adapter sends it as its
+  own text block with the cache breakpoint (`stableSplit`, `cacheHistory`), so the entry the
+  turn writes ends at the line, and the next turn, whose history replays the line alone, reads
+  it (the leftovers of wave 7: with the facts in front of the line every turn wrote its whole
+  history again at 1.25 times the input price and read only the tools and the system prompt;
+  `conversation.test.ts` "chat turns read their history from the prompt cache",
+  `anthropic-provider.test.ts`; testenv's `PromptCacheSim` keys a prefix by the blocks the
+  adapter sends).
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
@@ -5283,7 +5331,13 @@ subscription); no credential meets every hard need; api_key lacks webSearch" and
 come from the same functions: `RuntimeApp.chooser.forTask({ specialist, projectId, task })`
 (`credentialChoiceFor` over `RouterTaskBilling.savedKinds()`, the saved credentials in the
 person's order, and `hasDependenciesToInstall` of the project's folder) gives `{ kind, line }`, the
-sentence the plan card (`GET /inbox` `planTasks`, `daemon/plan-tasks.ts`), New task and Settings
+sentence the plan card (`GET /inbox` `planTasks`, `daemon/plan-tasks.ts`; each plan task there
+also carries `estimateUsdMicro`, the figure the Start dialog will show for the task the plan
+writes: `planEstimateUsdMicro` over the learned estimates, the plan shaped as the apply shapes
+it, 0 for the person's questions, while the task itself keeps the plan's bounded guess as its
+`est_cost_usd_micro`; the leftovers of wave 7: the card showed the guess while the Start dialog
+showed it times the learned ratio; `real-daemon.test.ts` "the plan card's figure is the Start
+dialog's"), New task and Settings
 show (`choiceLine`: "Runs on your API key: it can read web pages here but not search, so the
 researcher reads pages whose address it knows." when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your

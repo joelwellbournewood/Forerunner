@@ -32,6 +32,32 @@ export interface PromptCacheOptions {
   messageText?: (m: ChatMessage) => string;
 }
 
+/** A message's stable start and changing end (`ChatMessage.stableChars`), as the adapter splits it. */
+function stableSplitOf(m: ChatMessage): [string, string] | null {
+  const n = m.stableChars;
+  if (m.raw || typeof m.content !== "string" || typeof n !== "number") return null;
+  if (!(n > 0 && n < m.content.length)) return null;
+  return [m.content.slice(0, n), m.content.slice(n)];
+}
+
+/**
+ * A message as the adapter sends it, for a prefix's key: a plain string is one text block, a
+ * message with a stable start two (only its start when the mark falls on it); nothing but the
+ * role and the content counts (the leftovers of wave 7: the chat's history, replayed as a
+ * string, read the entry its turn wrote).
+ */
+function sentForm(m: ChatMessage, marked: boolean): { role: string; content: unknown } {
+  const split = stableSplitOf(m);
+  if (split)
+    return {
+      role: m.role,
+      content: (marked ? [split[0]] : split).map((text) => ({ type: "text", text })),
+    };
+  if (typeof m.content === "string")
+    return { role: m.role, content: [{ type: "text", text: m.content }] };
+  return { role: m.role, content: m.raw ?? m.content };
+}
+
 export const DEFAULT_PROMPT_CACHE_MIN_TOKENS = 512;
 export const DEFAULT_PROMPT_CACHE_TTL_MS = 5 * 60_000;
 
@@ -91,10 +117,16 @@ export class PromptCacheSim {
       }
       at.push(last);
       for (const i of at) {
-        const upTo = messageTokens.slice(0, i + 1).reduce((s, n) => s + n, 0);
+        // A message with a stable start (`stableChars`) is marked on that start, as the
+        // adapter marks it; its changing end is not part of the entry.
+        const split = stableSplitOf(req.messages[i] as ChatMessage);
+        const upTo =
+          messageTokens.slice(0, i).reduce((s, n) => s + n, 0) +
+          (split ? this.count(split[0]) : (messageTokens[i] ?? 0));
+        const prefix = req.messages.slice(0, i + 1).map((m, j) => sentForm(m, j === i));
         marks.push({
           tokens: toolsTokens + systemTokens + upTo,
-          key: key({ tools, system: req.system ?? "", messages: req.messages.slice(0, i + 1) }),
+          key: key({ tools, system: req.system ?? "", messages: prefix }),
         });
       }
     }

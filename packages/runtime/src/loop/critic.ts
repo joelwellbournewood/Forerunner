@@ -60,6 +60,7 @@ import {
   reportedQuestions,
   wentAheadWithout,
 } from "../session/person-questions.ts";
+import { withReviewWait } from "../session/review-refusal.ts";
 import { webSourceEvidence } from "../session/web-sources.ts";
 import {
   type CriticPort,
@@ -628,6 +629,18 @@ export class CriticLoop implements CriticPort {
           ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
         },
       );
+    } catch (e) {
+      // A credential refused the review and no other could serve it (ADR 0100 point 9): what it
+      // waits for is kept for the task's project, and the session lets the task wait.
+      throw await withReviewWait(e, {
+        provider: this.deps.providers.get(this.deps.providerName),
+        store,
+        nowMs: this.deps.clock.now(),
+        projectId: task.project_id,
+        agentId: req.agentId,
+        onError: (what, err) =>
+          this.logger.warn(what, { taskId: task.id, error: errorMessage(err) }),
+      });
     } finally {
       await lease?.sandbox.destroy().catch(() => {});
       // The try's own files (samples, a build folder of the checks) never stay in the folder.

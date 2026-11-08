@@ -181,6 +181,17 @@ export function parseSummaryClaims(summary: string): SummaryClaims {
 }
 
 /** The task ids a session's handoff lists as sent back by the critic (`handoff.sent_back`). */
+/**
+ * The tasks a session left paused at a budget (the handoff's `paused`, ADR 0112): a pause is no
+ * failure and no question for the person; the card says how it goes on (the leftovers of wave
+ * 7: a session whose only task paused was graded "sent back for changes").
+ */
+export function pausedOf(handoff: JsonValue): string[] {
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return [];
+  const list = (handoff as Record<string, unknown>).paused;
+  return Array.isArray(list) ? list.filter((id): id is string => typeof id === "string") : [];
+}
+
 export function sentBackOf(handoff: JsonValue): string[] {
   if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return [];
   const list = (handoff as Record<string, unknown>).sent_back;
@@ -276,7 +287,19 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       "The runtime caps must have stopped the session; check the ledger and the hooks",
     );
   }
-  if (actual > 0 && planItems.length > 0 && doneTasks === 0 && session.status === "completed") {
+  // A task paused at a budget (ADR 0112) is neither done nor failed nor a question for the
+  // person: a session whose every planned task that is not done paused did what its budget held.
+  const paused = new Set(pausedOf(session.handoff));
+  const onlyPaused =
+    paused.size > 0 &&
+    [...planned].every((id) => paused.has(id) || data.tasks.get(id)?.status === "done");
+  if (
+    actual > 0 &&
+    planItems.length > 0 &&
+    doneTasks === 0 &&
+    session.status === "completed" &&
+    !onlyPaused
+  ) {
     add(
       "medium",
       `Session spent ${money(actual)} and no task reached done`,
@@ -296,6 +319,7 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   const plannedWaiting = [...planned].filter(
     (id) =>
       data.tasks.get(id)?.status === "needs_human" &&
+      !paused.has(id) &&
       !plannedFailed.includes(id) &&
       !plannedSentBack.includes(id),
   );

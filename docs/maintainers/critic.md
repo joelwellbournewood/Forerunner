@@ -204,7 +204,19 @@ read whose checks the runtime ran; the spec's "low confidence never accepts" is 
 An `escalate` carries an optional `escalation: { reason: unverified_finding | evidence_missing
 | limit, detail }`, the ground the rules check. When a model answers in text instead, the first
 JSON object in the text that parses is used; nothing at all is `outcome: "no_verdict"` and a
-conservative `escalate`. Every `evidence` line is something a human can check: criteria met or
+conservative `escalate`. A task review whose run a limit or a credential refused before any
+verdict (`refusedReviewError`: a `budget_exceeded` outcome at any level, or an `error` with
+`provider_usage_limit`, `provider_auth` or `unavailable`, which the routed provider returns only
+when no other credential could serve the call) is no review and no verdict (the leftovers of
+wave 7, ADR 0112 point 5 and ADR 0100 point 9 amended): its Run row is written (a credential's
+outcome `usage_limit` or `credential_refused`, `credentialRunOutcome`, never `error`), no Review
+or finding is, and the review throws a `ForerunnerError` with the refusal's code and
+`details.review = REVIEW_REFUSED` (the runtime's `session/review-refusal.ts`). Before, it was an
+`escalate` with the finding "Critic review did not complete (budget_exceeded)", which the retry
+ladder counted as a failed try of the work. A refusal after the verdict was captured still
+completes the review (`REFUSALS_AFTER_VERDICT`); session reviews, promotion reviews and
+calibration keep their conservative outcome (`critic.test.ts`, `budget-pause.test.ts`,
+`credential-wait-session.test.ts`). Every `evidence` line is something a human can check: criteria met or
 unmet with the evidence the critic cited, checks run, the prompt version, the run id, the
 compression bypass, the doc-drift result, the ground an escalate stood on (`escalate: ...`) or
 why it did not qualify (`escalate not qualified: ...`) and, for tier 1, whether the 30 s target
@@ -375,7 +387,12 @@ store and persists a `Review` with `session_id` set and `task_id` null:
   were sent back by the critic (the session handoff's `sent_back`, `sentBackOf`), even at no
   cost: one medium finding naming both counts ("No planned task was done: 1 of 2 failed, 1 sent
   back by the critic"; U-017: an all-failed session was graded 100; U-072: so was one whose only
-  task was sent back). The service's own event is
+  task was sent back). A task paused at a budget (the handoff's `paused`, `pausedOf`, ADR 0112)
+  is none of these: it never counts as waiting for the person, and a session whose every
+  planned task that is not done paused gets neither that finding nor "spent ... and no task
+  reached done" (the leftovers of wave 7: a session whose only task paused read "sent back for
+  changes (grade 70, 2 findings)"); its cost against the estimate is still checked. The
+  service's own event is
   `critic.session_review_metrics` (the measurements); the runner reports the review as
   `critic.session_review`, so the session log shows it once;
 - honesty: `parseSummaryClaims` reads "Done: N" (also "N tasks done", "completed N tasks"),

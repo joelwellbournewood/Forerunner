@@ -1,6 +1,8 @@
+import { DEFAULT_CHF_PER_USD, usdToChfMicro } from "@forerunner/billing";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import { holdsTask } from "../daemon/task-words.ts";
+import type { LastSessionOutcome } from "./result.ts";
 
 /**
  * Crash recovery (core-experience design §4.10, ADR 0102). A daemon that died while a session
@@ -125,6 +127,20 @@ export async function endDeadSession(
   }
   const titles = tasks.map((t) => t.title);
   const summary = (opts.summary ?? interruptedSummary)(titles);
+  // What the session did before it died (the leftovers of wave 7): the tasks its runs worked on
+  // that are done now, and what it spent (the cost ledger's rows for it, else the row's own
+  // count). Before, its end said "nothing done. CHF 0.00." whatever it had finished.
+  const done: TaskRow[] = [];
+  for (const id of runTaskIds) {
+    const t = await store.task.get(id).catch(() => undefined);
+    if (t?.status === "done") done.push(t);
+  }
+  const booked = await store.costLedger.sum({ sessionId: fresh.id }).catch(() => null);
+  const spentUsdMicro = booked && booked.entries > 0 ? booked.usd_micro : fresh.spent_usd_micro;
+  const spentChfMicro =
+    booked && booked.entries > 0
+      ? booked.chf_micro
+      : usdToChfMicro(Math.max(0, Math.round(spentUsdMicro)), DEFAULT_CHF_PER_USD);
   const handoff = {
     ...((fresh.handoff as Record<string, unknown> | null) ?? {}),
     stop_reason: opts.stopReason,
@@ -140,8 +156,74 @@ export async function endDeadSession(
     status: "stopped",
     stopReason: opts.stopReason,
     released: tasks.map((t) => ({ taskId: t.id, title: t.title })),
+    // The end line's counts and money, as a session that ended by itself says them.
+    completed: done.length,
+    spentUsdMicro,
   } as never);
+  await recordLastSession(deps, ended, {
+    summary,
+    stopReason: opts.stopReason,
+    done,
+    released: tasks,
+    spentChfMicro,
+  }).catch((e: unknown) =>
+    logger.warn("the interrupted session was not recorded as the project's last", {
+      sessionId: fresh.id,
+      error: errorMessage(e),
+    }),
+  );
   return { session: ended, tasks };
+}
+
+/**
+ * The project's last session (`summary_cache.last_session`, the Overview's "Last session") is
+ * the one that ended here, unless a later one of the project already ended (the leftovers of
+ * wave 7: only the live runner wrote it, so after a crash the Overview read "No session yet"
+ * though the session had done work). Its outcome holds what it did and what it left ready.
+ */
+async function recordLastSession(
+  deps: Pick<RecoveryDeps, "store" | "clock">,
+  session: SessionRow,
+  facts: {
+    summary: string;
+    stopReason: string;
+    done: readonly TaskRow[];
+    released: readonly TaskRow[];
+    spentChfMicro: number;
+  },
+): Promise<void> {
+  const { store, clock } = deps;
+  if (!session.project_id) return;
+  const project = await store.project.get(session.project_id);
+  if (!project) return;
+  const cache = (project.summary_cache ?? {}) as Record<string, unknown>;
+  const last = cache.last_session as { ended_at?: unknown } | undefined;
+  const lastEnded = typeof last?.ended_at === "string" ? last.ended_at : null;
+  // A session of the project that ended after this one started is newer news.
+  if (lastEnded && session.started_at && lastEnded > session.started_at) return;
+  const named = (t: TaskRow) => ({ id: t.id, title: t.title });
+  const outcome: LastSessionOutcome = {
+    done: facts.done.map(named),
+    failed: [],
+    needsYou: [],
+    leftOver: facts.released.map(named),
+    waiting: [],
+    waitingForDocker: [],
+    stopReason: facts.stopReason,
+    spentChfMicro: facts.spentChfMicro,
+  };
+  await store.project.patch(project.id, {
+    summary_cache: {
+      ...cache,
+      last_session: {
+        id: session.id,
+        ended_at: session.ended_at ?? clock.nowIso(),
+        summary: facts.summary,
+        stop_reason: facts.stopReason,
+        outcome,
+      },
+    } as never,
+  });
 }
 
 /**

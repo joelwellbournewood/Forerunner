@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { SESSION_OVERRIDE_KEY } from "@forerunner/commands";
 import { dirname, fromPosix, join, Logger } from "@forerunner/platform";
 import { openStore } from "@forerunner/state";
-import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
+import {
+  FakeProvider,
+  PromptCacheSim,
+  type ScriptedReply,
+  textReply,
+  toolReply,
+} from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import {
@@ -18,6 +24,7 @@ import type { CapsPort } from "../src/enforcement/ports.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { MemoryLoop, memoryCommandPort } from "../src/loop/memory.ts";
+import type { ModelRequest } from "../src/provider/types.ts";
 import { StateApprovals } from "../src/wiring/state-ports.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
@@ -1250,6 +1257,48 @@ describe("chat context: where the files are (live, 2026-11-01; ADR 0106)", () =>
     await w.chat("where are my files?");
     expect(w.firstUser()).toMatch(/# Your files\nThe project's folder: \S+/);
     expect(w.firstUser()).not.toContain("The repository:");
+    await w.store.close();
+  });
+});
+
+/**
+ * The leftovers of wave 7 (R-chatcache): each chat turn paid the cache-write price on its whole
+ * history and read only the system prompt and the tools. The turn's line went with the facts of
+ * now in front of it ("<facts>\n\n<line>"), and the next turn replays the line alone, so its
+ * history never matched the entry the turn before wrote (bench-api: turns 2 and 3 each read the
+ * 5,615 tokens of system and tools, and wrote 749 and 453).
+ */
+describe("chat turns read their history from the prompt cache (the leftovers of wave 7)", () => {
+  it("the second turn reads more than the system and the tools from the cache: the first turn's line", async () => {
+    const w = await setup([
+      textReply("Polish the menu next.", { ttftMs: 0 }),
+      textReply("Then the release notes.", { ttftMs: 0 }),
+    ]);
+    await w.chat("what's next on the game?");
+    await w.chat("and after that?");
+    // The provider's prompt cache over the calls as they were sent (Anthropic's rules: the
+    // adapter's breakpoints; testenv `PromptCacheSim`).
+    const sim = new PromptCacheSim({ clock: w.h.clock });
+    const calls = w.provider.calls.map((c) => c.request as ModelRequest);
+    const bills = calls.map((r) => sim.bill(r));
+    const second = calls.findIndex((r) =>
+      String(r.messages.at(-1)?.content ?? "").includes("and after that?"),
+    );
+    expect(second).toBeGreaterThan(0);
+    // What the system prompt and the tools alone are worth.
+    const prefix = new PromptCacheSim().bill({
+      ...(calls[second] as ModelRequest),
+      messages: [],
+      cache: { system: true, tools: true },
+    });
+    const systemAndTools =
+      prefix.input_tokens + prefix.cache_creation_input_tokens + prefix.cache_read_input_tokens;
+    // The second turn's history starts with the first turn's line, exactly as it was cached.
+    expect(calls[second]?.messages[0]?.content).toBe("what's next on the game?");
+    expect(bills[second]?.cache_read_input_tokens).toBeGreaterThan(systemAndTools);
+    // The person's line is still what the turn says, with the facts of now beside it.
+    expect(w.firstUser(second)).toContain("and after that?");
+    expect(w.firstUser(second)).toContain("active_project");
     await w.store.close();
   });
 });

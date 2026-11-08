@@ -31,6 +31,7 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.blocked_by_findings",
   "critic.verdict",
   "critic.review_failed",
+  "critic.review_paused",
   "pr.merged",
   "pr.left_open",
   "pr.merge_failed",
@@ -57,6 +58,9 @@ export function eventAudience(type: string, p: Record<string, unknown> = {}): Ev
   // A credential stopped the run (U-078): its `billing.fallback` line says what happened and
   // what comes next ("... waits until 15:40 ... and starts by itself."), once.
   if (type === "task.finished" && p.outcome === "usage_limit") return "detail";
+  // A second task waiting for the same credential (the leftovers of wave 7): the first one's
+  // line and the session's end say the wait; the rest are details.
+  if (type === "billing.fallback" && p.repeat === true) return "detail";
   // A retry in the same session is told by what came of it (design §3.7: about eight lines per
   // task; the walk's failing task had twelve): the same specialist starting again is a detail,
   // another one taking over is not.

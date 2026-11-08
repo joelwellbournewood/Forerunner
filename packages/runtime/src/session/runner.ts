@@ -57,12 +57,20 @@ import {
 import {
   type BudgetStopSource,
   limitWords,
+  REVIEW_PAUSED_EVENT,
   type RunHandoff,
+  reviewPausedWords,
   stopEndsSession,
 } from "./budget-pause.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
-import { CREDENTIAL_WAIT_STOP, type CredentialWait, waitSentence } from "./credential-wait.ts";
+import {
+  CREDENTIAL_WAIT_REASON,
+  CREDENTIAL_WAIT_STOP,
+  type CredentialWait,
+  stoppedRunSentence,
+  waitSentence,
+} from "./credential-wait.ts";
 import {
   fileBlockedByFindingsRequest,
   fileFailedTaskCard,
@@ -104,6 +112,7 @@ import {
   sessionUpdateLine,
   waitingOf,
 } from "./result.ts";
+import { type ReviewRefusal, reviewRefusalOf } from "./review-refusal.ts";
 import {
   needsContainerSandbox,
   type SandboxGate,
@@ -326,6 +335,13 @@ export interface TaskExecutor {
      * counts the step and the spend on the session row and logs a step line while it runs.
      */
     onStep?: (step: TaskStep) => void;
+    /**
+     * Called once when the task's run really starts: after its credential pick and any hand-over
+     * to another specialist, with the specialist that runs (the leftovers of wave 7, W5-20). The
+     * session log's start line is written then; a task whose pick waits for a credential, so no
+     * run starts, gets none.
+     */
+    onStarted?: (info: { specialist: string }) => void;
   }): Promise<TaskExecutionResult>;
   /**
    * A task the person cancelled while it ran or was reviewed (phase C, live walk 2 C1): what
@@ -679,6 +695,33 @@ interface ReviewFailure {
   error: string;
 }
 
+/**
+ * A review a limit or a credential refused before its verdict (`reviewRefusalOf`): no verdict
+ * and no failed try; the task pauses at that limit or waits for the credential.
+ */
+interface ReviewRefused {
+  refused: ReviewRefusal;
+}
+
+/**
+ * Which limit refused a task's review (ADR 0112): the critic's run may spend what the session's
+ * token allows, so its own cap ("run") is the session's budget too.
+ */
+function reviewStopSource(level: string | null): BudgetStopSource {
+  switch (level) {
+    case "project":
+      return "project";
+    case "month":
+      return "month";
+    case "plan":
+      return "plan";
+    case "task":
+      return "task_budget";
+    default:
+      return "session";
+  }
+}
+
 /** A task moved while its run was going (U-039): the state set then, which stands. */
 export interface MovedWhileRunning {
   taskId: string;
@@ -881,6 +924,8 @@ export class SessionRunner {
     let sandboxAnswer: SandboxGateAnswer | null = null;
     /** The Claude credential the session's work waits for, when it ended on one (U-078). */
     let credentialWait: CredentialWait | null = null;
+    /** A task of this session waits for a Claude credential: the session ends saying so. */
+    let waitedForCredential = false;
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
@@ -1508,15 +1553,27 @@ export class SessionRunner {
           // Who ran it last, in this session or an earlier one: another specialist taking over
           // says so ("The migration specialist takes over … from the coder").
           const previous = before ?? (chosen ? await lastWorkSpecialist(store, task.id) : null);
-          startedWith.set(task.id, runItem.specialist);
-          await emit("task.started", {
-            taskId: task.id,
-            title: task.title,
-            specialist: runItem.specialist,
-            estimateUsdMicro: item.estimateUsdMicro,
-            ...(again ? { again: true } : {}),
-            ...(previous && previous !== runItem.specialist ? { handedFrom: previous } : {}),
-          });
+          // The log's start line is written when the run really starts (the leftovers of wave
+          // 7, W5-20): the executor says so (`onStarted`) after its credential pick and any
+          // hand-over, with the specialist that runs. Before, it was written here, so a run
+          // handed to another specialist for the web named the planned one, and a task whose
+          // credential pick then waited read "The writer started …" although nothing ran. An
+          // executor that does not say it is started at its first step, or when it returns
+          // (unless it waited for a credential before any run).
+          let started = false;
+          const sayStarted = async (specialist: string) => {
+            if (started) return;
+            started = true;
+            startedWith.set(task.id, specialist);
+            await emit("task.started", {
+              taskId: task.id,
+              title: task.title,
+              specialist,
+              estimateUsdMicro: item.estimateUsdMicro,
+              ...(again ? { again: true } : {}),
+              ...(previous && previous !== specialist ? { handedFrom: previous } : {}),
+            });
+          };
           runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
           // one-shot timer would let a long task's claim lapse and a peer take the task.
@@ -1600,8 +1657,16 @@ export class SessionRunner {
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
               ...(notes.length ? { notes } : {}),
               ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
+              onStarted: ({ specialist }) => {
+                steps = steps
+                  .then(() => sayStarted(specialist))
+                  .catch((e: unknown) =>
+                    this.logger.warn("start not recorded", { error: errorMessage(e) }),
+                  );
+              },
               onStep: (step) => {
                 steps = steps
+                  .then(() => sayStarted(runItem.specialist))
                   .then(() => recordStep(task, step))
                   .catch((e: unknown) =>
                     this.logger.warn("step not recorded", { error: errorMessage(e) }),
@@ -1668,6 +1733,11 @@ export class SessionRunner {
             unregisterTask();
             controller.signal.removeEventListener("abort", onSessionAbort);
           }
+          // An executor that never said it started (a person's task, a test's executor) is
+          // started now, before its end; a task whose credential pick waited before any run
+          // never started, and its wait's line says so.
+          if (result.outcome !== "usage_limit")
+            await sayStarted(result.specialist ?? runItem.specialist);
           task = await store.task.mustGet(task.id);
           await store.task.patch(task.id, {
             actual_cost_usd_micro: task.actual_cost_usd_micro + result.costUsdMicro,
@@ -1757,24 +1827,39 @@ export class SessionRunner {
             // through `failed`, so the retry ladder's attempt stays as it was, no critic
             // reviews it and it is never tried again as a passing error. The session log says
             // what happened and what comes next in one plain sentence.
+            // A second task waiting for the same credential is a detail (design §4.5: a blocker
+            // is named once); the session's end says the wait again.
+            const sameWait =
+              !!credentialWait &&
+              !!result.credentialWait &&
+              credentialWait.sourceId === result.credentialWait.sourceId &&
+              credentialWait.reason === result.credentialWait.reason;
             await emit(BILLING_FALLBACK_EVENT, {
               taskId: task.id,
               title: task.title,
               sentence: result.summary,
+              ...(sameWait ? { repeat: true } : {}),
             });
-            await releaseIfHeld(task.id, "a Claude credential could not serve: back to ready");
             const tries = (movedOnCredential.get(task.id) ?? 0) + 1;
             movedOnCredential.set(task.id, tries);
-            if (result.credentialWait || tries > MAX_CREDENTIAL_MOVES) {
-              // Nothing it may run can be billed now: the session ends on the wait (one
-              // sentence, no row of failed tasks); the rest stays ready and starts by itself
-              // at the reset, or once a new credential is saved (the executor noted the wait).
+            const waits = !!result.credentialWait || tries > MAX_CREDENTIAL_MOVES;
+            await releaseIfHeld(
+              task.id,
+              waits ? CREDENTIAL_WAIT_REASON : "a Claude credential could not serve: back to ready",
+            );
+            if (waits) {
+              // Nothing this task may run on can be billed now: it waits (one sentence, no
+              // failed task) and starts by itself at the reset, or once a new credential is
+              // saved (the executor noted the wait). Only this task waits (ADR 0100 point 10):
+              // the session goes on with the rest of its queue, where each task's own pick
+              // decides whether it runs now or waits too. Before, the session ended here and
+              // skipped the queue, a task whose first choice could serve now included (the
+              // leftovers of wave 7).
               credentialWait ??= result.credentialWait ?? null;
-              skipped.push(task.id, ...queue.map((i) => i.taskId));
+              waitedForCredential = true;
+              skipped.push(task.id);
               notAgain.add(task.id);
-              queue.length = 0;
-              stopReason = CREDENTIAL_WAIT_STOP;
-              break;
+              continue;
             }
             // Another credential takes over now ("Use the other one", or after a refusal): the
             // task goes on at once in this session.
@@ -1901,6 +1986,118 @@ export class SessionRunner {
             }
             if (!reviewed) {
               inReview.push(task.id);
+            } else if ("refused" in reviewed) {
+              // A limit or a credential refused the review before its verdict (the leftovers of
+              // wave 7): nobody judged the work, so it is no verdict and no failed try. Before,
+              // the critic made it an "escalate" verdict: the retry ladder ran the specialist
+              // again up to four times and filed '"X" failed 4 times'. A task the person moved
+              // meanwhile stays as they set it.
+              const now = await store.task.mustGet(task.id);
+              if (now.status !== "in_review") {
+                await recordMove(now, "review_failed", "review", stoppedByMove(reviewController));
+                continue;
+              }
+              const refusal = reviewed.refused;
+              if (refusal.kind === "credential") {
+                // ADR 0100 point 9: the work waits; it never fails for want of a credential. The
+                // task goes back to ready without a try (as a run a credential stopped), the
+                // project is kept on the credential it waits for, and the session's wait line
+                // says when it goes on; the next session runs it and reviews it.
+                const wait = refusal.wait as CredentialWait;
+                await store.task.restoreStatus(
+                  now.id,
+                  now.version,
+                  "in_review",
+                  CREDENTIAL_WAIT_REASON,
+                  { agentId: agent.id },
+                );
+                heldClaims.delete(task.id);
+                notAgain.add(task.id);
+                const owner = await store.human.get(agent.owner_human_id).catch(() => undefined);
+                await emit(BILLING_FALLBACK_EVENT, {
+                  taskId: task.id,
+                  title: task.title,
+                  review: true,
+                  sentence: stoppedRunSentence(
+                    { reason: wait.reason, kind: wait.kind },
+                    task.title,
+                    { wait },
+                    {
+                      ...(owner?.timezone ? { timezone: owner.timezone } : {}),
+                      nowMs: clock.now(),
+                    },
+                  ),
+                });
+                // As a task a credential stopped (U-078): only this task waits, and the session
+                // goes on with the rest; it starts by itself once the credential serves.
+                credentialWait ??= wait;
+                waitedForCredential = true;
+                skipped.push(task.id);
+                continue;
+              }
+              // ADR 0112 point 6: the review paused at its limit, as a run does: one card that
+              // names the limit (Continue where a bigger budget helps; at the project's budget,
+              // the month's cap or the subscription's share the task goes on by itself once that
+              // limit changed), and a stop at an outer limit or the session's own ends the
+              // session. The next session runs the task again and the critic reviews it once.
+              const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+              const source = reviewStopSource(refusal.level);
+              const stop: BudgetStop = {
+                capUsdMicro:
+                  source === "task_budget"
+                    ? now.budget_usd_micro
+                    : source === "session"
+                      ? budget.limits.budgetUsdMicro
+                      : (refusal.capUsdMicro ?? budget.limits.budgetUsdMicro),
+                spentUsdMicro: now.actual_cost_usd_micro,
+                source,
+                specialist: result.specialist ?? runItem.specialist,
+                stoppedBy: "budget",
+              };
+              const title = budgetStopTitle(now, stop, rate);
+              const waiting = await store.task.transition(
+                now.id,
+                now.version,
+                "needs_human",
+                `${title}.`,
+                { agentId: agent.id },
+              );
+              needsHuman.push(task.id);
+              try {
+                await fileBudgetStopCard({
+                  store,
+                  task: waiting,
+                  session,
+                  humanId: agent.owner_human_id,
+                  agentId: agent.id,
+                  runId: result.runId ?? null,
+                  stop,
+                  handoff: null,
+                  now: clock.nowIso(),
+                  chfPerUsd: rate,
+                });
+              } catch (e) {
+                this.logger.warn("card of the paused review not filed", {
+                  taskId: task.id,
+                  error: errorMessage(e),
+                });
+              }
+              await emit(REVIEW_PAUSED_EVENT, {
+                taskId: task.id,
+                title: task.title,
+                source,
+                text: reviewPausedWords(task.title, stop, (n) =>
+                  formatChf(usdToChfMicro(Math.max(0, Math.round(n)), rate)),
+                ),
+              });
+              if (stopEndsSession(source)) {
+                stopReason = budgetStopReasonOf(source);
+                // The subscription's share is a fraction, not money: no amount is kept.
+                stopCapUsdMicro = source === "plan" ? null : stop.capUsdMicro;
+                skipped.push(...queue.map((i) => i.taskId));
+                queue.length = 0;
+                break;
+              }
             } else if ("failed" in reviewed) {
               // U-045: the review failed (an error, not a verdict), or was stopped (the critic
               // records no review then). A task the person moved meanwhile stays as they set it
@@ -2113,7 +2310,10 @@ export class SessionRunner {
               // The session names the limit that ended it (review of budget-stop): before, it
               // said "the session's budget is used" at 1% of its own budget.
               stopReason = budgetStopReasonOf(result.budgetStop.source);
-              stopCapUsdMicro = result.budgetStop.capUsdMicro;
+              // The subscription's share is a fraction (0..1), not money: no amount is kept (the
+              // leftovers of wave 7: it was stored converted as if it were USD).
+              stopCapUsdMicro =
+                result.budgetStop.source === "plan" ? null : result.budgetStop.capUsdMicro;
               skipped.push(...queue.map((i) => i.taskId));
               queue.length = 0;
               break;
@@ -2179,6 +2379,9 @@ export class SessionRunner {
           }
           await releaseIfHeld(task.id, "task finished for this session");
         }
+        // Tasks that wait for a credential (U-078): the session ran what could run and ends on
+        // the wait's sentence.
+        if (stopReason === "completed" && waitedForCredential) stopReason = CREDENTIAL_WAIT_STOP;
         if (stopReason === "completed" && budget.noNewWork && skipped.length)
           stopReason = "budget_finish_current";
       }
@@ -2531,6 +2734,9 @@ export class SessionRunner {
       blocked_by_findings: blockedByFindings,
       review_failed: reviewFailed,
       sent_back: retried,
+      // The tasks paused at a budget with their card open (ADR 0112): the session review grades
+      // a pause as a pause, not as work that waits for the person (the leftovers of wave 7).
+      paused: (outcome.paused ?? []).map((t) => t.id),
       reviews: reviews.map((r) => ({
         task_id: r.taskId,
         review_id: r.reviewId,
@@ -2962,7 +3168,7 @@ export class SessionRunner {
        */
       ranBy: string;
     },
-  ): Promise<TaskReviewOutcome | ReviewFailure | null> {
+  ): Promise<TaskReviewOutcome | ReviewFailure | ReviewRefused | null> {
     const { emit, ranBy, ...request } = req;
     const critic = this.deps.critic;
     if (!critic) return null;
@@ -2975,6 +3181,10 @@ export class SessionRunner {
     try {
       outcome = await critic.reviewTask(request);
     } catch (e) {
+      // A limit or a credential refused the review before its verdict: the caller pauses the
+      // task or lets it wait (no verdict, no failed try).
+      const refused = reviewRefusalOf(e);
+      if (refused && (refused.kind === "budget" || refused.wait)) return { refused };
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }

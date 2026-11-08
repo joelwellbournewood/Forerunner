@@ -791,14 +791,18 @@ export class ConversationAgent {
       instructions: `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}\n\n${CHAT_PLAN_RULES}`,
     });
     // The conversation so far (design §3.9: "what it knows on every turn: the recent
-    // conversation"), then this turn: the volatile facts stay in the last user message, so the
-    // cached prefix (system, tools, the earlier turns) holds from one turn to the next.
+    // conversation"), then this turn: the person's line, then the facts of now. The line is the
+    // message's stable start (`stableChars`): the cache entry this turn writes ends there, and
+    // the next turn, which replays the line alone in its history, reads it (the leftovers of
+    // wave 7: with the facts in front of the line every turn wrote its whole history again at
+    // the cache-write price and read only the system prompt and the tools).
     const historyBudget = this.deps.historyMaxTokens ?? DEFAULT_CHAT_HISTORY_TOKENS;
+    const line = req.text.trim() || req.text;
     const messages: ChatMessage[] = [
       ...(historyBudget > 0
         ? historyMessages(earlier, (t) => provider.countTokens(t), historyBudget)
         : []),
-      { role: "user", content: `${context.volatile}\n\n${req.text}` },
+      { role: "user", content: `${line}\n\n${context.volatile}`, stableChars: line.length },
     ];
     const pricing = this.deps.pricingFor?.(model) ?? this.deps.pricing;
     // The turn's budget: the configured one, or by default USD 0.05 raised to room for

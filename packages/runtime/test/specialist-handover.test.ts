@@ -94,6 +94,8 @@ async function world(opts: {
   const prior = new Set((await store.run.forTask(task.id)).map((r) => r.id));
   const provider = new ScriptedProvider([{ text: "Done." }], h.clock);
   const events: string[] = [];
+  /** Who the executor said starts the run (`onStarted`), once per run that starts. */
+  const started: string[] = [];
   const exec = new LoopTaskExecutor({
     store,
     clock: h.clock,
@@ -129,10 +131,11 @@ async function world(opts: {
     }),
     item: { taskId: task.id, title: task.title, specialist: opts.specialist, estimateUsdMicro: 1 },
     signal: new AbortController().signal,
+    onStarted: ({ specialist }) => started.push(specialist),
   });
   // The runs this execution wrote, not the ones the world seeded.
   const runs = (await store.run.forTask(task.id)).filter((r) => !prior.has(r.id));
-  return { result, provider, events, store, task, runs };
+  return { result, provider, events, store, task, runs, started };
 }
 
 const names = () => shipped.runnableSpecialists().map((d) => d.name);
@@ -294,6 +297,7 @@ describe("the retry ladder's second rung changes the specialist (U-044)", () => 
       ranBy: ["coder", "coder"],
     });
     expect(w.provider.calls).toHaveLength(0);
+    expect(w.started).toEqual([]);
     expect(w.result).toEqual({
       outcome: "needs_human",
       summary:
@@ -329,6 +333,7 @@ describe("web work goes where the web is (U-044)", () => {
     expect(w.provider.calls).toHaveLength(1);
     expect(w.result.outcome).toBe("done");
     expect(w.runs.map((r) => r.specialist)).toEqual(["researcher"]);
+    expect(w.started).toEqual(["researcher"]);
     expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(
       "This run has no web access: work from the files in the project and the sources this brief gives.",
     );
@@ -360,6 +365,8 @@ describe("web work goes where the web is (U-044)", () => {
     });
     expect(w.result.outcome).toBe("done");
     expect(w.runs.map((r) => r.specialist)).toEqual(["web-reader"]);
+    // The session log's start line names the one that runs (W5-20: it named the researcher).
+    expect(w.started).toEqual(["web-reader"]);
     expect(w.events.join("\n")).toContain(
       "the researcher gets no web tools on this run (cc:WebFetch, cc:WebSearch); the web-reader, which has them, takes the task",
     );

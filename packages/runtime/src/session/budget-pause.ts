@@ -170,6 +170,30 @@ export function limitWords(
   }
 }
 
+/**
+ * The session log's event when a limit refused a task's review before its verdict (ADR 0112,
+ * the leftovers of wave 7): the task is paused at that limit like a run, with its card; `text`
+ * is the line (`reviewPausedWords`).
+ */
+export const REVIEW_PAUSED_EVENT = "critic.review_paused";
+
+/**
+ * The line of a review a limit refused: '"X" paused before its review: the project's budget of
+ * CHF 0.01 has no room for it.' (one line, the limit named as the card names it).
+ */
+export function reviewPausedWords(
+  title: string,
+  stop: { source: BudgetStopSource; capUsdMicro: number; specialist: string },
+  chf: (usdMicro: number) => string,
+): string {
+  const name = `"${title.replace(/\s+/g, " ").trim()}"`;
+  const what = limitWords(stop.source, stop.capUsdMicro, chf, stop.specialist).replace(
+    /^its budget/,
+    "its own budget",
+  );
+  return `${name} paused before its review: ${what} has no room for it.`;
+}
+
 /** The run's sentence for a pause (the session log's line and the task's reason). */
 export function pauseSentence(
   handoff: RunHandoff,

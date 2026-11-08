@@ -353,4 +353,72 @@ describe("a session a dead daemon left running is ended at the next start (desig
     );
     expect(updates).toEqual([]);
   }, 120_000);
+
+  // The leftovers of wave 7 (R-recovery): a session that finished one task (accepted, its
+  // spend booked) before the daemon died read "Interrupted: Forerunner closed: nothing done.
+  // CHF 0.00." on its page, and the Overview said "No session yet": the ended event carried no
+  // counts or spend, and only the live runner wrote the project's last session.
+  it("a session that finished a task before the crash says what it did and spent, and is the project's last session", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-recovery-done-"));
+    const clock = new SimulatedClock("2026-11-01T12:00:00Z");
+    const first = await compose(home, clock, false);
+    const ghost = await leaveAGhost(first);
+    // Before the crash the session finished "Write the README": its run, its review, its spend.
+    await first.store.run.insert({
+      task_id: ghost.other.id,
+      session_id: ghost.session.id,
+      specialist: "coder",
+      model: "fake",
+      provider: "fake",
+      effort: "low",
+      prompt_version: "v1",
+      billing_source_id: null,
+      outcome: "completed",
+      cost_usd_micro: 40_000,
+      author_agent: first.agent.id,
+    });
+    const claimed = await first.store.task.claim(ghost.other.id, first.agent.id, HOUR);
+    if (!claimed.ok) throw new Error("claim failed");
+    const by = { agentId: first.agent.id };
+    let readme = await first.store.task.transition(
+      ghost.other.id,
+      claimed.task.version,
+      "in_progress",
+      "started work",
+      by,
+    );
+    readme = await first.store.task.transition(
+      readme.id,
+      readme.version,
+      "in_review",
+      "did it",
+      by,
+    );
+    readme = await first.store.task.releaseClaim(readme.id, first.agent.id, "reviewed");
+    await first.store.task.transition(readme.id, readme.version, "done", "critic accepted", by);
+    await first.store.session.recordSpend(ghost.session.id, 40_000, 3);
+    // The first process dies here.
+    opened.splice(0);
+
+    const rt = await compose(home, clock, true);
+    const { app, token } = createDaemonApp(rt);
+    const get = async <T>(path: string) =>
+      (await (
+        await app.request(path, { headers: { authorization: `Bearer ${token}` } })
+      ).json()) as T;
+    // The session page's last line: what it did and what it spent.
+    const lines = (
+      await get<{ type: string; text: string; audience?: string }[]>(
+        `/sessions/${ghost.session.id}/events`,
+      )
+    ).filter((e) => e.audience !== "detail");
+    expect(lines.at(-1)?.text).toMatch(/^Interrupted: Forerunner closed: 1 done\. CHF 0\.0\d\.$/);
+    expect(lines.at(-1)?.text).not.toContain("CHF 0.00");
+    // The Overview's last session is that session, not "No session yet".
+    const summary = await get<{ lastSession: { id: string; stopReason: string } | null }>(
+      `/projects/${ghost.project.id}/summary`,
+    );
+    expect(summary.lastSession?.id).toBe(ghost.session.id);
+    expect(summary.lastSession?.stopReason).toBe("interrupted");
+  }, 120_000);
 });

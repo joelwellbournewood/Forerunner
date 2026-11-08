@@ -270,3 +270,35 @@ choice). A manual Start while the credential still rests ends at once with the s
 bench exercises all of it with no real key (`--provider bench-api`: the routed provider over the
 vault's keys, the Messages API stand-in in testenv answering a refused key with 401 and a limited
 one with the spend cap until its reset).
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-session'): reviews wait too
+
+Point 9 says work waits and never fails for want of a credential, and point 12 says the same for
+planning; a critic review that met a credential at its limit or refused, with no other credential
+to serve it (the routed provider moves a review once, point 4), still became an `escalate`
+verdict (or, when the critic threw, a "could not be reviewed" card beside the credential's own),
+the retry ladder counted it as a failed try, and nothing reviewed the task at the reset.
+
+16. **A review a credential refused waits like the work.** The critic writes its Run row
+    (`usage_limit`, or `credential_refused` for a refusal) and no Review or finding, and throws
+    the refusal; the critic port asks the routed provider what a review would wait for now
+    (`waitNow`), else reads the refused call's source, and keeps the task's project on that
+    source (`RoutedProvider.noteWait`, `limits.waiting`). The session gives the task back to ready
+    without a try, says the wait's sentence ("Your API key reached its usage limit; "X" waits
+    until 16:40 (your API key's limit) and starts by itself."), and files no card; at the reset,
+    or once a new credential is saved, the wake (point 9) starts a session that runs the task
+    again and the critic reviews it once. A refusal with nothing known to wait for keeps the
+    review-failed card.
+17. **Only the tasks that must wait wait (point 10 as written).** A task stopped by a credential,
+    or whose pick waits before it runs, goes back to ready with the reason
+    `CREDENTIAL_WAIT_REASON`, and the session goes on with the rest of its queue: each task's own
+    pick decides whether it runs now (its first choice serves: a research task whose first choice
+    is the API key while the subscription rests) or waits too, without a call. The session ends
+    `credential_wait` with the wait's sentence once nothing else can run. Only the waiting tasks'
+    rows say "Waits until ..." (`taskDisplay` reads the reason beside the project's wait), and a
+    second task waiting for the same credential is a detail line of the log (`repeat`). Before,
+    the session ended at the first wait and skipped its queue, and every ready task of the
+    project read "Waits until ...". This is the built answer (a) of U-078 applied as point 10
+    says; the open question (b) is unchanged. The log's start line is written when the run
+    starts (`TaskExecutor.execute`'s `onStarted`, after the pick and any hand-over), so a task
+    whose pick waits has none.
