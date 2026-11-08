@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { GitOps, MemoryGitHost, PrTaskExecutor } from "@forerunner/capabilities";
 import { appDirs, join, run, SimulatedClock } from "@forerunner/platform";
@@ -334,6 +334,43 @@ describe("rebase conflict card: every option does what it says (U-028)", {
     expect(second?.id).not.toBe(card.id);
     expect(second?.why).toContain("still conflicts");
     expect(second?.options).toEqual(card.options);
+    expect(await w.host.listPullRequests(REPO)).toHaveLength(0);
+  });
+
+  it('"I resolved it" with a Local only file forced into the branch: the next run\'s push is refused in the guard\'s own words, never as "git said" (merged-copy, ADR 0113)', async () => {
+    const w = await world();
+    const { task, card } = await conflicted(w);
+    const branch = task.branch ?? "";
+    // The person resolves the conflict on top of main and forces a Local only file in.
+    const mine = join(w.root, "person-local");
+    const person = new GitOps({ cwd: mine, identity });
+    await person.clone(w.bare, { branch });
+    const author = ["-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`];
+    // Their branch made again on main with the merged README (no editor, no merge commit).
+    await run(["git", "reset", "--hard", "origin/main"], { cwd: mine });
+    writeFileSync(join(mine, "README.md"), "# sample\nby other\nby agent\n");
+    mkdirSync(join(mine, "Local only"), { recursive: true });
+    writeFileSync(join(mine, "Local only", "notes.txt"), "the person's own notes\n");
+    await run(["git", "add", "README.md"], { cwd: mine });
+    await run(["git", "add", "-f", "Local only/notes.txt"], { cwd: mine });
+    await run(["git", ...author, "commit", "-m", "resolve the readme conflict"], { cwd: mine });
+    await run(["git", "push", "--force", "origin", branch], { cwd: mine });
+    await click(w, card, card.options[0] as string);
+    // main moves on again (another file), so the next run rebases the branch and pushes it.
+    const other = new GitOps({ cwd: join(w.root, "other-again"), identity });
+    await other.clone(w.bare);
+    writeFileSync(join(w.root, "other-again", "OTHER.md"), "other\n");
+    await other.commitAll("other file");
+    await other.push("main");
+
+    const { inner, calls } = writer("never written");
+    const res = await executor(w, inner).execute(ctxFor(w, await claimed(w, task.id)));
+    expect(calls.n).toBe(0);
+    expect(res.outcome).toBe("failed");
+    expect(res.summary).toBe(
+      `Forerunner did not upload the branch ${branch}: it holds "Local only/notes.txt", files of Local only, which never leave this computer. Press Try again to redo the work without them.`,
+    );
+    expect(res.summary).not.toContain("git said");
     expect(await w.host.listPullRequests(REPO)).toHaveLength(0);
   });
 
