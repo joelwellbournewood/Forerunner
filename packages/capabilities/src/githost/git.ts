@@ -911,7 +911,9 @@ export class GitOps {
       await this.git(["diff", "--binary", "--no-color", "--no-ext-diff", `${rev}~1`, rev]),
       "diff --binary",
     ).stdout;
-    const file = join(this.opts.cwd, ".git", "forerunner-apply.patch");
+    // In the system's temp folder, never under `<cwd>/.git`: in a linked worktree `.git` is a
+    // file, and writing there failed (the review of budget-resume).
+    const file = join(tmpdir(), `forerunner-apply-${randomUUID()}.patch`);
     writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
     try {
       const applied = await this.git([

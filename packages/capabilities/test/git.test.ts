@@ -629,4 +629,38 @@ describe("GitOps", { timeout: 120_000 }, () => {
       " M index.html\n?? about.html\n",
     );
   });
+
+  it("applyCommitted works in a git worktree, where .git is a file (review of budget-resume)", async () => {
+    // It wrote its patch to `<cwd>/.git/forerunner-apply.patch`, which fails with ENOTDIR in a
+    // linked worktree; the patch now goes to the system's temp folder.
+    const root = mkdtempSync(join(tmpdir(), "fr-git-wt-apply-"));
+    const main = join(root, "main");
+    const g = new GitOps({ cwd: main, identity });
+    const git = async (cwd: string, ...args: string[]) =>
+      (await run(["git", ...args], { cwd })).stdout.trim();
+    await g.init("main");
+    writeFileSync(join(main, "README.md"), "# Club\n");
+    await g.commitAll("Workspace before");
+    const before = await g.headSha();
+    writeFileSync(join(main, "guide.md"), "# Guide\n\nPart 1.\n");
+    await g.commitAll("Work in progress: Write the guide (paused at its budget)");
+    const wip = await g.headSha();
+    const wt = join(root, "wt");
+    await git(main, "worktree", "add", "-q", "-b", "side", wt, before);
+    expect(readFileSync(join(wt, ".git"), "utf8")).toMatch(/^gitdir: /);
+    const w = new GitOps({ cwd: wt, identity });
+    expect(await w.applyCommitted(wip, "Work in progress: Write the guide (brought back)")).toEqual(
+      { ok: true, files: ["guide.md"] },
+    );
+    expect(readFileSync(join(wt, "guide.md"), "utf8")).toBe("# Guide\n\nPart 1.\n");
+    expect(await git(wt, "log", "-1", "--format=%s")).toBe(
+      "Work in progress: Write the guide (brought back)",
+    );
+    // And back out again (`reverse`), as a cancel sets it aside.
+    expect(await w.applyCommitted(wip, "Set aside", { reverse: true })).toEqual({
+      ok: true,
+      files: ["guide.md"],
+    });
+    expect(existsSync(join(wt, "guide.md"))).toBe(false);
+  });
 });

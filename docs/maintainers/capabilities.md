@@ -323,8 +323,10 @@ with their milestone.
   else `{ files: [], kept: '"Y" built on it' }`. `bringBack(task)` restores the work in
   progress first (repository: `resetHard` to it and the marker again, pushed again when the
   setting is on; folder: `applyCommitted` as "Work in progress: <title> (brought back)"), then
-  what a stopped run changed. Tests: `pr-executor.test.ts` "a paused task keeps its work and
-  continues from it". `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
+  what a stopped run changed. `applyCommitted` writes its patch to the system's temp folder,
+  never under `<cwd>/.git`, which is a file in a linked worktree (the review of budget-resume;
+  `git.test.ts` "applyCommitted works in a git worktree"). Tests: `pr-executor.test.ts` "a
+  paused task keeps its work and continues from it". `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
 - **Local only** (`local-only.ts`, merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md),
