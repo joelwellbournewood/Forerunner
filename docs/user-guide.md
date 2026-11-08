@@ -395,9 +395,11 @@ it a GitHub repository, click **Create a repository** on the project page: it sh
 creates it with your GitHub token, puts the project's folder in it as the first commit and links
 it; from then on tasks work on branches with pull requests. "create a repository" in Chat does
 the same. When a session plans code work for such a project, your agent asks in the Inbox
-(**Create the repository** or **Not now**); "Not now" is not asked again. At autonomy 4
-(Autopilot) the agent creates a private repository itself and tells you. A public repository
-always needs your confirmation on this device.
+(**Create the repository** or **Not now**); "Not now" is not asked again. It asks at every
+autonomy level, Autopilot too, and so does a "create a repository" the agent decides on in
+Chat: nothing is created under your GitHub account without your yes. The offer does not hold
+any work, so the project's line does not count it as a question. A public repository always
+needs your confirmation on this device.
 
 **Note for the next session** on the Overview is one box: type what the agent should know
 and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note

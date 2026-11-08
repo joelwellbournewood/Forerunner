@@ -1848,8 +1848,11 @@ first push leaves the repository unlinked, says so and audits `allowed: false`).
 `cc:Bash` and `cc:Edit` or `cc:MultiEdit`) on a project without a repository, not declined
 before (`settings.repo_proposal`) and not already asked, becomes one non-blocking `approval`
 card keyed `repo:create:<project>` (options `REPO_PROPOSAL_OPTIONS`: "Create the repository",
-"Not now"; the steps name the repository, the account or organization and "private"), or, where
-`decideAutonomy("external_send")` allows (level 4), `repo.create` run as the agent. `sync`
+"Not now"; the steps name the repository, the account or organization and "private"), at every
+autonomy level: Autopilot asks too (the owner's decision of 2026-11-02; before 'merged-actions'
+the agent ran `repo.create` itself at level 4). The card asks nothing of a task, so
+`holdsTask` (`daemon/task-words.ts`, `isRepositoryOffer`) leaves it out of the project's
+status line (C-60: a finished folder project read "Waiting for you: 1 question"). `sync`
 (in `syncApprovals`, `repos`) runs `repo.create` for an approval with the answer as a tap, records
 a decline on the project, marks each card `applied_at` with its outcome and tells the person a
 failure. `repoProposalAnswer` (`wiring/request-answers.ts`, `ANSWER_CARD_KEYS.repoCreatePrefix`)
@@ -1857,7 +1860,9 @@ is the card's reader, so `acceptsAnswer` refuses any other word. The project car
 `repos` for the project page's button. Tests: `workspace-runs.test.ts` (both drivers, the change
 set, a second task's baseline), `repo-create.test.ts` (the fake git host: the grant, a card and
 nothing created without a yes, "Not now" not asked again, the first commit, the link, the next
-run's clone, the page's command with a tap, Autopilot, a refused typed answer, the Chat phrase).
+run's clone, the page's command with a tap, Autopilot asking with a card, the chat agent's
+`repo.create` at Autopilot filing a card, the status line not counting the offer, a refused
+typed answer, the Chat phrase).
 
 **What a run is capped at (U-042).** `runCapOf` (`session/executor.ts`) decides the brief's
 budget, which becomes the run token's `budgetUsdMicro` and the hooks' run cap: a task with a

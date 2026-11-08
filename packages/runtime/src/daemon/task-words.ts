@@ -244,18 +244,37 @@ export function budgetPauseDetail(source: unknown): string {
     : "Continue or cancel in the Inbox.";
 }
 
+function cardKey(card: { change_card?: unknown }): unknown {
+  const c = card.change_card;
+  return c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
+}
+
+/** The project's Docker card (`sandbox.not_ready`, one per project). */
+export function isDockerCard(card: { change_card?: unknown }): boolean {
+  return cardKey(card) === "sandbox.not_ready";
+}
+
+/**
+ * The offer of a repository for a project without one (`RepoProposals`, key `repo:create:<id>`):
+ * a yes or no the person gives when they like, which holds no work (tasks run in the project's
+ * folder meanwhile).
+ */
+export function isRepositoryOffer(card: { change_card?: unknown }): boolean {
+  const key = cardKey(card);
+  return typeof key === "string" && key.startsWith("repo:create:");
+}
+
 /**
  * Whether an open card holds its task on the Tasks tab ("Needs your answer", "Needs your
- * decision"). The Docker card (`sandbox.not_ready`, one per project, naming its task for Cancel
- * task) asks nothing of the task: the row reads "Waiting for Docker", or "Paused by you" with
- * Resume when the person paused it. Before, a paused task with that card read "Needs your
- * answer" and lost its Resume.
+ * decision") and counts as a question in the project's status line. The Docker card
+ * (`sandbox.not_ready`, one per project, naming its task for Cancel task) asks nothing of the
+ * task: the row reads "Waiting for Docker", or "Paused by you" with Resume when the person
+ * paused it. Before, a paused task with that card read "Needs your answer" and lost its Resume.
+ * The repository offer holds nothing either (C-60, merged-actions): before, a finished folder
+ * project read "Waiting for you: 1 question" on Home because of it.
  */
 export function holdsTask(card: { change_card?: unknown }): boolean {
-  const c = card.change_card;
-  const key =
-    c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
-  return key !== "sandbox.not_ready";
+  return !isDockerCard(card) && !isRepositoryOffer(card);
 }
 
 /** True when a person paused the task (Pause or Stop) and no card asks anything about it. */
