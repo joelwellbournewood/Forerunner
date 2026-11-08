@@ -1336,7 +1336,7 @@ export function createDaemonApp(
       // R-startcred: only asked while tasks would run (the pick is read-only).
       credentialWait:
         opts.credentialWait && r.runnable.length > 0
-          ? await rt.billing.waits.now(projectId).catch(() => null)
+          ? await (async () => rt.billing.waits.now(projectId))().catch(() => null)
           : null,
     });
   };
@@ -1768,7 +1768,12 @@ export function createDaemonApp(
     // U-078, C-68: an open plan card's tasks as this install would run them now (who does each,
     // where it runs and why), so the card says it before the person approves. One chooser batch
     // per request: the credentials and settings are read once, not per task (R-inboxperf).
-    const chooseFor = rt.chooser.batch();
+    // Made on the first plan task, so a poll with no plan card asks nothing of the chooser.
+    let batch: ReturnType<RuntimeApp["chooser"]["batch"]> | null = null;
+    const chooseFor: ReturnType<RuntimeApp["chooser"]["batch"]> = (input) => {
+      batch ??= rt.chooser.batch();
+      return batch(input);
+    };
     for (const [i, row] of requests.entries()) {
       // The figure each plan task shows is the one the Start dialog shows once it is written
       // (the learned estimate over the plan's guess; the leftovers of wave 7).
