@@ -451,6 +451,12 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const summary = String(r.session.summary);
     expect(summary).toContain("Stopped at this month's cap of CHF 0.10.");
     expect(summary).not.toMatch(/session's budget|budget is used/);
+    // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
+    // it in the Inbox"): it says how the task goes on.
+    expect(summary).toContain(
+      '"Members page" paused at this month\'s cap of CHF 0.10: it goes on by itself once that limit is raised or resets.',
+    );
+    expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
     // The session's end line (before: "Stopped: the budget is used: 1 needs you. CHF 0.04.").
     expect(

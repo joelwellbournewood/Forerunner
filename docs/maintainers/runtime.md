@@ -2047,8 +2047,12 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
   you reopen it; ..."; a Settings link at the outer limits); the session result: the builder
   `paused` appended to `RESULT_LINE_BUILDERS` (`pausedSentences`: '"X" paused at its budget of CHF
-  0.40: continue or cancel it in the Inbox.'), fed by `LastSessionOutcome.paused` (tasks with an
-  open budget card, out of `needsYou`); the chat's facts ("Paused: ...").
+  0.40: continue or cancel it in the Inbox.'; at a limit no Continue lifts, `waits` on the entry,
+  '"X" paused at the project's budget of CHF 0.01: it goes on by itself once that limit is raised
+  or resets.', since its card offers only Cancel; a mix points to the cards), fed by
+  `LastSessionOutcome.paused` (tasks with an open budget card, out of `needsYou`; the runner sets
+  `waits` from the card's source, `!offersContinue`) and passed on as `SessionResult.paused` (ids,
+  for the budget-stop notification); the chat's facts ("Paused: ...").
 - *The next brief (`task-context.ts`).* When the task's previous work run is `paused` or
   `budget_exceeded`, the block starts with `whereTheLastRunStopped` ("## Where the last run
   stopped": its work so far is in the folder, continue from it; its note, the files it changed

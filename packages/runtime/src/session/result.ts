@@ -53,9 +53,12 @@ export interface LastSessionOutcome {
   credentialWait?: string;
   /**
    * Tasks paused at a budget (budget-resume, ADR 0112 amended), each with the limit in words
-   * ("its budget of CHF 0.40"): their card offers Continue or Cancel. Not in `needsYou`.
+   * ("its budget of CHF 0.40"): their card offers Continue or Cancel. `waits`: a limit no
+   * Continue lifts (the project's budget, this month's cap, the subscription's share), whose card
+   * offers only Cancel and where the task goes on by itself once the limit is raised or resets.
+   * Not in `needsYou`.
    */
-  paused?: (NamedTask & { limit: string })[];
+  paused?: PausedTask[];
   spentChfMicro: number;
 }
 
@@ -367,20 +370,33 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   },
 ];
 
+/** A task paused at a budget, as the result names it (`LastSessionOutcome.paused`). */
+export type PausedTask = NamedTask & { limit: string; waits?: boolean };
+
 /**
  * '"Write the guide" paused at its budget of CHF 0.40: continue or cancel it in the Inbox.'; two
- * or more: '"A" and "B" paused at a budget: continue or cancel them in the Inbox.'
+ * or more: '"A" and "B" paused at a budget: continue or cancel them in the Inbox.'. At a limit no
+ * Continue lifts (`waits`) it says how the task goes on, as its card does: '"X" paused at the
+ * project's budget of CHF 0.01: it goes on by itself once that limit is raised or resets.' (the
+ * fixup's bench walk: it said "continue" to a card that offers only Cancel); a mix points to
+ * the cards.
  */
-export function pausedSentences(
-  paused: readonly (NamedTask & { limit: string })[],
-  told?: ToldByCards,
-): string[] {
+export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCards): string[] {
   const shown = paused.filter((t) => !told?.tasks?.has(t.id));
   const one = shown[0];
   if (!one) return [];
+  const waiting = shown.filter((t) => t.waits).length;
   if (shown.length === 1)
-    return [`"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`];
-  return [`${namesOf(titlesOf(shown))} paused at a budget: continue or cancel them in the Inbox.`];
+    return [
+      one.waits
+        ? `"${one.title}" paused at ${one.limit}: it goes on by itself once that limit is raised or resets.`
+        : `"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`,
+    ];
+  const names = namesOf(titlesOf(shown));
+  if (waiting === shown.length)
+    return [`${names} paused at a limit: they go on by themselves once it is raised or resets.`];
+  if (waiting > 0) return [`${names} paused at a budget: see their cards in the Inbox.`];
+  return [`${names} paused at a budget: continue or cancel them in the Inbox.`];
 }
 
 /**

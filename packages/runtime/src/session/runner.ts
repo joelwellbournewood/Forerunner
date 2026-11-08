@@ -52,6 +52,7 @@ import {
   budgetCardSource,
   budgetStopTitle,
   fileBudgetStopCard,
+  offersContinue,
 } from "./budget-card.ts";
 import {
   type BudgetStopSource,
@@ -2367,6 +2368,8 @@ export class SessionRunner {
                   (n) => formatChf(usdToChfMicro(Math.max(0, Math.round(n)), rate)),
                   typeof card.specialist === "string" ? card.specialist : "specialist",
                 ),
+                // A limit no Continue lifts: it goes on by itself once raised or reset.
+                ...(offersContinue(source) ? {} : { waits: true }),
               };
             }),
           }

@@ -154,4 +154,38 @@ describe("the session result's line of a paused task (budget-resume)", () => {
       }),
     ).toEqual([]);
   });
+
+  // Bench walk of the fixup of budget-resume: a task paused at the project's budget, whose card
+  // offers no Continue, was told 'continue or cancel it in the Inbox'.
+  it("at a limit no Continue lifts (the project's budget, this month's cap) it says how it goes on", () => {
+    expect(
+      pausedSentences([
+        {
+          id: "t1",
+          title: "Write the guide",
+          limit: "the project's budget of CHF 0.01",
+          waits: true,
+        },
+      ]),
+    ).toEqual([
+      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once that limit is raised or resets.',
+    ]);
+    expect(
+      pausedSentences([
+        { id: "t1", title: "Write the guide", limit: "this month's cap of CHF 0.10", waits: true },
+        { id: "t2", title: "Write the notes", limit: "this month's cap of CHF 0.10", waits: true },
+      ]),
+    ).toEqual([
+      '"Write the guide" and "Write the notes" paused at a limit: they go on by themselves once it is raised or resets.',
+    ]);
+    // One of each: their cards say which can continue.
+    expect(
+      pausedSentences([
+        { id: "t1", title: "Write the guide", limit: "its budget of CHF 0.40" },
+        { id: "t2", title: "Write the notes", limit: "this month's cap of CHF 0.10", waits: true },
+      ]),
+    ).toEqual([
+      '"Write the guide" and "Write the notes" paused at a budget: see their cards in the Inbox.',
+    ]);
+  });
 });
