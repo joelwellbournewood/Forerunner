@@ -836,7 +836,8 @@ function fakeStartCheck(
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
     // U-079: a full-review task waits while the Docker sandbox is not ready.
     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
-    else if (total + estimate > work) overBudget.push(named);
+    // C-45: what the tasks before it take (polish-screens, wave 13).
+    else if (total + estimate > work) overBudget.push({ ...named, ahead: money(total) });
     else {
       runnable.push(named);
       total += estimate;

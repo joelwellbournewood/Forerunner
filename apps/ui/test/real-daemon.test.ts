@@ -10974,4 +10974,38 @@ describe("polish-screens, wave 13", () => {
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
     expect(after.some((c) => /Switch project/.test(c.wordsUsed))).toBe(false);
   });
+
+  it("GET start-check says what runs before a task left out for the budget (C-45)", async () => {
+    const p = await client.createProject({ name: "Ahead", goal: "Three pages" });
+    const task = async (title: string, priority: "high" | "low", budgetUsdMicro: number) =>
+      client.createTask(p.id, {
+        title,
+        outcome: `${title} exists`,
+        acceptanceCriteria: [],
+        priority,
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro,
+        specialist: "coder",
+        riskTier: 0,
+      });
+    await task("Home page", "high", 300_000);
+    await task("About page", "low", 300_000);
+    await task("Contact page", "low", 10_000);
+    // The prices the check gives each task, with room for all three.
+    const wide = await client.startCheck(p.id, { budgetUsdMicro: 100_000_000 });
+    const price = (title: string) =>
+      [...wide.runnable, ...wide.overBudget].find((t) => t.title === title)?.estimate.usdMicro ?? 0;
+    const [home, about, contact] = [price("Home page"), price("About page"), price("Contact page")];
+    expect(contact).toBeLessThan(about);
+    // A work budget one micro-franc short of "Home" and "About": "About" does not fit after
+    // "Home", and "Contact", after it in the order, still does.
+    const work = home + about - 1;
+    const check = await client.startCheck(p.id, { budgetUsdMicro: Math.floor(work / 0.8) });
+    expect(check.runnable.map((t) => t.title)).toEqual(["Home page", "Contact page"]);
+    expect(check.overBudget.map((t) => t.title)).toEqual(["About page"]);
+    // What runs before it is "Home" alone, not "Home" and "Contact" (the dialog's sum before).
+    expect(check.overBudget[0]?.ahead?.usdMicro).toBe(home);
+    expect(check.overBudget[0]?.ahead?.chfMicro).toBeGreaterThan(0);
+  });
 });

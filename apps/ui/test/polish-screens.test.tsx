@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { formatClock, formatDateTime, formatTime } from "../src/lib/time.ts";
 import { usableNow } from "../src/pages/BillingOrderSection.tsx";
+import { money } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -233,6 +234,128 @@ describe("times on a screen: 24-hour HH:MM, in a browser set to en-US (later #66
     await screen.findAllByTestId("event-row");
     expect(screen.queryByTestId("stream-mode")).toBeNull();
     expect(screen.getByTestId("session-header")).not.toHaveTextContent(/finished|polling/);
+  });
+});
+
+describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
+  const openDialog = async (harness: ReturnType<typeof createHarness>) => {
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    return { user, dialog: await screen.findByTestId("start-session-dialog") };
+  };
+  const readyTask = (harness: ReturnType<typeof createHarness>) => {
+    const t = harness.daemon.state.tasks.find((x) => x.id === "task_3");
+    if (!t) throw new Error("fixture changed");
+    return t;
+  };
+
+  it("two tasks ready now: 'and 1 more', not 'as they become ready'", async () => {
+    const harness = createHarness();
+    const ready = readyTask(harness);
+    ready.estimate = money(1_000_000);
+    harness.daemon.state.tasks.push({
+      ...ready,
+      id: "task_two",
+      title: "Write the FAQ",
+      estimate: money(500_000),
+      priority: "low",
+    });
+    const { dialog } = await openDialog(harness);
+    // Before: "... and continues with up to 1 more as they become ready (about CHF 0.40)."
+    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs "Decide the versioning scheme" \(about CHF 0\.80\) and 1 more \(about CHF 0\.40\)\.$/,
+    );
+    expect(dialog).not.toHaveTextContent("as they become ready");
+  });
+
+  it("a stuck line names what holds it in words, never '(cancelled)' or '(draft)'", async () => {
+    const harness = createHarness();
+    const ready = readyTask(harness);
+    ready.estimate = money(10_000_000);
+    harness.daemon.state.tasks.push(
+      { ...ready, id: "task_old", title: "Try the old approach", status: "cancelled" },
+      { ...ready, id: "task_sketch", title: "Sketch the layout", status: "draft" },
+      {
+        ...ready,
+        id: "task_follow",
+        title: "Write the migration guide",
+        estimate: money(0),
+        dependsOn: ["task_old", "task_sketch"],
+      },
+    );
+    const { dialog } = await openDialog(harness);
+    const line = await within(dialog).findByTestId("start-session-waiting");
+    expect(line).toHaveTextContent(
+      '"Write the migration guide" waits on "Try the old approach", which was cancelled, and "Sketch the layout", which is a draft, so it cannot run. Change what it waits for on the Tasks tab.',
+    );
+    expect(dialog).not.toHaveTextContent(/\((ready|draft|failed|cancelled|needs_human)\)/);
+  });
+
+  it("two tasks larger than the work budget are one line, not one each", async () => {
+    const harness = createHarness();
+    const ready = readyTask(harness);
+    ready.estimate = money(10_000_000);
+    harness.daemon.state.tasks.push({
+      ...ready,
+      id: "task_big",
+      title: "Port the app",
+      estimate: money(12_000_000),
+      priority: "low",
+    });
+    const { dialog } = await openDialog(harness);
+    await within(dialog).findByTestId("start-session-cannot-run");
+    const lines = within(dialog).getAllByTestId("start-session-over-budget");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent(
+      '"Decide the versioning scheme" (about CHF 8.00) and "Port the app" (about CHF 9.60) each need more than this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget, or the tasks smaller ones.',
+    );
+  });
+
+  it("'the tasks that run first' sums only the tasks ordered before the one left out", async () => {
+    const harness = createHarness();
+    const ready = readyTask(harness);
+    // Work budget CHF 4.00: "Decide" (2.40) runs, "About page" (2.40) does not fit after it,
+    // "Contact page" (0.80, after it in the order) fits and runs.
+    ready.estimate = money(3_000_000);
+    harness.daemon.state.tasks.push(
+      { ...ready, id: "task_about", title: "About page", priority: "low" },
+      {
+        ...ready,
+        id: "task_small",
+        title: "Contact page",
+        estimate: money(10_000_000),
+        budget: money(1_000_000),
+        priority: "low",
+      },
+    );
+    const { dialog } = await openDialog(harness);
+    const left = await within(dialog).findByTestId("start-session-over-budget");
+    // Before: "take about CHF 3.20", which added "Contact page", run after it.
+    expect(left).toHaveTextContent(
+      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 2.40 of this session\'s work budget of CHF 4.00',
+    );
+  });
+
+  it("after Start the dialog says it started, with no second Start beside it", async () => {
+    const harness = createHarness({ eventDelayMs: 10 });
+    const { user, dialog } = await openDialog(harness);
+    await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+      "Started: the session works until nothing more can run",
+    );
+    // Before: an enabled Start stood beside "Started: …" once the check was read again.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(within(dialog).queryByTestId("confirm-start-session")).toBeNull();
+    expect(
+      within(dialog)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).not.toContain("Start");
+    expect(within(dialog).getByText("Close")).toBeInTheDocument();
+    expect(postedCalls(harness, "/sessions")).toHaveLength(1);
   });
 });
 

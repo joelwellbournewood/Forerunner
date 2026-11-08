@@ -513,16 +513,20 @@ nothing to run is refused even then: another project's session makes none of its
 so its start would only end at once.
 
 **Start** opens a dialog that says what the session will do: "This session runs "Create
-index.html" (about CHF 0.12) and continues with up to 6 more as they become ready". The budget
+index.html" (about CHF 0.12) and continues with up to 6 more as they become ready", or, with
+tasks that are ready now, "... and 2 more (about CHF 0.40)". The budget
 is filled in with the project's default; 0, a negative amount or more than is left of your
 monthly cap is refused in words. "Note for this session" goes into the brief of every task the
 session runs. When nothing can run, Start is greyed out and the dialog says why in one sentence
 with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up Docker,
-Connect Claude). After Start you stay where you were; **Open the session** opens its page.
-A task that does not fit is named one of two ways: "needs about CHF 3.00, more than this
-session's work budget of CHF 2.40" when it alone is too large, or "(about CHF 1.20) may be left
-for next time: the tasks that run first take about CHF 1.50 of this session's work budget of
-CHF 2.40" when it only does not fit after them. A task with a budget of its own is counted at
+Connect Claude); a task that waits on one that failed or was cancelled is named with it
+('"Write the guide" waits on "Draft the outline", which failed, so it cannot run.'). After Start
+you stay where you were; the dialog says it started, with **Open the session** and **Close**
+(to start another session, open it again). A task that does not fit is named one of two ways:
+"needs about CHF 3.00, more than this session's work budget of CHF 2.40" when it alone is too
+large (several such tasks are one line), or "(about CHF 1.20) may be left for next time: the
+tasks that run first take about CHF 1.50 of this session's work budget of CHF 2.40" when it only
+does not fit after the tasks ordered before it. A task with a budget of its own is counted at
 most at what is left of that budget, since its runs never spend more.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it

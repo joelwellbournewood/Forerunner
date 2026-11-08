@@ -1154,7 +1154,11 @@ cycle, each 409 conflict with cause `validation` and a message naming the tasks.
 answers what a session started now would plan: the ready count, `runnable`, `overBudget` and
 `waiting`, priced as the composed planner prices (`planEstimateUsdMicro` over the learned
 estimates, at most what is left of a task's own budget: `withinTaskBudget`) and cut as the runner cuts (`DEFAULT_RESERVE_SHARE`), with the project's session cap
-when no budget is given. Tests: `task-dependencies.test.ts` (the cut; a large task and two small
+when no budget is given. A task left out only because it does not fit after the others carries
+`aheadUsdMicro` (the route's `overBudget[].ahead`, C-45, polish-screens): what the tasks planned
+before it take, read in plan order, since the greedy cut still runs a smaller task after it;
+the dialog said "the tasks that run first take about Z" with every runnable task in Z (test
+`apps/ui/test/real-daemon.test.ts` "polish-screens, wave 13"). Tests: `task-dependencies.test.ts` (the cut; a large task and two small
 ones; tasks waiting on a cancelled and a failed one; the routes' refusals with their messages;
 the start check), `packages/state/test/suite.ts` (`waitingTasks`, `checkDependencies`) and
 `apps/ui/test/real-daemon.test.ts` ("dependencies").
