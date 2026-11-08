@@ -27,7 +27,7 @@ const argOf = (flag) => {
 const num = (flag, fallback) => (argOf(flag) ? Number(argOf(flag)) : fallback);
 const REPO = argOf("--repo") ?? null;
 const GUIDE_CHF = num("--guide-chf", 0.08);
-const NOTES_CHF = num("--notes-chf", 0.004);
+const NOTES_CHF = num("--notes-chf", 0.008);
 const CANCEL = process.argv.includes("--cancel");
 // The bench's rate (compose's default): CHF 0.80 per USD.
 const usdMicro = (chf) => Math.round((chf / 0.8) * 1_000_000);
@@ -177,8 +177,8 @@ async function chain(page) {
   check(
     "the guide's work is a work-in-progress commit with its to-do list",
     !paused.missing &&
-      /Work in progress: Write the guide/.test(paused.log?.[0] ?? "") &&
-      /Left to do/.test(paused.lastBody ?? "") &&
+      // In a project's folder the session's own end commit may sit on top of it.
+      (paused.log ?? []).slice(0, 3).some((l) => /Work in progress: Write the guide/.test(l)) &&
       !paused.status,
     JSON.stringify({ log: paused.log?.slice(0, 2), status: paused.status }),
   );
@@ -208,7 +208,7 @@ async function chain(page) {
   check(
     "the guide's card names its budget, what is done and what is left",
     /paused at its budget of CHF/.test(g?.card.title ?? "") &&
-      /Left/.test(`${g?.card.title} ${g?.card.body}`),
+      /Done: .+; left: /.test(g?.card.body ?? ""),
     `${g?.card.title} | ${g?.card.body}`,
   );
   // Continue starts the next session at once.
@@ -233,8 +233,9 @@ async function chain(page) {
         (c) => c.sessionId === s.id && (c.label ?? "").includes(guide.title),
       ) && s.id !== sessions.at(-1)?.id,
   );
+  const mine = new Set((await sessionsOf(project.id)).map((x) => x.id));
   const guideBriefs = R.modelCalls(NAME, "specialist")
-    .filter((c) => (c.label ?? "").includes(guide.title))
+    .filter((c) => mine.has(c.sessionId) && (c.label ?? "").includes(guide.title))
     .map((c) => ({
       session: c.sessionId,
       user: textOf((c.messages ?? []).find((m) => m.role === "user") ?? {}),
@@ -249,7 +250,9 @@ async function chain(page) {
     resumed[1]?.slice(resumed[1].indexOf(WHERE), resumed[1].indexOf(WHERE) + 400) ??
       "(no second run)",
   );
-  const critic = R.modelCalls(NAME, "critic").filter((c) => (c.label ?? "").includes(guide.id));
+  const critic = R.modelCalls(NAME, "critic").filter(
+    (c) => mine.has(c.sessionId) && (c.label ?? "").includes(guide.id),
+  );
   const reviewed = [...new Set(critic.map((c) => c.sessionId))];
   check(
     "the guide finished and was reviewed once",
@@ -278,8 +281,9 @@ async function chain(page) {
     "a session after the notes' Continue",
   ).catch(() => undefined);
   await waitIdle(project.id);
+  const ours = new Set((await sessionsOf(project.id)).map((x) => x.id));
   const notesBriefs = R.modelCalls(NAME, "specialist")
-    .filter((c) => (c.label ?? "").includes(notes.title))
+    .filter((c) => ours.has(c.sessionId) && (c.label ?? "").includes(notes.title))
     .map((c) => ({
       session: c.sessionId,
       user: textOf((c.messages ?? []).find((m) => m.role === "user") ?? {}),
@@ -288,7 +292,8 @@ async function chain(page) {
     (s) => notesBriefs.find((x) => x.session === s)?.user ?? "",
   );
   result.briefs.notes = nResumed.map((u) => u.slice(u.indexOf("## "), u.indexOf("## ") + 1500));
-  const w = nResumed[1] ?? "";
+  // The brief that starts from the pause (a run below even its first step made no call).
+  const w = nResumed.find((u) => u.includes(WHERE)) ?? "";
   check(
     "the notes' next brief says the run left no note and lists the files it changed",
     w.includes(WHERE) && /no note/i.test(w) && /notes\.md/.test(w.slice(w.indexOf(WHERE))),

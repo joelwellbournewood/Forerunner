@@ -67,6 +67,11 @@ export interface ResultFacts {
   leftOutForBudget: (NamedTask & { estimateChfMicro: number })[];
   /** The session's cap, in CHF (the "this session's CHF 0.90 was used" line). */
   sessionCapChfMicro: number;
+  /**
+   * What the session's tasks could spend (its cap less the review reserve), in CHF, when the plan
+   * left tasks out for it (W6-23: "more than this session's work budget of CHF 0.32").
+   */
+  workBudgetChfMicro?: number;
   /** Open tasks of the project after the session (not done, not cancelled). */
   openTasks: number;
   /** Reviewed pull requests the session merged, and those it left open for the person. */
@@ -247,6 +252,21 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       const did = o.done.length || f.inReview.length || f.mergedPrs;
       if (did || o.stopReason !== "nothing_runnable" || f.outcome.waitingForDocker.length)
         return [];
+      // W6-23 (budget-resume): every ready task was left out because its estimate alone is more
+      // than the session's work budget; before: "Nothing could run: no task is ready." beside
+      // "Left for next time: ...; this session's CHF 0.40 was used.", though nothing was spent.
+      const big = f.leftOutForBudget[0];
+      if (big) {
+        const who =
+          f.leftOutForBudget.length === 1
+            ? `"${big.title}" needs about ${formatChf(big.estimateChfMicro)}`
+            : `${namesOf(titlesOf(f.leftOutForBudget))} need more`;
+        return [
+          `Nothing could run: ${who}, more than this session's work budget${
+            typeof f.workBudgetChfMicro === "number" ? ` of ${formatChf(f.workBudgetChfMicro)}` : ""
+          }. Start a session with a larger budget.`,
+        ];
+      }
       const w = o.waiting[0];
       return [
         w
@@ -267,7 +287,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     name: "left for next time",
     line: 3,
     build: (f, o) => {
-      if (f.leftOutForBudget.length) {
+      // A session that ran nothing used no budget: "Nothing could run" says why (W6-23).
+      if (f.leftOutForBudget.length && o.stopReason !== "nothing_runnable") {
         const named = f.leftOutForBudget
           .slice(0, 3)
           .map((t) => `"${t.title}" (about ${formatChf(t.estimateChfMicro)})`)

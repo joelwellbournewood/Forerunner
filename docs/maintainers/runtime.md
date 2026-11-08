@@ -928,7 +928,10 @@ session stopped after 7 s, or one that planned nothing, threw the person's brief
 lines, from the tasks as they stand at the end (`collectEndState`): what needs the person ("X"
 needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
 N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
-"Y", which failed), then how it ended, what is next and the money (Stopped by you; Left for next
+"Y", which failed; Nothing could run: "X" needs about CHF 1.20, more than this session's work
+budget of CHF 0.32, when the plan left every ready task out for its estimate (W6-23: before, "no
+task is ready" beside "this session's CHF 0.40 was used", though nothing was spent; the "Left for
+next time ... was used" line is not written then)), then how it ended, what is next and the money (Stopped by you; Left for next
 time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; Left N
 reviewed pull requests for you to merge; N tasks wait on it; Nothing left; CHF 0.80). The pull
 requests are the session's own, said as what it did ("Left N ... for you to merge"): before

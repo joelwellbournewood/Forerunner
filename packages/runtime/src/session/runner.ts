@@ -2399,6 +2399,9 @@ export class SessionRunner {
           estimateChfMicro: usdToChfMicro(Math.max(0, Math.round(i.estimateUsdMicro)), rate),
         })),
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
+      ...(plan?.workBudgetUsdMicro !== undefined
+        ? { workBudgetChfMicro: usdToChfMicro(plan.workBudgetUsdMicro, rate) }
+        : {}),
       openTasks: endState.openTasks,
       mergedPrs: merges.filter((m) => m.status === "merged").length,
       // merge-in-app: a merge that waits for its checks (or a silent GitHub) merges by itself

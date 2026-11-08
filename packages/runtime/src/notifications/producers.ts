@@ -268,8 +268,11 @@ function limitAmount(stopReason: string, capChfMicro: number | undefined): strin
   }
 }
 
-/** What helps after a stop at an outer limit (ADR 0112); a larger session budget does not. */
-function goOnAfter(stopReason: string): string {
+/**
+ * What helps after a stop at an outer limit (ADR 0112); a larger session budget does not. At the
+ * session's own budget a task that paused there has its card (budget-resume): Continue there.
+ */
+function goOnAfter(stopReason: string, paused = false): string {
   switch (stopReason) {
     case MONTH_CAP_STOP:
       return "Raise the monthly spending cap in Settings to go on.";
@@ -278,7 +281,9 @@ function goOnAfter(stopReason: string): string {
     case PLAN_SHARE_STOP:
       return "It can go on once your Claude subscription's usage resets.";
     default:
-      return "Start a session with a larger budget to go on.";
+      return paused
+        ? "Continue it from its card in the Inbox."
+        : "Start a session with a larger budget to go on.";
   }
 }
 
@@ -320,7 +325,7 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
             .filter(Boolean)
             .join(" ")
         : said,
-      goOnAfter(r.stopReason),
+      goOnAfter(r.stopReason, r.needsHuman.length > 0),
     ),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,

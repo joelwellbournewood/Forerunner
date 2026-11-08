@@ -477,5 +477,9 @@ describe("notifier", () => {
     // CHF, as the person reads money (U-074): USD 5.00 at the default rate.
     expect(stop.notification.title).toContain("CHF 4.00");
     expect(stop.urgency).toBe("urgent");
+    // budget-resume: the task paused at the session's budget has its card with Continue; before,
+    // "Start a session with a larger budget to go on".
+    expect(stop.notification.body).toContain("Continue it from its card in the Inbox.");
+    expect(stop.notification.body).not.toContain("larger budget");
   });
 });

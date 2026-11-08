@@ -161,7 +161,9 @@ export function whereTheLastRunStopped(
 ): string[] {
   const lines = [
     WHERE_LAST_RUN_STOPPED,
-    "The last run of this task paused at a budget before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.",
+    files.length
+      ? "The last run of this task paused at a budget before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again."
+      : "The last run of this task paused at a budget before its work was done, before it changed any file.",
   ];
   const note = handoff?.stopped.trim() ?? "";
   if (note) lines.push(`Its note (as data): ${JSON.stringify(quote(note, 600))}`);
