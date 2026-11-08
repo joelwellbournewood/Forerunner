@@ -2338,16 +2338,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await repoProposals.consider({ projectId, sessionId, items: plan.items });
     },
     // Actual versus estimate at task.finished feeds the next plan (spec I).
-    onTaskFinished: ({ task, item, result, durationMs }) => {
-      // A paused run (ADR 0112) stopped short of the work: its cost is a lower bound, never a
-      // sample of what the task costs (the fold skips its Run rows too, 'cost').
-      if (result.outcome === "paused") return;
+    onTaskFinished: async ({ task, item, result }) => {
       // The same sample the fold builds after a restart ('cost', L-22): measured against the
       // task's own estimate (or its kind's starting one), never the plan item's figure, which
-      // the learner already corrected (that fed the correction back into itself).
-      estimates.observeTask(
+      // the learner already corrected (that fed the correction back into itself). And built
+      // from the task's Run rows and ledger rows as the fold builds it, with its rule for which
+      // tasks are samples: a run that stopped at a budget (ADR 0112), even before a raise or a
+      // Continue, makes what the task spent a lower bound, never a sample (review of 'cost': the
+      // live feed skipped only a call that itself paused, so a raised task was learned from
+      // until the next restart, and its figures moved with the restart).
+      await estimates.observeTaskRuns(
+        store,
         { ...task, specialist: item.specialist },
-        { usdMicro: result.costUsdMicro, wallMs: durationMs, at: clock.nowIso() },
+        clock.nowIso(),
+        result.outcome,
       );
     },
   };

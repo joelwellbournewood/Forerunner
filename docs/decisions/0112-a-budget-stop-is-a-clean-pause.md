@@ -159,12 +159,16 @@ that would fit (L-22).
    at a calibrated figure per specialist (`STARTING_ESTIMATES_USD_MICRO`, from the runs of
    2026-11-01 and 2026-11-02: coder USD 0.04, tester 0.06, research 0.50, ...), not half the
    registry's per-run cap (USD 1.50 for a coder). The plan model's guess is kept within 1.5 times
-   of its kind's figure. The learner's multiplier may go from x0.1 to x10 (was x0.25 to x4) and
-   one pseudo-sample holds it (was five): a consistent error is within x2 after three tasks of the
-   kind. A task with a run that stopped at a budget (`paused`, `budget_exceeded`) is no sample: a
-   pause is a lower bound. The work's cost excludes the critic's reviews, which the session's
-   review reserve pays. The live feed measures against the task's own estimate (ADR 0019's
-   amendment of 2026-10-20; the composed hook had drifted back to the corrected figure).
+   of its kind's figure; the person's questions (a task for the person) cost nothing and keep 0,
+   whatever the reply guessed. The learner's multiplier may go from x0.1 to x10 (was x0.25 to x4)
+   and one pseudo-sample holds it (was five): a consistent error is within x2 after three tasks of
+   the kind. A task with a run that stopped at a budget (`paused`, `budget_exceeded`) is no
+   sample, also once its budget was raised or it was continued and it finished: a pause is a lower
+   bound. The work's cost excludes the critic's reviews, which the session's review reserve pays.
+   The live feed measures against the task's own estimate (ADR 0019's amendment of 2026-10-20; the
+   composed hook had drifted back to the corrected figure) and reads the task's Run rows to leave
+   out what the fold leaves out (`observeTaskRuns`), so a restart changes no figure; a call a
+   credential stopped (`usage_limit`) is no sample either.
 5. **The subscription's estimates.** The Agent SDK path prices its first call from the brief and
    Claude Code's own prompt (about 20,000 tokens) instead of the step cap, and each next call from
    the whole prompt the last one sent (cached) and its reply.

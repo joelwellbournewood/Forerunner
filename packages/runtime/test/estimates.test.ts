@@ -621,6 +621,84 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
     expect(looped.estimate(query).costRatio).toBeLessThan(truth - 0.3);
   });
 
+  // Review of 'cost': the live feed skipped only a call that itself paused, so a task raised or
+  // continued after a budget stop was learned from until the next restart, whose fold left it
+  // out. The live feed now reads the task's Run rows and leaves out what the fold leaves out.
+  it("the live feed leaves out every task the fold leaves out: a budget stop before a raise, a fast-mode run, no finished work run (cost)", async () => {
+    const w = await world();
+    worlds.push(w);
+    const plain = await finishedTask(w, { estimate: 100_000, actual: 200_000, ledger: true });
+    // Stopped at its budget (hard or graceful), raised or continued, then done.
+    const raised = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 300_000,
+      runs: 2,
+      outcomes: ["budget_exceeded", "completed"],
+      ledger: true,
+    });
+    const continued = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 300_000,
+      runs: 2,
+      outcomes: ["paused", "completed"],
+      ledger: true,
+    });
+    const fast = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 400_000,
+      model: "fake-opus-fast",
+      ledger: true,
+    });
+    // A call that met a resting credential ran nothing: the task has no finished work run yet.
+    const waited = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 0,
+      runs: 1,
+      outcomes: ["running"],
+      status: "ready",
+    });
+    // Reviewed for USD 0.50 and booked: the work's cost is what the task's budget saw.
+    const reviewed = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 300_000,
+      ledger: true,
+      reviewUsdMicro: 500_000,
+      durationMs: 420_000,
+    });
+    // The critic accepts it two minutes after its run ended: the task row moves on, the run not.
+    await w.clock.advance(120_000);
+    await w.store.task.patch(reviewed.id, { reason: "Reviewed" });
+    const live = new EstimateModel({ defaults });
+    // The hook's moment is later still; a sample's time is when its work ended, in both feeds.
+    await w.clock.advance(60_000);
+    const feed = (t: TaskRow, outcome = "done") =>
+      live.observeTaskRuns(w.store, t, w.clock.nowIso(), outcome);
+    expect(await feed(plain)).toBe(true);
+    // The finishing call of a raised or continued task: it did the rest of the work only.
+    expect(await feed(raised)).toBe(false);
+    expect(await feed(continued)).toBe(false);
+    expect(await feed(fast)).toBe(false);
+    expect(await feed(waited, "usage_limit")).toBe(false);
+    // A call that itself stopped at a budget, before its Run row says so.
+    const fresh = await finishedTask(w, { estimate: 100_000, actual: 50_000, status: "ready" });
+    expect(await feed(fresh, "paused")).toBe(false);
+    expect(await feed(fresh, "budget_exceeded")).toBe(false);
+    // A retry a credential stopped before it spent anything: the try before it finished, but
+    // this call is no measure of the task's cost (a sample of 0 would read as a tenth).
+    expect(await feed(fresh, "usage_limit")).toBe(false);
+    expect(await feed(reviewed)).toBe(true);
+    expect(live.recentSamples().map((s) => s.taskId)).toEqual([plain.id, reviewed.id]);
+    // The sample is the fold's, figure for figure: the work's cost (the ledger less the review)
+    // and its runs' wall time, so a restart changes nothing the Performance screen shows.
+    expect(live.recentSamples().find((s) => s.taskId === reviewed.id)).toMatchObject({
+      actualUsdMicro: 300_000,
+      actualWallMs: 420_000,
+    });
+    const restarted = await EstimateModel.fromStore(w.store, { defaults });
+    expect(live.recentSamples()).toEqual(restarted.recentSamples());
+    expect(live.stats()).toEqual(restarted.stats());
+  });
+
   it("a task observed live is not folded again by a refresh inside the overlap window", async () => {
     const w = await world();
     worlds.push(w);

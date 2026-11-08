@@ -11,9 +11,10 @@
  *
  * Persistence: the samples are the finished `task` rows with their `run` rows and the
  * `cost_ledger`; the model is a deterministic fold over them, rebuilt with fromStore() at start
- * and extended with refresh() or, live, with observeTask() from the runner's task.finished hook.
- * Both feeds derive the sample the same way (sampleForTask), so the state after a restart agrees
- * with the state learned live. There is no separate table: a rebuild from the store always
+ * and extended with refresh() or, live, with observeTaskRuns() from the runner's task.finished
+ * hook. Both feeds derive the sample the same way (sampleForTask) and leave out the same tasks,
+ * read from their Run rows (tallyRun, isNoSample), so the state after a restart agrees with the
+ * state learned live. There is no separate table: a rebuild from the store always
  * reproduces the same state, and toJSON()/fromJSON() exist for callers that want to cache it.
  *
  * The fold is incremental and bounded: a cursor (the newest finish time seen) plus an overlap
@@ -24,7 +25,7 @@
  */
 import { isFastModeVariant } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
-import type { StateStore, TaskRow, TaskStatus } from "@forerunner/state";
+import type { RunRow, StateStore, TaskRow, TaskStatus } from "@forerunner/state";
 
 export interface EstimateInput {
   specialist: string | null;
@@ -206,6 +207,15 @@ export const FINISHED_TASK_STATUSES: readonly TaskStatus[] = ["done", "failed", 
  * of the work, so what the task spent is a lower bound, not its cost.
  */
 export const BUDGET_STOP_RUN_OUTCOMES: readonly string[] = ["paused", "budget_exceeded"];
+/**
+ * Executor call outcomes the live feed takes no sample from (`observeTaskRuns`): a budget stop,
+ * and a call a credential stopped or kept from starting (`usage_limit`, U-078: the task runs
+ * again, and what this call spent is no part of a finished task's cost on its own).
+ */
+export const NO_SAMPLE_CALL_OUTCOMES: readonly string[] = [
+  ...BUDGET_STOP_RUN_OUTCOMES,
+  "usage_limit",
+];
 /** The specialist name a review's Run row carries: its cost is no part of the work's. */
 const CRITIC_RUN_SPECIALIST = "critic";
 /** Ids per IN (...) clause when the fold lists runs (SQLite's parameter limit is far above this). */
@@ -272,6 +282,83 @@ function clamp(n: number, lo: number, hi: number): number {
 function isoMinus(iso: string, ms: number): string {
   const t = Date.parse(iso);
   return Number.isFinite(t) ? new Date(Math.max(0, t - ms)).toISOString() : iso;
+}
+
+/** The Run row columns the sample rule reads. */
+export type SampleRunInput = Pick<
+  RunRow,
+  "specialist" | "model" | "outcome" | "cost_usd_micro" | "duration_ms" | "updated_at"
+>;
+
+/**
+ * What a task's Run rows say about it as a sample. Both feeds build it with `tallyRun` and ask
+ * `isNoSample`, so the live learner and the fold after a restart leave out the same tasks.
+ */
+export interface RunTally {
+  /** The work runs' cost (the critic's reviews left out). */
+  cost: number;
+  /** The critic's reviews' cost: paid from the session's review reserve, not the task's budget. */
+  reviews: number;
+  wall: number;
+  /** Finished work runs. */
+  finished: number;
+  /** A work run on a fast-mode variant (ADR 0057): the surcharge is no part of the work's cost. */
+  fast: boolean;
+  /** A work run that stopped at a budget (`BUDGET_STOP_RUN_OUTCOMES`, ADR 0112). */
+  budgetStop: boolean;
+  /**
+   * When the last finished work run ended (its row's last update, written at its end), "" with
+   * none: the sample's time in both feeds, so a restart does not move it.
+   */
+  endedAt: string;
+}
+
+export function emptyRunTally(): RunTally {
+  return {
+    cost: 0,
+    reviews: 0,
+    wall: 0,
+    finished: 0,
+    fast: false,
+    budgetStop: false,
+    endedAt: "",
+  };
+}
+
+/** Add one Run row to a task's tally; a run still running (or never started) is left out. */
+export function tallyRun(acc: RunTally, r: SampleRunInput): RunTally {
+  if (r.outcome === "running" || r.outcome === "") return acc;
+  // A review is paid from the session's review reserve, not the task's budget.
+  if (r.specialist === CRITIC_RUN_SPECIALIST) {
+    acc.reviews += r.cost_usd_micro;
+    return acc;
+  }
+  // A fast-mode run (its Run row names the `<id>-fast` variant, spec D.20, ADR 0057) costs the
+  // fast-mode surcharge: the task is no sample of what the work costs.
+  if (isFastModeVariant(r.model)) acc.fast = true;
+  if (BUDGET_STOP_RUN_OUTCOMES.includes(r.outcome)) acc.budgetStop = true;
+  acc.cost += r.cost_usd_micro;
+  acc.wall += r.duration_ms ?? 0;
+  acc.finished += 1;
+  if (r.updated_at > acc.endedAt) acc.endedAt = r.updated_at;
+  return acc;
+}
+
+/**
+ * Whether a task is no sample of what its work costs: no finished work run, a fast-mode run, or
+ * a run that stopped at a budget, however the task went on afterwards (raised, continued, done
+ * or cancelled: what it spent is a lower bound, 'cost', ADR 0112).
+ */
+export function isNoSample(t: RunTally): boolean {
+  return t.finished === 0 || t.fast || t.budgetStop;
+}
+
+/**
+ * What a task's work cost: the cost ledger's rows for the task (the truth for caps) less its
+ * reviews, or, without ledger rows (a subscription's runs), its work runs' cost.
+ */
+export function workCostOf(t: RunTally, bookedUsdMicro: number | undefined): number {
+  return bookedUsdMicro === undefined ? t.cost : Math.max(0, bookedUsdMicro - t.reviews);
 }
 
 export class EstimateModel implements EstimatePort {
@@ -561,42 +648,12 @@ export class EstimateModel implements EstimatePort {
       this.prune();
       return 0;
     }
-    const byTask = new Map<
-      string,
-      {
-        cost: number;
-        reviews: number;
-        wall: number;
-        finished: number;
-        fast: boolean;
-        budgetStop: boolean;
-      }
-    >();
+    const byTask = new Map<string, RunTally>();
     for (let i = 0; i < fresh.length; i += RUN_LIST_CHUNK) {
       const ids = fresh.slice(i, i + RUN_LIST_CHUNK).map((t) => t.id);
       for (const r of await store.run.list({ task_id: ids })) {
-        if (!r.task_id || r.outcome === "running" || r.outcome === "") continue;
-        const acc = byTask.get(r.task_id) ?? {
-          cost: 0,
-          reviews: 0,
-          wall: 0,
-          finished: 0,
-          fast: false,
-          budgetStop: false,
-        };
-        byTask.set(r.task_id, acc);
-        // A review is paid from the session's review reserve, not the task's budget.
-        if (r.specialist === CRITIC_RUN_SPECIALIST) {
-          acc.reviews += r.cost_usd_micro;
-          continue;
-        }
-        // A fast-mode run (its Run row names the `<id>-fast` variant, spec D.20, ADR 0057) costs
-        // the fast-mode surcharge: the task is no sample of what the work costs.
-        if (isFastModeVariant(r.model)) acc.fast = true;
-        if (BUDGET_STOP_RUN_OUTCOMES.includes(r.outcome)) acc.budgetStop = true;
-        acc.cost += r.cost_usd_micro;
-        acc.wall += r.duration_ms ?? 0;
-        acc.finished += 1;
+        if (!r.task_id) continue;
+        byTask.set(r.task_id, tallyRun(byTask.get(r.task_id) ?? emptyRunTally(), r));
       }
     }
     // A task's ledger rows are recorded after the task exists, so the oldest fresh task's
@@ -613,12 +670,11 @@ export class EstimateModel implements EstimatePort {
     for (const t of fresh) {
       this.remember(t.id, t.updated_at);
       const runs = byTask.get(t.id);
-      if (!runs || runs.finished === 0 || runs.fast || runs.budgetStop) continue;
-      const booked = ledger.get(t.id);
+      if (!runs || isNoSample(runs)) continue;
       const sample = this.sampleForTask(t, {
-        usdMicro: booked === undefined ? runs.cost : Math.max(0, booked - runs.reviews),
+        usdMicro: workCostOf(runs, ledger.get(t.id)),
         wallMs: runs.wall,
-        at: t.updated_at,
+        at: runs.endedAt || t.updated_at,
       });
       if (this.observe(sample)) added += 1;
     }
@@ -664,6 +720,41 @@ export class EstimateModel implements EstimatePort {
     this.remember(task.id, actual.at);
     this.prune();
     return ok;
+  }
+
+  /**
+   * The runner's task.finished hook, built as the fold builds it (review of 'cost'): the task's
+   * Run rows and cost-ledger rows are read, and
+   * - a task the fold leaves out gives no sample live either (`isNoSample`): a work run that
+   *   stopped at a budget, also one before the budget was raised or the task continued; a
+   *   fast-mode run; or no finished work run (a call that met a resting credential). Before, the
+   *   live feed skipped only a call that itself paused, so a raised task was learned from until
+   *   the next restart, whose fold left it out;
+   * - the actual is the fold's: the work's cost so far (`workCostOf`) and its runs' wall time,
+   *   not the executor call's figures, whose wall time also counted the call's setup, so the
+   *   Performance screen's time ratio moved with a restart; and its time is when the last work
+   *   run ended (`at` only when no row says), not the hook's moment.
+   * `callOutcome` is the executor call's outcome: a budget stop is no sample whatever its Run row
+   * says, nor is a call a credential stopped (`usage_limit`: the task goes back to ready and
+   * runs again). A task tried more than once is a sample at each try, the last one with what the
+   * fold counts for it.
+   */
+  async observeTaskRuns(
+    store: StateStore,
+    task: EstimateTaskInput,
+    at: string,
+    callOutcome?: string,
+  ): Promise<boolean> {
+    if (callOutcome !== undefined && NO_SAMPLE_CALL_OUTCOMES.includes(callOutcome)) return false;
+    const tally = emptyRunTally();
+    for (const r of await store.run.forTask(task.id)) tallyRun(tally, r);
+    if (isNoSample(tally)) return false;
+    const booked = await store.costLedger.sum({ taskId: task.id });
+    return this.observeTask(task, {
+      usdMicro: workCostOf(tally, booked.entries > 0 ? booked.usd_micro : undefined),
+      wallMs: tally.wall,
+      at: tally.endedAt || at,
+    });
   }
 }
 

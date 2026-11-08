@@ -130,8 +130,18 @@ cost is a calibrated figure per specialist (`STARTING_ESTIMATES_USD_MICRO`, USD 
 does not name; the registry share and the 0.5 USD fallback remain only for a caller that passes
 `startingEstimates: null`), the multiplier is clamped to `[0.1, 10]` (was `[0.25, 4]`) and
 the shrinkage pseudo-count is 1 (was 5), the plan's guess is kept within 1.5 times of its kind's
-figure, a task with a `paused` or `budget_exceeded` run is no sample, and the fold's actual is the
-work runs' cost (the ledger less the critic's Run rows). The wall-time cold start is unchanged.
+figure (a task for the person keeps 0), a task with a `paused` or `budget_exceeded` run is no
+sample, and the fold's actual is the work runs' cost (the ledger less the critic's Run rows). The
+wall-time cold start is unchanged. The live feed (`observeTaskRuns`) reads the task's Run rows and
+ledger rows: it leaves out the same tasks as the fold (`tallyRun`, `isNoSample`: a budget stop
+before a raise or a Continue, a fast-mode run, no finished work run) and a call a credential
+stopped, and its actual is the fold's (`workCostOf`, the work runs' wall time; before, the
+executor call's cost and wall time, which counted the call's setup). In both feeds a sample's time
+is when the task's last work run ended (was the hook's moment live and the task row's last
+update in the fold, a row a review or a merge touches later), so the state learned live
+still agrees with the fold after a restart (review of 'cost': a raised task was learned from live
+and dropped by the next restart's fold). A task tried more than once is still a sample at each
+try live, the last with the fold's figures, and one sample after a restart.
 
 ## Amendment 2026-10-26: the eval budget bounds a run the human consented to
 

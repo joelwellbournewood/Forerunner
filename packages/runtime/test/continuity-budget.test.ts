@@ -223,6 +223,61 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     const after = (await inbox()).requests.find((r) => r.id === card.id) as Json | undefined;
     expect(String(after?.outcome)).toMatch(/^Raised the budget of "Contact page" to CHF \d+\.\d\d/);
   }, 60_000);
+
+  // Review of 'cost' (ADR 0112, ADR 0019): a task whose run stopped at its budget is no sample of
+  // what its work costs, even once the budget is raised and the task finishes (what it spent is
+  // a lower bound). The fold after a restart left it out, but the live learner took the run that
+  // finished as a sample, so Performance > Estimates and every estimate of the kind changed when
+  // the daemon restarted. A task that ran in one go is a sample both ways.
+  it("the raised task is no sample of what its work costs, live or after a restart; a plain task is, both ways (cost)", async () => {
+    const idle = async () =>
+      waitFor(
+        async () => ((await rt.store.session.active(rt.agent.id)).length === 0 ? true : undefined),
+        async () =>
+          `no session to be running (${(await rt.store.session.active(rt.agent.id)).map((s) => s.status).join(", ")})`,
+      );
+    await idle();
+    // A task that runs in one go, on the same project.
+    const created = await req(`/projects/${projectId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Opening hours",
+        outcome: "hours.html lists the opening hours.",
+        acceptanceCriteria: ["hours.html exists"],
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        specialist: "coder",
+        riskTier: 1,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const plainId = ((await created.json()) as Json).id as string;
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    await waitFor(
+      async () => ((await rt.store.task.mustGet(plainId)).status === "done" ? true : undefined),
+      async () => `"Opening hours" to be done (${(await rt.store.task.mustGet(plainId)).status})`,
+    );
+    await idle();
+    const runs = (await rt.store.run.forTask(taskId)).filter((r) => r.specialist !== "critic");
+    expect(runs.map((r) => r.outcome)).toContain("budget_exceeded");
+    const view = async () => {
+      const res = await req("/costs/estimates");
+      expect(res.status).toBe(200);
+      const { generated_at: _at, ...rest } = (await res.json()) as Json;
+      return rest as { recent: Json[]; rows: Json[] } & Json;
+    };
+    const live = await view();
+    expect(live.recent.map((s) => s.task_id)).toEqual([plainId]);
+    expect(live.rows.map((r) => [r.specialist, r.samples])).toEqual([["coder", 1]]);
+    await rt.close();
+    ({ rt, req } = await compose(home, clock, fake));
+    expect(await view()).toEqual(live);
+  }, 120_000);
 });
 
 describe("the budget Raise the budget sets", () => {
