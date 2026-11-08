@@ -2243,6 +2243,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                 sourceId: string;
                 projectId: string;
               }) => {
+                // The chooser's view follows what this run finds (a key saved since the mark).
+                await webSearchMarks.refresh();
                 if (await webSearchMarks.offFor(sourceId)) return null;
                 const lists = await webSearchLists(projectId);
                 return (await webSearchMarks.listsRefused(sourceId, projectId, lists))
@@ -4239,6 +4241,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         if (!spec) return null;
         const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
         const project = projectId ? await store.project.get(projectId).catch(() => null) : null;
+        // 'web-search': a key saved since search was switched off for the old one ends the mark.
+        await webSearchMarks.refresh();
         return credentialChoiceFor({
           kindsInOrder: await taskBilling.savedKinds(),
           needs: needsOf({
@@ -4251,7 +4255,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           dependencies: project ? hasDependenciesToInstall(docs.docsDirsFor(project)[0]) : false,
         });
       },
-      table: async () => abilityTable(chooserFacts(), await taskBilling.savedKinds()),
+      table: async () => {
+        await webSearchMarks.refresh();
+        return abilityTable(chooserFacts(), await taskBilling.savedKinds());
+      },
     },
     tools,
     executor,
