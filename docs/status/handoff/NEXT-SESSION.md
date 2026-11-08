@@ -15,49 +15,62 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-03 19:30 UTC (paused: the weekly limit is reached)
+## Status at 2026-11-08 08:45 UTC (wave 7 group 4 running)
 
-The account's seven-day limit was reached on 2026-11-03 and resets 2026-11-08 05:00 UTC. The
-owner did not approve paid extra usage, so nothing runs until then. A scheduled check-in in
-session `claude/nifty-knuth-f9udt0` resumes the work at 05:15 UTC on 2026-11-08.
+The weekly limit reset on 2026-11-08 at 05:00 UTC and the work resumed then, on the included
+plan (no paid extra usage). Session `claude/nifty-knuth-f9udt0` carries on; its scheduled
+check-ins pick the work up if a run stops.
 
-- **Merged and pushed at c5910a9.** CI is green on Windows and Linux, including the Desktop app
-  workflow's real-window check. Merged so far:
+- **Merged and pushed at b015f31.** CI and the Desktop app workflow are green on it, on Windows
+  and Linux. Merged so far:
   - phase C (verification, continuity, GitHub result, research on the web);
   - phase E wave 5 (answers, screens, noise, bench) and wave 6 (stops, asking, decisions,
     verification);
   - wave 7 group 1 (the merge record, ADR 0111; the budget stop, ADR 0112; desktop polish, with
     Ctrl- and Shift-click on the app's own links acting as a plain click);
   - wave 7 group 2 (dependent branches, credential limits);
+  - wave 7 group 3: Merge in the app, with a per-project "Who merges accepted work" setting
+    ("You press Merge" by default; no autonomy level merges by itself any more); the credential
+    chooser; cost (prompt caching, honest estimates); this computer's copy following every merge,
+    with its Local only folder (ADR 0113);
   - F2: the real window on Windows CI, and Docker full review on Linux;
-  - test temp files now go in one folder per run, removed at its end.
+  - test temp files go in one folder per run, removed at its end.
 - **The owner's decisions of 2026-11-02** are built in waves 7 and 8: merging, Autopilot, the
   local copy, the Local only folder, the PR preview, credentials, budgets, web search, the site
   rules, Ctrl-click, the status issue, the standard repository guide and collaboration. Their
-  full text is in the plan files backup below. Each still needs its ADR and user-guide entry
-  (phase G).
-- **Wave 7 group 3 is written, not yet reviewed:** merge-in-app, credential-chooser, cost and
-  merged-copy. The limit cut merged-copy off after 9 commits; the rest is still to do. The
-  branches are on GitHub as `claude/nifty-knuth-f9udt0-backup/fix-*`.
-- **The plan files are on GitHub too:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`.
-  It holds the wave 7 and 8 specs, the owner's decisions, the leftovers, each wave's results, the
-  collaboration audit, the workflow scripts and the resume recipe. Its README says how to restore
-  them and resume, on this machine or a fresh one. Delete the backup branches once group 3 is
-  merged.
+  full text is in the plan files backup below. Each is recorded in its ADR as it is built; the
+  user-guide entries are checked in phase G.
+- **Running now: wave 7 group 4** (budget resume: a paused task keeps its work and continues from
+  it; web search for research on the API key). Workflow run `wf_3eff7ab7-708`, started
+  08:06 UTC on b015f31.
+- **The plan files are on GitHub:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`
+  (refreshed after group 3). It holds the wave 7 and 8 specs, the owner's decisions, the
+  leftovers, each wave's results, the collaboration audit, the workflow scripts and the resume
+  recipes. Its README says how to restore them and resume, on this machine or a fresh one.
+  Delete it once wave 8 is merged.
+- **Backup branches to delete:** the four `claude/nifty-knuth-f9udt0-backup/fix-*` branches
+  (merge-in-app, credential-chooser, cost, merged-copy) are fully merged. The session cannot
+  delete branches (GitHub answers 403), so the owner deletes them.
 - **Next, in order:**
-  1. group 3: reviews, merged-copy finished, fix-ups, merge;
-  2. group 4: budget resume, web search;
-  3. group 5: merged-task actions, site rules;
-  4. group 6: polish;
-  5. live check 2 with the real model;
-  6. wave 8: 16 areas in 8 groups (collaboration, the status issue, the repository guide);
-  7. then F, G, G2 and H, as below.
+  1. group 4: budget resume, web search (running);
+  2. group 5: merged-task actions, site rules;
+  3. group 6: polish;
+  4. live check 2 with the real model;
+  5. wave 8: 16 areas in 8 groups (collaboration, the status issue, the repository guide);
+  6. then F, G, G2 and H, as below.
+- **Session-lead write-ups left for phase G** (the area agents may not edit them): the
+  UPDATE-LOG entries (U-028, U-037, U-078, L-15, L-22 from group 3), docs/requirements.md J.9
+  and J.10, and the CHANGELOG lines. Each area's suggested words are in its result file.
 - **Cost estimate for waves 7 and 8,** from what earlier rounds used: about USD 2,200 at API
-  prices (1,800 to 2,700). That is about three quarters of one week's included limit.
+  prices (1,800 to 2,700), about three quarters of one week's included limit. Group 3's
+  remaining work used about USD 115 of it.
 - **API spend for live checks:** about USD 6 of the owner's USD 40.
 - **Open owner questions** (defaults are built if unanswered): 9 on collaboration
   (`collab/owner-summary.md`) and 6 from waves 5 and 6 (`owner-questions-wave56.md`), both in
-  the plan files.
+  the plan files; from group 3, U-078 (does "Wait" also hold a refused API key's work, as built;
+  should running commands be a hard need for code tasks on a project with dependencies) and
+  U-037 (a Local only file changed by the person during a run: the person's version wins, as
+  built). ADRs 0100 and 0113 give the options.
 
 ## Progress, and the plan from here (approved by the owner, 2026-11-01 evening)
 
