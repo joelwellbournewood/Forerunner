@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { repoNameFor } from "../src/pages/project/CreateRepoDialog.tsx";
@@ -71,6 +71,30 @@ describe("Create a repository (U-037)", () => {
     );
     expect(screen.getByTestId("create-repo")).toBeInTheDocument();
   });
+
+  for (const how of ["the × button", "Escape"] as const) {
+    it(`closing the dialog with ${how} after Preview answers its card No: nothing is left open in the Inbox (leftovers7-tailmerge, TM-8)`, async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      renderApp("/projects/proj_beacon/summary", harness);
+      await user.click(await screen.findByTestId("create-repo"));
+      const dialog = await screen.findByTestId("create-repo-dialog");
+      await user.click(within(dialog).getByTestId("create-repo-preview"));
+      await within(dialog).findByTestId("command-pending");
+      const confirms = () =>
+        harness.daemon.state.calls.filter(
+          (c) => c.method === "POST" && /\/commands\/.+\/confirm$/.test(c.path),
+        );
+      expect(confirms()).toEqual([]);
+      // Escape on a <dialog> is the browser's "cancel" event (jsdom does not send it for a key).
+      if (how === "Escape") fireEvent(dialog, new Event("cancel", { cancelable: true }));
+      else await user.click(within(dialog).getByRole("button", { name: "Close" }));
+      // Before: the dialog closed and its card stayed open in the Inbox.
+      await waitFor(() => expect(confirms()).toHaveLength(1));
+      expect(confirms()[0]?.body).toEqual({ answer: "no" });
+      expect(screen.getByTestId("create-repo")).toBeInTheDocument();
+    });
+  }
 
   it("names the repository as the daemon does", () => {
     expect(repoNameFor("Garden Planner")).toBe("garden-planner");

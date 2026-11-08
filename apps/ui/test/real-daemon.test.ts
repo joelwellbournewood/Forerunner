@@ -11052,4 +11052,25 @@ describe("leftovers7-tailmerge, wave 13", () => {
     });
     expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(false);
   }, 120_000);
+
+  it("Create a repository: Preview files one card, and the No the dialog sends when it is closed leaves nothing open in the Inbox (TM-8)", async () => {
+    const project = await client.createProject({ name: "No repo yet", goal: "x" });
+    const cards = async () =>
+      (await client.inbox(rt.human.id)).requests.filter(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+    // Preview: exactly the call the project page's dialog makes.
+    const preview = await client.executeCommands({
+      commands: [{ name: "repo.create", params: { project: project.id, private: true } }],
+      wordsUsed: "Create a repository (project page)",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(preview.status).toBe("pending");
+    expect(await cards()).toHaveLength(1);
+    // The dialog closed with × or Escape answers it No (CreateRepoDialog's finish).
+    await client.confirmCommand(preview.pendingId ?? "", { answer: "no" });
+    expect(await cards()).toEqual([]);
+    expect((await client.project(project.id)).repos).toEqual([]);
+  }, 120_000);
 });

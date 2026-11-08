@@ -463,7 +463,9 @@ and `node_modules` out of it. To give
 it a GitHub repository, click **Create a repository** on the project page: it shows the name
 (from the project's), your GitHub account (or an organization you name) and private, and **Yes**
 creates it with your GitHub token, puts the project's folder in it as the first commit and links
-it; from then on tasks work on branches with pull requests. "create a repository" in Chat does
+it; from then on tasks work on branches with pull requests. Closing the dialog without **Yes**
+(× or Escape) answers its card **No**, so nothing is left waiting in the Inbox. "create a
+repository" in Chat does
 the same. When a session plans code work for such a project, your agent asks in the Inbox
 (**Create the repository** or **Not now**); "Not now" is not asked again. It asks at every
 autonomy level, Autopilot too, and so does a "create a repository" the agent decides on in
