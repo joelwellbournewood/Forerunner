@@ -1222,11 +1222,6 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
-   * W6-24: what a failed run left uncommitted in the task's worktree goes out of the way (kept
-   * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
-   * next run's checkout carried the files over, or git refused when main had changed them.
-   */
-  /**
    * R-dirtyworktree (W6-24 for a crash): a run the app's close or a crash cut short leaves its
    * files uncommitted in the task's worktree, with no work-in-progress commit (that and the
    * leftovers set aside happen only after the inner executor returns). Before, the next run
@@ -1252,6 +1247,11 @@ export class PrTaskExecutor implements TaskExecutor {
     }
   }
 
+  /**
+   * W6-24: what a failed run left uncommitted in the task's worktree goes out of the way (kept
+   * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
+   * next run's checkout carried the files over, or git refused when main had changed them.
+   */
   private async setLeftoversAside(git: GitOps, task: TaskRow): Promise<void> {
     try {
       const files = await git.setAside(

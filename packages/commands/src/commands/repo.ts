@@ -1,4 +1,5 @@
 import { ForerunnerError } from "@forerunner/platform";
+import { ANSWER_CARD_KEYS } from "@forerunner/runtime/wiring/request-answers";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
 import type { CommandContext, CommandDef, RepoPreview, Risk } from "../types.ts";
@@ -47,9 +48,6 @@ function ports(ctx: CommandContext) {
   return repos;
 }
 
-/** The repository offer's card key (`ANSWER_CARD_KEYS.repoCreatePrefix` + the project's id). */
-const REPO_OFFER_KEY_PREFIX = "repo:create:";
-
 /**
  * R-repooffer (leftovers7-merge): a repository asked for in Chat (or by voice) while the agent's
  * offer for the same project is open in the Inbox files no second card: the answer points to
@@ -61,7 +59,8 @@ async function assertNoOpenOffer(
   project: { id: string; name: string },
 ): Promise<void> {
   if (ctx.source === "ui") return;
-  const key = `${REPO_OFFER_KEY_PREFIX}${project.id}`;
+  // The repository offer's card key, as its producer files it (TM-10).
+  const key = `${ANSWER_CARD_KEYS.repoCreatePrefix}${project.id}`;
   const open = await ctx.store.humanRequest
     .list({ status: "open", project_id: project.id } as never, { limit: 200 })
     .catch(() => []);
