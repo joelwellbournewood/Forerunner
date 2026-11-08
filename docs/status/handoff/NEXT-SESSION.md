@@ -15,14 +15,15 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-08 15:30 UTC (wave 7 group 6 part 1 running)
+## Status at 2026-11-08 17:30 UTC (wave 7 group 6: wave 14 running)
 
 The weekly limit reset on 2026-11-08 at 05:00 UTC and the work resumed then, on the included
 plan (no paid extra usage). Session `claude/nifty-knuth-f9udt0` carries on; its scheduled
 check-ins pick the work up if a run stops.
 
-- **Merged and pushed at fa1a86f.** CI and the Desktop app workflow (Windows and Linux builds,
-  the installed-app check and the real-window check) are green on it. Merged so far:
+- **Merged and pushed at ca2c58d** (wave 12). CI and the Desktop app workflow (Windows and Linux
+  builds, the installed-app check and the real-window check) were green on fa1a86f, before
+  wave 12. Merged so far:
   - phase C (verification, continuity, GitHub result, research on the web);
   - phase E wave 5 (answers, screens, noise, bench) and wave 6 (stops, asking, decisions,
     verification);
@@ -44,6 +45,12 @@ check-ins pick the work up if a run stops.
     without a yes, at any level; research reads any public website, or only (or never) the
     sites listed per project, on both credentials, never this PC or the home network. ADRs 0097,
     0107 and 0113 are amended;
+  - wave 12 (two of its three areas, not yet independently reviewed: that happens in wave 14):
+    same-titled tasks get their own branch and pull request; a run cut short by a crash leaves
+    nothing behind; a merge made later by the retry pass files an Update; the rebuild card
+    offers Merge and Redo; a review refused at a budget or by a credential pauses or waits
+    instead of failing; under "Wait" only the tasks that must wait wait; recovery says what a
+    session did and spent; the plan card's estimate equals the Start dialog's;
   - F2: the real window on Windows CI, and Docker full review on Linux;
   - test temp files go in one folder per run, removed at its end.
 - **The owner's decisions of 2026-11-02** are built in waves 7 and 8: merging, Autopilot, the
@@ -51,22 +58,29 @@ check-ins pick the work up if a run stops.
   rules, Ctrl-click, the status issue, the standard repository guide and collaboration. Their
   full text is in the plan files backup below. Each is recorded in its ADR as it is built; the
   user-guide entries are checked in phase G.
-- **Group 6 is two waves.** Every leftover of groups 1 to 5 (246 items, 210 after merging
+- **Group 6 is three waves.** Every leftover of groups 1 to 5 (246 items, 210 after merging
   duplicates) was checked against the code at fa1a86f (`wave7g6-triage.json` in the plan
   files): 42 real problems, 34 new polish items, 14 live-check steps, 11 owner questions, 2 for
   wave 8, the rest already fixed or not a problem.
-  - **Running now: wave 12**, the real problems in three areas with separate files:
-    leftovers7-merge (16: same-titled tasks sharing a branch first, then rebuilds, take-out,
-    the merge retry, the copy, the repository offer), leftovers7-session (10: a review refused
-    at a budget or by a credential pauses or waits instead of failing, "Wait" keeps the queue
-    going, recovery, the session review, run rows, estimates, chat caching) and leftovers7-web
-    (16: the agent browser keeps Chromium's sandbox, the site rule never fails open, the
-    subscription's hooks and bookings, credential waits and the chooser). Workflow run
-    `wf_294ae3cd-fb8`, started 15:13 UTC on fa1a86f.
-  - **Next: wave 13, polish** (the 34 planned items and the 34 new ones), split into two areas
-    with separate files (words in the runtime and docs; the screens), after wave 12 is merged.
+  - **Wave 12** (run `wf_294ae3cd-fb8`) merged leftovers7-merge (11 of its 16 problems) and
+    leftovers7-session (all 10) at ca2c58d, with the full suite and the bench smoke green. The
+    run then broke: the session's working folder fell back to `/home/user` while it ran, so no
+    new agent worktree could be made. The independent reviews did not run, and leftovers7-web
+    never started. Lesson: while a workflow runs, no shell command of the session lead may end
+    outside `/home/user/Forerunner`.
+  - **Running now: wave 14** (run `wf_8c348d94-071`, started 17:17 UTC on ca2c58d): leftovers7-web
+    fresh (16: the agent browser keeps Chromium's sandbox, the site rule never fails open, the
+    subscription's hooks and bookings, credential waits and the chooser); the independent review
+    of leftovers7-merge and leftovers7-session, with a fix-up where it finds problems; and
+    leftovers7-merge2, the five merge problems wave 12 did not start (rebuilds owed across a
+    restart, one worktree lock for rebuilds and merges, a chain of three with a busy middle, a
+    pull request that stops being mergeable, Files saying when this computer's copy stops
+    following) plus the notification for a merge made later.
+  - **Next: wave 13, polish** (the 34 planned items and the 34 new ones, plus the sentences
+    waves 12 and 14 add), split into two areas with separate files (words in the runtime and
+    docs; the screens), after wave 14 is merged. Its split is `wave7g6b-areas.json`.
 - **The plan files are on GitHub:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`
-  (refreshed after wave 12 started). It holds the wave 7 and 8 specs, the owner's decisions,
+  (refreshed after wave 14 started). It holds the wave 7 and 8 specs, the owner's decisions,
   the leftovers and their triage, each wave's results, the collaboration audit, the workflow
   scripts and the resume recipes. Its README says how to restore them and resume, on this
   machine or a fresh one. Delete it once wave 8 is merged.
@@ -74,7 +88,7 @@ check-ins pick the work up if a run stops.
   (merge-in-app, credential-chooser, cost, merged-copy) are fully merged. The session cannot
   delete branches (GitHub answers 403), so the owner deletes them.
 - **Next, in order:**
-  1. wave 12: the real problems of groups 1 to 5 (running);
+  1. wave 14: the rest of wave 12, and its reviews (running);
   2. wave 13: polish;
   3. live check 2 with the real model (it now includes budget resume, web search, the site
      rules, take-out and the preview; the triage lists the steps to add);
@@ -88,8 +102,8 @@ check-ins pick the work up if a run stops.
   area's suggested words are in its result file.
 - **Cost estimate for waves 7 and 8,** from what earlier rounds used: about USD 2,200 at API
   prices (1,800 to 2,700), about three quarters of one week's included limit. Used so far
-  since the estimate: about USD 520 (group 3's remaining work about 115, group 4 about 160,
-  group 5 about 160, the group 6 triage about 90).
+  since the estimate: about USD 600 (group 3's remaining work about 115, group 4 about 160,
+  group 5 about 160, the group 6 triage about 90, wave 12 about 80, rough).
 - **API spend for live checks:** about USD 6 of the owner's USD 40.
 - **Open owner questions** (today's behaviour stays until answered): 9 on collaboration
   (`collab/owner-summary.md`) and 6 from waves 5 and 6 (`owner-questions-wave56.md`), both in
@@ -104,7 +118,11 @@ check-ins pick the work up if a run stops.
   what "Wait" holds when a credential rests, is refused or reaches a plan-share or monthly cap;
   whether a large Local only folder is copied into every run; what the time on the Files line
   means; whether a conflicting take-out offers to draft a revert task; how the project line
-  counts taken-out work.
+  counts taken-out work. Wave 12 adds two for the session lead or the owner: how stale the
+  Overview's view of GitHub's branch rules may be (a cache would save about 4 GitHub calls a
+  look but show a rule change up to a minute late), and whether Merge on the rebuild card should
+  merge a rebuilt pull request whose own change differs from the reviewed one (today it goes
+  back to the person, as the Overview's Merge does).
 
 ## Progress, and the plan from here (approved by the owner, 2026-11-01 evening)
 
