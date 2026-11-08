@@ -19,6 +19,7 @@ import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import { PUSH_UNFINISHED_SETTING, pushUnfinishedOf } from "../session/push-unfinished.ts";
+import { WEB_ACCESS_SETTING, webAccessOf } from "../wiring/web-access.ts";
 import type { Money, SettingView } from "./api-types.ts";
 import { money } from "./views.ts";
 
@@ -32,7 +33,16 @@ export interface SettingsViewInput {
   providerName: string | null;
   registryDir: string;
   pricing: PricingTable;
+  /**
+   * This computer names a proxy for its web traffic, which the page reader does not use yet
+   * ('sites'): the "Web pages research may read" row says so.
+   */
+  proxied?: boolean;
 }
+
+/** The page reader on a computer that reaches the internet only through a proxy ('sites'). */
+export const PROXY_ROW_WORDS =
+  "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works";
 
 /** Whether the project's first repository is one on a git host (not a folder on this PC). */
 function onHostRepository(p: ProjectRow): boolean {
@@ -290,6 +300,16 @@ export function settingsView(input: SettingsViewInput): Row[] {
               }),
             ]
           : []),
+        // 'sites' (the owner's decision of 2026-11-02): what research reads on the web, the same
+        // on both credentials; the value in force, the older block list included. The agent
+        // browser's own site list is separate, and the row says so in one sentence.
+        project({
+          key: `project.${WEB_ACCESS_SETTING}`,
+          label: "Web pages research may read",
+          value: webAccessOf(p.settings) as unknown as JsonValue,
+          description: `Any public website (the default, with an optional list of websites it never reads) or only the websites you list, for ${p.name}'s research on both credentials; each website covers its subdomains, and this computer and your home or office network are never read. The agent browser's own site list is separate and changes nothing here${input.proxied ? `. ${PROXY_ROW_WORDS}` : ""}`,
+          risk: "medium",
+        }),
         // The slider (spec D.16): -1 speed, 0 balanced, +1 quality, as every mode reads it.
         project({
           key: "project.speed_quality_offset",

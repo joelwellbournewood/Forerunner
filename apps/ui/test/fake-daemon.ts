@@ -130,6 +130,15 @@ import {
   signoffAnswer,
 } from "@forerunner/runtime/wiring/request-answers";
 import {
+  cleanSiteList,
+  legacyBlocks,
+  researchReadsLine,
+  type WebAccess,
+  webAccessNarrows,
+  webAccessOf,
+  webAccessWords,
+} from "@forerunner/runtime/wiring/web-access";
+import {
   decodeStoredKey,
   parseUnlockChallenge,
   wrapVaultKey,
@@ -1436,6 +1445,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // As the daemon's card (design §2): the status sentence, "n of m done", the session working
   // on it and its folder, computed when read from the fake's tasks, cards, plan and sessions
   // with the daemon's own `projectStatusLine`.
+  /**
+   * 'sites': a project's "Web pages research may read" as the daemon reads it (`webAccessOf`):
+   * `settings.set web_access`'s value, with the blocks a `PUT /projects/:id/settings` wrote as
+   * `browser.blockedDomains` already taken into its never list.
+   */
+  const webAccessFake = (projectId: string): WebAccess =>
+    webAccessOf({ web_access: state.settingValues[`web_access:${projectId}`] as never });
   const projectCardOf = (p: ProjectCard): ProjectCard => {
     const tasks = projectTaskViews(
       state.tasks,
@@ -1499,6 +1515,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       working,
       folder,
       repository,
+      // 'sites': as the daemon's card, from "Web pages research may read".
+      researchReads: researchReadsLine(webAccessFake(p.id)),
     };
   };
   app.get("/projects", (c) => c.json(state.projects.map(projectCardOf)));
@@ -3427,6 +3445,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         risk: "low",
       });
     }
+    // Like the daemon (settings-view.ts, 'sites'): "Web pages research may read" per project.
+    for (const p of state.projects)
+      rows.push({
+        key: "project.web_access",
+        label: "Web pages research may read",
+        scope: "project",
+        scopeId: p.id,
+        value: webAccessFake(p.id) as never,
+        description: `Any public website (the default, with an optional list of websites it never reads) or only the websites you list, for ${p.name}'s research on both credentials; each website covers its subdomains, and this computer and your home or office network are never read. The agent browser's own site list is separate and changes nothing here`,
+        risk: "medium",
+      });
     // Like the daemon: one fast-mode row per project, the effect and surcharge both ways.
     for (const [projectId, on] of Object.entries(state.fastMode)) {
       rows.push({
@@ -4159,10 +4188,33 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!p) return errorBody(c, 404, "not_found", "no such project");
     const body = (await c.req.json()) as { version?: number; settings?: Record<string, unknown> };
     if (typeof body.version !== "number") return errorBody(c, 400, "validation", "version");
+    // 'sites', as the daemon: the rule goes through settings.set (a yes before it widens), and
+    // blocks written here as browser.blockedDomains are taken into its never list.
+    if (body.settings && Object.hasOwn(body.settings, "web_access"))
+      return errorBody(
+        c,
+        403,
+        "approval_required",
+        "Web pages research may read is changed in Settings (or with settings.set), which asks a yes before a change lets research read more.",
+      );
+    const settings: Record<string, unknown> = { ...(body.settings ?? {}) };
+    const moved = legacyBlocks(settings);
+    if (moved.length) {
+      const now = webAccessFake(p.id);
+      state.settingValues[`web_access:${p.id}`] = {
+        ...now,
+        never: [...now.never, ...moved.filter((m) => !now.never.includes(m))],
+      };
+      const browser = { ...(settings.browser as Record<string, unknown>) };
+      delete browser.blockedDomains;
+      if (Object.keys(browser).length) settings.browser = browser;
+      else delete settings.browser;
+      settings.web_access = state.settingValues[`web_access:${p.id}`];
+    }
     return c.json({
       id: p.id,
       version: body.version + 1,
-      settings: { ...(body.settings ?? {}) },
+      settings,
       mirrorScheduled: Boolean(
         (body.settings?.mirror as { enabled?: boolean } | undefined)?.enabled,
       ),
@@ -4530,6 +4582,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     mid_session_limit: "medium",
     // U-078: medium, as SETTING_SPECS.code_commands (the API key moves code work onto money).
     code_commands: "medium",
+    // 'sites': medium, as SETTING_SPECS.web_access (widening asks a yes; narrowing acts at once).
+    web_access: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
@@ -4867,6 +4921,61 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const risk = SETTING_RISK[key];
       if (!risk) return refuse(`unknown setting ${key}`);
       const project = projectByRef(projectRef);
+      if (key === "web_access" && project) {
+        // As SETTING_SPECS.web_access ('sites'): the one clean-up, refused entries in words, a
+        // yes only when the rule widens (judged against the rule in force), the same value refused.
+        const raw = (params.value ?? {}) as { mode?: unknown; only?: unknown; never?: unknown };
+        const mode = raw.mode === "only" ? "only" : "any";
+        const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+        const only = mode === "only" ? cleanSiteList(list(raw.only), "only") : null;
+        const never = cleanSiteList(list(raw.never), "never");
+        const refused = [...(only?.refused ?? []), ...never.refused].map(
+          (r) => `"${r.entry}" is ${r.why}.`,
+        );
+        if (only && only.sites.length === 0 && !refused.length)
+          refused.push(
+            "Only these websites needs at least one website, or research would be stuck.",
+          );
+        if (refused.length) return refuse(refused.join(" "));
+        const value: WebAccess = { mode, only: only?.sites ?? [], never: never.sites };
+        const before = webAccessFake(project.id);
+        const what = `web pages research may read for ${project.name}`;
+        if (JSON.stringify(before) === JSON.stringify(value))
+          return refuse(
+            `Web pages research may read for ${project.name} is already ${webAccessWords(before)}.`,
+          );
+        const effect =
+          mode === "only"
+            ? "research reads only these websites and their subdomains, on the API key and on the subscription"
+            : "research reads any public website except the ones listed, on the API key and on the subscription";
+        const r: Risk = webAccessNarrows(value, before) ? "low" : risk;
+        return {
+          name,
+          params,
+          risk: r,
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: webAccessWords(before),
+              newValue: `${webAccessWords(value)} (${effect})`,
+              scope: "project",
+              sentence: `Set ${what} from ${webAccessWords(before)} to ${webAccessWords(value)}: ${effect}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            r,
+          ),
+          apply: () => {
+            state.settingValues[settingSlot(key, project.id)] = value;
+            return {
+              before: { key, project_id: project.id, value: before },
+              after: { key, project_id: project.id, value },
+            };
+          },
+        };
+      }
       if (key === "fast_mode" && project && typeof params.value === "boolean") {
         // The daemon's card for this key (SettingSpec.effect, ADR 0051 item 4): the effect
         // and the surcharge for the direction asked, in the change card and the sentence.

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ToolExecutionContext } from "../src/agent/tools.ts";
 import { webReadLoopbackFor } from "../src/cli/main.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
+import { createDaemonApp } from "../src/daemon/server.ts";
 import { domainCovered } from "../src/enforcement/token.ts";
 import { WEB_FETCH_TOOL } from "../src/registry/tools.ts";
 import { browserSettingsOf } from "../src/wiring/browser-ports.ts";
@@ -256,9 +257,114 @@ describe("the page reader's loopback seam: the scripted bench modes only ('sites
     ).rejects.toMatchObject({ code: "domain_not_allowed" });
   });
 
+  it("on a computer with a proxy set, the Settings row says the reader does not use it", async () => {
+    const { rt, projectId } = await compose({ HTTPS_PROXY: "http://proxy.example.test:3128" });
+    const { app, token } = createDaemonApp(rt);
+    const res = await app.request(`/settings?scope=project&scopeId=${projectId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const rows = (await res.json()) as { key: string; description: string }[];
+    const row = rows.find((r) => r.key === "project.web_access");
+    expect(row?.description).toContain(
+      "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works",
+    );
+    const plain = await compose({});
+    const { app: app2, token: token2 } = createDaemonApp(plain.rt);
+    const rows2 = (await (
+      await app2.request(`/settings?scope=project&scopeId=${plain.projectId}`, {
+        headers: { authorization: `Bearer ${token2}` },
+      })
+    ).json()) as { key: string; description: string }[];
+    expect(rows2.find((r) => r.key === "project.web_access")?.description).not.toContain("proxy");
+  });
+
   it("with the seam (the bench's composition), the stand-in page on 127.0.0.1 is read", async () => {
     const { rt, projectId } = await compose({}, true);
     const r = await rt.toolsForRun().get(WEB_FETCH_TOOL)?.execute({ url: pageUrl }, ctx(projectId));
     expect(r?.content).toContain("the daemon's own page");
   });
+});
+
+describe("'Web pages research may read' survives a restart and an undo ('sites')", () => {
+  it("settings.set stores the cleaned rule, the next daemon enforces it, and Undo puts the old rule back", async () => {
+    const clock = new SimulatedClock(Date.parse("2026-11-08T10:00:00Z"));
+    const home = mkdtempSync(join(tmpdir(), "fr-sites-restart-"));
+    const compose = () =>
+      composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({}),
+        provider: new ScriptedProvider([], clock),
+        gitHost: new MemoryGitHost("alice"),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "1.0.0",
+        sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+        startServices: false,
+        webReadLoopback: true,
+      });
+    let rt = await compose();
+    const post = async (path: string, body: unknown) => {
+      const { app, token } = createDaemonApp(rt);
+      const r = await app.request(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      });
+      return (await r.json()) as Record<string, unknown>;
+    };
+    try {
+      const project = await rt.store.project.insert({ name: "Docs", goal: "g", repos: [] });
+      const ctx: ToolExecutionContext = {
+        runId: "r1",
+        sessionId: "s1",
+        agentId: rt.agent.id,
+        humanId: rt.human.id,
+        projectId: project.id,
+        allowedPaths: [],
+        signal: new AbortController().signal,
+      };
+      const set = await post("/commands/execute", {
+        commands: [
+          {
+            name: "settings.set",
+            params: {
+              key: "web_access",
+              value: { mode: "only", only: ["https://www.Example.com/docs/"], never: [] },
+              project: project.id,
+            },
+          },
+        ],
+        source: "ui",
+        wordsUsed: "Settings: Web pages research may read to Only these websites: example.com",
+      });
+      expect(set.status).toBe("done");
+      await rt.close();
+      rt = await compose();
+      const stored = (await rt.store.project.mustGet(project.id)).settings.web_access;
+      expect(stored).toEqual({ mode: "only", only: ["example.com"], never: [] });
+      await expect(
+        rt.toolsForRun().get(WEB_FETCH_TOOL)?.execute({ url: "http://127.0.0.1:9/x" }, ctx),
+      ).rejects.toMatchObject({
+        message:
+          'Refused: 127.0.0.1 is not on this project\'s "only these websites" list (example.com).',
+      });
+      // Undo from the change log, after the restart: a widening, so it asks a yes first.
+      const undo = await post(`/changes/${String(set.changeLogId)}/undo`, {});
+      expect(undo.status).toBe("pending");
+      const yes = await post(`/commands/${String(undo.pendingId)}/confirm`, { answer: "tap" });
+      expect(yes.status).toBe("done");
+      expect(webAccessOf((await rt.store.project.mustGet(project.id)).settings)).toEqual({
+        mode: "any",
+        only: [],
+        never: [],
+      });
+    } finally {
+      await rt.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

@@ -11,6 +11,13 @@ import {
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import { PUSH_UNFINISHED_SETTING } from "@forerunner/runtime/session/push-unfinished";
+import {
+  cleanSiteList,
+  WEB_ACCESS_SETTING,
+  webAccessNarrows,
+  webAccessOf,
+  webAccessWords,
+} from "@forerunner/runtime/wiring/web-access";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -55,6 +62,18 @@ export interface SettingSpec {
   effect?: (value: JsonValue, ctx: SettingEffectContext) => string;
   /** A value in words for the card and the change log, when JSON would show (U-074). */
   display?: (value: unknown) => string;
+  /**
+   * 'sites': a change that `narrows` acts at once and only a widening asks a yes, judged against
+   * the value in force when the change is made (new code in settings.set; before, a key's risk
+   * was the same both ways and `narrows` was read only by an undo).
+   */
+  narrowingActsAtOnce?: boolean;
+  /** The value in force for a project key, when it is not only the stored key ('sites'). */
+  currentOf?: (settings: ProjectRow["settings"]) => JsonValue;
+  /** Other project settings the write changes with it ('sites': the older block list moved). */
+  writeAlso?: (settings: ProjectRow["settings"]) => Record<string, JsonValue | undefined>;
+  /** The schema's messages are whole sentences: the refusal shows them without the key. */
+  plainRefusals?: boolean;
 }
 
 /** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
@@ -155,6 +174,40 @@ const CREDENTIAL_WORDS: Record<string, string> = {
 export function billingOrderWords(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) return "not chosen (the defaults)";
   return value.map((k) => CREDENTIAL_WORDS[String(k)] ?? String(k)).join(", then ");
+}
+
+/**
+ * "Web pages research may read" ('sites', the owner's decision of 2026-11-02): any public website
+ * (`any`, with an optional "never" list) or only the websites on a list (`only`, which may not
+ * be empty). Every entry goes through the one clean-up (`cleanSiteList`): the stored value is the
+ * cleaned one, and an entry it cannot take is refused in words, never dropped.
+ */
+export const WebAccessSetting = z
+  .object({
+    mode: z.enum(["any", "only"]),
+    only: z.array(z.string().max(500)).max(200).optional(),
+    never: z.array(z.string().max(500)).max(200).optional(),
+  })
+  .strict()
+  .transform((v, ctx) => {
+    const only = v.mode === "only" ? cleanSiteList(v.only ?? [], "only") : null;
+    const never = cleanSiteList(v.never ?? [], "never");
+    for (const r of [...(only?.refused ?? []), ...never.refused])
+      ctx.addIssue({ code: "custom", message: `"${r.entry}" is ${r.why}.` });
+    if (only && only.sites.length === 0 && only.refused.length === 0)
+      ctx.addIssue({
+        code: "custom",
+        message: "Only these websites needs at least one website, or research would be stuck.",
+      });
+    return { mode: v.mode, only: only?.sites ?? [], never: never.sites };
+  });
+
+/** What a rule means for research, for the card and the change log. */
+export function webAccessEffect(value: unknown): string {
+  const v = webAccessOf({ [WEB_ACCESS_SETTING]: value as JsonValue });
+  return v.mode === "only"
+    ? "research reads only these websites and their subdomains, on the API key and on the subscription"
+    : "research reads any public website except the ones listed, on the API key and on the subscription";
 }
 
 /** What flipping small-project mode (spec B.6) changes; existing tasks keep their tier. */
@@ -294,6 +347,34 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
         ? "a paused task's work in progress is pushed to its branch on GitHub too, where it starts the repository's checks and others see it"
         : "a paused task's work in progress stays on this computer until the task is done",
     display: (value) => (value === true ? "on" : "off"),
+  },
+  // 'sites' (the owner's decision of 2026-11-02, ADR 0107 amended): "Web pages research may
+  // read", the same on both credentials. Widening it asks a yes; narrowing it acts at once. The
+  // value in force includes the blocks still under `browser.blockedDomains` (written before this
+  // setting), and writing it takes them into this one list.
+  [WEB_ACCESS_SETTING]: {
+    key: WEB_ACCESS_SETTING,
+    label: "web pages research may read",
+    scope: "project",
+    risk: "medium",
+    narrowingActsAtOnce: true,
+    plainRefusals: true,
+    schema: WebAccessSetting as unknown as z.ZodType<JsonValue>,
+    narrows: webAccessNarrows,
+    currentOf: (settings) => webAccessOf(settings) as unknown as JsonValue,
+    writeAlso: (settings) => {
+      const b = settings.browser;
+      if (!b || typeof b !== "object" || Array.isArray(b)) return {};
+      const browser = { ...(b as Record<string, JsonValue>) };
+      if (!("blockedDomains" in browser) && !("blocked_domains" in browser)) return {};
+      delete browser.blockedDomains;
+      delete browser.blocked_domains;
+      return { browser: Object.keys(browser).length ? browser : undefined };
+    },
+    description:
+      "What research reads on the web: mode any (any public website, except the never list) or only (only the websites on the only list); each entry covers the site and its subdomains. Never this computer or the local network.",
+    display: webAccessWords,
+    effect: (value) => webAccessEffect(value),
   },
   shared_with: {
     key: "shared_with",
@@ -513,9 +594,10 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
   const spec = settingSpec(p.key);
   const parsed = spec.schema.safeParse(p.value);
   if (!parsed.success) {
+    const words = parsed.error.issues.map((i) => i.message);
     throw new ForerunnerError(
       "validation",
-      `${p.key}: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+      spec.plainRefusals ? words.join(" ") : `${p.key}: ${words.join("; ")}`,
       {
         details: { key: p.key },
       },
@@ -528,7 +610,9 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
     const { project, usedActive } = await resolveProject(ctx, p.project);
     const current = spec.column
       ? ((project[spec.column as keyof ProjectRow] as JsonValue | undefined) ?? null)
-      : (project.settings[spec.key] ?? null);
+      : spec.currentOf
+        ? spec.currentOf(project.settings)
+        : (project.settings[spec.key] ?? null);
     return {
       spec,
       value: parsed.data,
@@ -613,7 +697,10 @@ async function write(
         ...author,
       } as never);
     } else {
-      await patchProjectSettings(ctx.store, id, { [spec.key]: value }, author);
+      const also = spec.writeAlso
+        ? spec.writeAlso((await ctx.store.project.mustGet(id)).settings)
+        : {};
+      await patchProjectSettings(ctx.store, id, { ...also, [spec.key]: value }, author);
     }
     return;
   }
@@ -628,7 +715,15 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
   name: "settings.set",
   description: `Change a setting by key. Keys: ${Object.keys(SETTING_SPECS).join(", ")}.`,
   params,
-  risk: (p) => settingRisk(settingSpec(p.key), p.value),
+  // 'sites': a key whose narrowing acts at once is judged against the value in force now.
+  risk: async (p, ctx) => {
+    const spec = settingSpec(p.key);
+    if (spec.narrowingActsAtOnce && spec.narrows) {
+      const t = await target(p, ctx).catch(() => null);
+      if (t && spec.narrows(t.value, t.current)) return "low";
+    }
+    return settingRisk(spec, p.value);
+  },
   maxRisk: "high",
   scope: (p) =>
     Object.hasOwn(SETTING_SPECS, p.key) && SETTING_SPECS[p.key]?.scope === "global"

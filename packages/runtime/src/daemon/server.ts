@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { formatChf, monthWindow, usdToChfMicro } from "@forerunner/billing";
-import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
+import { email as agentEmail, cloudflare, desktop, web } from "@forerunner/capabilities";
 import {
   type ErrorCode,
   errorMessage,
@@ -80,6 +80,7 @@ import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring
 import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
+import { moveLegacyBlocks, WEB_ACCESS_SETTING } from "../wiring/web-access.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
   AnswerOfferBody,
@@ -1801,7 +1802,15 @@ export function createDaemonApp(
   app.put("/projects/:id/settings", async (c) => {
     const body = await parse(c, UpdateProjectSettingsBody);
     const current = await rt.store.project.mustGet(c.req.param("id"));
-    const merged: Record<string, unknown> = { ...(current.settings as Record<string, unknown>) };
+    // 'sites': "Web pages research may read" goes through `settings.set`, which asks a yes
+    // before a change widens what research reads; this route would skip that.
+    if (Object.hasOwn(body.settings, WEB_ACCESS_SETTING))
+      throw new ForerunnerError(
+        "approval_required",
+        "Web pages research may read is changed in Settings (or with settings.set), which asks a yes before a change lets research read more.",
+        { details: { key: WEB_ACCESS_SETTING, command: "settings.set" } },
+      );
+    let merged: Record<string, unknown> = { ...(current.settings as Record<string, unknown>) };
     for (const [k, v] of Object.entries(body.settings)) {
       const prev = merged[k];
       merged[k] =
@@ -1809,9 +1818,27 @@ export function createDaemonApp(
           ? { ...(prev as Record<string, unknown>), ...(v as Record<string, unknown>) }
           : v;
     }
+    // 'sites': one stored block list. Blocks written here as `browser.blockedDomains` are taken
+    // into "Web pages research may read"'s never list in the same write, with an audit row, so
+    // every block in force is enforced by the reader and the agent browser and shown on the row.
+    const moved = moveLegacyBlocks(merged);
+    if (moved) merged = moved.settings;
     const updated = await rt.store.project.update(current.id, body.version, {
       settings: merged as never,
     });
+    if (moved?.moved.length)
+      await rt.store.auditLog.append({
+        tool: "project.settings",
+        allowed: true,
+        denied_reason: null,
+        agent_id: rt.agent.id,
+        human_id: rt.human.id,
+        input_summary: JSON.stringify({ projectId: current.id, blockedDomains: moved.moved }),
+        result_summary: `browser.blockedDomains taken into web_access.never: ${moved.moved.join(", ")}`,
+        cost_usd_micro: 0,
+        occurred_at: rt.clock.nowIso(),
+        author_agent: rt.agent.id,
+      });
     const mirrors = await rt.refreshMirrorSchedules();
     // The handover schedule follows `settings.handover` the same way (ADR 0060).
     const jobs = await rt.jobs.refreshSchedules();
@@ -2397,6 +2424,8 @@ export function createDaemonApp(
         providerName: rt.provider?.name ?? null,
         registryDir: rt.registry.dir,
         pricing: rt.pricingTable(),
+        // 'sites': the row says when the page reader cannot read through this PC's proxy.
+        proxied: web.proxySetIn(rt.env),
       }),
     );
   });

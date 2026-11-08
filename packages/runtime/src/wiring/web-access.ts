@@ -436,9 +436,56 @@ export function webAccessOf(settings: Record<string, unknown> | null | undefined
     raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const only = cleanSiteList(strings(v.only), "only").sites;
   const mode: WebAccessMode = v.mode === "only" && only.length > 0 ? "only" : "any";
-  const never = cleanSiteList(strings(v.never), "never").sites;
-  for (const entry of legacyBlocks(settings)) if (!never.includes(entry)) never.push(entry);
+  const never: string[] = [];
+  for (const entry of [...strings(v.never), ...legacyBlocks(settings)]) {
+    const site = blockEntry(entry);
+    if (site && !never.includes(site)) never.push(site);
+  }
   return { mode, only: mode === "only" ? only : [], never };
+}
+
+/**
+ * A block-list entry as it is read: cleaned where the clean-up takes it, else as written
+ * (lowercase, without `*.` or a trailing dot), so the reader still matches it: a block is never
+ * lost on the way (an IP address someone blocked before this setting, say).
+ */
+function blockEntry(entry: string): string {
+  const c = cleanSite(entry, "never");
+  return c.ok ? c.site : entry.trim().toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+}
+
+/**
+ * One stored block list ('sites'): `settings` with the blocks under `browser.blockedDomains`
+ * taken into `web_access.never` (the rest of `browser` kept, the key left out when nothing else
+ * is in it). Null when there is nothing to move. `moved` names the entries, for the audit row.
+ */
+export function moveLegacyBlocks(
+  settings: Record<string, unknown>,
+): { settings: Record<string, unknown>; moved: string[] } | null {
+  const b = settings[BROWSER_KEY];
+  if (!b || typeof b !== "object" || Array.isArray(b)) return null;
+  const browser = { ...(b as Record<string, unknown>) };
+  if (!("blockedDomains" in browser) && !("blocked_domains" in browser)) return null;
+  const moved = legacyBlocks(settings);
+  delete browser.blockedDomains;
+  delete browser.blocked_domains;
+  const current = webAccessOf({ ...settings, [BROWSER_KEY]: browser });
+  const stored = settings[WEB_ACCESS_SETTING];
+  const rest = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  const never = [...current.never];
+  for (const m of moved) if (!never.includes(m)) never.push(m);
+  const next: Record<string, unknown> = {
+    ...settings,
+    [WEB_ACCESS_SETTING]: {
+      ...(rest as Record<string, unknown>),
+      mode: current.mode,
+      only: current.only,
+      never,
+    },
+  };
+  if (Object.keys(browser).length) next[BROWSER_KEY] = browser;
+  else delete next[BROWSER_KEY];
+  return { settings: next, moved };
 }
 
 /**
@@ -451,8 +498,7 @@ export function legacyBlocks(settings: Record<string, unknown> | null | undefine
   const o = b as Record<string, unknown>;
   const out: string[] = [];
   for (const entry of strings(o.blockedDomains ?? o.blocked_domains)) {
-    const c = cleanSite(entry, "never");
-    const site = c.ok ? c.site : entry.trim().toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+    const site = blockEntry(entry);
     if (site && !out.includes(site)) out.push(site);
   }
   return out;

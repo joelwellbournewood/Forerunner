@@ -217,6 +217,13 @@ export const ProjectCard = z.object({
   folder: z.string().nullable().optional(),
   /** The repository the project is linked to, with its page; null without one (ADR 0106). */
   repository: z.object({ fullName: z.string(), url: z.string() }).nullable().optional(),
+  /**
+   * What research may read on the web, in one line for the Overview ('sites', the owner's
+   * decision of 2026-11-02): "Research reads: any public website", "Research reads: only
+   * developer.mozilla.org". From "Web pages research may read" (`researchReadsLine`). Absent on a
+   * card the state service serves.
+   */
+  researchReads: z.string().optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 

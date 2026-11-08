@@ -5209,6 +5209,117 @@ describe("the UI client against the real daemon: research on an API key reads th
     expect(models.specialists.find((x) => x.name === "researcher")?.limitation).toBeNull();
   }, 120_000);
 
+  it("'Web pages research may read' ('sites'): PUT's old block list becomes the one never list, settings.set changes the next page read, and the Overview carries the line", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Rules", goal: "Read only one site" });
+    const rowOf = async () =>
+      (await client.settings({ scope: "project", scopeId: project.id })).find(
+        (s) => s.key === "project.web_access",
+      );
+    // The default: any public website, on the row and on the Overview's line.
+    expect((await rowOf())?.value).toEqual({ mode: "any", only: [], never: [] });
+    expect((await rowOf())?.label).toBe("Web pages research may read");
+    expect((await client.project(project.id)).researchReads).toBe(
+      "Research reads: any public website",
+    );
+    // A block written the old way (PUT /projects/:id/settings, browser.blockedDomains) is taken
+    // into the one never list in the same write, with an audit row: enforced and shown.
+    const row = await rt.store.project.mustGet(project.id);
+    const put = await client.updateProjectSettings(project.id, {
+      version: row.version,
+      settings: { browser: { blockedDomains: ["*.example.org", "https://www.facebook.com/x"] } },
+    });
+    expect(put.settings).toMatchObject({
+      web_access: { mode: "any", only: [], never: ["example.org", "facebook.com"] },
+    });
+    expect(put.settings.browser).toBeUndefined();
+    expect((await rowOf())?.value).toEqual({
+      mode: "any",
+      only: [],
+      never: ["example.org", "facebook.com"],
+    });
+    const moved = await rt.store.auditLog.list({ tool: "project.settings" } as never);
+    expect(moved.map((r) => r.result_summary)).toEqual([
+      "browser.blockedDomains taken into web_access.never: example.org, facebook.com",
+    ]);
+    // The rule itself is not written through that route: it skips the yes a widening needs.
+    const sneak = await rt.store.project.mustGet(project.id);
+    await expect(
+      client.updateProjectSettings(project.id, {
+        version: sneak.version,
+        settings: { web_access: { mode: "any", only: [], never: [] } },
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    // "Only these websites" through settings.set (the Settings row's command): a narrowing,
+    // done at once.
+    const set = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "only", only: ["https://example.com/docs"], never: ["example.org"] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to Only these websites: example.com",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(set.status).toBe("done");
+    expect((await rowOf())?.value).toEqual({
+      mode: "only",
+      only: ["example.com"],
+      never: ["example.org"],
+    });
+    expect((await client.project(project.id)).researchReads).toBe(
+      "Research reads: only example.com",
+    );
+    // Back to any public website is a widening: a yes first.
+    const widen = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "any", only: [], never: [] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to Any public website",
+      source: "ui",
+      projectId: project.id,
+    });
+    expect(widen.status).toBe("pending");
+    if (widen.pendingId) await client.confirmCommand(widen.pendingId, { answer: "no" });
+    // The next page read follows the rule: the stand-in page is not on the "only" list, and the
+    // words the researcher got (and wrote) name the rule.
+    hits.length = 0;
+    const task = await client.createTask(project.id, {
+      title: "Compare two static site generators",
+      outcome: `docs/research.md says how fast Hugo builds, citing ${pageUrl}`,
+      riskTier: 1,
+      specialist: "researcher",
+    });
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      60_000,
+    );
+    expect(hits).toEqual([]);
+    const file = await client.projectFile(project.id, "docs/research.md");
+    expect(file.content).toContain(
+      `${pageUrl} was not read: Refused: 127.0.0.1 is not on this project's "only these websites" list (example.com).`,
+    );
+    const drawer = await client.task(task.id);
+    expect(JSON.stringify(drawer.runs)).toContain("only these websites");
+  }, 120_000);
+
   it("an install without web access says so for the researcher, and its task still runs from the project's files", async () => {
     // The page reader turned off and no subscription: no specialist reads the web.
     const off = await composeWithRolePlayer({}, {}, { FORERUNNER_WEB_FETCH: "off" });

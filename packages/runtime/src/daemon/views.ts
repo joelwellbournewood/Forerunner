@@ -45,6 +45,7 @@ import { defaultRiskTier } from "../session/project-plan.ts";
 import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
+import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
 import type {
   AgentView,
   ChangeLogView,
@@ -231,6 +232,8 @@ export async function projectCard(
     working,
     folder,
     repository,
+    // 'sites': "Research reads: any public website" (the Overview's line).
+    researchReads: researchReadsLine(webAccessOf(p.settings)),
   };
 }
 
