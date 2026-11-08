@@ -10,6 +10,7 @@ import {
   cancelWorkKind,
   cancelWorkLine,
 } from "@forerunner/runtime/daemon/cancel-words";
+import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -167,6 +168,10 @@ export function actionTarget(
     return {
       refused: `"${task.title}" is ${task.display?.label ?? task.status}: ${ACTION_WORDS[action]} is not offered for it.`,
     };
+  // As the daemon's task.reopen (R-pin): no Redo while the task's work is being taken out.
+  const takeOut = task.display?.takeOut;
+  if (action === "redo" && takeOut?.state === "open" && takeOut.number)
+    return { refused: redoWhileTakingOutSentence(task.title, takeOut.number) };
   // As the daemon's task.resume: a task only the person can do has nobody to go ahead.
   if (action === "go_ahead" && task.specialist === "person")
     return {

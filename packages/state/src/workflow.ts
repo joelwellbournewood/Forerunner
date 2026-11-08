@@ -100,7 +100,10 @@ export const MERGE_RECORD_TRANSITIONS: Graph<MergeRecordState> = {
   merging: ["merged", "waiting_checks", "left_to_you", "queued"],
   waiting_checks: ["merging", "left_to_you", "merged", "queued"],
   left_to_you: ["queued", "merging", "waiting_checks", "merged"],
-  merged: [],
+  // A redo's new pull request (a fresh branch after the old one was merged) is a new merge of
+  // the same task: `MergeRecordRepo.pin` queues the record again for it, and only for it
+  // (R-pin, leftovers7-merge: before, pin patched merged -> queued outside the graph).
+  merged: ["queued"],
 };
 
 /** Every graph, keyed by "<table>.<column>", for the generated doc. */

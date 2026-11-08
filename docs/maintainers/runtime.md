@@ -2983,6 +2983,12 @@ UI's fake daemon imports. A pull request of one commit squash-merged or rebase-m
 same shape: `takeOutPlan` returns `sure: false` and the body says "(#4, merged)". `taskDisplay()`'s merged case (`mergedDisplay`) reads the
 record: "Merged" with `takeOut: { state: "offered" }`, "Taken out in #9 (waiting for you to
 merge)" (`open`), "Taken out in #9" (`merged`); a take-out closed without merging offers it again.
+While a take-out is open, Redo is refused in words (`task.reopen`, `redoWhileTakingOutSentence`:
+'"X" is being taken out in #9: merge or close #9 first, then redo it.') and the Tasks row offers
+no action (R-pin, leftovers7-merge: the redo's new pull request queued the record again and
+cleared its take-out, which was then listed and settled nowhere). The redo's new pull request
+moves a merged record back to `queued` through the graph (`merged -> queued`, data-model.md);
+an open take-out a record redone before this rule still has stays on it.
 `ProjectPullRequests.view` lists each open take-out (`TaskTakeOut.openOf`) as a `take_out` row
 (title "Take out: <title>", `taskId` the task, no review) whose Merge merges it as it is through
 `mergeAsIs`, then marks it merged (`TaskTakeOut.merged`); before listing, `TaskTakeOut.settle`

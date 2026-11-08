@@ -623,7 +623,12 @@ describe("migrations", () => {
           })
         ).reviewed_head_sha,
       ).toBe("a".repeat(40));
-      await expect(repos.mergeRecord.move(pinned.id, "queued")).rejects.toMatchObject({
+      // Merged moves on only to queued, for a redo's new pull request (R-pin, leftovers7-merge;
+      // that move is the graph's now, and `pin` makes it): never back to merging or waiting.
+      await expect(repos.mergeRecord.move(pinned.id, "merging")).rejects.toMatchObject({
+        code: "validation",
+      });
+      await expect(repos.mergeRecord.move(pinned.id, "waiting_checks")).rejects.toMatchObject({
         code: "validation",
       });
       // The CHECK refuses a state outside the graph's names.

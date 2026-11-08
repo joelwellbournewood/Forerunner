@@ -10267,4 +10267,49 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     const bodies = (await client.inbox(rt.human.id)).messages.map((m) => m.body);
     expect(bodies.filter((b) => b === merged)).toHaveLength(1);
   }, 120_000);
+
+  /** Merge on the click and wait until the record says merged. */
+  const mergeNow = async (projectId: string, n: number, taskId: string) => {
+    expect((await client.mergePullRequest(projectId, n)).state).toBe("queued");
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(taskId))?.state === "merged",
+      `#${n} to be merged`,
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(taskId)),
+      30_000,
+    );
+  };
+
+  it("Redo while the task's work is being taken out is refused in words; the take-out stays listed and the task stays as it was (R-pin)", async () => {
+    const project = await client.createProject({ name: "Taking out", goal: "x", repos: [FULL] });
+    const a = await doneTask(project.id, "Add the old banner", "banner.ts");
+    await mergeNow(project.id, a.pr.number, a.task.id);
+    const out = await client.takeOutTask(a.task.id);
+    expect(out.state).toBe("opened");
+    const n = out.number ?? 0;
+    const shown = (await client.task(a.task.id)).task;
+    expect(shown.display?.takeOut).toMatchObject({ state: "open", number: n });
+    const refused = await client
+      .taskAction(a.task.id, { action: "redo", version: shown.version })
+      .catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).message).toContain(
+      `"Add the old banner" is being taken out in #${n}: merge or close #${n} first, then redo it.`,
+    );
+    const after = (await client.task(a.task.id)).task;
+    expect(after.status).toBe("done");
+    expect(after.display?.takeOut).toMatchObject({ state: "open", number: n });
+    const rows = (await client.projectPullRequests(project.id)).waiting;
+    expect(rows.find((w) => w.kind === "take_out" && w.number === n)).toBeTruthy();
+    // Merged on the click, the take-out is finished: Redo is taken again.
+    expect((await client.mergePullRequest(project.id, n)).state).toBe("queued");
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(a.task.id))?.take_out_state === "merged",
+      `#${n} to be merged`,
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(a.task.id)),
+      30_000,
+    );
+    const now = (await client.task(a.task.id)).task;
+    const redone = await client.taskAction(a.task.id, { action: "redo", version: now.version });
+    expect(redone.status).toBe("ready");
+  }, 120_000);
 });

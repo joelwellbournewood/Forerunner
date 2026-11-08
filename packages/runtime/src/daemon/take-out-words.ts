@@ -20,6 +20,15 @@ export function namesList(items: readonly string[]): string {
 /** A task's title in quotes, on one line. */
 export const quoted = (title: string): string => `"${title.replace(/\s+/g, " ").trim()}"`;
 
+/**
+ * Redo refused while the task's work is being taken out (R-pin, leftovers7-merge): the redo's
+ * new pull request would replace the record that keeps the open take-out, which would then be
+ * listed nowhere. Polish owns the wording.
+ */
+export function redoWhileTakingOutSentence(title: string, number: number): string {
+  return `${quoted(title)} is being taken out in #${number}: merge or close #${number} first, then redo it.`;
+}
+
 /** The sentence for a merge whose shape Forerunner cannot undo safely (the fix scope's words). */
 export function unknownShapeSentence(number: number): string {
   return `#${number} was merged in a way Forerunner cannot undo safely; undo it on GitHub.`;

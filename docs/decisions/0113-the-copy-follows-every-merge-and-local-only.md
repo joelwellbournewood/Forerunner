@@ -197,11 +197,23 @@ preview (its `preview.json` and git worktree) are read back by a daemon started 
 home (`apps/ui/test/real-daemon.test.ts`, "a take-out and a preview survive a restart").
 
 Known gaps: a Redo of a task
-whose take-out is still open starts its record again and forgets that take-out (its pull request
-stays open on GitHub, no longer listed as a take-out). A dependent pull request merged with a merge
+whose take-out is still open started its record again and forgot that take-out (its pull request
+stayed open on GitHub, no longer listed as a take-out); closed by leftovers7-merge (R-pin, the
+amendment below). A dependent pull request merged with a merge
 commit that carried its dependency's commits (a dependency merged by GitHub through it) is
 reverted whole by `-m 1`, the dependency's work included; Forerunner's own Merge merges the
 dependency first, so this needs a merge made on GitHub.
+
+## Amendment: the leftovers of wave 7, merge side ('leftovers7-merge', 2026-11-08)
+
+1. **No Redo while a take-out is open.** A done task whose take-out pull request is open is not
+   redone: its row offers no action and `task.reopen` refuses in one sentence ('"X" is being
+   taken out in #9: merge or close #9 first, then redo it.'). A Redo's new pull request queues
+   the task's merge record again, which kept the take-out; the take-out was then listed and
+   settled nowhere. The merge record's graph now has `merged -> queued` (the redo's new pull
+   request, made by `pin` and only there), and a record redone before this rule keeps its open
+   take-out. Alternative considered: keep Redo and move the take-out to a record of its own (a
+   schema change for a case the person can end with one Merge or Close).
 
 ## Alternatives considered
 

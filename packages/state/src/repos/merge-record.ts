@@ -34,10 +34,15 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
     const current = await this.forTask(input.task_id);
     if (!current) return this.insert({ ...input, state: "queued" });
     // A merged pull request stays merged; a redo's new pull request (a fresh branch after the
-    // old one was merged, dependent-branches) is a new merge, so the record starts again.
+    // old one was merged, dependent-branches) is a new merge, so the record starts again: the
+    // graph's merged -> queued (R-pin).
     if (current.state === "merged" && current.pr_url === input.pr_url) return current;
-    if (current.state !== "queued" && current.state !== "merged")
+    if (current.state !== "queued")
       assertTransition(MERGE_RECORD_TRANSITIONS, "merge_record", current.state, "queued");
+    // A take-out of the old work still open on GitHub stays on the record, so it is still
+    // listed and settled (Redo is refused while it is open; a record redone before that rule
+    // keeps it). One merged or closed belonged to the old work and goes.
+    const takeOutOpen = current.take_out_state === "open";
     return this.patch(current.id, {
       agent_id: input.agent_id,
       project_id: input.project_id ?? current.project_id,
@@ -56,9 +61,9 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
             merge_sha: null,
             method: null,
             attempts: 0,
-            take_out_pr_number: null,
-            take_out_pr_url: null,
-            take_out_state: null,
+            ...(takeOutOpen
+              ? {}
+              : { take_out_pr_number: null, take_out_pr_url: null, take_out_state: null }),
           }
         : {}),
       author_agent: input.author_agent ?? input.agent_id,

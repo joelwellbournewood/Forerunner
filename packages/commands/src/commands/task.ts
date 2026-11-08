@@ -7,6 +7,7 @@ import {
   cancelWorkKind,
   cancelWorkLine,
 } from "@forerunner/runtime/daemon/cancel-words";
+import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
 // The module itself, not the package index: the index loads this package (a cycle), and the
 // schema is needed when this module is evaluated.
 import {
@@ -945,6 +946,23 @@ export const taskResume: CommandDef<TaskResumeParams> = {
 
 // --- task.reopen -----------------------------------------------------------------------------
 
+/**
+ * Redo of a done task whose work is being taken out (its take-out pull request is open) is
+ * refused in words (R-pin, leftovers7-merge): the redo's new pull request would queue the merge
+ * record that keeps the take-out, which would then be neither listed nor settled. Once the
+ * take-out is merged or closed, Redo is offered again.
+ */
+async function assertNotTakingOut(task: TaskRow, ctx: CommandContext): Promise<void> {
+  if (task.status !== "done") return;
+  const record = await ctx.store.mergeRecord.forTask(task.id).catch(() => undefined);
+  if (record?.take_out_state === "open" && record.take_out_pr_number)
+    throw new ForerunnerError(
+      "validation",
+      redoWhileTakingOutSentence(task.title, record.take_out_pr_number),
+      { details: { taskId: task.id, takeOut: record.take_out_pr_number, reason: "taking_out" } },
+    );
+}
+
 const reopenParams = z.object({ ...taskRef, note: noteParam });
 export type TaskReopenParams = z.infer<typeof reopenParams>;
 
@@ -961,11 +979,13 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["cancelled", "done"], "cancelled or done");
+    await assertNotTakingOut(task, ctx);
     return moveCard(ctx, "task.reopen", task, "ready", params);
   },
   async run(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["cancelled", "done"], "cancelled or done");
+    await assertNotTakingOut(task, ctx);
     const moved = await personMove(ctx, task, "ready", {
       reason:
         task.status === "done"
