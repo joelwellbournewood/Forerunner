@@ -90,3 +90,13 @@ the project's status line does not count it as a question (`holdsTask`, C-60). B
 the agent created a private repository with no card from either path (the composed tests
 `repo-create.test.ts` "at Autopilot (level 4) the agent asks too" and "the chat agent's
 repo.create at Autopilot files a card" failed then).
+
+## Amendment: one card per repository ('leftovers7-merge', 2026-11-08)
+
+The agent's offer and a `repo.create` asked in Chat could both be open for one project, and
+nothing withdrew the offer once a repository was linked, so its "Create the repository" then
+failed with a warning. Now a repository linked by any path withdraws the open offer ("Closed: it
+no longer needs you."), an offer answered after a link changes nothing and warns of nothing, and
+a `repo.create` from Chat or voice while the offer is open is refused in one sentence that points
+to the offer (the project page's own Create goes on and withdraws the offer). The command's card
+reads as its question with Yes and No, not as the generic "a GitHub repository for X".

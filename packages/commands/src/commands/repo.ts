@@ -47,6 +47,32 @@ function ports(ctx: CommandContext) {
   return repos;
 }
 
+/** The repository offer's card key (`ANSWER_CARD_KEYS.repoCreatePrefix` + the project's id). */
+const REPO_OFFER_KEY_PREFIX = "repo:create:";
+
+/**
+ * R-repooffer (leftovers7-merge): a repository asked for in Chat (or by voice) while the agent's
+ * offer for the same project is open in the Inbox files no second card: the answer points to
+ * the offer. The project page's own Create goes on (the offer is then withdrawn once the
+ * repository is linked, `RepoCreator`).
+ */
+async function assertNoOpenOffer(
+  ctx: CommandContext,
+  project: { id: string; name: string },
+): Promise<void> {
+  if (ctx.source === "ui") return;
+  const key = `${REPO_OFFER_KEY_PREFIX}${project.id}`;
+  const open = await ctx.store.humanRequest
+    .list({ status: "open", project_id: project.id } as never, { limit: 200 })
+    .catch(() => []);
+  if (open.some((r) => (r.change_card as { key?: unknown } | null)?.key === key))
+    throw new ForerunnerError(
+      "validation",
+      `A card in your Inbox already asks to create a repository for "${project.name}": answer it there.`,
+      { details: { projectId: project.id, reason: "offer_open" } },
+    );
+}
+
 function where(p: RepoPreview): string {
   return p.accountKind === "organization"
     ? `the organization ${p.owner}`
@@ -79,6 +105,7 @@ export const repoCreate: CommandDef<RepoCreateParams> = {
   actionClass: "external_send",
   async plan(p, ctx) {
     const { project, usedActive } = await resolveProject(ctx, p.project);
+    await assertNoOpenOffer(ctx, project);
     const preview = await ports(ctx).preview({
       projectId: project.id,
       private: p.private,
@@ -98,6 +125,10 @@ export const repoCreate: CommandDef<RepoCreateParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: usedActive,
+      // R-repooffer: the card a Chat answer waits on reads as its question, with Yes and No
+      // that say what they do (before: the generic "a GitHub repository for X", "yes"/"no").
+      // Polish owns the wording.
+      ask: `Create the ${preview.private ? "private" : "public"} GitHub repository ${preview.fullName} for "${project.name.replace(/\s+/g, " ").trim()}"? Its tasks then run on branches with pull requests.`,
     });
   },
   async run(p, ctx) {

@@ -3014,7 +3014,16 @@ merge on GitHub then finish the take-outs and a merge removes the preview).
 `REPO_OFFER_BODY` below it and gives each answer its line ("Makes it on GitHub, private, with the
 project's folder as its first commit." / "Tasks keep running in the project's folder; the agent
 does not ask again."). Before, a project named "Birds: a counter" read 'Create a repository for
-"Birds' (`packages/runtime/test/repo-create.test.ts`).
+"Birds' (`packages/runtime/test/repo-create.test.ts`). **One card per repository** (R-repooffer,
+leftovers7-merge): once the project has a repository (created on the project page or by an
+answered chat card, `RepoCreator.create`, or linked by hand, which `RepoProposals.sync` finds at
+its next pass, `withdrawLinked`), the open offer is withdrawn (`withdrawRepoOffers`; the Inbox:
+"Closed: it no longer needs you."), and an offer answered after a link is marked
+`already_linked` with no warning. A `repo.create` from Chat or voice while the offer is open is
+refused with 'A card in your Inbox already asks to create a repository for "X": answer it
+there.' (the project page's own Create, `source: "ui"`, goes on); the command's card has an `ask`
+('Create the private GitHub repository o/x for "X"? Its tasks then run on branches with pull
+requests.'), so a chat answer waits as that question with Yes and No that say what they do.
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull

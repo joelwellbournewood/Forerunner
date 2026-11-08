@@ -489,6 +489,83 @@ describe("a repository for a project without one (U-037)", () => {
     ]);
   });
 
+  it(
+    "a repository made on the project page while the agent's offer is open withdraws the offer: one card at most, never a warning (R-repooffer)",
+    async () => {
+      const { id } = await projectWithCodeWork("Pond Survey");
+      await session(id);
+      const offer = await proposalCard(id);
+      if (!offer) throw new Error("no proposal card");
+      const pending = await json(
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "repo.create", params: { project: id, private: true } }],
+            source: "ui",
+            projectId: id,
+            wordsUsed: "Create a repository (project page)",
+          }),
+        }),
+      );
+      expect(pending.status).toBe("pending");
+      const confirmed = await json(
+        await req(`/commands/${String(pending.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        }),
+      );
+      expect(confirmed.status).toBe("done");
+      expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/pond-survey"]);
+      // Before: the offer stayed open; its Create then failed with a warning.
+      const inbox = await json(await req("/inbox"));
+      const offers = (
+        inbox.requests as Array<{ projectId: string | null; why: string; status: string }>
+      ).filter((r) => r.projectId === id && r.why.startsWith("Create a repository for "));
+      // Under Answered: closed, saying it no longer needs the person.
+      expect(offers.map((r) => [r.status, (r as { outcome?: string }).outcome])).toEqual([
+        ["withdrawn", "Closed: it no longer needs you."],
+      ]);
+      const row = await rt.store.humanRequest.mustGet(offer.id);
+      expect(row.status).toBe("withdrawn");
+      const messages = await rt.store.message.inbox({ humanId: rt.human.id }, { limit: 50 });
+      expect(messages.map((m) => m.body).join("\n")).not.toContain(
+        "The repository you asked for was not created",
+      );
+    },
+    REPO_WORK_MS,
+  );
+
+  it("Chat asks for a repository while the agent's offer is open: no second card, the answer points to the offer (R-repooffer)", async () => {
+    const { id } = await projectWithCodeWork("Moth Count");
+    await session(id);
+    const offer = await proposalCard(id);
+    if (!offer) throw new Error("no proposal card");
+    const openCards = async () =>
+      ((await json(await req("/inbox"))).requests as Array<{ id: string; status: string }>)
+        .filter((r) => r.status === "open")
+        .map((r) => r.id)
+        .sort();
+    const before = await openCards();
+    const asked = await json(
+      await req("/commands/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          commands: [{ name: "repo.create", params: { project: id, private: true } }],
+          source: "text",
+          projectId: id,
+          wordsUsed: "create a repository for Moth Count",
+        }),
+      }),
+    );
+    expect(asked.status).toBe("refused");
+    expect(String(asked.reason)).toContain(
+      'A card in your Inbox already asks to create a repository for "Moth Count": answer it there.',
+    );
+    // Before: a second card ("a GitHub repository for Moth Count", yes/no) beside the offer.
+    expect(await openCards()).toEqual(before);
+    expect(before).toContain(offer.id);
+  });
+
   it("names a repository after its project", () => {
     expect(repoNameFor("Garden Planner", "0abc")).toBe("garden-planner");
     expect(repoNameFor("Zürich Café: v2!", "0abc")).toBe("zurich-cafe-v2");

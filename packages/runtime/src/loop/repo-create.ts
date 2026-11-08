@@ -37,6 +37,28 @@ import type { CommandResultView } from "./ports.ts";
  *   project's status line does not count it as a question (`holdsTask`, C-60).
  */
 
+/**
+ * Withdraws the open repository offers of a project that has a repository now (R-repooffer,
+ * leftovers7-merge): the Inbox then says "Closed: it no longer needs you." Returns how many.
+ */
+export async function withdrawRepoOffers(
+  store: Pick<StateStore, "humanRequest" | "project">,
+  projectId: string,
+): Promise<number> {
+  if (((await store.project.get(projectId))?.repos.length ?? 0) === 0) return 0;
+  const key = `${ANSWER_CARD_KEYS.repoCreatePrefix}${projectId}`;
+  const open = await store.humanRequest.list({ status: "open", project_id: projectId } as never, {
+    limit: 200,
+  });
+  let n = 0;
+  for (const row of open)
+    if ((row.change_card as JsonObject | null)?.key === key) {
+      await store.humanRequest.withdraw(row.id, row.version);
+      n++;
+    }
+  return n;
+}
+
 /** Audit row kind of a repository creation (and of a first push that failed). */
 export const REPO_CREATE_AUDIT_TOOL = "repo.create";
 
@@ -156,6 +178,10 @@ export class RepoCreator implements RepoCommandPort {
     }
     await store.project.patch(project.id, { repos: [info.fullName] });
     await this.audit(req, project, info, true, `created and linked; ${files} file(s) pushed`);
+    // R-repooffer: the agent's open offer for this project needs nobody any more.
+    await withdrawRepoOffers(store, project.id).catch((e) =>
+      this.logger.warn("repository offer not withdrawn", { error: errorMessage(e) }),
+    );
     this.deps.onLinked?.(project.id);
     this.logger.info("repository created and linked", {
       projectId: project.id,
@@ -355,6 +381,7 @@ export class RepoProposals {
   async sync(): Promise<{ created: number; declined: number; failed: number }> {
     const { store, clock } = this.deps;
     const out = { created: 0, declined: 0, failed: 0 };
+    await this.withdrawLinked();
     const rows = await store.humanRequest.list(
       { human_id: this.deps.humanId, status: "answered" } as never,
       { limit: 500 },
@@ -365,6 +392,12 @@ export class RepoProposals {
       if (card.applied_at) continue;
       const projectId = String(card.project_id ?? "");
       const answer = repoProposalAnswer(row.answer);
+      // R-repooffer: linked meanwhile (Chat, the project page, a repository link): nothing to
+      // create, and no warning that it was not.
+      if (answer === "create" && ((await store.project.get(projectId))?.repos.length ?? 0) > 0) {
+        await this.mark(row, { outcome: "already_linked" });
+        continue;
+      }
       if (answer === "decline") {
         const project = await store.project.get(projectId);
         if (project) {
@@ -425,6 +458,46 @@ export class RepoProposals {
       });
     }
     return out;
+  }
+
+  /**
+   * R-repooffer (leftovers7-merge): an open offer whose project has a repository now (made from
+   * Chat or the project page, or linked by hand) is withdrawn: the Inbox says "Closed: it no
+   * longer needs you." Before, it stayed open and its "Create the repository" then failed with a
+   * warning. Called by `sync` and by `RepoCreator` once it linked one (`withdrawFor`).
+   */
+  async withdrawLinked(projectId?: string): Promise<number> {
+    const { store } = this.deps;
+    let n = 0;
+    const open = await store.humanRequest.open({ humanId: this.deps.humanId }, { limit: 500 });
+    const projects = new Set<string>();
+    for (const row of open) {
+      const key = (row.change_card as JsonObject | null)?.key;
+      if (typeof key !== "string" || !key.startsWith(REPO_PROPOSAL_KEY_PREFIX)) continue;
+      const id = key.slice(REPO_PROPOSAL_KEY_PREFIX.length);
+      if (!projectId || id === projectId) projects.add(id);
+    }
+    for (const id of projects) {
+      try {
+        n += await withdrawRepoOffers(store, id);
+      } catch (e) {
+        this.logger.warn("repository offer not withdrawn", {
+          projectId: id,
+          error: errorMessage(e),
+        });
+      }
+    }
+    return n;
+  }
+
+  /** The open offer for a project, if any (a chat's `repo.create` points to it). */
+  async openOfferFor(projectId: string): Promise<HumanRequestRow | null> {
+    const key = `${REPO_PROPOSAL_KEY_PREFIX}${projectId}`;
+    const open = await this.deps.store.humanRequest.open(
+      { humanId: this.deps.humanId },
+      { limit: 500 },
+    );
+    return open.find((r) => (r.change_card as JsonObject | null)?.key === key) ?? null;
   }
 
   private async mark(row: HumanRequestRow, extra: JsonObject): Promise<void> {
