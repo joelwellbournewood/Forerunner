@@ -116,7 +116,13 @@ export interface TaskDisplayContext {
       Partial<
         Pick<
           MergeRecordRow,
-          "pr_number" | "take_out_pr_number" | "take_out_pr_url" | "take_out_state"
+          | "pr_number"
+          | "take_out_pr_number"
+          | "take_out_pr_url"
+          | "take_out_state"
+          // TM-4: a merge that waits for the task folder's changes (`owedMergeWait`).
+          | "rebuild_owed_for"
+          | "last_outcome"
         >
       >
   >;

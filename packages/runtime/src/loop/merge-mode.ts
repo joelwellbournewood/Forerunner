@@ -95,8 +95,8 @@ export const OWED_FOLDER_LABEL = "Accepted · merge waits for you";
  */
 export function owedMergeWait(record: {
   state: string;
-  rebuild_owed_for: string | null;
-  last_outcome: string | null;
+  rebuild_owed_for?: string | null;
+  last_outcome?: string | null;
   sentence: string;
 }): string | null {
   if (record.state !== "queued" && record.state !== "waiting_checks") return null;
