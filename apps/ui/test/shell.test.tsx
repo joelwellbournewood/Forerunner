@@ -57,7 +57,6 @@ describe("command palette commands", () => {
       navigate: () => {},
       setActiveProject: () => {},
       setTheme: () => {},
-      toggleKill: () => {},
       openNewProject: () => {},
       openShortcuts: () => {},
     });

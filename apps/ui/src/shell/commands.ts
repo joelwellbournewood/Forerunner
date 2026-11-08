@@ -16,7 +16,13 @@ export interface CommandContext {
   navigate: NavigateFunction;
   setActiveProject: (id: string) => void;
   setTheme: (theme: ThemePreference) => void;
-  toggleKill: () => void;
+  /**
+   * Stop all (design §3.1): opens the question the header's Stop all asks once ("Stops every
+   * running session now. ..."); listed only while something runs (later #59).
+   */
+  askStopAll?: () => void;
+  /** Allow sessions again (design §3.1): listed only while sessions are stopped. */
+  allowSessions?: () => void;
   openNewProject: () => void;
   openShortcuts: () => void;
   /** Opens the conversation and starts a push-to-talk turn (the global hotkey's action). */
@@ -128,14 +134,34 @@ export function buildCommands(ctx: CommandContext): Command[] {
       run: ctx.openStartSession,
     });
   }
-  commands.push(
-    { id: "action.newProject", title: "New project", group: "Actions", run: ctx.openNewProject },
-    {
-      id: "action.kill",
-      title: state.killActive ? "Resume all sessions" : "Stop all sessions",
+  commands.push({
+    id: "action.newProject",
+    title: "New project",
+    group: "Actions",
+    run: ctx.openNewProject,
+  });
+  // As the header (design §3.1, later #59): Stop all only while something runs, and it asks
+  // first; while sessions are stopped, Allow sessions again. Never a stop that acts at once
+  // from a list where a mistyped Enter picks it.
+  const running = state.projects.filter((p) => p.working).length;
+  if (state.killActive && ctx.allowSessions) {
+    commands.push({
+      id: "action.allowSessions",
+      title: "Allow sessions again",
+      hint: "lets sessions start again",
       group: "Actions",
-      run: ctx.toggleKill,
-    },
+      run: ctx.allowSessions,
+    });
+  } else if (!state.killActive && running > 0 && ctx.askStopAll) {
+    commands.push({
+      id: "action.stopAll",
+      title: `Stop all (${running} running)`,
+      hint: "asks first",
+      group: "Actions",
+      run: ctx.askStopAll,
+    });
+  }
+  commands.push(
     {
       id: "action.theme.dark",
       title: "Theme: dark",

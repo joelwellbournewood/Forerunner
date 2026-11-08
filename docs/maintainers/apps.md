@@ -438,7 +438,7 @@ project with work, as before; later #60: it started every project with work, so 
 pressing it started the others too; test `test/shell-live.test.tsx`, real-daemon "Continue where
 it stopped starts only what Stop all stopped"). `/me.provider` null shows
 "Claude is not connected: planning and tasks need it. You can still add tasks. [Connect]"
-(`/setup`). The project cards stay live: `project.changed` upserts one, `inbox.changed` (in SSE
+(`/setup`), on every page but `/setup` itself, where Connect points (later #63). The project cards stay live: `project.changed` upserts one, `inbox.changed` (in SSE
 mode, or when the count moved) and a session's start or end re-read the list
 (`coalescedRefresh`: never two reads at once). The install-wide `/events` frame
 `session.changed` carries `{ type, payload }` (server.ts `onSession`): `parseDaemonEvent` reads
@@ -469,7 +469,12 @@ no such line (the panel is where it is undone, and resume alone would not undo i
 stop keeps the banner with the error.
 `Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation, "Switch project: …", New
 project, "Start session: <active project>" (opens `StartSessionDialog` from the shell, U-077),
-Stop all/Resume, theme and shortcuts commands; `filterCommands` matches every word). The header's
+theme and shortcuts commands; `filterCommands` matches every word). As the header (later #59):
+**Stop all (N running)** is listed only while something runs and opens the header's own question
+(the shell holds `StopAll`'s `asking`), so nothing stops before "Stop all" in it; while sessions
+are stopped it is **Allow sessions again** (`POST /kill/resume`); before, "Stop all sessions" was
+listed while nothing ran, stopped at once and read "Resume all sessions" when stopped (test
+`test/polish-screens.test.tsx`). The header's
 palette button reads `paletteShortcut(config.platform)`: "⌘K" on macOS only, "Ctrl+K" on
 Windows and Linux (U-077).
 

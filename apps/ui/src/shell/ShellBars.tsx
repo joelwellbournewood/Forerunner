@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink } from "react-router";
+import { Link, NavLink, useLocation } from "react-router";
 import { describeError, type ProjectCard } from "../api/client.ts";
 import { Button } from "../components/ui.tsx";
 import {
@@ -74,14 +74,27 @@ export function RunningChip() {
 
 /**
  * Stop all, only while something runs, asks once (design §3.1): "Stops every running session
- * now. No session starts until you allow it again."
+ * now. No session starts until you allow it again." The shell holds whether it asks, so the
+ * palette's Stop all opens the same question (later #59).
  */
-export function StopAll() {
+export function StopAll({
+  asking: askingProp,
+  onAsking,
+}: {
+  asking?: boolean;
+  onAsking?: (asking: boolean) => void;
+} = {}) {
   const client = useClient();
   const store = useUiStore();
   const working = useWorking();
   const killActive = useUiState((s) => s.killActive);
-  const [asking, setAsking] = useState(false);
+  const [askingOwn, setAskingOwn] = useState(false);
+  const asking = askingProp ?? askingOwn;
+  const setAsking = (next: boolean | ((was: boolean) => boolean)) => {
+    const value = typeof next === "function" ? next(asking) : next;
+    if (onAsking) onAsking(value);
+    else setAskingOwn(value);
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (killActive || working.length === 0) return null;
@@ -221,11 +234,13 @@ export function StoppedBar() {
 
 /**
  * Without a working Claude credential (`/me.provider` null), one bar says so (design §3.1):
- * planning and tasks need it; adding tasks does not.
+ * planning and tasks need it; adding tasks does not. Not on `/setup`, where Connect points.
  */
 export function NoKeyBar() {
   const provider = useUiState((s) => s.me?.provider);
-  if (provider !== null) return null;
+  const { pathname } = useLocation();
+  // Not on the page its Connect opens (later #63): the setup assistant says it there itself.
+  if (provider !== null || pathname.startsWith("/setup")) return null;
   return (
     <div
       role="status"

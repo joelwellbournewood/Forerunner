@@ -53,6 +53,64 @@ describe("the project header and its tabs (later #56, #57)", () => {
   });
 });
 
-// Kept for later describe blocks of this file.
-void fireEvent;
-void postedCalls;
+describe("the shell's palette and bars (later #59, #63)", () => {
+  const palette = async () => {
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    return screen.findByTestId("command-palette");
+  };
+  const titles = (p: HTMLElement) =>
+    within(p)
+      .queryAllByTestId("command-item")
+      .map((i) => i.textContent ?? "");
+
+  it("lists Stop all only while something runs, asks once before stopping, then offers Allow sessions again", async () => {
+    // Before: "Stop all sessions" was listed while nothing ran and stopped at once, without
+    // the question the header's button asks; its other state read "Resume all sessions".
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/", harness, { pollIntervalMs: 40 });
+    await screen.findAllByTestId("project-card");
+    let p = await palette();
+    await user.type(within(p).getByTestId("command-input"), "stop");
+    expect(titles(p).some((t) => /Stop all/.test(t))).toBe(false);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("command-palette")).toBeNull());
+    // A session runs: the palette lists Stop all with how many run.
+    const running = { ...harness.daemon.state.sessions[0], id: "sess_live", status: "running" };
+    harness.daemon.state.sessions.push(running as (typeof harness.daemon.state.sessions)[0]);
+    await screen.findByTestId("kill-switch");
+    p = await palette();
+    await user.type(within(p).getByTestId("command-input"), "stop all");
+    expect(titles(p).filter((t) => /Stop all/.test(t))).toEqual([
+      expect.stringContaining("Stop all (1 running)"),
+    ]);
+    await user.keyboard("{Enter}");
+    // It asks once, with what it does; nothing is sent before the confirmation.
+    expect(await screen.findByTestId("kill-confirm")).toHaveTextContent(
+      "Stops every running session now. No session starts until you allow it again.",
+    );
+    expect(postedCalls(harness, "/kill")).toHaveLength(0);
+    await user.click(screen.getByTestId("kill-confirm-stop"));
+    await waitFor(() => expect(postedCalls(harness, "/kill")).toHaveLength(1));
+    await screen.findByTestId("kill-banner");
+    // Stopped: the palette offers the header's words, not "Resume all sessions".
+    p = await palette();
+    await user.type(within(p).getByTestId("command-input"), "sessions");
+    const listed = titles(p);
+    expect(listed.some((t) => t.includes("Allow sessions again"))).toBe(true);
+    expect(listed.some((t) => /Resume all|Stop all/.test(t))).toBe(false);
+    await user.type(within(p).getByTestId("command-input"), " again");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(postedCalls(harness, "/kill/resume")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId("kill-banner")).toBeNull());
+  });
+
+  it("the no-key bar does not show on the setup page its Connect points to", async () => {
+    const home = renderApp("/", createHarness({ me: { provider: null } }));
+    expect(await screen.findByTestId("no-key-bar")).toBeInTheDocument();
+    home.unmount();
+    renderApp("/setup", createHarness({ me: { provider: null } }));
+    expect(await screen.findByRole("heading", { name: /Set up Forerunner/ })).toBeInTheDocument();
+    expect(screen.queryByTestId("no-key-bar")).toBeNull();
+  });
+});

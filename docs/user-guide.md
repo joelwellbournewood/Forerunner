@@ -53,7 +53,7 @@ Extensions, Changes, Performance, Updates), and the gear for **Settings**. While
 works, a chip says so: **Alice is working on "Style the page" · 2 min ›**; click it to open the
 session. **Stop all (1 running)** shows only while something runs (see "Kill switch").
 Without a Claude key a bar says "Claude is not connected: planning and tasks need it. You can
-still add tasks." with **Connect**.
+still add tasks." with **Connect** (not on the setup page Connect opens).
 
 Home shows, top to bottom:
 
@@ -994,7 +994,8 @@ session only and leave the rest running. Starting a session while sessions are s
 so, with **Allow sessions again**.
 
 The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
-active project.
+active project. It lists **Stop all** only while something runs, and asks first as the header's
+button does; while sessions are stopped it offers **Allow sessions again**.
 
 ## Links
 
