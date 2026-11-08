@@ -3292,9 +3292,16 @@ options Redo and Leave it open, `REBUILD_CARD_OPTIONS.conflict`; an open merge c
 words). `last_outcome` keeps it from being said twice, across polls and restarts; a record that
 owes a rebuild, or whose rebuild conflicted, is not noticed (that comes first). Once GitHub says
 it merges cleanly again, and its head is still the reviewed commit (main changed back, the
-conflicting change taken out), the record goes back to `left_to_you` with no sentence
-(`conflict_resolved`), the Overview offers Merge again and an open conflict card is withdrawn. A
-head that moved since (the person resolved it on GitHub with a commit of their own) is not the
+conflicting change taken out), the record goes back to `left_to_you` and says again what it
+said before the notice (TM-7, leftovers7-tailmerge: the notice's card keeps it,
+`change_card.before_conflict` with the record's `last_outcome`, `sentence` and the head the notice
+was given on, and, when the notice took over an open card, that card's words, Details, options
+and status; `beforeConflict`, `restoreCard`), or with no sentence (`conflict_resolved`) when
+nothing was kept; the Overview offers what it offered then (Merge, with a rebuild's warning), an
+open card the notice took over says again what it said, and a card the notice filed is withdrawn.
+"The head" is the one the notice was given on, not the reviewed one: a rebuilt branch's head is
+not the reviewed commit, and before, a conflict that went away on main left a rebuilt record
+"changed after the review" with no Merge and without its warning. A head that moved since (the person resolved it on GitHub with a commit of their own) is not the
 reviewed version, so the record says what the merge step would (`last_outcome` `head_moved`,
 `headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
 then merge it yourself or send it back."), the Overview offers no Merge, and the open conflict

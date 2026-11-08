@@ -993,11 +993,22 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect([pr.mergeable, pr.head.sha]).toEqual([true, reviewed]);
     await m.poll();
     expect(await m.cards(b.id)).toEqual([]);
+    // It says again what it said before the notice (TM-7, leftovers7-tailmerge: before, an
+    // empty sentence, which lost words such as a rebuild's warning); the row offers Merge with
+    // no sentence, as it did then.
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
-      last_outcome: "conflict_resolved",
-      sentence: "",
+      last_outcome: "not_allowed",
+      sentence: `#${prB} waits for you to merge it: press Merge on the Overview.`,
       reviewed_head_sha: reviewed,
+    });
+    const overview = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(
+      await m.w.store.project.mustGet(m.w.project),
+    );
+    expect(overview.waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      state: "left_to_you",
+      canMerge: true,
+      sentence: null,
     });
     // The Merge the row offers again works.
     expect((await m.mergeByPerson(b.id)).status).toBe("merged");
@@ -1264,6 +1275,57 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     } finally {
       off();
     }
+  });
+
+  it("a record rebuilt without its dependency that then conflicts with main, and the conflict goes away on main: the row and the card say again what they said before the notice, with the Merge they offered (TM-7)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Retitle the app", { "README.md": "# footer\n" });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Retitle the app", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    // A is closed: B is rebuilt without it, and waits for the person with its warning.
+    await m.close(a.id);
+    await m.poll();
+    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "rebuilt_without",
+      sentence: warning,
+    });
+    const rowOf = async () => (await screens(m, b.id)).waiting.find((w) => w.number === prB);
+    expect((await rowOf())?.merge).toMatchObject({ canMerge: true, sentence: warning });
+    const head = (await m.pr(b.id)).head.sha;
+    // Someone changes the same line on main: the notice.
+    await m.host.seedCommit(FULL, { "README.md": "# other\n" }, "Retitle on main", "main");
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("conflict");
+    expect((await rowOf())?.merge).toMatchObject({ state: "blocked", canMerge: false });
+    // The change on main is taken back: B's head is the one the row offered Merge for.
+    await m.host.seedCommit(FULL, { "README.md": "# app\n" }, "Put the title back", "main");
+    expect([(await m.pr(b.id)).mergeable, (await m.pr(b.id)).head.sha]).toEqual([true, head]);
+    await m.poll();
+    // Before: the record went to "changed after the review" (its reviewed head is the one
+    // before the rebuild), or with an empty sentence, and the warning was gone.
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "rebuilt_without",
+      sentence: warning,
+    });
+    expect((await rowOf())?.merge).toMatchObject({
+      state: "left_to_you",
+      canMerge: true,
+      sentence: warning,
+    });
+    // The one card says it again too, with what it offered.
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const views = await requestViews(m.w.store, rows);
+    expect(views.map((v) => ({ title: v.title, body: v.body }))).toEqual([
+      { title: `"Retitle the app" was rebuilt without pull request #${prA}`, body: warning },
+    ]);
+    expect(views[0]?.choices?.map((c) => c.label)).toEqual(["Merge", "Redo"]);
+    // Nothing more at the next poll.
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("rebuilt_without");
   });
 
   it("'Drop the branch and retry from scratch' whose run changes nothing: the same, one sentence and a closed pull request (TM-1)", async () => {

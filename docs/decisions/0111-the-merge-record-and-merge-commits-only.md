@@ -379,3 +379,10 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    it, and the Overview's row and the Tasks row say it in one sentence with the way out (commit
    or remove the changes, or redo the task), instead of "Merging…" with no reason; the folder's
    warning is logged once per such state instead of at every poll.
+6. **A conflict that goes away says again what was said before.** The conflict notice keeps what
+   the record said before it (its outcome and sentence, and the head it was given on) on its
+   card, and the words of a card it took over. When GitHub says the pull request merges cleanly
+   again on that same head, the record, the row and the card say it again, with the Merge they
+   offered: a rebuild's warning ("#8 was rebuilt without #4 ..."), or "builds on #X, which was
+   not merged". Before, the sentence was emptied, and a rebuilt record (whose head is not the
+   reviewed commit) read "changed after the review" with no Merge.

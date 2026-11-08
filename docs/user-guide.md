@@ -358,7 +358,8 @@ card ('"Add the page" conflicts with main') offers **Redo** (the task is done ag
 **Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
 the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
 If the conflict goes away without a change to the pull request (the other change is taken out of
-main again), the row offers Merge again and the card closes. If you resolve it on GitHub with a
+main again), the row and its card say again what they said before (a rebuild's warning, for
+example) and offer Merge again; a card filed only for the conflict closes. If you resolve it on GitHub with a
 commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
 after the review: look at the new commits, then merge it yourself or send it back." and offers no
 Merge, and the card says the same; merge it on GitHub, or press **Redo**.
