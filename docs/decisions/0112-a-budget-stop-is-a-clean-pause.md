@@ -181,3 +181,63 @@ call can still cost more than its estimate if the provider drops a cache entry e
 provider moves a run to another credential mid-run (another cache); the next call's estimate
 reads what happened. The calibration is Sonnet 5.5's; another model's prices move the cost, and
 the learner corrects it per kind.
+
+## Amendment 2026-11-08 ('budget-resume'): the work is saved in code, the next run continues from it, one card with Continue
+
+The owner's decision of 2026-11-02 on budgets ("Q3 yes": code-side save with "where I stopped /
+left to do", resume from it, a card naming the real limit with "Continue (CHF N more)" that
+starts the next session at once, Cancel that sets the work aside and names the stuck tasks)
+builds on the pause above. Before, the executor returned before any commit for every outcome but
+done, so a paused run's files stayed uncommitted in the task's worktree; the next run's
+`checkout -B <branch> origin/<base>` carried them over or, when main had changed the same file,
+git refused and the task failed (Try again failed the same way); in a project's folder the next
+task's snapshot took them in. The next brief said only "It paused at a budget"; the card offered
+"Raise the budget" (a session that "tries again"), also at the month's cap where the started
+session stopped at once; a session-budget stop filed nothing the first time (C-36).
+
+1. **The work is saved in code.** A run that stops before its work is done (a pause; also a
+   question for the person, a credential's limit and a stop, which left the same uncommitted
+   files) leaves one commit on the task's own branch in its worktree, "Work in progress: <title>
+   (paused at its budget)", with the run's "Where I stopped" and "Left to do" in the message;
+   `refs/forerunner/wip/<task>` marks it. In a project's folder a pause is one commit of its own
+   in the folder, so the next task's snapshot (and the session's commit at its end) does not
+   take it in. A failed run's leftovers are set aside under `refs/forerunner/failed/<task>`, so
+   the next attempt starts clean (W6-24).
+2. **Pushed only when the person says so.** The project setting "Push unfinished work to GitHub"
+   (`push_unfinished_work`, off by default: a push starts the repository's automatic checks and
+   co-workers see the branch) pushes the work in progress to the task's branch too, through the
+   same guard as every push (no Local only file ever leaves this computer, ADR 0113).
+3. **The next run continues from it.** It checks out the task's own branch (never `-B` from the
+   host), brings in what a person pushed to it and the base when it moved, by merging, never
+   rebasing (ADR 0111's no-replay rule); a conflict files the existing rebase-conflict card, never
+   a git error. In a project's folder the task's next run keeps its work in progress out of its
+   snapshot while no later task built on it, so its review reads the whole work. The marker goes
+   when the work goes to review, when the branch starts again from the base, and on a cancel.
+4. **The next brief starts with "## Where the last run stopped"**: that its work is in the
+   folder and it continues from it, its note, the files it changed and its to-do list, each
+   quoted as data; a run that left no note (a tiny budget, a hard stop) says so and lists the
+   files. A resumed run that ends with "Left to do: nothing" is reviewed, never paused again.
+5. **One card per pause, at the first stop of any kind.** '"X" paused at its budget of CHF 0.40'
+   (the real limit), "Done: ...; left: ..." from the run's note, and **Continue (CHF N more)**:
+   the same amount again (the task's budget, the specialist's limit per run, the session's
+   budget), at least the task's estimate; it raises the task's budget (or gives the session that
+   continues it that much, for a stop at the session's budget) and starts the next session at
+   once (`resumeWork` with `budgetUsdMicro`); and **Cancel task**. A stop at the session's budget
+   pauses with the same card at the first stop and ends the session (C-36's count and its
+   three-option card are gone). At this month's cap, the project's budget or the subscription's
+   share there is no Continue: the card says where to change it (Settings) and when the month
+   resets, and the task goes on by itself once the limit has room again (`wakeBudgetWaits`,
+   before every scheduler tick). A card filed before this change keeps its options.
+6. **Cancel sets the work aside.** Cancel of a paused task (its row, its card, the chat) sets its
+   work in progress aside (in a repository the branch goes back to its start and a pushed branch
+   leaves the host; in a project's folder only while no later task built on it, else its files
+   stay and the line says why); Undo, or Reopen later, brings it back as work in progress. The
+   dialog and the answer name the tasks that will be stuck. The Cancel line is one place
+   (`daemon/cancel-words.ts`) within 100 characters (W6-7); in a project linked to the person's
+   own folder it says what the run wrote stays there (C-37); Undo of a cancel promises no session
+   (C-30).
+
+Consequences: a paused task's history shows its work in progress (and a merge of main) in its
+pull request; the WIP and failed refs are local to the task's worktree and the project's folder.
+Not built here: pricing Claude Code's `modelUsage` at each model's own price, and booking usage a
+stopped run reports after its token was revoked (both still logged, as before).

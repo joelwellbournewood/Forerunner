@@ -2,7 +2,7 @@
 // reserve hears the wrap-up and pauses with its report kept, and a tiny budget pauses with the
 // save only. Run on a bench started with --provider bench (and, for the long task,
 // --env FORERUNNER_BENCH_LONG=guide so the stand-in keeps writing until it hears the wrap-up):
-//   node scripts/bench/journeys/budget.cjs <bench> <label> [--long-chf 0.08] [--tiny-chf 0.01]
+//   node scripts/bench/journeys/budget.cjs <bench> <label> [--long-chf 0.08] [--tiny-chf 0.004]
 //     [--below-chf 0.0005]
 // --below-chf adds a third task whose budget is below even its first call's worst case: no call
 // runs, and the run's log line says so ("less than its first step may cost": save only).
@@ -27,7 +27,7 @@ const arg = (flag, fallback) => {
   return i > 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) : fallback;
 };
 const LONG_CHF = arg("--long-chf", 0.08);
-const TINY_CHF = arg("--tiny-chf", 0.01);
+const TINY_CHF = arg("--tiny-chf", 0.004);
 const BELOW_CHF = arg("--below-chf", 0);
 // The bench's rate (compose's default): CHF 0.80 per USD.
 const usdMicro = (chf) => Math.round((chf / 0.8) * 1_000_000);

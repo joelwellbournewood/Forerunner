@@ -374,6 +374,32 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
+  it("Cancel on a running task of a project linked to your own folder says what it wrote stays there, in at most 100 characters (C-37, W6-7)", async () => {
+    // Before: "what it changed is removed; Undo brings it back", and nothing was set aside there.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.taskMeta.ownFolder?.add("proj_atlas");
+    addTask(harness, "t_own", "Tidy the notes folder", {
+      status: "in_progress",
+      claimedBy: "agent_1",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("t_own")).getByTestId("action-cancel"));
+    const dialog = await screen.findByTestId("action-dialog");
+    const explain = within(dialog).getByTestId("action-explain").textContent ?? "";
+    expect(explain).toBe("Drops it. Its run stops now; what it wrote stays in your folder.");
+    expect(explain.length).toBeLessThanOrEqual(100);
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      'Cancelled "Tidy the notes folder": its run stopped; what it wrote stays in your folder.',
+    );
+    // As the daemon: nothing was set aside, so the undo brings no files back.
+    const entry = harness.daemon.state.changes.find((c) =>
+      c.sentence.startsWith('Cancelled "Tidy the notes folder"'),
+    );
+    expect((entry?.after as { set_aside?: boolean } | null)?.set_aside).toBeUndefined();
+  });
+
   it("a task left Being reviewed with no review going on: Cancel says only Drops it, and the line only that it is cancelled (stops, L-7)", async () => {
     // Live check of phase C: after a quit during its review the row read "Being reviewed" and
     // Cancel's dialog said "Drops it. Its review stops now and what it changed is removed;

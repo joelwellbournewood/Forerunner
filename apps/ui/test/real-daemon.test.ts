@@ -8892,3 +8892,248 @@ describe("the UI client against the real daemon: this computer's copy follows ev
     });
   }, 120_000);
 });
+
+describe("the UI client against the real daemon: a paused task keeps its work and continues from it (budget-resume, ADR 0112 amended)", () => {
+  // The owner's decision of 2026-11-02 (budgets): a pause's work is saved in code on the task's
+  // own branch, one card names the limit with Continue (CHF N more), which starts the next
+  // session at once, and that session's brief starts from where the run stopped. Here a session
+  // on the stand-in model runs a repository project's task on a local host.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let criticCalls: ModelRequest[] = [];
+  let specialistCalls: ModelRequest[] = [];
+  let bare = "";
+  let seedDir = "";
+  const host = new MemoryGitHost("alice");
+  const repo = { owner: "o", name: "resume" };
+  const seedIdentity = { name: "Seed", email: "seed@example.test" };
+  const gitOf = (dir: string, args: string[]) =>
+    run(["git", "-C", dir, ...args], { allowFailure: true }).then((r) => r.stdout.trim());
+  const hostBranches = async () =>
+    (await run(["git", "--git-dir", bare, "for-each-ref", "--format=%(refname:short)"])).stdout
+      .split(/\r?\n/)
+      .filter(Boolean);
+  const userText = (c: ModelRequest) => {
+    const first = c.messages.find((m) => m.role === "user");
+    return typeof first?.content === "string" ? first.content : JSON.stringify(first?.content);
+  };
+  const waitIdle = async (projectId: string, why: string) =>
+    eventually(
+      async () =>
+        (await client.sessions({ projectId })).every(
+          (s) => !["running", "paused", "planned"].includes(s.status),
+        ),
+      why,
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-resume-"));
+    bare = join(home, "resume.git");
+    seedDir = join(home, "seed");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({ cwd: seedDir, identity: seedIdentity });
+    await seed.clone(bare);
+    writeFileSync(join(seedDir, "README.md"), "# resume\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ ...repo, private: true, cloneUrl: bare });
+    // The stand-in writes the guides one part per call until it hears the wrap-up.
+    ({ rt, client, criticCalls, specialistCalls } = await composeWithRolePlayer(
+      { FORERUNNER_BENCH_LONG: "Write the guide" },
+      { gitHost: host, tryIt: false },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("the pause is a commit on the task's branch (nothing pushed); Continue (CHF N more) starts a session at once whose brief starts where it stopped; after main moved the run goes on from the branch, is reviewed once and files no new card", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Resume",
+      goal: "A guide for the club",
+      repos: ["o/resume"],
+    });
+    // What New task sends with a budget of CHF 0.036 (USD 0.045): about three times the reserve
+    // of two stand-in calls (budget-stop's journey).
+    const task = await client.createTask(project.id, {
+      title: "Write the guide in guide.md",
+      outcome: "guide.md explains the club",
+      acceptanceCriteria: ["guide.md exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 45_000,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const started = await client.startSession({ agentId, projectId: project.id });
+    expect(started.session?.id, JSON.stringify(started)).toBeTruthy();
+    await waitIdle(project.id, "the first session to end");
+    // The row and its card name the limit; the card says what it did and left.
+    const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+    expect(row?.display).toMatchObject({
+      label: "Paused at its budget",
+      detail: "Continue or cancel in the Inbox.",
+      cancelWork:
+        "Its work so far is set aside unless a later task built on it; Undo brings it back.",
+    });
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    expect(card?.title).toBe('"Write the guide in guide.md" paused at its budget of CHF 0.04');
+    expect(card?.body ?? "").toMatch(
+      /^Done: guide\.md has \d+ parts?; left: write the rest of guide\.md, check guide\.md against the criteria\.$/,
+    );
+    const labels = (card?.choices ?? []).map((c) => c.label);
+    expect(labels[0]).toMatch(/^Continue \(CHF \d+\.\d\d more\)$/);
+    expect(labels.slice(1)).toEqual(["Cancel task"]);
+    // The work is a commit of its own on the task's branch on this computer; nothing pushed.
+    const taskRow = await rt.store.task.mustGet(task.id);
+    const wt = join(rt.dirs.worktrees, taskRow.id);
+    expect(await gitOf(wt, ["status", "--porcelain"])).toBe("");
+    expect(await gitOf(wt, ["log", "-1", "--format=%s"])).toBe(
+      "Work in progress: Write the guide in guide.md (paused at its budget)",
+    );
+    expect(await gitOf(wt, ["log", "-1", "--format=%b"])).toContain(
+      "Left to do:\n- write the rest of guide.md",
+    );
+    expect(await gitOf(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(taskRow.branch);
+    expect(await hostBranches()).not.toContain(taskRow.branch);
+    expect(
+      (await host.listPullRequests(repo, { state: "all" })).filter(
+        (p) => p.head.ref === taskRow.branch,
+      ),
+    ).toEqual([]);
+    // No critic for the pause.
+    expect(criticCalls.filter((c) => JSON.stringify(c.messages).includes(task.id))).toEqual([]);
+
+    // Someone changes main meanwhile.
+    const seed = new GitOps({ cwd: seedDir, identity: seedIdentity });
+    writeFileSync(join(seedDir, "README.md"), "# resume\nchanged on main\n");
+    await seed.commitAll("main moves on");
+    await seed.push("main");
+
+    // Continue, as the Inbox sends it: a session starts at once (no Start pressed).
+    const sessionsBefore = (await client.sessions({ projectId: project.id })).length;
+    const specialistBefore = specialistCalls.length;
+    await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: labels[0] ?? "",
+    });
+    await eventually(
+      async () => (await client.sessions({ projectId: project.id })).length > sessionsBefore,
+      "a session to start after Continue",
+      async () =>
+        JSON.stringify((await client.inbox(me.id)).requests.find((r) => r.id === card?.id)),
+      15_000,
+    );
+    await waitIdle(project.id, "the continuing session to end");
+    const done = await rt.store.task.mustGet(task.id);
+    expect(done.status, done.reason).toBe("done");
+    // Its brief started from where the run stopped: the note, the files, the to-do list.
+    const resumed = specialistCalls
+      .slice(specialistBefore)
+      .map(userText)
+      .find((t) => t.includes("Write the guide in guide.md"));
+    expect(resumed).toContain("## Where the last run stopped");
+    expect(resumed).toContain('Files it changed: "guide.md"');
+    expect(resumed).toContain('- "write the rest of guide.md"');
+    expect(resumed).not.toContain("It failed:");
+    // Reviewed once (one session of critic calls), and no new card.
+    const reviewed = criticCalls.filter((c) => JSON.stringify(c.messages).includes(task.id));
+    expect(reviewed.length).toBeGreaterThan(0);
+    expect(
+      (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === task.id && r.status === "open",
+      ),
+    ).toEqual([]);
+    // Its pull request carries the work in progress and main merged in (never rebased).
+    const pr = (await host.listPullRequests(repo, { state: "open" })).find(
+      (p) => p.head.ref === done.branch,
+    );
+    expect(pr, "the task's pull request").toBeDefined();
+    const history = (await run(["git", "--git-dir", bare, "log", "--format=%s", done.branch ?? ""]))
+      .stdout;
+    expect(history).toContain(
+      "Work in progress: Write the guide in guide.md (paused at its budget)",
+    );
+    expect(history).toContain("Bring in main");
+    const readme = await run(["git", "--git-dir", bare, "show", `${done.branch}:README.md`]);
+    expect(readme.stdout).toContain("changed on main");
+  }, 150_000);
+
+  it("with 'Push unfinished work to GitHub' on (Settings), a pause pushes its branch; Cancel names the stuck task, sets the work aside and deletes the branch there; Undo brings the work back", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Resume push",
+      goal: "A guide and its summary",
+      repos: ["o/resume"],
+    });
+    const row = (await client.settings()).find(
+      (s) => s.key === "project.push_unfinished_work" && s.scopeId === project.id,
+    );
+    expect(row).toMatchObject({ label: "Push unfinished work to GitHub", value: false });
+    const turnedOn = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "push_unfinished_work", value: true, project: project.id },
+        },
+      ],
+      source: "ui",
+    });
+    expect(turnedOn.status).toBe("done");
+    const task = await client.createTask(project.id, {
+      title: "Write the guide for members",
+      outcome: "members.md explains the club to members",
+      acceptanceCriteria: ["members.md exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 45_000,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const after = await client.createTask(project.id, {
+      title: "Sum up the members guide",
+      outcome: "summary.md sums it up",
+      acceptanceCriteria: ["summary.md exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [task.id],
+      specialist: "coder",
+      riskTier: 1,
+    });
+    await client.startSession({ agentId, projectId: project.id });
+    await waitIdle(project.id, "the session to end");
+    const paused = await rt.store.task.mustGet(task.id);
+    expect(paused.status).toBe("needs_human");
+    const branch = paused.branch ?? "";
+    expect(await hostBranches()).toContain(branch);
+    // Cancel from the Tasks tab, as the dialog sends it: the line names the stuck task and the
+    // work set aside; the branch leaves the host.
+    const cancelled = await client.taskAction(task.id, {
+      version: paused.version,
+      action: "cancel",
+    });
+    expect(cancelled.change?.sentence).toBe(
+      `Cancelled "Write the guide for members": its work so far is set aside; Undo brings it back. Its card in the Inbox was withdrawn. "${after.title}" waits on it and is stuck now.`,
+    );
+    const wt = join(rt.dirs.worktrees, task.id);
+    expect(await gitOf(wt, ["ls-files", "members.md"])).toBe("");
+    expect(await hostBranches()).not.toContain(branch);
+    // Undo: the task is paused again with its card, and its work is back as work in progress.
+    const undone = await client.undoChange(cancelled.change?.changeLogId ?? "");
+    expect(undone.status, JSON.stringify(undone)).toBe("done");
+    expect(JSON.stringify(undone)).toContain("Its work so far is back.");
+    expect((await rt.store.task.mustGet(task.id)).status).toBe("needs_human");
+    expect(await gitOf(wt, ["log", "-1", "--format=%s"])).toBe(
+      "Work in progress: Write the guide for members (paused at its budget)",
+    );
+    expect(await gitOf(wt, ["ls-files", "members.md"])).toBe("members.md");
+  }, 150_000);
+});

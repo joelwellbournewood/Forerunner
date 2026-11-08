@@ -2113,6 +2113,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         noted: noteId !== null,
         stuck,
         live,
+        shown,
       }),
       reversible: true,
     });
@@ -2168,7 +2169,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       projectId: task.projectId,
       source: "ui",
       wordsUsed: parsed.data.reason ?? "",
-      sentence: actionSentence(task, from, parsed.data.to, { live }),
+      sentence: actionSentence(task, from, parsed.data.to, { live, shown }),
       reversible: true,
     });
     return c.json(changeOf(task, entry));

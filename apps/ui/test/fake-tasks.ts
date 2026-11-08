@@ -55,6 +55,11 @@ export interface FakeTaskMeta {
       save?: { label: string; to: string } | null;
     }
   >;
+  /**
+   * Projects linked to the person's own folder (C-37): a Cancel there keeps what a run wrote,
+   * as the daemon's `display.cancelWork` says. A test adds them.
+   */
+  ownFolder?: Set<string>;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
@@ -63,6 +68,7 @@ export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
     added: new Map(tasks.map((t, i) => [t.id, i])),
     notLive: new Set(),
     credentialWaits: new Map(),
+    ownFolder: new Set(),
   };
 }
 
@@ -123,6 +129,7 @@ export function projectTaskViews(
     agentNames: new Map([["agent_alice", "Alice"]]),
     live: (taskId: string) => !meta.notLive.has(taskId),
     credentialWait: meta.credentialWaits.get(projectId) ?? null,
+    ...(meta.ownFolder?.has(projectId) ? { ownFolder: true } : {}),
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
   return runOrder(rows).map((row, i) => ({
@@ -171,7 +178,14 @@ export function actionSentence(
   task: TaskView,
   from: string,
   to: string,
-  extra: { withdrawn?: number; noted?: boolean; stuck?: readonly string[]; live?: boolean } = {},
+  extra: {
+    withdrawn?: number;
+    noted?: boolean;
+    stuck?: readonly string[];
+    live?: boolean;
+    /** The row's status before the move (`viewOf`): a paused task's card, a linked folder. */
+    shown?: TaskView["display"];
+  } = {},
 ): string {
   const t = `"${task.title}"`;
   let s: string;
@@ -185,9 +199,9 @@ export function actionSentence(
       ? cancelWorkKind({
           running: ran && ["claimed", "in_progress"].includes(from),
           liveReview: ran && from === "in_review",
-          paused: task.display?.blocker?.cardKind === "budget",
+          paused: (extra.shown ?? task.display)?.blocker?.cardKind === "budget",
           pullRequest: !!task.prUrl,
-          ownFolder: task.display?.cancelWork === cancelWorkLine("own_folder"),
+          ownFolder: (extra.shown ?? task.display)?.cancelWork === cancelWorkLine("own_folder"),
         })
       : null;
   if (to === "cancelled" && work) s = `Cancelled ${t}: ${cancelledWorkWords(work)}`;

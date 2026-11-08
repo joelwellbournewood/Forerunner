@@ -468,12 +468,10 @@ looks again and takes the tasks that just became ready (what they waited for is 
 the critic sent back (the next attempt runs in the same session, up to the retry limit; after
 the last one you get one card), and tasks you made ready meanwhile. So a chain of seven tasks
 is one Start. It stops when nothing more can run, the session's budget is used (a fifth is kept
-for reviews; a task whose run the session's budget stopped is ready again and the next session
-continues it; if a session's budget stops the same task a second time, it waits for you with one
-card, '"Long report" needs more than a session's budget', and three buttons: **Raise session
-budget** (sets this project's budget per session to the amount it names and starts a session),
-**Raise its budget** (starts one session of that amount for this task; later sessions keep the
-budget they had) and **Cancel task**), you stop it, or its time runs out. A run that fails because Claude did not answer
+for reviews; a task whose run the session's budget stopped pauses with one card,
+'"Long report" paused at this session's budget of CHF 4.00', and **Continue (CHF 4.00 more)**
+starts a session of that amount at once that goes on from where it stopped; see "A budget stop
+is a pause" below), you stop it, or its time runs out. A run that fails because Claude did not answer
 (the network, a rate limit) is tried again once at once; if it fails again the task reads
 "Failed:" with what went wrong, never the model's first sentence.
 
@@ -750,12 +748,14 @@ since its first run did not finish its work; restarting the app changes none of 
 Each step of a task reuses what the step before sent (Claude keeps the conversation for five
 minutes and charges a tenth of the price for what it already has), so a long task pays the full
 price only for what is new; a step that writes a whole file can do so in one go when the task's
-budget leaves room. When a task reaches its budget it waits for you and the session goes on
-with the other tasks. The Inbox gets one card,
-'"Contact page" stopped at its budget of CHF 0.01', with what it spent so far and two buttons:
-**Raise the budget** (it names the new amount, sets it and starts a session that tries again)
-and **Cancel task**. The Tasks tab reads "Paused at its budget", with Answer (the card), Edit
-(set another budget yourself) and Cancel.
+budget leaves room. When a task reaches its budget it pauses and the session goes on with the
+other tasks. The Inbox gets one card, '"Contact page" paused at its budget of CHF 0.40', with
+what its run did and what is left in its own words ("Done: contact.html has the form; left:
+check the links.") and two buttons: **Continue (CHF 0.40 more)** (adds that much to its budget,
+the same amount again or at least its estimate, and starts a session at once that goes on from
+where it stopped) and **Cancel task**. The Tasks tab reads "Paused at its budget" with "Continue
+or cancel in the Inbox.", with Answer (the card), Edit (set another budget yourself) and
+Cancel.
 
 A budget stop is a pause, not a failure. Before a task's run reaches its budget, the agent is
 told once that about a fifth of its budget is left: it starts nothing new, leaves the files
@@ -766,15 +766,34 @@ at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish."). A
 for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
 smaller than a single step's cost says so and pauses before that step. A run that stopped at a
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
-it does not count as a failed try, and its report stays in the task (the next run reads it). A
-run that wraps up with nothing left is reviewed as usual. The card and the task name the limit
-that stopped it: the task's budget, the specialist's limit, the session's budget, the project's
-budget, this month's cap or the share of your Claude subscription Forerunner may use. A stop at
+it does not count as a failed try, and its report stays in the task. A run that wraps up with
+nothing left is reviewed as usual. The card and the task name the limit that stopped it: the
+task's budget, the specialist's limit, the session's budget, the project's budget, this month's
+cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,
 the project's budget, the month's cap or the subscription's share ends the session, and the
 session says which ("Stopped at this month's cap" on its page, "Stopped at this month's cap of
-CHF 150.00." in its result and the Inbox). Its notification says what helps: raise the monthly
-spending cap in Settings, raise the project budget, or wait until your Claude subscription's
-usage resets (a larger session budget would not help). A task's run never spends more than what
+CHF 150.00." in its result and the Inbox). At the month's cap, the project's budget or the
+subscription's share the card offers no Continue (a bigger task budget would not help): it says
+how the task goes on ("It goes on by itself once you raise the monthly cap in Settings, or on 1
+December."), links Settings, and the task goes on by itself once that limit has room again.
+
+**A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the
+agent did with the wrap-up: in a project linked to a GitHub repository it is one commit on the
+task's own branch on this computer, "Work in progress: Write the guide (paused at its budget)",
+with "Where I stopped" and "Left to do" in its message; in a project's folder it is one commit of
+its own in that folder, so the next task does not take it in as its starting point. Nothing is
+pushed to GitHub unless you turn on the project's **Push unfinished work to GitHub** (Settings,
+off by default: a push starts the repository's automatic checks and others see the branch; a
+file in Local only is never pushed). The next run of the task continues from that work: in a
+repository it starts from the task's branch (with main merged in when it moved; if main changed
+the same lines, you get the usual conflict card), and its brief starts with "Where the last run
+stopped": the run's note, the files it changed and its to-do list (a run that stopped before it
+could write a note says so and lists the files). **Cancel** on a paused task sets its work aside
+and names the tasks that will be stuck ("Drops it. Its work so far is set aside unless a later
+task built on it; Undo brings it back."); in a project's folder that another task has built on
+since, its files stay and the line says why. Undo, or Reopen later, brings the work back, and its
+next run continues from it. Cancel of a running task in a project linked to your own folder says
+that what it wrote stays in your folder. A task's run never spends more than what
 is left of the session's work budget (the fifth kept for reviews stays for them), so a task that
 fills a whole session gets about 64% of it for its work. On a Claude subscription a budget stop really stops Claude Code: the run
 ends only once Claude Code has exited, and Stop now still ends it at once.
