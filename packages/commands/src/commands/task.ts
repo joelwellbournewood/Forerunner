@@ -1,5 +1,12 @@
-import { ForerunnerError } from "@forerunner/platform";
+import { ForerunnerError, isAbsolute } from "@forerunner/platform";
 import { defaultRiskTier, riskTierFor } from "@forerunner/runtime";
+// The module itself (a pure module of words), as the priority one below.
+import {
+  type CancelWorkKind,
+  cancelledWorkWords,
+  cancelWorkKind,
+  cancelWorkLine,
+} from "@forerunner/runtime/daemon/cancel-words";
 // The module itself, not the package index: the index loads this package (a cycle), and the
 // schema is needed when this module is evaluated.
 import {
@@ -253,6 +260,38 @@ export async function waitingOn(
   );
 }
 
+/** Whether the task's project is linked to the person's own folder (its repo is a path, C-37). */
+async function ownFolderOf(
+  ctx: Pick<CommandContext, "store">,
+  task: Pick<TaskRow, "project_id">,
+): Promise<boolean> {
+  const linked = (await ctx.store.project.get(task.project_id))?.repos[0]?.trim();
+  return !!linked && isAbsolute(linked);
+}
+
+/** What a Cancel of the task does to its work now, for its read-back (`moveAsk`). */
+async function cancelWorkFor(
+  ctx: CommandContext,
+  task: TaskRow,
+  live: boolean | undefined,
+): Promise<CancelWorkKind | null> {
+  const open =
+    task.status === "needs_human"
+      ? await ctx.store.humanRequest.list({ task_id: task.id, status: "open" } as never, {
+          limit: 50,
+        })
+      : [];
+  return cancelWorkKind({
+    running: RUNNING.includes(task.status),
+    liveReview: task.status === "in_review" && live === true,
+    paused: open.some(
+      (r) => (r.change_card as { key?: unknown } | null)?.key === "task:budget_stop",
+    ),
+    pullRequest: !!task.pr_url,
+    ownFolder: await ownFolderOf(ctx, task),
+  });
+}
+
 function namesList(titles: readonly string[]): string {
   const shown = titles.slice(0, 3).map((t) => quote(t, 60));
   const more = titles.length > 3 ? ` and ${titles.length - 3} more` : "";
@@ -274,26 +313,35 @@ export function moveAsk(
   stuck = 0,
   /** Whether a run or review of the task goes on now (`CommandPorts.liveWork`); see there. */
   live?: boolean,
+  /**
+   * What Cancel does to its work (`cancelWorkFor`: a paused task's work set aside, a linked
+   * folder that keeps it, C-37); absent: worded from the status, the pull request and `live`.
+   */
+  work?: CancelWorkKind | null,
 ): string {
   const t = quote(task.title);
   if (to === "cancelled") {
-    // As the row's Cancel dialog (L-10, the UI's `cancelWorkLine`) and the line after Yes
-    // (`personMove`): what Yes does to a task whose run is going (C-38) or whose review goes on
-    // here (L-7: a task left "Being reviewed" by a quit was promised a removal that never
-    // came); a task left in review with no review running is only dropped. A task with a pull
-    // request keeps it and nothing is taken out of the folder (review of fix/stops: a GitHub
-    // project's task carries one from the end of its run).
-    const what = RUNNING.includes(from)
-      ? "its run"
-      : from === "in_review" && live === true
-        ? "its review"
-        : null;
-    const work = !what
-      ? ""
-      : task.pr_url
-        ? `; ${what} stops now; its pull request stays open`
-        : `; ${what} stops now and what it changed is removed`;
-    return `Cancel ${t}? It is dropped${work}${stuck ? `; ${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck` : ""}.`;
+    // As the row's Cancel dialog (L-10, `cancelWorkLine`) and the line after Yes
+    // (`personMove`): what Yes does to a task whose run is going (C-38), whose review goes on
+    // here (L-7), or that paused with its work in progress (budget-resume); a task left in
+    // review with no review running is only dropped. One line, as the dialog's (W6-7: at most
+    // 100 characters after "Drops it.").
+    const kind =
+      work !== undefined
+        ? work
+        : cancelWorkKind({
+            running: RUNNING.includes(from),
+            liveReview: from === "in_review" && live === true,
+            paused: false,
+            pullRequest: !!task.pr_url,
+            ownFolder: false,
+          });
+    const parts = [
+      "Drops it.",
+      kind ? cancelWorkLine(kind) : null,
+      stuck ? `${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck.` : null,
+    ];
+    return `Cancel ${t}? ${parts.filter(Boolean).join(" ")}`;
   }
   if (to === "needs_human")
     return RUNNING.includes(from)
@@ -306,15 +354,6 @@ export function moveAsk(
   if (to === "ready") return `Resume ${t}? It is ready again; the next session can run it.`;
   return `Mark ${t} ${statusWords(to)}?`;
 }
-
-/**
- * What Undo of a cancel does with the work it took out of the folder (L-6, live check of phase
- * C): the task comes back, and its changes with it unless the same files changed since, which
- * a session that goes on after the cancel often does within seconds. Before, the line and the
- * dialog said "Undo brings it back", and the Undo then said it could not.
- */
-export const CANCEL_UNDO_WORDS =
-  "Undo reopens it, and its changes come back unless the same files changed since.";
 
 /** What Undo of such a cancel says when the same files changed since (L-6). */
 export const UNDO_CONFLICT_WORDS =
@@ -331,22 +370,20 @@ export function moveSentence(
     stuck?: readonly string[];
     redo?: boolean;
     /**
-     * What happens to the work of a task cancelled while it ran or was reviewed (phase C, live
-     * walk 2 C1): `removed`, what it changed is taken out of the folder it ran in (Undo brings
-     * it back); `pull_request`, its pull request stays open.
+     * What happened to the work of a cancelled task (phase C, live walk 2 C1; budget-resume): a
+     * run or review stopped and its changes removed (Undo restores them), its pull request kept,
+     * what it wrote kept in the person's own folder (C-37), or a paused task's work set aside.
      */
-    work?: "removed" | "pull_request";
+    work?: CancelWorkKind;
+    /** A paused task's work stays: why ('"Y" built on it'). */
+    kept?: string | null;
   } = {},
 ): string {
   const t = quote(task.title);
   let s: string;
-  if (to === "cancelled" && extra.work) {
-    const what = from === "in_review" ? "its review" : "its run";
-    s =
-      extra.work === "removed"
-        ? `Cancelled ${t}: ${what} stopped and what it changed is removed. ${CANCEL_UNDO_WORDS}`
-        : `Cancelled ${t}: ${what} stopped; its pull request stays open.`;
-  } else if (to === "cancelled") s = `Cancelled ${t}.`;
+  if (to === "cancelled" && extra.work)
+    s = `Cancelled ${t}: ${cancelledWorkWords(extra.work, extra.kept)}`;
+  else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = RUNNING.includes(from)
       ? `Stopped ${t}: its run ended and it is paused until you press Resume.`
@@ -414,17 +451,35 @@ async function personMove(
       ? await ctx.ports.stopTask?.(task.id, `${statusWords(to)} by you`)
       : undefined;
   const stuck = to === "cancelled" ? (await waitingOn(ctx, task)).map((t) => t.title) : [];
-  // What happens to the work of a task cancelled while it ran or was reviewed: the session's
-  // runner takes it out of the folder it ran in once the run stops (phase C); a pull request
-  // already opened stays open. Said only when a live run or review was stopped: a task in
-  // review that no session reviews (its card waits, or Forerunner closed during its review)
-  // has nothing taken out, and its line says only that it is cancelled.
-  const work =
-    to === "cancelled" && stopped === true
-      ? task.pr_url
-        ? ("pull_request" as const)
-        : ("removed" as const)
-      : undefined;
+  // What happens to the work of a cancelled task. A run or review the cancel stopped: the
+  // session's runner takes what it changed out of the folder once it stops (phase C), a pull
+  // request already opened stays open, and a project linked to the person's own folder keeps
+  // what it wrote (C-37). Said only when a live run or review was stopped: a task in review that
+  // no session reviews has nothing taken out. A task that does not run (a paused one,
+  // budget-resume): its work in progress is set aside now, Undo and Reopen bring it back.
+  let work: CancelWorkKind | undefined;
+  let kept: string | null = null;
+  let setAside = false;
+  if (to === "cancelled") {
+    const ownFolder = await ownFolderOf(ctx, task);
+    if (stopped === true)
+      work =
+        cancelWorkKind({
+          running: RUNNING.includes(from),
+          liveReview: from === "in_review",
+          paused: false,
+          pullRequest: !!task.pr_url,
+          ownFolder,
+        }) ?? undefined;
+    else if (!ownFolder && ctx.ports.setAsideWork) {
+      const aside = await ctx.ports.setAsideWork(task.id).catch(() => null);
+      if (aside && (aside.files.length > 0 || aside.kept)) {
+        work = "paused";
+        kept = aside.kept;
+        setAside = aside.files.length > 0;
+      }
+    }
+  }
   return {
     // The row as it was, so the undo puts it back whole: its reason and who set the status
     // (an agent's pause reads "Needs your answer" or "Paused", a person's "Paused by you"), and
@@ -445,13 +500,14 @@ async function personMove(
       ...(noteId ? { note_id: noteId } : {}),
       ...(withoutAnswersNoteId ? { without_answers_note_id: withoutAnswersNoteId } : {}),
       ...(withdrawn.length ? { withdrawn_requests: withdrawn } : {}),
+      ...(setAside ? { set_aside: true } : {}),
     },
     sentence: moveSentence(task, from, moved.status, {
       withdrawn: withdrawn.length,
       noted: noteId !== null,
       stuck,
       redo: from === "done",
-      ...(work ? { work } : {}),
+      ...(work ? { work, kept } : {}),
     }),
     projectId: task.project_id,
     reversible: true,
@@ -520,15 +576,15 @@ async function undoMove(before: JsonValue, after: JsonValue, ctx: CommandContext
       await ctx.store.humanRequest.reopenWithdrawn(card.id, card.version);
   }
   await dismissNotes(ctx, after);
-  // The cancel of a task that ran took what it changed out of the folder (phase C): the undo
-  // puts it back, on top of the folder as it is now.
-  if (
-    a.status === "cancelled" &&
-    (RUNNING.includes(b.status as TaskStatus) || b.status === "in_review") &&
-    ctx.ports.bringBackWork
-  ) {
+  // The cancel of a task that ran took what it changed out of the folder (phase C), and the
+  // cancel of a paused task its work in progress (budget-resume): the undo puts it back, on top
+  // of the folder as it is now (a paused task's as work in progress again, which its next run
+  // continues from).
+  const ran = RUNNING.includes(b.status as TaskStatus) || b.status === "in_review";
+  if (a.status === "cancelled" && (ran || a.set_aside === true) && ctx.ports.bringBackWork) {
     const back = await ctx.ports.bringBackWork(task.id);
-    if (back === "restored") return "What it changed is back in the folder.";
+    if (back === "restored")
+      return ran ? "What it changed is back in the folder." : "Its work so far is back.";
     if (back === "conflict") return UNDO_CONFLICT_WORDS;
   }
   return undefined;
@@ -555,8 +611,8 @@ function undoMoveSentence(before: JsonValue, after: JsonValue): string {
         : `its ${cards} cards are back in the Inbox`;
   if (a.status === "cancelled") {
     const to = reopenTarget(previous);
-    if (to !== previous)
-      return `Undone: reopened ${title}; it is ready again and a session picks it up.`;
+    // C-30: the undo starts no session (before: "... and a session picks it up").
+    if (to !== previous) return `Undone: reopened ${title}; it is ready again.`;
     return `Undone: reopened ${title}; it ${againWords(to, cards)}${cardsBack ? ` and ${cardsBack}` : ""}.`;
   }
   const back: TaskStatus = ["claimed", "in_progress", "in_review"].includes(previous)
@@ -783,6 +839,9 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
         params.to,
         params.to === "cancelled" ? (await waitingOn(ctx, task)).length : 0,
         ctx.ports.liveWork?.(task.id),
+        params.to === "cancelled"
+          ? await cancelWorkFor(ctx, task, ctx.ports.liveWork?.(task.id))
+          : undefined,
       ),
     });
   },
@@ -907,7 +966,7 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
   async run(params, ctx) {
     const task = await findTask(params, ctx);
     assertFrom(task, ["cancelled", "done"], "cancelled or done");
-    return personMove(ctx, task, "ready", {
+    const moved = await personMove(ctx, task, "ready", {
       reason:
         task.status === "done"
           ? `Redo asked by you${params.note?.trim() ? `: ${params.note.trim()}` : ""}`
@@ -915,6 +974,14 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
       note: params.note,
       reopen: true,
     });
+    // budget-resume: what its cancel set aside comes back with it (the Inbox card's Cancel task
+    // has no Undo: Reopen is the way back), its work in progress continued by its next run.
+    if (task.status === "cancelled" && ctx.ports.bringBackWork) {
+      const back = await ctx.ports.bringBackWork(task.id).catch(() => "missing" as const);
+      if (back === "restored") moved.sentence += " Its work so far is back.";
+      if (back === "conflict") moved.sentence += ` ${UNDO_CONFLICT_WORDS}`;
+    }
+    return moved;
   },
   undoBlocked: (_params, before, after, ctx) => moveUndoBlocked(before, after, ctx),
   undoSentence: (_params, before, after) => {

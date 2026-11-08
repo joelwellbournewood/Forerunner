@@ -291,7 +291,42 @@ with their milestone.
   reads a file as a commit holds it. The runtime uses them for the person's answers in a
   workspace's decision record, so a run going on there never holds them in its change set (a
   cancel's `setAside` took them out before, phase C review). A variable a caller passes in
-  `env` adds to the ones `GitOps` sets. `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
+  `env` adds to the ones `GitOps` sets. **A paused task keeps its work** (budget-resume, [ADR
+  0112](../decisions/0112-a-budget-stop-is-a-clean-pause.md) amended 2026-11-08): in
+  `executeIn`, a result in `WIP_OUTCOMES` (`paused`, `needs_human`, `usage_limit`, `killed`)
+  is saved by `saveWorkInProgress`: one commit on the task's own branch,
+  `workInProgressMessage` ("Work in progress: <title> (paused at its budget)", then "Where I
+  stopped" and "Left to do" from `result.handoff`, then the task), `wipRef(task)`
+  (`refs/forerunner/wip/<task>`) set to it, the task's own files returned as `changedFiles`
+  (`ownFiles`: from `DEPS_BASE_REF` or the base), and pushed (force, never the default branch,
+  through the `neverPush` guard; `isNeverPushed(e)` is said in its own words) only when the
+  `pushUnfinishedFor(task)` dep says the project's "Push unfinished work to GitHub" is on. The
+  next run checks out that branch when `workInProgress` finds the marker in it (never `checkout
+  -B` from the host), merges in what a person pushed to the host's copy and the base when it
+  moved (`Bring in main`; never a rebase, ADR 0111), and a conflict goes to `conflict` (the
+  rebase-conflict card); "Drop the branch and retry from scratch" and the fresh path drop the
+  marker, and a run that went to review removes it; a pushed work in progress with no pull
+  request is replaced by a force-with-lease push. A `failed` or `timeout` result's leftovers go
+  to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. In a
+  project's folder (`inWorkspace`) a pause is one commit of its own with the same message and
+  marker; the task's next run keeps that commit's files out of its snapshot
+  (`GitOps.commitAllExcept`, while `builtOnBy` finds no later task's "Workspace before" or work
+  in progress after it: `ownWorkInProgress`), so its change set is the whole work; another
+  task's snapshot is made even when nothing changed while a work in progress is in the folder,
+  so a cancel knows it built on it. `setAsideWork(task, { running })` (the runner's `setAside`
+  for a stopped run, and the cancel of a paused task through the commands' `setAsideWork` port
+  and the budget card's Cancel): in a repository the worktree's uncommitted changes as before,
+  then the work in progress kept under `setAsideWipRef(task)`, the branch reset to where its work
+  started, and a pushed branch with no open pull request deleted on the host
+  (`GitOps.deleteRemoteBranch`); in the project's folder only while nothing built on it
+  (`GitOps.applyCommitted(rev, message, { reverse: true })`, its own commit "Set aside: ..."),
+  else `{ files: [], kept: '"Y" built on it' }`. `bringBack(task)` restores the work in
+  progress first (repository: `resetHard` to it and the marker again, pushed again when the
+  setting is on; folder: `applyCommitted` as "Work in progress: <title> (brought back)"), then
+  what a stopped run changed. `applyCommitted` writes its patch to the system's temp folder,
+  never under `<cwd>/.git`, which is a file in a linked worktree (the review of budget-resume;
+  `git.test.ts` "applyCommitted works in a git worktree"). Tests: `pr-executor.test.ts` "a
+  paused task keeps its work and continues from it". `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
 - **Local only** (`local-only.ts`, merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md),

@@ -3,6 +3,10 @@ import {
   type TaskDisplay,
   type TaskDisplayKey,
 } from "@forerunner/runtime/daemon/api-types";
+import {
+  cancelWorkKind,
+  cancelWorkLine as cancelWorkWords,
+} from "@forerunner/runtime/daemon/cancel-words";
 import type { TaskAction, TaskView } from "../api/client.ts";
 
 /**
@@ -101,24 +105,31 @@ export function actionsFor(
 }
 
 /**
- * What Cancel does to the work of a task that runs or is being reviewed (phase C, live walk 2
- * C1: the cancelled page's files stayed and the next task described it): its run stops, and
- * what it changed is taken out of the folder; Undo reopens it and puts the changes back unless
- * the same files changed since (L-6: a session that goes on often changes them within
- * seconds); a pull request already opened stays open. Null for a task that is not running, and
- * for one whose run or review does not go on in the app (the daemon's `display.live`, L-7: a
- * task left "Being reviewed" by a quit was promised a removal that never came).
+ * What Cancel does to the work of a task (`cancel-words.ts`): a run or review that goes on
+ * stops and what it changed is taken out of the folder, Undo restores it unless the files
+ * changed since (phase C, L-6); a pull request already opened stays open; a paused task's work
+ * so far is set aside (budget-resume); a project linked to the person's own folder keeps what
+ * it wrote (C-37, said by the daemon). Null for a task whose Cancel changes no work, and for one
+ * whose run or review does not go on in the app (`display.live`, L-7).
  */
 export function cancelWorkLine(
   task: Pick<TaskView, "status" | "prUrl" | "display" | "reason">,
 ): string | null {
-  const key = displayOf(task).key;
-  if (key !== "running" && key !== "review") return null;
+  // budget-resume: the daemon says it (`display.cancelWork`: a paused task's work set aside, a
+  // project linked to the person's own folder that keeps it, C-37), in the line the read-back
+  // and the line after the action use (W6-7: at most 100 characters after "Drops it.").
+  if (task.display?.cancelWork) return task.display.cancelWork;
+  const display = displayOf(task);
+  const key = display.key;
   if (task.display?.live === false) return null;
-  const what = key === "review" ? "Its review" : "Its run";
-  return task.prUrl
-    ? `${what} stops now; its pull request stays open.`
-    : `${what} stops now and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.`;
+  const kind = cancelWorkKind({
+    running: key === "running",
+    liveReview: key === "review",
+    paused: key === "answer" && display.blocker?.cardKind === "budget",
+    pullRequest: !!task.prUrl,
+    ownFolder: false,
+  });
+  return kind ? cancelWorkWords(kind) : null;
 }
 
 /** The actions that open a form or a page instead of the confirm dialog. */

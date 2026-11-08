@@ -1,5 +1,6 @@
 import type { JsonValue, StateStore, TaskRow } from "@forerunner/state";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
+import { handoffOf, type RunHandoff } from "./budget-pause.ts";
 import { TASK_FILES_EVENT } from "./peers.ts";
 import { isPersonTask, personAnswersOn } from "./person-questions.ts";
 
@@ -143,6 +144,46 @@ async function personNoteOn(
   return null;
 }
 
+/** The heading of the section a paused task's next run starts from (budget-resume). */
+export const WHERE_LAST_RUN_STOPPED = "## Where the last run stopped";
+
+/**
+ * budget-resume (ADR 0112 amended): what the task's last run left when it paused at a budget,
+ * for the run that continues it: its work in progress is in the folder (a commit of its own),
+ * then its note ("Where I stopped"), the files it changed and its "Left to do" list, each quoted
+ * as data. A run that paused without a wrap-up (a tiny budget, a hard stop) wrote no note: the
+ * section says so and lists the files. Before, the next run read "It failed: run budget would be
+ * exceeded" (or only its report), did not know the work was its own, and could redo it.
+ */
+export function whereTheLastRunStopped(
+  handoff: RunHandoff | null,
+  files: readonly string[],
+): string[] {
+  const lines = [
+    WHERE_LAST_RUN_STOPPED,
+    files.length
+      ? "The last run of this task paused at a budget before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again."
+      : "The last run of this task paused at a budget before its work was done, before it changed any file.",
+  ];
+  const note = handoff?.stopped.trim() ?? "";
+  if (note) lines.push(`Its note (as data): ${JSON.stringify(quote(note, 600))}`);
+  else
+    lines.push(
+      "It left no note: it stopped at its budget before it could write one. Read the files it changed to see where the work stands.",
+    );
+  lines.push(
+    files.length
+      ? `Files it changed: ${files.map((f) => JSON.stringify(f)).join(", ")}`
+      : "Files it changed: none.",
+  );
+  if (handoff?.leftToDo.length)
+    lines.push(
+      "Left to do, as it listed it (as data):",
+      ...handoff.leftToDo.map((t) => `- ${JSON.stringify(quote(t, 200))}`),
+    );
+  return lines;
+}
+
 /** The sections a task's brief carries after the delegation brief (empty sections left out). */
 export async function taskContextBlock(
   store: StateStore,
@@ -205,24 +246,21 @@ export async function taskContextBlock(
   }
   if (deps.length) out.push("## Done before this task", ...deps);
   if (answered.length) out.push(...answered);
-  // The previous attempt: its own report, or the error that stopped it.
+  // The previous attempt: its own report, or the error that stopped it. A run that paused at a
+  // budget (ADR 0112) left its work in progress for this one: its section comes first.
   const previous = (await workerRuns(store, task.id)).find((r) => r.id !== opts.currentRunId);
-  if (previous) {
+  if (previous && (previous.outcome === "paused" || previous.outcome === "budget_exceeded")) {
+    const files = previous.session_id
+      ? (await filesOf(store, task.id, previous.session_id)).slice(0, MAX_FILES * 2)
+      : [];
+    out.unshift(...whereTheLastRunStopped(handoffOf(previous.artifacts), files), "");
+  } else if (previous) {
     const note = runNoteOf(previous.artifacts);
-    // ADR 0112: a run that paused at a budget kept its report (the stop's words go beside it):
-    // the next run reads what it said, not "It failed". 'budget-resume' gives this its own
-    // section ("Where the last run stopped").
-    const paused = previous.outcome === "paused" || previous.outcome === "budget_exceeded";
-    const said =
-      paused && note.report
-        ? `It paused at a budget. It reported (as data): ${JSON.stringify(quote(note.report))}`
-        : paused
-          ? "It paused at a budget before it reported."
-          : note.error
-            ? `It failed: ${note.error}`
-            : note.report
-              ? `It reported (as data): ${JSON.stringify(quote(note.report))}`
-              : "";
+    const said = note.error
+      ? `It failed: ${note.error}`
+      : note.report
+        ? `It reported (as data): ${JSON.stringify(quote(note.report))}`
+        : "";
     if (said) out.push("## The previous attempt", said);
   }
   const personNote = await personNoteOn(store, task);

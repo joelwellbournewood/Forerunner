@@ -241,7 +241,12 @@ month's cap" (the limit only: a title has 60 characters), the body the limit's a
 what helps ("Raise the monthly spending cap in Settings to go on.", the project budget, or
 "It can go on once your Claude subscription's usage resets."); before (review of budget-stop)
 it read "stopped, the budget is used" and advised "Start a session with a larger budget",
-which the month's cap refuses. `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
+which the month's cap refuses. A stop at the session's own budget whose task paused there
+(budget-resume: its card offers Continue) advises "Continue it from its card in the Inbox."
+(`goOnAfter(reason, paused)`, from `SessionEndFacts.paused`: the runner's `SessionResult.paused`,
+the tasks with an open budget card at the end); without a paused task, still a larger session
+budget, also when another task needs the person for a question (the review of budget-resume:
+before, any task in `needsHuman` made it say Continue). `criticVerdict(…, { projectName, taskTitle })` says what happened to which task ('the
 critic sent "X" back'), never "Critic: revise (grade 35)" or "Review <id> of task <id>".
 `killSwitch(…, by)` says whose stop it was ("Stop all: every session stopped", "Forerunner was
 closed: its work stopped") and what happens next, without the run, process and token counts.

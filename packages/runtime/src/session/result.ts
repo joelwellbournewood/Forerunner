@@ -51,6 +51,14 @@ export interface LastSessionOutcome {
    * API key: save one in Settings.").
    */
   credentialWait?: string;
+  /**
+   * Tasks paused at a budget (budget-resume, ADR 0112 amended), each with the limit in words
+   * ("its budget of CHF 0.40"): their card offers Continue or Cancel. `waits`: a limit no
+   * Continue lifts (the project's budget, this month's cap, the subscription's share), whose card
+   * offers only Cancel and where the task goes on by itself once the limit is raised or resets.
+   * Not in `needsYou`.
+   */
+  paused?: PausedTask[];
   spentChfMicro: number;
 }
 
@@ -62,6 +70,11 @@ export interface ResultFacts {
   leftOutForBudget: (NamedTask & { estimateChfMicro: number })[];
   /** The session's cap, in CHF (the "this session's CHF 0.90 was used" line). */
   sessionCapChfMicro: number;
+  /**
+   * What the session's tasks could spend (its cap less the review reserve), in CHF, when the plan
+   * left tasks out for it (W6-23: "more than this session's work budget of CHF 0.32").
+   */
+  workBudgetChfMicro?: number;
   /** Open tasks of the project after the session (not done, not cancelled). */
   openTasks: number;
   /** Reviewed pull requests the session merged, and those it left open for the person. */
@@ -242,6 +255,21 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       const did = o.done.length || f.inReview.length || f.mergedPrs;
       if (did || o.stopReason !== "nothing_runnable" || f.outcome.waitingForDocker.length)
         return [];
+      // W6-23 (budget-resume): every ready task was left out because its estimate alone is more
+      // than the session's work budget; before: "Nothing could run: no task is ready." beside
+      // "Left for next time: ...; this session's CHF 0.40 was used.", though nothing was spent.
+      const big = f.leftOutForBudget[0];
+      if (big) {
+        const who =
+          f.leftOutForBudget.length === 1
+            ? `"${big.title}" needs about ${formatChf(big.estimateChfMicro)}`
+            : `${namesOf(titlesOf(f.leftOutForBudget))} need more`;
+        return [
+          `Nothing could run: ${who}, more than this session's work budget${
+            typeof f.workBudgetChfMicro === "number" ? ` of ${formatChf(f.workBudgetChfMicro)}` : ""
+          }. Start a session with a larger budget.`,
+        ];
+      }
       const w = o.waiting[0];
       return [
         w
@@ -262,7 +290,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     name: "left for next time",
     line: 3,
     build: (f, o) => {
-      if (f.leftOutForBudget.length) {
+      // A session that ran nothing used no budget: "Nothing could run" says why (W6-23).
+      if (f.leftOutForBudget.length && o.stopReason !== "nothing_runnable") {
         const named = f.leftOutForBudget
           .slice(0, 3)
           .map((t) => `"${t.title}" (about ${formatChf(t.estimateChfMicro)})`)
@@ -332,7 +361,43 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     line: 3,
     build: (_f, o) => [`${formatChf(o.spentChfMicro)}.`],
   },
+  {
+    // budget-resume: a task paused at a budget, by the limit its card names; its card is the
+    // one place for the decision (an Update leaves it out, `told`).
+    name: "paused",
+    line: 1,
+    build: (_f, o, told) => pausedSentences(o.paused ?? [], told),
+  },
 ];
+
+/** A task paused at a budget, as the result names it (`LastSessionOutcome.paused`). */
+export type PausedTask = NamedTask & { limit: string; waits?: boolean };
+
+/**
+ * '"Write the guide" paused at its budget of CHF 0.40: continue or cancel it in the Inbox.'; two
+ * or more: '"A" and "B" paused at a budget: continue or cancel them in the Inbox.'. At a limit no
+ * Continue lifts (`waits`) it says how the task goes on, as its card does: '"X" paused at the
+ * project's budget of CHF 0.01: it goes on by itself once that limit is raised or resets.' (the
+ * fixup's bench walk: it said "continue" to a card that offers only Cancel); a mix points to
+ * the cards.
+ */
+export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCards): string[] {
+  const shown = paused.filter((t) => !told?.tasks?.has(t.id));
+  const one = shown[0];
+  if (!one) return [];
+  const waiting = shown.filter((t) => t.waits).length;
+  if (shown.length === 1)
+    return [
+      one.waits
+        ? `"${one.title}" paused at ${one.limit}: it goes on by itself once that limit is raised or resets.`
+        : `"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`,
+    ];
+  const names = namesOf(titlesOf(shown));
+  if (waiting === shown.length)
+    return [`${names} paused at a limit: they go on by themselves once it is raised or resets.`];
+  if (waiting > 0) return [`${names} paused at a budget: see their cards in the Inbox.`];
+  return [`${names} paused at a budget: continue or cancel them in the Inbox.`];
+}
 
 /**
  * The result's lines (at most three). With `told`, what an open card already says is left out:

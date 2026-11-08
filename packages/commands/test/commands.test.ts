@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { autonomyLevelWords } from "../src/commands/settings.ts";
 import {
@@ -795,14 +797,14 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         })) as { readback?: string }
       ).readback;
     expect(await ask(reviewed.id)).toBe(
-      'Cancel "About page"? It is dropped; its review stops now; its pull request stays open.',
+      'Cancel "About page"? Drops it. Its review stops now; its pull request stays open.',
     );
     expect(await ask(running.id)).toBe(
-      'Cancel "Credits page"? It is dropped; its run stops now; its pull request stays open.',
+      'Cancel "Credits page"? Drops it. Its run stops now; its pull request stays open.',
     );
     // Without a pull request, what it changed is removed (ADR 0105).
     expect(await ask(plain.id)).toBe(
-      'Cancel "Contact page"? It is dropped; its review stops now and what it changed is removed.',
+      'Cancel "Contact page"? Drops it. Its review stops and its changes are removed; Undo restores them unless the files changed.',
     );
     // Yes does what the read-back said.
     const asked = await w.executor.execute({
@@ -822,7 +824,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     // No review going on here: dropped only, pull request or not.
     w.ports.liveWork = () => false;
     const idle = await insert("FAQ page", "in_review", "https://github.test/o/r/pull/9");
-    expect(await ask(idle.id)).toBe('Cancel "FAQ page"? It is dropped.');
+    expect(await ask(idle.id)).toBe('Cancel "FAQ page"? Drops it.');
     await w.store.close();
   });
 
@@ -923,7 +925,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     });
     expect(asked.status).toBe("pending");
     expect((asked as { readback: string }).readback).toBe(
-      'Cancel "Write the FAQ"? It is dropped; its run stops now and what it changed is removed.',
+      'Cancel "Write the FAQ"? Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.',
     );
     // The task finishes before the yes.
     const running = await w.store.task.mustGet(task.id);
@@ -944,6 +946,112 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       '"Write the FAQ" is already done; nothing changed.',
     );
     expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    await w.store.close();
+  });
+
+  it("cancel of a task paused at its budget: the read-back and the line say its work is set aside and name the stuck task; Undo brings it back; Reopen of a cancel brings it back too (budget-resume)", async () => {
+    const w = await world();
+    const paused = await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Write the guide",
+      outcome: "guide.md",
+      status: "needs_human",
+      reason: '"Write the guide" paused at its budget of CHF 0.04.',
+    } as never);
+    await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Sum up the guide",
+      outcome: "summary.md",
+      status: "ready",
+      depends_on: [paused.id],
+      reason: "planned",
+    } as never);
+    await w.store.humanRequest.insert({
+      kind: "approval",
+      why: '"Write the guide" paused at its budget of CHF 0.04.',
+      options: ["Continue (CHF 0.04 more)", "Cancel task"],
+      human_id: w.human.id,
+      project_id: w.pharma.id,
+      task_id: paused.id,
+      change_card: { key: "task:budget_stop", source: "task_budget" },
+    });
+    const calls: string[] = [];
+    const ports = {
+      ...w.ports,
+      setAsideWork: async (taskId: string) => {
+        calls.push(`aside ${taskId}`);
+        return { files: ["guide.md"], kept: null };
+      },
+      bringBackWork: async (taskId: string) => {
+        calls.push(`back ${taskId}`);
+        return "restored" as const;
+      },
+    };
+    const chat = { ...w.ctx({ ports }), source: "chat" as const, activeProjectId: w.pharma.id };
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "Write the guide", to: "cancelled" },
+      ctx: chat,
+    });
+    expect((asked as { readback: string }).readback).toBe(
+      'Cancel "Write the guide"? Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back. 1 task waiting on it will be stuck.',
+    );
+    const yes = done(
+      await w.executor.confirmByText(
+        (asked as { pendingId: string }).pendingId,
+        "yes",
+        w.ctx({ ports }).actor,
+      ),
+    );
+    expect(yes.sentence).toBe(
+      'Cancelled "Write the guide": its work so far is set aside; Undo brings it back. Its card in the Inbox was withdrawn. "Sum up the guide" waits on it and is stuck now.',
+    );
+    expect(calls).toEqual([`aside ${paused.id}`]);
+    const undone = await w.executor.undo(yes.changeLogId, w.ctx({ ports }));
+    expect(JSON.stringify(undone)).toContain("Its work so far is back.");
+    expect(calls).toEqual([`aside ${paused.id}`, `back ${paused.id}`]);
+    expect((await w.store.task.mustGet(paused.id)).status).toBe("needs_human");
+    // Cancelled again (from the Inbox card, which has no Undo): Reopen brings its work back.
+    const again = await w.store.task.mustGet(paused.id);
+    await w.store.task.transition(paused.id, again.version, "cancelled", "you cancelled it", {
+      humanId: w.human.id,
+    });
+    const reopened = done(
+      await w.executor.execute({
+        name: "task.reopen",
+        params: { task: paused.id },
+        ctx: w.ctx({ ports, source: "ui" }),
+      }),
+    );
+    expect(reopened.sentence).toBe(
+      'Reopened "Write the guide": it is ready again. Its work so far is back.',
+    );
+    await w.store.close();
+  });
+
+  it("cancel of a running task in a project linked to your own folder says what it wrote stays there (C-37)", async () => {
+    const w = await world();
+    const linked = await w.store.project.insert({
+      name: "Notes",
+      goal: "Tidy notes",
+      repos: [join(tmpdir(), "my notes")],
+    } as never);
+    await w.store.task.insert({
+      project_id: linked.id,
+      title: "Tidy the notes folder",
+      outcome: "notes are sorted",
+      status: "in_progress",
+      reason: "running",
+    } as never);
+    const chat = { ...w.ctx(), source: "chat" as const, activeProjectId: linked.id };
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "Tidy the notes folder", to: "cancelled" },
+      ctx: chat,
+    });
+    expect((asked as { readback: string }).readback).toBe(
+      'Cancel "Tidy the notes folder"? Drops it. Its run stops now; what it wrote stays in your folder.',
+    );
     await w.store.close();
   });
 

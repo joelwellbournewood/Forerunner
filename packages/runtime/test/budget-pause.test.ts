@@ -5,9 +5,10 @@ import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRAP_UP_TEXT } from "../src/agent/loop.ts";
-import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
+import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
+import { wakeBudgetWaits } from "../src/session/budget-card.ts";
 import { handoffOf } from "../src/session/budget-pause.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
@@ -76,6 +77,10 @@ function provider(clock: SimulatedClock, calls: ModelRequest[]) {
       ...works("Tiny page", 5_000, LEFT),
       ...works("Big report", 150_000, NOTHING_LEFT),
       ...works("Members list", 30_000, LEFT),
+      textReply("Wrote members-chart.html.\n\nLeft to do: nothing", {
+        when: coderOn("Members chart"),
+        times: Number.POSITIVE_INFINITY,
+      }),
     ],
   });
   const stream = fake.stream.bind(fake);
@@ -136,7 +141,12 @@ async function runOne(
   req: Req,
   rt: RuntimeApp,
   title: string,
-  opts: { budgetUsdMicro?: number; sessionBudgetUsdMicro?: number } = {},
+  opts: {
+    budgetUsdMicro?: number;
+    sessionBudgetUsdMicro?: number;
+    /** The project's own budget (0: none), set before its task is added. */
+    projectBudgetUsdMicro?: number;
+  } = {},
 ) {
   const projectId = (
     (await (
@@ -146,6 +156,8 @@ async function runOne(
       })
     ).json()) as Json
   ).id as string;
+  if (opts.projectBudgetUsdMicro)
+    await rt.store.project.patch(projectId, { budget_usd_micro: opts.projectBudgetUsdMicro });
   const created = await req(`/projects/${projectId}/tasks`, {
     method: "POST",
     body: JSON.stringify({
@@ -405,8 +417,25 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (q) => q.taskId === r.taskId && q.status === "open",
     );
-    expect(card?.title).toBe('"Members list" stopped at this month\'s cap of CHF 0.10');
-    expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+    expect(card?.title).toBe('"Members list" paused at this month\'s cap of CHF 0.10');
+    // budget-resume: a bigger task budget does not help at the month's cap (the review of
+    // budget-stop: Raise the budget started a session that stopped at once at the same cap):
+    // the card offers no Continue, says where to change it and that the task goes on by itself.
+    expect(((card?.choices ?? []) as Json[]).map((c) => c.label)).toEqual(["Cancel task"]);
+    expect(card?.links).toEqual([
+      {
+        label: "Open Settings",
+        to: "/settings",
+        explain: "Raise it there; the task goes on by itself.",
+      },
+    ]);
+    expect(String(card?.body)).toMatch(
+      /It goes on by itself once you raise the monthly cap in Settings, or on 1 December\.$/,
+    );
+    expect(r.view.display).toMatchObject({
+      label: "Paused at this month's cap",
+      detail: "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.",
+    });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
     expect(r.runs[0]?.outcome).toBe("budget_exceeded");
   }, 60_000);
@@ -422,6 +451,12 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const summary = String(r.session.summary);
     expect(summary).toContain("Stopped at this month's cap of CHF 0.10.");
     expect(summary).not.toMatch(/session's budget|budget is used/);
+    // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
+    // it in the Inbox"): it says how the task goes on.
+    expect(summary).toContain(
+      '"Members page" paused at this month\'s cap of CHF 0.10: it goes on by itself once that limit is raised or resets.',
+    );
+    expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
     // The session's end line (before: "Stopped: the budget is used: 1 needs you. CHF 0.04.").
     expect(
@@ -451,4 +486,209 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     );
     expect(String(stop.body)).not.toMatch(/larger budget|session's budget/);
   }, 60_000);
+
+  it("once the month's cap has room again the paused task goes on by itself: its card closes and it is ready (budget-resume)", async () => {
+    const r = await runOne(req, rt, "Members map", { budgetUsdMicro: 2_000_000 });
+    expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+    // As the daemon's own wake asks (compose.ts): the caps read again, not from the minute's
+    // cache, so the session that goes on does not meet the old cap.
+    const roomFor = async (projectId: string) => {
+      (rt.caps as DynamicCaps).forget({ humanId: rt.human.id, projectId });
+      return (
+        (await rt.caps.check({ humanId: rt.human.id, projectId }, 1, { phase: "work" }))
+          .decision === "allow"
+      );
+    };
+    // This month's cap as Settings has it now (compose's own port reads the same row).
+    const limitNow = async () =>
+      (await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro || Number.POSITIVE_INFINITY;
+    const wake = (room = roomFor) =>
+      wakeBudgetWaits({
+        store: rt.store,
+        clock,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        limitNow,
+        roomFor: room,
+      });
+    // Still at the cap: nothing moves.
+    expect(await wake()).toBe(0);
+    // Room alone is not a change (the review of budget-resume: a pause under the 80% line woke
+    // at every tick and paused again at once): the cap is what the card names, so it stays.
+    expect(await wake(async () => true)).toBe(0);
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    // The person raises the monthly cap in Settings.
+    await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 150_000_000 });
+    // It (and the other tasks paused at the month's cap) goes on.
+    expect(await wake()).toBeGreaterThanOrEqual(1);
+    const task = await rt.store.task.mustGet(r.taskId);
+    expect(task.status).toBe("ready");
+    expect(task.reason).toBe("its limit has room again: it continues from where it stopped");
+    const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.taskId === r.taskId,
+    );
+    expect(card?.status).toBe("withdrawn");
+    expect(card?.outcome).toBe('"Members map" goes on: its limit has room again.');
+  }, 60_000);
+});
+
+/**
+ * The review of budget-resume: a task paused at an outer limit (the project's budget, this
+ * month's cap) went on by itself at the next scheduler tick whenever the pause left the spend
+ * under the limit's 80% line (the refused call's worst case would have reached 100%), with
+ * nothing changed: every tick started a session that paused again, withdrew the card and filed
+ * it anew, with urgent notifications, until the person cancelled the task. It goes on only once
+ * the limit really changed (raised in Settings, or a new month), as its card says.
+ */
+describe("a task paused at the project's budget goes on only once that budget changes (budget-resume)", () => {
+  const clock = new SimulatedClock("2026-11-02T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-budget-wake-"));
+  const calls: ModelRequest[] = [];
+  const fake = provider(clock, calls);
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const cardOf = async (taskId: string) =>
+    ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+      (q) => q.taskId === taskId,
+    );
+
+  it("below the 80% line with nothing changed, the scheduler's ticks start nothing and keep the card; raising the budget in Settings starts one session that finishes it", async () => {
+    // A project's budget of USD 0.0075 (CHF 0.01): the run's first call alone would go over
+    // it, so it pauses with the project's spend under the 80% line: room for any small call.
+    const r = await runOne(req, rt, "Members chart", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 7_500,
+    });
+    expect(r.view.display).toMatchObject({ label: "Paused at the project's budget" });
+    expect(
+      (await rt.caps.check({ humanId: rt.human.id, projectId: r.projectId }, 1, { phase: "work" }))
+        .decision,
+    ).toBe("allow");
+    const before = await cardOf(r.taskId);
+    expect(before.map((q) => q.status)).toEqual(["open"]);
+    expect(before[0]?.title).toBe('"Members chart" paused at the project\'s budget of CHF 0.01');
+    const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
+    expect(await sessions()).toBe(1);
+
+    // Ticks with nothing changed (before: each one woke it, a session paused again at once).
+    for (let i = 0; i < 3; i++) {
+      await clock.advance(30_000);
+      await rt.scheduler.tick();
+    }
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    expect((await cardOf(r.taskId)).map((q) => [q.status, q.id])).toEqual([
+      ["open", before[0]?.id],
+    ]);
+    expect(await sessions()).toBe(1);
+
+    // The person raises the project's budget in Settings (the same command its row sends).
+    const set = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: r.projectId } },
+        ],
+        wordsUsed: "Settings: Project budget to 5",
+        source: "ui",
+        projectId: r.projectId,
+      }),
+    });
+    let result = (await set.json()) as Json;
+    if (result.status === "pending")
+      result = (await (
+        await req(`/commands/${String(result.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        })
+      ).json()) as Json;
+    expect(result.status, JSON.stringify(result)).toBe("done");
+
+    // The next tick wakes it: its card closes and one session starts and finishes it.
+    await rt.scheduler.tick();
+    const after = await cardOf(r.taskId);
+    expect(after.map((q) => q.status)).toEqual(["withdrawn"]);
+    expect(after[0]?.outcome).toBe('"Members chart" goes on: its limit has room again.');
+    const done = await waitFor(
+      async () => {
+        const t = await rt.store.task.mustGet(r.taskId);
+        return t.status === "done" ? t : undefined;
+      },
+      async () =>
+        `"Members chart" to be done (${(await rt.store.task.mustGet(r.taskId)).status}, ${await sessions()} sessions)`,
+    );
+    expect(done.status).toBe("done");
+    expect(await sessions()).toBe(2);
+    // No further card: the session that went on did not pause again.
+    expect((await cardOf(r.taskId)).map((q) => q.status)).toEqual(["withdrawn"]);
+    // Nothing is left running for the next test.
+    await waitFor(
+      async () =>
+        (await rt.store.session.forProject(r.projectId)).every((s) =>
+          ["completed", "stopped", "failed", "killed"].includes(s.status),
+        )
+          ? true
+          : undefined,
+      async () => "the project's sessions to end",
+    );
+  }, 120_000);
+
+  it("a task paused at this month's cap goes on in the new month by itself, never on room alone", async () => {
+    // This month's cap just above what the month spent: the run's first call would go over it.
+    const spent = (await rt.caps.check({ humanId: rt.human.id }, 0, { phase: "work" }))
+      .spentUsdMicro as number;
+    await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: spent + 5_000 });
+    try {
+      const r = await runOne(req, rt, "Members table", { budgetUsdMicro: 2_000_000 });
+      expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+      const [card] = await cardOf(r.taskId);
+      expect(card?.status).toBe("open");
+      const wake = (now: string) =>
+        wakeBudgetWaits({
+          store: rt.store,
+          // Only the wake reads this clock: the runtime's own stays in November.
+          clock: new SimulatedClock(now),
+          humanId: rt.human.id,
+          agentId: rt.agent.id,
+          limitNow: async () =>
+            (await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro ||
+            Number.POSITIVE_INFINITY,
+          // Room is there (a new month's spend starts at nothing): only the month decides.
+          roomFor: async () => true,
+        });
+      // Later this month, with room and the cap unchanged: it stays paused.
+      expect(await wake("2026-11-30T23:59:00.000Z")).toBe(0);
+      expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+      // A card whose reset date is not after it was filed (one filed without the time says
+      // 1 February 1970) still waits for the month after it was filed, never wakes at once.
+      const row = await rt.store.humanRequest.mustGet(String(card?.id));
+      await rt.store.humanRequest.patch(row.id, {
+        change_card: { ...(row.change_card ?? {}), resets_at: "1970-02-01T00:00:00.000Z" },
+      });
+      expect(await wake("2026-11-30T23:59:00.000Z")).toBe(0);
+      // On 1 December, as its card says, it goes on.
+      expect(await wake("2026-12-01T00:00:00.000Z")).toBe(1);
+      expect((await rt.store.task.mustGet(r.taskId)).status).toBe("ready");
+      expect((await cardOf(r.taskId)).map((q) => [q.status, q.outcome])).toEqual([
+        ["withdrawn", '"Members table" goes on: its limit has room again.'],
+      ]);
+      // It is left ready, with no session asked for: nothing runs on for the next test.
+      await rt.store.task.transition(
+        r.taskId,
+        (await rt.store.task.mustGet(r.taskId)).version,
+        "cancelled",
+        "test done",
+        { agentId: rt.agent.id },
+      );
+    } finally {
+      await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 0 });
+    }
+  }, 120_000);
 });

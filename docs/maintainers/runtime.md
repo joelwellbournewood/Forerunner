@@ -928,7 +928,10 @@ session stopped after 7 s, or one that planned nothing, threw the person's brief
 lines, from the tasks as they stand at the end (`collectEndState`): what needs the person ("X"
 needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
 N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
-"Y", which failed), then how it ended, what is next and the money (Stopped by you; Left for next
+"Y", which failed; Nothing could run: "X" needs about CHF 1.20, more than this session's work
+budget of CHF 0.32, when the plan left every ready task out for its estimate (W6-23: before, "no
+task is ready" beside "this session's CHF 0.40 was used", though nothing was spent; the "Left for
+next time ... was used" line is not written then)), then how it ended, what is next and the money (Stopped by you; Left for next
 time: "X" (about CHF 0.43); this session's CHF 0.90 was used; "X" is ready to continue; Left N
 reviewed pull requests for you to merge; N tasks wait on it; Nothing left; CHF 0.80). The pull
 requests are the session's own, said as what it did ("Left N ... for you to merge"): before
@@ -1887,14 +1890,9 @@ when it spent the whole cap); the card's body says the same ("So far it spent CH
 step would have gone over the budget."); the runner sets the
 task's reason to the card's sentence ('"Contact page" stopped at its budget of CHF 0.01.') and
 files one blocking card (`fileBudgetStopCard`, key `task:budget_stop`, options **Raise the
-budget** and **Cancel task**, reused while open). `raisedBudgetUsdMicro` is the budget the
-button sets: what the task spent in all its runs plus room for the next one (the whole budget it
-stopped at, or twice the specialist's per-run limit it stopped at, and at least its estimate and
-USD 0.50), in steps of USD 0.05, stored on the card with the day's rate so its words name the
-amount ("Sets its budget to CHF 0.44 and starts a session that tries again."). `syncBudgetStopAnswers`
-(in `RuntimeApp.syncApprovals`) applies the answer once: Raise sets the budget (never lower than
-one set meanwhile with Edit), moves the task to ready and asks for a session of the project
-(`resumeWork`); Cancel task cancels it; a task that moved on is recorded `task_moved_on`. The
+budget** and **Cancel task**, reused while open; budget-resume made it **Continue (CHF N
+more)**, below). `syncBudgetStopAnswers` (in `RuntimeApp.syncApprovals`) applies the answer
+once; a task that moved on is recorded `task_moved_on`. The
 reader is `budgetStopAnswer` (`wiring/request-answers.ts`), the words `budgetCard` in
 `daemon/request-words.ts`, and the Tasks tab reads "Paused at its budget" (ADR 0112;
 `budgetPauseLabel` names an outer limit: "Paused at this month's cap", "Paused at the project's
@@ -1902,7 +1900,7 @@ budget", ...; before, "Needs your decision: its budget is used") (`cardKindOf` â
 UI offers Answer, Edit and Cancel). `budgetStopTitle` names the limit from `BudgetStop.source`
 ('"X" stopped at this month\'s cap of CHF 150.00'). Tests:
 `continuity-budget.test.ts` (one card, the result, the Tasks tab and the Inbox agree, CHF only,
-the card across a restart, Raise the budget runs the task to done), `task-budget-cap.test.ts`,
+the card across a restart, Continue runs the task to done), `task-budget-cap.test.ts`,
 the phase 1 gate, `inbox.test.tsx` and `real-daemon.test.ts` ("continuity") in `apps/ui`.
 
 **A budget stop is a clean pause ([ADR 0112](../decisions/0112-a-budget-stop-is-a-clean-pause.md),
@@ -1973,9 +1971,8 @@ budget-stop; the owner's decision of 2026-11-02).**
   the project budget, or wait for the subscription's usage to reset; never a larger session
   budget, which the month's cap refuses). Before (review of budget-stop), such a session took
   `budget_exceeded` and said "Stopped: the budget is used" at 1% of its own budget. A pause at
-  the session's budget goes the session-budget way below (C-36; `sessionBudgetStops` counts
-  `paused` runs too; stop reason `budget_exceeded`) until the 'budget-resume' area pauses it
-  with the same card at the first stop.
+  the session's budget files the same card at the first stop and ends the session with
+  `budget_exceeded` (budget-resume, below; C-36's count is gone).
 - *The subscription's stop (`agent/sdk.ts`).* Every stop that is not the kill switch's (a
   budget, the time limit, an error) aborts the run's controller and waits for Claude Code to
   exit (`awaitExit`: what it still sends is read and its usage booked; after `SDK_STOP_WAIT_MS`
@@ -2005,31 +2002,77 @@ budget-stop; the owner's decision of 2026-11-02).**
   `task-budget-cap.test.ts`, and `real-daemon.test.ts` ("a budget stop is a clean pause", "a
   session ended at this month's cap names it") in `apps/ui`.
 
-**A task a session's own budget stopped twice asks the person (C-36, ADR 0105, the session
-lead's default).** A stop at the session's budget (`budget_exceeded`) releases the task to ready
-with its attempt count unchanged, as before; but the runner first counts the task's stops by a
-session's budget since its last card (`sessionBudgetStops`: its work runs that ended
-`budget_exceeded`, less the run a task-cap card names in `run_id` and the runs a session-budget
-card lists in `run_ids`; the current run once, row or not). At `SESSION_BUDGET_STOPS_BEFORE_CARD`
-(2) the task moves to `needs_human` ('"Long report" needs more than a session\'s budget.') and
-`fileSessionBudgetCard` files one card under the same key (`task:budget_stop`, `source:
-session_budget`, `run_ids`, the session's cap, the project's budget per session,
-`raise_to_usd_micro` = `raisedSessionBudgetUsdMicro`: twice the session's cap, at least USD 0.50,
-steps of USD 0.05) with **Raise session budget** ("Sets this project's budget per session to CHF
-4.00 and starts a session that tries again."), **Raise its budget** ("Starts one session of CHF
-4.00 for it now; later sessions keep CHF 2.00.") and **Cancel task**; the session's result names
-it among the tasks that need the person. `budgetStopAnswer` reads `raise_session` besides
-`raise` and `cancel`; `syncBudgetStopAnswers` applies a session card's answer: Raise session
-budget writes the project's `session_cap_usd_micro` (and `session_cap_chf_micro` at the card's
-rate, the keys of the budget command) and starts a session; Raise its budget sets the task's
-budget to what it spent plus that amount and starts one session of that amount
-(`resumeWork(..., { budgetUsdMicro })`, `StartRequest.budgetUsdMicro`), later sessions keeping
-the project's. The Tasks tab reads "Needs your decision: a session's budget is too small".
-Before, such a task went back to Ready after every stop and every session ran it again until the
-person noticed. Tests: `session-budget-card.test.ts` (the first stop releases, the second files
-one card, the words in CHF, across a restart, Raise its budget runs it to done with a session of
-the named amount, Raise session budget sets the project's budget per session, Cancel task),
-`inbox.test.tsx` in `apps/ui`.
+**A paused task keeps its work and continues from it (budget-resume, [ADR 0112](../decisions/0112-a-budget-stop-is-a-clean-pause.md)
+amended 2026-11-08; the owner's decision of 2026-11-02).**
+- *One card per pause (`session/budget-card.ts`).* The runner moves every `paused` result with a
+  `budgetStop` to `needs_human` and files `fileBudgetStopCard` at the first stop of any kind (a
+  session-budget stop included: C-36's `sessionBudgetStops`, `SESSION_BUDGET_STOP_OPTIONS` and
+  the second-stop card are gone): title `budgetStopTitle` ('"X" paused at its budget of CHF
+  0.40'), the run's note and to-do list on the card (`done`, `left`, cut, data), options
+  `[continueLabel(n), "Cancel task"]` where `offersContinue(source)` (the task's budget, the
+  specialist's limit, the session's budget) and `["Cancel task"]` at `month`, `project` and
+  `plan` (with `resets_at`: the next month's first day). `continueUsdMicro` is the same amount
+  again (the limit it paused at), at least the task's estimate, in steps of USD 0.01. A stop at
+  the session's budget ends the session like the outer limits (`stopEndsSession`). A result
+  `budget_exceeded` without `budgetStop` (an executor from before ADR 0112) still releases the
+  task to ready and ends the session.
+- *Answers (`syncBudgetStopAnswers`).* `budgetStopAnswer` reads `continue` (the label, "continue",
+  and the older cards' "Raise the budget", "Raise its budget", "Raise session budget") or
+  `cancel`. Continue adds `continue_usd_micro` to `max(budget, spent)` (or, for a stop at the
+  session's budget, gives the session that much) and starts it at once through `resumeWork(...,
+  { budgetUsdMicro })`; its outcome line is 'Gave "X" CHF 0.40 more: a session started.'. Cancel
+  cancels it and calls the `setAside` port (`PrTaskExecutor.setAsideWork`), the card recording
+  `set_aside` or `kept` for its line. An older card (`raise_to_usd_micro`) keeps its meaning.
+- *Limits no Continue lifts (`wakeBudgetWaits`).* Before every scheduler tick (compose's
+  `refresh`, beside `credentialWaits.wake`), each open budget card whose limit changed since the
+  pause and has room goes on: at `project`, the project's budget now (`limitNow`, compose reads
+  the row; unset is none) above the card's `cap_usd_micro`; at `month`, the monthly cap above it
+  or the card's `resets_at` passed (else the month after the card was filed); at `plan`, its
+  `resets_at` passed. Then, except at `plan`, `roomFor` must allow a call: compose drops the
+  project's caps from `DynamicCaps`' minute cache first (`forget`), so the session that goes on
+  does not meet the old cap and pause again. The card is withdrawn with `outcome: "went_on"`
+  ('"X" goes on: its limit has room again.'), its task goes to ready and a session of the
+  project is asked for. Room alone never wakes it (the review of budget-resume): a pause at an
+  outer limit comes when the next call's worst case would reach it, so the spend can be under
+  the 80% line, and waking on room started a session every tick (30 s) that paused again, with
+  the card withdrawn and filed anew and urgent notifications, until the person cancelled it.
+  Tests: `budget-pause.test.ts` "a task paused at the project's budget goes on only once that
+  budget changes" (through `scheduler.tick()` and the Settings command) and the month's cases.
+  Before budget-resume, Raise the budget started a session that stopped at once at the same cap
+  and filed the same card again.
+- *Words.* The row: `budgetPauseLabel` and `budgetPauseDetail` ("Continue or cancel in the
+  Inbox.", or "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."); the
+  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ..." or "It stopped
+  before it could say where it stood; its work so far is kept.", then how it goes on or what waits
+  on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
+  you reopen it; ..."; a Settings link at the outer limits); the session result: the builder
+  `paused` appended to `RESULT_LINE_BUILDERS` (`pausedSentences`: '"X" paused at its budget of CHF
+  0.40: continue or cancel it in the Inbox.'; at a limit no Continue lifts, `waits` on the entry,
+  '"X" paused at the project's budget of CHF 0.01: it goes on by itself once that limit is raised
+  or resets.', since its card offers only Cancel; a mix points to the cards), fed by
+  `LastSessionOutcome.paused` (tasks with an open budget card, out of `needsYou`; the runner sets
+  `waits` from the card's source, `!offersContinue`) and passed on as `SessionResult.paused` (ids,
+  for the budget-stop notification); the chat's facts ("Paused: ...").
+- *The next brief (`task-context.ts`).* When the task's previous work run is `paused` or
+  `budget_exceeded`, the block starts with `whereTheLastRunStopped` ("## Where the last run
+  stopped": its work so far is in the folder, continue from it; its note, the files it changed
+  from the run's `task.files` event, its to-do list, all JSON-quoted; no note: says so). The
+  runner emits `task.files` for a paused run: `PrTaskExecutor` returns its `changedFiles`.
+- *Cancel words (`daemon/cancel-words.ts`).* `cancelWorkKind` and `cancelWorkLine` (the dialog
+  and the read-back, at most 100 characters after "Drops it.", W6-7) and `cancelledWorkWords`
+  (the line after the action): a run or review stopped and its changes removed, a pull request
+  kept, the person's own folder keeping what a run wrote (C-37; `TaskDisplayContext.ownFolder`
+  from the project's absolute `repos[0]`), a paused task's work set aside. `taskDisplay` sends
+  the line as `TaskDisplay.cancelWork` for a running task, a live review and a paused one.
+- *Settings.* `push_unfinished_work` (`session/push-unfinished.ts`, `pushUnfinishedOf`): the
+  project row "Push unfinished work to GitHub" in `settingsView` for a project on a host
+  repository; compose passes it to `PrTaskExecutor` as `pushUnfinishedFor`.
+- Tests: `session-budget-card.test.ts` (a session-budget stop pauses at the first stop with one
+  card, across a restart, Continue starts a session of the named amount whose brief starts where
+  the run stopped, Cancel names the stuck task), `continuity-budget.test.ts` (the task's budget,
+  Continue, `continueUsdMicro`), `budget-pause.test.ts` (the month's card: no Continue, a Settings
+  link, the wake), `real-daemon.test.ts` ("a paused task keeps its work and continues from it")
+  and `inbox.test.tsx` in `apps/ui`, and scenario 5 (`tests/e2e`).
 
 **Cancelling a task that runs or is reviewed (phase C, live walk 2 C1, ADR 0105).** Before, the
 run was stopped (U-039) but its files stayed in the project's folder, the next task built on

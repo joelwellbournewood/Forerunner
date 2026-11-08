@@ -203,7 +203,11 @@ import {
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
 import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
-import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
+import {
+  type BudgetStopSyncResult,
+  syncBudgetStopAnswers,
+  wakeBudgetWaits,
+} from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
 import {
   type AbilityTable,
@@ -240,6 +244,7 @@ import {
   syncPlanApprovals,
 } from "../session/plan-approval.ts";
 import { syncPrAnswers } from "../session/pr-answers.ts";
+import { pushUnfinishedOf } from "../session/push-unfinished.ts";
 import { recoverInterruptedSessions } from "../session/recovery.ts";
 import {
   SessionRunner,
@@ -1268,6 +1273,15 @@ export class DynamicCaps implements CapsPort {
   }
 
   /**
+   * Forget the caps read for this human and project, so the next check reads them again. A
+   * task paused at one of them goes on once the person raised it (`wakeBudgetWaits`): its
+   * session must not meet the old cap from the minute's cache and pause again at once.
+   */
+  forget(scope: Pick<CapScope, "humanId" | "projectId">): void {
+    this.cache.delete(`${scope.humanId}:${scope.projectId ?? ""}`);
+  }
+
+  /**
    * The checker's room over the human's month and the project's budget (CapsPort.roomUsdMicro).
    * The session level here is unbounded (SessionBudget enforces it in-process), so it is never
    * the smallest.
@@ -2286,6 +2300,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const project = await store.project.get(task.project_id);
         return project ? docs.localOnlyFolder(project) : null;
       },
+      // budget-resume: the project's "Push unfinished work to GitHub" (off by default).
+      pushUnfinishedFor: async (task) =>
+        pushUnfinishedOf((await store.project.get(task.project_id))?.settings),
     });
   const executor = prExecutor(true);
   // merged-copy: a run's Local only copy the app left when it closed or crashed during the run
@@ -3146,6 +3163,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...(result.spentChfMicro !== undefined ? { spentChfMicro: result.spentChfMicro } : {}),
         completed: result.completed,
         needsHuman: result.needsHuman,
+        ...(result.paused ? { paused: result.paused } : {}),
         failed: result.failed,
         retried: result.retried,
         inReview: result.inReview,
@@ -3199,6 +3217,33 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         .catch((e: unknown) =>
           logger.warn("work waiting for a credential not started", { error: errorMessage(e) }),
         );
+      // budget-resume: a task paused at this month's cap, the project's budget or the
+      // subscription's share goes on by itself once that limit changed (raised in Settings, a
+      // new month) and has room; room alone never wakes it (the review of budget-resume).
+      await wakeBudgetWaits({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        limitNow: async (source, projectId) => {
+          const usdMicro =
+            source === "project"
+              ? (await store.project.get(projectId))?.budget_usd_micro
+              : (await store.human.get(human.id))?.monthly_cap_usd_micro;
+          // An unset or zero cap is no limit (`DynamicCaps`).
+          return usdMicro && usdMicro > 0 ? usdMicro : Number.POSITIVE_INFINITY;
+        },
+        roomFor: async (projectId) => {
+          caps.forget({ humanId: human.id, projectId });
+          return (
+            (await caps.check({ humanId: human.id, projectId }, 1, { phase: "work" })).decision ===
+            "allow"
+          );
+        },
+        start: (req) => scheduler.request(req),
+      }).catch((e: unknown) =>
+        logger.warn("paused work at a limit not started again", { error: errorMessage(e) }),
+      );
     },
   });
   /**
@@ -3334,6 +3379,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const task = await store.task.mustGet(taskId);
         return (await executor.bringBack(task)).result;
       },
+      // budget-resume: the cancel of a paused task sets its work in progress aside (Undo and
+      // Reopen bring it back); in the project's folder only while no later task built on it.
+      setAsideWork: async (taskId) => executor.setAsideWork(await store.task.mustGet(taskId)),
       // session.resume ("resume", "allow sessions again", design §3.1): Stop all lifted, as
       // POST /kill/resume does (kill.json removed by `onResume`), the header told.
       allowSessions: () => {
@@ -3566,6 +3614,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         humanId: human.id,
         agentId: agent.id,
         ...resumeStart,
+        // budget-resume: Cancel task sets the work in progress aside (Reopen brings it back).
+        setAside: (task) => executor.setAsideWork(task),
       }),
       // A task a run left waiting without asking anything (live walk 4): Try again starts a
       // session that tries again; Cancel task cancels it.

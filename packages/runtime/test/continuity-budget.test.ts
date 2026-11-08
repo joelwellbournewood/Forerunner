@@ -6,7 +6,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { raisedBudgetUsdMicro } from "../src/session/budget-card.ts";
+import { continueLabel, continueUsdMicro } from "../src/session/budget-card.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -16,10 +16,11 @@ import { closingReply, submitReply } from "./loop-helpers.ts";
  * the Tasks tab said "Paused"; the drawer spoke USD on a CHF screen and told the person to edit
  * the budget, press Resume and Start again.
  *
- * Now the stop files one Inbox card: '"Contact page" stopped at its budget of CHF 0.01.' with
- * Raise the budget (which raises it and starts a session that tries again) and Cancel task;
- * the result, the Tasks tab and the Inbox agree; every amount is in CHF; the card survives a
- * restart without a second copy.
+ * Now the stop files one Inbox card: '"Contact page" paused at its budget of CHF 0.01.' with
+ * Continue (CHF N more), which gives it that much more and starts the session that continues
+ * it (budget-resume; before, Raise the budget set a budget and a session "tried again"), and
+ * Cancel task; the result, the Tasks tab and the Inbox agree; every amount is in CHF; the card
+ * survives a restart without a second copy.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
 type Json = Record<string, unknown>;
@@ -158,19 +159,22 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     const cards = await openCards();
     expect(cards).toHaveLength(1);
     const card = cards[0] as Json;
-    expect(card.title).toBe('"Contact page" stopped at its budget of CHF 0.01');
+    // budget-resume: a pause names its limit and offers Continue with the amount it adds.
+    expect(card.title).toBe('"Contact page" paused at its budget of CHF 0.01');
     expect(card.choices).toEqual([
       expect.objectContaining({
-        label: "Raise the budget",
+        label: expect.stringMatching(/^Continue \(CHF \d+\.\d\d more\)$/),
         explain: expect.stringMatching(
-          /^Sets its budget to CHF \d+\.\d\d and starts a session that tries again\.$/,
+          /^Adds CHF \d+\.\d\d to its budget and starts a session that goes on from where it stopped\.$/,
         ),
         tone: "primary",
       }),
       expect.objectContaining({ label: "Cancel task", tone: "danger" }),
     ]);
-    // The session's result points at a card that is there.
-    expect(String(ended.summary)).toContain('"Contact page" needs your decision (Inbox).');
+    // The session's result points at a card that is there, as a pause.
+    expect(String(ended.summary)).toContain(
+      '"Contact page" paused at its budget of CHF 0.01: continue or cancel it in the Inbox.',
+    );
     // The Tasks tab says the same as the Inbox, with the card to open. ADR 0112: a stop at a
     // budget is a pause (before: "Needs your decision: its budget is used").
     const view = await taskView();
@@ -178,6 +182,7 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     expect(view.display).toMatchObject({
       key: "answer",
       label: "Paused at its budget",
+      detail: "Continue or cancel in the Inbox.",
       blocker: { kind: "card", requestId: card.id, cardKind: "budget" },
     });
     // CHF everywhere a person reads it: no dollar amounts.
@@ -194,7 +199,7 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
   }, 120_000);
 
-  it("Raise the budget raises it and starts a session that finishes the task", async () => {
+  it("Continue gives it the amount it named more and starts a session that finishes the task", async () => {
     const card = (await openCards())[0] as Json;
     const choice = (card.choices as Json[])[0] as Json;
     const before = await rt.store.task.mustGet(taskId);
@@ -204,10 +209,16 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     });
     expect(answered.status).toBe(200);
     const raised = await rt.store.task.mustGet(taskId);
-    expect(raised.budget_usd_micro).toBeGreaterThan(before.budget_usd_micro);
-    // The amount the button promised is the one set.
-    const promised = /CHF (\d+\.\d\d)/.exec(String(choice.explain))?.[1];
-    expect(promised).toBeDefined();
+    // The amount the button named is added to what the budget covered (its budget, or what it
+    // spent when that is more).
+    const more = continueUsdMicro(before, {
+      capUsdMicro: before.budget_usd_micro,
+      source: "task_budget",
+    });
+    expect(raised.budget_usd_micro).toBe(
+      Math.max(before.budget_usd_micro, before.actual_cost_usd_micro) + more,
+    );
+    expect(choice.label).toBe(`Continue (CHF ${((more * 0.8) / 1e6).toFixed(2)} more)`);
     const done = await waitFor(
       async () => {
         const t = await rt.store.task.mustGet(taskId);
@@ -221,7 +232,7 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     expect(done.status).toBe("done");
     expect(await openCards()).toEqual([]);
     const after = (await inbox()).requests.find((r) => r.id === card.id) as Json | undefined;
-    expect(String(after?.outcome)).toMatch(/^Raised the budget of "Contact page" to CHF \d+\.\d\d/);
+    expect(String(after?.outcome)).toMatch(/^Gave "Contact page" CHF \d+\.\d\d more: /);
   }, 60_000);
 
   // Review of 'cost' (ADR 0112, ADR 0019): a task whose run stopped at its budget is no sample of
@@ -280,36 +291,41 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
   }, 120_000);
 });
 
-describe("the budget Raise the budget sets", () => {
-  it("leaves the next run as much room as the stop had: the whole budget, or twice the specialist's limit", () => {
-    // A budget of USD 0.50 spent: USD 0.50 more.
+describe("how much Continue adds (budget-resume)", () => {
+  it("the same amount again: the budget, the specialist's limit per run or the session's budget, at least the estimate, in steps of CHF 0.01", () => {
+    // A budget of USD 0.50: USD 0.50 more.
     expect(
-      raisedBudgetUsdMicro(
-        { est_cost_usd_micro: 0 },
-        { capUsdMicro: 500_000, spentUsdMicro: 500_000, source: "task_budget" },
-      ),
-    ).toBe(1_000_000);
-    // No budget of its own, stopped at the coder's USD 3.00 per run: the budget counts every
-    // run, so it is what was spent plus twice that limit (USD 3.00 more would stop it again).
+      continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 500_000, source: "task_budget" }),
+    ).toBe(500_000);
+    // No budget of its own, paused at the coder's USD 3.00 per run: USD 3.00 more (its next run
+    // continues from its work in progress, so the same room goes further).
     expect(
-      raisedBudgetUsdMicro(
+      continueUsdMicro(
         { est_cost_usd_micro: 400_000 },
-        { capUsdMicro: 3_000_000, spentUsdMicro: 3_000_000, source: "specialist_limit" },
+        { capUsdMicro: 3_000_000, source: "specialist_limit" },
       ),
-    ).toBe(9_000_000);
-    // A tiny budget: at least USD 0.50 of room, or the estimate when it is larger, in steps of
-    // USD 0.05.
+    ).toBe(3_000_000);
+    // A session's budget of USD 2.50: a session of USD 2.50.
     expect(
-      raisedBudgetUsdMicro(
-        { est_cost_usd_micro: 0 },
-        { capUsdMicro: 12_500, spentUsdMicro: 12_500, source: "task_budget" },
-      ),
-    ).toBe(550_000);
+      continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 2_500_000, source: "session" }),
+    ).toBe(2_500_000);
+    // A tiny budget: at least the estimate (CHF 0.9872), rounded up to a step of CHF 0.01 at the
+    // default rate of CHF 0.80 per USD: CHF 0.99, USD 1.2375.
     expect(
-      raisedBudgetUsdMicro(
-        { est_cost_usd_micro: 1_230_000 },
-        { capUsdMicro: 12_500, spentUsdMicro: 12_500, source: "task_budget" },
+      continueUsdMicro(
+        { est_cost_usd_micro: 1_234_000 },
+        { capUsdMicro: 12_500, source: "task_budget" },
       ),
-    ).toBe(1_250_000);
+    ).toBe(1_237_500);
+    // A budget of CHF 0.01 (USD 0.0125): CHF 0.01 more, as its button says (USD steps made the
+    // button say CHF 0.02).
+    expect(
+      continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 12_500, source: "task_budget" }),
+    ).toBe(12_500);
+    expect(continueLabel(12_500, 0.8)).toBe("Continue (CHF 0.01 more)");
+    // At least one step.
+    expect(
+      continueUsdMicro({ est_cost_usd_micro: 0 }, { capUsdMicro: 0, source: "task_budget" }),
+    ).toBe(12_500);
   });
 });

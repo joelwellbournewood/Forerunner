@@ -82,6 +82,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import {
@@ -2024,7 +2025,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon: whether the move stops a live run or review (the cancel's sentence and
     // whether its work is set aside follow it).
     const live = liveWork(viewOf(task));
-    const setAside = target.to === "cancelled" && live && !task.prUrl;
+    // budget-resume: a paused task's work in progress is set aside too (as the daemon's
+    // `setAsideWork`), and a project linked to the person's own folder keeps a run's (C-37).
+    const shown = viewOf(task).display;
+    const ownFolder = shown?.cancelWork === cancelWorkLine("own_folder");
+    const setAside =
+      target.to === "cancelled" &&
+      ((live && !task.prUrl && !ownFolder) || shown?.blocker?.cardKind === "budget");
     // The row as it was, for the undo (as the daemon's change log records it).
     const was = {
       reason: task.reason,
@@ -2106,6 +2113,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         noted: noteId !== null,
         stuck,
         live,
+        shown,
       }),
       reversible: true,
     });
@@ -2134,7 +2142,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       );
     const from = task.status;
     const live = liveWork(viewOf(task));
-    const setAside = parsed.data.to === "cancelled" && live && !task.prUrl;
+    const shown = viewOf(task).display;
+    const setAside =
+      parsed.data.to === "cancelled" &&
+      ((live && !task.prUrl && shown?.cancelWork !== cancelWorkLine("own_folder")) ||
+        shown?.blocker?.cardKind === "budget");
     task.status = parsed.data.to;
     task.reason = parsed.data.reason ?? parsed.data.note ?? `Moved by you`;
     if (parsed.data.to === "needs_human") state.taskMeta.pausedByPerson.add(task.id);
@@ -2157,7 +2169,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       projectId: task.projectId,
       source: "ui",
       wordsUsed: parsed.data.reason ?? "",
-      sentence: actionSentence(task, from, parsed.data.to, { live }),
+      sentence: actionSentence(task, from, parsed.data.to, { live, shown }),
       reversible: true,
     });
     return c.json(changeOf(task, entry));
@@ -2633,12 +2645,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(read !== "cancel" ? { start: "started" } : {}),
       };
     }
-    // As the daemon's `syncBudgetStopAnswers` (live walk 2, B2): Raise the budget sets the
-    // budget the card named (never lower than the task's own) and a session tries again;
-    // Cancel task cancels it.
+    // As the daemon's `syncBudgetStopAnswers` (budget-resume, ADR 0112 amended): Continue (CHF
+    // N more) gives it that much more (its budget, or the session that continues it for a stop at
+    // the session's budget) and a session starts at once; Cancel task cancels it and sets its work
+    // aside. A card of before budget-resume ("Raise the budget") sets the budget it named.
     const budgetCard = r.changeCard as {
       key?: unknown;
       raise_to_usd_micro?: unknown;
+      continue_usd_micro?: unknown;
       source?: unknown;
     } | null;
     if (budgetCard?.key === "task:budget_stop") {
@@ -2646,46 +2660,37 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const read = budgetStopAnswer(parsed.data.answer as never);
       const moved = !task || task.status !== "needs_human";
       let budget: number | null = null;
-      // C-36: the card of a task a session's budget stopped twice. Raise session budget sets
-      // the project's budget per session (the fake keeps no such setting: the card records the
-      // amount, as the daemon's does) and a session tries again.
-      let sessionCap: number | null = null;
-      if (budgetCard.source === "session_budget" && task && !moved && read === "raise_session") {
-        sessionCap = Number(budgetCard.raise_to_usd_micro) || 0;
-        budget = task.budget.usdMicro;
-        task.status = "ready";
-        task.reason = `you raised the budget per session to CHF ${(money(sessionCap).chfMicro / 1e6).toFixed(2)} in the Inbox`;
-        touch(task);
-      } else if (budgetCard.source === "session_budget" && task && !moved && read === "raise") {
-        // As the daemon (budget-card.ts): one session of the named amount, so the task's own
-        // budget covers what it spent and that session; later sessions keep their budget.
-        const promised = Number(budgetCard.raise_to_usd_micro) || 0;
-        budget = Math.max(task.budget.usdMicro, task.actual.usdMicro + promised);
+      let more: number | null = null;
+      if (task && !moved && read === "continue") {
+        const session = budgetCard.source === "session" || budgetCard.source === "session_budget";
+        if (typeof budgetCard.continue_usd_micro === "number") {
+          more = budgetCard.continue_usd_micro;
+          budget = session
+            ? task.budget.usdMicro
+            : Math.max(task.budget.usdMicro, task.actual.usdMicro) + more;
+        } else {
+          more = Number(budgetCard.raise_to_usd_micro) || 0;
+          budget = session ? task.budget.usdMicro : Math.max(task.budget.usdMicro, more);
+        }
         task.budget = money(budget);
-        task.cap = money(budget);
-        task.capSource = "task_budget";
+        task.cap = money(Math.max(0, budget - task.actual.usdMicro));
+        if (!session) task.capSource = "task_budget";
         task.status = "ready";
-        task.reason = `you gave it one session of CHF ${(money(promised).chfMicro / 1e6).toFixed(2)} in the Inbox`;
-        touch(task);
-      } else if (task && !moved && (read === "raise" || read === "raise_session")) {
-        budget = Math.max(task.budget.usdMicro, Number(budgetCard.raise_to_usd_micro) || 0);
-        task.budget = money(budget);
-        task.cap = money(budget);
-        task.capSource = "task_budget";
-        task.status = "ready";
-        task.reason = `you raised its budget to CHF ${(money(budget).chfMicro / 1e6).toFixed(2)} in the Inbox`;
+        task.reason = `you gave it CHF ${(money(more).chfMicro / 1e6).toFixed(2)} more in the Inbox: it continues from where it stopped`;
         touch(task);
       } else if (task && !moved && read === "cancel") {
         task.status = "cancelled";
-        task.reason = "you cancelled it in the Inbox when it stopped at its budget";
+        task.reason = "you cancelled it in the Inbox when it paused at a budget";
         touch(task);
       }
       r.changeCard = {
         ...budgetCard,
         applied_at: new Date().toISOString(),
         outcome: moved ? "task_moved_on" : read,
-        ...(budget !== null ? { budget_usd_micro: budget, start: "started" } : {}),
-        ...(sessionCap !== null ? { session_cap_usd_micro_set: sessionCap } : {}),
+        ...(budget !== null
+          ? { budget_usd_micro: budget, continued_usd_micro: more, start: "started" }
+          : {}),
+        ...(!moved && read === "cancel" ? { set_aside: 1 } : {}),
       };
     }
     // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
@@ -5705,7 +5710,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ? `Undone: reopened the task "${task.title}"; it ${again}${back ? ` and ${back}` : ""}.`
           : `Undone: the task "${task.title}" ${again}${back ? `; ${back}` : ""}.`;
       // As the daemon (phase C): the undo of a cancel that set a run's work aside puts it back.
-      if (after.set_aside) sentence += " What it changed is back in the folder.";
+      if (after.set_aside)
+        sentence += ["claimed", "in_progress", "in_review"].includes(before.status)
+          ? " What it changed is back in the folder."
+          : " Its work so far is back.";
     }
     if (first?.name === "task.update" && task) {
       const fields = ((before as { fields?: Record<string, unknown> } | null)?.fields ??

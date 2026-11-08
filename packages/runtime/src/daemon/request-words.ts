@@ -528,46 +528,35 @@ function chfAt(usdMicro: unknown, rate: unknown): string | null {
 }
 
 /**
- * A task stopped at its own budget (live walk 2, B2; `session/budget-card.ts`): Raise the
- * budget (to the amount the card names, and a session tries again) or Cancel task.
+ * A paused task's card (budget-resume, ADR 0112 amended; `session/budget-card.ts`): the title
+ * names the real limit ('"X" paused at its budget of CHF 0.40'), the body what the run did and
+ * left (its own words, as data) and, for a limit no bigger budget lifts, how it goes on; then
+ * Continue (CHF N more) and Cancel task. Cards filed before budget-resume keep their options
+ * ("Raise the budget"), each still doing what it said.
  */
 function budgetCard(
   r: Pick<HumanRequestRow, "why" | "options">,
   card: JsonObject,
   ctx: RequestWordsContext,
 ): RequestWords {
-  const task = ctx.taskTitle ?? str(card.task_title) ?? "the task";
   const waiting = ctx.waiting ?? [];
-  const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
-  const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
-  if (card.source === "session_budget") return sessionBudgetCard(r, card, task, waiting);
-  // The hooks stop a run before a call that would go over the cap, so it may have spent less
-  // than the budget: then the next step is what did not fit (the bench read "stopped at its
-  // budget of CHF 0.01. So far it spent CHF 0.00.").
-  const under =
-    typeof card.spent_usd_micro === "number" &&
-    typeof card.cap_usd_micro === "number" &&
-    card.spent_usd_micro < card.cap_usd_micro;
+  const more = chfAt(card.continue_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
+  const session = card.source === "session" || card.source === "session_budget";
+  const goesOn = goesOnWords(card);
   const body =
-    [
-      spent
-        ? under
-          ? `So far it spent ${spent}; its next step would have gone over the budget.`
-          : `So far it spent ${spent}.`
-        : null,
-      waitingSentence(waiting),
-    ]
-      .filter(Boolean)
-      .join(" ") || null;
+    [pausedWorkSentence(card), goesOn ?? waitingSentence(waiting)].filter(Boolean).join(" ") ||
+    null;
   const choices: RequestChoiceWords[] = [];
   for (const option of r.options.map(optionLabel)) {
     const what = budgetStopAnswer(option);
-    if (what === "raise")
+    if (what === "continue")
       choices.push({
         label: option,
-        explain: raiseTo
-          ? `Sets its budget to ${raiseTo} and starts a session that tries again.`
-          : "Raises its budget and starts a session that tries again.",
+        explain: !more
+          ? "Gives it more and starts a session that goes on from where it stopped."
+          : session
+            ? `Starts a session of ${more} now; it goes on from where it stopped.`
+            : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
         tone: "primary",
         confirm: null,
         input: null,
@@ -575,9 +564,9 @@ function budgetCard(
     else if (what === "cancel")
       choices.push({
         label: option,
-        explain: cancelExplain(waiting),
-        tone: "danger",
-        confirm: cancelConfirm(task, waiting),
+        explain: cancelPausedExplain(waiting),
+        tone: goesOn ? "secondary" : "danger",
+        confirm: cancelConfirm(ctx.taskTitle ?? str(card.task_title) ?? "the task", waiting),
         input: null,
       });
   }
@@ -585,7 +574,15 @@ function budgetCard(
     title: str(card.title) ?? firstSentence(r.why),
     body,
     choices,
-    links: [],
+    links: goesOn
+      ? [
+          {
+            label: "Open Settings",
+            to: "/settings",
+            explain: card.source === "plan" ? null : "Raise it there; the task goes on by itself.",
+          },
+        ]
+      : [],
     reply: "none",
     details: [],
     outcome: null,
@@ -593,89 +590,105 @@ function budgetCard(
 }
 
 /**
- * A task a session's own budget stopped twice (C-36, `session/budget-card.ts`): raise the
- * project's budget per session, give the task one bigger session, or cancel it.
+ * What the paused run did and left, in one sentence from its own note (data): "Done: guide.md
+ * has 3 parts; left: write the rest, check it." A run that wrote no note (a tiny budget, a hard
+ * stop): its work so far is kept.
  */
-function sessionBudgetCard(
-  r: Pick<HumanRequestRow, "why" | "options">,
-  card: JsonObject,
-  task: string,
-  waiting: readonly string[],
-): RequestWords {
-  const sessionCap = chfAt(card.session_cap_usd_micro, card.chf_per_usd);
-  const projectCap = chfAt(card.project_cap_usd_micro, card.chf_per_usd);
-  const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
-  const raiseTo = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
-  const body =
-    [
-      sessionCap
-        ? `Two sessions of ${sessionCap} stopped while it ran${spent ? `; it spent ${spent} so far` : ""}.`
-        : null,
-      waitingSentence(waiting),
-    ]
-      .filter(Boolean)
-      .join(" ") || null;
-  const choices: RequestChoiceWords[] = [];
-  for (const option of r.options.map(optionLabel)) {
-    const what = budgetStopAnswer(option);
-    if (what === "raise_session")
-      choices.push({
-        label: option,
-        explain: raiseTo
-          ? `Sets this project's budget per session to ${raiseTo} and starts a session that tries again.`
-          : "Raises this project's budget per session and starts a session that tries again.",
-        tone: "primary",
-        confirm: null,
-        input: null,
-      });
-    else if (what === "raise")
-      choices.push({
-        label: option,
-        explain: raiseTo
-          ? `Starts one session of ${raiseTo} for it now${projectCap ? `; later sessions keep ${projectCap}` : ""}.`
-          : "Starts one bigger session for it now.",
-        tone: "secondary",
-        confirm: null,
-        input: null,
-      });
-    else if (what === "cancel")
-      choices.push({
-        label: option,
-        explain: cancelExplain(waiting),
-        tone: "danger",
-        confirm: cancelConfirm(task, waiting),
-        input: null,
-      });
+function pausedWorkSentence(card: JsonObject): string | null {
+  const done = str(card.done);
+  const left = Array.isArray(card.left)
+    ? card.left.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+    : [];
+  const items = left.slice(0, 3).map((t) => noFinalDot(t));
+  const leftWords = items.length
+    ? `${items.join(", ")}${left.length > 3 ? ` and ${left.length - 3} more` : ""}`
+    : null;
+  if (done && leftWords) return `Done: ${noFinalDot(done)}; left: ${leftWords}.`;
+  if (done) return `Done: ${noFinalDot(done)}.`;
+  if (leftWords) return `Left: ${leftWords}.`;
+  // A card of before budget-resume has neither: its title says it all.
+  if (!("done" in card)) return null;
+  return "It stopped before it could say where it stood; its work so far is kept.";
+}
+
+const noFinalDot = (s: string) => s.trim().replace(/[.\s]+$/, "");
+
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/** "1 December": when a month's cap or share resets. */
+function resetDay(iso: unknown): string | null {
+  if (typeof iso !== "string") return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+/**
+ * How a task paused at a limit no bigger budget lifts goes on (budget-resume): by itself once
+ * the person raised the limit in Settings or it reset (`wakeBudgetWaits`; room alone never wakes
+ * it). Null for a limit Continue lifts.
+ */
+function goesOnWords(card: JsonObject): string | null {
+  const day = resetDay(card.resets_at);
+  switch (card.source) {
+    case "month":
+      return `It goes on by itself once you raise the monthly cap in Settings${day ? `, or on ${day}` : ""}.`;
+    case "project":
+      return "It goes on by itself once you raise the project's budget in Settings.";
+    case "plan":
+      return `It goes on by itself when your subscription's share resets${day ? ` on ${day}` : ""}, or once you raise the share in Settings.`;
+    default:
+      return null;
   }
-  return {
-    title: str(card.title) ?? firstSentence(r.why),
-    body,
-    choices,
-    links: [],
-    reply: "none",
-    details: [],
-    outcome: null,
-  };
+}
+
+/** What Cancel does to a paused task: its work goes aside, what waits is stuck (design §3.5). */
+function cancelPausedExplain(waiting: readonly string[]): string {
+  const base = "Drops it; its work is set aside until you reopen it";
+  if (waiting.length === 0) return `${base}.`;
+  if (waiting.length === 1) return `${base}; ${q(waiting[0] as string)} will be stuck.`;
+  return `${base}; the ${waiting.length} tasks after it will be stuck.`;
 }
 
 function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
   const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
   const started = startWords(card.start);
   switch (card.outcome) {
+    case "continue": {
+      const more = chfAt(card.continued_usd_micro, card.chf_per_usd);
+      return `Gave ${task}${more ? ` ${more}` : ""} more${started ? `: ${started}` : ": the next session continues it"}.`;
+    }
+    case "went_on":
+      return `${task} goes on: its limit has room again.`;
+    // Cards answered before budget-resume.
     case "raise_session": {
       const to = chfAt(card.session_cap_usd_micro_set ?? card.raise_to_usd_micro, card.chf_per_usd);
       return `Raised this project's budget per session${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
     }
     case "raise": {
-      if (card.source === "session_budget") {
-        const one = chfAt(card.raise_to_usd_micro, card.chf_per_usd);
-        return `Gave ${task} one session${one ? ` of ${one}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
-      }
       const to = chfAt(card.budget_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
       return `Raised the budget of ${task}${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
     }
-    case "cancel":
-      return `${task} was cancelled.`;
+    case "cancel": {
+      const kept = str(card.kept);
+      if (kept) return `${task} was cancelled; its files stay in the folder: ${kept}.`;
+      return typeof card.set_aside === "number" && card.set_aside > 0
+        ? `${task} was cancelled; its work is set aside until you reopen it.`
+        : `${task} was cancelled.`;
+    }
     case "task_moved_on":
       return `${task} had moved on already, so nothing changed.`;
     default:
@@ -1007,6 +1020,12 @@ export function requestWords(
   } else if (key === ANSWER_CARD_KEYS.budgetStop) {
     words = budgetCard(r, card, ctx);
     outcome = budgetOutcome(card, ctx);
+    // budget-resume: a card the app closed because its limit has room again says so, not
+    // "Closed: it no longer needs you."
+    if (r.status !== "open" && card.outcome === "went_on" && outcome) {
+      words.outcome = outcome;
+      return words;
+    }
   } else if (key === ANSWER_CARD_KEYS.cannotRun) {
     words = cannotRunCard(r, card, ctx);
     outcome = cannotRunOutcome(card, ctx);

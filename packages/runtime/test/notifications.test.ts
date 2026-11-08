@@ -472,10 +472,28 @@ describe("notifier", () => {
       spentUsdMicro: 5_000_000,
       completed: [],
       needsHuman: ["decide"],
+      paused: ["decide"],
     });
     expect(stop.notification.kind).toBe("budget_stop");
     // CHF, as the person reads money (U-074): USD 5.00 at the default rate.
     expect(stop.notification.title).toContain("CHF 4.00");
     expect(stop.urgency).toBe("urgent");
+    // budget-resume: the task paused at the session's budget has its card with Continue; before,
+    // "Start a session with a larger budget to go on".
+    expect(stop.notification.body).toContain("Continue it from its card in the Inbox.");
+    expect(stop.notification.body).not.toContain("larger budget");
+    // The review of budget-resume: a task that needs the person for another reason (a question)
+    // has no Continue on its card, so the stop says what helps instead.
+    const asked = await hooks.budgetStop(w.humanId, {
+      sessionId: "s-10",
+      status: "stopped",
+      stopReason: "budget_exceeded",
+      summary: "Cap hit.",
+      spentUsdMicro: 5_000_000,
+      completed: [],
+      needsHuman: ["question"],
+    });
+    expect(asked.notification.body).toContain("Start a session with a larger budget to go on.");
+    expect(asked.notification.body).not.toContain("Continue it from its card");
   });
 });

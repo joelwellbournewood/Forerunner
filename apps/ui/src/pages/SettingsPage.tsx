@@ -92,6 +92,7 @@ export const SETTING_KEYS = [
   "fast_mode",
   "status_pull_request",
   "merge_mode",
+  "push_unfinished_work",
   "shared_with",
   "quiet_hours",
   "notify_channel",

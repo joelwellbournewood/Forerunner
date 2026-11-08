@@ -6,6 +6,11 @@ import type {
   TaskView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
+  cancelledWorkWords,
+  cancelWorkKind,
+  cancelWorkLine,
+} from "@forerunner/runtime/daemon/cancel-words";
+import {
   ACTION_FROM,
   ACTION_WORDS,
   runOrder,
@@ -50,6 +55,11 @@ export interface FakeTaskMeta {
       save?: { label: string; to: string } | null;
     }
   >;
+  /**
+   * Projects linked to the person's own folder (C-37): a Cancel there keeps what a run wrote,
+   * as the daemon's `display.cancelWork` says. A test adds them.
+   */
+  ownFolder?: Set<string>;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
@@ -58,6 +68,7 @@ export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
     added: new Map(tasks.map((t, i) => [t.id, i])),
     notLive: new Set(),
     credentialWaits: new Map(),
+    ownFolder: new Set(),
   };
 }
 
@@ -118,6 +129,7 @@ export function projectTaskViews(
     agentNames: new Map([["agent_alice", "Alice"]]),
     live: (taskId: string) => !meta.notLive.has(taskId),
     credentialWait: meta.credentialWaits.get(projectId) ?? null,
+    ...(meta.ownFolder?.has(projectId) ? { ownFolder: true } : {}),
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
   return runOrder(rows).map((row, i) => ({
@@ -166,18 +178,33 @@ export function actionSentence(
   task: TaskView,
   from: string,
   to: string,
-  extra: { withdrawn?: number; noted?: boolean; stuck?: readonly string[]; live?: boolean } = {},
+  extra: {
+    withdrawn?: number;
+    noted?: boolean;
+    stuck?: readonly string[];
+    live?: boolean;
+    /** The row's status before the move (`viewOf`): a paused task's card, a linked folder. */
+    shown?: TaskView["display"];
+  } = {},
 ): string {
   const t = `"${task.title}"`;
   let s: string;
   // A task cancelled while it ran or was reviewed (phase C): what happens to its work. As the
   // daemon, said only when a live run or review was stopped (`liveWork`).
   const ran = extra.live ?? ["claimed", "in_progress", "in_review"].includes(from);
-  const what = from === "in_review" ? "its review" : "its run";
-  if (to === "cancelled" && ran)
-    s = task.prUrl
-      ? `Cancelled ${t}: ${what} stopped; its pull request stays open.`
-      : `Cancelled ${t}: ${what} stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.`;
+  // budget-resume: a paused task's work in progress is set aside; a project linked to the
+  // person's own folder keeps what it wrote (C-37), as the daemon's display says.
+  const work =
+    to === "cancelled"
+      ? cancelWorkKind({
+          running: ran && ["claimed", "in_progress"].includes(from),
+          liveReview: ran && from === "in_review",
+          paused: (extra.shown ?? task.display)?.blocker?.cardKind === "budget",
+          pullRequest: !!task.prUrl,
+          ownFolder: (extra.shown ?? task.display)?.cancelWork === cancelWorkLine("own_folder"),
+        })
+      : null;
+  if (to === "cancelled" && work) s = `Cancelled ${t}: ${cancelledWorkWords(work)}`;
   else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = ["claimed", "in_progress"].includes(from)

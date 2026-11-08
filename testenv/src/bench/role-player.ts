@@ -92,6 +92,12 @@ export interface BenchOptions {
    * budget a few times the run's reserve shows the wrap-up and the pause on the bench.
    */
   long?: string[];
+  /**
+   * Inflated usage (FORERUNNER_BENCH_USAGE=<title substring>:<input tokens>, comma-separated,
+   * budget-resume, W6-21): every call of a matching task's specialist bills that many more input
+   * tokens, so a session's budget can be used up on the bench (the stand-in's calls are tiny).
+   */
+  usage?: { title: string; inputTokens: number }[];
   /** `ok`, or a planted intake failure (FORERUNNER_BENCH_INTAKE=malformed|error). */
   intake: "ok" | "malformed" | "error";
   /**
@@ -176,11 +182,22 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     askStyle: askStyleOf(env.FORERUNNER_BENCH_ASK_STYLE),
     missing: list(env.FORERUNNER_BENCH_MISSING),
     long: list(env.FORERUNNER_BENCH_LONG),
+    usage: usageKnobs(env.FORERUNNER_BENCH_USAGE),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
     criticDelayMs: Number.isFinite(criticDelay) && criticDelay > 0 ? criticDelay : 0,
   };
+}
+
+/** FORERUNNER_BENCH_USAGE: "Write the guide:2000000,Notes:500000" (a title substring, then tokens). */
+function usageKnobs(raw: string | undefined): { title: string; inputTokens: number }[] {
+  return list(raw).flatMap((item) => {
+    const at = item.lastIndexOf(":");
+    const title = at > 0 ? item.slice(0, at).trim() : "";
+    const tokens = at > 0 ? Number(item.slice(at + 1).trim()) : Number.NaN;
+    return title && Number.isInteger(tokens) && tokens > 0 ? [{ title, inputTokens: tokens }] : [];
+  });
 }
 
 /** What the stand-in decided to answer, before it becomes stream events. */
@@ -281,6 +298,12 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           Math.ceil((a.text.length + JSON.stringify(a.toolCalls).length) / 4),
         ),
       };
+      // FORERUNNER_BENCH_USAGE (W6-21): a matching task's specialist bills more input tokens.
+      if (guess.role === "specialist" && opts.usage?.length) {
+        const title = parseBrief(req, guess).title;
+        const hit = opts.usage.find((u) => title.toLowerCase().includes(u.title.toLowerCase()));
+        if (hit) usage.input_tokens += hit.inputTokens;
+      }
       const stop: StopReason = a.error ? "error" : a.toolCalls.length ? "tool_use" : "end_turn";
       const logged: LoggedReply = {
         text: a.text,
@@ -532,7 +555,10 @@ function specialistAnswer(
         ? outcomeFile
         : [defaultFile(brief.title, who)];
   const mentioned = filesNamed(`${brief.title}\n${brief.outcome}\n${brief.criteria.join("\n")}`);
-  const longHit = matchesAny(brief.title, opts.long ?? []);
+  // budget-resume: a run whose brief starts from where the last run stopped continues the work
+  // and finishes it (it does not start the parts again), as a model told so does.
+  const resumed = /## Where the last run stopped/.test(firstUserText(req.messages));
+  const longHit = resumed ? undefined : matchesAny(brief.title, opts.long ?? []);
 
   // 0. Told that about a fifth of the budget is left (ADR 0112): start nothing new and report
   // with the two headings the brief names.

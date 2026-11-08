@@ -313,9 +313,7 @@ describe("undo says when it cannot work (U-061)", () => {
     );
     const u = done(await w.executor.undo(cancel.changeLogId, w.ctx()));
     // No raw state ("claimed") in what the person reads (design §5).
-    expect(u.sentence).toBe(
-      'Undone: reopened the task "Port the parser"; it is ready again and a session picks it up.',
-    );
+    expect(u.sentence).toBe('Undone: reopened the task "Port the parser"; it is ready again.');
     const after = await w.store.task.mustGet(task.id);
     expect(after).toMatchObject({ status: "ready", claimed_by: null });
     await w.store.close();

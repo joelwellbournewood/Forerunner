@@ -6,20 +6,16 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import {
-  fileSessionBudgetCard,
-  raisedSessionBudgetUsdMicro,
-  SESSION_BUDGET_STOP_OPTIONS,
-} from "../src/session/budget-card.ts";
+import { fileBudgetStopCard } from "../src/session/budget-card.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
- * C-36 (the session lead's default, ADR 0105): a task a session's own budget stopped went back
- * to Ready with no card, so a task that alone always needs more than a session's budget was run
- * again by every session until the person noticed, each run bounded only by the session's budget
- * and the monthly cap. Now the first such stop releases it as before, and the second files one
- * Inbox card: '"Long report" needs more than a session's budget' with Raise session budget,
- * Raise its budget and Cancel task; the task waits for the answer. The card survives a restart
+ * budget-resume (the owner's decision of 2026-11-02, ADR 0112 amended; supersedes C-36): a task
+ * the session's own budget stops pauses at the first stop with one card, like every other pause:
+ * '"Long report" paused at this session's budget of CHF 2.00' with Continue (CHF 2.00 more),
+ * which starts the next session of that amount at once, and Cancel task. Before (C-36, the
+ * session lead's default): the first stop released it with no card and the second filed a card
+ * with Raise session budget, Raise its budget and Cancel task. The card survives a restart
  * without a second copy, and each option does what its line says.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
@@ -38,11 +34,11 @@ function provider(clock: SimulatedClock) {
     replies: [
       submitReply({}, { times: Number.POSITIVE_INFINITY }),
       closingReply(),
-      // The first two runs spend past the session's budget on their first call; the hooks stop
-      // each before the second.
+      // The first run spends past the session's budget on its first call; the hooks stop it
+      // before the second.
       toolReply("list_dir", { path: "." }, "Looking at the folder first.", {
         when: { lastUserIncludes: "Long report" },
-        times: 2,
+        times: 1,
         usage: { input_tokens: 5_000_000, output_tokens: 200_000 },
       }),
       textReply("Wrote report.md with the whole report.", {
@@ -96,7 +92,7 @@ async function waitFor<T>(
   }
 }
 
-describe("a task that needs more than a session's budget asks the person after the second stop (C-36)", () => {
+describe("a task the session's budget stops pauses at the first stop with one card (budget-resume)", () => {
   const clock = new SimulatedClock("2026-11-03T09:00:00Z");
   const home = mkdtempSync(join(tmpdir(), "fr-session-budget-"));
   const fake = provider(clock);
@@ -168,50 +164,61 @@ describe("a task that needs more than a session's budget asks the person after t
     await rt?.close();
   });
 
-  it("the first stop releases it for the next session, with no card", async () => {
+  it("the first stop pauses it with one card that names this session's budget and offers Continue (CHF 2.00 more)", async () => {
     const ended = await session();
-    expect(String(ended.summary)).toContain('"Long report"');
     // It ran, and the session's budget stopped it (not the task's own: CHF 40 is far off).
     expect(
       (await rt.store.run.forTask(taskId))
         .filter((r) => r.specialist !== "critic")
         .map((r) => r.outcome),
     ).toEqual(["budget_exceeded"]);
-    expect(await openCards()).toEqual([]);
-    const t = await rt.store.task.mustGet(taskId);
-    expect(t.status).toBe("ready");
-    expect(t.attempt).toBe(0);
-  }, 60_000);
-
-  it("the second stop files one card with three options in words; the task waits for it", async () => {
-    const ended = await session();
+    // Before (C-36): the first stop filed nothing and released it, the second filed a card with
+    // three options. Now one card at the first stop.
     const cards = await openCards();
     expect(cards).toHaveLength(1);
     const card = cards[0] as Json;
-    expect(card.title).toBe('"Long report" needs more than a session\'s budget');
-    expect(String(card.body)).toMatch(
-      /^Two sessions of CHF 2\.00 stopped while it ran; it spent CHF \d+\.\d\d so far\.$/,
+    expect(card.title).toBe('"Long report" paused at this session\'s budget of CHF 2.00');
+    // A hard stop wrote no note: the card says the work so far is kept.
+    expect(card.body).toBe(
+      "It stopped before it could say where it stood; its work so far is kept.",
     );
     expect(card.choices).toEqual([
       expect.objectContaining({
-        label: "Raise session budget",
-        explain:
-          "Sets this project's budget per session to CHF 4.00 and starts a session that tries again.",
+        label: "Continue (CHF 2.00 more)",
+        explain: "Starts a session of CHF 2.00 now; it goes on from where it stopped.",
         tone: "primary",
       }),
       expect.objectContaining({
-        label: "Raise its budget",
-        explain: "Starts one session of CHF 4.00 for it now; later sessions keep CHF 2.00.",
+        label: "Cancel task",
+        explain: "Drops it; its work is set aside until you reopen it.",
+        tone: "danger",
       }),
-      expect.objectContaining({ label: "Cancel task", tone: "danger" }),
     ]);
-    // The session's result points at the card; the Tasks tab agrees, in CHF.
-    expect(String(ended.summary)).toContain('"Long report" needs your decision (Inbox).');
+    // The session's result names the pause, not "needs your decision"; the Tasks tab agrees.
+    expect(String(ended.summary)).toContain(
+      '"Long report" paused at this session\'s budget of CHF 2.00: continue or cancel it in the Inbox.',
+    );
+    expect(String(ended.summary)).not.toContain("needs your decision");
+    // The session's urgent notification says to continue it from its card (the runner's
+    // `paused`, through the daemon's session end): never a larger session budget.
+    const stop = await waitFor(
+      async () =>
+        (
+          (await (await req("/notifications/recent?limit=200")).json()) as {
+            notifications: Json[];
+          }
+        ).notifications.find((n) => n.kind === "budget_stop" && n.sessionId === ended.id),
+      async () => "the session's budget_stop notification",
+    );
+    expect(String(stop.body)).toContain("Continue it from its card in the Inbox.");
+    expect(String(stop.body)).not.toContain("larger budget");
     const view = await taskView();
     expect(view.status).toBe("needs_human");
+    expect(view.attempt).toBe(0);
     expect(view.display).toMatchObject({
       key: "answer",
-      label: "Needs your decision: a session's budget is too small",
+      label: "Paused at the session's budget",
+      detail: "Continue or cancel in the Inbox.",
       blocker: { kind: "card", requestId: card.id, cardKind: "budget" },
     });
     for (const text of [card.title, card.body, JSON.stringify(card.choices), view.reason])
@@ -226,12 +233,12 @@ describe("a task that needs more than a session's budget asks the person after t
     expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
   }, 120_000);
 
-  it("Raise its budget starts one session of the amount it named, which finishes the task", async () => {
+  it("Continue starts a session of the amount it named at once; its brief starts from where the last run stopped; the task finishes and no new card is filed", async () => {
     const card = (await openCards())[0] as Json;
-    const choice = (card.choices as Json[]).find((c) => c.label === "Raise its budget") as Json;
+    const before = fake.calls.length;
     const answered = await req(`/requests/${String(card.id)}/answer`, {
       method: "POST",
-      body: JSON.stringify({ version: card.version, answer: choice.label }),
+      body: JSON.stringify({ version: card.version, answer: "Continue (CHF 2.00 more)" }),
     });
     expect(answered.status).toBe(200);
     const done = await waitFor(
@@ -245,23 +252,30 @@ describe("a task that needs more than a session's budget asks the person after t
       },
     );
     expect(done.status).toBe("done");
-    // The one session had the amount the button named; the project's budget per session is as
-    // it was.
+    // The session had the amount the button named; the task's own budget is as it was.
     const sessions = await rt.store.session.list({ project_id: projectId } as never, {
       orderBy: [{ column: "created_at", direction: "desc" }],
       limit: 1,
     });
-    expect(sessions[0]?.budget_cap_usd_micro).toBe(raisedSessionBudgetUsdMicro(SESSION_BUDGET));
-    const project = await rt.store.project.mustGet(projectId);
-    expect(project.settings.session_cap_usd_micro).toBeUndefined();
+    expect(sessions[0]?.budget_cap_usd_micro).toBe(SESSION_BUDGET);
+    expect(done.budget_usd_micro).toBe(50_000_000);
+    // The run that continued it was told where the last one stopped, first.
+    const brief = fake.calls
+      .slice(before)
+      .map((c) => JSON.stringify(c.request.messages))
+      .find((m) => m.includes("Long report") && m.includes("Where the last run stopped"));
+    expect(brief, "a brief that starts from where the last run stopped").toBeDefined();
+    expect(brief).toContain("It left no note: it stopped at its budget before it could write one.");
+    expect(brief).not.toContain("It failed:");
     const after = (await inbox()).requests.find((r) => r.id === card.id) as Json | undefined;
-    expect(String(after?.outcome)).toMatch(/^Gave "Long report" one session of CHF 4\.00/);
+    expect(String(after?.outcome)).toBe('Gave "Long report" CHF 2.00 more: a session started.');
+    expect(await openCards()).toEqual([]);
   }, 60_000);
 });
 
-describe("the session-budget card's other options (C-36)", () => {
+describe("Cancel task on a paused task's card (budget-resume)", () => {
   const clock = new SimulatedClock("2026-11-03T09:00:00Z");
-  const home = mkdtempSync(join(tmpdir(), "fr-session-budget-options-"));
+  const home = mkdtempSync(join(tmpdir(), "fr-session-budget-cancel-"));
   let rt: RuntimeApp;
   let req: Awaited<ReturnType<typeof compose>>["req"];
   let projectId = "";
@@ -278,15 +292,21 @@ describe("the session-budget card's other options (C-36)", () => {
     await rt?.close();
   });
 
-  /** A task waiting on the card, as the runner leaves it after the second stop. */
-  const carded = async (title: string) => {
+  it("Cancel task names the task that will be stuck, cancels it and says what became of its work", async () => {
     const task = await rt.store.task.insert({
       project_id: projectId,
-      title,
-      outcome: `${title} is written`,
+      title: "Long appendix",
+      outcome: "appendix.md is written",
       status: "needs_human",
       budget_usd_micro: 50_000_000,
-      reason: `"${title}" needs more than a session's budget.`,
+      reason: '"Long appendix" paused at this session\'s budget of CHF 2.00.',
+    });
+    await rt.store.task.insert({
+      project_id: projectId,
+      title: "Index of the appendix",
+      outcome: "index.md is written",
+      status: "ready",
+      depends_on: [task.id],
     });
     const session = await rt.store.session.insert({
       agent_id: rt.agent.id,
@@ -296,67 +316,53 @@ describe("the session-budget card's other options (C-36)", () => {
       runner: "pc",
       budget_cap_usd_micro: SESSION_BUDGET,
     });
-    const { request } = await fileSessionBudgetCard({
+    const { request } = await fileBudgetStopCard({
       store: rt.store,
       task,
       session,
       humanId: rt.human.id,
       agentId: rt.agent.id,
-      runIds: [],
-      projectCapUsdMicro: SESSION_BUDGET,
+      runId: null,
+      stop: {
+        capUsdMicro: SESSION_BUDGET,
+        spentUsdMicro: 1_000_000,
+        source: "session",
+        specialist: "coder",
+        stoppedBy: "wrap_up",
+      },
+      handoff: {
+        stopped: "appendix.md has its first two parts.",
+        leftToDo: ["write part 3", "check the appendix"],
+        stoppedBy: "wrap_up",
+      },
+      now: clock.nowIso(),
       chfPerUsd: 0.8,
     });
-    expect(request.options).toEqual([...SESSION_BUDGET_STOP_OPTIONS]);
-    const shown = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+    expect(request.options).toEqual(["Continue (CHF 2.00 more)", "Cancel task"]);
+    const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (r) => r.id === request.id,
     ) as Json;
-    return { task, card: shown };
-  };
-
-  const click = async (card: Json, label: string) => {
-    const choice = (card.choices as Json[]).find((c) => c.label === label) as Json;
-    expect(choice, `the card offers ${label}`).toBeDefined();
+    // What it did and left, in its own words; Cancel names what will be stuck.
+    expect(card.body).toBe(
+      'Done: appendix.md has its first two parts; left: write part 3, check the appendix. "Index of the appendix" waits on it.',
+    );
+    const cancel = (card.choices as Json[]).find((c) => c.label === "Cancel task") as Json;
+    expect(cancel.explain).toBe(
+      'Drops it; its work is set aside until you reopen it; "Index of the appendix" will be stuck.',
+    );
+    expect(cancel.confirm).toBe(
+      'Cancel "Long appendix"? "Index of the appendix" waits on it and will be stuck.',
+    );
     const answered = await req(`/requests/${String(card.id)}/answer`, {
       method: "POST",
-      body: JSON.stringify({ version: card.version, answer: choice.label }),
+      body: JSON.stringify({ version: card.version, answer: cancel.label }),
     });
     expect(answered.status).toBe(200);
-  };
-
-  it("Raise session budget sets the project's budget per session to the amount it named", async () => {
-    const { task, card } = await carded("Long chapter");
-    await click(card, "Raise session budget");
-    const project = await rt.store.project.mustGet(projectId);
-    expect(project.settings.session_cap_usd_micro).toBe(
-      raisedSessionBudgetUsdMicro(SESSION_BUDGET),
-    );
-    // CHF 4.00 at the card's rate, for the Settings and budget words.
-    expect(project.settings.session_cap_chf_micro).toBe(4_000_000);
-    const t = await rt.store.task.mustGet(task.id);
-    expect(["ready", "claimed", "in_progress", "in_review", "done", "failed"]).toContain(t.status);
-    expect(t.budget_usd_micro).toBe(50_000_000);
-    // The session it started ends before the next case (nothing left running).
-    await waitFor(
-      async () => {
-        const running = await rt.store.session.list(
-          { project_id: projectId, status: "running" } as never,
-          { limit: 5 },
-        );
-        return running.length === 0 ? true : undefined;
-      },
-      async () =>
-        `the started session to end (task ${(await rt.store.task.mustGet(task.id)).status})`,
-    );
-    const started = await rt.store.session.list({ project_id: projectId } as never, {
-      orderBy: [{ column: "created_at", direction: "desc" }],
-      limit: 1,
-    });
-    expect(started[0]?.budget_cap_usd_micro).toBe(raisedSessionBudgetUsdMicro(SESSION_BUDGET));
-  }, 60_000);
-
-  it("Cancel task cancels it", async () => {
-    const { task, card } = await carded("Long appendix");
-    await click(card, "Cancel task");
     expect((await rt.store.task.mustGet(task.id)).status).toBe("cancelled");
+    const after = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (r) => r.id === request.id,
+    ) as Json;
+    // Nothing of it was in the folder (no run wrote there): it is only cancelled.
+    expect(after.outcome).toBe('"Long appendix" was cancelled.');
   }, 60_000);
 });

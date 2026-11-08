@@ -1134,8 +1134,8 @@ describe("Inbox", () => {
     });
   });
 
-  describe("a task stopped at its budget (live walk 2, B2)", () => {
-    /** The card the runner files when a run stops at the task's own budget, as `/inbox` serves it. */
+  describe("a task paused at its budget (budget-resume, ADR 0112 amended)", () => {
+    /** The card the runner files when a run pauses at the task's own budget, as `/inbox` serves it. */
     const budgetCard = () => ({
       id: "req_budget",
       projectId: "proj_atlas",
@@ -1144,22 +1144,25 @@ describe("Inbox", () => {
       taskTitle: "Decide the versioning scheme",
       sessionId: "sess_1",
       kind: "approval",
-      why: '"Decide the versioning scheme" stopped at its budget of CHF 0.01.',
+      why: '"Decide the versioning scheme" paused at its budget of CHF 0.40.',
       steps: [],
-      options: ["Raise the budget", "Cancel task"],
+      options: ["Continue (CHF 0.40 more)", "Cancel task"],
       blocking: true,
       risk: "medium" as const,
       changeCard: {
         key: "task:budget_stop",
         task_id: "task_3",
         task_title: "Decide the versioning scheme",
-        title: '"Decide the versioning scheme" stopped at its budget of CHF 0.01',
+        title: '"Decide the versioning scheme" paused at its budget of CHF 0.40',
         run_id: "run_1",
         source: "task_budget",
         specialist: "writer",
-        cap_usd_micro: 12_500,
-        spent_usd_micro: 12_500,
-        raise_to_usd_micro: 500_000,
+        cap_usd_micro: 500_000,
+        spent_usd_micro: 420_000,
+        continue_usd_micro: 500_000,
+        stopped_by: "wrap_up",
+        done: "versioning.md compares three schemes.",
+        left: ["pick one", "write the decision"],
         chf_per_usd: 0.8,
         applied_at: null,
       },
@@ -1174,8 +1177,9 @@ describe("Inbox", () => {
       const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
       if (t3) {
         t3.status = "needs_human";
-        t3.budget = money(12_500);
-        t3.reason = '"Decide the versioning scheme" stopped at its budget of CHF 0.01.';
+        t3.budget = money(500_000);
+        t3.actual = money(420_000);
+        t3.reason = '"Decide the versioning scheme" paused at its budget of CHF 0.40.';
       }
       return harness;
     };
@@ -1184,61 +1188,53 @@ describe("Inbox", () => {
         (r) => r.getAttribute("data-request-id") === "req_budget",
       ) as HTMLElement;
 
-    it("says in one sentence where it stopped, in CHF; Raise the budget says the amount and what happens", async () => {
+    it("names the limit in CHF, what it did and what is left, with Continue (CHF N more) and Cancel task", async () => {
       renderApp("/inbox", setUp());
       const card = await cardOf();
       expect(within(card).getByTestId("request-title")).toHaveTextContent(
-        '"Decide the versioning scheme" stopped at its budget of CHF 0.01',
+        '"Decide the versioning scheme" paused at its budget of CHF 0.40',
       );
+      // Before: "So far it spent CHF 0.34; its next step would have gone over the budget."
       expect(within(card).getByTestId("request-body")).toHaveTextContent(
-        "So far it spent CHF 0.01.",
+        "Done: versioning.md compares three schemes; left: pick one, write the decision.",
       );
       expect(card).not.toHaveTextContent(/\$|USD/);
       expect(
         within(card)
           .getAllByTestId("option")
           .map((b) => b.textContent),
-      ).toEqual(["Raise the budget", "Cancel task"]);
+      ).toEqual(["Continue (CHF 0.40 more)", "Cancel task"]);
       expect(
         within(card)
           .getAllByTestId("option-explain")
           .map((e) => e.textContent),
       ).toEqual([
-        "Sets its budget to CHF 0.40 and starts a session that tries again.",
-        "Drops it. Nothing waits on it.",
+        "Adds CHF 0.40 to its budget and starts a session that goes on from where it stopped.",
+        "Drops it; its work is set aside until you reopen it.",
       ]);
+      expect(within(card).queryByTestId("option-link")).toBeNull();
       expect(within(card).queryByTestId("free-text")).toBeNull();
     });
 
-    it("a run stopped before a step that would go over says so, not only what it spent", async () => {
-      const harness = setUp();
-      const card = harness.daemon.state.requests.find((r) => r.id === "req_budget");
-      if (card?.changeCard)
-        Object.assign(card.changeCard, { cap_usd_micro: 500_000, spent_usd_micro: 300_000 });
-      renderApp("/inbox", harness);
-      expect(within(await cardOf()).getByTestId("request-body")).toHaveTextContent(
-        "So far it spent CHF 0.24; its next step would have gone over the budget.",
-      );
-    });
-
-    it("Raise the budget sends the option; the card is replaced by its Done line and the task is ready with the budget raised", async () => {
+    it("Continue sends the option the card shows; its Done line says what it gave, the task is ready with that much more", async () => {
       const user = userEvent.setup();
       const harness = setUp();
       renderApp("/inbox", harness);
       const card = await cardOf();
-      await user.click(within(card).getByRole("button", { name: "Raise the budget" }));
+      await user.click(within(card).getByRole("button", { name: "Continue (CHF 0.40 more)" }));
       await waitFor(() =>
         expect(postedCalls(harness, "/requests/req_budget/answer")[0]?.body).toEqual({
           version: 1,
-          answer: "Raise the budget",
+          answer: "Continue (CHF 0.40 more)",
         }),
       );
       expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        'Done: Raised the budget of "Decide the versioning scheme" to CHF 0.40: a session started.',
+        'Done: Gave "Decide the versioning scheme" CHF 0.40 more: a session started.',
       );
       const task = harness.daemon.state.tasks.find((t) => t.id === "task_3");
       expect(task?.status).toBe("ready");
-      expect(task?.budget.usdMicro).toBe(500_000);
+      // What its budget covered (USD 0.50) and the USD 0.50 the button named.
+      expect(task?.budget.usdMicro).toBe(1_000_000);
     });
 
     it("on the Tasks tab the task reads Paused at its budget, with Answer, Edit and Cancel (ADR 0112)", async () => {
@@ -1249,7 +1245,8 @@ describe("Inbox", () => {
         key: "answer",
         // ADR 0112: a stop at a budget is a pause (before: "Needs your decision: its budget is used").
         label: "Paused at its budget",
-        detail: "Its card is in the Inbox: raise its budget, or cancel it.",
+        // budget-resume: what to do, in the words of its card (before: "raise its budget").
+        detail: "Continue or cancel in the Inbox.",
         blocker: { kind: "card", requestId: "req_budget", cardKind: "budget" },
       });
       expect(actionsFor("answer", view)).toEqual(["answer", "edit", "cancel"]);
@@ -1270,38 +1267,72 @@ describe("Inbox", () => {
       expect(within(drawer).getByTestId("drawer-action-edit")).toBeInTheDocument();
       expect(within(drawer).queryByTestId("drawer-action-resume")).toBeNull();
       // ADR 0112: it says it is paused at its budget (before, the word "Paused" was banned here,
-      // because it read "Paused" with Resume); never "Paused by you", never Resume.
+      // because it read "Paused" with Resume) and what to do; never "Paused by you", never Resume.
       expect(drawer).toHaveTextContent("Paused at its budget");
+      expect(drawer).toHaveTextContent("Continue or cancel in the Inbox.");
       expect(drawer).not.toHaveTextContent(/\$|USD|Paused by you|Press Resume/);
+    });
+
+    it("on the Tasks tab Cancel's dialog says its work is set aside, and Undo brings it back", async () => {
+      const user = userEvent.setup();
+      const harness = setUp();
+      renderApp("/projects/proj_atlas/tasks", harness);
+      const row = (await screen.findAllByTestId("task-row")).find(
+        (r) => r.getAttribute("data-task-id") === "task_3",
+      ) as HTMLElement;
+      expect(within(row).getByTestId("task-status")).toHaveTextContent("Paused at its budget");
+      expect(row).not.toHaveTextContent(/\$|USD|Paused by you|Press Resume/);
+      await user.click(within(row).getByTestId("action-cancel"));
+      const dialog = await screen.findByTestId("action-dialog");
+      // W6-7: one line of at most 100 characters after "Drops it.".
+      const explain = within(dialog).getByTestId("action-explain").textContent ?? "";
+      expect(explain).toBe(
+        "Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.",
+      );
+      expect(explain.length).toBeLessThanOrEqual(100);
+      await user.click(within(dialog).getByTestId("confirm-action"));
+      expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+        'Cancelled "Decide the versioning scheme": its work so far is set aside; Undo brings it back.',
+      );
+      await user.click(screen.getByTestId("task-moved-undo"));
+      await waitFor(() =>
+        expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe(
+          "needs_human",
+        ),
+      );
+      expect(await screen.findByText(/Its work so far is back\./)).toBeInTheDocument();
     });
   });
 
-  describe("a task a session's budget stopped twice (C-36)", () => {
-    /** The card the runner files after the second stop, as `/inbox` serves it. */
-    const sessionCard = () => ({
-      id: "req_session_budget",
+  describe("a task paused at this month's cap (budget-resume)", () => {
+    const monthCard = () => ({
+      id: "req_month",
       projectId: "proj_atlas",
       projectName: "Atlas",
       taskId: "task_3",
       taskTitle: "Decide the versioning scheme",
       sessionId: "sess_1",
       kind: "approval",
-      why: '"Decide the versioning scheme" needs more than a session\'s budget. Two sessions of CHF 4.00 stopped while it ran.',
+      why: '"Decide the versioning scheme" paused at this month\'s cap of CHF 150.00.',
       steps: [],
-      options: ["Raise session budget", "Raise its budget", "Cancel task"],
+      options: ["Cancel task"],
       blocking: true,
       risk: "medium" as const,
       changeCard: {
         key: "task:budget_stop",
-        source: "session_budget",
         task_id: "task_3",
         task_title: "Decide the versioning scheme",
-        title: '"Decide the versioning scheme" needs more than a session\'s budget',
-        run_ids: ["run_1", "run_2"],
-        session_cap_usd_micro: 5_000_000,
-        project_cap_usd_micro: 5_000_000,
-        spent_usd_micro: 9_000_000,
-        raise_to_usd_micro: 10_000_000,
+        title: '"Decide the versioning scheme" paused at this month\'s cap of CHF 150.00',
+        run_id: "run_1",
+        source: "month",
+        specialist: "writer",
+        cap_usd_micro: 187_500_000,
+        spent_usd_micro: 420_000,
+        continue_usd_micro: null,
+        stopped_by: "budget",
+        done: "",
+        left: [],
+        resets_at: "2026-12-01T00:00:00.000Z",
         chf_per_usd: 0.8,
         applied_at: null,
       },
@@ -1310,94 +1341,33 @@ describe("Inbox", () => {
       createdAt: "2026-11-02T09:00:00.000Z",
       version: 1,
     });
-    const setUp = () => {
-      const harness = createHarness();
-      harness.daemon.state.requests.unshift(sessionCard());
-      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
-      if (t3) {
-        t3.status = "needs_human";
-        t3.reason = '"Decide the versioning scheme" needs more than a session\'s budget.';
-      }
-      return harness;
-    };
-    const cardOf = async () =>
-      (await screen.findAllByTestId("request")).find(
-        (r) => r.getAttribute("data-request-id") === "req_session_budget",
-      ) as HTMLElement;
 
-    it("says what stopped it in CHF, with three buttons and what each does", async () => {
-      renderApp("/inbox", setUp());
-      const card = await cardOf();
-      expect(within(card).getByTestId("request-title")).toHaveTextContent(
-        '"Decide the versioning scheme" needs more than a session\'s budget',
-      );
+    it("offers no Continue: it says how it goes on by itself, links Settings and offers Cancel task", async () => {
+      // The review of budget-stop: Raise the budget started a session that stopped at once at the
+      // same cap and filed the same card again.
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(monthCard());
+      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+      if (t3) t3.status = "needs_human";
+      renderApp("/inbox", harness);
+      const card = (await screen.findAllByTestId("request")).find(
+        (r) => r.getAttribute("data-request-id") === "req_month",
+      ) as HTMLElement;
       expect(within(card).getByTestId("request-body")).toHaveTextContent(
-        "Two sessions of CHF 4.00 stopped while it ran; it spent CHF 7.20 so far.",
+        "It stopped before it could say where it stood; its work so far is kept. It goes on by itself once you raise the monthly cap in Settings, or on 1 December.",
       );
-      expect(card).not.toHaveTextContent(/\$|USD/);
       expect(
         within(card)
           .getAllByTestId("option")
           .map((b) => b.textContent),
-      ).toEqual(["Raise session budget", "Raise its budget", "Cancel task"]);
-      expect(
-        within(card)
-          .getAllByTestId("option-explain")
-          .map((e) => e.textContent),
-      ).toEqual([
-        "Sets this project's budget per session to CHF 8.00 and starts a session that tries again.",
-        "Starts one session of CHF 8.00 for it now; later sessions keep CHF 4.00.",
-        "Drops it. Nothing waits on it.",
-      ]);
-    });
-
-    it("Raise session budget sends the option; the Done line says the new budget per session", async () => {
-      const user = userEvent.setup();
-      const harness = setUp();
-      renderApp("/inbox", harness);
-      const card = await cardOf();
-      await user.click(within(card).getByRole("button", { name: "Raise session budget" }));
-      await waitFor(() =>
-        expect(postedCalls(harness, "/requests/req_session_budget/answer")[0]?.body).toEqual({
-          version: 1,
-          answer: "Raise session budget",
-        }),
-      );
-      expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        "Done: Raised this project's budget per session to CHF 8.00: a session started.",
-      );
-      expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe("ready");
-    });
-
-    it("Raise its budget gives the task one session of the named amount on top of what it spent", async () => {
-      const user = userEvent.setup();
-      const harness = setUp();
-      const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
-      const spent = t3?.actual.usdMicro ?? 0;
-      renderApp("/inbox", harness);
-      const card = await cardOf();
-      await user.click(within(card).getByRole("button", { name: "Raise its budget" }));
-      await waitFor(() =>
-        expect(postedCalls(harness, "/requests/req_session_budget/answer")[0]?.body).toEqual({
-          version: 1,
-          answer: "Raise its budget",
-        }),
-      );
-      await screen.findByTestId("done-line");
-      const after = harness.daemon.state.tasks.find((t) => t.id === "task_3");
-      expect(after?.status).toBe("ready");
-      // As the daemon: what it spent plus one session of USD 10 (CHF 8.00), not USD 10 alone.
-      expect(after?.budget.usdMicro).toBe(Math.max(t3?.budget.usdMicro ?? 0, spent + 10_000_000));
-      expect(after?.reason).toBe("you gave it one session of CHF 8.00 in the Inbox");
-    });
-
-    it("on the Tasks tab it reads Needs your decision: a session's budget is too small", async () => {
-      const harness = setUp();
+      ).toEqual(["Cancel task"]);
+      const link = within(card).getByTestId("option-link");
+      expect(link).toHaveTextContent("Open Settings");
+      expect(link).toHaveAttribute("href", "/settings");
       const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
       expect(view?.display).toMatchObject({
-        key: "answer",
-        label: "Needs your decision: a session's budget is too small",
-        blocker: { kind: "card", requestId: "req_session_budget", cardKind: "budget" },
+        label: "Paused at this month's cap",
+        detail: "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.",
       });
     });
   });

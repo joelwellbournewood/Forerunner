@@ -248,6 +248,13 @@ export interface CommandPorts {
    */
   bringBackWork?(taskId: string): Promise<"restored" | "missing" | "conflict">;
   /**
+   * The cancel of a task that is not running (a paused one, budget-resume): its work in
+   * progress is set aside (Undo and Reopen bring it back with `bringBackWork`). `files`: what was
+   * taken out; `kept`: why it stays ('"Y" built on it', in a project's folder that another task
+   * built on since). Absent: nothing is set aside.
+   */
+  setAsideWork?(taskId: string): Promise<{ files: string[]; kept: string | null }>;
+  /**
    * Lifts Stop all ("Allow sessions again", design §3.1): new sessions may start. Answers
    * whether sessions were stopped. Absent: `session.resume` is refused as unavailable.
    */
