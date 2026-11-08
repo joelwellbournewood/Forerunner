@@ -126,7 +126,8 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
   (not in Local only) that the repository's `.gitignore` leaves out and that a merge then adds
   stops the copy's checkout rather than being replaced: the copy keeps its old time until the
   person moves the file, and the refresh logs it (the same as a tracked file the person changed
-  that the merge changes too). The Files tab does not say why the time stopped moving. (Until the
+  that the merge changes too). The Files tab does not say why the time stopped moving (it does
+  since the leftovers7-merge2 amendment at the end). (Until the
   review of merged-copy this said a repository that starts tracking a folder named Local only
   "keeps the person's folder until its checkout conflicts": it did not, git replaced the
   person's ignored files without a conflict. Decision 4 now keeps them.)
@@ -232,3 +233,16 @@ dependency first, so this needs a merge made on GitHub.
   worktree it reaches both with the rules above.
 - **Rely on `.git/info/exclude` alone**: an agent's `git add -f` or own commit uploads it.
 - **Link the person's own working folder** (the owner said no).
+
+## Amendment: the copy says when it stopped following ('leftovers7-merge2', 2026-11-08)
+
+When this computer's copy cannot be brought to what is merged (a tracked file the person changed
+that a merge changes too, a file of theirs in the way of a merged one, on Windows a path in
+another letter case), the copy's record keeps why (`stopped`: `changed`, `in_the_way` or `other`,
+with the files the refusal named) until a refresh succeeds, and `GET /projects/:id/files` carries
+it (`copy.stopped`, with one line). The Files tab says "This computer's copy of o/r, not updated
+since 14:05." and the line ("You changed README.md in this copy, and a merge changed it too: move
+your change out of the way and the copy follows again.") instead of "As merged on GitHub,
+updated 14:05" with a time that no longer moves. The person's files are still never touched: the
+copy waits for them. A fetch that fails (GitHub not answering) is not a copy that stopped
+following: the next poll fetches again, and nothing is said.

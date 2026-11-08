@@ -2923,7 +2923,9 @@ pass made the full call for every waiting record, every minute (a token, an audi
 five GitHub calls each). **A merge the app made by itself is an Update**: one Inbox message
 (`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
 for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
-says it) and the person's own click (answered where they pressed it) add none. While Stop all
+says it) and the person's own click (answered where they pressed it) add none; the Update is
+followed by `onMergedLater` listeners, which compose binds to one `pr_merged` notification
+(leftovers7-merge2, `notifications.md`). While Stop all
 holds the agent (`stopped`, the daemon's `kill.isFrozen`) the retry pass tries nothing and writes
 no row; a stop or an unexpected error during an attempt puts the record back to
 `waiting_checks`, never `merging` for good. A record
@@ -3190,21 +3192,53 @@ it: `request-words.ts` titles it '"Add footer" was rebuilt without pull request 
 not be rebuilt without ...'); one already open for the task takes the new sentence instead of a
 second card. Nothing merges a `left_to_you` record unattended (the retry takes `waiting_checks`
 and `queued` only), in any mode. `sweep(projectId)` is the watcher's `onDefaultBranchHead`: it
-retries the rebuilds that could not run (`busy`, `held`, `failed`, kept in memory) and drops a
-dependency that is no longer done (redone, cancelled) from the done tasks waiting for it (store
-reads and local git only, unless a rebuild is due). `mergePort(merge)` is the runner's merge port:
+retries the rebuilds that could not run (`busy`, `held`, `failed`) and drops a dependency that is
+no longer done (redone, cancelled) from the done tasks waiting for it (store reads and local git
+only, unless a rebuild is due). **Owed rebuilds survive a restart** (R-owed, leftovers7-merge2):
+`rebuildFor` marks each done dependent's merge record (`merge_record.rebuild_owed_for`, migration
+0008, `MergeRecordRepo.oweRebuild` / `owedRebuilds`) before the rebuild starts, and settles it from
+the outcome: `busy`/`held`/`failed` stays owed, a rebuild or a conflict read every dependency the
+branch holds and clears it, "unchanged" clears only what was owed for this dependency (a record
+that owes one keeps it when a second dependency changes). `sweep` reads the owed records at every
+poll, also the first after a restart (A merged and known by then, so nothing else would catch B),
+and clears those whose task is no longer done; an accept (`pin`) keeps the mark. A task without a
+record (accepted before ADR 0111) keeps the old in-memory fallback. While a record owes a rebuild,
+nothing merges its pull request (`ReviewedPrMerge`, below). **The conflict notice** (R-conflict):
+`pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
+poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
+the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no
+approval) and whose pull request GitHub says does not merge (`mergeable === false`): the record
+goes `left_to_you` with `last_outcome` `conflict` and `conflictNoticeSentence` ("#8 conflicts with
+main in index.html: resolve the conflict on GitHub, or redo the task.", the files from
+`PrTaskExecutor.conflictsWithBase`), and one card (the left-open card with `notice: "conflict"`,
+options Redo and Leave it open, `REBUILD_CARD_OPTIONS.conflict`; an open merge card takes the new
+words). `last_outcome` keeps it from being said twice, across polls and restarts; a record that
+owes a rebuild, or whose rebuild conflicted, is not noticed (that comes first). Once GitHub says
+it merges cleanly again, the record goes back to `left_to_you` with no sentence
+(`conflict_resolved`), the Overview offers Merge again and an open conflict card is withdrawn. The
+Overview's row is blocked with the sentence through `pull-requests.ts`' `NO_CLICK`. No GitHub call
+is added: the watcher reads each open pull request every poll already; `sweep` answers true when a
+notice was given or taken back, and compose sends the project event then. `mergePort(merge)` is the runner's merge port:
 before an accepted task's merge it rebuilds the branch when what it holds went away while it ran
 or was reviewed; a void, a changed own change or a conflict pins the record at the reviewed
 commit and leaves it to the person (outcome `head_moved` or `conflict`, with its card). `RuntimeApp.dependentBranches`
-is the instance. Known gaps: the owed rebuilds are in memory (a restart in the window between a
-merge or close the watcher saw and a rebuild a busy worktree postponed relies on the run's own
-rebuild); a merge already under way when a dependency closes can still finish before the rebuild
-pushes. Tests: `dependent-branches-merge.test.ts` (the runner, the merge step, the watcher and
+is the instance. **A rebuild never races a merge** (R-lock, leftovers7-merge2): the merge step
+takes the task folder's lock (`inWorktree`, `capabilities.md`) for every git step there, so a
+rebuild that finds the folder busy is owed; the merge step does not claim a record that owes a
+rebuild, and asks again right before it moves the record to a pushed head and right before
+GitHub's merge (`onNewHead`, `stillMayMerge`: false when the record moved or owes a rebuild, and
+the record goes back to `queued` as approved); a record someone else moved while the call ran
+keeps that word whatever GitHub answered (GitHub merges only the head the call names, so a rebuild
+pushed after the last look makes it refuse). **A chain whose middle could not be rebuilt**
+(R-chain) follows the middle once it is (`HeldDependency.rebuilt`, `capabilities.md`). Tests: `dependent-branches-merge.test.ts` (the runner, the merge step, the watcher and
 `DependentBranches` composed as the daemon composes them, against the fake git host: a chain of
 three merged in order with merge commits, a squash on GitHub, a close, a redo, a cancel, a
 conflicting rebuild, a close during the review, a redo's record, a dependency merged inside its
-dependent's merge, two conflicting dependencies' card), `dependent-branches-restart.test.ts`
-(the runtime composed twice on one home: a squash while the app was closed).
+dependent's merge commit, two conflicting dependencies' card; leftovers7-merge2: a merge held in
+its git or at GitHub's merge while the dependency closes, a chain of three with a busy middle, the
+conflict notice), `dependent-branches-restart.test.ts` (the runtime composed twice on one home: a
+squash while the app was closed; a squash seen while the dependent's folder was busy, rebuilt at
+the first poll after the restart; a conflict notice said once across a restart).
 
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
@@ -5996,7 +6030,11 @@ default branch as the host has it after every merge, not only at a session's end
   folder/tracked/none). With `head` and `base` (the watcher's read) and the copy already there
   on that branch, nothing is fetched and the host is not asked (no `repoFor`, which calls
   `getRepo`); the record is written as checked. A checkout that fails (a
-  file the person changed in the copy that the merge changed too) keeps the old `updatedAt`.
+  file the person changed in the copy that the merge changed too) keeps the old `updatedAt`, and
+  since leftovers7-merge2 (R-copystuck) says why: `backToBase` returns `copyStoppedOf(error)`
+  (`changed` for local changes the checkout would overwrite, `in_the_way` for untracked or ignored
+  files it would overwrite, else `other`, with the files git named), kept as the record's
+  `stopped` until a refresh succeeds; the person's files are never touched.
 - Every checkout in the copy (`backToBase`, and `checkout`'s switch to a docs branch) goes
   through `switchCopy` (review of merged-copy, bench W8): git replaces ignored files without a
   word, and a repository that started tracking `Local only/notes.txt` (a collaborator's commit
@@ -6033,7 +6071,15 @@ default branch as the host has it after every merge, not only at a session's end
   folder, line }`, null for a project without a repository; read from the record, no git): the
   Files tab says "This computer's copy of <repo>. As merged on GitHub, updated 14:05." and shows
   Local only with "Never uploaded. Agents can read and change it." and its own Open folder, or
-  "No Local only folder here: this repository already has a folder of that name.".
+  "No Local only folder here: this repository already has a folder of that name.". While the
+  copy cannot follow (R-copystuck), `copy.stopped` carries `reason`, `files` and `line`
+  (`copyStoppedLine`: "You changed README.md in this copy, and a merge changed it too: move your
+  change out of the way and the copy follows again.", "notes.md in this copy is in the way of a
+  merged file: move it and the copy follows again.", "Git could not bring it to what is merged;
+  it tries again at the next merge."), absent otherwise; the Files tab then says "This
+  computer's copy of <repo>, not updated since 14:05." and the line, never "As merged". Tests:
+  `loop-docs.test.ts` "a copy that cannot follow a merge says why", `real-daemon.test.ts` and
+  `project-overview.test.tsx` (R-copystuck).
 
 **Local only around a run** (`@forerunner/capabilities` `local-only.ts`, capabilities.md):
 `PrTaskExecutorDeps.localOnlyFor` is `ProjectDocs.localOnlyFolder`; the PR executor copies the

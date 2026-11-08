@@ -245,11 +245,25 @@ with their milestone.
   rebuild that kept the task's own change records `refs/forerunner/rebuilt/<old head>` (the new
   head) in its worktree, and a dependent holding the old head follows it (`rebuiltTo`: kept,
   `open`) instead of reading it as redone (a 3-task chain on the bench, 2026-11-03, voided the
-  third task before this). Each: the branch as the host has it, rebuilt,
+  third task before this). Such a kept dependency is marked `rebuilt` (`HeldDependency.rebuilt`)
+  and the dependent is rebuilt onto its new head too (R-chain, leftovers7-merge2: when the
+  middle of a chain could not be rebuilt at first, the third had been rebuilt onto the middle's
+  old head, which still held the first task's pre-squash commits, and nothing rebuilt it again);
+  `rebuildDependents` passes each task it rebuilt in the pass on to the tasks after it
+  (`rebuildTask(task, hooks, onlyIfHolding)` takes one id or several). Each: the branch as the
+  host has it, rebuilt,
   `hooks.beforePush(rebuild, pr)` (the runtime settles the merge record there), then a push
   with a lease (never the default branch) and the "Builds on" line updated. A worktree a run or
   another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one with
-  uncommitted changes. `mergeMethodOf(task, mergeSha, head)` reads how a PR was merged on the
+  uncommitted changes. **One lock per task folder** (`githost/worktree-lock.ts`, exported:
+  `inWorktree` waits, `tryWorktree` skips a busy folder, `worktreeBusy`; keyed by the resolved
+  path, in this process): every git step in a task's worktree takes it, the PR executor's run,
+  a resolved conflict, a rebuild, setting work aside, and since leftovers7-merge2 (R-lock) the
+  runtime's merge step too (`loop/merge.ts`: bringing the base in and pushing it, reading the
+  reviewed commit, the files of a conflict), so a rebuild and a merge never interleave in one
+  folder. `conflictsWithBase(task)` (R-conflict) reads, in the task's worktree under the lock,
+  the files its branch on the host conflicts in with the base (null when busy or gone).
+  `mergeMethodOf(task, mergeSha, head)` reads how a PR was merged on the
   host (two parents: `merge`; one: `rebase` when the PR had several commits and the last one is
   repeated, else `squash`). A redo of a task whose PR was merged or closed (none open) pushes to
   a fresh branch (`freshBranch`: the old name with `-r2`, `-r3`, ... that no host branch or PR
