@@ -129,7 +129,17 @@ with their milestone.
   consequence: a tokenless clone of a private repository no longer borrows the human's saved
   credentials; it fails with `provider_auth` "no token configured for <origin>".
   `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=""`, `SSH_ASKPASS=""` and `GCM_INTERACTIVE=never`
-  keep it from prompting. Error output is redacted (`redactToken()` removes the token raw and
+  keep it from prompting. Every command runs with `-c core.autocrlf=false -c core.safecrlf=false`
+  (files byte for byte as committed, on both platforms), and every folder our git makes says the
+  line endings in its own config (R-copystuck, ADR 0113 amendment of 2026-11-09): `clone` passes
+  `--config core.autocrlf=false`, `init` and `pinLineEndings()` write `core.autocrlf=false` into
+  `.git/config` (`pinLineEndings` reads it first with `--type=bool` and writes nothing when it
+  already says so; true when it wrote). So any other git used in the folder (the person's own in
+  this computer's copy or their project's folder, an agent's in its worktree) reads and writes
+  files as ours does: the folder's config beats Git for Windows' system `core.autocrlf=true`,
+  which wrote a file the person put back with CRLF that ours then read as changed. Only
+  `core.autocrlf` is written: it is the one setting of ours that changes the bytes read or
+  written; `core.safecrlf` only warns or refuses on the person's own `git add`. Error output is redacted (`redactToken()` removes the token raw and
   in its Basic form). git missing
   from PATH is `unavailable`, a spawn failure `provider_error`, a command the runner killed at
   `timeoutMs` (default 5 minutes) `timeout` naming the limit. `GitOpsOptions.runner` swaps the
@@ -295,7 +305,9 @@ with their milestone.
   link), kept as a local git repository: `inWorkspace` writes a `.gitignore` for caches when the
   folder has none (`ensureWorkspaceGitignore`, `WORKSPACE_GITIGNORE`: `__pycache__/`, `*.pyc`,
   `node_modules/`, `.venv/`, ...; live, 2026-11-02, a Python run's bytecode was staged into the
-  project), commits what is there as the baseline
+  project), says our line endings in the folder's git config (`pinLineEndings`, for a folder
+  made before `init` did; a failure is logged and the run goes on; R-copystuck), commits what is
+  there as the baseline
   ("Workspace before ..."; an empty first commit for a fresh folder), runs the inner executor
   with that folder as its worktree, stages the run's change (`GitOps.stageAll`) and returns the
   folder as `worktree` with the staged files as `changedFiles`, so the critic's `git diff HEAD`
@@ -769,7 +781,14 @@ non-http origins refused), a killed command reported as `timeout` with the limit
 `remoteDefaultBranch()`, `remoteUrl()` and `localBranches(prefix)`, no force-push of the
 default branch, redacted errors. The recording runner also pins the auth shape: a Basic
 `x-access-token` header after an empty reset entry, no `bearer`, no raw token in argv or env,
-`-c credential.helper=` before the subcommand with or without a token.
+`-c credential.helper=` before the subcommand with or without a token. Line endings
+(R-copystuck): a clone and an `init` say `core.autocrlf=false` in their own config, the
+person's git set up as Git for Windows' default (`core.autocrlf=true` in a `GIT_CONFIG_GLOBAL`
+file, never a `-c`, which would beat the folder's config) puts a file back as committed and our
+`status` reads it unchanged, and `pinLineEndings` writes a folder made before (no setting, or
+`true`) once and leaves `.git/config` untouched when it already says so. `pr-executor.test.ts`
+"in a project's folder, the person's own git with Git for Windows' default puts a file back as
+ours reads it" does the same in a project's folder, one made before the fix included.
 
 `git-auth.integration.test.ts` runs `GitOps` against a real `git http-backend` behind a small
 Node server that, like GitHub's git endpoint, takes only Basic with the right token and answers

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
@@ -682,6 +682,86 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     expect(after?.stopped ?? null).toBeNull();
     expect(after?.updatedAt).toBe(w.clock.nowIso());
     expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes, merged\n");
+    await w.close();
+  });
+
+  it("the copy's own git config says core.autocrlf=false after a refresh, also a copy cloned before it did; the person's own git with Git for Windows' default then puts a file back as ours reads it, and the copy follows again (R-copystuck, Windows)", async () => {
+    // Desktop app run 42525106539 (Windows): the person put README.md back with their own git,
+    // which Git for Windows sets up with core.autocrlf=true (its system config), so it wrote the
+    // file with CRLF; our git (`-c core.autocrlf=false`) read that as still changed, and the copy
+    // never followed a merge again. The person's git here is set up the same way, through a
+    // global config (a `-c` would beat the folder's own config, which the fix relies on).
+    const w = await loopWorld();
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    await docs.refreshCopy(project);
+    const clone = join(root, "worktrees", w.project);
+    const configFile = join(clone, ".git", "config");
+    const setting = async () =>
+      (
+        await run(["git", "-C", clone, "config", "--local", "--get", "core.autocrlf"], {
+          allowFailure: true,
+        })
+      ).stdout.trim();
+    expect(await setting()).toBe("false");
+    // A copy cloned before the fix: its config does not say so.
+    await run(["git", "-C", clone, "config", "--local", "--unset", "core.autocrlf"]);
+    expect(await setting()).toBe("");
+    const windowsGit = join(root, "git-for-windows.gitconfig");
+    writeFileSync(windowsGit, "[core]\n\tautocrlf = true\n");
+    const persons = (args: string[]) =>
+      run(["git", "-C", clone, ...args], {
+        env: { ...process.env, GIT_CONFIG_GLOBAL: windowsGit },
+      });
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    const merge = async (file: string, text: string) => {
+      writeFileSync(join(root, "seed", file), text);
+      await seed.commitAll(`merged ${file}`);
+      await seed.push("main");
+      await w.clock.advance(60_000);
+      return docs.refreshCopy(project, { head: await seed.headSha(), base: "main" });
+    };
+    // The person's editor saves README.md with CRLF and nothing else changed; a merge changes
+    // README.md. A difference in line endings alone is still the person's change (as before):
+    // the copy never overwrites it, says so, and now the person's own git says so too.
+    writeFileSync(join(clone, "README.md"), "# sample\r\n");
+    await merge("README.md", "# sample, merged\n");
+    const stuck = docs.copyView(project)?.stopped;
+    expect(stuck).toEqual({
+      reason: "changed",
+      files: ["README.md"],
+      line: "You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.",
+    });
+    expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# sample\r\n");
+    // That refresh wrote the setting into the copy cloned before the fix.
+    expect(await setting()).toBe("false");
+    expect((await persons(["status", "--porcelain"])).stdout).toBe(" M README.md\n");
+    // The person moves the change away with their own git: the file as committed, LF.
+    await persons(["checkout", "--", "README.md"]);
+    expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# sample\n");
+    // The next refresh brings the copy to what is merged.
+    expect(await docs.refreshCopy(project, { head: await seed.headSha(), base: "main" })).toEqual({
+      refreshed: true,
+    });
+    expect(docs.copyView(project)?.stopped ?? null).toBeNull();
+    expect(await readFile(join(clone, "README.md"), "utf8")).toBe("# sample, merged\n");
+    // Across a restart (a new ProjectDocs over the same folders): the watcher's read of the head
+    // the copy has (every poll) leaves the config file as it is, not written again; a full
+    // refresh keeps the setting once (its `checkout -B` rewrites the branch's tracking lines, so
+    // only the content is compared there).
+    const config = await readFile(configFile, "utf8");
+    expect(config.match(/autocrlf/g)).toHaveLength(1);
+    const written = statSync(configFile).mtimeMs;
+    const { docs: restarted } = await docsFor(w, root, bare);
+    expect(
+      await restarted.refreshCopy(project, { head: await seed.headSha(), base: "main" }),
+    ).toEqual({ refreshed: false });
+    expect(statSync(configFile).mtimeMs).toBe(written);
+    expect(await readFile(configFile, "utf8")).toBe(config);
+    await restarted.refreshCopy(project);
+    expect(await readFile(configFile, "utf8")).toBe(config);
+    expect(await setting()).toBe("false");
     await w.close();
   });
 

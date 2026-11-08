@@ -2020,6 +2020,13 @@ export class PrTaskExecutor implements TaskExecutor {
     ensureWorkspaceGitignore(dir);
     // W6-26: a review's try folder a daemon that died mid-review left is never committed.
     excludeNeverPushed(dir, [TRY_DIR]);
+    // R-copystuck: the person's own git in their project's folder (Git for Windows: CRLF) puts a
+    // file back as ours reads it; `init` says so in a new folder, this in one made before.
+    await git.pinLineEndings().catch((e: unknown) =>
+      this.logger.warn("the folder's line endings were not set in its git config", {
+        error: errorMessage(e),
+      }),
+    );
     const before = `Workspace before "${task.title}" (task ${task.id})`;
     // budget-resume: the task's own work in progress (its pause's commit), while no later task
     // built on it, stays out of this snapshot: its files go back into this run's change set, so

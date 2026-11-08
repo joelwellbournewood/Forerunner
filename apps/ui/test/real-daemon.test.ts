@@ -9618,6 +9618,16 @@ describe("the UI client against the real daemon: Open this version and Take this
     // Not the copy, and no Local only in it.
     expect(folder).not.toBe(rt.docs.copyDir(project.id));
     expect(existsSync(join(folder, "Local only"))).toBe(false);
+    // The person's own git there, set up as Git for Windows sets it up (core.autocrlf=true; here
+    // in a global config), reads the copy's config, which says our line endings (R-copystuck):
+    // a file they change and put back is as merging would give it, not rewritten with CRLF.
+    const windowsGit = join(work, "git-for-windows.gitconfig");
+    writeFileSync(windowsGit, "[core]\n\tautocrlf = true\n");
+    writeFileSync(join(folder, "cart.ts"), "// tried something\n");
+    await run(["git", "-C", folder, "checkout", "--", "cart.ts"], {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: windowsGit },
+    });
+    expect(readFileSync(join(folder, "cart.ts"), "utf8")).toBe('export const f = "cart.ts";\n');
     // The row carries it, read again (after a reload too).
     const after = await client.projectPullRequests(project.id);
     expect(after.waiting.find((w) => w.number === a.pr.number)?.preview).toEqual({
@@ -10763,8 +10773,16 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
       line: "You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.",
     });
     expect(stuck.copy?.updatedAt).toBe(first.copy?.updatedAt);
-    // Moved away (put back as it was): the next poll brings the copy to what is merged.
-    await run(["git", "-C", folder, "checkout", "--", "README.md"]);
+    // Moved away (put back as it was) with the person's own git, set up as Git for Windows sets
+    // it up by default (`core.autocrlf=true`, there in its system config; here in a global one,
+    // so every machine runs it so): the next poll brings the copy to what is merged. Before, on
+    // Windows, their git wrote the file back with CRLF, the daemon's git (`autocrlf=false`) read
+    // that as still changed, and the copy never followed again (Desktop app run 42525106539).
+    const windowsGit = join(work, "git-for-windows.gitconfig");
+    writeFileSync(windowsGit, "[core]\n\tautocrlf = true\n");
+    await run(["git", "-C", folder, "checkout", "--", "README.md"], {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: windowsGit },
+    });
     await rt.githostWatcher?.pollOnce();
     const after = await client.projectFiles(project.id);
     expect(after.copy?.stopped).toBeUndefined();

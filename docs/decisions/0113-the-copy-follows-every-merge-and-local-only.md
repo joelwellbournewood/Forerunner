@@ -246,3 +246,31 @@ your change out of the way and the copy follows again.") instead of "As merged o
 updated 14:05" with a time that no longer moves. The person's files are still never touched: the
 copy waits for them. A fetch that fails (GitHub not answering) is not a copy that stopped
 following: the next poll fetches again, and nothing is said.
+
+## Amendment: the copy's git says our line endings (R-copystuck on Windows, 2026-11-09)
+
+This computer's copy is a folder the person uses with their own tools, so a git used there reads
+and writes files as Forerunner's does: the copy's own config (`.git/config`) says
+`core.autocrlf=false`, the setting every git command of Forerunner runs with. Git for Windows
+sets `core.autocrlf=true` in its system config by default; a repository's own config beats it.
+Before, a person who did what the Files line asks ("move your change out of the way") by putting
+the file back with their own git got it written with CRLF line endings, Forerunner's git read the
+file as still changed, and the copy never followed a merge again (the Desktop app workflow's
+Windows run 42525106539 failed on exactly this).
+
+- Every clone and every new repository Forerunner's git makes carries the setting from the start
+  (`GitOps.clone`, `GitOps.init`): the copy, a project's folder, a task's worktree. A copy cloned
+  before gets it at its next refresh, watcher check or docs write, and a project's folder at its
+  next run (`GitOps.pinLineEndings`, which writes nothing when the config already says so). A
+  pull request's preview is a working folder of the copy's clone and reads the same config.
+- Only `core.autocrlf` is written: it is the one setting of Forerunner's git that changes the
+  bytes read from or written to files. A repository's own `.gitattributes` still applies to both.
+- A file whose only difference is its line endings (an editor that saved it with CRLF) still
+  counts as the person's change: the copy keeps it and the Files line names it, and the person's
+  own `git status` there now says the same. A copy that stopped because of a CRLF restore made
+  before this change stays stopped until the person puts the file back once more.
+- Alternatives considered: dropping `-c core.autocrlf=false` from Forerunner's git (every clone
+  on Windows would then hold CRLF files the agents, the critic's diffs and the Local only copy
+  compare byte for byte); `* -text` in `.git/info/attributes` (it would override the
+  repository's own `.gitattributes`, which Forerunner's git honours); treating a CRLF-only
+  difference as no change (the copy would overwrite what the person's editor saved).

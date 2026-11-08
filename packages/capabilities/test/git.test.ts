@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -662,5 +663,62 @@ describe("GitOps", { timeout: 120_000 }, () => {
       files: ["guide.md"],
     });
     expect(existsSync(join(wt, "guide.md"))).toBe(false);
+  });
+
+  it("a clone and a new repository say our line endings in their own config, so the person's git with Git for Windows' default puts a file back as ours reads it; pinLineEndings writes a folder made before once (R-copystuck)", async () => {
+    // Desktop app run 42525106539 (Windows): the person's git (core.autocrlf=true, Git for
+    // Windows' system default) put a file back in this computer's copy with CRLF, and ours
+    // (`-c core.autocrlf=false`) read it as still changed. Their git is set up the same way here,
+    // through a global config: a `-c` would beat the folder's own config.
+    const { url } = await bareRepo();
+    const root = mkdtempSync(join(tmpdir(), "fr-git-eol-"));
+    const windowsGit = join(root, "git-for-windows.gitconfig");
+    writeFileSync(windowsGit, "[core]\n\tautocrlf = true\n");
+    const persons = (cwd: string, ...args: string[]) =>
+      run(["git", ...args], { cwd, env: { ...process.env, GIT_CONFIG_GLOBAL: windowsGit } });
+    const setting = async (cwd: string) =>
+      (
+        await run(["git", "config", "--local", "--get", "core.autocrlf"], {
+          cwd,
+          allowFailure: true,
+        })
+      ).stdout.trim();
+    const dir = join(root, "copy");
+    const copy = new GitOps({ cwd: dir, identity });
+    await copy.clone(url);
+    expect(await setting(dir)).toBe("false");
+    const folder = join(root, "folder");
+    await new GitOps({ cwd: folder, identity }).init("main");
+    expect(await setting(folder)).toBe("false");
+    // The person changes README.md and puts it back with their own git: as committed, and ours
+    // reads nothing changed.
+    writeFileSync(join(dir, "README.md"), "# mine\n");
+    await persons(dir, "checkout", "--", "README.md");
+    expect(readFileSync(join(dir, "README.md"), "utf8")).toBe("# seed\n");
+    expect((await copy.status()).files).toEqual([]);
+    // Already said: the config file is not written again.
+    const config = join(dir, ".git", "config");
+    const text = readFileSync(config, "utf8");
+    const at = statSync(config).mtimeMs;
+    expect(await copy.pinLineEndings()).toBe(false);
+    expect(readFileSync(config, "utf8")).toBe(text);
+    expect(statSync(config).mtimeMs).toBe(at);
+    // A folder made before (no setting): the person's git writes CRLF there, which ours reads
+    // as a change. Pinned once, and again over a config that says true, never twice.
+    await run(["git", "config", "--local", "--unset", "core.autocrlf"], { cwd: dir });
+    writeFileSync(join(dir, "README.md"), "# mine\n");
+    await persons(dir, "checkout", "--", "README.md");
+    expect(readFileSync(join(dir, "README.md"), "utf8")).toBe("# seed\r\n");
+    expect(await copy.pinLineEndings()).toBe(true);
+    expect(await setting(dir)).toBe("false");
+    expect(await copy.pinLineEndings()).toBe(false);
+    await run(["git", "config", "--local", "core.autocrlf", "true"], { cwd: dir });
+    expect(await copy.pinLineEndings()).toBe(true);
+    expect(readFileSync(config, "utf8").match(/autocrlf/g)).toHaveLength(1);
+    expect(await setting(dir)).toBe("false");
+    writeFileSync(join(dir, "README.md"), "# mine\n");
+    await persons(dir, "checkout", "--", "README.md");
+    expect(readFileSync(join(dir, "README.md"), "utf8")).toBe("# seed\n");
+    expect((await copy.status()).files).toEqual([]);
   });
 });

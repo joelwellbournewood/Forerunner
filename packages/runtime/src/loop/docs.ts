@@ -527,6 +527,8 @@ export class ProjectDocs implements ProjectDocsPort {
       const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
       const git = this.gitOf(dir, auth);
       await git.fetch();
+      // The preview reads the copy's config: our line endings there too (R-copystuck).
+      await this.pinLineEndings(git);
       if (!(await git.hasRef(pr.headSha))) await git.fetchRef(`refs/pull/${pr.number}/head`);
       if (!(await git.hasRef(pr.headSha)))
         throw new ForerunnerError(
@@ -1009,6 +1011,9 @@ export class ProjectDocs implements ProjectDocsPort {
     opts: { checkout?: boolean } = {},
   ): Promise<void> {
     const base = `origin/${target.base}`;
+    // The copy's own config says our line endings, also in a copy cloned before the clone did
+    // (R-copystuck): the person's own git there writes a file it puts back as ours reads it.
+    await this.pinLineEndings(git);
     const hasBase = await git.hasRef(base);
     // A copy that could not be put on the default branch (a file the person changed in it that
     // the merge also changed) keeps the time of its last real update, and says why (R-copystuck).
@@ -1048,6 +1053,22 @@ export class ProjectDocs implements ProjectDocsPort {
       writeFileSync(join(dir, ".git", COPY_RECORD), JSON.stringify(record), "utf8");
     } catch (e) {
       this.logger.warn("the copy's record was not written", { error: errorMessage(e) });
+    }
+  }
+
+  /**
+   * `GitOps.pinLineEndings` in the copy (R-copystuck, ADR 0113): its `.git/config` says
+   * `core.autocrlf=false`, which a preview (a working folder of the same clone) reads too, so
+   * the person's own git there (Git for Windows: `core.autocrlf=true`) writes files as ours
+   * reads them. Written once; a failure is logged and the step goes on.
+   */
+  private async pinLineEndings(git: GitOps): Promise<void> {
+    try {
+      await git.pinLineEndings();
+    } catch (e) {
+      this.logger.warn("the copy's line endings were not set in its git config", {
+        error: errorMessage(e),
+      });
     }
   }
 

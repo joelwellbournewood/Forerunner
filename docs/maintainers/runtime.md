@@ -6162,6 +6162,27 @@ default branch as the host has it after every merge, not only at a session's end
   watcher refresh waits for a docs write that has the clone on its branch; 'merged-actions''s
   preview takes it too. Reads (the Files and Docs routes) take no lock.
 - The copy's GitOps (`gitOf`) carries `neverPush: NEVER_PUSHED`.
+- **The copy's own git config says our line endings** (R-copystuck, Windows; ADR 0113 amendment
+  of 2026-11-09): `.git/config` has `core.autocrlf=false`, the setting every command of
+  `GitOps` runs with, so the person's own git in the copy reads and writes files as ours does.
+  Git for Windows sets `core.autocrlf=true` in its system config, and the folder's config beats
+  it. Before, a file the person put back with their own git (`git checkout -- README.md`, as the
+  Files line asks) was written with CRLF; our git, comparing the bytes with the committed blob
+  (the entry is racily clean right after, and git then stores it as modified), still read it as
+  changed, `checkout -B` refused, and the copy never followed a merge again (Desktop app run
+  42525106539). The clone writes it (`GitOps.clone`'s `--config`), and `settle` calls
+  `pinLineEndings` (a private wrapper over `GitOps.pinLineEndings` that logs a failure and goes
+  on) on every refresh, every watcher check of the head and every docs write, so a copy cloned
+  before the fix gets it at its next one; `previewPullRequest` calls it too after its fetch (a
+  preview is a working folder of the same clone and reads the same config). Nothing is written
+  when the config already says so. A file whose only difference is its line endings (an editor
+  that saved it with CRLF) still counts as the person's change, as before: the copy keeps it and
+  the Files line names it, and the person's own `git status` now says the same. A copy that
+  stopped because of a CRLF restore made before the fix stays stopped until the person puts the
+  file back once more, now as committed. Tests: `loop-docs.test.ts` "the copy's own git config
+  says core.autocrlf=false" (a copy cloned before the fix, a CRLF-only edit, the person's git
+  with Git for Windows' default, a restart), `real-daemon.test.ts` R-copystuck (the person's
+  `checkout --` with that default) and "Open this version" (the same in the preview folder).
 - `GET /projects/:id/files` gains `copy` (`ProjectDocs.copyView`: `updatedAt`, `localOnly {
   folder, line }`, null for a project without a repository; read from the record, no git): the
   Files tab says "This computer's copy of <repo>. As merged on GitHub, updated 14:05." and shows

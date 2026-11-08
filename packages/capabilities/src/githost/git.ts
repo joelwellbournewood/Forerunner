@@ -333,20 +333,46 @@ export class GitOps {
     return r;
   }
 
-  /** Clone into opts.cwd (created). */
+  /**
+   * Clone into opts.cwd (created). The clone's own config says `core.autocrlf=false` from the
+   * start (`--config`), as `pinLineEndings` keeps it: any other git used in the folder reads and
+   * writes files as ours does.
+   */
   async clone(url: string, opts: { depth?: number; branch?: string } = {}): Promise<void> {
-    const args = ["clone", "--no-tags"];
+    const args = ["clone", "--no-tags", "--config", "core.autocrlf=false"];
     if (opts.depth) args.push("--depth", String(opts.depth));
     if (opts.branch) args.push("--branch", opts.branch);
     args.push(url, this.opts.cwd);
     this.must(await this.git(args, { cwd: undefined }, url), "clone");
   }
 
+  /** A new repository in opts.cwd, its own config saying our line endings (`pinLineEndings`). */
   async init(defaultBranch = "main"): Promise<void> {
     this.must(
       await this.git(["init", "-b", defaultBranch, this.opts.cwd], { cwd: undefined }),
       "init",
     );
+    await this.pinLineEndings();
+  }
+
+  /**
+   * The folder's own config (`.git/config`) says `core.autocrlf=false`, the setting every
+   * command of ours runs with (`base()`), so any other git used in the folder reads and writes
+   * files as ours does (R-copystuck, ADR 0113): the person's own git in this computer's copy,
+   * where Git for Windows' default `core.autocrlf=true` (its system config) would write a file
+   * it restores with CRLF, or an agent's in its worktree. The folder's config beats the system
+   * and global ones. Before, a file the person put back with their own git still read as
+   * changed to ours, and the copy never followed a merge again. Writes only when the folder
+   * does not say so already (`.git/config` is left alone then); true when it wrote.
+   */
+  async pinLineEndings(): Promise<boolean> {
+    const now = await this.git(["config", "--local", "--type=bool", "--get", "core.autocrlf"]);
+    if (now.code === 0 && now.stdout.trim() === "false") return false;
+    this.must(
+      await this.git(["config", "--local", "--replace-all", "core.autocrlf", "false"]),
+      "config core.autocrlf",
+    );
+    return true;
   }
 
   async fetch(remote = "origin"): Promise<void> {

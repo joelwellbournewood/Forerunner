@@ -1554,6 +1554,42 @@ describe("a paused task keeps its work and continues from it (budget-resume)", {
     );
     await s.w.store.close();
   });
+
+  it("in a project's folder, the person's own git with Git for Windows' default puts a file back as ours reads it: the folder's git config says core.autocrlf=false, also a folder made before it did (R-copystuck)", async () => {
+    // The person's git is set up as Git for Windows sets it up (core.autocrlf=true), through a
+    // global config. Before, it wrote a file it put back with CRLF, which our git (`-c
+    // core.autocrlf=false`) read as changed: a cancel's take-back then failed ("its files changed
+    // since") and the next snapshot recorded the line endings as a change.
+    const s = await setup({ folder: true });
+    const windowsGit = join(s.w.root, "git-for-windows.gitconfig");
+    writeFileSync(windowsGit, "[core]\n\tautocrlf = true\n");
+    const setting = () => s.gitIn(s.workspace, ["config", "--local", "--get", "core.autocrlf"]);
+    await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    expect(await setting()).toBe("false");
+    // A folder made before the fix: the task's next run says it.
+    await run(["git", "-C", s.workspace, "config", "--local", "--unset", "core.autocrlf"]);
+    expect(await setting()).toBe("");
+    const resumed = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "faq.md"), "# FAQ\n")))
+      .execute(await s.ctx());
+    expect(resumed.outcome).toBe("done");
+    expect(await setting()).toBe("false");
+    // The person changes guide.md and puts it back with their own git: as our git has it.
+    writeFileSync(join(s.workspace, "guide.md"), "# my guide\n");
+    await run(["git", "-C", s.workspace, "checkout", "--", "guide.md"], {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: windowsGit },
+    });
+    expect(readFileSync(join(s.workspace, "guide.md"), "utf8")).toBe("# Guide\n\n## Part 1\n");
+    expect(await s.gitIn(s.workspace, ["diff", "--name-only"])).toBe("");
+    await s.w.store.close();
+  });
 });
 
 describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_000 }, () => {
