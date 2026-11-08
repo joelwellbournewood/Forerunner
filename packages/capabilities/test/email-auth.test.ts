@@ -54,7 +54,7 @@ describe("AuthResultsHeaderVerifier over the testenv mail host", () => {
       skipSigning: true,
       fromIp: world.server.publicIp,
     });
-    const v1 = await world.verifier.verify(await inboundOf(a!));
+    const v1 = await world.verifier.verify(await inboundOf(a));
     expect(v1).toMatchObject({ dkim: "none", aligned: false, spf: "pass" });
     expect(v1.reason).toBe("dkim=none");
 
@@ -69,7 +69,7 @@ describe("AuthResultsHeaderVerifier over the testenv mail host", () => {
       skipSigning: true,
       fromIp: world.server.publicIp,
     });
-    const v2 = await world.verifier.verify(await inboundOf(b!));
+    const v2 = await world.verifier.verify(await inboundOf(b));
     expect(v2.dkim).toBe("fail");
     expect(v2.aligned).toBe(false);
     expect(v2.reason).toBe("dkim=fail");
@@ -81,7 +81,7 @@ describe("AuthResultsHeaderVerifier over the testenv mail host", () => {
       { from: OWNER, to: AGENT, subject: "x", text: "y" },
       { dkimAs: "evil.test", fromIp: world.server.publicIp },
     );
-    const verdict = await world.verifier.verify(await inboundOf(stored!));
+    const verdict = await world.verifier.verify(await inboundOf(stored));
     expect(verdict.dkim).toBe("pass");
     expect(verdict.aligned).toBe(false);
     expect(verdict.reason).toContain("signed for evil.test");
@@ -90,7 +90,7 @@ describe("AuthResultsHeaderVerifier over the testenv mail host", () => {
   it("fails SPF when the connecting address is not designated by the domain", async () => {
     world = await emailWorld();
     const [stored] = await world.server.inject({ from: OWNER, to: AGENT, subject: "x", text: "y" });
-    const verdict = await world.verifier.verify(await inboundOf(stored!));
+    const verdict = await world.verifier.verify(await inboundOf(stored));
     expect(verdict.dkim).toBe("pass");
     expect(verdict.aligned).toBe(true);
     expect(verdict.spf).toBe("fail");

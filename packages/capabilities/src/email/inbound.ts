@@ -320,7 +320,7 @@ function markerPattern(marker: string, flags = ""): RegExp | null {
 export function hasCommandMarker(subject: string | undefined, marker: string): boolean {
   if (!subject) return false;
   const re = markerPattern(marker);
-  return re !== null && re.test(subject);
+  return re?.test(subject) ?? false;
 }
 
 /** What the model sees in place of the owner's private command marker. */

@@ -2847,7 +2847,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (budgetCard?.key === "task:budget_stop") {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = budgetStopAnswer(parsed.data.answer as never);
-      const moved = !task || task.status !== "needs_human";
+      const moved = task?.status !== "needs_human";
       let budget: number | null = null;
       let more: number | null = null;
       if (task && !moved && read === "continue") {
@@ -2888,7 +2888,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (cannotRun?.key === "task:cannot_run") {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = cannotRunAnswer(parsed.data.answer as never);
-      const moved = !task || task.status !== "needs_human";
+      const moved = task?.status !== "needs_human";
       if (task && !moved && read === "retry") {
         task.status = "ready";
         task.reason = "you asked to try again in the Inbox";
