@@ -852,6 +852,59 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(after.sentence).toBe("");
   });
 
+  it("the conflict notice's Redo does the task again from main, as its line says: the session it starts ends with the same pull request merging cleanly, no second card, and the person's Merge merges it (R-conflict fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    await m.poll();
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [view] = await requestViews(m.w.store, rows);
+    if (!view || !rows[0]) throw new Error("no conflict card");
+    expect(view.title).toBe(`"Write the other page" conflicts with main`);
+    // The answer the Inbox sends: the card's own option.
+    const redo = view.choices?.find((c) => c.label === "Redo");
+    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    expect((await answerCard(m, rows[0], redo?.label ?? "")).redone).toBe(1);
+    // The stand-in executor names its run by the attempt: the redo is the next one.
+    const ready = await m.w.store.task.mustGet(b.id);
+    expect(ready.status).toBe("ready");
+    await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
+    // The session the Redo starts.
+    await m.session();
+    const after = await m.w.store.task.mustGet(b.id);
+    // Before: the run resumed the open pull request's branch, its rebase onto main conflicted in
+    // index.html, and the task stopped with a second card in git words ("Rebase of fr/... onto
+    // main conflicts in ...", I resolved it / Drop the branch / Cancel the task).
+    expect([after.status, /conflict/i.test(after.reason ?? "")]).toEqual(["done", false]);
+    expect(
+      (await m.cards(b.id)).filter((c) => /conflict|rebase/i.test(`${c.title} ${c.body}`)),
+    ).toEqual([]);
+    // The same pull request, with only the task's own work on main, merging cleanly.
+    expect(await m.prNumber(b.id)).toBe(prB);
+    const pr = await m.pr(b.id);
+    expect([pr.state, pr.merged, pr.mergeable]).toEqual(["open", false, true]);
+    expect(await m.prCommits(prB)).toEqual(["Write the other page"]);
+    expect(await m.hostGit("rev-parse", `${pr.head.sha}^`)).toBe(
+      await m.hostGit("rev-parse", "refs/heads/main"),
+    );
+    // Its record follows the new review and waits for the person's Merge, as any accept does in
+    // "You press Merge"; the poll says nothing more.
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "not_allowed",
+      sentence: `#${prB} waits for you to merge it: press Merge on the Overview.`,
+      reviewed_head_sha: pr.head.sha,
+    });
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    expect(await m.hostGit("show", "main:index.html")).toBe("<h1>two</h1>");
+  });
+
   it("two unmerged dependencies that conflict: the dependent waits with one Inbox card naming both pull requests (W6-22)", async () => {
     const m = await chainWorld({ level: 2 });
     m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
