@@ -35,7 +35,15 @@ export interface StartBlockedFacts {
    * Settings.", "Waits until 15:40 (your subscription's limit) and starts by itself.") and the
    * link that replaces a refused credential. Null or absent: a task's credential serves now.
    */
-  credentialWait?: { text: string; save: { label: string; to: string } | null } | null;
+  credentialWait?: {
+    text: string;
+    save: { label: string; to: string } | null;
+    /**
+     * TR-2: a resting credential whose wait no Start has kept yet: `text` is the whole sentence
+     * ("Nothing can run until 15:40 (...). Press Start and it runs then.") and Start stays on.
+     */
+    startable?: boolean;
+  } | null;
 }
 
 /**
@@ -69,10 +77,13 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
   if (blocked === null && f.credentialWait && r.runnable.length > 0 && !f.busy)
     return {
       kind: "nothing_runnable",
-      sentence: `Nothing can run yet. ${f.credentialWait.text}`,
+      sentence: f.credentialWait.startable
+        ? f.credentialWait.text
+        : `Nothing can run yet. ${f.credentialWait.text}`,
       action: f.credentialWait.save
         ? { kind: "link", label: f.credentialWait.save.label, to: f.credentialWait.save.to }
         : null,
+      ...(f.credentialWait.startable ? { startable: true } : {}),
     };
   if (blocked?.kind !== "nothing_runnable" || r.ready !== 0) return blocked;
   if (f.plan === "pending")

@@ -226,6 +226,7 @@ import {
   type CredentialWait,
   credentialWaitOf,
   saveLink,
+  startKeepsWaitSentence,
   waitSentence,
 } from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
@@ -312,6 +313,7 @@ import {
   RouterTaskBilling,
   sdkHostCommandsEnabled,
   seedBillingSources,
+  waitingOf,
 } from "../wiring/billing-pick.ts";
 import {
   credentialFor,
@@ -839,11 +841,15 @@ export interface RuntimeApp {
       credentialSaved(kind: "api_key" | "subscription"): Promise<number>;
       /**
        * R-startcred: when no ready task of the project can run now because its credential rests
-       * or was refused, the wait's sentence and where to save a new credential; else null.
+       * or was refused, the wait's sentence and where to save a new credential; else null. Only
+       * reads (TR-2): `startable` when no Start kept the wait of a resting credential yet, so a
+       * Start still does something (its session keeps the wait), and `text` says so in full.
        */
-      now(
-        projectId: string,
-      ): Promise<{ text: string; save: { label: string; to: string } | null } | null>;
+      now(projectId: string): Promise<{
+        text: string;
+        save: { label: string; to: string } | null;
+        startable?: boolean;
+      } | null>;
     };
   };
   chfPerUsd: () => number;
@@ -3624,15 +3630,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: async (projectId) => {
       const wait = await credentialWaitNow(projectId);
       if (!wait) return null;
-      // The words say the work starts by itself (at the reset, or once a new credential is
-      // saved): the wait is kept on its source, as a session that met it would keep it.
-      await taskBilling
-        .noteWait(wait.sourceId, projectId, agent.id)
-        .catch((e: unknown) =>
-          logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
-        );
+      // TR-2: looking records nothing (the Start dialog's check, the stopped bar's read). A
+      // wait a Start or a session already kept on its source starts by itself, and says so; a
+      // reset nobody kept a wait for says what Start does, and Start stays pressable: its
+      // session meets the wait and keeps it (the executor's `noteWait`).
+      const words = { timezone: human.timezone, nowMs: clock.now() };
+      const source = await store.billingSource.get(wait.sourceId).catch(() => undefined);
+      const kept = !!source && waitingOf(source.limits).some((w) => w.projectId === projectId);
+      if (wait.reason !== "refused" && !kept)
+        return { text: startKeepsWaitSentence(wait, words), save: null, startable: true };
       return {
-        text: waitSentence(wait, { timezone: human.timezone, nowMs: clock.now() }),
+        text: waitSentence(wait, words),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
       };
     },

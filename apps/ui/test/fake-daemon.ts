@@ -480,7 +480,15 @@ export interface FakeDaemonState {
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says "Nothing can run yet. <text>".
    */
-  credentialWaitNow: Record<string, { text: string; save: { label: string; to: string } | null }>;
+  credentialWaitNow: Record<
+    string,
+    {
+      text: string;
+      save: { label: string; to: string } | null;
+      /** leftovers7-tailrun TR-2: no Start kept the wait yet: `text` is the whole sentence, Start stays on. */
+      startable?: boolean;
+    }
+  >;
   /**
    * Where each project's files are on this computer (design §3.10), as the daemon's card says
    * (`folder`); a project without an entry has none yet. `files` are what `GET
@@ -2409,10 +2417,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (credentialWait && !view.blocked && view.runnable.length > 0)
       view.blocked = {
         kind: "nothing_runnable",
-        sentence: `Nothing can run yet. ${credentialWait.text}`,
+        sentence: credentialWait.startable
+          ? credentialWait.text
+          : `Nothing can run yet. ${credentialWait.text}`,
         action: credentialWait.save
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,
+        ...(credentialWait.startable ? { startable: true } : {}),
       };
     return c.json(view);
   });

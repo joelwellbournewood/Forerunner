@@ -10917,3 +10917,136 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(true);
   }, 120_000);
 });
+
+/**
+ * leftovers7-tailrun (wave 13): the run-side leftovers of waves 12 and 14, through the UI's client
+ * against the real daemon.
+ */
+describe("leftovers7-tailrun, wave 13", () => {
+  it("TR-2: looking at the Start check while the only key rests records nothing; Start keeps the wait and that work starts at the reset", async () => {
+    const key = ["sk-ant-api03-", "tailrun", "5".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-11-09T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-tailrun-"));
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({ model, clock, answerFor: keyRule({}) });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_api_key: key }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const waitsOnKey = async () => {
+      const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+        (s) => s.kind === "api_key",
+      );
+      const list = Array.isArray(src?.limits.waiting) ? src.limits.waiting : [];
+      return (list as { projectId: string }[]).map((w) => w.projectId);
+    };
+    try {
+      const projects = [];
+      for (const name of ["Looked", "Started"]) {
+        const p = await client.createProject({ name, goal: `${name} notes` });
+        await client.createTask(p.id, {
+          title: `Write the ${name} note`,
+          outcome: "The note is written",
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+        projects.push(p);
+      }
+      const [looked, started] = projects as [(typeof projects)[0], (typeof projects)[0]];
+      // The only key rests until 08:30 UTC (09:30 in Zurich): another session met its limit.
+      const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+        (s) => s.kind === "api_key",
+      );
+      if (!src) throw new Error("no api_key source");
+      await rt.store.billingSource.patch(src.id, {
+        limits: { ...src.limits, restingUntil: "2026-11-09T08:30:00Z" },
+      });
+      // The Start dialog opens on both projects and closes again.
+      for (const p of [looked, started]) {
+        const check = await client.startCheck(p.id);
+        // No wait is kept yet, so the line says what Start does, and Start stays pressable.
+        expect(check.blocked).toEqual({
+          kind: "nothing_runnable",
+          sentence:
+            "Nothing can run until 09:30 (your API key's limit). Press Start and it runs then.",
+          action: null,
+          startable: true,
+        });
+      }
+      // Looking recorded nothing (before: both projects' waits were kept on the key).
+      expect(await waitsOnKey()).toEqual([]);
+      // Start on one of them, as the dialog sends it: its session meets the wait and keeps it.
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: started.id });
+      const sessionId = first.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session that met the wait to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      expect(await waitsOnKey()).toEqual([started.id]);
+      // From then on its check says the work starts by itself (true now), with Start off.
+      expect((await client.startCheck(started.id)).blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence:
+          "Nothing can run yet. Waits until 09:30 (your API key's limit) and starts by itself.",
+        action: null,
+      });
+      // At the reset: the work Start waited for starts by itself; the project only looked at
+      // does not (before: both started).
+      clock.set(Date.parse("2026-11-09T08:31:00Z"));
+      expect(await rt.billing.waits.wake()).toBe(1);
+      const triggers = async (projectId: string) =>
+        (await rt.store.session.list({ project_id: projectId } as never, { limit: 10 })).map(
+          (s) => s.trigger,
+        );
+      await eventually(
+        async () => (await triggers(started.id)).includes("budget_reset"),
+        "the session started at the reset",
+        async () => (await triggers(started.id)).join(", "),
+        15_000,
+      );
+      expect((await triggers(started.id)).sort()).toEqual(["budget_reset", "manual"]);
+      expect(await triggers(looked.id)).toEqual([]);
+    } finally {
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false }).catch(() => undefined);
+      await rt.close();
+    }
+  }, 120_000);
+});

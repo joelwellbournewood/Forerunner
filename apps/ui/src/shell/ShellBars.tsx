@@ -170,7 +170,10 @@ export function StoppedBar() {
           r.stoppedProjects ?? (await client.projects().catch(() => projects)).map((p) => p.id);
         for (const id of ids) {
           const check = await client.startCheck(id).catch(() => null);
-          if (!check || check.blocked || check.runnable.length === 0) continue;
+          // A wait for a credential's reset nobody kept yet still starts (TR-2): the session
+          // keeps the wait, and the work starts by itself at the reset.
+          if (!check || (check.blocked && !check.blocked.startable) || !check.runnable.length)
+            continue;
           await client.startSession({
             agentId: identity.agentId,
             projectId: id,

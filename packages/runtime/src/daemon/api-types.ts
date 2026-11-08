@@ -1494,7 +1494,9 @@ export const StartCheckView = z.object({
    * Why a Start now would do nothing (design §3.6), in one sentence with the button that
    * unblocks it: sessions are stopped (Stop all), no Claude credential, or nothing can run.
    * Null when a session would work. `action.kind` says what the button does: `resume` (Allow
-   * sessions again), `link` (open `action.to`).
+   * sessions again), `link` (open `action.to`). `startable` (TR-2): the work waits for a
+   * credential's reset and no Start kept that wait yet; Start stays on, since its session keeps
+   * the wait and the work then starts at the reset (the check itself records nothing).
    */
   blocked: z
     .object({
@@ -1507,6 +1509,7 @@ export const StartCheckView = z.object({
           to: z.string().nullable(),
         })
         .nullable(),
+      startable: z.boolean().optional(),
     })
     .nullable()
     .default(null),

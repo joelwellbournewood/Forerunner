@@ -328,3 +328,24 @@ the retry ladder counted it as a failed try, and nothing reviewed the task at th
    is refused or rests now, the line is that wait's sentence ("Waits for a new API key: save one in
    Settings."), not "Runs on your API key: ...". The Start dialog's check keeps the wait on its
    source when it names it, so "starts by itself" is true; `POST /sessions` does not refuse on it.
+
+## Amendment 2026-11-09 (the run-side leftovers of waves 12 and 14, 'leftovers7-tailrun')
+
+1. **Looking records nothing; Start keeps the wait (TR-2, the session lead's decision; amends
+   points 4 and 6 of the amendment above).** The Start check (the dialog's `GET
+   /projects/:id/start-check`, read again by the stopped bar's Continue where it stopped) kept the
+   wait it named on its source, so a person who only opened the dialog had a session start by
+   itself at the reset. Now the check only reads. A wait a Start or a session already kept says
+   "... and starts by itself." (true) with Start off. A resting credential's wait nobody kept says
+   what Start does ("Nothing can run until 15:40 (your API key's limit). Press Start and it runs
+   then.") and keeps Start on (`blocked.startable`); Start, or Continue, starts a session that
+   meets the wait and keeps it, so the work starts at the reset. A refused credential's wait keeps
+   Start off: saving a new credential is the step.
+2. **The check asks the run's own pick (TR-3).** It asked the billing pick with tier "sonnet"
+   and without the person's answers, so a task whose questions were answered could read "Nothing
+   can run yet" while its run went to the subscription. Now it asks with the request the task's
+   next run makes (`LoopTaskExecutor.nextRunBillingRequest`: the specialist and the ladder's
+   stand-in, the tier, the needs with `personAnswered`).
+3. **A refusal written while the waits are taken survives (TR-4).** `takeReady` judges the
+   refusal in the copy each version-checked write works on, against the credential the vault
+   holds, so a refusal written between its read and its write is kept with its card.

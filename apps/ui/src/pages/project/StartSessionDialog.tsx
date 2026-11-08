@@ -236,6 +236,9 @@ export function StartSessionDialog({
   const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
   const problem = budgetProblem(budget, data?.monthLeft ?? null);
   const blocked = data?.blocked ?? null;
+  // leftovers7-tailrun TR-2: work that waits for a credential's reset no Start has kept a wait
+  // for yet: the line says what Start does, and Start keeps the wait (looking records nothing).
+  const stops = !!blocked && !blocked.startable;
   // What a session would run is said only when it can start: above "Claude is not connected"
   // or "Sessions are stopped", "This session runs ..." contradicted the disabled Start.
   const plan = data && !blocked ? planSentence(data) : null;
@@ -249,7 +252,7 @@ export function StartSessionDialog({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || !identity || blocked || problem) return;
+    if (busy || !identity || stops || problem) return;
     const chf = budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
     setBusy(true);
     setError(null);
@@ -411,7 +414,7 @@ export function StartSessionDialog({
           <Button
             variant="primary"
             type="submit"
-            disabled={busy || !identity || !!blocked || !!problem}
+            disabled={busy || !identity || stops || !!problem}
             data-testid="confirm-start-session"
           >
             {busy ? "Starting…" : "Start"}

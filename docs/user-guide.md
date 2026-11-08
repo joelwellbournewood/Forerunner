@@ -762,7 +762,11 @@ drafted and waits in the Inbox for your approval. At a usage limit a plan waits 
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
 new API key: 2 tasks"), and so does the Start dialog ("Nothing can run yet. Waits for a new API
-key: save one in Settings.", with **Save a new key**) instead of what a session would run. If
+key: save one in Settings.", with **Save a new key**) instead of what a session would run.
+Opening the Start dialog changes nothing: when your credential rests until a reset and no
+session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
+Press Start and it runs then." and **Start** stays on; press it (or **Continue where it
+stopped**) and the work starts by itself at 15:40. Only looking starts nothing. If
 you add a Claude subscription instead of a new key, the work that waited starts by itself on the
 subscription when your order lets it go there (with no order chosen, tasks use the
 subscription first); under **Wait** a first choice that rests or was refused still holds its
