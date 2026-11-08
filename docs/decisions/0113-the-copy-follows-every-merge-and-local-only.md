@@ -94,6 +94,10 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
   while its plan waits.
 - A person's file in Local only is never pushed, never shown to the critic as the work, and
   never lost: a clash keeps both versions.
+- "Never uploaded" means never to the git host: what an agent reads from Local only goes to the
+  model like the rest of the work. The user guide says so and asks the person to keep passwords
+  and keys out of it (it said "keys you would never commit" until the merged-copy resume of
+  2026-11-08).
 - A refresh can wait behind a docs write (a fetch and a push); the watcher's poll waits with it.
 - Open question for the owner (U-037): when the person changed a Local only file while a run used
   it, (a) the person's file wins and the agent's is kept beside it (built), (b) the agent's wins

@@ -135,13 +135,14 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   keep your own files in its Local only folder, not beside the merged ones.
 - **Local only** (on Files, for a repository project): a folder inside this computer's copy,
   "Never uploaded. Agents can read and change it." Put files there that the work may use but
-  that must stay on this computer (notes, data, keys you would never commit). **Open folder**
-  beside it opens that folder. Each task's run gets a copy of it in its own folder and gives back
-  what it changed or added; a file it deleted stays with you. If you change a file there while a
-  run uses it, your version stays and the agent's is kept beside it as "notes (from <task
-  title>).txt", and the task's result says so. Forerunner never uploads it: a branch that holds
-  any of it is not pushed, and the task says so. A repository that already has a folder called
-  "Local only" gets none ("No Local only folder here: …").
+  that must stay out of the repository (notes, data, drafts). An agent reads what its task needs
+  from it, and what it reads goes to Claude like the rest of the work: keep passwords and keys
+  out of it. **Open folder** beside it opens that folder. Each task's run gets a copy of it in
+  its own folder and gives back what it changed or added; a file it deleted stays with you. If
+  you change a file there while a run uses it, your version stays and the agent's is kept beside
+  it as "notes (from <task title>).txt", and the task's result says so. Forerunner never uploads
+  it: a branch that holds any of it is not pushed, and the task says so. A repository that
+  already has a folder called "Local only" gets none ("No Local only folder here: …").
 - **Plan** (under More): milestones and their dependencies.
 - **Tasks**: every task, in the order a session runs them (a task after the tasks it waits for,
   then by priority), with its status in words, who does it, its cost and the critic's call. The
