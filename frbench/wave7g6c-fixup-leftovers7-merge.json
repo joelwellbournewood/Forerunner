@@ -1,0 +1,151 @@
+{
+  "area": "leftovers7-merge (fix-up after the independent review)",
+  "branch": "fix/leftovers7-merge",
+  "head_sha": "adb59a3438b7636787301d1422aabcaa663f5be6",
+  "commits": [
+    {
+      "sha": "e437599fe8e9291abd1d248c4b2a087a837ff3a7",
+      "subject": "repo-create: one card per repository whichever way it was asked first (U-037, R-repooffer fix-up)"
+    },
+    {
+      "sha": "84b5d42e679806b90d35cb4f6026991fecb59590",
+      "subject": "pr-answers, pr-executor: a rebuild card's Redo does the task again from main, as its line says (U-028, R-rebuildcard fix-up)"
+    },
+    {
+      "sha": "9fa1162f7e1f0f346ad781101ad514db340780e5",
+      "subject": "rebuild redo: the Redo's mark crosses a restart (U-028, R-rebuildcard fix-up)"
+    },
+    {
+      "sha": "adb59a3438b7636787301d1422aabcaa663f5be6",
+      "subject": "user guide: the rebuild card's Redo sentence beside the Redo paragraph (U-028, R-rebuildcard fix-up)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Review blocking 1 (R-repooffer, the other order). If Chat's repo.create card came first, or the project page's Create dialog was previewed and then closed, the agent still filed its offer beside it at the next plan. That made two open cards for one repository. Once either card linked the repository, the other stayed open, and its Yes posted 'Your answer to the change card \"...\" was not applied: ... already has a repository'.",
+      "u_ids": [
+        "U-037"
+      ],
+      "failing_test_before": "packages/runtime/test/repo-create.test.ts. All three cases failed before the fix and pass now. (1) 'Chat asks for a repository before the agent would offer one: the agent files no offer beside it, and its Yes leaves nothing open and no warning (fixup R-repooffer, the other order)': 2 open cards, expected 1. (2) 'a repository linked by any path closes every open card that asks for one: the offer and the project page's previewed card both say Closed, the closed card's Yes creates nothing, and no warning (fixup R-repooffer)': the previewed card stayed open after the offer's Create. (3) 'a Chat card for a project linked another way meanwhile is closed, not left to fail (fixup R-repooffer)': the Chat card stayed open. All three drive the HTTP boundary: POST /commands/execute (source text or ui), the session's plan, GET /inbox, POST /requests/:id/answer with the card's shown choice, GET /commands/pending and POST /commands/:id/confirm.",
+      "how": "Root cause: RepoProposals.consider deduplicated only its own offer key (repo-create.ts:323-327 at b0ecd2e). withdrawRepoOffers and withdrawLinked withdrew only the offer key, never an open repo.create change card of the command executor. All changes are in packages/runtime/src/loop/repo-create.ts:\n- New asksForRepository(card, projectId): recognises an executor change card (email_token plus decision) whose command, or a part of a composed plan, is repo.create for the project. consider() now returns 'already_asked' while such a card is open, so the person's own card stays the one card.\n- withdrawRepoOffers (via repoCardProject) now withdraws the project's open single repo.create change cards as well as the offer, once the project has a repository. The Inbox then shows 'Closed: it no longer needs you.'\n- RepoProposals.withdrawLinked also drops the executor's closure behind a withdrawn or expired repo.create card (dropClosedClosures). It uses the new optional RepoCommandRunner.pending and cancel, which CommandLoop already has. Chat therefore no longer reads such a card back as waiting, and a late Yes or confirm is refused.\n- RepoCreator.whenLinked(listener), registered by the RepoProposals constructor, does this at once when the creator links a repository. sync() does it at its next pass for a link made another way.\n- compose.ts is untouched: compose already passes the RepoCreator and the CommandLoop.\nDocs: ADR 0097 amendment, runtime.md (the repository offer), user guide.",
+      "check_in_the_app": "Bench walk, re-run here at e437599+ on bench 'fixup-leftovers7-merge' (--provider bench, stand-in GitHub). Results are in /tmp/frbench/fixup-leftovers7-merge/walk-repo-{A,B,C}.json and steps/01-10.\nA. Chat first. Make a project with no repository and one coder task. In Chat type `tool: repo_create {\"project\": \"<name>\", \"private\": true}`, then press Start on the Overview. Inbox shows 'Needs you (1)': only 'Create the private GitHub repository bench/<x> for \"<name>\"?' with Yes and No, and no offer. Yes links it. Nothing stays open and no 'not applied' warning appears.\nB. Same, but on the project page press Create a repository, then Preview, then close the dialog with Escape. Start. Inbox still shows 'Needs you (1)'. Yes links it, with no warning.\nC. Start first, so the agent's offer 'Create a repository for \"<name>\"?' is open. Then Preview on the project page and close the dialog: two cards, and the project page goes on as ADR 0097 says. Press 'Create the repository' on the offer. The previewed card moves to Answered as 'Closed: it no longer needs you.', GET /commands/pending is empty, and there is no warning.\nLIVE CHECK (session lead, real model). Do not create a repository on the owner's account. Make a project with no repository link and a one-line brief that plans code work. Before approving the plan, type 'create a repository for <project>' in Chat. A Yes/No card is read back and appears in the Inbox. Then Approve and start. After the plan, the Inbox has one card about a repository (Chat's), not two. Answer No to it. Optionally, start one more session: now the agent's offer appears, as the only repository card. Answer Not now."
+    },
+    {
+      "problem": "Review blocking 2 (R-rebuildcard). The rebuild card's new Redo did not do what its line says ('The task is done again from main; a session starts for it.'). Redo only reopened the task. The run then found the open PR on the task's branch, resumed from origin/<branch> and rebuilt it again. On the conflict variant (a dependent that edits its dependency's own file, the common chain) it stopped at the same conflict with a second card ('merge conflict in ...', I resolved it / Drop the branch and retry from scratch / Cancel the task). On the clean variant, the redo stacked a new commit on the rebuilt one instead of starting from main.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts (composed: real git, fake GitHub, runner, critic, merge step). (1) 'the conflict rebuild card's Redo does the task again from main, as its line says: ...': was ['needs_human', conflict]; now done, same PR, commits ['Fix the page'] only, head parent = main, no conflict card, record on the new head, not merged. (2) 'the rebuilt card's Redo also does the task again from main: ...': was ['Add footer', 'Add footer']; now one commit on main. Plus packages/runtime/test/rebuild-redo-restart.test.ts (validation rule 4: the daemon is composed twice on one home, with the Redo answered before the restart): was ['needs_human', conflict], now ['in_review', false]. Each was checked failing against b0ecd2e's pr-executor.ts and pr-answers.ts.",
+      "how": "Root cause: session/pr-answers.ts applyRedo reopened the task and nothing told the PR executor to start over. githost/pr-executor.ts resumes whenever an open PR is on the branch, unless the task's last rebase-conflict answer is 'dropped'.\nFix:\n- applyRedo now marks the answered card with `redo_from_base: true`, in the same transaction. The new export is REDO_FROM_BASE_FIELD from @forerunner/capabilities.\n- PrTaskExecutor.conflictAnswer reads the newest such card of the task as a 'dropped' answer. The next run starts the branch from origin/<base> (with any unmerged dependencies' work), and the open PR gets the new work by a forced push.\n- The mark is consumed once a run reaches review or files a new conflict card, exactly as for 'Drop the branch and retry from scratch'.\n- This applies to both rebuild cards, so the unchanged line is true for both. No words changed.\nDocs: ADR 0111 amendment, runtime.md (the rebuild card), capabilities.md (the conflict answer), user guide.",
+      "check_in_the_app": "Bench walk, re-run here on 'fixup-leftovers7-merge'. Results are in /tmp/frbench/fixup-leftovers7-merge/walk-rebuild-{conflict,clean}.json and steps/11-20.\nConflict variant: on bench/seeded, task A 'Write the intro conflict in shared-conflict.md', and task B 'Rewrite the intro conflict in shared-conflict.md' depending on A. After the session, close A's PR #2 on the stand-in GitHub. Within one poll there is one card: '\"Rewrite the intro ...\" could not be rebuilt without pull request #2', with Redo ('The task is done again from main; a session starts for it.') and Leave it open. Press Redo. The card reads 'Redone: the task is ready again and a session runs it.' and a session runs by itself. B ends done on the same PR #3, whose only commit is B's own ('Rewrite the intro conflict in shared-conflict.md'), with head parent = main. No card is open for B. The Overview shows #3 under Waiting for you to merge.\nClean variant: B writes outline-clean.md. The card offers Merge and Redo. After Redo, PR #5 holds only outline-clean.md and one commit on main.\nLIVE CHECK (session lead, phaseE7-live.md §1, a new step after 'Second chain'). On forerunner-sandbox, with 'You press Merge', run a 2-task chain where the second task changes the first one's file (for example 'Add the page in page.html', then 'Change the heading in page.html' depending on it). Close the first PR on GitHub without merging. After the next watcher poll (about a minute), the Inbox has '\"<second>\" could not be rebuilt without pull request #A' with Redo and Leave it open, and no Merge or 'I merged it'. Press Redo: a session starts by itself. When it ends:\n- the second task is Done again, 'Accepted · waiting for you to merge';\n- its PR #B (same number) lists one commit, its own, directly on main, and GitHub shows a force-push;\n- there is no second card about a conflict.\nClose #B at the end."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "Non-blocking: misplaced JSDoc blocks. In pr-executor.ts, cleanAfterCutShortRun's doc sits between setLeftoversAside's doc and its function. In merge.ts, mergedUpdateWords' doc follows fileLeftOpenRequest's doc.",
+      "why": "Not blocking. leftovers7-merge2 is rewriting the same regions of pr-executor.ts and merge.ts beside me, so a comment-only move there would only risk a merge conflict. Polish or merge2 can move them."
+    },
+    {
+      "problem": "Non-blocking: cleanAfterCutShortRun runs before conflictAnswer. A person who resolves a conflict in the worktree (the 'branch only on this computer' steps) and answers 'I resolved it' with a rebase still in progress has the half-done resolution aborted.",
+      "why": "Not blocking. Fixing it means reordering executeIn in pr-executor.ts, which leftovers7-merge2 is changing now (worktree lock, chain rebuilds). It is a real but narrow edge: the card's steps say to commit the resolution, which ends the rebase. Suggested fix: skip abortUnfinished while the task's last conflict answer is 'resolved' and not consumed."
+    },
+    {
+      "problem": "Non-blocking: the project page's Create a repository dialog files its pending card on Preview, and closing the dialog (× or Escape) leaves that card open in the Inbox.",
+      "why": "After this fix it is the one card for the repository (no offer beside it, and it closes when a repository is linked), so blocking 1's class is closed. Cancelling the card when the dialog closes is a UI behaviour change in apps/ui/src/pages/project/CreateRepoDialog.tsx, outside this area's files. It is listed for polish or the session lead."
+    },
+    {
+      "problem": "Non-blocking words and decisions from the review: the Update 'Merged #N: \"X\".' has no project name; the rebuild card body says 'or send it back' while the button is Redo; the why reads 'The critic accepted X, but pull request #N was not merged.'; the repo.create failure warning names 'change card \"a GitHub repository for X\"'; same-titled tasks give duplicate React keys and identical rows (C-59); whether the rebuild card should offer Merge on a rebuilt_changed record; repo.ts duplicates REPO_OFFER_KEY_PREFIX.",
+      "why": "Wording is polish's (wave 13). Merge on rebuilt_changed is a decision for the session lead or owner. The duplicate constant is cosmetic, in a file I did not need to touch."
+    },
+    {
+      "problem": "Non-blocking: the R-queuedwords live step as the fixer wrote it does not reach the queued state.",
+      "why": "Not code. For the live check, the queued state shows only between the pin and the merge step. Example: under 'Merge automatically after review', a dependent queued behind a dependency whose checks are running. forerunner-sandbox has no checks, so this state can only be shown on a repository with checks."
+    },
+    {
+      "problem": "Edge, existing behaviour: if the Redo's run pauses (budget or a question) before it reaches review, the next run reads the unconsumed redo mark again and starts from main again, dropping the paused work in progress.",
+      "why": "Same as the existing 'Drop the branch and retry from scratch' answer: 'dropped' stays in force until a run reaches review. Consuming the mark at branch creation would make the next run merge the old conflicting branch into the work in progress, which is worse. Left as it is and documented."
+    },
+    {
+      "problem": "Edge: if the person answers Yes on two repository cards for one project (for example Chat's and a previewed one) before any sync applies either, the second Yes still posts 'was not applied'.",
+      "why": "Only open cards are withdrawn: an answered one belongs to the answered-cards sync. This is rare, needs two Yes clicks on two cards, and is not what the review found."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0. Unit: 471 files, 4852 passed, 6 skipped. Lint: 69 warnings, all there before, 0 errors. link-check ok; secret-scan clean. docs:check inside pnpm check cannot diff against origin/main here, so it was run separately below. rebuild-redo-restart.test.ts was added after this run collected its files and was run separately."
+    },
+    {
+      "command": "pnpm docs:check --base fa1a86f",
+      "result": "docs-check: ok (49 files)"
+    },
+    {
+      "command": "npx vitest run --project unit packages/runtime/test/rebuild-redo-restart.test.ts",
+      "result": "1 passed. Against b0ecd2e's pr-executor.ts and pr-answers.ts: 1 failed (['needs_human', true])."
+    },
+    {
+      "command": "npx vitest run --project unit on the area's runtime, capability and command tests (dependent-branches*, merge-in-app*, merge-record*, pr-answers, repo-create, take-out, capabilities pr-executor and take-out, packages/commands/test)",
+      "result": "27 files, 319 passed"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped (Postgres not set, as expected); 30 tests passed, 74 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 85 files, 939 tests passed (includes the real-daemon cases on the changed runtime)"
+    },
+    {
+      "command": "Playwright (apps/ui, local config)",
+      "result": "Not run: no UI file changed. The UI was walked on the bench instead (steps 01-20)."
+    },
+    {
+      "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+      "result": "Not run: the desktop shell was not touched"
+    },
+    {
+      "command": "git merge-tree --write-tree fix/leftovers7-merge against claude/nifty-knuth-f9udt0, fix/leftovers7-merge2 and fix/leftovers7-web",
+      "result": "All three merge cleanly. A first version conflicted with merge2 in docs/user-guide.md; adb59a3 moved the sentence and fixed it."
+    },
+    {
+      "command": "Bench walks on 'fixup-leftovers7-merge' (daemon 48481, UI 2081, stand-in GitHub 48483, --provider bench), Playwright scripts in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx-walk-repo.cjs and fx-walk-rebuild.cjs",
+      "result": "All 5 walks hold. Repository: A (Chat first), B (previewed and closed), C (offer first, then preview). Rebuild Redo: the conflict and the clean variant. Results are in /tmp/frbench/fixup-leftovers7-merge/walk-*.json. The bench is stopped, and its home, its stand-in GitHub folder and its browser profile are deleted."
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-leftovers7-merge/steps/41-w8-02-inbox-both-open.png",
+      "/tmp/frbench/review-leftovers7-merge/steps/43-w8-04-inbox-after-yes.png",
+      "/tmp/frbench/review-leftovers7-merge/steps/37-w7-01-inbox-two-cards.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-leftovers7-merge/steps/03-a-02-inbox-one-card.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/04-a-03-inbox-after-yes.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/06-b-02-inbox-one-card.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/09-c-02-inbox-offer-and-preview.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/10-c-03-inbox-answered.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/12-rb-conflict-02-inbox-rebuild-card.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/13-rb-conflict-03-inbox-after-redo.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/14-rb-conflict-04-overview-after.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/18-rb-clean-03-inbox-after-redo.png"
+    ]
+  },
+  "tests_changed_for_design": [],
+  "new_problems": [
+    "The project page's CreateRepoDialog leaves its previewed pending card open in the Inbox when the dialog is closed with × or Escape (apps/ui/src/pages/project/CreateRepoDialog.tsx: finish() does not cancel result.pendingId). Since this fix it is the one repository card and it closes when a repository is linked. Still, a person who pressed × likely meant to cancel. Evidence: /tmp/frbench/fixup-leftovers7-merge/walk-repo-B.json 'afterPreview' and steps/05-b-preview-shown.png.",
+    "Existing behaviour, now also reachable through Redo: an unconsumed 'dropped' answer (conflict card or rebuild Redo) drops a paused run's work in progress at the next run, because executeIn computes wip = dropped ? null : .... See not_done."
+  ],
+  "notes_for_other_areas": [
+    "leftovers7-merge2 (its conflict notice card offers Redo, 'the task is done again from main'): reuse REDO_FROM_BASE_FIELD (exported from @forerunner/capabilities, githost/pr-executor.ts). Set `[REDO_FROM_BASE_FIELD]: true` on the answered card's change_card in the same transaction as the task's reopen, as pr-answers.ts applyRedo does. PrTaskExecutor.conflictAnswer then reads the newest such card of the task as a 'dropped' answer: the branch starts from base, the open PR gets the new work by a forced push, and the mark is consumed when a run reaches review or files a new conflict card. Before this fix-up, a Redo on an open PR resumed and rebuilt it.",
+    "My pr-executor.ts change is one exported constant (after RebaseConflictOutcome) and the body of conflictAnswer. merge-tree against fix/leftovers7-merge2 is clean.",
+    "repo-create.ts:\n- asksForRepository(card, projectId, {alone?}) tells whether an executor change card asks for a repository.\n- withdrawRepoOffers(store, projectId) now withdraws the offer and the project's open single repo.create change cards once it has a repository.\n- RepoCreator.whenLinked(listener).\n- RepoProposals.withdrawLinked(projectId?) now also drops the executor closures behind withdrawn or expired repo.create cards, through the optional RepoCommandRunner.pending and cancel.\n- consider() returns 'already_asked' while a repo.create change card for the project is open.\n- RepoProposals.openOfferFor is still unused (the fixer's).",
+    "compose.ts is untouched by this fix-up. The only compose hunk of leftovers7-merge is still the fixer's syncPrAnswers({..., merge, ...resumeStart}).",
+    "Polish (wave 13): this fix-up adds no person-facing sentence. The rebuild card's Redo line ('The task is done again from main; a session starts for it.') is unchanged and is now true. The Inbox outcome 'Closed: it no longer needs you.' is existing wording. New log lines only: 'repository cards not closed' and 'closed repository card not dropped' (repo-create). New user-guide sentences:\n- the 'one card per repository, whichever way you ask first' sentence after the repository offer paragraph;\n- the 'Redo on a rebuild's card (either card above) does the task again from the default branch ...' sentence at the end of the Redo paragraph under dependent branches.",
+    "Functions polish depends on from this fix-up: pr-answers.ts applyRedo (sets the mark), pr-executor.ts conflictAnswer and REDO_FROM_BASE_FIELD, and the repo-create.ts functions above.",
+    "Session lead: two LIVE CHECK steps are written in the fixed entries' check_in_the_app. One is a new step after phaseE7-live.md §1 'Second chain'. The other is a repository-card check that answers No, so nothing is created on the owner's account."
+  ]
+}

@@ -66,7 +66,9 @@ scripts in `/tmp/frbench/workflow-scripts`. Copy them from there into the sessio
 ## Resume
 
 Start `forerunner-phase-e6.js` for the next group with the args described in
-NEXT-SESSION.md. To restart wave 14 from scratch, use the args in `wave7g6c-args.json` (they point at the
+NEXT-SESSION.md. Wave 14 is merged (ce13bb1; its reports are `wave7g6c-*.json`). Wave 13 (polish-words,
+polish-screens, leftovers7-tailmerge, leftovers7-tailrun) runs from `wave7g6d-args.json` (resume details in
+`wave7g6d-resume.json`; the spec was built by `build-wave13.cjs`). To restart wave 14 from scratch, use the args in `wave7g6c-args.json` (they point at the
 wave 12 fixers' reports in `frbench/`).
 Each group's note lists the earlier groups' result files (`wave7g1-result.json` to
 `wave7g4-result.json`), whose leftovers the later areas fix.

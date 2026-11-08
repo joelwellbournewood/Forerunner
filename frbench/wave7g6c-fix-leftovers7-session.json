@@ -1,0 +1,7 @@
+{
+  "area": "leftovers7-session",
+  "branch": "fix/leftovers7-session",
+  "head_sha": "7f886afb3ff21231752c46cf557d70f8a8cbd4df",
+  "full_report": "/tmp/frbench/wave7g6a-fix-session.json",
+  "summary": "Wave 12's fixer for leftovers7-session. Its full report (commits, fixed with failing-before tests and check_in_the_app steps, not_done, validation, screenshots, tests_changed_for_design, new_problems, notes_for_other_areas) is the JSON file /tmp/frbench/wave7g6a-fix-session.json: read it whole with cat; it is the claims to verify. Fixed: 10 problems; not_done: 4."
+}

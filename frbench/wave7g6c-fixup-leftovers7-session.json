@@ -1,0 +1,176 @@
+{
+  "area": "leftovers7-session (fix-up after the independent review)",
+  "branch": "fix/leftovers7-session",
+  "head_sha": "93b6aa0ede37bf41c90611d56fc241775b90ed76",
+  "commits": [
+    {
+      "sha": "b87b09a",
+      "subject": "session: an interrupted session's row keeps the ledger's spend, so its page and its end line agree (R-recovery)"
+    },
+    {
+      "sha": "563c261",
+      "subject": "session: an interrupted session with no ledger rows keeps its CHF at the day's rate (R-recovery)"
+    },
+    {
+      "sha": "675ca31",
+      "subject": "critic: unit tests for the refused review's two mappings (U-042, U-078)"
+    },
+    {
+      "sha": "9cd28ef",
+      "subject": "test: a review whose key Anthropic refuses waits for a new key, and saving one reviews it (U-078)"
+    },
+    {
+      "sha": "93b6aa0",
+      "subject": "docs: the user guide says what an interrupted session's page keeps (R-recovery)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "BLOCKING (review): after a crash the session page showed two amounts for one session. The card 'Spent of this session's budget' read CHF 0.00 of CHF 5.00, and the last line read 'Interrupted: Forerunner closed: 1 done. CHF 0.01.'. GET /sessions/:id and GET /sessions returned the row's live counter, which held the coder's run alone (6097 USD micro). The cost ledger held 16014 (coder 6097 plus critic 9917).",
+      "u_ids": [
+        "R-recovery",
+        "U-042"
+      ],
+      "failing_test_before": "packages/runtime/test/session-recovery.test.ts \"after the crash the session's spend is the ledger's: one amount on its page, in its list and on its end line\". At 7f886af it failed with 'expected 40000 to be 70000': the coder and the critic were booked in the ledger, but the row counted only the coder. It passes now.",
+      "how": "Root cause: endDeadSession (packages/runtime/src/session/recovery.ts) took the ledger's sum for the session.ended event and for the project's last session. It never wrote that sum to the session row. The runner's own end overwrites spent_usd_micro with the ledger sum (runner.ts, the end's patch); the recovery did not. Now, when the ledger has rows for the session, endDeadSession sets the row's spent_usd_micro to the ledger's usd_micro. It does this with a versioned update before setStatus(stopped). The same function serves the startup recovery and POST /sessions/:id/stop and /pause on a ghost session, so all three are fixed. The test seeds ledger rows for the coder (40000) and the critic (30000) and a live counter of 40000. Across the restart it checks four things: GET /sessions/:id spent, the end line's CHF (formatChf of the page's chfMicro), GET /sessions?projectId=, and the row after a second restart. docs/maintainers/runtime.md (crash recovery) and docs/user-guide.md are updated.",
+      "check_in_the_app": "Bench (--provider bench, FORERUNNER_BENCH_DELAY_MS=3000, ports 48482/2082). Walk: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fixup-l7s/walk-crash.cjs, then screens.cjs. Project 'Choir notes' had two coder tasks. I waited until one task was Done and one was running, then ran restart-daemon --hard. Before the crash, GET /sessions/:id read 6097 USD micro. After it: status stopped, stopReason interrupted, spent 16014 USD micro (CHF 0.0128), and GET /sessions?projectId= gives the same 16014. The session page (steps/04-after-session-page-after-crash.png) reads 'Spent of this session's budget CHF 0.01 of CHF 5.00 (0%)' above 'Interrupted: Forerunner closed: 1 done. CHF 0.01.'. Before the fix the reviewer's screenshot showed CHF 0.00 there (/tmp/frbench/review-leftovers7-session-evidence/bench-steps/19-b1-session-after-crash.png). The Overview (05) reads Last result 'Interrupted: Forerunner closed while this session ran. \"Write the concert notes\" is ready again.' with 'Changed by the last session: rehearsal.md'. LIVE CHECK (real model, session lead): 1) Create a project with two small tasks, e.g. 'Write the rehearsal notes' (rehearsal.md) and 'Write the concert notes' (concert.md). Press Start session, then Start. 2) On the session page, wait for 'The critic accepted \"Write the rehearsal notes\".' and the next line 'The coder started \"Write the concert notes\" …'. 3) End the Forerunner daemon process hard: Task Manager, End task on the daemon; or kill -9 its PID. 4) Reopen Forerunner and open that session (Sessions tab or the Overview's last result). Expected: the last line reads 'Interrupted: Forerunner closed: 1 done. CHF x.xx.', and the 'Spent of this session's budget' card above it shows the same CHF x.xx, not CHF 0.00. That amount includes the critic's review: it equals the coder's plus the critic's cost for that session in the cost view (Settings > Costs, by session). The Overview shows this session as the last one."
+    },
+    {
+      "problem": "Non-blocking finding (review), in the same function: when the ledger had no rows for an interrupted session, the project's last session kept its CHF at the built-in rate of 0.8 (recovery.ts:141, DEFAULT_CHF_PER_USD). The session page converts the same row at the day's rate (rt.chfPerUsd). With any other configured rate, the chat's 'Spent:' for the last session and the session page disagreed.",
+      "u_ids": [
+        "R-recovery"
+      ],
+      "failing_test_before": "packages/runtime/test/session-recovery.test.ts \"with no ledger rows, the last session's CHF is at the day's rate, as on the session page\". It failed with 'expected 32000 to be 50000' at 1.25 CHF per USD. It passes now.",
+      "how": "RecoveryDeps gains an optional chfPerUsd: () => number. endDeadSession picks it, and the fallback converts at deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD. compose passes its chfPerUsd to recoverInterruptedSessions. The Stop and Pause routes already pass rt, which carries chfPerUsd. The test's compose helper takes an optional rate. runtime.md is updated.",
+      "check_in_the_app": "Nothing visible changes at the default rate of 0.8. With FORERUNNER_CHF_PER_USD set to another rate (or a live rate that differs from 0.8), crash a session as in the first item before any ledger row is booked. Its spend then comes from the row's own count. Then ask in the project's chat what the last session spent: the CHF matches the session page's 'Spent of this session's budget'."
+    },
+    {
+      "problem": "Non-blocking finding (review): packages/critic had no unit test of refusedReviewError or credentialRunOutcome. Only the composed runtime tests covered them (budget-pause and credential-wait-session), and those exercise one budget level and the usage limit.",
+      "u_ids": [
+        "U-042",
+        "U-078"
+      ],
+      "failing_test_before": "None: this commit only adds tests. packages/critic/test/refused-review.test.ts (9 cases) tests functions that did not exist at fa1a86f.",
+      "how": "New packages/critic/test/refused-review.test.ts covers both functions. refusedReviewError: a budget refusal with its error (level, cap, source, spend and run kept, marked REVIEW_REFUSED); a budget refusal without an error (plain message); provider_usage_limit, provider_auth and unavailable (reset and source kept); and what is not a refusal (completed, a plain error, timeout, step cap). credentialRunOutcome: usage_limit for a limit or unavailable, credential_refused for provider_auth, budget_exceeded and error unchanged. The docs/maintainers/critic.md refusal paragraph names the file.",
+      "check_in_the_app": "Nothing visible: these are unit tests of the two mappings."
+    },
+    {
+      "problem": "Non-blocking finding (review): the refused-key branch of R-criticcred had no test. Only the review that meets a usage limit was tested.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-wait-session.test.ts \"a review whose key Anthropic refuses is no verdict either: the task waits for a new key, and saving one reviews it\". With the sources at fa1a86f it fails: \"expected ['ready', 1] to deeply equal ['ready', 0]\" (the refused review counted as a failed try). It passes at 7f886af and now.",
+      "how": "The world helper gains refuseReviewsOn(key): the Messages API stand-in refuses a review's call (one that offers submit_review) on that key only. It also gains a POST form of req. The case checks the following. The critic's Run row is credential_refused. The task is ready at attempt 0 with no Review or finding. The Inbox has only 'Anthropic refused your API key', with no review-failed or 'failed N times' card. The Tasks row reads 'Waits for a new API key' and the drawer never says Failed. POST /setup/anthropic with a new key starts the work by itself. The critic then accepts it once, attempt stays 0 and no card stays open. runtime.md's test list names it.",
+      "check_in_the_app": "LIVE CHECK (needs a key Anthropic refuses only after the work ran, so this is hard to stage live; the composed test covers it). If staged: run a session on an API key, revoke the key in the Anthropic console while the coder runs, and let the review meet the refusal. The task row reads 'Waits for a new API key'. The Inbox has one card, 'Anthropic refused your API key', and no 'failed' card. The drawer lists the critic's run as 'Stopped: Anthropic refused the credential'. Save a new key in the setup assistant: the work goes on by itself and the task becomes Done after one review."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "Non-blocking finding: the Inbox card for a review paused at a budget reuses the run-pause body 'It stopped before it could say where it stood; its work so far is kept.' (request-words.ts pausedWorkSentence). That is untrue when the coder finished and only the review waits.",
+      "why": "The words in request-words.ts belong to polish (shared_files: 'the budget card's … words'). budget-card.ts is budget-resume's card filer and is not in this area's file list. A fix needs state plus a sentence: in runner.ts's review-refusal branch, pass a flag such as review: true into fileBudgetStopCard (BudgetStopCardInput and change_card); then pausedWorkSentence can return something like 'The work is done; its review waits for room in the budget.' I handed this to polish in notes_for_other_areas instead of writing a new sentence in polish's file."
+    },
+    {
+      "problem": "Non-blocking finding: the R-estimates real-daemon case compares the plan card's figure with planEstimateUsdMicro(rt.estimates, row), not with GET /projects/:id/start-check, the Start dialog's own route.",
+      "why": "To call start-check, the test must first stop the session that Approve and start began. A stopped run can teach the estimates: on the review bench the learned figure moved from 18684 to 14412 between the card and the dialog. A comparison through start-check would be flaky. Both screens call the same function today. Left as it is."
+    },
+    {
+      "problem": "Non-blocking finding: the fixer's intermediate commits (8de7f51, 266cb83, b48a67c) are not green on their own, so they cannot be bisected.",
+      "why": "They are already merged into claude/nifty-knuth-f9udt0 at ca2c58d, so their history cannot be rewritten. Each of this fix-up's own commits typechecks and passes its tests."
+    },
+    {
+      "problem": "Non-blocking finding: the chat turn now puts the person's line first, but the system prompt (agent.ts:357) still says doc excerpts and lessons may follow the session facts in the first message. The bench role-player was changed to read the stable start, so the stand-in cannot catch a model that answers the facts instead of the line.",
+      "why": "Only a real model can show whether replies answer the line. The live check: with a project that has several tasks, a last session and retrieved docs (a long facts block), send three chat lines and confirm each reply answers its line. Changing the prompt's wording without that evidence would be guessing."
+    },
+    {
+      "problem": "Non-blocking finding: GET /inbox calls store.project.get for every request row and shapes each plan on every poll (server.ts around :1760).",
+      "why": "Handed to leftovers7-web, which owns R-inboxperf."
+    },
+    {
+      "problem": "Non-blocking findings that are words: the plan card's per-task CHF values do not add up to the rounded total; 'it goes on by itself once that limit is raised or resets' is said of a project budget, which never resets (result.ts:392, task-words.ts:250); 'Stopped at the project's budget of CHF 0.01. CHF 0.00.' with tiny budgets.",
+      "why": "All of these existed before this area, and the wording belongs to polish (wave 13)."
+    },
+    {
+      "problem": "Non-blocking finding: on upgrade, ready tasks given back by a pre-fix session with the old reason read Ready, not 'Waits until …', while the project waits.",
+      "why": "This only affects rows written before the fix, and the wake still starts them. Migrating old reasons would touch the state package, which this area must not change."
+    },
+    {
+      "problem": "Non-blocking finding: a review refused at the task's own budget pauses with Continue, and going on reruns the specialist before the review. That spends part of the added budget, so Continue may have to be pressed again.",
+      "why": "Same as the fixer's not_done 1: there is no review-only pass, and building one needs new persisted state and a runner path. It is recorded as 'Not built' in the ADR 0112 amendment of 2026-11-08."
+    },
+    {
+      "problem": "R-criticcred on the subscription only (the acceptance named 'subscription only'): both the existing test and the new refused-key test use an API key through the Messages API stand-in.",
+      "why": "The stand-in has no Claude Code. The subscription's refusal reaches the same credentialRunOutcome and review-refusal path (provider_auth or provider_usage_limit). This needs a live check with a Claude subscription."
+    },
+    {
+      "problem": "Live checks against a real credential (session lead).",
+      "why": "This round may use only the stand-in. The steps are in check_in_the_app of each fixed item."
+    }
+  ],
+  "validation": [
+    {
+      "command": "npx vitest run --project unit packages/runtime/test/session-recovery.test.ts",
+      "result": "Before the fix: 1 failed ('expected 40000 to be 70000'); after: 7 passed. With the rate case: failed 'expected 32000 to be 50000' before, 8 passed after."
+    },
+    {
+      "command": "git checkout fa1a86f -- packages/critic/src packages/runtime/src testenv/src; npx vitest run --project unit packages/runtime/test/credential-wait-session.test.ts -t refuses; git checkout HEAD -- …",
+      "result": "At the base sources the refused-key review case fails (\"expected ['ready', 1] to deeply equal ['ready', 0]\"). With HEAD's sources restored it passes."
+    },
+    {
+      "command": "pnpm check",
+      "result": "exit 0: lint (warnings only, none new), lint:paths, typecheck, unit tests 473 files with 4853 passed and 6 skipped, docs:check, docs:links, secret-scan clean (2066 files). The first run caught a typecheck error in the new critic test fixture (RunResult required fields); I fixed it inside the same commit (675ca31) before the rerun."
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 (and --base fix/leftovers7-session before the move)",
+      "result": "docs-check: ok (8 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 73 skipped (Postgres-backed tests skip without FORERUNNER_TEST_PG)"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 85 files, 934 tests passed (includes real-daemon.test.ts)"
+    },
+    {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "34 passed (1.1m); the local config was removed afterwards and is not committed"
+    },
+    {
+      "command": "bench fixup-leftovers7-session (--provider bench, FORERUNNER_BENCH_DELAY_MS=3000, daemon 48482, UI 2082): walk-crash.cjs + screens.cjs",
+      "result": "Before the crash, GET /sessions/:id spent was 6097. After restart-daemon --hard: stopped/interrupted, spent 16014 (coder plus critic), and GET /sessions gives the same 16014. Session page: 'Spent of this session's budget CHF 0.01 of CHF 5.00' above 'Interrupted: Forerunner closed: 1 done. CHF 0.01.'. Overview Last result is the interrupted session. Bench stopped with stop.mjs; home and browser profile deleted."
+    },
+    {
+      "command": "git merge-tree --write-tree --name-only claude/nifty-knuth-f9udt0 fix/leftovers7-session",
+      "result": "clean (tree 43f0f63, no conflicts)"
+    },
+    {
+      "command": "git status --short; git rev-parse HEAD fix/leftovers7-session",
+      "result": "clean tree; both at 93b6aa0ede37bf41c90611d56fc241775b90ed76"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-leftovers7-session-evidence/bench-steps/19-b1-session-after-crash.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-leftovers7-session/steps/04-after-session-page-after-crash.png",
+      "/tmp/frbench/fixup-leftovers7-session/steps/05-after-overview-after-crash.png",
+      "/tmp/frbench/fixup-leftovers7-session/steps/06-after-sessions-tab-after-crash.png"
+    ]
+  },
+  "tests_changed_for_design": [],
+  "new_problems": [
+    "The project's Sessions tab (/projects/:id/sessions) shows no CHF per session. The amount is only in GET /sessions and on each session page (bench step 06), so a stale or fixed spend on the row is visible only on the session page. This is an observation, not a regression."
+  ],
+  "notes_for_other_areas": [
+    "packages/runtime/src/session/recovery.ts: endDeadSession now writes the session row's spent_usd_micro from the cost ledger's sum when the ledger has rows. It uses a versioned store.session.update before setStatus(stopped). RecoveryDeps has a new optional field chfPerUsd: () => number. compose passes it to recoverInterruptedSessions, and endDeadSession(rt, …) in the Stop and Pause routes gets it from rt. Anything else that ends a session outside the runner should write the same ledger sum.",
+    "Polish (wave 13): the budget card for a review paused at a budget reads 'It stopped before it could say where it stood; its work so far is kept.' (request-words.ts pausedWorkSentence). That is untrue when the specialist finished. The state that would let polish word it differently is not there yet. In runner.ts's review-refusal branch, the fileBudgetStopCard call passes handoff: null; add a flag such as review: true to BudgetStopCardInput and change_card in session/budget-card.ts. A suggested sentence for that case: 'The work is done; its review waits for room in the budget.'",
+    "Polish: no new person-facing sentence was added in code. docs/user-guide.md (crash recovery paragraph) gains: 'Its page still says what it finished and what it spent before Forerunner closed (\"Interrupted: Forerunner closed: 1 done. CHF 0.01.\"), with the same amount in \"Spent of this session's budget\", and the Overview shows it as the last session.'",
+    "Tests: packages/runtime/test/credential-wait-session.test.ts world() gains refuseReviewsOn(key), so the stand-in refuses only a review's call on that key, and req(path, body?) now POSTs when given a body. New file packages/critic/test/refused-review.test.ts.",
+    "leftovers7-web (R-inboxperf): the reviewer notes that GET /inbox calls store.project.get for every request row and shapes each plan on every poll (server.ts around :1760)."
+  ]
+}

@@ -1,0 +1,199 @@
+{
+  "area": "leftovers7-merge2",
+  "branch": "fix/leftovers7-merge2",
+  "head_sha": "441ab43d307f17e8e5f8cea3200bda6afe70371e",
+  "commits": [
+    {
+      "sha": "27d5ed0",
+      "subject": "dependent-branches: a rebuild that could not run is kept on the merge record and done after a restart (R-owed, U-028)"
+    },
+    {
+      "sha": "4e7e2dc",
+      "subject": "merge: one lock per task folder, and a rebuild under way stops a merge of the head it replaces (R-lock, U-028)"
+    },
+    {
+      "sha": "307a08c",
+      "subject": "pr-executor: a chain of three whose middle could not be rebuilt follows the middle once it is (R-chain, U-028)"
+    },
+    {
+      "sha": "1f8d51d",
+      "subject": "dependent-branches: an open pull request that stops merging cleanly into main is said once, and Merge is not offered (R-conflict, U-028)"
+    },
+    {
+      "sha": "7851846",
+      "subject": "docs: Files says when this computer's copy stops following what is merged, and why (R-copystuck, U-037)"
+    },
+    {
+      "sha": "6ea035b",
+      "subject": "notifications: a merge the app made by itself raises one notification beside its Update (leftovers7-merge2, U-028)"
+    },
+    {
+      "sha": "57c887f",
+      "subject": "docs: owed rebuilds, the worktree lock, the chain, the conflict notice, the copy that stops following (leftovers7-merge2)"
+    },
+    {
+      "sha": "441ab43",
+      "subject": "merge: the R-lock checks apply to a task's stored record only; a pull request merged as it is merges again (R-lock follow-up)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "R-lock [minor]: no shared worktree lock. The merge step's git in a task folder (bringing main in, pushing it, moving the record to the pushed head) ran without the PR executor's lock, so a rebuild for a closed dependency could reset the branch mid-merge. The merge step then merged main into the rebuilt head, moved the voided record back to 'merging' (onNewHead) and merged it, so a dependent was merged without the person's look after its review was voided. Separately, when GitHub refused a held merge call because the rebuild pushed first, the merge step overwrote the rebuild's sentence with 'changed after the review'.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'a dependency closed while the person's Merge brings main into the dependent: the rebuild waits for the merge step's git, and the head that still holds the closed work is never merged (R-lock)' (failed: the rebuild force-pushed during the merge's git) and 'a dependency closed while the merge call is held open on GitHub: the rebuild pushes first, GitHub refuses the old head, and the record keeps the rebuild's word (R-lock)' (failed: the sentence was replaced). Follow-up 441ab43 also restores apps/ui/test/real-daemon.test.ts's docs and take-out Merge cases. Those failed after 4e7e2dc because mergeAsIs has no stored record.",
+      "how": "packages/capabilities/src/githost/worktree-lock.ts exports inWorktree (waits), tryWorktree (skips a busy folder) and worktreeBusy, keyed by the resolved path. pr-executor imports them. loop/merge.ts takes the lock for four things: (1) mergeChecked's update path, which re-reads the PR head inside the lock, then fetches, merges the base, pushes and calls onNewHead; (2) conflictsIn; (3) keepsOwnChange; (4) mergeReviewed's head read and lookFor's base comparison. A rebuild that finds the folder busy is owed (R-owed marks the record before any rebuild starts). run() does not claim a record with rebuild_owed_for set. Inside the call, onNewHead and a new stillMayMerge(head) hook run just before the record moves and just before host.mergePullRequest. Each returns false when the record is no longer 'merging' at the head this call holds, or when it owes a rebuild. The tool then returns superseded and run() puts the record back to 'queued', keeping its approval. After any call that did not merge, a record someone else moved keeps that word. GitHub merges only the sha the call names, so a rebuild pushed after the last check makes GitHub refuse. The checks apply only to run()'s stored records (call(..., fenced=true)). mergeAsIs (docs and take-out PRs) is unchanged.",
+      "check_in_the_app": "In the app (bench --githost, or forerunner-sandbox): a project in 'You press Merge', task A, then task B waiting on A (B's PR builds on A's). In GitHub's branch rules for main, require branches to be up to date. Move main with an unrelated commit. Press Merge on B's row, and at the same moment close A's PR on GitHub. Expected: B is never merged. Within a poll or two, B's PR on GitHub holds only B's own file. B's row and its one Inbox card read '#B was rebuilt without #A, which was closed. It was reviewed with #A's changes, so it waits for you: look at it before you merge it, or send it back.' Nothing merges it later by itself. LIVE CHECK (session lead, forerunner-sandbox, phaseE7-live.md §1 second chain): under 'Merge automatically after review', press Merge on the dependent and close its dependency's PR on GitHub within a few seconds. Afterwards GitHub shows the dependent open (not merged) with only its own commits after a force-push, the daemon log has 'dependent pull request rebuilt' and no 'merge record ... state: merged' for it, and the Inbox has the one rebuilt-without card."
+    },
+    {
+      "problem": "R-chain [minor]: in a chain A <- B <- C, if B's folder was busy when A was squash-merged, C was rebuilt onto B's old head, which still held A's pre-squash commits. Once B was rebuilt, nothing rebuilt C again. C's PR kept A's original commits and files until B merged.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts '(c) a chain of three whose middle task's folder is busy when the first is squash-merged: once the middle is free, the third's pull request holds none of the first's original commits (R-chain)' (failed: C's commits still included 'Add page').",
+      "how": "pr-executor.ts: heldState marks a kept dependency that is carried only as a rebuild of the held head (rebuiltTo) as HeldDependency.rebuilt. rebuildBranch and rebuildIn's first read-only check now also rebuild when a kept dependency was rebuilt: the base is made again with its new head, then only the task's own commits are replayed. dropped and the sentences are unchanged, so nothing is voided. rebuildDependents passes the changed dependency plus every task rebuilt so far in the pass, so the next task in the chain is checked when it holds any of them. rebuildTask's onlyIfHolding accepts one id or several.",
+      "check_in_the_app": "Bench --githost: a chain A, B (waits on A), C (waits on B) on bench/seeded, all accepted (level 2). Put an uncommitted file in B's folder (<home>/worktrees/<B id>/scratch.txt). Squash-merge A on the stand-in GitHub, wait for one poll (B's PR still shows 'Add page'). Remove the file, wait for the next poll. Expected: B's PR shows only its own commit, and C's PR shows B's and C's files with no 'Add page' commit and 'Builds on #B (not merged yet)'. Both records still wait for the person, with no card. LIVE CHECK (forerunner-sandbox): the same chain of three. While B's worktree has a stray uncommitted file, squash-merge A on GitHub. After the file is removed, within a minute, C's PR 'Commits' tab on GitHub no longer lists A's commit."
+    },
+    {
+      "problem": "R-owed [minor]: rebuilds that could not run (a busy or dirty folder, a failed step) were remembered only in memory. A squash-merge or close seen while the dependent's folder was busy, followed by a restart, was never rebuilt, so the dependent's PR kept the dependency's commits and files.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-restart.test.ts 'a squash-merge seen while the dependent's folder was busy is rebuilt after a restart, at the first poll (R-owed)' (failed: PR files still footer.html and page.html after the restart). New: packages/state/test/suite.ts 'a rebuild owed stays on the record until it ran, a second one keeps the first, an accept clears it (R-owed)' (SQLite; Postgres skips without FORERUNNER_TEST_PG). The suite test's title says 'an accept clears it', but pin was later changed to keep the mark: see notes.",
+      "how": "Migration 0008 adds merge_record.rebuild_owed_for (nullable). MergeRecordRepo.oweRebuild(taskId, depId|null) keeps the first owed dependency; owedRebuilds(projectId) lists them. DependentBranches.rebuildFor marks every done dependent with a record before the rebuild starts (markOwed). It settles from the outcome: busy, held or failed stays owed; rebuilt or conflict clears it; unchanged clears only what was owed for this dependency. sweep() reads the owed records at every poll, including the first after a restart, and clears those whose task is no longer done. Tasks with no record keep the old in-memory fallback. ReviewedPrMerge.run reads its record fresh before claiming, because an owed mark bumps the version. data-model.md was regenerated.",
+      "check_in_the_app": "Bench --githost: A, then B waiting on A, both accepted. Leave an uncommitted file in B's worktree. Squash-merge A on the stand-in GitHub and wait one poll (B's PR still lists A's page). Stop the daemon (restart-daemon.mjs) and remove the file. After the first poll of the new daemon, B's PR lists only its own file and the 'Builds on' line is gone. GET /tasks/<B> shows nothing owed, and the daemon log has 'dependent pull request rebuilt'. LIVE CHECK: not needed with the real model (no model behaviour); optional on forerunner-sandbox with the same steps and a quit of the app between the merge and the next start."
+    },
+    {
+      "problem": "R-conflict [minor]: an open task PR whose mergeable turned false after another merge was never noticed. The Overview row kept offering Merge, which then failed, and no card was filed.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'an open pull request that conflicts with main once another merges: one card after one poll, none more at the next, Merge no longer offered; once the conflict is gone the card closes and Merge is offered again (R-conflict)'; packages/runtime/test/dependent-branches-restart.test.ts 'a pull request that conflicts with main after another merge is said once: one card after a poll, none more at the next poll or after a restart (R-conflict)'; apps/ui/test/real-daemon.test.ts 'two open pull requests on one file, one merged on GitHub: one conflict card after one poll, none more at the next; the Overview no longer offers Merge on the conflicted row (R-conflict)' (failed: no card); apps/ui/test/inbox.test.tsx 'a pull request that stopped merging cleanly into main is one card titled by its task, with Redo and Leave it open; Redo sends that option (R-conflict)' (failed: title).",
+      "how": "DependentBranches.pullRequestState keeps the watcher's read of each open task PR for the poll. The watcher already reads every open PR each poll, so no GitHub call is added. sweep(), after the poll's rebuilds, drops PRs rebuilt in the poll and calls conflictNotice. It applies to a done task whose record waits for the person (left_to_you, or queued with approval none) and whose PR has mergeable === false. The record moves to left_to_you with last_outcome 'conflict' and conflictNoticeSentence(pr, base, files); the files come from the new PrTaskExecutor.conflictsWithBase. One left-open card is filed (change_card notice:'conflict', base; options REBUILD_CARD_OPTIONS.conflict = Redo / Leave it open); an already open merge card is patched instead. last_outcome dedupes across polls and restarts. A rebuild owed, or a rebuild_conflict, comes first. When mergeable is true again, the record goes to last_outcome 'conflict_resolved' with an empty sentence, Merge is offered again, and the open conflict card is withdrawn. The Overview row is blocked through the existing NO_CLICK. sweep returns true when it said or took back a notice. compose.ts (one hunk) then emits the project event. request-words.ts (one hunk) titles the card '\"<task>\" conflicts with main'. GitHostWatcherDeps.onDefaultBranchHead now returns unknown.",
+      "check_in_the_app": "Bench --githost, 'You press Merge': two tasks on bench/seeded that both write index.html, both accepted. On the stand-in GitHub, edit the first PR's index.html and merge it there. Within one poll, the Overview row of the second PR shows '#3 conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.' and no Merge button. The Inbox has one card, '\"Write another home page in index.html\" conflicts with main', with Redo ('The task is done again from main; a session starts for it.') and Leave it open. More polls add no card. Evidence: /tmp/frbench/fix-leftovers7-merge2-evidence/before/02-before-overview-after-the-merge.png (Merge still offered, no card) and after/02-after-overview-after-the-merge.png and after/03-after-inbox-after-the-merge.png. LIVE CHECK (forerunner-sandbox, new step for phaseE7-live.md §1): run two tasks that change the same lines of one file. Merge the first on GitHub's website. Within about a minute the app's Overview row for the second shows the conflict sentence instead of Merge, and the Inbox has exactly one card with Redo / Leave it open. Resolve the conflict on GitHub (edit the branch so it merges). After the next poll the row offers Merge again and the card shows under Answered as closed."
+    },
+    {
+      "problem": "R-copystuck [minor]: when this computer's copy could not be brought to what is merged (a tracked file the person changed that the merge also changes, a file of theirs in the way, on Windows a path in another letter case), Files kept saying 'As merged on GitHub, updated HH:MM' and never said why it stopped following.",
+      "u_ids": [
+        "U-037"
+      ],
+      "failing_test_before": "packages/runtime/test/loop-docs.test.ts 'a copy that cannot follow a merge says why, with the files: a file the person changed that the merge changes too, or one of theirs in the way; once moved away, the next merge brings it up to date (R-copystuck)'; apps/ui/test/real-daemon.test.ts 'a copy that cannot follow a merge says so on GET /projects/:id/files, with the reason and the file; it follows again once the change is moved away (R-copystuck)' (failed: stopped undefined); apps/ui/test/project-overview.test.tsx 'a copy that stopped following what is merged says so and why, never 'As merged'; once it follows again the line says when (R-copystuck)'.",
+      "how": "loop/docs.ts: backToBase returns copyStoppedOf(error) instead of false: 'changed' for git's 'local changes ... would be overwritten', 'in_the_way' for untracked or ignored files that would be overwritten, else 'other', with the tab-indented files git names. settle writes it as CopyRecord.stopped until a refresh succeeds. copyView adds the optional stopped {reason, files, line}, with line from copyStoppedLine. api-types ProjectFilesView copy.stopped is optional, so older clients are unaffected. The fake daemon's copies type takes it. FilesTab.repositoryLine says 'This computer's copy of <repo>, not updated since 14:05. <line> Work waiting ...' instead of 'As merged'. The person's files are never touched.",
+      "check_in_the_app": "Bench --githost: a project on bench/seeded. After its copy exists (Files shows 'As merged on GitHub, updated HH:MM'), edit README.md in the folder Files shows, then change README.md on main on the stand-in GitHub. After the next poll, Files says 'This computer's copy of bench/seeded, not updated since HH:MM. You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.' Put README.md back; after the next poll it says 'As merged on GitHub, updated <new time>'. Evidence: before/04-before-files-copy-stopped.png vs after/04-after-files-copy-stopped.png. LIVE CHECK (forerunner-sandbox): edit README.md in this computer's copy (Files > Open folder), merge a PR that changes README.md, then reopen Files after about a minute: the line names README.md and does not say 'As merged'. Revert the edit; after the next merge or poll the line says 'As merged' again."
+    },
+    {
+      "problem": "Notification for a later merge: a merge made later by the retry pass or the start-up resume filed an Inbox Update 'Merged #N' but raised no desktop notification, unlike a session's merge.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/merge-record.test.ts R-mergeretry cases ('checks still running: ... one Update 'Merged #N'', 'a merge inside a session adds no Update and no notification of its own', 'the start-up resume: ... posts the Update once'), extended to count merged-later events (failed: onMergedLater missing); apps/ui/test/real-daemon.test.ts 'a Merge that waited for its checks and was merged later by the retry pass raises one notification beside its Update (leftovers7-merge2)' (failed: no notification after 15 s, with compose at its earlier state).",
+      "how": "ReviewedPrMerge.onMergedLater(listener) is called from tellMerged after the Update: retry and resume only, never a session's merge or the person's click. New notification kind 'pr_merged' (normal) and producers.prMerged: title 'Quote page: merged #12', body '\"Style the page\" is merged. Open the project to see it.', link /projects/<id>, dedupe 'pr-merged:<record>:<n>'. compose.ts gets one hunk after bindProducers. notifications.md has the row; writing-rules.test.ts checks the words.",
+      "check_in_the_app": "A repository whose PR has a running check: press Merge on the Overview (the row reads '#N merges when its checks pass.'). When the check passes, the next poll merges it. The Inbox's Updates show 'Merged #N: \"<task>\".' once, and one desktop notification '<project>: merged #N' with body '\"<task>\" is merged. Open the project to see it.' appears; clicking it opens the project. LIVE CHECK: forerunner-sandbox has no checks, so the retry path cannot be shown there. On a repository with a CI check, or with the bench (the real-daemon case), press Merge while the check runs. Exactly one notification arrives when it merges, none for a plain Merge whose merge was immediate."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "A rebuild owed because the dependent's folder holds changes nobody committed blocks that PR's merge until the person clears the folder. If the person presses Merge, the record waits 'queued' (the row reads as merging) with no sentence saying why.",
+      "why": "The fence is the safe direction: merging a branch that still holds a closed dependency's work is the worst outcome. A sentence for 'waits for its rebuild' is a new piece of wording (polish's), and what to tell the person about a dirty task folder (which they normally never touch) is a product choice. It happens only when someone edited a task's worktree by hand."
+    },
+    {
+      "problem": "A merge that GitHub completes before the watcher has even read the dependency's close can still carry the closed dependency's work.",
+      "why": "Inherent: the app learns of the close only at the next poll, so this is the same as the close coming after the merge. Everything from the moment the app knows (marking the rebuild owed, checking again before GitHub's merge, GitHub's own refusal of a moved head) is covered. Recorded in ADR 0111's amendment point 2."
+    },
+    {
+      "problem": "On a shared state store (peers), an owed rebuild mark or a conflict notice is not restricted to this install's agent's records: an install without the task's worktree would see 'unchanged' and could clear a mark set by the install that has it.",
+      "why": "Peers and teams are out of scope this round (NEXT-SESSION.md). Restricting by agent would need DependentBranches to know the install's agent ids (a compose change). Noted for the collaboration wave."
+    },
+    {
+      "problem": "A fetch failure of this computer's copy (GitHub not answering, a refused token) is not shown on the Files line.",
+      "why": "By design: it is not a copy that stopped following (the next poll fetches again). It is written in ADR 0113's amendment. Saying a transient network failure on Files would be a new product decision."
+    },
+    {
+      "problem": "Bench walk of R-lock, R-chain, R-owed and the notification.",
+      "why": "They need a held host call, a busy folder across a restart, or a CI check, which the bench cannot stage reliably. They are covered by composed tests against the fake GitHub (dependent-branches-merge.test.ts, dependent-branches-restart.test.ts) and the real-daemon case for the notification. The bench before/after walked the two person-visible ones the spec asked for: the conflict card and the Files line."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs check, links, secret scan) on head 441ab43",
+      "result": "exit 0: 472 test files, 4864 passed, 6 skipped; lint 69 warnings, none in lines I wrote (the 2 in apps/ui/test/fake-daemon.ts at 2812/2853 were there before); check-paths ok; link-check ok; secret-scan clean. Log /tmp/frbench/fix-leftovers7-merge2/logs/check2.log"
+    },
+    {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (38 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG, as expected); 30 passed, 75 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 85 files, 946 passed. The first run, before 441ab43, failed 5 real-daemon merge cases (docs and take-out Merge); fixed by 441ab43 and rerun green."
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 34 passed"
+    },
+    {
+      "command": "npx vitest run packages/runtime/test/{dependent-branches*,merge*,githost*,loop-merge,pr-answers,merged-copy,take*,loop-docs} packages/capabilities/test/{pr-executor,take-out}.test.ts (after the follow-up)",
+      "result": "17 files, 173 passed"
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+    },
+    {
+      "command": "Bench before/after (node /tmp/frbench/fix-leftovers7-merge2-evidence/walk-l7m2.cjs fix-leftovers7-merge2 <label> <checkout>; --provider bench --githost 48465, FORERUNNER_GITHOST_POLL_MS=3000)",
+      "result": "BEFORE (ca2c58d export): GitHub says PR #3 mergeable=false (dirty), but the row still offers Merge, no card, and Files says 'As merged on GitHub, updated 18:14'. AFTER (441ab43): every check ok. The row is blocked with '#3 conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.', one card with Redo / Leave it open, none more after more polls, and Files says 'This computer's copy of bench/seeded, not updated since 18:15. You changed README.md in this copy, ...'. Bench stopped, home deleted."
+    },
+    {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-leftovers7-merge2-evidence/before/02-before-overview-after-the-merge.png",
+      "/tmp/frbench/fix-leftovers7-merge2-evidence/before/03-before-inbox-after-the-merge.png",
+      "/tmp/frbench/fix-leftovers7-merge2-evidence/before/04-before-files-copy-stopped.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-leftovers7-merge2-evidence/after/02-after-overview-after-the-merge.png",
+      "/tmp/frbench/fix-leftovers7-merge2-evidence/after/03-after-inbox-after-the-merge.png",
+      "/tmp/frbench/fix-leftovers7-merge2-evidence/after/04-after-files-copy-stopped.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/state/test/schema.test.ts (migrate results and appliedVersions now include 8; MIGRATIONS[7] is MIGRATION_0008; the v5 record expects rebuild_owed_for: null) and packages/state/test/migrations.integration.test.ts (applied [2..8], version 8)",
+      "why": "Migration 0008 adds merge_record.rebuild_owed_for. These tests assert the latest version and the full set of applied migrations. No assertion was weakened."
+    },
+    {
+      "test": "packages/runtime/test/dependent-branches-restart.test.ts",
+      "why": "The existing case's setup moved into a shared restartWorld() (its writer now takes the file's content) so the new R-owed and R-conflict restart cases reuse it. The existing case's assertions are unchanged."
+    },
+    {
+      "test": "packages/runtime/test/merge-record.test.ts R-mergeretry cases",
+      "why": "They gained assertions on the new onMergedLater events, and one case was renamed to say it adds no notification either. Nothing was removed."
+    }
+  ],
+  "new_problems": [
+    "The bench stand-in writes identical content for two tasks that name the same file, so two such PRs never conflict on their own. The bench walk had to edit the first PR on the stand-in GitHub before merging it (see walk-l7m2.cjs). Worth a FORERUNNER_BENCH_* switch if conflict walks recur.",
+    "packages/state/test/suite.ts's new case title says 'an accept clears it', but its assertion was written while pin cleared the mark; MergeRecordRepo.pin now does clear rebuild_owed_for (pin patches rebuild_owed_for: null) — consistent with the test. Note: I had considered keeping the mark across a pin so a session merge right after a redo waits for the sweep; I kept pin clearing it (a new accept reads the branch as it is). A reviewer may want to revisit that choice for the rare redo-then-immediate-accept race.",
+    "ReviewedPrMerge.mergeAsIs builds a made-up record ('pr-N'); its onNewHead would throw if it ever had a worktree (it never does). This existed before my changes and is unreachable today; it is why the R-lock checks are limited to run()'s records."
+  ],
+  "notes_for_other_areas": [
+    "Polish (wave 13), new sentences to review (design §5): (1) dependent-branches.ts conflictNoticeSentence: '#8 conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.' (no files: '#8 conflicts with main: ...'). (2) request-words.ts mergeLeftOpenCard conflict title: '\"<task>\" conflicts with main' (change_card.notice === 'conflict', base). (3) loop/docs.ts copyStoppedLine: 'You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.'; 'notes.md in this copy is in the way of a merged file: move it and the copy follows again.' (plurals handled); 'Git could not bring it to what is merged; it tries again at the next merge.' (4) FilesTab.repositoryLine stopped variant: 'This computer's copy of <repo>, not updated since 14:05. <line> Work waiting in a pull request is on the Overview.' (5) producers.prMerged: title '<project>: merged #12', body '\"<task>\" is merged. Open the project to see it.' (6) Internal only (audit row result, not shown): merge.ts superseded message.",
+    "APIs added that later areas can use: capabilities githost/worktree-lock.ts (inWorktree, tryWorktree, worktreeBusy); PrTaskExecutor.conflictsWithBase(task); HeldDependency.rebuilt; rebuildTask(task, hooks, onlyIfHolding: string | string[]); state merge_record.rebuild_owed_for (migration 0008), MergeRecordRepo.oweRebuild / owedRebuilds; DependentBranches.sweep(): Promise<boolean> (true when a conflict notice was given or taken back); conflictNoticeSentence; ReviewedPrMerge.onMergedLater(listener); MergePrToolDeps.onNewHead now returns Promise<boolean>, plus a new stillMayMerge(head); MergePrArtifacts.superseded; record last_outcome values 'conflict' (notice), 'conflict_resolved', 'rebuild_owed'; CopyRecord.stopped, CopyView.stopped, copyStoppedOf, copyStoppedLine; api-types ProjectFilesView copy.stopped (optional); notification kind 'pr_merged' with producers.prMerged; GitHostWatcherDeps.onDefaultBranchHead now returns unknown.",
+    "compose.ts (leftovers7-web's file): two small hunks of mine. (a) In onDefaultBranchHead, dependentBranches.sweep(...).then((said) => said && events.emit('project', ...)). (b) Right after bindProducers: merge.onMergedLater(...) -> notifications.prMerged. Please keep both when merging.",
+    "For the leftovers7-merge fix-up, if it touches merge.ts: ReviewedPrMerge.run() now re-reads its record at the start (store.mergeRecord.get), does not claim a record with rebuild_owed_for set, and after a call that did not merge keeps the word of a record moved by someone else (a superseded call goes back to 'queued'). call() has a new last parameter fenced, true only from run(). In mergeChecked, the update path runs inside inWorktree and re-reads the PR head first. pr-executor.ts: inWorktree/tryWorktree moved to worktree-lock.ts (imported); heldState, rebuildBranch, rebuildIn and rebuildDependents changed for R-chain; conflictsWithBase was added. droppedWords is untouched.",
+    "fake-daemon.ts: the only edit is the copies state type, which gained an optional stopped field (needed for the R-copystuck UI test). real-daemon.test.ts: one new describe at the end ('leftovers of wave 7, merge side, part 2 (leftovers7-merge2)') on its own fake GitHub repository alice/l7m2.",
+    "Live checks for the session lead (phaseE7-live.md §1, new steps): (1) The conflict notice: run two tasks on one file and merge one on GitHub. One card and a blocked row appear; after resolving on GitHub, Merge is offered again. (2) Files: edit README.md in the copy, then merge a README change; the line names the file. (3) The R-lock race (close the dependency right after pressing Merge on the dependent): never merged, one rebuilt-without card. forerunner-sandbox has no CI checks, so the merged-later notification can only be shown on a repository with checks.",
+    "Not changed (owner question / decision, as the spec says): the server-side cache for R-overviewcalls."
+  ]
+}

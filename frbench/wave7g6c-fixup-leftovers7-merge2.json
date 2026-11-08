@@ -1,0 +1,164 @@
+{
+  "area": "leftovers7-merge2",
+  "branch": "fix/leftovers7-merge2",
+  "head_sha": "555167a06994ee406df9590f58775e827508bb44",
+  "commits": [
+    {
+      "sha": "ff62cce",
+      "subject": "pr-answers, pr-executor: a card's Redo does the task again from main (code of 84b5d42, for the conflict notice's Redo) (U-028, R-conflict fix-up)"
+    },
+    {
+      "sha": "1e7494b",
+      "subject": "dependent-branches: the conflict notice's Redo does the task again from main, tested to its merge (U-028, R-conflict fix-up)"
+    },
+    {
+      "sha": "e0afcbd",
+      "subject": "dependent-branches: a conflict resolved with a commit after the review offers no Merge and says so (U-028, R-conflict fix-up)"
+    },
+    {
+      "sha": "555167a",
+      "subject": "dependent-branches: a card the conflict notice changes gets the Details of what it says now (U-028, R-conflict fix-up)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking 1: Redo on the new conflict card did not do the task again from main, although its line says \"The task is done again from main; a session starts for it.\" The session it started resumed the open pull request's branch. Its rebase onto main conflicted, and the task ended needs_human with a second card in git words (\"Rebase of fr/... onto main conflicts in…\", I resolved it / Drop the branch and retry from scratch / Cancel the task).",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts \"the conflict notice's Redo does the task again from main, as its line says: the session it starts ends with the same pull request merging cleanly, no second card, and the person's Merge merges it (R-conflict fix-up)\". With pr-answers.ts and pr-executor.ts as they were at 441ab43 it fails with ['needs_human', true] (the rebase conflict).",
+      "how": "Root cause: the conflict card is a left-open card whose Redo goes through applyRedo (session/pr-answers.ts). applyRedo only reopened the task, and PrTaskExecutor resumes whenever an open pull request is on the branch. The rebuild cards had the same flaw, and the leftovers7-merge fix-up running beside this one fixed it in 84b5d42: applyRedo marks the answered card redo_from_base (REDO_FROM_BASE_FIELD), and PrTaskExecutor.conflictAnswer reads that as \"Drop the branch and retry from scratch\". ff62cce carries only the code of 84b5d42 (pr-executor.ts and pr-answers.ts, byte for byte), without its tests and docs, so the two branches merge cleanly. 1e7494b adds the test. It answers with the card's own option from requestViews, runs the session the Redo starts, and checks: the task is done with no conflict; there is no conflict or rebase card; the same pull request holds only the task's own commit on main and merges; the record follows the new review and waits for the person; the next poll is silent; the person's Merge merges it.",
+      "check_in_the_app": "Bench (--provider bench --githost, FORERUNNER_GITHOST_POLL_MS=3000). Make a project on bench/seeded in 'You press Merge' with three tasks that write index.html: 'Write the home page in index.html', 'Write the quote page in index.html' and 'Write the quotes page in index.html'. Run a session. Press Merge on the home page's row. Within a poll, both quote rows show '#N conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.' with no Merge button, and there is one card each. Press Redo on the quote page's card. A session starts. When it ends, the task is done, there is no second card, and GitHub's PR has one commit ('Write the quote page in index.html') on top of main and is mergeable. The row offers Merge, and pressing it merges. Evidence: /tmp/frbench/fixup-leftovers7-merge2-evidence/after/04-06, 09 and after-walk.json (17 of 17 checks ok). LIVE CHECK (session lead, forerunner-sandbox, phaseE7-live.md §1, the conflict-notice step): run two tasks that change the same lines of one file in 'You press Merge', and merge the first on GitHub's website. Within about a minute the second's Overview row shows the conflict sentence instead of Merge, and the Inbox has one card '\"<task>\" conflicts with main' with Redo / Leave it open. Press Redo. A session starts at once. When it ends, the task is done, the Inbox has no second card (no 'Rebase of fr/… onto main conflicts' card), and GitHub shows the same PR force-pushed with only the task's new commit on top of main and 'This branch has no conflicts'. The Overview row offers Merge, and pressing it merges."
+    },
+    {
+      "problem": "Blocking 2: after the person resolved the conflict on GitHub, as the notice tells them to, the row offered Merge again with no sentence. That Merge could never work: the person's commit is not the reviewed head, so the merge step refused it ('#3 changed after the review…') and filed a second card.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts, the R-conflict case. Its tail was changed for this design, and it was last_outcome 'conflict_resolved' with sentence ''. apps/ui/test/real-daemon.test.ts 'a conflict the person resolves on GitHub with a commit of their own: the row still offers no Merge and says the pull request changed after the review, and the one card says so too (R-conflict fix-up)' returned {state: left_to_you, canMerge: true, sentence: null} from GET /projects/:id/pull-requests. Sibling 'a conflict that goes away on main ...' exists in both files. It presses Merge after the resolution and the PR merges, before and after the fix.",
+      "how": "Root cause: DependentBranches.conflictNotice (session/dependent-branches.ts), on mergeable === true, moved the record to conflict_resolved with an empty sentence. It never compared the PR head with reviewed_head_sha. Now Merge is offered again only when the head is still the reviewed commit, for example when main changed back. A head that moved since gets the merge step's own word: last_outcome 'head_moved' with headMovedSentence (newly exported from loop/merge.ts, the same words as its headMoved). That outcome is in NO_CLICK, so the Overview offers no Merge. The open conflict card takes those words: notice is cleared, so it gets the existing left-open title, and Redo and Leave it open stay. A record whose reviewed head is unknown keeps the old path. No new sentence.",
+      "check_in_the_app": "Bench, the same walk. On GitHub (the stand-in), merge main into the quotes page's branch, resolve index.html, and push. GitHub says it is mergeable. Within a poll, the row reads '#3 changed after the review: look at the new commits, then merge it yourself or send it back.' and has no Merge button. The Inbox has one card, 'The critic accepted \"Write the quotes page in index.html\", but pull request #3 was not merged', with that sentence and Redo / Leave it open. Nothing merges. Evidence: after/07-08 (before: /tmp/frbench/review-leftovers7-merge2/steps/07-09). LIVE CHECK (forerunner-sandbox): get to a conflict card as above. Then on GitHub's website use 'Resolve conflicts', keep either side and commit. Within about a minute the Overview row says the 'changed after the review' sentence with no Merge button. The Inbox's one card is titled 'The critic accepted \"<task>\", but pull request #N was not merged' with that sentence, Details 'Look at the commits pushed after the review / Merge it yourself or ask for a new review', and Redo / Leave it open. Nothing merges by itself. Optional: on another conflicted PR, revert the first merge on main (GitHub's Revert, then merge the revert). That row offers Merge again with no sentence, its card closes, and Merge merges it."
+    },
+    {
+      "problem": "Found on the bench re-walk: when a card changed from the conflict notice to 'changed after the review', its Details still listed the conflict's steps ('Resolve the conflict on the PR branch', 'Merge the pull request').",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts, the R-conflict case's Details assertion, and apps/ui/test/real-daemon.test.ts 'a conflict the person resolves on GitHub with a commit of their own ...' (open[0].details from GET /inbox). Both returned the conflict's two steps.",
+      "how": "A left-open card's steps were written once, at fileLeftOpenRequest. DependentBranches patched why, options and change_card but never steps. loop/merge.ts now exports leftOpenSteps(status), which uses the same STEPS table. Both card patches write the steps of what the card says now: the conflict notice taking over an open card, and the head-moved patch.",
+      "check_in_the_app": "In the walk above, open Details on the card: it lists 'Look at the commits pushed after the review' and 'Merge it yourself or ask for a new review' (after/08-after-08-inbox-after-resolving-on-github.png)."
+    },
+    {
+      "problem": "Non-blocking items from the review: docs/maintainers/runtime.md said 'an accept (pin) keeps the mark', but MergeRecordRepo.pin clears rebuild_owed_for. Separately, CopyRecord.stopped (persisted in the copy's .git) had no restart test.",
+      "u_ids": [
+        "U-028",
+        "U-037"
+      ],
+      "failing_test_before": "none: the first is a corrected doc line (the state suite already asserts that pin clears the mark). The second is added coverage that passes before and after: packages/runtime/test/loop-docs.test.ts R-copystuck builds a new ProjectDocs over the same folders, reads copyView, and runs its first refresh.",
+      "how": "runtime.md now says pin clears the mark, because a new review reads the branch as it is. The restart lines are in the R-copystuck test (in e0afcbd).",
+      "check_in_the_app": "Not person-visible beyond what the fixer's R-copystuck check covers. The reviewer's walk 2 (/tmp/frbench/review-leftovers7-merge2/steps/13) already showed the stopped line surviving restart-daemon.mjs."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "copyStoppedOf (loop/docs.ts) matches git's English messages. On a git that prints in another language, the Files line falls back to 'Git could not bring it to what is merged…' without the file names.",
+      "why": "GitOps (capabilities githost/git.ts) runs every git command with the process's locale. Fixing the locale for that one checkout needs a new GitOps option. Setting LC_ALL=C globally would change every git message parsed elsewhere (rebase and merge conflict files). That is more than the review's blocking scope; it is left for a later wave."
+    },
+    {
+      "problem": "Possible watcher stall (the reviewer's non-blocking note, not reproduced). A done task redone while its record is queued or waiting_checks would make the retry pass wait on inWorktree for the whole redo run, which blocks the poll.",
+      "why": "The fix would change which records the retry pass takes (tryWorktree there, or skip records whose task is not done). That is a merge-step behaviour change beyond the blocking findings, and nothing reproduced it. The reviewer's suggested fix stands as the starting point."
+    },
+    {
+      "problem": "Two cases still lose part of what a record said before the conflict notice. (1) A rebuilt_without record, whose Merge was offered with its warning, says 'changed after the review' after a resolution, with no Merge in the app (the rebuild moved its head after the review). (2) A record whose head is unchanged gets back an empty sentence, which drops a sentence such as 'builds on #X, which was not merged: merge #X first'.",
+      "why": "Case 1 is the safe direction, and the sentence is true. Restoring the exact earlier sentence would need the record to keep what it said before the notice (a new column or a card field). Both are rare: a conflict on top of an earlier left-to-you outcome."
+    },
+    {
+      "problem": "'dependent branch not rebuilt: its worktree has uncommitted changes' is a WARN at every poll while a rebuild is owed. The fixer's not_done items also remain: the 'Merging…' row with no reason while a dirty folder owes a rebuild, peers clearing owed marks, and fetch failures not shown on Files.",
+      "why": "These are log noise and product or wording choices that the fixer already listed. They are not part of the review's blocking findings."
+    },
+    {
+      "problem": "No bench BEFORE re-run.",
+      "why": "The reviewer's walk at 441ab43 is the before evidence: /tmp/frbench/review-leftovers7-merge2/steps/04-06 (Redo leading to the rebase card) and 07-09 (Merge offered after the resolution, then refused with a second card). The after walk ran the same journey at 555167a."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit, docs, links, secret scan) at 555167a",
+      "result": "exit 0: 472 files, 4866 passed, 6 skipped. That is 2 fewer than before the rewrite: 84b5d42's own tests stay on fix/leftovers7-merge. Lint 0 errors and 69 warnings, none in changed lines. Log: /tmp/frbench/fixup-leftovers7-merge2-evidence/logs/check.log"
+    },
+    {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (39 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 passed, 75 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 85 files, 948 passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 34 passed. The UI source did not change; the run is for completeness."
+    },
+    {
+      "command": "npx vitest run packages/runtime/test/dependent-branches-merge.test.ts packages/runtime/test/dependent-branches-restart.test.ts packages/runtime/test/dependent-branches.test.ts packages/runtime/test/pr-answers.test.ts packages/runtime/test/loop-docs.test.ts packages/runtime/test/merge-record.test.ts packages/runtime/test/loop-merge.test.ts packages/capabilities/test/pr-executor.test.ts",
+      "result": "8 files, 129 passed (before the final Details commit). Then dependent-branches-merge and dependent-branches-restart: 23 passed, and the real-daemon leftovers7-merge2 describe: 5 passed at the head."
+    },
+    {
+      "command": "Failing-first runs",
+      "result": "The Redo test, with pr-answers.ts and pr-executor.ts as at 441ab43, gave ['needs_human', true]. The R-conflict composed case and the real-daemon 'resolves on GitHub' case, with dependent-branches.ts and merge.ts as at 1e7494b, gave conflict_resolved / {left_to_you, canMerge: true, sentence: null}. The Details assertions, with dependent-branches.ts as at e0afcbd, returned the conflict's two steps."
+    },
+    {
+      "command": "git merge-tree --write-tree: claude/nifty-knuth-f9udt0 + fix/leftovers7-merge (adb59a3), then fix/leftovers7-merge2 (555167a); also against fix/leftovers7-session",
+      "result": "Both clean. The earlier version of this fix-up, a full cherry-pick of 84b5d42, conflicted in ADR 0111, runtime.md and the user guide, so the branch was rewritten to carry only its code. With fix/leftovers7-web, conflicts remain in apps/ui/test/real-daemon.test.ts (both append a describe at the end) and docs/maintainers/apps.md. These are identical with the fixer's 441ab43, so they are not new."
+    },
+    {
+      "command": "Bench walk (node /tmp/frbench/fixup-leftovers7-merge2-evidence/walk-fixup.cjs fixup-leftovers7-merge2 <checkout> after; --provider bench --githost 48486, daemon 48483, UI 2083, FORERUNNER_GITHOST_POLL_MS=3000), fresh bench at 555167a",
+      "result": "17 of 17 checks ok, no console errors or failed requests. Earlier runs on this branch found the Details problem (fixed in 555167a) and a stand-in artefact (see new_problems). The bench is stopped and its home, stand-in repositories and browser profile are deleted. The evidence is kept in /tmp/frbench/fixup-leftovers7-merge2-evidence/after/."
+    },
+    {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+    }
+  ],
+  "new_problems": [
+    "A redo from main, or 'Drop the branch and retry from scratch', whose run changes nothing on a task with an open pull request force-pushes main's head to the branch. That leaves an empty pull request marked done and offered for Merge. In PrTaskExecutor.execute, `!commit.committed && !existingPr` is the only no-change check; with `dropped` the branch starts at the base, so no commit means no change at all. Seen on bench run 2: the stand-in re-wrote main's own page on the redo, and PR #4 merged with no diff. This is pr-executor's drop path, shared with leftovers7-merge (84b5d42). Suggestion: with `dropped`, no commit becomes failed 'no changes', or the empty PR is closed.",
+    "Bench stand-in: the specialist reads an existing index.html and copies its kind, because 'seen' feeds the quotes test in testenv/src/bench/plans.ts. So a redo of a plain page, after a quote page merged to main, writes main's content again. Walks of the conflict Redo must merge the plain page first and redo a quote page, as walk-fixup.cjs does. The reviewer's claim that two same-kind titles never conflict holds."
+  ],
+  "notes_for_other_areas": [
+    "Merge order: ff62cce is the code of fixup-leftovers7-merge's 84b5d42 (pr-executor.ts REDO_FROM_BASE_FIELD and conflictAnswer; pr-answers.ts applyRedo), byte for byte. Its tests, docs and user-guide words stay on fix/leftovers7-merge. git merge-tree shows fix/leftovers7-merge (adb59a3) and this branch merging cleanly in either order. If leftovers7-merge changes that code later, take theirs.",
+    "New exports in packages/runtime/src/loop/merge.ts: headMovedSentence(prNumber), the same words as the merge step's headMoved, and leftOpenSteps(status), the left-open card's Details by outcome. Polish should keep the head-moved sentence in one place. merge.ts headMoved() and hostRefused() still spell it inline and could call headMovedSentence.",
+    "DependentBranches.conflictNotice can now move a record to last_outcome 'head_moved' (watcher side), besides 'conflict' and 'conflict_resolved'. It patches the open conflict card with notice: null, base: null, status 'head_moved', the head-moved why and steps, keeping the options Redo / Leave it open. The conflict notice taking over an open card now also writes the conflict's steps.",
+    "Words for polish (wave 13). No new sentence was added: the row and card reuse '#N changed after the review: look at the new commits, then merge it yourself or send it back.' and the existing left-open title. The user guide's conflict-notice paragraph (docs/user-guide.md, 'A pull request that no longer merges cleanly') was rewritten to say what Redo, a conflict gone on main, and a resolution on GitHub each lead to, and polish may shorten it. The reviewer's other word notes still stand: the Overview Decisions line after Redo reads the card's why ('… was not merged. Redo.'); a conflicted PR's Tasks row still says 'Accepted · waiting for you to merge'; the rebase card shows a branch name, although the conflict notice's Redo no longer leads to it.",
+    "Docs touched: docs/maintainers/runtime.md (the conflict notice paragraph, and the pin line corrected), ADR 0111 (the leftovers7-merge2 amendment, point 4), docs/user-guide.md (conflict notice paragraph). apps/ui/test/real-daemon.test.ts got two cases inside the existing leftovers7-merge2 describe; fake-daemon.ts is unchanged (no route shape changed).",
+    "Live checks for phaseE7-live.md §1 (new steps): the conflict notice's Redo runs to a clean PR with no second card; a conflict resolved on GitHub's website shows 'changed after the review' with no Merge, and the one card has the head-moved Details; optionally, a conflict gone on main offers Merge again and it merges. The exact steps are in fixed[].check_in_the_app."
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-leftovers7-merge2/steps/04-inbox-after-redo-on-the-welcome-page.png",
+      "/tmp/frbench/review-leftovers7-merge2/steps/05-inbox-after-the-redo-session.png",
+      "/tmp/frbench/review-leftovers7-merge2/steps/07-overview-after-resolving-on-github.png",
+      "/tmp/frbench/review-leftovers7-merge2/steps/09-overview-after-merge-on-the-resolved-page.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-leftovers7-merge2-evidence/after/03-after-03-inbox-two-conflict-cards.png",
+      "/tmp/frbench/fixup-leftovers7-merge2-evidence/after/05-after-05-inbox-after-the-redo-session.png",
+      "/tmp/frbench/fixup-leftovers7-merge2-evidence/after/06-after-06-overview-after-the-redo-session.png",
+      "/tmp/frbench/fixup-leftovers7-merge2-evidence/after/07-after-07-overview-after-resolving-on-github.png",
+      "/tmp/frbench/fixup-leftovers7-merge2-evidence/after/08-after-08-inbox-after-resolving-on-github.png",
+      "/tmp/frbench/fixup-leftovers7-merge2-evidence/after/09-after-09-overview-after-merging-the-redone-page.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/dependent-branches-merge.test.ts, the R-conflict case ('an open pull request that conflicts with main once another merges: ...')",
+      "why": "Its title and tail changed. It used to assert that after a resolution commit on the branch the record had an empty sentence and was no longer 'conflict', which offered Merge again. The review showed that Merge cannot work, because that head was not reviewed. The case now asserts head_moved with the head-moved sentence, one card with those words, Details and options, nothing more at the next poll, and nothing merged. The good path (reviewed head unchanged, Merge offered and merging) moved to its own new case, so nothing was weakened."
+    }
+  ]
+}

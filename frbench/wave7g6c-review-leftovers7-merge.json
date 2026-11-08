@@ -1,0 +1,103 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I set up a bench named review-leftovers7-merge (daemon 48471, UI 2071, stand-in GitHub 48473, --provider bench), started from this worktree at b0ecd2e. I drove it through the UI with Playwright. Scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk*.cjs. Results are in /tmp/frbench/review-leftovers7-merge/walk*.json and screenshots in /tmp/frbench/review-leftovers7-merge/steps/. The bench is stopped and its home deleted.\n\n1. **R-branch: same-titled tasks.** Project \"Two guides\" on bench/seeded. Two tasks titled \"Write the guide\" were created in the New task dialog a second apart; their ids share the first 8 characters. I pressed Start on the Overview, then Start in the dialog. Each task got its own branch (fr/83066fca-write-the-guide and fr/dac89566-write-the-guide) and its own PR (#2 and #3). The Overview lists two rows, each with Merge. Screenshots: steps/06-w1-05-overview-after.png and 07-w1-06-tasks-after.png.\n\n2. **R-queuedwords: switching to \"Merge automatically after review\" after the accept.** Both rows stayed \"Accepted · waiting for you to merge\" with Merge, because the records are left_to_you, not queued. The two screens agree. The fixer's check-in step cannot show the queued case this way; the real-daemon case covers it.\n\n3. **R-mergeretry: Merge while a check runs.** I added an in_progress check on #3 in the stand-in GitHub and pressed Merge on the row. The row read \"#3 merges when its checks pass.\" Over 135 s of polls the merge_pr audit rows stayed at 3 while the attempt count rose 1→4. Once the check passed, the next poll merged #3: one more audit row, and exactly one Update \"Merged #3: \"Write the guide\".\" in the Inbox. Screenshots: steps/12-w3-01-merge-waits-for-checks.png and 13-w3-02-inbox-merged-later.png.\n\n4. **R-pin: Take this work out, then Redo.** On the Tasks tab I pressed \"Take this work out\" on the merged row and confirmed. The row read \"Taken out in #4 (waiting for you to merge)\" with no actions. POST /tasks/:id/action redo answered 409: '\"Write the guide\" is being taken out in #4: merge or close #4 first, then redo it.' After Merge #4 on the Overview, the row read \"Taken out in #4\" and offered Redo again. Screenshots: steps/16-w4-03-tasks-taking-out.png and 19-w4-06-tasks-after-take-out-merged.png.\n\n5. **R-rebuildcard: chain A←B, A's PR closed on GitHub.**\n   - Merge path: within one poll there was one card, '\"Write the outline merge in outline-merge.md\" was rebuilt without pull request #5', offering Merge (\"Merges #6 as it is now, as Merge on the Overview does.\") and Redo, with no \"I merged it\". Pressing Merge merged #6 and the card read \"Done: Merged #6.\" Screenshots: steps/21-w5-merge-02-inbox-rebuild-card.png and 22-w5-merge-03-inbox-after-merge.png.\n   - Redo path, second chain: the card answered \"Redone: the task is ready again and a session runs it.\"; a session started by itself and the task ended done again on PR #8.\n\n6. **R-repooffer.**\n   - Offer first (project \"Moth count\", no repository, one coder task): Start filed the offer. Chat `tool: repo_create {...}` was refused with 'A card in your Inbox already asks to create a repository for \"Moth count\": answer it there.' and no second card appeared. The project page's Create a repository → Preview → Yes linked bench/moth-count, and the offer moved to Answered with \"Closed: it no longer needs you.\" No warning was posted.\n   - The other order fails; see blocking 1. Walk 7 (Pond survey: the project page dialog was abandoned) and walk 8 (Bat count: Chat asked first) both left two cards open. Answering one left the other open, and its Yes then posted a warning. Screenshots: steps/41-w8-02-inbox-both-open.png and 43-w8-04-inbox-after-yes.png.\n\n7. **R-dirtyworktree: crash mid-run.** I restarted the daemon with FORERUNNER_BENCH_DELAY_MS=5000 and started a task on bench/seeded. Once the worktree showed \"?? crash-notes.md\" I ran restart-daemon --hard. The task was back to Ready, and Continue → Start ran it to done with PR #9. `git for-each-ref refs/forerunner/failed/` lists the task's ref. The log has \"leftovers were set aside\" and no \"would be overwritten\".\n\n**Design check.**\n- Each card shows its options with one-line explanations, Done lines and Updates, as §3.8 asks.\n- Work continues by itself after Redo and after the checks pass.\n- Words for polish: the Update has no project name, the card body says \"or send it back\", and duplicate titles read identically.\n\n**Tests at base.** I reverted the 20 source files to fa1a86f, kept the tests, and ran them.\n- Failed: all 5 pr-executor leftovers7-merge cases ('git checkout -B ... untracked working tree files would be overwritten', same branch), R-takeoutdep, both R-repooffer cases, R-pin in the state suite (SQLite), bench-role-player R-testpaths, merge-record R-mergeretry (audit [true,true,true], \"issue\" called 3 times, no Update), both R-rebuildcard cases, inbox R-rebuildcard, project-overview R-overviewcalls (12 reads, not 2), and tasks.test.tsx (Redo offered).\n- Real-daemon: R-branch, R-queuedwords, R-mergeretry and R-pin failed. The R-testpaths case passes at base, as the fixer said.\n- I restored the files afterwards.\n\n**Validation run here (at HEAD).**\n- pnpm lint: 0 errors, 69 old warnings.\n- typecheck, lint:paths and docs:check --base fa1a86f: ok.\n- The area's 9 runtime and capability test files: 161 tests pass.\n- UI vitest: 85 files, 939 tests pass.\n- Playwright e2e/session.spec.ts (local config): 2 pass.",
+  "blocking": [
+    {
+      "issue": "R-repooffer is fixed for only one order. When Chat's repo.create card is filed before the offer (or the project page's Create dialog is previewed and closed), the agent still files its offer beside it, so two cards are open for one repository. Once either links the repository, the other stays open, and its Yes fails with the warning the problem names.",
+      "where": "packages/runtime/src/loop/repo-create.ts:323-327 (RepoProposals.consider dedupes only its own repo proposal key); repo-create.ts:44-60 and :469-490 (withdrawRepoOffers/withdrawLinked withdraw only the offer key, never an open repo.create command card); packages/commands/src/commands/repo.ts:58-74 (assertNoOpenOffer only guards the offer-first order)",
+      "evidence": "Bench walk 8 ('Bat count', /tmp/frbench/review-leftovers7-merge/walk8.json):\n1. Chat `tool: repo_create {\"project\":\"Bat count\",\"private\":true}` → card 'Create the private GitHub repository bench/bat-count for \"Bat count\"?' (open).\n2. Start session → the offer 'Create a repository for \"Bat count\"?' is filed too: Inbox 'Needs you (2)' (steps/41-w8-02-inbox-both-open.png).\n3. 'Create the repository' on the offer → bench/bat-count linked; Chat's card stays open.\n4. Its Yes → Update 'Your answer to the change card \"a GitHub repository for Bat count\" was not applied: Bat count already has a repository (bench/bat-count); one is created only for a project without one. Nothing changed; ask again if you still want it.' tagged warning (steps/43-w8-04-inbox-after-yes.png).\n\nWalk 7 ('Pond survey', the project page dialog previewed then closed) gives the same two open cards and the same warning. ADR 0097's new amendment is titled 'one card per repository', which this order breaks.",
+      "expected": "One card per repository whatever the order: the offer is not filed while a repo.create card is open for the project (or that card is withdrawn when the offer is filed), and a repository linked by any path withdraws every open repo.create card for that project ('Closed: it no longer needs you.'), so no answer posts the 'not applied' warning. Failing test first, in repo-create.test.ts at the HTTP boundary:\n1. /commands/execute repo.create with source 'text' (pending).\n2. A session plans code work.\n3. GET /inbox has one open card for the project.\n4. Answer it with its shown option: no open card is left and no 'not applied' message."
+    },
+    {
+      "issue": "The new Redo option on the rebuild card's conflict variant does not do what its line says. Its line is 'The task is done again from main; a session starts for it.' The redo's run resumes the open PR's branch, rebuilds it again, hits the same conflict, and stops at a second conflict card. A dependent that edits its dependency's file, the common chain, gets this variant whenever the dependency's PR is closed.",
+      "where": "packages/runtime/src/session/pr-answers.ts:310-338 (applyRedo only reopens the task); packages/capabilities/src/githost/pr-executor.ts:735-751 and :760-780 (the open PR on the task's branch makes the run resume from origin/<branch> and rebuildBranch again); packages/runtime/src/loop/merge.ts REBUILD_CARD_OPTIONS.conflict; packages/runtime/src/daemon/request-words.ts:851-856 (the Redo line)",
+      "evidence": "A temporary composed test in the dependent-branches-merge.test.ts chainWorld (not committed, deleted after):\n1. 'Add page' writes src/page.ts.\n2. 'Add footer' (depends on it) appends a line to src/page.ts.\n3. m.close(A); m.poll() files the card '\"Add footer\" could not be rebuilt without pull request #1' with choices [['Redo','The task is done again from main; a session starts for it.'],['Leave it open',...]].\n4. Answer 'Redo' → syncPrAnswers {redone:1}, task ready.\n5. m.session() → task status 'needs_human', reason 'merge conflict in src/page.ts', and a new open card 'Rebuilding fr/278b21e8-add-footer without #1, which was closed conflicts in src/page.ts;…' with ['I resolved it','Drop the branch and retry from scratch','Cancel the task']. PR #2 is still open on the conflicting branch.\n\nThe fixer's Redo test covers only the clean rebuilt_without card and checks only that the task becomes ready.",
+      "expected": "Redo on a rebuild card starts the task again from main, as its line says. For example, the next run starts its branch from origin/<base> as the conflict card's 'Drop the branch and retry from scratch' does (conflictAnswer outcome 'dropped'), and the open PR gets the new work. Alternatively the line says what really happens. Composed test first: conflict rebuild card → Redo → next session → the task ends in review with only its own work on main's base, and no second conflict card (design §5 rule 9; validation: each option's click leads to the outcome its label says)."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "R-branch: two tasks titled alike within 65 s get two branches and two PRs; the second carries none of the first's commits",
+      "holds": true,
+      "note": "pr-executor and real-daemon cases fail at fa1a86f and pass now. Bench: fr/83066fca-… and fr/dac89566-…, PRs #2 and #3, two Overview rows."
+    },
+    {
+      "claim": "R-dirtyworktree: a crash's leftovers are set aside under refs/forerunner/failed/<task>; no git refusal; a half-done rebase is ended",
+      "holds": true,
+      "note": "Both tests fail at base ('untracked working tree files would be overwritten', 'you need to resolve your current index first'). Bench restart --hard mid-run: the next run made PR #9 and the failed ref holds crash-notes.md."
+    },
+    {
+      "claim": "R-exclude: a reused worktree commits a new file under a tracked 'Local only/'",
+      "holds": true,
+      "note": "The test fails at base and passes now; loop-docs.test.ts (this computer's copy keeps the line) passes. Not walked on the bench."
+    },
+    {
+      "claim": "R-mergeretry: no token or audit row while checks run; one audit row and one Update 'Merged #N' when it merges later",
+      "holds": true,
+      "note": "merge-record, merge-in-app and real-daemon cases fail at base. Bench: audit rows 3→3 over two polls, then 4, and one Update 'Merged #3: \"Write the guide\".'"
+    },
+    {
+      "claim": "R-queuedwords: in after_review a queued record reads 'Accepted · merging' on Tasks and Overview",
+      "holds": true,
+      "note": "The real-daemon case fails at base. The check-in step as written (switch the mode on an accepted task) does not reach the queued state on the bench: those records are left_to_you and both screens say 'waiting for you to merge'."
+    },
+    {
+      "claim": "R-overviewcalls (UI half): other projects' changes no longer re-read the Overview's PRs",
+      "holds": true,
+      "note": "project-overview test: 12 reads at base, 2 now. Server-side cache dropped: listed in not_done, a decision for the session lead."
+    },
+    {
+      "claim": "R-pin: merged→queued goes through the graph; no Redo while a take-out is open",
+      "holds": true,
+      "note": "State suite (SQLite), schema, tasks.test.tsx and real-daemon fail at base. Bench: no actions on the row, 409 with the sentence, Redo back after #4 merged."
+    },
+    {
+      "claim": "R-rebuildcard: the rebuild card offers Merge and Redo, never 'I merged it'; each does what it says",
+      "holds": false,
+      "note": "The rebuilt_without variant holds on the bench: Merge merged #6 ('Merged #6.'), and Redo started a session. The conflict variant's Redo does not redo from main: see blocking 2."
+    },
+    {
+      "claim": "R-repooffer: offer and Chat's repo.create can no longer both be open; a linked repository withdraws the offer",
+      "holds": false,
+      "note": "Holds when the offer comes first (bench walk 6b). Fails when Chat's card (or the project page dialog) comes first: two cards, then a warning (blocking 1)."
+    },
+    {
+      "claim": "R-takeoutdep: a merge commit carrying a dependency's work is not reverted with -m 1",
+      "holds": true,
+      "note": "take-out.test.ts fails at base (menu.ts gone from main) and passes now. Not walked."
+    },
+    {
+      "claim": "R-testpaths: the stand-in lists the person's task at 0; Stop now always exercised; new real-daemon cases",
+      "holds": true,
+      "note": "bench-role-player test fails at base. Playwright session.spec passes. The real-daemon 'not accepted yet' and Files case passes at base too, as the fixer said."
+    },
+    {
+      "claim": "not_done: R-owed, R-lock, R-chain, R-conflict, R-copystuck, notification moved; server cache needs a decision",
+      "holds": true,
+      "note": "These match the '[MOVED to leftovers7-merge2]' items and the wave 12 note."
+    },
+    {
+      "claim": "No test weakened",
+      "holds": true,
+      "note": "The four changed assertions (merge-record audit rows, merge-in-app rowsBefore, schema merged→queued, tasks Redo) follow the designed behaviour change. Each now asserts the stricter or new outcome."
+    },
+    {
+      "claim": "Validation green (lint, typecheck, docs, UI suite, Playwright)",
+      "holds": true,
+      "note": "Rerun here: lint 0 errors, typecheck ok, docs:check --base fa1a86f ok, lint:paths ok, UI vitest 939/939, session.spec 2/2."
+    }
+  ],
+  "non_blocking": [
+    "JSDoc misplaced: in pr-executor.ts the new cleanAfterCutShortRun doc block was inserted between setLeftoversAside's doc and its function, so setLeftoversAside's doc now sits orphaned above another one. The same happened in merge.ts: mergedUpdateWords' doc block follows fileLeftOpenRequest's doc.",
+    "cleanAfterCutShortRun runs before conflictAnswer. If a person, following the conflict card's 'branch only on this computer' steps, answers 'I resolved it' with a rebase still in progress in the worktree, abortUnfinished silently discards their half-done resolution. Consider skipping the abort while an 'I resolved it' answer waits.",
+    "Words for polish (new sentences): the Update 'Merged #3: \"Write the guide\".' has no project name, though the session Updates say 'Two guides: did 2 tasks…'. The rebuild card body still ends 'look at it before you merge it, or send it back.' while the button is Redo. Its why starts 'The critic accepted X, but pull request #6 was not merged.' The repo.create failure warning says 'change card \"a GitHub repository for X\"'.",
+    "Same-titled tasks (polish C-59): the Overview's Next list uses `<li key={s}>` with '\"Write the guide\": Ready' twice, giving 11 React duplicate-key console errors (SummaryTab.tsx:162/187). Chat 'redo Write the guide' answers 'Say more of the title, for example \"Write the guide\"', which is useless when titles are identical. The two PR rows read the same.",
+    "The rebuild card's Merge on a rebuilt_changed record goes to head_moved and back to the person (the fixer's new_problems[1]). Its line says 'as Merge on the Overview does', which is literally true, but whether Merge should be offered there is a decision.",
+    "R-queuedwords live step: rewrite it. Switching the mode after the accept leaves left_to_you records (both screens say 'waiting for you to merge'). The queued state appears only between pin and the merge step, e.g. a dependent queued behind a dependency whose checks run under after_review.",
+    "repo.ts defines its own REPO_OFFER_KEY_PREFIX = 'repo:create:' instead of reusing ANSWER_CARD_KEYS.repoCreatePrefix (commands already imports from @forerunner/runtime/daemon).",
+    "The R-mergeretry real-daemon case came in a follow-up commit (30c954e), not with the behaviour change (256537e). No route shape changed, so the fake daemon did not need to.",
+    "The project page's Create a repository dialog files a pending card in the Inbox as soon as Preview is pressed. Closing the dialog with × leaves it open (Inbox 2 for one repository). This is part of blocking 1's class.",
+    "The log line for a crash's leftovers reads 'a failed run's leftovers were set aside' (log only).",
+    "compose.ts got one hunk, used for the rebuild card's Merge and Redo wiring (syncPrAnswers merge/start), not for the conflict notice the fix scope allowed. It is reported in the fixer's notes and merged cleanly at a2caf52."
+  ]
+}

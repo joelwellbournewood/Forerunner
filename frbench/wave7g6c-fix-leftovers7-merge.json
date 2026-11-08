@@ -1,0 +1,7 @@
+{
+  "area": "leftovers7-merge",
+  "branch": "fix/leftovers7-merge",
+  "head_sha": "b0ecd2e5767d4c01ee5a65ab5954f5f2fa7e4de1",
+  "full_report": "/tmp/frbench/wave7g6a-fix-merge.json",
+  "summary": "Wave 12's fixer for leftovers7-merge. Its full report (commits, fixed with failing-before tests and check_in_the_app steps, not_done, validation, screenshots, tests_changed_for_design, new_problems, notes_for_other_areas) is the JSON file /tmp/frbench/wave7g6a-fix-merge.json: read it whole with cat; it is the claims to verify. Fixed: 11 problems; not_done: 8."
+}

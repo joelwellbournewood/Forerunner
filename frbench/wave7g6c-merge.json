@@ -1,0 +1,103 @@
+{
+  "merged": [
+    "fix/leftovers7-web (43ed727): merge commit c3c4d14, no conflicts",
+    "fix/leftovers7-merge (adb59a3, the 4 fix-up commits on top of the wave 12 merge a2caf52): merge commit 5915f08, no conflicts",
+    "fix/leftovers7-session (93b6aa0, the 5 fix-up commits on top of the wave 12 merge ca2c58d): merge commit 73c1349, no conflicts",
+    "fix/leftovers7-merge2 (555167a, 12 commits from ca2c58d): merge commit ce13bb1, 2 conflicts resolved"
+  ],
+  "head_sha": "ce13bb1fbd775831bc16cfbdc32708b55cba6cce",
+  "pushed": true,
+  "conflicts_resolved": [
+    "apps/ui/test/real-daemon.test.ts (append-only file): leftovers7-web and leftovers7-merge2 each added their own describe block at the end. I kept both blocks, web's first, and restored the closing `}, 120_000); });` between them. No test was changed.",
+    "docs/maintainers/apps.md, the one long `/projects/:id/:tab?` table row: leftovers7-web added the Start dialog's credential wait (R-startcred) and leftovers7-merge2 added the Files `copy.stopped` sentence (R-copystuck), in different places of the same line. I word-diffed each side against the base and kept both additions. Lengths check out: combined = web + merge2 - base.",
+    "No conflict in pr-executor.ts or pr-answers.ts. merge2's ff62cce is the same code as leftovers7-merge's 84b5d42, byte for byte, so the merged pr-answers.ts equals fix/leftovers7-merge's. REDO_FROM_BASE_FIELD is defined once (pr-executor.ts:81). compose.ts merged cleanly: the web hunks (credential wake, chooser), the session hunk (recovery chfPerUsd) and merge2's two hunks (sweep then project event, onMergedLater notification) are all present.",
+    "The merge commit ce13bb1 was amended before the push so its message records the conflicts and how they were resolved, with the Co-Authored-By and Claude-Session lines. It still has two parents and is signed."
+  ],
+  "integration_fixes": [],
+  "validation": [
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "ok"
+    },
+    {
+      "command": "pnpm lint",
+      "result": "exit 0: 0 errors, 69 warnings (the same old kinds)"
+    },
+    {
+      "command": "pnpm lint:paths",
+      "result": "exit 0"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "exit 0 (node, apps/ui, apps/mobile, apps/approvals-web)"
+    },
+    {
+      "command": "pnpm test (unit)",
+      "result": "exit 0: 477 files, 4904 passed, 6 skipped"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0 (d189ffd)",
+      "result": "docs-check: ok (83 files)"
+    },
+    {
+      "command": "pnpm docs:links",
+      "result": "link-check: ok (206 files)"
+    },
+    {
+      "command": "pnpm secrets:scan",
+      "result": "clean (2072 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 75 skipped (Postgres-backed tests skip without FORERUNNER_TEST_PG, as expected)"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files; 25 passed, 1 skipped"
+    },
+    {
+      "command": "pnpm --filter @forerunner/live test (dry run)",
+      "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped. FORERUNNER_LIVE was not set, so no live model call was made."
+    },
+    {
+      "command": "pnpm test:injection",
+      "result": "exit 0: PASS, 59 cases (42 hostile, 17 controls), 0 failed (simulated clock, stand-in model)"
+    },
+    {
+      "command": "FORCE_COLOR=1 HOME=<empty folder> pnpm test (unit, as CI runs it)",
+      "result": "exit 0: 477 files, 4904 passed, 6 skipped"
+    },
+    {
+      "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty folder> pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 85 files, 952 passed (includes real-daemon.test.ts with all four areas' describe blocks)"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 34 passed (local config not committed)"
+    },
+    {
+      "command": "cargo fmt --check (apps/desktop/src-tauri)",
+      "result": "exit 0. No area touched apps/desktop (0 files changed since d189ffd), so clippy and cargo test were not needed and not run."
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing"
+    },
+    {
+      "command": "signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD) ... grep '^gpgsig'",
+      "result": "35 commits, all signed (nothing printed)"
+    },
+    {
+      "command": "git push -u origin claude/nifty-knuth-f9udt0",
+      "result": "d189ffd..ce13bb1 on the first try; origin matches HEAD"
+    }
+  ],
+  "smoke": "The bench smoke on the merged result passed 25 of 25 checks (bench merge-w14, daemon 48490, UI 2090, --fresh, stand-in provider). It had 0 findings, 0 recorded problems, and 17 model calls (intake 1, specialist 9, critic 6, chat 1). The plan went to the Inbox and Approve and start ran both tasks to done in one session. The page files were written, Files and the Overview show them, the chat named a task, and the critic reviewed the work. The journey script was not changed. The bench was stopped with stop.mjs, and its home and browser profile were deleted. Logs and smoke-result.json are in /tmp/frbench/merge-w14/logs/ and the daemon log is /tmp/frbench/merge-w14/daemon.log.",
+  "problems_left": [
+    "Nothing is broken by the merge: every suite is green and no fix after the merge was needed.",
+    "The areas' own not_done items stay open, unchanged by this merge:\n- R-newtaskwords (New task's runs-on line ignores the typed words) is not built.\n- R-lateusage task side: a stopped run's late cost does not reach task.actual_cost_usd_micro.\n- leftovers7-merge2: a Merge pressed while a rebuild is owed (the task folder has uncommitted changes) shows 'Merging…' with no reason; copyStoppedOf matches only git's English messages; the possible watcher stall on inWorktree (not reproduced); an empty PR after a redo from main whose run changes nothing (pr-executor drop path).\n- leftovers7-merge: CreateRepoDialog leaves its previewed card open when the dialog is closed.\n- leftovers7-session: the budget card's body is wrong for a review paused at a budget (needs a review flag for polish).",
+    "Non-blocking review notes on leftovers7-web, still open:\n- SummaryTab ResearchReads can keep a stale local line when a later change restores the earlier card line.\n- GET start-check now records a wait (a GET with a side effect).\n- credentialWaitNow ignores the answered state.\n- intake.ts onlyWebsitesLines gives the planner an odd line for an empty only list.\n- isPersonTask lacks the RECORDED_ANSWER exception.\n- The scheduler hold's release in intake.ts is not in a finally.\n- takeReady can clear a refusal written during a retry.\n- The `<launching>` filter in sandboxRefusalOf does not match ANSI-coloured lines.",
+    "Live checks owed by the session lead, with a real credential, as each fixed item's check_in_the_app describes:\n- leftovers7-web: R-readhook, R-lateusage, R-modelusage, R-refusedstays, and R-sandbox on Windows.\n- leftovers7-merge: the repository card answered No; the rebuild card's Redo after phaseE7-live.md §1 'Second chain'.\n- leftovers7-session: the crash with a real model; the chat line answered first.\n- leftovers7-merge2: the conflict notice's Redo; a conflict resolved on GitHub; the Files copy line; the R-lock race.",
+    "Polish (wave 13) still has to review the new sentences each area listed in its notes_for_other_areas. The CLAUDE.md 'Work in progress' paragraph stays until the round is done."
+  ]
+}

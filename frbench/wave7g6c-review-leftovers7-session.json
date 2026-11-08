@@ -1,0 +1,94 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I reviewed fix/leftovers7-session at 7f886af, run from my worktree. Bench \"review-leftovers7-session\" on daemon port 48472 and UI port 2072, real daemon and real UI in Chromium. Scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/. Screenshots and texts are in /tmp/frbench/review-leftovers7-session-evidence/{bench-steps,bench-api-steps}/. The bench is stopped and its home and browser profile are deleted.\n\nA) Review refused at the project's budget (R-criticbudget, R-sessreview). Stand-in model (--provider bench).\n- Setup: project \"Club page\" with one coder task, \"Write the club page\".\n- In Settings > Advanced > Project budget > Change, I typed 0.01 and pressed Preview and apply. Steps 01-03: \"Raised the project budget for Club page from CHF 0 to CHF 0.01.\"\n- I started the session from the project page (Start session, then the dialog's Start; steps 04-05).\n- Tasks tab (06): the row reads \"Paused at the project's budget\" with Answer and Cancel.\n- Inbox (08): exactly one card, '\"Write the club page\" paused at the project's budget of CHF 0.01', with Open Settings and Cancel task. There is no \"failed 4 times\" card and no review-failed card.\n- Session page (09): the coder started and finished, then the warning '\"Write the club page\" paused before its review: the project's budget of CHF 0.01 has no room for it.' and \"Stopped at the project's budget: 1 needs you. CHF 0.00.\" There is no \"sent back\" and no \"Trying again\".\n- Details (10): critic.review_paused, then \"Session review: accepted (grade 100, 0 findings)\". No \"No planned task was done\" finding.\n- I raised the budget to 5 in Settings (12-14). With no other click, a session started by itself and the task became Done. The Inbox card was withdrawn (\"Nothing needs you\").\n- Drawer after the raise (18): critic Finished, coder Finished, \"Review by the critic · Stopped at a budget\", coder Finished. The specialist ran again before the single review, as the fixer's not_done says.\n- Mismatch with the design: the card's body says \"It stopped before it could say where it stood; its work so far is kept.\", which is untrue when the coder had finished (see non_blocking).\n\nB) Crash after an accepted task (R-recovery). FORERUNNER_BENCH_DELAY_MS=3000, two coder tasks.\n- I waited for one task done and one running, then ran restart-daemon --hard.\n- Session page (19): the last line now reads \"Interrupted: Forerunner closed: 1 done. CHF 0.01.\" (before the fix: \"nothing done. CHF 0.00.\").\n- On the same page, the card \"Spent of this session's budget\" still reads \"CHF 0.00 of CHF 5.00\". GET /sessions/:id gives spent.usdMicro 6097 (the coder's run only). The cost ledger holds 16014 for the session: coder 6097 plus critic 9917. This is the blocking item.\n- Overview (20): Last result is \"Interrupted: Forerunner closed while this session ran. \"Write the concert notes\" is ready again.\" with \"Changed by the last session: rehearsal.md\". It no longer says \"No session yet\".\n- Inbox: one Update. Tasks: rehearsal Done, concert Ready.\n\nC) Plan card figure against the Start dialog (R-estimates).\n- I ran two \"Quote page\" projects to completion to teach the estimates, then created \"Quote page 3\" from the same brief.\n- GET /inbox planTasks: build 18684, check 26658 (the plan's guesses were 60000 and 90000). The card (23/24) shows \"about CHF 0.01\" and \"about CHF 0.02\" (before the fix it would have shown CHF 0.05 and CHF 0.07).\n- I pressed Approve and start, stopped that session, and opened Start session (25): \"runs \"Build…\" (about CHF 0.01) and continues with up to 1 more … (about CHF 0.02)\". This matches the card. start-check gave build 14412, because learning moved after the stopped run; check 26658 is identical.\n\nD) Chat cache (R-chatcache) on the bench. Three POST /chat lines on one project. Turns read 0, then 5671, then 5783 tokens from the cache, and wrote 5664, then 105, then 107. Replies were to the person's lines.\n\nE) Usage limit on the API path (R-waitqueue, R-startedline, R-failedrun). --provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2, scripts/bench/journeys/credentials.cjs with --wait-start 240.\n- Both tasks read \"Waits until 19:07, your API key's limit\".\n- The person's log has one start line (a.md) and one wait line. The second task has neither: its line moved to Details.\n- No card was filed.\n- A session started by itself at the reset and both tasks reached Done.\n- The drawer lists the stopped run as \"Stopped at the usage limit\", not Failed.",
+  "blocking": [
+    {
+      "issue": "After a crash, the session page shows two different amounts for the session's spend. The fix made the end line use the cost ledger, but recovery never updates the session row's spent_usd_micro. So GET /sessions/:id (the 'Spent of this session's budget' card and the session lists) keeps the stale live amount, which leaves out the critic's spend. The runner's own end writes spent_usd_micro from the same ledger sum (runner.ts:2967); endDeadSession computes that sum (recovery.ts:138) and puts it only on the session.ended event (recovery.ts:161). The acceptance asks that the page read 'its real spend after the restart', and design §1 says 'What the app says is true now'; the page does not hold to either. Validation rule 8 (fix the siblings) is unmet: the session row is the sibling of the line that was fixed.",
+      "where": "packages/runtime/src/session/recovery.ts:150",
+      "evidence": "Bench walk B: /tmp/frbench/review-leftovers7-session-evidence/bench-steps/19-b1-session-after-crash.png shows 'Spent of this session's budget CHF 0.00 of CHF 5.00 (0%)' above the last line 'Interrupted: Forerunner closed: 1 done. CHF 0.01.' After the restart, GET /sessions/01a1bc87-782e-… returned spent.usdMicro 6097, the coder run alone. The cost_ledger rows for that session sum to 16014 (runs: coder 6097, critic 9917). The test session-recovery.test.ts 'a session that finished a task before the crash…' checks only the last event line and lastSession. It never reads GET /sessions/:id spent, and it seeds no ledger rows (it uses session.recordSpend), so the gap cannot show there.",
+      "expected": "endDeadSession should write spent_usd_micro = the ledger's usd_micro on the session row (in the setStatus or a patch), as the runner's end does when the ledger has rows. The recovery test should seed ledger rows for both the coder and the critic and assert that GET /sessions/:id spent equals the amount in the end line (and the CHF the Overview shows), across the restart."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "R-criticbudget: a review refused at the project's budget pauses the task (needs_human, 'Paused at the project's budget', one budget card with Cancel task and Open Settings, attempt 0, no 'failed 4 times'); raising the budget reviews it once",
+      "holds": true,
+      "note": "budget-pause.test.ts case fails at fa1a86f ('expected 3 to be 0': attempt 3) and passes now. The bench walk shows it end to end, including that the task goes on by itself after the raise in Settings."
+    },
+    {
+      "claim": "R-criticcred: a review that meets a credential's usage limit waits (no verdict, no failed try, no card) and is reviewed by itself at the reset, also after a restart",
+      "holds": true,
+      "note": "credential-wait-session.test.ts fails at base ('[ready, 1]' vs '[ready, 0]') and passes now. The refused-key branch (provider_auth to credential_refused, 'Waits for a new API key', a saved key starts it) has no test; see non_blocking."
+    },
+    {
+      "claim": "R-waitqueue: under Wait only the tasks whose first choice rests wait; the rest of the queue runs; only waiting rows say 'Waits until …'",
+      "holds": true,
+      "note": "The test fails at base and passes now. On bench-api, a second waiting task's wait line goes to Details (repeat)."
+    },
+    {
+      "claim": "R-startedline/W5-20: the start line comes when the run starts and names who runs; a task whose pick waits gets none",
+      "holds": true,
+      "note": "session-keeps-going and specialist-handover cases fail at base and pass now. On bench-api the second task shows no started line."
+    },
+    {
+      "claim": "R-recovery: an interrupted session says what it did and spent and is the project's last session",
+      "holds": false,
+      "note": "The end line and lastSession are right (the test fails at base and passes now; the bench confirms). The session row's spend is not reconciled, so the same page shows CHF 0.00 against CHF 0.01 (blocking)."
+    },
+    {
+      "claim": "R-sessreview: a session whose only task paused is not 'revise' and has no 'No planned task was done' finding",
+      "holds": true,
+      "note": "budget-pause cases fail at base and pass now. On the bench: 'Session review: accepted (grade 100, 0 findings)'."
+    },
+    {
+      "claim": "R-failedrun: a run a credential stopped reads 'Stopped at the usage limit' or 'Stopped: Anthropic refused the credential', never Failed",
+      "holds": true,
+      "note": "The test fails at base (['Failed']) and passes now. On bench-api the drawer shows 'Stopped at the usage limit'."
+    },
+    {
+      "claim": "R-planunit: a stop at the subscription's share keeps no CHF amount",
+      "holds": true,
+      "note": "session-keeps-going case fails at base and passes now. Nothing changes on screen."
+    },
+    {
+      "claim": "R-chatcache: turn 2 reads more than system and tools from the cache",
+      "holds": true,
+      "note": "conversation.test.ts fails at base (4760 vs 4760) and passes now. The adapter case anthropic-provider.test.ts fails at base. On the bench, turns read 5671 then 5783. This depends on PromptCacheSim, which the same commit changed; the real API is the live check."
+    },
+    {
+      "claim": "R-estimates: the plan card's figure equals the Start dialog's",
+      "holds": true,
+      "note": "inbox.test.tsx and real-daemon cases fail at base and pass now. On the bench the card and dialog matched (CHF 0.01 and CHF 0.02)."
+    },
+    {
+      "claim": "Validation: pnpm test, test:integration, test:e2e, UI vitest, Playwright, lint, typecheck, docs-check green",
+      "holds": true,
+      "note": "Run here: unit 472 files with 4841 passed and 6 skipped; e2e 25 passed and 1 skipped; integration 30 passed and 73 skipped; UI vitest 85 files, 934 passed; Playwright 34 passed; lint exit 0 (warnings only); typecheck exit 0; docs-check ok (44 files)."
+    },
+    {
+      "claim": "No test weakened",
+      "holds": true,
+      "note": "Every changed assertion follows a design change: endsWith became startsWith for the reordered chat turn; the seeded tasks now carry CREDENTIAL_WAIT_REASON with the assertions unchanged; C-68 gains estimateUsdMicro: null. Nothing was removed or skipped."
+    },
+    {
+      "claim": "Changed route GET /inbox has a real-daemon case and the fake changed in the same commit",
+      "holds": true,
+      "note": "b48a67c changes server.ts, the fake daemon, real-daemon.test.ts and inbox.test.tsx together. The fake uses the real planTaskViews."
+    }
+  ],
+  "non_blocking": [
+    "The Inbox card for a review paused at a budget reuses the run-pause body: 'It stopped before it could say where it stood; its work so far is kept.' (request-words.ts:612). This is untrue when the coder finished and only the review waits (bench step 08). The runner passes handoff: null (runner.ts:2075), so polish has no state to word this differently. A flag on the card, such as review: true, would let polish write 'The work is done; its review waits for room in the budget.'",
+    "Chat turn reorder: the message is now '<line>\\n\\n# Now…' with the line first. The system prompt still says 'Project doc excerpts and lessons from memory may follow the session facts in the first message' (agent.ts:357), and nothing tells the model the first paragraph is the person's line. The bench role-player was changed to read stableChars, so the stand-in cannot catch a model that answers the facts. The live check should confirm that real replies answer the line, with a long facts block (tasks, last session, retrieved docs).",
+    "The R-criticcred refused-key path is not tested: critic provider_auth gives a credential_refused run, the row reads 'Waits for a new API key', and saving a key starts the review. Only the usage-limit review is tested. The acceptance named 'subscription only'; the test uses an API key.",
+    "packages/critic has no unit test of refusedReviewError or credentialRunOutcome. They are covered only by composed runtime tests.",
+    "Intermediate commits are not green. 8de7f51 breaks two tasks.test.tsx cases, 266cb83 breaks four UI chat cases, and b48a67c breaks real-daemon C-68, until 7f886af, whose subject 'bench: …' hides the UI test updates. The commits cannot be bisected.",
+    "The R-estimates real-daemon case compares against planEstimateUsdMicro(rt.estimates, row), not GET /projects/:id/start-check (the Start dialog's route). Both use the same function today, but the boundary would be start-check. On the bench, the learned figure moved between card and dialog after the stopped session (18684 to 14412 USD micro); this is true-now behaviour.",
+    "GET /inbox now calls store.project.get for every request row, not only plan cards, and shapes each plan on every poll (server.ts around :1760). Hand this to leftovers7-web, which owns R-inboxperf.",
+    "When the ledger has no rows, recovery falls back to DEFAULT_CHF_PER_USD, not the configured rate, for last_session.spentChfMicro (recovery.ts around :141).",
+    "The plan card's per-task CHF values do not add up to the total once rounded: 'about CHF 0.01' plus 'about CHF 0.02' with 'About CHF 0.04 for the 2 tasks'. This rounding existed before; polish.",
+    "'it goes on by itself once that limit is raised or resets' is said of a project budget, which never resets (result.ts:392, task-words.ts:250). The sentence comes from group 4 and is polish's.",
+    "Tiny budgets give 'Stopped at the project's budget of CHF 0.01. CHF 0.00.' The fixer reported this; it existed before.",
+    "On upgrade, ready tasks given back by a pre-fix session with the old reason no longer read 'Waits until …' while the project waits; they show Ready. The wake still starts them.",
+    "A review refused at the task's own budget pauses with Continue. Going on reruns the specialist first (not_done 1: no review-only pass), which spends part of the added budget before the review, so Continue may have to be pressed again."
+  ]
+}

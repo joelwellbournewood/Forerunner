@@ -1,0 +1,12 @@
+{
+  "wave": 13,
+  "runId": "wf_06cd7061-9f6",
+  "taskId": "wr1qkzds9",
+  "launched": "2026-11-08T21:40Z",
+  "base": "ce13bb1",
+  "keys": ["leftovers7-tailmerge", "leftovers7-tailrun", "polish-words", "polish-screens"],
+  "args": "/tmp/frbench/wave7g6d-args.json",
+  "spec": "/tmp/frbench/phaseE.json (backup before wave 13: phaseE.before-wave13.json); builder: build-wave13.cjs in the session scratchpad",
+  "resume": "Workflow({scriptPath: '/home/user/Forerunner/.claude/worktrees/_wf-scripts/forerunner-phase-e6.js', resumeFromRunId: 'wf_06cd7061-9f6', args: <contents of wave7g6d-args.json>}) from cwd /home/user/Forerunner; keep every shell command inside /home/user/Forerunner while it runs (isolation:'worktree' needs the cwd to be the git repo).",
+  "journal": "/root/.claude/projects/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/subagents/workflows/wf_06cd7061-9f6/journal.jsonl"
+}

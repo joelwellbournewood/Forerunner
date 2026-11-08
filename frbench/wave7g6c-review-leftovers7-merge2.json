@@ -1,0 +1,87 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I ran the bench \"review-leftovers7-merge2\" from my worktree at 441ab43. Settings: --provider bench, the stand-in GitHub on port 48474, FORERUNNER_GITHOST_POLL_MS=3000, daemon on 48473, UI on 2073. Scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/. Screenshots and texts are in /tmp/frbench/review-leftovers7-merge2/steps/, with results in review-walk1.json and review-walk3.json.\n\nWalk 1 (R-conflict, then R-copystuck):\n- Project \"Three pages\" on bench/seeded with three tasks that each write index.html: \"Write the quote page in index.html\", \"...home page...\", \"...welcome page...\". The stand-in writes a different index.html when the title says \"quote\", so these make real conflicts without editing anything on GitHub.\n- After the session, the Overview listed #2, #3 and #4 with Merge, plus the docs PR #1 (01). I pressed Merge on #2's row in the UI and it merged.\n- Within two polls, rows #3 and #4 lost their Merge button. Each read '#N conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.' (02). The docs row kept its Merge, as it should.\n- The Inbox had exactly one card per pull request, titled '\"Write the home page in index.html\" conflicts with main'. Each had Redo (\"The task is done again from main; a session starts for it.\") and Leave it open (\"Closes this card; the pull request stays open on GitHub.\") (03).\n- More polls added nothing. After restart-daemon.mjs and more polls there were still 2 cards, and both rows were still blocked. This matches the design: one job, buttons with one-line consequences, nothing echoed.\n- FAILED, Redo on the welcome page's card (04-06). A session started at once and the Done line said \"Redone: the task is ready again and a session runs it.\" But the run resumed on the old branch, which conflicts with main. The rebase onto main conflicted and the task ended in needs_human. A new card appeared: \"Rebase of fr/e34de89b-write-the-welcome-page-in-index.html onto main conflicts in…\", with I resolved it / Drop the branch and retry from scratch / Cancel the task. The task was not done again from main.\n- FAILED, resolving on GitHub (07-09). I merged main into #3's branch on the stand-in, resolved the conflict and pushed. GitHub then said mergeable=true. After a poll the card was withdrawn (\"Closed: it no longer needs you.\") and the row offered Merge again with no sentence. I pressed it in the UI. Nothing merged. The row became \"#3 changed after the review: look at the new commits, then merge it yourself or send it back.\" and a second Inbox card was filed.\n- Files (10-12): I edited README.md in this computer's copy and pushed a README change to main. After a poll, GET files returned stopped {reason: changed, files: [README.md]}. The tab read \"This computer's copy of bench/seeded, not updated since 19:33. You changed README.md in this copy, and a merge changed it too: ...\", never \"As merged\". The person's file was untouched. After I put README.md back and waited one poll, it read \"As merged on GitHub, updated 19:34\".\n\nWalk 2 (13): the same stopped copy survived restart-daemon.mjs, both on the API and on the tab.\n\nWalk 3 (R-owed, 14):\n- A (\"Write the page in page.html\") and B (\"Write the footer in footer.html\", waiting on A). I put scratch.txt in B's worktree and squash-merged A on the stand-in.\n- Polls logged \"dependent branch not rebuilt: its worktree has uncommitted changes\". B's PR still held page.html.\n- Pressing Merge on B left it unmerged. The row read only \"Merging…\" with no reason, as the fixer's not_done says.\n- I restarted the daemon and removed the file. The first polls rebuilt B (\"dependent pull request rebuilt\", dropped 5) and the retry merged B. main now has 'Merge pull request #6' with only \"Write the footer in footer.html\" after the squash of #5, so none of A's original commits.\n\nNo console errors or failed requests were recorded. The bench is stopped, its home, browser profile and stand-in repositories are deleted, and only the steps folder is kept.",
+  "blocking": [
+    {
+      "issue": "Redo on the new conflict card does not redo the task from main. Its own one-line consequence says it does, and the reviewer checklist asks that each option leads to what its label says. The task ends in a second card in git words that asks the person to resolve the rebase or drop the branch.",
+      "where": "packages/runtime/src/session/dependent-branches.ts:323 (the card offers REBUILD_CARD_OPTIONS.conflict); packages/runtime/src/session/pr-answers.ts:313 (applyRedo only reopens the task); packages/capabilities/src/githost/pr-executor.ts:735 (with the pull request still open the redo resumes its own branch, and rebaseOnto(origin/main) then conflicts, in this.conflict); packages/runtime/src/daemon/request-words.ts:855 (the explanation)",
+      "evidence": "Bench walk 1, steps 04-06 in /tmp/frbench/review-leftovers7-merge2/steps/ and review-walk1.json (afterRedo, afterRedoCards). I pressed Redo on '\"Write the welcome page in index.html\" conflicts with main'. A session started and the task ended needs_human with the card 'Rebase of fr/e34de89b-write-the-welcome-page-in-index.html onto main conflicts in…', options I resolved it / Drop the branch and retry from scratch / Cancel the task. The fixer's inbox.test.tsx only checks that Redo posts the string. No test runs what the Redo then does.",
+      "expected": "Redo on a conflict card (notice 'conflict'; the older rebuild-conflict card has the same flaw) starts the task again from main, as 'Drop the branch and retry from scratch' does. The session then ends with a pull request that merges cleanly and no second conflict card. Otherwise the card must not offer Redo with that consequence. Add a composed or real-daemon test that answers with requestView(row).options and runs the session to its outcome."
+    },
+    {
+      "issue": "After the person resolves the conflict on GitHub, as the notice tells them to, the row offers Merge again. That Merge can never work. The person's own fix moved the head away from the reviewed one, so pressing Merge is refused with 'changed after the review' and a second card is filed. This breaks the area's own goal that the row stops offering a Merge that cannot work. It also contradicts the existing rule that a head changed after review is not offered for Merge ('head_moved' is in NO_CLICK).",
+      "where": "packages/runtime/src/session/dependent-branches.ts:280-288 (the mergeable === true branch moves the record to left_to_you with last_outcome 'conflict_resolved', an empty sentence and canMerge true, without comparing the PR head with reviewed_head_sha); docs/user-guide.md:354",
+      "evidence": "Bench walk 1, steps 07 and 09 and review-walk1.json afterMergeH. After the resolution GitHub said mergeable=true and the row said {state: left_to_you, canMerge: true, sentence: null}. Pressing Merge in the UI gave merged=false, the row became {state: blocked, sentence: '#3 changed after the review: look at the new commits, then merge it yourself or send it back.'}, and a new card appeared: 'The critic accepted \"Write the home page in index.html\", but pull request #3 was not merged'. The fixer's composed test (dependent-branches-merge.test.ts, the R-conflict case) also resolves with a commit on the branch. It then asserts only that Merge is offered and never presses it.",
+      "expected": "When GitHub says the pull request merges again, offer Merge only if its head is still the reviewed one (for example main changed back, or the conflicting merge was reverted). When the head moved and the own change differs, the row stays without Merge and says the existing head-moved sentence, so the person looks at it and merges on GitHub or sends it back. The R-conflict test presses Merge after the resolution and asserts what the person sees, and the user guide line is corrected."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "R-lock: the rebuild waits for the merge step's git, and the head that still holds the closed work is never merged",
+      "holds": true,
+      "note": "dependent-branches-merge.test.ts passes at 441ab43. Copied onto claude/nifty-knuth-f9udt0 (d189ffd) it fails for the stated reason: B's head moved, e4ef849 vs da74778."
+    },
+    {
+      "claim": "R-lock: with the merge call held open on GitHub, the rebuild pushes first and the record keeps the rebuild's word",
+      "holds": true,
+      "note": "Fails at the base: the log shows the sentence replaced by '#2 changed after the review...'. GitHub refused the old head at the base too, so the base only had the wrong words, not a wrong merge."
+    },
+    {
+      "claim": "R-chain: once the middle task is free, the third task's PR holds none of the first's original commits",
+      "holds": true,
+      "note": "Passes at HEAD. Fails at the base: C's commits still include 'Add page'. The case's later poll asserts heads unchanged, so there is no rebuild loop."
+    },
+    {
+      "claim": "R-owed: a squash-merge seen while the dependent was busy is rebuilt after a restart, at the first poll",
+      "holds": true,
+      "note": "The restart test fails at the base (files still footer.html and page.html). Bench walk 3 confirmed it after restart-daemon.mjs. The state suite case passes on SQLite. migration 0008 is correct, and schema.test.ts / migrations.integration.test.ts were only bumped to version 8."
+    },
+    {
+      "claim": "R-conflict: one card after a poll, none more at the next poll or after a restart, and Merge is no longer offered on the conflicted row",
+      "holds": true,
+      "note": "Passes in real-daemon, composed and restart tests, and all fail at the base. Confirmed on the bench, including across a daemon restart. The follow-through is broken: see the two blocking findings (Redo, and Merge after the resolution)."
+    },
+    {
+      "claim": "R-copystuck: GET /projects/:id/files carries copy.stopped with the reason and files, the Files tab says so instead of 'As merged', and it follows again once the change is moved away",
+      "holds": true,
+      "note": "loop-docs, real-daemon and project-overview cases pass at HEAD and fail at the base. Confirmed on the bench and across a restart. The fake daemon changed in the same commit (7851846)."
+    },
+    {
+      "claim": "A merge made later by the retry pass or the start-up resume raises one pr_merged notification beside its Update; a session's merge and the person's click raise none",
+      "holds": true,
+      "note": "The real-daemon case passes, and fails at the base (timed out after 15 s with no notification). merge-record cases pass. tellMerged is called only when !session && authority.kind !== 'person'."
+    },
+    {
+      "claim": "441ab43 restores Merge for docs and take-out pull requests (mergeAsIs has no record)",
+      "holds": true,
+      "note": "Full UI vitest suite at HEAD: 85 files, 946 passed."
+    },
+    {
+      "claim": "Validation: pnpm check, test:integration, test:e2e, UI suite and Playwright are green",
+      "holds": true,
+      "note": "Rerun here: typecheck ok; lint 0 errors and 69 warnings, none in changed lines; docs:check --base ok; the area's unit files 172 passed; UI suite 946 passed; test:e2e 25 passed and 1 skipped; Playwright with the local config 34 passed. I did not rerun the full unit suite or test:integration; the fixer's check2.log shows 4864 unit tests passed."
+    },
+    {
+      "claim": "The bench stand-in writes identical content for two tasks that name the same file, so they never conflict on their own",
+      "holds": false,
+      "note": "Only true for titles of the same kind. A title with 'quote' and one without give different index.html files. My walk got real add/add conflicts that way."
+    },
+    {
+      "claim": "runtime.md: 'an accept (pin) keeps the mark'",
+      "holds": false,
+      "note": "MergeRecordRepo.pin clears rebuild_owed_for (merge-record.ts:59-60), and suite.ts asserts that it does. The doc line at runtime.md:3204 is wrong."
+    }
+  ],
+  "non_blocking": [
+    "docs/maintainers/runtime.md:3204 says 'an accept (`pin`) keeps the mark'. The code and the state suite do the opposite: pin clears rebuild_owed_for. Fix the doc line.",
+    "Rule 4: CopyRecord.stopped is new persisted state (a file in the copy's .git) with no restart test. The bench showed it survives restart-daemon.mjs (walk 2, step 13). A compose-twice or daemon-twice case would close the gap.",
+    "Confirmed the fixer's not_done #1 on the bench (walk 3, step 14). Merge pressed while a rebuild is owed because the folder holds uncommitted changes leaves the row on 'Merging…' with no reason until the folder is cleaned. After cleaning, the owed rebuild ran and the retry merged B correctly, with no pre-squash commits of A. A sentence is polish's or an owner choice.",
+    "Possible watcher stall, not reproduced. lookFor().baseChange, keepsOwnChange and mergeChecked's update path now wait on inWorktree. PrTaskExecutor.execute holds the same folder lock for a whole run. A done task can be redone while its record is queued or waiting_checks (the gate and the retry pass do not check task status). In that case retryWaitingMerges, which the watcher's poll awaits, would block every poll until the redo run ends: no PR events, copy refreshes or conflict notices meanwhile. Consider tryWorktree on the retry path, or skipping records whose task is not done.",
+    "copyStoppedOf (loop/docs.ts) matches git's English messages. GitOps does not set LC_ALL or LANGUAGE, so a git that prints in another language falls back to 'other' ('Git could not bring it to what is merged...') without the file names. Consider LC_ALL=C for that checkout.",
+    "A record whose left-to-you sentence said something else (rebuilt_without 'reviewed with #A's changes...', or head_moved) loses that sentence if it later conflicts and is resolved, because conflict_resolved sets sentence ''. The row then offers a plain Merge without the earlier warning.",
+    "The R-conflict real-daemon case does not cross a restart; the composed dependent-branches-restart case and my bench walk do.",
+    "'dependent branch not rebuilt: its worktree has uncommitted changes' is a WARN logged at every poll while a rebuild is owed (log noise).",
+    "Words for polish (design §5). The Files line is three sentences. The Overview Decisions line after Redo reads 'The critic accepted \"Write the welcome page in index.html\", but pull request #4 was not merged. Redo.' (the card's why, not its conflict title). The Tasks row of a conflicted PR still reads 'Accepted · waiting for you to merge'. The rebase-conflict card that Redo leads to shows a branch name ('Rebase of fr/e34de89b-... onto main conflicts in…'); that card is older, but this area now leads people to it.",
+    "The R-lock and R-owed tests use real-time waits of 20 s with messages that say what never happened, which is within the Windows CI guidance."
+  ]
+}

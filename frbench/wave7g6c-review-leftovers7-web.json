@@ -1,0 +1,103 @@
+{
+  "verdict": "pass",
+  "acceptance_walk": "Worktree detached at fix/leftovers7-web (43ed727), pnpm install --frozen-lockfile, Playwright local config copied. I ran two benches one after the other, both named review-leftovers7-web (daemon 48470, UI 2070), both started from this worktree.\n\nBench 1: --provider bench-api --api-key refused.\n- I ran journeys/credentials.cjs (label rev). It made a project with two writer tasks, and a session met the refused key.\n- Walk A (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walkA.cjs):\n  - Overview \"Next\" says each task \"Waits for a new API key\". The header says \"Waiting for a new API key: 2 tasks\" with Save a new key.\n  - Start dialog: \"Nothing can run yet. Waits for a new API key: save one in Settings.\" with a \"Save a new key\" link and Start disabled. There is no \"This session runs ...\". I looked at the screenshot. The link opens /setup.\n  - Tasks rows say \"Waits for a new API key\".\n  - Inbox has one card: \"Anthropic refused your API key ... Save a new key\".\n  - GET start-check gives blocked nothing_runnable with that sentence. GET /settings/models gives the coder and researcher runsOn as the wait sentence.\n- Walk B (walkB.cjs): New task, \"Who does it\" set to coder, then researcher, then writer-marketing (testid task-who). Each shows \"Waits for a new API key: save one in Settings.\" under the fields; I looked at the screenshot. The fixer's own walk used a testid that does not exist (new-task-specialist), so its screenshot never showed this line.\n- Walk C (walkC.cjs), the Research reads line:\n  - Overview Change, add facebook.com to Never, apply, close: the line reads \"Research reads: any public website, never facebook.com\".\n  - A later change applied the way chat applies it (POST /commands/execute settings.set web_access, source text, only developer.mozilla.org) shows on the open page within about 0.5 s as \"Research reads: only developer.mozilla.org\", with no reload.\n  - Undo case: an Overview change to \"never facebook.com\", then a chat change back to any public website. The line went back to \"Research reads: any public website\" within 0.5 s.\n- Walk D (walkD.cjs): I wrote web_access straight into state.sqlite, past the clean-up, for three new projects:\n  - only [\"github.io\"] reads \"Research reads: only github.io\", on the card and on screen.\n  - only [] reads \"Research reads: no website\".\n  - only [\"10.1.2.3\"] reads \"Research reads: only 10.1.2.3\".\n  - None reads \"any public website\". In the Change dialog the entries show as written, with \"Not taken: github.io is too broad ...\" and \"Name at least one website, or research would be stuck.\"; I looked at the screenshot.\n- Walk E (walkE.cjs), R-refusedstays: I saved a subscription token through POST /setup/anthropic, as the setup assistant does. The daemon log has a new subscription billing row picked at once (no restart) and \"work that waited for a credential starts again {started:1}\". A session with trigger budget_reset started by itself. The rows changed from \"Waits for a new API key\" to Running / Ready. On this bench the subscription run cannot finish (no Claude Code, as the bench README says), so I stopped that session.\n\nBench 2: --fresh --provider bench, FORERUNNER_BENCH_DELAY_MS=5000.\n- Walk F (walkF.cjs), R-planningstart:\n  - I created a project \"Notes\" with two ready tasks. Then, through the UI, New project \"Garden page\" with a brief, so planning starts.\n  - About 4.9 s into planning I pressed Start session on Notes. The dialog answered \"Queued: your agent is in another session. This one starts when that one ends.\", with no error and no 409.\n  - Daemon log: the intake proposal was filed at 19:30:58.413, and the Notes session started at that same millisecond. It finished both tasks (\"Did 2 tasks ... CHF 0.03\").\n\nBoth benches are stopped and the home deleted. The second --fresh start wiped bench 1's step files; walk A–E results are the JSON printed in this session, and the scripts are kept in the scratchpad.\n\nSecurity boundary checked on this machine. Real Chromium 1243, run as root, through launchAgentBrowser (scratchpad sandbox-real.ts). The first launch fails with Playwright's \"Chromium sandboxing failed!\". sandboxRefusalOf returns that line, the agent browser falls back, and it logs why. So the fix does not stop the browser from starting where the sandbox really cannot start.\n\nTests:\n- With packages/runtime/src and packages/capabilities/src set back to the base (claude/nifty-knuth-f9udt0) and the branch's tests kept, 20 of the 21 named tests fail, each for the stated reason:\n  - sandbox: seen [true,false], and an unsandboxed warn line blaming the profile path\n  - R-startcred: start-check blocked null\n  - R-planningstart: POST /sessions 409 claim_conflict\n  - R-failopen; R-modelusage; R-lateusage (sdk-driver and the composed test); R-limitsrmw; R-personsanswers; R-readhook\n  - code-commands-restart passes at the base, as the fixer said.\n- The real-daemon leftovers7-web cases also fail at the base: blocked null, and 5 vault lookups where at most 1 is allowed.\n- project-overview R-researchreads fails with the base SummaryTab.\n- All named tests pass on the branch.\n\nFull validation on the branch:\n- pnpm test: 475 files, 4876 passed / 6 skipped\n- pnpm test:e2e: 13 files, 25 passed / 1 skipped\n- UI vitest: 85 files, 945 passed\n- Playwright (local config): 34 passed\n- lint: 0 errors (69 warnings, the same kinds as before); typecheck ok\n- docs:check --base claude/nifty-knuth-f9udt0 ok; lint:paths ok; docs:links ok; secrets:scan clean\n\nThe worktree is left clean: the temporary scratch test was removed, and every source I set back was restored.",
+  "blocking": [],
+  "claims_checked": [
+    {
+      "claim": "R-sandbox/W6-30: only an error that names the sandbox drops Chromium's own sandbox, for the agent browser and the page try",
+      "holds": true,
+      "note": "The unit tests fail at the base and pass on the branch. Real Chromium as root still falls back with the reason \"Chromium sandboxing failed!\". A timeout or a held profile now throws \"browser could not be launched\" and logs no unsandboxed line."
+    },
+    {
+      "claim": "R-failopen: a stored 'only' rule never reads as any public website (line, page reader, web search)",
+      "holds": true,
+      "note": "Composed test and the bench (state DB writes) agree: \"only github.io\", \"no website\", \"only 10.1.2.3\". WebReadPolicy keeps 'only' with an empty list. Search is withheld when no domain is usable. The changed web-fetch assertion asserted the fail-open itself; it now asserts the refusal, which is a design reason, not a weakening."
+    },
+    {
+      "claim": "R-researchreads: the Overview line follows a later change made in chat",
+      "holds": true,
+      "note": "Holds on the real daemon and UI, the undo-to-the-old-value case included. In the fake-daemon world, where the card had not refreshed when the dialog closed, a later change that restores the earlier line still shows the stale local line (see non_blocking)."
+    },
+    {
+      "claim": "R-readhook: Read/NotebookRead/Grep get no updatedToolOutput; WebSearch, WebFetch and MCP keep theirs; a flagged read gets a note",
+      "holds": true,
+      "note": "sites-subscription test checks the hook's return for Read and Grep in their own shapes. isExternalCcTool is limited to WebFetch|WebSearch."
+    },
+    {
+      "claim": "R-lateusage: a killed run's tail and a post-Stop-all booking reach the ledger and the Run row",
+      "holds": true,
+      "note": "sdk-driver and the composed sdk-late-usage test fail at the base. afterModelCall still checks the signature and books before the live-token check; afterStop allows nothing. The task's own actual_cost is left out, as listed in not_done."
+    },
+    {
+      "claim": "R-modelusage: modelUsage is booked per model at its own price",
+      "holds": true,
+      "note": "Test: 270 booked, against 1,350 at the base. An unknown model is priced as the run's model."
+    },
+    {
+      "claim": "R-limitsrmw: every limits writer is version-checked",
+      "holds": true,
+      "note": "billing-limits tests fail at the base. A narrow race remains in takeReady (see non_blocking)."
+    },
+    {
+      "claim": "R-personsanswers: 'Follow the owner's decision in docs/...' is no askPerson need",
+      "holds": true,
+      "note": "credential-chooser test fails at the base. The sibling isPersonTask was not changed (see non_blocking)."
+    },
+    {
+      "claim": "R-codecommandsrestart: code_commands survives a restart",
+      "holds": true,
+      "note": "New restart test; it passes at the base too (no bug), as the fixer said."
+    },
+    {
+      "claim": "R-wakeorder: a start that fails or is only queued keeps the wait; after a restart the work starts by itself",
+      "holds": true,
+      "note": "credential-limits test fails at the base. The code reads runOutcome and calls keep() for a queued or deferred start."
+    },
+    {
+      "claim": "R-refusedstays: saving a subscription while the only key is refused ends the wait and starts a session by itself",
+      "holds": true,
+      "note": "Composed test, plus bench walk E: a new billing row with no restart, and a budget_reset session started at once."
+    },
+    {
+      "claim": "R-planningstart: a start asked for during a planning call is queued and runs when planning ends",
+      "holds": true,
+      "note": "Composed test (409 at the base), plus bench walk F: 'Queued: ...', and the session started the same millisecond the plan was filed."
+    },
+    {
+      "claim": "R-startcred: the Start dialog says 'Nothing can run yet. Waits for a new API key...' with Save a new key, and no 'This session runs'",
+      "holds": true,
+      "note": "real-daemon case (blocked null at the base), the fake daemon changed in the same commit, a project.test UI case, and the bench screenshot."
+    },
+    {
+      "claim": "R-runsonrefused: the runs-on line says the wait, never 'Runs on your API key', for a refused key",
+      "holds": true,
+      "note": "real-daemon case for coder and researcher, plus the bench New task 'Who does it' note for coder, researcher and writer-marketing. Plan-card lines go through the same chooserBatch, but no test covers the plan card itself."
+    },
+    {
+      "claim": "R-inboxperf: GET /inbox reads the credentials once per request",
+      "holds": true,
+      "note": "real-daemon counting-vault case (5 at the base, 1 now). The batch is made lazily, so the phase 5 gate passes (e2e green)."
+    },
+    {
+      "claim": "R-newtaskwords listed in not_done with a reason",
+      "holds": true,
+      "note": "Not built. Its acceptance item ('New task with words that need the owner's decision shows the API-key line') is therefore unmet and is left for a follow-up."
+    }
+  ],
+  "non_blocking": [
+    "R-newtaskwords is not built (it is in not_done with a reason). The acceptance item 'tasks.test.tsx plus real-daemon: New task with words that need the owner's decision shows the API-key line before Create' is unmet. The route and NewTaskDialog still need to send the typed words.",
+    "apps/ui/src/pages/project/SummaryTab.tsx ResearchReads keeps the local line while `changed.over === cardLine`. If the card had not refreshed when the dialog closed, and a later change elsewhere restores exactly the earlier line (for example chat undoes the Overview change), the stale local line wins. Reproduced with the fake daemon: after the Overview added never facebook.com, the setting was deleted and project.changed sent, and the line still read 'Research reads: any public website, never facebook.com'. The earlier scratch test missed this because toHaveTextContent matches substrings. It did not happen on the real daemon, where the card refreshed within about 0.5 s, before close. Simplest fix: drop `changed` as soon as the card line changes at all.",
+    "GET /projects/:id/start-check now writes: waits.now calls noteWait, so opening the Start dialog, or the stopped bar's 'Continue where it stopped', records a wait. A session then starts by itself at the reset or once a credential is saved, even if the person only looked. This matches the sentence ('starts by itself') and design §1 ('work keeps going by itself'), but it is a GET with a side effect and is worth naming for the session lead.",
+    "compose credentialWaitNow builds the pick without the task's `answered` state and with modelTier fixed to 'sonnet'. A task whose person questions were already answered still gets the askPerson need, so in an edge case the Start check can say 'Nothing can run yet' while the real run would go to the subscription.",
+    "billing-pick takeReady computes `refused` once, from the snapshot it read before the version-checked write. A refusal written between that read and the write is treated as stale on the retry and cleared. The new comment claims such a refusal is 'either taken here or kept', which is not true for refusals. It heals itself at the next refused call.",
+    "Sibling of R-failopen that was missed: intake.ts onlyWebsitesLines, given an empty 'only' list, gives the planner '...only these websites and their subdomains: . Plan no research ...' (model-facing text).",
+    "Sibling of R-personsanswers that was missed: person-questions.ts isPersonTask still matches PERSONS_ANSWER on legacy titles without the RECORDED_ANSWER exception. Also, RECORDED_ANSWER removes the need for a whole text, so 'Follow the owner's decision in docs/x and get the owner's confirmation before deploying' loses the confirmation need unless NEEDS_PERSON catches it.",
+    "intake.ts: release() of the scheduler hold is not in a finally between store.session.start and the try that releases it. If userMessage or SessionBudget threw there, the agent would stay held, and every start would be queued until a restart. Low risk.",
+    "Wording for polish: during planning the Start dialog still says 'This session runs ...' (start-check busy does not count holds). After Start it says 'Queued: your agent is in another session. This one starts when that one ends.', but the person sees 'Drafting the plan', not a session.",
+    "Wording for polish: once a subscription has taken the work, the Inbox card 'Anthropic refused your API key ... The work that needs it waits and starts by itself then.' stays. That is true for the key, but the work no longer waits. setup also still returns restartNeeded: true for a subscription that now serves without a restart.",
+    "sandboxRefusalOf's `<launching>` filter does not match call-log lines that carry ANSI colour codes. Playwright printed '\\u001b[2m  - <launching> ...' on this machine. This is harmless today because the markers are specific and never appear in a command line, but the guard the comment describes does not hold under colour.",
+    "The fixer's bench evidence for R-runsonrefused (08-*-new-task-researcher.png) shows no runs-on line, because its walk used a testid that does not exist (new-task-specialist). My walk with task-who shows the line correctly.",
+    "New person-facing sentences for polish (as the fixer listed): 'Research reads: no website'; 'Only these websites: none'; the reader refusal '... list, which names no website'; 'Nothing can run yet. ' + waitSentence. Also 'the browser did not start (...)' as a full-review try's unavailable reason, and the model-facing repoFileFlaggedNote.",
+    "Live checks still owed by the session lead, as the fixer wrote them: R-readhook (no hook_error for Read or Grep on the subscription), R-lateusage and R-modelusage (ledger against Claude Code's total_cost_usd), R-refusedstays with a real subscription finishing the tasks, R-sandbox on Windows (no unsandboxed line)."
+  ]
+}
