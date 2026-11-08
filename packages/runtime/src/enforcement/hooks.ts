@@ -506,6 +506,32 @@ export class EnforcementHooks {
   }
 
   /**
+   * A tool's own output with every resolved secret value scrubbed out of its strings, the shape
+   * kept: the same keys, arrays and numbers, each string redacted with its lines kept where they
+   * were (`keepLines`), so Claude Code's numbered view of a file shows every other line under
+   * the number it had. `changed` says whether any string held a value (leftovers7-tailrun TR-1:
+   * the Agent SDK path hands this back for Claude Code's built-in tools, whose output it cannot
+   * replace with a bare string). The output came over JSON, so it holds no cycle.
+   */
+  redactToolOutput(value: unknown): { value: unknown; changed: boolean } {
+    let changed = false;
+    const walk = (v: unknown): unknown => {
+      if (typeof v === "string") {
+        const out = this.deps.secrets.redact(v, { keepLines: true });
+        if (out !== v) changed = true;
+        return out;
+      }
+      if (!v || typeof v !== "object") return v;
+      if (Array.isArray(v)) return v.map(walk);
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+      return out;
+    };
+    const out = walk(value);
+    return { value: changed ? out : value, changed };
+  }
+
+  /**
    * After a tool the provider ran inside a model call ('web-search': one web search): one audit
    * row, as for the runtime's own tools. The provider ran it, so no hook could refuse it before:
    * the run's token decided whether the tool was offered at all (the loop checks the grant), and

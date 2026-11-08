@@ -165,6 +165,27 @@ describe("redactValues", () => {
   it("leaves text without matches unchanged", () => {
     expect(redactValues("nothing here", [freshValue()])).toBe("nothing here");
   });
+
+  it("a value that spans lines: found with either line ending; keepLines leaves its breaks (TR-1)", () => {
+    const key = ["-----BEGIN K-----", freshValue("a-"), freshValue("b-"), "-----END K-----"];
+    const lf = key.join("\n");
+    const crlfText = ["one", ...key, "after"].join("\r\n");
+    // A file checked out on Windows holds the value with CRLF; the vault holds it with LF.
+    expect(redactValues(crlfText, [lf])).toBe("one\r\n[REDACTED]\r\nafter");
+    // keepLines: the marker, then as many breaks as the value held; the later lines keep their place.
+    const lfText = ["one", ...key, "after"].join("\n");
+    const kept = redactValues(lfText, [lf], undefined, { keepLines: true });
+    expect(kept.split("\n")).toEqual(["one", "[REDACTED]", "", "", "", "after"]);
+    expect(kept.split("\n")).toHaveLength(lfText.split("\n").length);
+    const keptCrlf = redactValues(crlfText, [lf], undefined, { keepLines: true });
+    expect(keptCrlf.split("\n")).toHaveLength(crlfText.split("\n").length);
+    expect(keptCrlf.split("\n").at(-1)).toBe("after");
+    // A single-line value: keepLines changes nothing.
+    const one = freshValue();
+    expect(redactValues(`x ${one} y`, [one], undefined, { keepLines: true })).toBe(
+      "x [REDACTED] y",
+    );
+  });
 });
 
 describe("SecretResolver (runtime SecretsPort shape)", () => {

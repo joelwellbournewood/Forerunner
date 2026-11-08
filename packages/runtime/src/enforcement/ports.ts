@@ -63,8 +63,12 @@ export interface CapsPort {
 export interface SecretsPort {
   /** Replace whole-string "secret:<name>" values with vault values when granted; throw otherwise. */
   resolve(input: unknown, granted: ReadonlySet<string>): Promise<unknown>;
-  /** Scrub any secret value that was resolved during this run out of a string. */
-  redact(text: string): string;
+  /**
+   * Scrub any secret value that was resolved during this run out of a string. `keepLines`
+   * keeps the text's line breaks where they were (a value spanning lines leaves its breaks
+   * behind the marker), for an output whose lines are shown numbered (TR-1).
+   */
+  redact(text: string, opts?: { keepLines?: boolean }): string;
 }
 
 export interface AuditEntry {

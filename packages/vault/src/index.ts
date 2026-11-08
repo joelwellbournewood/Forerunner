@@ -29,6 +29,7 @@ export {
   isSecretRef,
   MIN_REDACT_LENGTH,
   parseSecretRef,
+  type RedactOptions,
   type ResolveOptions,
   redactValues,
   resolveSecretRefs,

@@ -214,10 +214,13 @@ other human without the value ever leaving the owner's install in clear.
   Buffer) pass through by identity; nesting deeper than 64 is refused.
 - `redactValues(text, values)`: removes every value and its JSON-escaped, URL-encoded, base64,
   base64url (padded and unpadded: JWT segments, some Basic-auth clients, `@base64d` pipelines)
-  and hex (both cases) forms, longest first. Values shorter than 4 characters are not scrubbed
-  (they would destroy ordinary text and are not secrets).
+  and hex (both cases) forms, longest first; a value that spans lines is found with either line
+  ending (a file checked out on Windows holds it with CRLF). Values shorter than 4 characters are
+  not scrubbed (they would destroy ordinary text and are not secrets). `{ keepLines: true }` (the
+  fourth argument) leaves a multi-line value's line breaks behind the marker, so a numbered view
+  of the text keeps every other line's number (the Agent SDK path's built-in tools, TR-1).
 - `SecretResolver(vault, audit?)`: per-run object with `resolve(input, granted)` and
-  `redact(text)`; it remembers the values it resolved. It matches the runtime's `SecretsPort`
+  `redact(text, opts?)`; it remembers the values it resolved. It matches the runtime's `SecretsPort`
   and is what `packages/runtime` wires into `beforeToolCall` / `afterToolCall`.
 
 ### Service-side credentials by reference (state service)
@@ -445,7 +448,7 @@ harnesses and the nine scenarios" step. `docs/status/gates.md` cites the step fo
 | `test/file.test.ts` | round-trip, layout, no plaintext on disk, 0600 on POSIX, default paths, wrong key and wrong passphrase, tamper (ciphertext, tag, swapped entry, check value), corrupt and newer files, atomic writes (parseable after every write, no temp files, stale temp ignored, concurrent writers), lock/unlock, exportKey/importKey, the runner flow |
 | `test/keyring.test.ts` | index maintenance, profiles, chunking (Windows cap simulated), index chunking, header-lookalike values, incomplete chunk detection, store failures, timeout through `SimulatedClock`, probe detection; a real-keyring round trip that runs only where a probe succeeds (`it.skipIf`, the describe title shows the reason) |
 | `test/open.test.ts` | backend selection, fall back with logged reason, env override, forced keyring failing loudly, invalid env value |
-| `test/refs.test.ts` | reference syntax, nested resolution, immutability, a reserved reference refused before the vault read whatever the grant (and by `parseSecretRef` / `formatSecretRef`), not-granted before vault read, not-found, depth cap, `redactValues` forms, `SecretResolver` |
+| `test/refs.test.ts` | reference syntax, nested resolution, immutability, a reserved reference refused before the vault read whatever the grant (and by `parseSecretRef` / `formatSecretRef`), not-granted before vault read, not-found, depth cap, `redactValues` forms (a multi-line value with either line ending, `keepLines`), `SecretResolver` |
 | `test/no-leak.test.ts` | captures Logger sinks, console and every thrown error across all backends and failure paths; asserts no value (or its base64) appears |
 | `test/wrap.test.ts` | spec S.13: raw 32-byte X25519 pairs, the install key created once in the vault under its reserved name (a non-key entry is refused), wrap/unwrap round trip to the recipient and nobody else, every binding field (name, owner, agent, device) fails closed, tampered ciphertext / tag / iv / salt / ephemeral key, a wrong version and malformed blobs are `validation` without the value in the error or the logs, fresh ephemeral key and salt per wrap, values up to the cap and multi-byte text |
 | `test/security-vault.test.ts` | the security review: a vault file copied without its key is refused (`wrong_key`) and no key is written next to it, the locked state names the path and never a value, a world-readable key file is tightened to 0600 before use, a tampered KDF block is `corrupt` and never a raw crypto error, an ungranted name is refused before any vault read, the resolver's edge cases, and base64url and hex forms are scrubbed |

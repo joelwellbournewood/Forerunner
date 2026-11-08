@@ -935,10 +935,12 @@ export class SdkAgentDriver {
       // Claude Code applies to every tool; `updatedMCPToolOutput` covers MCP tools only, so web
       // search results reached Claude without the "information, not instructions" wrapper). A
       // built-in tool's replacement must keep its output's shape: WebSearch's results become the
-      // one wrapped text. A built-in file tool's read (Read, NotebookRead, Grep) is scanned and
-      // flagged, never replaced (R-readhook: a bare string in place of its own shape is ignored
-      // or refused by Claude Code, and an envelope inside Read's text would shift the line
-      // numbers it shows); a flagged read gets one note beside it instead.
+      // one wrapped text. Every other built-in tool (Read, Grep, Bash, Edit, ...) gets no
+      // envelope (R-readhook: a bare string in place of its own shape is refused by Claude Code,
+      // which then keeps the original output, and an envelope inside Read's text would shift the
+      // line numbers it shows); a flagged read gets one note beside it instead. Its output is
+      // replaced only when it holds a resolved secret's value (TR-1): the same output, in its own
+      // shape, with the value scrubbed out of its strings and the lines kept where they were.
       // The wrap-up (ADR 0112) goes with the first result after the hooks said so, once, as
       // context beside the result, never inside it.
       const wrapUp = wrap.due && wrap.text && !wrap.sent ? wrap.text : undefined;
@@ -951,11 +953,17 @@ export class SdkAgentDriver {
           capUsdMicro: ctx.token.claims.budgetUsdMicro,
         });
       }
+      const scrubbed =
+        isMcpTool(toolName) || isExternalCcTool(toolName)
+          ? undefined
+          : this.deps.hooks.redactToolOutput(input.tool_response);
       const replaced: Record<string, unknown> = isMcpTool(toolName)
         ? { updatedMCPToolOutput: r.content, updatedToolOutput: r.content }
         : isExternalCcTool(toolName)
           ? { updatedToolOutput: builtInOutput(toolName, input.tool_response, r.content) }
-          : {};
+          : scrubbed?.changed
+            ? { updatedToolOutput: scrubbed.value }
+            : {};
       const flaggedFile =
         untrusted?.source === "repo_file" && r.report?.suspicious
           ? repoFileFlaggedNote(untrusted.origin)
