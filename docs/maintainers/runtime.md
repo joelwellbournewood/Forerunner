@@ -2956,23 +2956,43 @@ it, and the task's merge record keeps it (`take_out_pr_number`, `take_out_pr_url
 The answer (`TaskTakeOutAnswer`) is `opened` with `takeOutOpenedSentence` ("Opened #9 to take "X"
 out. It waits for you to merge it. "Y" built on it: check it still works once #9 is merged."),
 `conflict` with `takeOutConflictSentence` and one Inbox notice per task (`kind: "info"`, key
-`take_out:conflict:<task>`, no task id: `holdsTask` leaves it out with `isTakeOutNotice`, so the
-project's line does not wait on it), or `refused`. The words are in `daemon/take-out-words.ts`,
-which the UI's fake daemon imports. `taskDisplay()`'s merged case (`mergedDisplay`) reads the
+`TAKE_OUT_NOTICE_PREFIX` + task, no task id: `holdsTask` leaves it out with `isTakeOutNotice`, so
+the project's line does not wait on it), or `refused`. The notice's card keeps `task_title` and
+`files`; `request-words.ts`'s `takeOutNoticeCard` titles it `"<title>" could not be taken out`
+and says `takeOutConflictBody(files)` below it, with Got it ("Closes this card; its work stays in
+main.") and, once closed, "Nothing changed: "<title>" stays in main." (review of merged-actions:
+the generic card's first-sentence title was cut at the ": " inside a quoted task title, in the
+Inbox, on Home and in the notification). The words are in `daemon/take-out-words.ts`, which the
+UI's fake daemon imports. A pull request of one commit squash-merged or rebase-merged leaves the
+same shape: `takeOutPlan` returns `sure: false` and the body says "(#4, merged)". `taskDisplay()`'s merged case (`mergedDisplay`) reads the
 record: "Merged" with `takeOut: { state: "offered" }`, "Taken out in #9 (waiting for you to
 merge)" (`open`), "Taken out in #9" (`merged`); a take-out closed without merging offers it again.
 `ProjectPullRequests.view` lists each open take-out (`TaskTakeOut.openOf`) as a `take_out` row
 (title "Take out: <title>", `taskId` the task, no review) whose Merge merges it as it is through
 `mergeAsIs`, then marks it merged (`TaskTakeOut.merged`); before listing, `TaskTakeOut.settle`
 reads each open take-out the host no longer lists as open and marks it merged or closed, and the
-git host watcher's `onDefaultBranchHead` calls `settle(project, null)` (each open take-out read
-from the host, only while one is open), so a take-out merged on GitHub is read within a poll.
+git host watcher's `onDefaultBranchHead` (every repository project at every poll, whether main
+moved or not) calls `settle(project, null)` (each open take-out read from the host, only while
+one is open), so a take-out merged or closed on GitHub is read within a poll.
 One take-out runs per task at a time (a second press: "Its work is being taken out now: the
 answer comes in a moment."; `packages/runtime/test/take-out.test.ts`). Tests:
 `packages/capabilities/test/take-out.test.ts` (merge, squash and rebase merges on the fake
-GitHub: main's tree after merging the take-out equals main's before the merge; a conflict pushes
-nothing; an unknown shape and a commit not in main), `apps/ui/test/real-daemon.test.ts` "Take this
-work out on a merged task of a chain ..." and "a pull request squash-merged on GitHub ...".
+GitHub: main's tree after merging the take-out equals main's before the merge; a one-commit squash
+and rebase with `sure: false`; a conflict pushes nothing; an unknown shape and a commit not in
+main; the clone removed after), `packages/runtime/test/take-out.test.ts` (the notice's words with a
+": " in the title, through `requestView` and `requestOpened`), `apps/ui/test/real-daemon.test.ts`
+"Take this work out on a merged task of a chain ...", "a pull request squash-merged on GitHub ..."
+and "a take-out and a preview survive a restart" (validation rule 4: the daemon composed twice on
+one home; the rows, the take-out rows with Merge and the preview's folder read back; Merge and a
+merge on GitHub then finish the take-outs and a merge removes the preview).
+
+**The repository offer's words (merged-actions).** `RepoProposals` files
+`${repoOfferQuestion(name)} ${REPO_OFFER_BODY}` as the card's text; `request-words.ts`'s
+`repoOfferCard` titles it by `repoOfferQuestion` with the project's name read now, says
+`REPO_OFFER_BODY` below it and gives each answer its line ("Makes it on GitHub, private, with the
+project's folder as its first commit." / "Tasks keep running in the project's folder; the agent
+does not ask again."). Before, a project named "Birds: a counter" read 'Create a repository for
+"Birds' (`packages/runtime/test/repo-create.test.ts`).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull

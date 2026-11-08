@@ -1541,7 +1541,57 @@ describe("Take this work out (merged-actions, the owner's decision of 2026-11-02
     expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
       '"Index the documentation pages" could not be taken out by itself. Later work changed the same lines in site/index.html: undo it on GitHub by hand, or ask in Chat for a task that does it.',
     );
+    // Nothing of it is in Changes (it opened nothing): the line does not point there.
+    expect(within(screen.getByTestId("task-moved")).queryByText("In Changes")).toBeNull();
     // task_2 is done, but nothing says its work is merged: no Take this work out.
     expect(actionsOf(await rowOf("task_2"))).toEqual(["Redo"]);
+  });
+
+  it("the conflict's Inbox card and Home's line name the whole task when its title holds a colon (review of merged-actions)", async () => {
+    // The review's bench walk: the card read '"Write the README' with the rest of the title in
+    // its body, and Home's line 'Corner Shop: "Write the README'.
+    const user = userEvent.setup();
+    const harness = merged();
+    const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+    if (t1) t1.title = "Write the README: what the page does and how to open it";
+    harness.daemon.state.takeOutConflict = ["README.md"];
+    const app = renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("task_1")).getByTestId("action-take_out"));
+    await user.click(
+      within(await screen.findByTestId("take-out-dialog")).getByTestId("confirm-take-out"),
+    );
+    await screen.findByTestId("task-moved-sentence");
+    // A second press files no second card.
+    await user.click(within(await rowOf("task_1")).getByTestId("action-take_out"));
+    await user.click(
+      within(await screen.findByTestId("take-out-dialog")).getByTestId("confirm-take-out"),
+    );
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_1/take-out")).toHaveLength(2));
+    app.unmount();
+
+    const inbox = renderApp("/inbox", harness);
+    const titles = await screen.findAllByTestId("request-title");
+    const card = titles
+      .find((t) => t.textContent?.includes("could not be taken out"))
+      ?.closest("[data-testid='request']");
+    if (!(card instanceof HTMLElement)) throw new Error("no take-out notice in the Inbox");
+    expect(titles.filter((t) => t.textContent?.includes("could not be taken out"))).toHaveLength(1);
+    expect(within(card).getByTestId("request-title")).toHaveTextContent(
+      '"Write the README: what the page does and how to…" could not be taken out',
+    );
+    expect(within(card).getByTestId("request-body")).toHaveTextContent(
+      "Later work changed the same lines in README.md: undo it on GitHub by hand, or ask in Chat for a task that does it.",
+    );
+    expect(within(card).getByRole("button", { name: "Got it" })).toBeInTheDocument();
+    inbox.unmount();
+
+    renderApp("/", harness);
+    const home = await screen.findByTestId("home-needs-you");
+    const line = within(home)
+      .getAllByTestId("home-card")
+      .find((l) => l.textContent?.includes("could not be taken out"));
+    expect(line).toHaveTextContent(
+      'Atlas:"Write the README: what the page does and how to…" could not be taken outAnswer',
+    );
   });
 });

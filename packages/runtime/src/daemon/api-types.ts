@@ -1098,11 +1098,9 @@ export const ProjectPullRequestView = z.object({
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
 
 /**
- * `POST /projects/:id/pull-requests/:number/preview` (merged-actions): "Open this version" of a
- * pull request that waits to be merged. `ready`: its files are in `folder` on this computer, as
- * merging would give them (or as its branch has them, when it does not merge cleanly yet; the
- * sentence says which), replacing the project's earlier preview; nothing runs there and nothing
- * done there is kept. `refused`: no folder, and `sentence` says why.
+ * `POST /tasks/:id/take-out` (merged-actions): "Take this work out" on a merged task, a pull
+ * request that reverts its merge by the way it was merged and names the done tasks that built on
+ * it (`TaskTakeOut`, `loop/take-out.ts`).
  */
 export const TaskTakeOutAnswer = z.object({
   /**
@@ -1120,6 +1118,13 @@ export const TaskTakeOutAnswer = z.object({
 });
 export type TaskTakeOutAnswer = z.infer<typeof TaskTakeOutAnswer>;
 
+/**
+ * `POST /projects/:id/pull-requests/:number/preview` (merged-actions): "Open this version" of a
+ * pull request that waits to be merged. `ready`: its files are in `folder` on this computer, as
+ * merging would give them (or as its branch has them, when it does not merge cleanly yet; the
+ * sentence says which), replacing the project's earlier preview; nothing runs there and nothing
+ * done there is kept. `refused`: no folder, and `sentence` says why.
+ */
 export const PullRequestPreviewAnswer = z.object({
   state: z.enum(["ready", "refused"]),
   sentence: z.string(),

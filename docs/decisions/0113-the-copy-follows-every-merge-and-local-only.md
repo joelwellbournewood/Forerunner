@@ -183,10 +183,20 @@ session's plan and from the chat.
    `repo.create` is medium for every actor, so no level creates a repository without a yes; the
    offer holds no work and is not counted as a question in the project's line (C-60).
 
-Known gaps: a take-out's merge is marked at once by the app's Merge, at the git host watcher's
-read of main's head after a merge on GitHub, and at the Overview's next read of the pull requests;
-a take-out closed on GitHub without merging (main does not move) is read only at that next
-Overview read, so its row keeps "(waiting for you to merge)" until then. A Redo of a task
+A take-out's merge is marked at once by the app's Merge; one merged or closed on GitHub is read at
+the git host watcher's next poll (its `onDefaultBranchHead` runs for every repository project at
+every poll, whether main moved or not, and `TaskTakeOut.settle` asks the host about each open
+take-out: one request per open take-out per poll, none when none is open) and at the Overview's
+next read of the pull requests. A one-commit pull request squash-merged and one rebase-merged leave
+the same shape in git; its one commit is taken back either way and the take-out's words say
+"merged", not which (`takeOutPlan`'s `sure`). The conflict notice is worded from its card (the
+task's title and the files: `takeOutNoticeCard` in `request-words.ts`), so a title holding ": "
+reads whole; the repository offer likewise (`repoOfferCard`). The take-out's clone beside the
+task's worktree is removed once its push or conflict is done. The take-out record and the
+preview (its `preview.json` and git worktree) are read back by a daemon started again on the same
+home (`apps/ui/test/real-daemon.test.ts`, "a take-out and a preview survive a restart").
+
+Known gaps: a Redo of a task
 whose take-out is still open starts its record again and forgets that take-out (its pull request
 stays open on GitHub, no longer listed as a take-out). A dependent pull request merged with a merge
 commit that carried its dependency's commits (a dependency merged by GitHub through it) is

@@ -9394,7 +9394,7 @@ describe("the UI client against the real daemon: Open this version and Take this
     projectId: string,
     title: string,
     file: string,
-    opts: { from?: string; dependsOn?: string[]; content?: string } = {},
+    opts: { from?: string; dependsOn?: string[]; content?: string; second?: string } = {},
   ) {
     const task = await rt.store.task.insert({
       project_id: projectId,
@@ -9419,6 +9419,11 @@ describe("the UI client against the real daemon: Open this version and Take this
     await git.createBranch(branch, opts.from ? `origin/${opts.from}` : "origin/main");
     writeFileSync(join(dir, file), opts.content ?? `export const f = "${file}";\n`);
     await git.commitAll(`Add ${file}`);
+    // A second commit (another file): a squash of it differs from a rebase in git.
+    if (opts.second) {
+      writeFileSync(join(dir, opts.second), `export const g = "${opts.second}";\n`);
+      await git.commitAll(`Add ${opts.second}`);
+    }
     await git.push(branch);
     const pr = await github.createPullRequest(REPO, {
       title,
@@ -9557,7 +9562,8 @@ describe("the UI client against the real daemon: Open this version and Take this
     expect(pr.base.ref).toBe("main");
     expect(pr.body).toContain('Later tasks built on it: "Add the receipt".');
     expect(pr.body).toContain(`(#${a.pr.number}, merged)`);
-    // The task's row says it, after a restart of the view too (the record keeps it).
+    // The task's row says it (the merge record keeps it; the describe below starts the daemon
+    // again on the same home and reads it there).
     expect((await row(a.task.id))?.display).toMatchObject({
       label: `Taken out in #${n} (waiting for you to merge)`,
       takeOut: { state: "open", number: n },
@@ -9592,7 +9598,9 @@ describe("the UI client against the real daemon: Open this version and Take this
 
   it("a pull request squash-merged on GitHub: Take this work out reverts the squash (main's tree after its merge equals main's before the squash); an unknown shape and a conflict are said in words", async () => {
     const project = await client.createProject({ name: "Kiosk", goal: "A kiosk", repos: [FULL] });
-    const c = await doneTask(project.id, "Add the menu", "menu.ts");
+    // Two commits: a squash of one commit looks like a rebase in git, and is then said to be
+    // "merged" (capabilities take-out.test.ts).
+    const c = await doneTask(project.id, "Add the menu", "menu.ts", { second: "prices.ts" });
     const treeBefore = await hostGit("rev-parse", "main^{tree}");
     // Merged on GitHub's website by squash, as the watcher then records it.
     const squashed = await github.mergePullRequest(REPO, c.pr.number, {
@@ -9630,8 +9638,10 @@ describe("the UI client against the real daemon: Open this version and Take this
       builtOn: [],
     });
 
-    // Later work changed the same lines: nothing is pushed, one Inbox notice says so.
-    const e = await doneTask(project.id, "Set the price", "price.ts", {
+    // Later work changed the same lines: nothing is pushed, one Inbox notice says so. Its task's
+    // title holds a colon, as planners' titles often do (review of merged-actions: the card was
+    // titled '"Set the price' with the rest of the title in its body).
+    const e = await doneTask(project.id, "Set the price: one franc", "price.ts", {
       content: "export const price = 1;\n",
     });
     const mergedE = await github.mergePullRequest(REPO, e.pr.number, { sha: e.pr.head.sha });
@@ -9645,15 +9655,239 @@ describe("the UI client against the real daemon: Open this version and Take this
     const branches = (await github.listBranches(REPO)).map((x) => x.name).sort();
     const conflict = await client.takeOutTask(e.task.id);
     const sentence =
-      '"Set the price" could not be taken out by itself. Later work changed the same lines in price.ts: undo it on GitHub by hand, or ask in Chat for a task that does it.';
+      '"Set the price: one franc" could not be taken out by itself. Later work changed the same lines in price.ts: undo it on GitHub by hand, or ask in Chat for a task that does it.';
     expect(conflict).toEqual({ state: "conflict", sentence, number: null, url: null, builtOn: [] });
     expect((await github.listBranches(REPO)).map((x) => x.name).sort()).toEqual(branches);
     await client.takeOutTask(e.task.id);
     const inbox = await client.inbox(rt.human.id);
-    expect(inbox.requests.filter((r) => r.why === sentence && r.status === "open")).toHaveLength(1);
+    const notices = inbox.requests.filter((r) => r.why === sentence && r.status === "open");
+    expect(notices).toHaveLength(1);
+    // The Inbox and Home read its title and body (Home: "Kiosk: <title>").
+    expect(notices[0]).toMatchObject({
+      projectName: "Kiosk",
+      title: '"Set the price: one franc" could not be taken out',
+      body: "Later work changed the same lines in price.ts: undo it on GitHub by hand, or ask in Chat for a task that does it.",
+      reply: "none",
+    });
+    expect((notices[0]?.choices ?? []).map((c) => c.label)).toEqual(["Got it"]);
     // The notice asks nothing of a task: the project's line does not wait on it.
     expect((await client.project(project.id)).statusLine?.text ?? "").not.toMatch(
       /^Waiting for you/,
     );
   }, 120_000);
+});
+
+describe("the UI client against the real daemon: a take-out and a preview survive a restart (merged-actions, validation rule 4)", () => {
+  // The review of merged-actions: the take-out's columns on the merge record (migration 0007),
+  // the preview's record (preview.json) and its git worktree beside the copy were never read
+  // back by a daemon started again on the same home. Real git on the testenv fake GitHub; the
+  // state in a file, as on the person's computer.
+  const FULL = "alice/stall";
+  const REPO = { owner: "alice", name: "stall" };
+  const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
+
+  it("after the daemon starts again: the row still reads 'Taken out in #N (waiting for you to merge)', the Overview lists the take-out with Merge and the waiting pull request with its folder; Merge and a merge on GitHub then finish the take-outs, and the preview goes once its pull request is merged", async () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-take-out-restart-"));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    await host.createRepo({
+      owner: "alice",
+      name: "stall",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# stall\n" },
+    });
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env,
+          dirs,
+          stateUrl,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl,
+          },
+        },
+      );
+    };
+    const hostGit = async (...args: string[]) =>
+      (await run(["git", "--git-dir", host.repo(FULL)?.dir ?? "", ...args])).stdout.trim();
+
+    /** A done task with its pull request on the host, as a session leaves it. */
+    async function doneTask(rt: RuntimeApp, projectId: string, title: string, file: string) {
+      const task = await rt.store.task.insert({
+        project_id: projectId,
+        title,
+        outcome: `${title} done`,
+        acceptance_criteria: ["works"],
+        risk_tier: 1,
+        status: "done",
+        priority: 1,
+        depends_on: [],
+        budget_usd_micro: 1_000_000,
+        est_cost_usd_micro: 0,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "critic accepted",
+        author_agent: rt.agent.id,
+      });
+      const dir = join(work, `wt-${task.id}`);
+      const git = new GitOps({ cwd: dir, identity, auth: { token } });
+      await git.clone(host.cloneUrl(FULL));
+      const branch = `fr/${file.replace(/\W+/g, "-")}-${task.id.slice(-6).toLowerCase()}`;
+      await git.createBranch(branch, "origin/main");
+      writeFileSync(join(dir, file), `export const f = "${file}";\n`);
+      await git.commitAll(`Add ${file}`);
+      await git.push(branch);
+      const pr = await github.createPullRequest(REPO, {
+        title,
+        body: "",
+        head: branch,
+        base: "main",
+      });
+      await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch });
+      await rt.store.mergeRecord.pin({
+        task_id: task.id,
+        project_id: projectId,
+        agent_id: rt.agent.id,
+        pr_number: pr.number,
+        pr_url: pr.htmlUrl,
+        reviewed_head_sha: pr.head.sha,
+        author_agent: rt.agent.id,
+      });
+      return { task, pr };
+    }
+    /** Merge in the app, then wait for the record to say merged. */
+    async function mergeInApp(
+      rt: RuntimeApp,
+      client: DaemonClient,
+      projectId: string,
+      t: Awaited<ReturnType<typeof doneTask>>,
+    ) {
+      expect((await client.mergePullRequest(projectId, t.pr.number)).state).toBe("queued");
+      await eventually(
+        async () => (await rt.store.mergeRecord.forTask(t.task.id))?.state === "merged",
+        `#${t.pr.number} to be merged`,
+        async () => JSON.stringify(await rt.store.mergeRecord.forTask(t.task.id)),
+        30_000,
+      );
+    }
+
+    let first: Awaited<ReturnType<typeof compose>> | null = await compose();
+    let second: Awaited<ReturnType<typeof compose>> | null = null;
+    try {
+      // Before the restart: two merged tasks taken out (both wait), and one pull request waiting
+      // with its version on this computer.
+      const project = await first.client.createProject({
+        name: "Stall",
+        goal: "A market stall's page",
+        repos: [FULL],
+      });
+      const a = await doneTask(first.rt, project.id, "Add the stall", "stall.ts");
+      const b = await doneTask(first.rt, project.id, "Add the till", "till.ts");
+      await mergeInApp(first.rt, first.client, project.id, a);
+      await mergeInApp(first.rt, first.client, project.id, b);
+      const outA = await first.client.takeOutTask(a.task.id);
+      const outB = await first.client.takeOutTask(b.task.id);
+      expect([outA.state, outB.state]).toEqual(["opened", "opened"]);
+      const n = outA.number ?? 0;
+      const m = outB.number ?? 0;
+      const c = await doneTask(first.rt, project.id, "Add the sign", "sign.ts");
+      const preview = await first.client.previewPullRequest(project.id, c.pr.number);
+      expect(preview.state).toBe("ready");
+      const folder = preview.folder ?? "";
+      expect(readFileSync(join(folder, "sign.ts"), "utf8")).toBe('export const f = "sign.ts";\n');
+      const mainBefore = await hostGit("rev-parse", "main");
+      await first.rt.close();
+      first = null;
+
+      // The daemon starts again on the same home.
+      second = await compose();
+      const { client, rt } = second;
+      const row = async (id: string) => (await client.tasks(project.id)).find((t) => t.id === id);
+      expect((await row(a.task.id))?.display).toMatchObject({
+        label: `Taken out in #${n} (waiting for you to merge)`,
+        takeOut: { state: "open", number: n },
+      });
+      expect((await row(b.task.id))?.display).toMatchObject({
+        label: `Taken out in #${m} (waiting for you to merge)`,
+        takeOut: { state: "open", number: m },
+      });
+      const prs = await client.projectPullRequests(project.id);
+      expect(prs.waiting.find((w) => w.number === n)).toMatchObject({
+        kind: "take_out",
+        taskId: a.task.id,
+        title: "Take out: Add the stall",
+        merge: { state: "ready", canMerge: true },
+      });
+      expect(prs.waiting.find((w) => w.number === c.pr.number)?.preview).toEqual({
+        folder,
+        sentence: preview.sentence,
+      });
+      expect(readFileSync(join(folder, "sign.ts"), "utf8")).toBe('export const f = "sign.ts";\n');
+      // A second press after the restart still says what is going on; main is untouched.
+      expect((await client.takeOutTask(a.task.id)).sentence).toBe(
+        `"Add the stall" is being taken out in #${n}: merge #${n} to finish it.`,
+      );
+      expect(await hostGit("rev-parse", "main")).toBe(mainBefore);
+
+      // #m merged on GitHub: the next read of the Overview (or the watcher's poll) settles it.
+      expect((await github.mergePullRequest(REPO, m, {})).merged).toBe(true);
+      await eventually(
+        async () => {
+          await client.projectPullRequests(project.id);
+          return (await row(b.task.id))?.display?.label === `Taken out in #${m}`;
+        },
+        `the row to read "Taken out in #${m}" after #${m} was merged on GitHub`,
+        async () => JSON.stringify((await row(b.task.id))?.display),
+        30_000,
+      );
+      // #n merged in the app: the row says it, and the work left main.
+      expect((await client.mergePullRequest(project.id, n)).state).toBe("queued");
+      await eventually(
+        async () => (await rt.store.mergeRecord.forTask(a.task.id))?.take_out_state === "merged",
+        `#${n} to be merged`,
+        async () => JSON.stringify(await rt.store.mergeRecord.forTask(a.task.id)),
+        30_000,
+      );
+      expect((await row(a.task.id))?.display?.label).toBe(`Taken out in #${n}`);
+      const files = await hostGit("ls-tree", "--name-only", "main");
+      expect(files).not.toContain("stall.ts");
+      expect(files).not.toContain("till.ts");
+      // The previewed pull request merged in the app: its folder goes, and no row offers one.
+      await mergeInApp(rt, client, project.id, c);
+      await eventually(
+        async () => !existsSync(folder),
+        "the preview folder to be removed after its pull request was merged",
+        async () => JSON.stringify(readdirSync(join(dirs.worktrees, "docs", "previews"))),
+        15_000,
+      );
+      expect((await client.projectPullRequests(project.id)).waiting.some((w) => w.preview)).toBe(
+        false,
+      );
+    } finally {
+      await first?.rt.close();
+      await second?.rt.close();
+      await host.stop();
+    }
+  }, 180_000);
 });

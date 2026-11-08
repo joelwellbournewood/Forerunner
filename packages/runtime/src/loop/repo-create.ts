@@ -12,6 +12,7 @@ import {
   safeSegment,
 } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, ProjectRow, StateStore } from "@forerunner/state";
+import { REPO_OFFER_BODY, repoOfferQuestion } from "../daemon/request-words.ts";
 import { ANSWER_CARD_KEYS, repoProposalAnswer } from "../wiring/request-answers.ts";
 import { projectWorkspaceDir } from "./docs.ts";
 import type { CommandResultView } from "./ports.ts";
@@ -319,8 +320,10 @@ export class RepoProposals {
       project_id: project.id,
       session_id: req.sessionId,
       kind: "approval",
-      // The title is the question (design §3.8: a card's first sentence names the project).
-      why: `Create a repository for "${project.name}"? Code work is planned for it, and it has none: its tasks run in the project's folder on this computer.`,
+      // The Inbox titles it by its question with the project's name read then and says the
+      // sentence below it (`repoOfferCard`, request-words.ts); this is the one line for readers
+      // that show one.
+      why: `${repoOfferQuestion(project.name)} ${REPO_OFFER_BODY}`,
       steps: [
         `Repository: ${preview.fullName}`,
         `Under: ${preview.accountKind === "organization" ? `the organization ${preview.owner}` : `your GitHub account ${preview.owner}`}`,

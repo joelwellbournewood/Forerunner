@@ -126,6 +126,11 @@ function rememberedFilters(store: object): Map<string, KeptFilters> {
 interface Moved {
   sentence: string;
   undoToken: string | null;
+  /**
+   * False for an answer the change log has no row of (Take this work out opens a pull request
+   * on GitHub and changes no task): the line does not point to Changes.
+   */
+  inChanges?: boolean;
 }
 
 /**
@@ -381,9 +386,14 @@ export function TasksTab({
               Undo
             </Button>
           ) : null}
-          <Link to="/changes" className="text-xs text-blue-700 hover:underline dark:text-blue-300">
-            In Changes
-          </Link>
+          {moved.inChanges === false ? null : (
+            <Link
+              to="/changes"
+              className="text-xs text-blue-700 hover:underline dark:text-blue-300"
+            >
+              In Changes
+            </Link>
+          )}
         </div>
       ) : null}
       {tasks.loading && !tasks.data ? <Loading what="tasks" /> : null}
@@ -550,7 +560,7 @@ export function TasksTab({
           // The answer is the outcome (the pull request that waits, or the conflict): it stands
           // above the list like a moved task's sentence, with no Undo (close the pull request
           // on GitHub instead).
-          setMoved({ sentence: answer.sentence, undoToken: null });
+          setMoved({ sentence: answer.sentence, undoToken: null, inChanges: false });
           setTakingOut(null);
           tasks.reload();
           if (answer.state === "conflict") refreshInboxCount();

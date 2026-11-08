@@ -2,7 +2,9 @@ import type { GitHost, PullRequestInfo, TakeOutGitResult } from "@forerunner/cap
 import { SimulatedClock } from "@forerunner/platform";
 import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
+import { requestView } from "../src/daemon/views.ts";
 import { TaskTakeOut } from "../src/loop/take-out.ts";
+import { requestOpened } from "../src/notifications/producers.ts";
 
 /**
  * TaskTakeOut (merged-actions) with the host and the git step stood in: a second press while
@@ -12,7 +14,9 @@ import { TaskTakeOut } from "../src/loop/take-out.ts";
  * (capabilities `take-out.test.ts`), the route and the screens in apps/ui.
  */
 describe("TaskTakeOut", () => {
-  async function world() {
+  async function world(
+    opts: { title?: string; result?: (pushed: TakeOutGitResult) => TakeOutGitResult } = {},
+  ) {
     const clock = new SimulatedClock("2026-11-08T10:00:00Z");
     const store = await openStore({ url: "sqlite::memory:", clock });
     const human = await store.human.insert({ name: "Ada", email: "a@example.test" });
@@ -20,7 +24,7 @@ describe("TaskTakeOut", () => {
     const project = await store.project.insert({ name: "Shop", goal: "g", repos: ["o/shop"] });
     const task = await store.task.insert({
       project_id: project.id,
-      title: "Add the cart",
+      title: opts.title ?? "Add the cart",
       status: "done",
       pr_url: "https://github.com/o/shop/pull/4",
       branch: "fr/aaaa-add-the-cart",
@@ -54,7 +58,7 @@ describe("TaskTakeOut", () => {
     const git = {
       takeOut: async (): Promise<TakeOutGitResult> => {
         await gate;
-        return {
+        const pushed: TakeOutGitResult = {
           kind: "pushed",
           branch: "fr/aaaa-add-the-cart-take-out",
           base: "main",
@@ -62,10 +66,11 @@ describe("TaskTakeOut", () => {
           how: "squash",
           commits: ["m".repeat(40)],
         };
+        return opts.result ? opts.result(pushed) : pushed;
       },
     };
     const takeOut = new TaskTakeOut({ store, host, git, humanId: human.id, agentId: agent.id });
-    return { store, task, later, takeOut, opened, release, host };
+    return { store, task, later, takeOut, opened, release, host, human };
   }
 
   it("a second press while the first runs is refused; one pull request is opened, naming the task built on it; a record is made for a merge that had none", async () => {
@@ -111,5 +116,55 @@ describe("TaskTakeOut", () => {
       async () => ({ number: 9, merged: true, state: "closed" }) as unknown as PullRequestInfo;
     await w.takeOut.settle(w.task.project_id, null);
     expect((await w.store.mergeRecord.forTask(w.task.id))?.take_out_state).toBe("merged");
+  });
+
+  it("a pull request of one commit, whose squash and rebase git cannot tell apart, is said to be merged, not squash-merged (review of merged-actions)", async () => {
+    const w = await world({ result: (pushed) => ({ ...pushed, sure: false }) });
+    w.release();
+    expect((await w.takeOut.takeOut(w.task.id)).state).toBe("opened");
+    const body = String((w.opened[0] as { body: string }).body);
+    expect(body).toContain("(#4, merged): it reverts that change");
+    expect(body).not.toContain("squash");
+  });
+
+  it("a conflict files one notice whose title survives a colon in the task's title: the Inbox, Home and the notification read the whole title, then one sentence (review of merged-actions)", async () => {
+    // The review's bench walk: "Write the README: what the page does and how to open it" read
+    // as the Inbox title '"Write the README' with the rest of the title in the body, and as
+    // Home's line 'Corner Shop: "Write the README'. Planner titles often hold a colon.
+    const title = "Write the README: what the page does and how to open it";
+    const w = await world({ title, result: () => ({ kind: "conflict", files: ["README.md"] }) });
+    w.release();
+    expect((await w.takeOut.takeOut(w.task.id)).state).toBe("conflict");
+    // A second press files no second notice.
+    await w.takeOut.takeOut(w.task.id);
+    const open = await w.store.humanRequest.list({ status: "open" } as never, { limit: 10 });
+    expect(open).toHaveLength(1);
+    const row = open[0];
+    if (!row) throw new Error("no notice");
+    const view = requestView(row, "Corner Shop");
+    expect(view.title).toBe(
+      '"Write the README: what the page does and how to…" could not be taken out',
+    );
+    expect(view.body).toBe(
+      "Later work changed the same lines in README.md: undo it on GitHub by hand, or ask in Chat for a task that does it.",
+    );
+    expect((view.choices ?? []).map((c) => [c.label, c.explain])).toEqual([
+      ["Got it", "Closes this card; its work stays in main."],
+    ]);
+    expect(view.reply).toBe("none");
+    // Home's Needs you line is the project's name and this title (HomePage.tsx).
+    expect(`${view.projectName}: ${view.title}`).toBe(
+      'Corner Shop: "Write the README: what the page does and how to…" could not be taken out',
+    );
+    // The notification is titled from the same words, the project's name first; its 60
+    // characters shorten the quoted name, never what happened.
+    const note = requestOpened(row, w.human.id, { projectName: "Corner Shop" });
+    expect(note.title).toMatch(/^Corner Shop: "Write the [^"]*…" could not be taken out$/);
+    expect(note.title.length).toBeLessThanOrEqual(60);
+    // Answered: what happens next, not an echo of the click.
+    const answered = requestView({ ...row, status: "answered", answer: "Got it" }, "Corner Shop");
+    expect(answered.outcome).toBe(
+      'Nothing changed: "Write the README: what the page does and how to…" stays in main.',
+    );
   });
 });

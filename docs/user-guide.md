@@ -384,11 +384,13 @@ the answer and the pull request name the finished tasks that built on it ("Add t
 built on it: check it still works once #9 is merged). The task's row then says "Taken out in #9
 (waiting for you to merge)", and the pull request waits on the Overview under **Taking work
 out**, where **Merge** merges it; the row then says "Taken out in #9". If later work changed the
-same lines, nothing is opened: the answer and one Inbox notice say which files, and you undo it
-on GitHub by hand or ask in Chat for a task that does it. A merge made in a way Forerunner cannot
-undo safely is refused with one sentence ("#4 was merged in a way Forerunner cannot undo safely;
-undo it on GitHub."). Closing the take-out pull request on GitHub without merging it offers the
-button again.
+same lines, nothing is opened: the answer and one Inbox notice ("<task>" could not be taken out,
+with the files and what to do; **Got it** closes it) say which files, and you undo it on GitHub by
+hand or ask in Chat for a task that does it. A merge made in a way Forerunner cannot undo safely is
+refused with one sentence ("#4 was merged in a way Forerunner cannot undo safely; undo it on
+GitHub."). A pull request of one commit looks the same squash-merged or rebase-merged, so the
+take-out says only that it was merged. Merging or closing the take-out pull request on GitHub is
+seen within about a minute; closing it without merging offers the button again.
 
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and

@@ -5,6 +5,7 @@ import type { TaskTakeOutAnswer } from "../daemon/api-types.ts";
 import {
   andList,
   quoted,
+  TAKE_OUT_NOTICE_PREFIX,
   takeOutConflictSentence,
   takeOutOpenedSentence,
   unknownShapeSentence,
@@ -32,7 +33,7 @@ import { parsePullUrl } from "./merge.ts";
  */
 
 /** The notice of a take-out that conflicted: one per task while it is open. */
-export const TAKE_OUT_NOTICE_PREFIX = "take_out:conflict:";
+export { TAKE_OUT_NOTICE_PREFIX };
 
 /** What `PrTaskExecutor` does in git for it. */
 export interface TakeOutGitPort {
@@ -56,8 +57,12 @@ export interface TaskTakeOutDeps {
   changed?: (projectId: string) => void;
 }
 
-/** "merged with a merge commit" / "squashed" / "rebased" for the pull request's words. */
-function mergedHow(how: MergeMethod): string {
+/**
+ * "merged" / "squash-merged" / "rebase-merged" for the pull request's words; "merged" when git
+ * cannot tell a squash from a rebase (a pull request of one commit, `sure` false).
+ */
+function mergedHow(how: MergeMethod, sure: boolean): string {
+  if (!sure) return "merged";
   return how === "squash" ? "squash-merged" : how === "rebase" ? "rebase-merged" : "merged";
 }
 
@@ -65,11 +70,11 @@ function mergedHow(how: MergeMethod): string {
 function takeOutBody(
   task: TaskRow,
   number: number,
-  how: MergeMethod,
+  how: { how: MergeMethod; sure: boolean },
   builtOn: readonly string[],
 ): string {
   const lines = [
-    `Takes out the work of ${quoted(task.title)} (#${number}, ${mergedHow(how)}): it reverts that change on a branch of its own. Nothing reaches the default branch until you merge this.`,
+    `Takes out the work of ${quoted(task.title)} (#${number}, ${mergedHow(how.how, how.sure)}): it reverts that change on a branch of its own. Nothing reaches the default branch until you merge this.`,
     "",
     builtOn.length
       ? `Later tasks built on it: ${andList(builtOn.map(quoted))}. Their work may need it: check them before you merge this.`
@@ -202,7 +207,7 @@ export class TaskTakeOut {
         return refused(unknownShapeSentence(ref.number), later);
       case "conflict": {
         const sentence = takeOutConflictSentence(task.title, done.files);
-        await this.notice(task, sentence);
+        await this.notice(task, sentence, done.files);
         return { state: "conflict", sentence, number: null, url: null, builtOn: later };
       }
       case "pushed":
@@ -214,7 +219,7 @@ export class TaskTakeOut {
       // new one is opened for the new branch.
       opened = await host.createPullRequest(done.repo, {
         title: `Take out: ${task.title.replace(/\s+/g, " ").trim()}`,
-        body: takeOutBody(task, ref.number, done.how, later),
+        body: takeOutBody(task, ref.number, { how: done.how, sure: done.sure !== false }, later),
         head: done.branch,
         base: done.base,
       });
@@ -340,8 +345,13 @@ export class TaskTakeOut {
     });
   }
 
-  /** One Inbox notice for a take-out that conflicted (kept once per task while it is open). */
-  private async notice(task: TaskRow, sentence: string): Promise<void> {
+  /**
+   * One Inbox notice for a take-out that conflicted (kept once per task while it is open). Its
+   * card keeps the task's title and the files: `request-words.ts` titles it by the task and says
+   * the rest in one sentence (`takeOutNoticeCard`); the `why` is the whole sentence for readers
+   * that show one line.
+   */
+  private async notice(task: TaskRow, sentence: string, files: readonly string[]): Promise<void> {
     const key = `${TAKE_OUT_NOTICE_PREFIX}${task.id}`;
     const open = await this.deps.store.humanRequest.list(
       { status: "open", project_id: task.project_id } as never,
@@ -359,7 +369,7 @@ export class TaskTakeOut {
       options: [],
       blocking: false,
       risk: "low",
-      change_card: { key, task_id: task.id, title: task.title },
+      change_card: { key, task_id: task.id, task_title: task.title, files: [...files] },
       author_agent: this.deps.agentId,
     });
   }

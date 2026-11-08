@@ -349,9 +349,14 @@ with their milestone.
   reverted newest first; one parent whose change is the pull request's whole change: a squash,
   reverted without `-m`; anything else null), makes `branch` from the default branch, reverts and
   pushes it (forced with a lease, never the default branch, through `neverPush`). It returns
-  `TakeOutGitResult`: `pushed` (branch, base, repo, `how`, the commits), `conflict` (the files;
-  the clone reset, nothing pushed), `unknown_shape`, `not_in_main` or `no_repository`. Test:
-  `test/take-out.test.ts` on the fake GitHub's own merge, squash and rebase.
+  `TakeOutGitResult`: `pushed` (branch, base, repo, `how`, `sure`, the commits), `conflict` (the
+  files; nothing pushed), `unknown_shape`, `not_in_main` or `no_repository`. A pull request of one
+  commit squash-merged or rebase-merged leaves the same shape in git: its one commit is taken back
+  either way and `sure` is false, so the runtime's words say "merged", not which (review of
+  merged-actions: a rebase read "squash-merged"). The clone is removed once the push or the
+  conflict is done (a failure to remove it is logged; the next take-out fetches into it). Test:
+  `test/take-out.test.ts` on the fake GitHub's own merge, squash and rebase, of two commits and of
+  one, and the clone gone after each.
 - **Local only** (`local-only.ts`, merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md),
   the owner's decision of 2026-11-02): a repository project's folder that never leaves this
   computer and that agents can use. `LOCAL_ONLY_DIR` ("Local only"), `TRY_DIR`

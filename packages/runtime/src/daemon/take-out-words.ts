@@ -38,8 +38,20 @@ export function takeOutOpenedSentence(
   return `${opened} ${names} built on it: check ${they} once #${number} is merged.`;
 }
 
-/** The notice and answer of a take-out that conflicted with later work. */
+/**
+ * The Inbox notice of a take-out that conflicted with later work: one per task while it is open
+ * (`TaskTakeOut.notice`, `isTakeOutNotice`). Its change card keeps the task's title and the
+ * files, and `request-words.ts` words it from them (`takeOutNoticeCard`), so a title that holds
+ * ": " or ". " is never cut into a title and a body (review of merged-actions).
+ */
+export const TAKE_OUT_NOTICE_PREFIX = "take_out:conflict:";
+
+/** What went wrong and what to do, after the task's name (the notice's body). */
+export function takeOutConflictBody(files: readonly string[]): string {
+  return `Later work changed the same lines in ${namesList(files)}: undo it on GitHub by hand, or ask in Chat for a task that does it.`;
+}
+
+/** The answer of a take-out that conflicted with later work (the notice's `why` too). */
 export function takeOutConflictSentence(title: string, files: readonly string[]): string {
-  const shown = namesList(files);
-  return `${quoted(title)} could not be taken out by itself. Later work changed the same lines in ${shown}: undo it on GitHub by hand, or ask in Chat for a task that does it.`;
+  return `${quoted(title)} could not be taken out by itself. ${takeOutConflictBody(files)}`;
 }

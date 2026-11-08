@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, run, SimulatedClock } from "@forerunner/platform";
+import { join, run, SimulatedClock, safeSegment } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -101,6 +101,8 @@ describe("taking merged work out by the way it was merged (merged-actions)", {
 
   const takeOut = (task: TaskRow, number: number, mergeSha: string, headSha: string | null) =>
     exec.takeOut({ task, number, mergeSha, headSha, branch: `fr/take-out-${task.title}` });
+  /** Where `takeOut` clones the repository for a task (`<worktreeRoot>/<task>-take-out`). */
+  const cloneOf = (task: TaskRow) => join(root, "wt", `${safeSegment(task.id)}-take-out`);
 
   it.each([
     ["merge", "merged with a merge commit: git revert -m 1"],
@@ -120,11 +122,31 @@ describe("taking merged work out by the way it was merged (merged-actions)", {
       expect(await mainTree()).not.toBe(before);
       const mainBefore = await hostGit("rev-parse", "main");
       const out = await takeOut(task, pr.number, mergeSha, pr.head.sha);
-      expect(out).toMatchObject({ kind: "pushed", how: method, base: "main" });
+      expect(out).toMatchObject({ kind: "pushed", how: method, sure: true, base: "main" });
       if (out.kind !== "pushed") return;
       // main itself is untouched: the take-out is a branch of its own.
       expect(await hostGit("rev-parse", "main")).toBe(mainBefore);
       expect(out.commits).toHaveLength(method === "rebase" ? 2 : 1);
+      // Its clone is not kept (review of merged-actions: a full clone per task stayed on disk).
+      expect(existsSync(cloneOf(task))).toBe(false);
+      await mergeTakeOut(out.branch, `Take out: ${task.title}`);
+      expect(await mainTree()).toBe(before);
+    },
+  );
+
+  it.each([["rebase"], ["squash"]] as const)(
+    "a pull request of one commit %s-merged: its one commit is taken back, and git cannot tell the way apart, so it is not named (review of merged-actions: a rebase read 'squash-merged')",
+    async (method) => {
+      const { pr, task } = await pullRequest(`one-${method}`, [
+        { [`one-${method}.ts`]: "export const one = 1;\n" },
+      ]);
+      const before = await mainTree();
+      const merged = await gh.mergePullRequest(REPO, pr.number, { method, sha: pr.head.sha });
+      expect(merged.merged).toBe(true);
+      const out = await takeOut(task, pr.number, merged.sha ?? "", pr.head.sha);
+      expect(out).toMatchObject({ kind: "pushed", sure: false });
+      if (out.kind !== "pushed") return;
+      expect(out.commits).toEqual([merged.sha]);
       await mergeTakeOut(out.branch, `Take out: ${task.title}`);
       expect(await mainTree()).toBe(before);
     },
@@ -145,6 +167,7 @@ describe("taking merged work out by the way it was merged (merged-actions)", {
     const out = await takeOut(task, pr.number, merged.sha ?? "", pr.head.sha);
     expect(out).toEqual({ kind: "conflict", files: ["price.txt"] });
     expect((await gh.listBranches(REPO)).map((b) => b.name)).toEqual(branches.map((b) => b.name));
+    expect(existsSync(cloneOf(task))).toBe(false);
   });
 
   it("a merge commit that is not the pull request's work in any shape is not taken out", async () => {

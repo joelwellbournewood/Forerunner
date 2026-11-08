@@ -343,6 +343,47 @@ describe("a repository for a project without one (U-037)", () => {
     REPO_WORK_MS,
   );
 
+  it("the offer reads as its question and one sentence, whatever the project's name holds (review of merged-actions: a colon cut the title)", async () => {
+    // Before: the card was titled by the first sentence of its text, cut at the first ": ",
+    // ". " or "? ", so "Birds: a counter" read 'Create a repository for "Birds'.
+    const { id } = await projectWithCodeWork("Birds: a counter");
+    await session(id);
+    const inbox = await json(await req("/inbox"));
+    const card = (
+      inbox.requests as Array<{
+        projectId: string | null;
+        projectName: string | null;
+        why: string;
+        title: string;
+        body: string | null;
+        choices: Array<{ label: string; explain: string | null; tone: string }>;
+        reply: string;
+      }>
+    ).find((r) => r.projectId === id && r.why.startsWith("Create a repository for "));
+    if (!card) throw new Error("no proposal card");
+    expect(card.title).toBe('Create a repository for "Birds: a counter"?');
+    expect(card.body).toBe(
+      "Code work is planned for it, and it has none: its tasks run in the project's folder on this computer.",
+    );
+    expect(card.choices.map((c) => [c.label, c.explain, c.tone])).toEqual([
+      [
+        "Create the repository",
+        "Makes it on GitHub, private, with the project's folder as its first commit.",
+        "primary",
+      ],
+      [
+        "Not now",
+        "Tasks keep running in the project's folder; the agent does not ask again.",
+        "secondary",
+      ],
+    ]);
+    expect(card.reply).toBe("none");
+    // Home's Needs you line: the project's name, then this title.
+    expect(`${card.projectName}: ${card.title}`).toBe(
+      'Birds: a counter: Create a repository for "Birds: a counter"?',
+    );
+  });
+
   it(
     "the chat agent's repo.create at Autopilot files a card and creates nothing until the person's yes",
     async () => {

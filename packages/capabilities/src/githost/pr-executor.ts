@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import {
   type Clock,
   errorMessage,
@@ -1577,42 +1577,67 @@ export class PrTaskExecutor implements TaskExecutor {
     const target = await this.deps.repoFor(req.task);
     if (!target) return { kind: "no_repository" };
     const dir = join(this.deps.worktreeRoot, `${safeSegment(req.task.id)}-take-out`);
-    return inWorktree(dir, async () => {
-      const git = await this.gitFor(target, dir);
-      if (existsSync(join(dir, ".git"))) await git.fetch();
-      else {
-        mkdirSync(this.deps.worktreeRoot, { recursive: true });
-        await git.clone(target.clone);
-      }
-      const base = `origin/${target.base}`;
-      if (!(await git.hasRef(req.mergeSha)) || !(await git.isAncestor(req.mergeSha, base)))
-        return { kind: "not_in_main" };
-      let head = req.headSha;
-      if (head && !(await git.hasRef(head))) await git.fetchRef(`refs/pull/${req.number}/head`);
-      if (head && !(await git.hasRef(head))) head = null;
-      const plan = await takeOutPlan(git, req.mergeSha, head);
-      if (!plan) return { kind: "unknown_shape" };
-      await git.createBranch(req.branch, base);
-      const reverted = await git.revert(plan.commits, plan.mainline ? { mainline: 1 } : {});
-      if (!reverted.ok) {
-        await git.resetHard(base);
-        return { kind: "conflict", files: reverted.conflicts };
-      }
-      await git.push(req.branch, { force: true, defaultBranch: target.base });
-      this.logger.info("work taken out", {
-        taskId: req.task.id,
-        how: plan.how,
-        commits: plan.commits.length,
-      });
-      return {
-        kind: "pushed",
-        branch: req.branch,
-        base: target.base,
-        repo: target.repo,
-        how: plan.how,
-        commits: plan.commits,
-      };
+    return inWorktree(dir, () =>
+      this.takeOutIn(dir, target, req).finally(() => {
+        // The clone is not kept once the branch is pushed or the conflict named (review of
+        // merged-actions: a full clone per taken-out task stayed on disk). A failure to remove
+        // it is logged; the next take-out of the task fetches into what is left.
+        try {
+          rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+        } catch (e) {
+          this.logger.warn("take-out clone not removed", { dir, error: errorMessage(e) });
+        }
+      }),
+    );
+  }
+
+  /** `takeOut`'s git, in its clone `dir` (under `inWorktree`). */
+  private async takeOutIn(
+    dir: string,
+    target: Target,
+    req: {
+      task: TaskRow;
+      number: number;
+      mergeSha: string;
+      headSha: string | null;
+      branch: string;
+    },
+  ): Promise<TakeOutGitResult> {
+    const git = await this.gitFor(target, dir);
+    if (existsSync(join(dir, ".git"))) await git.fetch();
+    else {
+      mkdirSync(this.deps.worktreeRoot, { recursive: true });
+      await git.clone(target.clone);
+    }
+    const base = `origin/${target.base}`;
+    if (!(await git.hasRef(req.mergeSha)) || !(await git.isAncestor(req.mergeSha, base)))
+      return { kind: "not_in_main" };
+    let head = req.headSha;
+    if (head && !(await git.hasRef(head))) await git.fetchRef(`refs/pull/${req.number}/head`);
+    if (head && !(await git.hasRef(head))) head = null;
+    const plan = await takeOutPlan(git, req.mergeSha, head);
+    if (!plan) return { kind: "unknown_shape" };
+    await git.createBranch(req.branch, base);
+    const reverted = await git.revert(plan.commits, plan.mainline ? { mainline: 1 } : {});
+    if (!reverted.ok) {
+      await git.resetHard(base);
+      return { kind: "conflict", files: reverted.conflicts };
+    }
+    await git.push(req.branch, { force: true, defaultBranch: target.base });
+    this.logger.info("work taken out", {
+      taskId: req.task.id,
+      how: plan.how,
+      commits: plan.commits.length,
     });
+    return {
+      kind: "pushed",
+      branch: req.branch,
+      base: target.base,
+      repo: target.repo,
+      how: plan.how,
+      sure: plan.sure,
+      commits: plan.commits,
+    };
   }
 
   /** The pull request's "Builds on" line as it is now (`withBuildsOn`); a failure is logged. */
@@ -2190,6 +2215,13 @@ export type TakeOutGitResult =
       repo: RepoRef;
       /** How the pull request had been merged, as read from git. */
       how: MergeMethod;
+      /**
+       * False when git cannot tell the way apart: a pull request of one commit squash-merged and
+       * one rebase-merged leave the same shape (one commit on top of main with its change), so
+       * the words say "merged" (review of merged-actions: a rebase read "squash-merged").
+       * Absent: true.
+       */
+      sure?: boolean;
       /** The commits taken back, in the order reverted. */
       commits: string[];
     }
@@ -2209,14 +2241,17 @@ export type TakeOutGitResult =
  * - one parent whose change is the pull request's whole change (a squash): `git revert <sha>`;
  * - anything else (no head to compare with, a fast-forward, an octopus, a change that matches
  *   neither): null.
+ * A pull request of one commit squash-merged or rebase-merged leaves the same shape: its one
+ * commit is taken back either way, with `sure` false (the words say "merged", not which).
  */
 export async function takeOutPlan(
   git: GitOps,
   mergeSha: string,
   headSha: string | null,
-): Promise<{ how: MergeMethod; commits: string[]; mainline: boolean } | null> {
+): Promise<{ how: MergeMethod; commits: string[]; mainline: boolean; sure: boolean } | null> {
   const parents = await git.parentsOf(mergeSha);
-  if (parents.length === 2) return { how: "merge", commits: [mergeSha], mainline: true };
+  if (parents.length === 2)
+    return { how: "merge", commits: [mergeSha], mainline: true, sure: true };
   const parent = parents[0];
   if (parents.length !== 1 || !parent || !headSha) return null;
   const own = await git.commitsNotIn(mergeSha, headSha);
@@ -2240,12 +2275,15 @@ export async function takeOutPlan(
       const original = own[own.length - 1 - i] as string;
       same = (await patchOf(copy)) === (await patchOf(original));
     }
-    if (same) return { how: own.length > 1 ? "rebase" : "squash", commits: chain, mainline: false };
+    if (same)
+      return own.length > 1
+        ? { how: "rebase", commits: chain, mainline: false, sure: true }
+        : { how: "squash", commits: chain, mainline: false, sure: false };
   }
   // A squash: one commit whose change is the pull request's own change as a whole.
   const forked = await git.mergeBase(headSha, parent);
   if (forked && (await git.patchId(parent, mergeSha)) === (await git.patchId(forked, headSha)))
-    return { how: "squash", commits: [mergeSha], mainline: false };
+    return { how: "squash", commits: [mergeSha], mainline: false, sure: true };
   return null;
 }
 

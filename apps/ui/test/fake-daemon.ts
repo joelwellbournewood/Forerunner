@@ -99,6 +99,8 @@ import {
 } from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import {
+  quoted,
+  TAKE_OUT_NOTICE_PREFIX,
   takeOutConflictSentence,
   takeOutOpenedSentence,
 } from "@forerunner/runtime/daemon/take-out-words";
@@ -2024,25 +2026,76 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // keeps it (the row reads "Taken out in #N (waiting for you to merge)") and the Overview lists
   // it under Waiting for you to merge; the done tasks that built on it are named. A task whose
   // work is not merged, or is being taken out already, is refused with the daemon's sentence.
-  // `state.takeOutConflict` set by a test: the revert conflicts (the daemon also files one Inbox
-  // notice, which the screens read from GET /inbox).
+  // `state.takeOutConflict` set by a test: the revert conflicts, and one Inbox notice is filed
+  // per task while it is open, as `TaskTakeOut.notice` files it (the screens read it from
+  // GET /inbox, worded by `request-words.ts`).
   app.post("/tasks/:id/take-out", (c) => {
     const task = state.tasks.find((t) => t.id === c.req.param("id"));
     if (!task) return errorBody(c, 404, "not_found", "no such task");
     const record = state.taskMeta.merges?.get(task.id);
     const refused = (sentence: string) =>
       c.json({ state: "refused", sentence, number: null, url: null, builtOn: [] });
-    if (task.status !== "done" || record?.state !== "merged")
-      return refused(`"${task.title}" is not merged, so there is nothing to take out of main.`);
-    if (record.take_out_state === "open" && record.take_out_pr_number)
+    const title = quoted(task.title);
+    if (task.status !== "done")
+      return refused(`${title} is not done, so it has no merged work to take out.`);
+    if (record?.take_out_state === "open" && record.take_out_pr_number)
       return refused(
-        `"${task.title}" is being taken out in #${record.take_out_pr_number}: merge #${record.take_out_pr_number} to finish it.`,
+        `${title} is being taken out in #${record.take_out_pr_number}: merge #${record.take_out_pr_number} to finish it.`,
       );
-    const builtOn = state.tasks
-      .filter((t) => t.status === "done" && t.dependsOn.includes(task.id))
-      .map((t) => t.title);
+    if (record?.take_out_state === "merged" && record.take_out_pr_number)
+      return refused(`${title} was taken out in #${record.take_out_pr_number}.`);
+    if (record?.state !== "merged") {
+      const n = record?.pr_number;
+      return refused(
+        n
+          ? `#${n} is not merged, so ${title}'s work is not in main: close #${n} on GitHub if you do not want it.`
+          : `${title} has no pull request, so there is nothing to take out of main.`,
+      );
+    }
+    // The done tasks that built on it, directly or through another (`TaskTakeOut.builtOn`).
+    const builtOn: string[] = [];
+    const seen = new Set([task.id]);
+    let frontier = [task.id];
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const t of state.tasks)
+        if (!seen.has(t.id) && t.dependsOn.some((d) => frontier.includes(d))) {
+          seen.add(t.id);
+          next.push(t.id);
+          if (t.status === "done") builtOn.push(t.title);
+        }
+      frontier = next;
+    }
     if (state.takeOutConflict) {
-      const sentence = takeOutConflictSentence(task.title, state.takeOutConflict);
+      const files = [...state.takeOutConflict];
+      const sentence = takeOutConflictSentence(task.title, files);
+      const key = `${TAKE_OUT_NOTICE_PREFIX}${task.id}`;
+      const open = state.requests.some(
+        (r) => r.status === "open" && (r.changeCard as { key?: unknown } | null)?.key === key,
+      );
+      if (!open) {
+        const project = state.projects.find((p) => p.id === task.projectId);
+        state.requests.push({
+          id: nextId("req"),
+          projectId: task.projectId,
+          projectName: project?.name ?? null,
+          taskId: null,
+          taskTitle: null,
+          sessionId: null,
+          kind: "info",
+          why: sentence,
+          steps: [],
+          options: [],
+          blocking: false,
+          risk: "low",
+          changeCard: { key, task_id: task.id, task_title: task.title, files },
+          status: "open",
+          answer: null,
+          createdAt: new Date().toISOString(),
+          version: 1,
+        });
+        emit("inbox.changed", { blockingCount: blockingCount() });
+      }
       return c.json({ state: "conflict", sentence, number: null, url: null, builtOn });
     }
     const prs = state.pullRequests[task.projectId] ?? { waiting: [], error: null };

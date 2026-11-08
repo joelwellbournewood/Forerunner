@@ -11,6 +11,7 @@ import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 import { cancelWorkKind, cancelWorkLine } from "./cancel-words.ts";
+import { TAKE_OUT_NOTICE_PREFIX } from "./take-out-words.ts";
 
 /*
  * The words of a task's status and the person's actions on it (design §2 and §3.5,
@@ -275,7 +276,7 @@ export function isRepositoryOffer(card: { change_card?: unknown }): boolean {
  */
 export function isTakeOutNotice(card: { change_card?: unknown }): boolean {
   const key = cardKey(card);
-  return typeof key === "string" && key.startsWith("take_out:conflict:");
+  return typeof key === "string" && key.startsWith(TAKE_OUT_NOTICE_PREFIX);
 }
 
 /**
