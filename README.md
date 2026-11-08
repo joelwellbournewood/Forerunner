@@ -14,7 +14,9 @@ GitHub refuses deletions from it, so the owner deletes it).
   - the results of each wave (`wave*-result.json`, `phaseC*-result.json`);
   - the collaboration audit and wave 8 spec (`collab/`);
   - group 3's resume recipe (`wave7g3-resume.json`), its fixers' reports
-    (`wave7g3-fix-reports.json`) and its result (`wave7g3-result.json`).
+    (`wave7g3-fix-reports.json`) and its result (`wave7g3-result.json`);
+  - group 4's args, resume recipe and result (`wave7g4-*.json`), and group 5's args and
+    resume recipe (`wave7g5-args.json`, `wave7g5-resume.json`).
 
   Logs, screenshots and bench folders are left out.
 - `workflow-scripts/`: the workflow scripts that run the waves (`forerunner-phase-e6.js` runs
@@ -22,13 +24,13 @@ GitHub refuses deletions from it, so the owner deletes it).
 
 ## Where the round stands
 
-Wave 7 group 3 (merge-in-app, credential-chooser, cost, merged-copy) is merged into
-`claude/nifty-knuth-f9udt0` at b015f31. Its four `claude/nifty-knuth-f9udt0-backup/fix-*`
-branches are no longer needed: all their commits are in that branch. Delete them on GitHub.
+Wave 7 groups 1 to 4 are merged into `claude/nifty-knuth-f9udt0`. Group 4 (budget-resume,
+web-search) ends at a9d4b76. The four `claude/nifty-knuth-f9udt0-backup/fix-*` branches from
+group 3 are no longer needed: all their commits are in that branch. Delete them on GitHub.
 
-Next: group 4 (wave 10: budget-resume, web-search), then group 5 (wave 11: merged-actions,
-sites), group 6 (wave 12: polish), live check 2, and wave 8 (`frbench/collab/`). The plan is
-in docs/status/handoff/NEXT-SESSION.md.
+Group 5 (wave 11: merged-actions, sites) is running from a9d4b76. Next: group 6 (wave 12:
+polish), live check 2, and wave 8 (`frbench/collab/`). The plan is in
+docs/status/handoff/NEXT-SESSION.md.
 
 ## Restore on a fresh machine
 
@@ -50,6 +52,6 @@ scripts in `/tmp/frbench/workflow-scripts`. Copy them from there into the sessio
 ## Resume
 
 Start `forerunner-phase-e6.js` for the next group with the args described in
-NEXT-SESSION.md. Each group's note lists the earlier groups' result files
-(`wave7g1-result.json`, `wave7g2-result.json`, `wave7g3-result.json`), whose leftovers the
-later areas fix.
+NEXT-SESSION.md. To restart group 5 from scratch, use the args in `wave7g5-args.json`.
+Each group's note lists the earlier groups' result files (`wave7g1-result.json` to
+`wave7g4-result.json`), whose leftovers the later areas fix.
