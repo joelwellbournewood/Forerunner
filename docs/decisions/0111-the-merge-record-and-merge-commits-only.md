@@ -224,7 +224,13 @@ in the app to merge it, and a level-3 project merged with no per-project choice.
    click, as they are, in either mode. Where a rule needs an approval or merge commits are off, the
    row shows the sentence instead of a button; the view reads those once per look.
 5. **True words.** The task row and drawer read "Merged", "Accepted · merges when its checks pass"
-   or "Accepted · waiting for you to merge" from the record; the session result counts what merges
+   or "Accepted · waiting for you to merge" from the record, and a pull request the click queued
+   behind one whose checks run says "#6 merges after #5, once #5's checks pass." on its row
+   ("Accepted · merges after #5" on the task row) instead of "Merging…": it is not in flight, so
+   the Overview stops reading the list until the merge that frees it (review of 2026-11-08: it
+   read the list every 1.5 s for as long as the checks ran, four GitHub calls a read). Once nothing
+   of a Merge is in flight the Overview's line says what it came to ("Merged #2.", "#3 is not
+   merged yet: the row below says why."), never the click's "Merging …"; the session result counts what merges
    by itself apart from what waits for the person, and the Overview adds "Since then: merged #2,
    #3 and #4."; the session line of a pull request left open is worded from the merge step's
    status. The Overview's pull-request block says without the raw error why it lists nothing: no

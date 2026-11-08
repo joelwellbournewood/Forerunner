@@ -10,7 +10,12 @@ import {
   STATUS_BRANCH,
 } from "../loop/docs.ts";
 import { type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
-import { MERGE_MODE_WORDS, type MergeMode, mergeModeOf } from "../loop/merge-mode.ts";
+import {
+  MERGE_MODE_WORDS,
+  type MergeMode,
+  mergeModeOf,
+  mergesAfterSentence,
+} from "../loop/merge-mode.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
 import type {
   ProjectPullRequestsView,
@@ -308,11 +313,28 @@ export class ProjectPullRequests {
     // Dependency order: what each task's pull request builds on merges first.
     const rowOfTask = new Map<string, ProjectPullRequestView>();
     for (const row of rows) if (row.taskId) rowOfTask.set(row.taskId, row);
+    // Each row's own state, before a row that waits behind another is said as waiting (below).
+    const ownState = new Map(rows.map((r) => [r.number, r.merge?.state]));
     for (const row of rows) {
       const task = row.taskId ? byId.get(row.taskId) : undefined;
       if (!task || !row.merge) continue;
       const chain = this.chainOf(task, byId, rowOfTask);
       row.merge.first = chain.first;
+      // The person's Merge, queued behind pull requests whose checks still run: it waits its
+      // turn and says so; nothing about it is in flight until those merge (review, 2026-11-08:
+      // it said "Merging…" for as long as the checks ran, and the Overview read the list every
+      // 1.5 s all that time). The merge of the one before it is a project event: the Overview
+      // reads the list again then.
+      const waitingOn = chain.first.filter((n) => ownState.get(n) === "waiting_checks");
+      if (row.merge.state === "queued" && waitingOn.length) {
+        row.merge = {
+          state: "waiting_checks",
+          canMerge: false,
+          sentence: mergesAfterSentence(row.number, chain.first, waitingOn),
+          first: chain.first,
+        };
+        continue;
+      }
       if (row.merge.state === "blocked" || !row.merge.canMerge) continue;
       if (chain.notAccepted) {
         row.merge = {

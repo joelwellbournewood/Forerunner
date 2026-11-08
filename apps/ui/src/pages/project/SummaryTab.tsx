@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { HumanRequestView, ProjectCard, ProjectPullRequestView } from "../../api/client.ts";
+import type {
+  HumanRequestView,
+  ProjectCard,
+  ProjectPullRequestsView,
+  ProjectPullRequestView,
+} from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { ReadAloud } from "../../components/ReadAloud.tsx";
@@ -185,6 +190,7 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
           projectId={projectId}
           repository={project.repository}
           version={version}
+          card={project}
           changed={changed}
         />
       ) : project?.folder ? (
@@ -263,12 +269,15 @@ function RepositoryFiles({
   projectId,
   repository,
   version,
+  card,
   changed,
   pollMs = MERGE_POLL_MS,
 }: {
   projectId: string;
   repository: { fullName: string; url: string };
   version: string;
+  /** The project's card as the store has it now: a new one each time the daemon says it changed. */
+  card: ProjectCard;
   changed: string[];
   pollMs?: number;
 }) {
@@ -281,28 +290,47 @@ function RepositoryFiles({
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);
-  // The Merge pressed last: what the daemon answered, and the pull requests it merges.
-  const [pressed, setPressed] = useState<{ order: number[]; sentence: string } | null>(null);
+  // The Merge pressed last: what the daemon answered, the pull requests it merges, and the list
+  // as it was read before the answer (until a read after it comes, the click's sentence stands).
+  const [pressed, setPressed] = useState<{
+    order: number[];
+    sentence: string;
+    before: ProjectPullRequestsView | null;
+  } | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const waiting: ProjectPullRequestView[] = prs.data?.waiting ?? [];
   const inFlight = (pr: ProjectPullRequestView) =>
     pr.merge?.state === "merging" || pr.merge?.state === "queued";
-  // Follow a Merge while one of its pull requests is still listed as merging.
+  // A row that changes without the person (it waits for checks, its own or those of one it merges
+  // after, or merges now): each time the daemon says the project changed (a merge the watcher's
+  // retry made is one), the list is read again. The status sentence and progress do not move on a
+  // merge, so `version` alone missed it (bench, 2026-11-08: the rows stayed until a reload).
+  const settling = useRef(false);
+  settling.current = waiting.some((pr) => inFlight(pr) || pr.merge?.state === "waiting_checks");
+  useEffect(() => {
+    if (card && settling.current) reload();
+  }, [card, reload]);
+  // Follow a Merge while one of its pull requests is still listed as merging (a row that waits
+  // for checks, its own or those of one it merges after, is not: the project event of the merge
+  // that frees it reads the list again).
   const following =
     pressed !== null &&
-    pressed.order.some((n) => {
-      const row = waiting.find((w) => w.number === n);
-      return row ? inFlight(row) : false;
-    });
+    (prs.data === pressed.before ||
+      pressed.order.some((n) => {
+        const row = waiting.find((w) => w.number === n);
+        return row ? inFlight(row) : false;
+      }));
   useEffect(() => {
     if (!following) return;
     const t = setInterval(() => reload(), pollMs);
     return () => clearInterval(t);
   }, [following, reload, pollMs]);
-  const merged = pressed
-    ? pressed.order.filter((n) => prs.data && !waiting.some((w) => w.number === n))
-    : [];
+  // What the Merge pressed last came to, once nothing of it is in flight (review, 2026-11-08: the
+  // line kept the click's "Merging #12 and #13 in order." above rows that said neither could
+  // merge). Unknown while the list cannot be read: the line goes and the error says why.
+  const listed = prs.data !== null && prs.data !== undefined && !prs.data.error;
+  const outcome = pressed && listed && !following ? pressedOutcome(pressed.order, waiting) : null;
   const press = async (pr: ProjectPullRequestView) => {
     setBusy(true);
     setMergeError(null);
@@ -311,7 +339,7 @@ function RepositoryFiles({
       if (answer.state === "refused") {
         setPressed(null);
         setMergeError(answer.sentence);
-      } else setPressed({ order: answer.order, sentence: answer.sentence });
+      } else setPressed({ order: answer.order, sentence: answer.sentence, before: prs.data });
       reload();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : String(e));
@@ -360,11 +388,9 @@ function RepositoryFiles({
             ) : null}
           </p>
         ) : null}
-        {pressed ? (
+        {pressed && (following || outcome) ? (
           <p data-testid="merge-answer" role="status">
-            {merged.length && !following
-              ? `Merged ${andWords(merged.map((n) => `#${n}`))}.`
-              : pressed.sentence}
+            {outcome ?? pressed.sentence}
           </p>
         ) : null}
         {mergeError ? (
@@ -461,6 +487,25 @@ function RepositoryFiles({
 
 /** How often the Overview reads the pull requests again while a Merge it pressed runs. */
 export const MERGE_POLL_MS = 1500;
+
+/**
+ * What a Merge came to once none of its pull requests is in flight: "Merged #2, #3 and #4."
+ * when all are gone from the list (merged); otherwise those not merged, whose rows each say why
+ * (a check failed, it waits for its checks or behind one that does, a rule): "Merged #2. #3 and
+ * #4 are not merged yet: each row below says why."
+ */
+function pressedOutcome(order: readonly number[], waiting: readonly ProjectPullRequestView[]) {
+  const name = (n: number) => `#${n}`;
+  const left = order.filter((n) => waiting.some((w) => w.number === n));
+  const merged = order.filter((n) => !left.includes(n));
+  const done = merged.length ? `Merged ${andWords(merged.map(name))}.` : "";
+  if (!left.length) return done;
+  const notYet =
+    left.length === 1
+      ? `${name(left[0] as number)} is not merged yet: the row below says why.`
+      : `${andWords(left.map(name))} are not merged yet: each row below says why.`;
+  return done ? `${done} ${notYet}` : notYet;
+}
 
 /** "#2, #3 and #4". */
 function andWords(items: readonly string[]): string {

@@ -1017,7 +1017,8 @@ export const ProjectPullRequestView = z.object({
   /**
    * What the Overview's Merge does for it (merge-in-app; absent from an older service):
    * `ready`, Merge is offered; `queued` / `merging`, the person pressed Merge (or the session
-   * merges it) and it runs now; `waiting_checks`, it merges by itself when its checks pass;
+   * merges it) and it runs now; `waiting_checks`, it merges by itself when its checks pass, or,
+   * pressed, once those of the pull requests it merges after pass (not in flight either way);
    * `left_to_you`, it waits for the person, and the sentence says why (Merge is offered when a
    * click can merge it); `blocked`, Forerunner cannot merge it here (a rule it cannot meet,
    * merge commits off, what it builds on is not accepted yet), and the sentence says what to do.

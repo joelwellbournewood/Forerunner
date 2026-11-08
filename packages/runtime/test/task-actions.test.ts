@@ -15,7 +15,7 @@ import {
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { pairReports, reviewStopWords, runWebSources } from "../src/daemon/task-display.ts";
-import { plainPlurals, plainReason, runOrder } from "../src/daemon/task-words.ts";
+import { plainPlurals, plainReason, runOrder, taskDisplay } from "../src/daemon/task-words.ts";
 import { notesForTask } from "../src/session/next-session.ts";
 
 /**
@@ -288,6 +288,50 @@ describe("the words of a task's status (design §2, §5)", () => {
       t("urgent", 10, "2026-11-01T10:04:00Z"),
     ]).map((x) => x.id);
     expect(order).toEqual(["urgent", "readme", "notes", "license"]);
+  });
+
+  it("a done task the person's Merge queued behind pull requests whose checks run says it merges after them, not 'merging' (merge-in-app review)", () => {
+    // Review (2026-11-08): "Accepted · merging" for as long as the first one's checks ran.
+    const task = (id: string, depends_on: string[] = []) =>
+      ({ id, title: id, status: "done", reason: "critic accepted", depends_on }) as never;
+    const tasks = new Map([
+      ["page", task("page")],
+      ["footer", task("footer", ["page"])],
+      ["test", task("test", ["footer"])],
+    ]);
+    const record = (state: string, pr_number: number) => ({
+      state: state as never,
+      approval: "person" as const,
+      sentence: "",
+      pr_number,
+    });
+    const ctx = (pageState: string) => ({
+      tasks,
+      cards: new Map(),
+      sandboxReady: true,
+      runs: new Map(),
+      agentNames: new Map(),
+      merges: new Map([
+        ["page", record(pageState, 5)],
+        ["footer", record("queued", 6)],
+        ["test", record("queued", 7)],
+      ]),
+    });
+    const label = (id: string, pageState: string) =>
+      taskDisplay(tasks.get(id) as never, ctx(pageState));
+    expect(label("page", "waiting_checks").label).toBe("Accepted · merges when its checks pass");
+    expect(label("footer", "waiting_checks")).toMatchObject({
+      label: "Accepted · merges after #5",
+      detail: "#6 merges after #5, once #5's checks pass.",
+    });
+    // Two steps behind: it names both, and whose checks it waits for.
+    expect(label("test", "waiting_checks")).toMatchObject({
+      label: "Accepted · merges after #5 and #6",
+      detail: "#7 merges after #5 and #6, once #5's checks pass.",
+    });
+    // While the first one merges, the rest is merging too; once it is merged, it is not named.
+    expect(label("footer", "merging").label).toBe("Accepted · merging");
+    expect(label("test", "merged").label).toBe("Accepted · merging");
   });
 });
 

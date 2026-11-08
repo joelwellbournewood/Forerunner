@@ -1,7 +1,37 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import type { EventSourceLike, StreamOptions } from "../src/api/sse.ts";
+import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
+
+/** An `/events` EventSource wired to the fake daemon's listeners, open at once. */
+function liveEvents(harness: Harness): StreamOptions {
+  const factory = (_url: string): EventSourceLike => {
+    const listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
+    const fromDaemon = (event: string, data: unknown) => {
+      for (const l of listeners.get(event) ?? []) l({ data: JSON.stringify(data) } as MessageEvent);
+    };
+    const es: EventSourceLike & { readyState: number } = {
+      readyState: 0,
+      onerror: null,
+      onopen: null,
+      addEventListener(type, listener) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+      },
+      close() {
+        es.readyState = 2;
+        harness.daemon.state.listeners.delete(fromDaemon);
+      },
+    };
+    harness.daemon.state.listeners.add(fromDaemon);
+    queueMicrotask(() => {
+      es.readyState = 1;
+      es.onopen?.(new Event("open"));
+    });
+    return es;
+  };
+  return { eventSource: factory, setTimer: () => 0, clearTimer: () => {} };
+}
 
 /**
  * The project page as a person uses it to see progress and results (design §3.4, §3.10): the
@@ -257,6 +287,96 @@ describe("Merge in the app (merge-in-app, the owner's decision of 2026-11-02)", 
       await within(files).findByTestId("pr-merge-sentence", {}, { timeout: 10_000 }),
     ).toHaveTextContent("main changed since the review");
     expect(within(files).getByTestId("pr-merge")).toBeEnabled();
+    // The line above says the outcome, not the click's "Merging #11." (review, 2026-11-08).
+    expect(within(files).getByTestId("merge-answer")).toHaveTextContent(
+      "#11 is not merged yet: the row below says why.",
+    );
+  });
+
+  it("a chain whose Merge stops without merging anything says so above the rows, never 'Merging' (review W5: a failed check on the first)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [row(12, "Add the page"), row(13, "Add the footer", { first: [12] })],
+      error: null,
+    };
+    harness.daemon.state.pullRequestMergeOutcome = {
+      state: "blocked",
+      sentence: "A check failed on #12 (ci/test): fix it, or merge it on GitHub.",
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const rows = await within(files).findAllByTestId("pr-waiting");
+    await user.click(within(rows[1] as HTMLElement).getByTestId("pr-merge"));
+    expect(await within(files).findByTestId("merge-answer")).toHaveTextContent(
+      "Merging #12 and #13 in order.",
+    );
+    await waitFor(() => expect(within(files).getAllByTestId("pr-merge-sentence")).toHaveLength(2), {
+      timeout: 10_000,
+    });
+    expect(within(files).queryAllByTestId("pr-merging")).toEqual([]);
+    const answer = within(files).getByTestId("merge-answer");
+    expect(answer).toHaveTextContent("#12 and #13 are not merged yet: each row below says why.");
+    expect(answer).not.toHaveTextContent("Merging");
+  });
+
+  it("a Merge whose first pull request waits for its checks: the one after it says it waits its turn (not 'Merging…'), and the Overview stops reading the list (review W2, W4)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [row(5, "Add the page"), row(6, "Add the footer", { first: [5] })],
+      error: null,
+    };
+    harness.daemon.state.pullRequestMergeOutcome = { state: "waiting_checks" };
+    renderApp("/projects/proj_atlas", harness, liveEvents(harness));
+    const files = await screen.findByTestId("your-files");
+    const rows = await within(files).findAllByTestId("pr-waiting");
+    await user.click(within(rows[1] as HTMLElement).getByTestId("pr-merge"));
+    await waitFor(() => expect(within(files).getAllByTestId("pr-merge-sentence")).toHaveLength(2), {
+      timeout: 10_000,
+    });
+    const after = within(files).getAllByTestId("pr-waiting");
+    expect(within(after[0] as HTMLElement).getByTestId("pr-merge-sentence")).toHaveTextContent(
+      "#5 merges when its checks pass.",
+    );
+    expect(within(after[1] as HTMLElement).getByTestId("pr-merge-sentence")).toHaveTextContent(
+      "#6 merges after #5, once #5's checks pass.",
+    );
+    expect(within(files).queryAllByTestId("pr-merging")).toEqual([]);
+    expect(within(files).getByTestId("merge-answer")).toHaveTextContent(
+      "#5 and #6 are not merged yet: each row below says why.",
+    );
+    // Nothing is in flight: the list is not read again until the project changes (before, every
+    // 1.5 s for as long as #5's checks ran: 19 reads in 30 s on the bench).
+    const reads = harness.daemon.state.pullRequestReads.proj_atlas ?? 0;
+    await new Promise((r) => setTimeout(r, 4_000));
+    expect(harness.daemon.state.pullRequestReads.proj_atlas ?? 0).toBe(reads);
+    // #5's checks pass and the watcher's retry merges both: the daemon says the project changed,
+    // and the Overview reads the list again (bench: without this, the rows stayed until a reload).
+    const prs = harness.daemon.state.pullRequests.proj_atlas;
+    if (prs) prs.waiting = prs.waiting.filter((r) => r.number !== 5 && r.number !== 6);
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    expect(await within(files).findByTestId("prs-none", {}, { timeout: 10_000 })).toHaveTextContent(
+      "No pull request waits for you.",
+    );
+    expect(within(files).getByTestId("merge-answer")).toHaveTextContent("Merged #5 and #6.");
+  }, 30_000);
+
+  it("a list that cannot be read after a Merge does not claim the merge: the line goes, the error says why", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    await user.click(await within(files).findByTestId("pr-merge"));
+    expect(await within(files).findByTestId("merge-answer")).toHaveTextContent("Merging #11.");
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [],
+      error: "GitHub did not answer, so the pull requests are not listed. Try again later.",
+    };
+    expect(
+      await within(files).findByTestId("prs-error", {}, { timeout: 10_000 }),
+    ).toHaveTextContent("GitHub did not answer");
+    expect(within(files).queryByTestId("merge-answer")).toBeNull();
   });
 
   it("a row whose rules Forerunner cannot meet says why instead of a Merge; the automatic mode's line says so", async () => {

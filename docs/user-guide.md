@@ -331,7 +331,10 @@ on the Overview under **Waiting for you to merge**, and the task's row on the Ta
 #4." and the task rows say **Merged**. A pull request that builds on others ("Merges #2 and #3
 first.") merges those first, each with a merge commit, so each is marked merged on GitHub. A
 pull request whose checks still run says "#4 merges when its checks pass." and merges by itself
-once they pass, also after a restart. Where Forerunner cannot merge (a rule it cannot meet,
+once they pass, also after a restart; one that builds on it says "#5 merges after #4, once #4's
+checks pass." (its task row: "Accepted · merges after #4") and follows it. When a Merge stops
+before everything merged, the line above the rows says so ("#4 and #5 are not merged yet: each row
+below says why.") and each row says why. Where Forerunner cannot merge (a rule it cannot meet,
 merge commits turned off, what it builds on is not accepted yet), the row says why in one sentence
 instead of offering Merge. With **Merge automatically after review**, Forerunner merges each
 accepted task's pull request by itself and its row says **Merged**; Settings asks you to confirm

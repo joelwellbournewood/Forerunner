@@ -97,7 +97,11 @@ import {
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
-import { MERGE_MODE_WORDS, mergeModeEffect } from "@forerunner/runtime/loop/merge-mode";
+import {
+  MERGE_MODE_WORDS,
+  mergeModeEffect,
+  mergesAfterSentence,
+} from "@forerunner/runtime/loop/merge-mode";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import {
   SANDBOX_WHY,
@@ -461,10 +465,18 @@ export interface FakeDaemonState {
    * The person's Merge in the app (merge-in-app): the pull requests a click is merging, by
    * project and number, with how many reads of GET pull-requests still show them merging; the
    * next read after that drops them (merged), or shows `outcome`'s sentence when a test set one
-   * (the merge step left it to the person).
+   * (the merge step left it to the person). `after`: the pull requests of the same click it
+   * merges after. A `waiting_checks` outcome is the first one's checks still running: it says
+   * "#N merges when its checks pass.", and the ones after it wait their turn with a sentence
+   * (`mergesAfterSentence`), as the daemon's view says them; neither is merging any more.
    */
-  pullRequestMerges: Record<string, { number: number; reads: number }[]>;
-  pullRequestMergeOutcome: { state: "left_to_you" | "blocked"; sentence: string } | null;
+  pullRequestMerges: Record<string, { number: number; reads: number; after: number[] }[]>;
+  pullRequestMergeOutcome:
+    | { state: "left_to_you" | "blocked"; sentence: string }
+    | { state: "waiting_checks" }
+    | null;
+  /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
+  pullRequestReads: Record<string, number>;
   /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
   docs: Record<string, DocView[]>;
   messages: MessageView[];
@@ -911,6 +923,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequests: clone(PROJECT_PULL_REQUESTS),
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
+    pullRequestReads: {},
     docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
     killActive: false,
@@ -6419,6 +6432,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!project) return errorBody(c, 404, "not_found", "no such project");
     const repository = repositoryOf(project.repos);
     const prs = state.pullRequests[id];
+    state.pullRequestReads[id] = (state.pullRequestReads[id] ?? 0) + 1;
     // merge-in-app: a Merge pressed in the app shows "merging" for a read, then the rows are
     // gone (merged, as GitHub lists open pull requests only) or carry the outcome's sentence.
     const merging = state.pullRequestMerges[id] ?? [];
@@ -6432,7 +6446,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         const row = prs.waiting.find((r) => r.number === m.number);
         if (!row) continue;
         const outcome = state.pullRequestMergeOutcome;
-        if (outcome)
+        if (outcome?.state === "waiting_checks") {
+          // The first one's checks run; each later one waits its turn behind it (not merging).
+          row.merge = {
+            state: "waiting_checks",
+            canMerge: false,
+            sentence: m.after.length
+              ? mergesAfterSentence(m.number, m.after, m.after.slice(0, 1))
+              : `#${m.number} merges when its checks pass.`,
+            first: m.after,
+          };
+        } else if (outcome)
           row.merge = {
             state: outcome.state,
             canMerge: outcome.state === "left_to_you",
@@ -6476,11 +6500,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const order = [...(row.merge?.first ?? []), number];
     const merging = state.pullRequestMerges[id] ?? [];
     state.pullRequestMerges[id] = merging;
-    for (const n of order) {
+    for (const [i, n] of order.entries()) {
       const r = prs.waiting.find((w) => w.number === n);
       if (!r) continue;
       r.merge = { state: "merging", canMerge: false, sentence: null, first: [] };
-      merging.push({ number: n, reads: 1 });
+      merging.push({ number: n, reads: 1, after: order.slice(0, i) });
     }
     const names = order.map((n) => `#${n}`);
     const list =

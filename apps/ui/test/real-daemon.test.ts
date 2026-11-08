@@ -8100,6 +8100,60 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
     ).toEqual([]);
   }, 120_000);
 
+  it("a Merge on a chain whose first PR's checks still run: the one after it says it waits its turn (no row and no task in flight), and both merge in order once the checks pass", async () => {
+    // Review (2026-11-08, bench W2 and W4): the dependent said "Merging…" on the Overview and
+    // "Accepted · merging" on the Tasks tab for as long as the first one's checks ran (up to a
+    // day), and the Overview read the list every 1.5 s all that time.
+    const project = await client.createProject({ name: "Waits", goal: "A page", repos: [FULL] });
+    const a = await doneTask(project.id, "Add the menu", "menu.ts");
+    const b = await doneTask(project.id, "Add the menu test", "menu-test.ts", {
+      from: a.branch,
+      dependsOn: [a.task.id],
+    });
+    await checkRun(a.pr.head.sha, "in_progress");
+    const answer = await client.mergePullRequest(project.id, b.pr.number);
+    expect(answer).toMatchObject({ state: "queued", order: [a.pr.number, b.pr.number] });
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(a.task.id))?.state === "waiting_checks",
+      "the first record to wait for its checks",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(a.task.id)),
+      30_000,
+    );
+    await rt.pullRequests.idle();
+    const view = await client.projectPullRequests(project.id);
+    const rowOf = (n: number) => view.waiting.find((w) => w.number === n)?.merge;
+    expect(rowOf(a.pr.number)).toEqual({
+      state: "waiting_checks",
+      canMerge: false,
+      sentence: `#${a.pr.number} merges when its checks pass.`,
+      first: [],
+    });
+    expect(rowOf(b.pr.number)).toEqual({
+      state: "waiting_checks",
+      canMerge: false,
+      sentence: `#${b.pr.number} merges after #${a.pr.number}, once #${a.pr.number}'s checks pass.`,
+      first: [a.pr.number],
+    });
+    // The Tasks rows say the same, not "merging".
+    const displayOf = async (id: string) => (await client.task(id)).task.display;
+    expect((await displayOf(a.task.id))?.label).toBe("Accepted · merges when its checks pass");
+    expect(await displayOf(b.task.id)).toMatchObject({
+      label: `Accepted · merges after #${a.pr.number}`,
+      detail: `#${b.pr.number} merges after #${a.pr.number}, once #${a.pr.number}'s checks pass.`,
+    });
+    await checkRun(a.pr.head.sha, "completed", "success");
+    await rt.merge.retryWaiting();
+    const [ra, rb] = [
+      await rt.store.mergeRecord.forTask(a.task.id),
+      await rt.store.mergeRecord.forTask(b.task.id),
+    ];
+    expect([ra?.state, rb?.state]).toEqual(["merged", "merged"]);
+    expect((await displayOf(b.task.id))?.label).toBe("Merged");
+    expect(
+      (await client.projectPullRequests(project.id)).waiting.filter((w) => w.kind === "task"),
+    ).toEqual([]);
+  }, 120_000);
+
   it("a pull request with no record merges as it is on GitHub now, and the answer says so", async () => {
     const project = await client.createProject({ name: "Old", goal: "A page", repos: [FULL] });
     const d = await doneTask(project.id, "Add the about page", "about.ts", { record: false });

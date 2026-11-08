@@ -38,3 +38,35 @@ export function mergeModeEffect(mode: MergeMode): string {
     ? "Forerunner merges each task's pull request once the critic accepts it. Merges show under your GitHub name, a comment on a merged pull request starts nothing, and if this repository's main goes online by itself, every accepted task goes live"
     : "each accepted task's pull request waits for you to press Merge on the Overview";
 }
+
+/** "#5", "#5 and #6", "#5, #6 and #7". */
+function prsWords(numbers: readonly number[]): string {
+  const names = numbers.map((n) => `#${n}`);
+  return names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * A pull request the person's Merge approved that waits its turn behind pull requests it builds
+ * on whose checks still run (merge-in-app review, 2026-11-08: it said "Merging…" and "Accepted ·
+ * merging" for as long as those checks ran, up to a day, and the Overview read the list every
+ * 1.5 s all that time). `after`: every open pull request it merges after, in order; `waitingOn`:
+ * those whose checks run. The Overview's row and the Tasks row's detail say it in these words.
+ */
+export function mergesAfterSentence(
+  pr: number,
+  after: readonly number[],
+  waitingOn: readonly number[],
+): string {
+  const once =
+    waitingOn.length === 1
+      ? `once #${waitingOn[0]}'s checks pass`
+      : `once the checks of ${prsWords(waitingOn)} pass`;
+  return `#${pr} merges after ${prsWords(after)}, ${once}.`;
+}
+
+/** The Tasks row's label for it (with `mergesAfterSentence` as the line under it). */
+export function mergesAfterLabel(after: readonly number[]): string {
+  return `Accepted · merges after ${prsWords(after)}`;
+}
