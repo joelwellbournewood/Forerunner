@@ -4019,7 +4019,9 @@ card. Before (the review's fix-up), the run resumed `origin/<branch>`, rebuilt i
 the conflict card, stopped at the same conflict with a second card. Tests:
 `dependent-branches-merge.test.ts` "the conflict rebuild card's Redo does the task again from
 main ..." and "the rebuilt card's Redo also does the task again from main ..." (the next session
-run; one own commit on main, the same pull request, no conflict card). A left-open card already
+run; one own commit on main, the same pull request, no conflict card), and
+`rebuild-redo-restart.test.ts` (validation rule 4: the Redo answered, the daemon composed again
+on the same home before the run, and the run still starts from main). A left-open card already
 open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
