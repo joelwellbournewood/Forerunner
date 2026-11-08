@@ -319,7 +319,8 @@ export class RepoProposals {
       project_id: project.id,
       session_id: req.sessionId,
       kind: "approval",
-      why: `Code work is planned for "${project.name}", which has no repository: its tasks run in the project's folder on this computer. Create a repository for it?`,
+      // The title is the question (design §3.8: a card's first sentence names the project).
+      why: `Create a repository for "${project.name}"? Code work is planned for it, and it has none: its tasks run in the project's folder on this computer.`,
       steps: [
         `Repository: ${preview.fullName}`,
         `Under: ${preview.accountKind === "organization" ? `the organization ${preview.owner}` : `your GitHub account ${preview.owner}`}`,

@@ -1539,7 +1539,7 @@ describe("Take this work out (merged-actions, the owner's decision of 2026-11-02
       within(await screen.findByTestId("take-out-dialog")).getByTestId("confirm-take-out"),
     );
     expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
-      '"Index the documentation pages" could not be taken out by itself: later work changed the same lines in site/index.html. Undo it on GitHub by hand, or ask in Chat for a task that does it.',
+      '"Index the documentation pages" could not be taken out by itself. Later work changed the same lines in site/index.html: undo it on GitHub by hand, or ask in Chat for a task that does it.',
     );
     // task_2 is done, but nothing says its work is merged: no Take this work out.
     expect(actionsOf(await rowOf("task_2"))).toEqual(["Redo"]);

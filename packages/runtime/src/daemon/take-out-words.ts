@@ -11,6 +11,12 @@ export function andList(items: readonly string[]): string {
     : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/** Up to three names, then "and N more" (design §5 rule 5): "A, B, C and 2 more". */
+export function namesList(items: readonly string[]): string {
+  if (items.length <= 3) return andList(items);
+  return `${items.slice(0, 3).join(", ")} and ${items.length - 3} more`;
+}
+
 /** A task's title in quotes, on one line. */
 export const quoted = (title: string): string => `"${title.replace(/\s+/g, " ").trim()}"`;
 
@@ -27,15 +33,13 @@ export function takeOutOpenedSentence(
 ): string {
   const opened = `Opened #${number} to take ${quoted(title)} out. It waits for you to merge it.`;
   if (!builtOn.length) return opened;
-  const names = andList(builtOn.slice(0, 3).map(quoted));
-  const more = builtOn.length > 3 ? ` and ${builtOn.length - 3} more` : "";
   const they = builtOn.length === 1 ? "it still works" : "they still work";
-  return `${opened} ${names}${more} built on it: check ${they} once #${number} is merged.`;
+  const names = namesList(builtOn.map(quoted));
+  return `${opened} ${names} built on it: check ${they} once #${number} is merged.`;
 }
 
 /** The notice and answer of a take-out that conflicted with later work. */
 export function takeOutConflictSentence(title: string, files: readonly string[]): string {
-  const shown = andList(files.slice(0, 3));
-  const more = files.length > 3 ? ` and ${files.length - 3} more` : "";
-  return `${quoted(title)} could not be taken out by itself: later work changed the same lines in ${shown}${more}. Undo it on GitHub by hand, or ask in Chat for a task that does it.`;
+  const shown = namesList(files);
+  return `${quoted(title)} could not be taken out by itself. Later work changed the same lines in ${shown}: undo it on GitHub by hand, or ask in Chat for a task that does it.`;
 }

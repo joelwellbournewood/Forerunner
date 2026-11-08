@@ -9645,7 +9645,7 @@ describe("the UI client against the real daemon: Open this version and Take this
     const branches = (await github.listBranches(REPO)).map((x) => x.name).sort();
     const conflict = await client.takeOutTask(e.task.id);
     const sentence =
-      '"Set the price" could not be taken out by itself: later work changed the same lines in price.ts. Undo it on GitHub by hand, or ask in Chat for a task that does it.';
+      '"Set the price" could not be taken out by itself. Later work changed the same lines in price.ts: undo it on GitHub by hand, or ask in Chat for a task that does it.';
     expect(conflict).toEqual({ state: "conflict", sentence, number: null, url: null, builtOn: [] });
     expect((await github.listBranches(REPO)).map((x) => x.name).sort()).toEqual(branches);
     await client.takeOutTask(e.task.id);

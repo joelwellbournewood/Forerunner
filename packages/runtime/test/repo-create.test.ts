@@ -142,7 +142,7 @@ describe("a repository for a project without one (U-037)", () => {
       status: string;
     }>;
     return requests.find(
-      (r) => r.projectId === projectId && r.why.includes("Create a repository for it?"),
+      (r) => r.projectId === projectId && r.why.startsWith("Create a repository for "),
     );
   }
 
@@ -332,7 +332,7 @@ describe("a repository for a project without one (U-037)", () => {
       // Design \u00a75: the card says what and why in two sentences, without the old list of what
       // GitHub would not have.
       expect(card.why).toBe(
-        'Code work is planned for "Bird Counter", which has no repository: its tasks run in the project\'s folder on this computer. Create a repository for it?',
+        'Create a repository for "Bird Counter"? Code work is planned for it, and it has none: its tasks run in the project\'s folder on this computer.',
       );
       expect(card.why).not.toContain("no branch, pull request or review on GitHub");
       // The person's yes creates it, as below Autopilot.

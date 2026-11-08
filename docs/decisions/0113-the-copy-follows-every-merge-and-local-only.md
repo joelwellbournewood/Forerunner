@@ -171,8 +171,8 @@ session's plan and from the chat.
    a pull request "Take out: <title>" is opened whose body, like the answer, names the done tasks
    that built on it ("Later tasks built on it: ... Their work may need it: check them before you
    merge this."). A revert that conflicts with later work pushes nothing and files one Inbox
-   notice per task (`take_out:conflict:<task>`, "... could not be taken out by itself: later work
-   changed the same lines in price.ts. Undo it on GitHub by hand, or ask in Chat for a task that
+   notice per task (`take_out:conflict:<task>`, "... could not be taken out by itself. Later work
+   changed the same lines in price.ts: undo it on GitHub by hand, or ask in Chat for a task that
    does it."), which asks nothing of a task. The merge record keeps the take-out
    (`take_out_pr_number`, `take_out_pr_url`, `take_out_state`; migration 0007), so the row reads
    "Taken out in #9 (waiting for you to merge)", then "Taken out in #9"; the Overview lists it

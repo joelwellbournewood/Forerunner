@@ -1,3 +1,4 @@
+import { namesList } from "@forerunner/runtime/daemon/take-out-words";
 import { PRIORITY_LABELS } from "@forerunner/runtime/priority";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -705,10 +706,8 @@ export function TakeOutDialog({
   }
   if (!task) return null;
   const builtOn = builtOnTitles(task, tasks);
-  const named = builtOn.slice(0, 3).map((t) => `"${t}"`);
-  const list =
-    named.length <= 1 ? (named[0] ?? "") : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
-  const more = builtOn.length > 3 ? ` and ${builtOn.length - 3} more` : "";
+  // The daemon's words for the list ("A", "B", "C" and 1 more), so the dialog and the answer agree.
+  const list = namesList(builtOn.map((t) => `"${t}"`));
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
@@ -730,8 +729,7 @@ export function TakeOutDialog({
         </p>
         {builtOn.length ? (
           <p className="text-sm" data-testid="take-out-built-on">
-            {list}
-            {more} built on it: {builtOn.length === 1 ? "it" : "they"} may need this work. The pull
+            {list} built on it: {builtOn.length === 1 ? "it" : "they"} may need this work. The pull
             request names {builtOn.length === 1 ? "it" : "them"}.
           </p>
         ) : null}
