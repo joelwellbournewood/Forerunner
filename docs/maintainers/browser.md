@@ -303,6 +303,16 @@ an exception. The runtime's critic loop calls it through `TryItPort` (compose: s
 `<data>/evidence/<task>/<review key>/`). Test: `test/try-page.integration.test.ts` (a real
 Chromium, skipped with the reason without one).
 
+The agent browser (`profile.ts` `launchAgentBrowser`, W6-30, the same class as C-17) starts
+its persistent context with `chromiumSandbox: true` too; where Chromium cannot start with it, it
+runs without it for that and every later launch of the profile, the log says why ("the agent
+browser runs without Chromium's own sandbox on this computer", with the browser's line) and
+`LaunchedProfile.unsandboxed` carries the reason (null with the sandbox).
+`LaunchProfileOptions.launchContext` is the seam (`test/browser-profile.test.ts`). A navigation
+that another one interrupts is asked for again when the other went to Chromium's error page or
+to the very same address (R-9, `navigationInterruptedRetry`), at most `GOTO_INTERRUPTED_TRIES`
+(3) times in all.
+
 Chromium's own sandbox (C-17, ADR 0110): `launchBrowser` starts it with `chromiumSandbox: true`
 (Playwright's default turns it off and adds `--no-sandbox`). Where it cannot start with it
 (Linux as root, no user namespaces) a light review's page is opened without it and every try's

@@ -159,6 +159,11 @@ export interface LaunchProfileOptions {
   /** Launch timeout in ms (default 60 s). */
   timeoutMs?: number;
   logger?: Logger;
+  /** Test seam: replaces Playwright's `chromium.launchPersistentContext`. */
+  launchContext?: (
+    userDataDir: string,
+    options: Parameters<typeof chromium.launchPersistentContext>[1],
+  ) => Promise<BrowserContext>;
 }
 
 export interface LaunchedProfile {
@@ -167,6 +172,22 @@ export interface LaunchedProfile {
   userAgent: string;
   executablePath?: string;
   headless: boolean;
+  /**
+   * Why Chromium runs without its own sandbox here (W6-30), or null when it runs with it: it is
+   * launched with `chromiumSandbox: true` and falls back only where that cannot start (Linux as
+   * root, a kernel without user namespaces), saying so in the log.
+   */
+  unsandboxed: string | null;
+}
+
+/** The line of a failed launch that says why (Playwright puts the browser's own words last). */
+function launchRefusal(e: unknown): string {
+  const lines = errorMessage(e)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const said = lines.find((l) => /sandbox/i.test(l) && !/^browserType\./.test(l));
+  return (said ?? lines[0] ?? "it did not start").slice(0, 200);
 }
 
 interface UaCache {
@@ -295,12 +316,28 @@ export async function launchAgentBrowser(opts: LaunchProfileOptions): Promise<La
     handleSIGHUP: false,
   };
 
+  // W6-30 (as C-17 did for the page try): Chromium's own sandbox on; Playwright's default is off.
+  // Where it cannot start with it, the agent browser runs without it and the log says why.
+  const launchContext =
+    opts.launchContext ??
+    ((dir: string, o: Parameters<typeof chromium.launchPersistentContext>[1]) =>
+      chromium.launchPersistentContext(dir, o));
+  let unsandboxed: string | null = null;
   const launch = async (userAgent?: string): Promise<BrowserContext> => {
+    const options = { ...baseOptions, ...(userAgent ? { userAgent } : {}) };
     try {
-      return await chromium.launchPersistentContext(dirs.profile, {
-        ...baseOptions,
-        ...(userAgent ? { userAgent } : {}),
-      });
+      if (unsandboxed === null) {
+        try {
+          return await launchContext(dirs.profile, { ...options, chromiumSandbox: true });
+        } catch (e) {
+          unsandboxed = launchRefusal(e);
+          logger.warn(
+            "the agent browser runs without Chromium's own sandbox on this computer: it could not start with it",
+            { agentId: opts.agentId, why: unsandboxed },
+          );
+        }
+      }
+      return await launchContext(dirs.profile, { ...options, chromiumSandbox: false });
     } catch (e) {
       throw new ForerunnerError(
         "unavailable",
@@ -354,5 +391,12 @@ export async function launchAgentBrowser(opts: LaunchProfileOptions): Promise<La
     executable: executableKey,
     version,
   });
-  return { context, dirs, userAgent: withSuffix(cache.userAgent), executablePath, headless };
+  return {
+    context,
+    dirs,
+    userAgent: withSuffix(cache.userAgent),
+    executablePath,
+    headless,
+    unsandboxed,
+  };
 }

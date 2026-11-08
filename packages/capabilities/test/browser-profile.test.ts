@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "@forerunner/platform";
+import type { BrowserContext } from "playwright";
 import { describe, expect, it } from "vitest";
 import {
   AI_AGENT_UA_SUFFIX,
@@ -10,9 +11,11 @@ import {
   DISABLE_FEATURES_ARG,
   FORERUNNER_DISABLED_FEATURES,
   HARDENING_ARGS,
+  launchAgentBrowser,
   PLAYWRIGHT_DISABLED_FEATURES,
   resolveChromiumExecutable,
 } from "../src/browser/profile.ts";
+import { navigationInterruptedRetry } from "../src/browser/session.ts";
 
 describe("browser profile layout", () => {
   it("puts every agent under data/browser/<safe agent id>, never a shared or human profile", () => {
@@ -94,4 +97,89 @@ describe("hardening flags", () => {
       expect([...PLAYWRIGHT_DISABLED_FEATURES].sort()).toEqual([...(installed ?? [])].sort());
     },
   );
+});
+
+/**
+ * W6-30 (the class of C-17): the agent browser starts Chromium with its own sandbox on
+ * (Playwright's default turns it off), and only where it cannot start with it does it run
+ * without, saying why. The launch seam replaces Playwright's `launchPersistentContext`.
+ */
+describe("the agent browser starts with Chromium's own sandbox (W6-30)", () => {
+  function fakeContext() {
+    const page = {
+      evaluate: async () => "Mozilla/5.0 HeadlessChrome/141",
+      close: async () => undefined,
+    };
+    return {
+      newPage: async () => page,
+      browser: () => ({ version: () => "141.0" }),
+      close: async () => undefined,
+      clearPermissions: async () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      setDefaultTimeout: () => undefined,
+    } as unknown as BrowserContext;
+  }
+
+  it("asks for chromiumSandbox: true and keeps it when Chromium starts with it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-browser-sbx-"));
+    const seen: (boolean | undefined)[] = [];
+    try {
+      const launched = await launchAgentBrowser({
+        agentId: "a1",
+        executablePath: process.execPath,
+        env: { FORERUNNER_HOME: home },
+        launchContext: async (_dir, o) => {
+          seen.push(o?.chromiumSandbox);
+          return fakeContext();
+        },
+      });
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((s) => s === true)).toBe(true);
+      expect(launched.unsandboxed).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back without it only where it cannot start, and says why", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-browser-sbx-"));
+    const seen: (boolean | undefined)[] = [];
+    try {
+      const launched = await launchAgentBrowser({
+        agentId: "a1",
+        executablePath: process.execPath,
+        env: { FORERUNNER_HOME: home },
+        launchContext: async (_dir, o) => {
+          seen.push(o?.chromiumSandbox);
+          if (o?.chromiumSandbox)
+            throw new Error(
+              "browserType.launchPersistentContext: Target page closed\nRunning as root without --no-sandbox is not supported",
+            );
+          return fakeContext();
+        },
+      });
+      // Tried with the sandbox once, then without it for this and every later launch.
+      expect(seen[0]).toBe(true);
+      expect(seen.slice(1).every((s) => s === false)).toBe(true);
+      expect(launched.unsandboxed).toBe("Running as root without --no-sandbox is not supported");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a navigation interrupted by the same page is tried once more (R-9)", () => {
+  it("retries after Chromium's error page and after a navigation to the same address, never another", () => {
+    const url = "http://127.0.0.1:4321/chain";
+    const interrupted = (to: string) =>
+      `page.goto: Navigation to "${url}" is interrupted by another navigation to "${to}"`;
+    expect(navigationInterruptedRetry(interrupted("chrome-error://chromewebdata/"), url)).toBe(
+      true,
+    );
+    expect(navigationInterruptedRetry(interrupted(url), url)).toBe(true);
+    expect(navigationInterruptedRetry(interrupted("http://127.0.0.1:4321/elsewhere"), url)).toBe(
+      false,
+    );
+    expect(navigationInterruptedRetry("page.goto: net::ERR_ABORTED", url)).toBe(false);
+  });
 });

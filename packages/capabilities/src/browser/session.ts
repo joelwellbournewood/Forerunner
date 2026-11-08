@@ -477,21 +477,25 @@ export class BrowserSession {
   /**
    * `page.goto` returning the status. After the policy route aborts a document request,
    * Chromium commits its own error page a moment later; a navigation started in that moment
-   * is reported as interrupted, so it is tried once more after the error page settled.
+   * is reported as interrupted, so it is tried once more after the error page settled. The same
+   * holds when the interrupting navigation goes to the very address asked for (R-9: a blocked
+   * redirect followed by a navigation back to the same page), `navigationInterruptedRetry`.
    */
   private async goto(page: Page, url: string): Promise<number | null> {
     const options = {
       waitUntil: "load" as const,
       timeout: this.opts.navigationTimeoutMs ?? 30_000,
     };
-    try {
-      const resp = await page.goto(url, options);
-      return resp?.status() ?? null;
-    } catch (e) {
-      if (!/interrupted by another navigation to "chrome-error:/i.test(errorMessage(e))) throw e;
-      await page.waitForLoadState("load", { timeout: 5_000 }).catch(() => undefined);
-      const resp = await page.goto(url, options);
-      return resp?.status() ?? null;
+    // At most `GOTO_INTERRUPTED_TRIES` in all: the page settles between tries.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const resp = await page.goto(url, options);
+        return resp?.status() ?? null;
+      } catch (e) {
+        if (attempt >= GOTO_INTERRUPTED_TRIES || !navigationInterruptedRetry(errorMessage(e), url))
+          throw e;
+        await page.waitForLoadState("load", { timeout: 5_000 }).catch(() => undefined);
+      }
     }
   }
 
@@ -969,5 +973,28 @@ export class BrowserSession {
   /** Whether `url` would pass this session's policy (no side effects). */
   allows(url: string): boolean {
     return this.policy.isAllowed(url) && urlHost(url) !== null;
+  }
+}
+
+/**
+ * Whether a `page.goto` that failed with this message is tried once more after the page
+ * settled: it was interrupted by Chromium's own error page (after the policy route aborted the
+ * document), or by another navigation to the same address (R-9: after a blocked redirect the
+ * page navigates to it again; before, only the error page was taken, and the browser
+ * integration test failed about one run in five with "interrupted by another navigation").
+ */
+/** How many times `goto` asks for a page whose navigation another one interrupted (R-9). */
+export const GOTO_INTERRUPTED_TRIES = 3;
+
+export function navigationInterruptedRetry(message: string, url: string): boolean {
+  const m = /interrupted by another navigation to "([^"]*)"/i.exec(message);
+  if (!m) return false;
+  const to = m[1] ?? "";
+  if (/^chrome-error:/i.test(to)) return true;
+  const strip = (u: string) => u.replace(/#.*$/, "");
+  try {
+    return strip(new URL(to).toString()) === strip(new URL(url).toString());
+  } catch {
+    return strip(to) === strip(url);
   }
 }
