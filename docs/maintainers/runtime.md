@@ -542,8 +542,25 @@ entry or `restingUntil`; test `billing-limits.test.ts`); `RuntimeApp.billing.wai
 once from `credentialSaved(kind)`, which the setup assistant's `POST /setup/anthropic` calls
 through `onClaudeCredentialSaved`) takes the projects whose source serves again
 (`RouterTaskBilling.takeReady`: the rest ended, no refusal stands; a refusal a new credential
-ended is cleared with its card) and requests one session start each (`budget_reset`) while
-the project has ready work. (5) The words: the session result's first builder
+ended is cleared with its card; and, R-refusedstays, a project kept on a source that cannot serve
+whose work another credential serves now, asked through `credentialWaitNow`: the billing pick of
+each ready task, read-only, so 'Wait' still holds work to a first choice that rests or was
+refused) and requests one session start each (`budget_reset`) while the project has ready work.
+`credentialSaved` also seeds a billing row for a credential of a kind the install had none of
+(`seedBillingSources`: a subscription saved while only a refused key was could serve nothing
+until a restart). R-wakeorder: the wait leaves the source only once its start is known to run:
+a start the runner refuses (its `runOutcome` not ok) or one that only waits in the scheduler's
+queue (memory) is noted again (`noteWait`), so it survives a quit; a project whose session runs
+now is left to it, and one with a start already queued is not asked twice. R-planningstart: a
+planning call holds the agent through `Scheduler.hold` (`IntakeDeps.holdAgent`, from the session
+row's insert to its close), so a session start asked for meanwhile (Start, the wake, a schedule)
+is queued ("queued", not the runner's "already working in another session") and runs when
+planning ends. R-startcred: `RuntimeApp.billing.waits.now(projectId)` is the wait every ready
+task's pick meets now (`waitSentence` and `saveLink`), and `startBlocked`'s `credentialWait` fact
+turns it into "Nothing can run yet. Waits for a new API key: save one in Settings." with the save
+link (`nothing_runnable`, so `POST /sessions` refuses with it too); tests
+`credential-limits.test.ts` "credential waits: the Start check, another credential, a failed
+start, a planning call". (5) The words: the session result's first builder
 (`RESULT_LINE_BUILDERS` in `session/result.ts`, `LastSessionOutcome.credentialWait`: "Waits
 until 15:40 (your subscription's limit) and starts by itself." / "Waits for a new API key: save
 one in Settings."), the task row (`TaskDisplayContext.credentialWait` from `credentialWaitRow`:

@@ -388,6 +388,12 @@ export interface IntakeDeps {
    * the plan is drafted by itself once it serves again, after a restart too. Absent (no routed
    * provider): such a draft fails as any other.
    */
+  /**
+   * R-planningstart: the scheduler's hold on the agent while a planning call runs on a session
+   * row of its own (`Scheduler.hold`), so a session start asked for meanwhile waits and runs
+   * when planning ends instead of being refused. Returns the release. Absent: no hold.
+   */
+  holdAgent?: (agentId: string) => () => void;
   credentialWait?: {
     now(): Promise<CredentialWait | null>;
     note(wait: CredentialWait, projectId: string): Promise<void>;
@@ -1542,24 +1548,37 @@ export class IntakeService {
     const deadline = new Date(
       clock.now() + INTAKE_CALLS * planning.timeoutMs + INTAKE_DEADLINE_MARGIN_MS,
     ).toISOString();
+    // R-planningstart: the agent's one session is this planning call's until it ends, so a
+    // session start asked for meanwhile waits in the scheduler's queue.
+    const release = this.deps.holdAgent?.(this.deps.agent.id) ?? (() => undefined);
     // The row is created with its plan, so it carries the reason and the author (spec B.5).
-    let session = await store.session.insert({
-      agent_id: this.deps.agent.id,
-      project_id: project.id,
-      trigger: "manual",
-      plan: { intake: { project_id: project.id, deadline } },
-      budget_cap_usd_micro: budgetUsdMicro,
-      step_cap: 4,
-      spent_usd_micro: 0,
-      steps: 0,
-      status: "planned",
-      summary: `intake: ${project.name}`,
-      handoff: {},
-      runner: "pc",
-      reason: `intake of ${project.name}`,
-      author_agent: this.deps.agent.id,
-    });
-    session = await store.session.start(session.id, session.version);
+    let session = await store.session
+      .insert({
+        agent_id: this.deps.agent.id,
+        project_id: project.id,
+        trigger: "manual",
+        plan: { intake: { project_id: project.id, deadline } },
+        budget_cap_usd_micro: budgetUsdMicro,
+        step_cap: 4,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "planned",
+        summary: `intake: ${project.name}`,
+        handoff: {},
+        runner: "pc",
+        reason: `intake of ${project.name}`,
+        author_agent: this.deps.agent.id,
+      })
+      .catch((e: unknown) => {
+        release();
+        throw e;
+      });
+    try {
+      session = await store.session.start(session.id, session.version);
+    } catch (e) {
+      release();
+      throw e;
+    }
     // One budget for both calls: the retry spends what the first left.
     const budget = new SessionBudget({
       sessionId: session.id,
@@ -1712,6 +1731,8 @@ export class IntakeService {
           error: errorMessage(e),
         });
       }
+      // The planning session is closed: a start that waited for it runs now.
+      release();
     }
   }
 

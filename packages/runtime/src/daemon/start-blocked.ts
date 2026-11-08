@@ -29,6 +29,13 @@ export interface StartBlockedFacts {
    * replaced.
    */
   planWait?: { text: string; save: { label: string; to: string } | null } | null;
+  /**
+   * R-startcred (U-078): no ready task can run now because each one's credential rests or was
+   * refused (its own pick waits), as the wait's sentence ("Waits for a new API key: save one in
+   * Settings.", "Waits until 15:40 (your subscription's limit) and starts by itself.") and the
+   * link that replaces a refused credential. Null or absent: a task's credential serves now.
+   */
+  credentialWait?: { text: string; save: { label: string; to: string } | null } | null;
 }
 
 /**
@@ -57,6 +64,16 @@ export function busyHere(
  */
 export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckView["blocked"] {
   const blocked = firstBlocker(r, f);
+  // R-startcred: tasks would run, but no credential can serve them now: Start would end at once
+  // with the wait (before, the dialog said "This session runs ..." and the session then waited).
+  if (blocked === null && f.credentialWait && r.runnable.length > 0 && !f.busy)
+    return {
+      kind: "nothing_runnable",
+      sentence: `Nothing can run yet. ${f.credentialWait.text}`,
+      action: f.credentialWait.save
+        ? { kind: "link", label: f.credentialWait.save.label, to: f.credentialWait.save.to }
+        : null,
+    };
   if (blocked?.kind !== "nothing_runnable" || r.ready !== 0) return blocked;
   if (f.plan === "pending")
     return {

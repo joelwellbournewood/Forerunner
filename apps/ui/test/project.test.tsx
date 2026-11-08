@@ -406,6 +406,29 @@ describe("Project page", () => {
       );
       expect(dialog).not.toHaveTextContent(/Give your agent work first|could not be drafted/);
     });
+
+    // R-startcred (leftovers7-web): tasks are ready, but the only key is refused.
+    it("with ready tasks whose only key is refused, the Start dialog says they wait for a new key, not what the session runs", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.credentialWaitNow.proj_atlas = {
+        text: "Waits for a new API key: save one in Settings.",
+        save: { label: "Save a new key", to: "/setup" },
+      };
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
+        /^Nothing can run yet\. Waits for a new API key: save one in Settings\.$/,
+      );
+      expect(within(dialog).getByTestId("start-session-unblock")).toHaveTextContent(
+        "Save a new key",
+      );
+      // Before: 'This session runs "..." (about CHF ...)', and Start ended at once with the wait.
+      expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
+      expect(dialog).not.toHaveTextContent("This session runs");
+    });
   });
 
   it("a task that only does not fit after the tasks before it is named as such, priced within its own budget (live walk 2, B3)", async () => {

@@ -302,3 +302,24 @@ the retry ladder counted it as a failed try, and nothing reviewed the task at th
     says; the open question (b) is unchanged. The log's start line is written when the run
     starts (`TaskExecutor.execute`'s `onStarted`, after the pick and any hand-over), so a task
     whose pick waits has none.
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-web'): waits that end, starts that are kept
+
+1. **A wait ends when another credential serves (R-refusedstays).** Work kept on a refused or
+   resting credential is started by itself when the billing pick of its ready tasks serves now on
+   another credential: a subscription saved while the only key is refused. The pick is the one the
+   task runs make, so under 'Wait' a first choice that rests or was refused still holds its work
+   (point 15 and the open owner question on refused credentials are unchanged). A credential saved
+   in the setup assistant gets its billing row at once (before, only at the next start).
+2. **A start is known to run before its wait is dropped (R-wakeorder).** A start the runner refuses,
+   or one that only waits in the scheduler's queue, keeps the project's wait on the source, so the
+   rows keep saying what they wait for and the start comes again, after a restart too.
+3. **A start asked for during a planning call waits for it (R-planningstart)**, in the scheduler's
+   queue, and runs when planning ends; before, the runner refused it and a background start was
+   lost.
+4. **The Start dialog says the wait (R-startcred).** With ready tasks whose credentials all wait,
+   the check says "Nothing can run yet. Waits for a new API key: save one in Settings." (or "Waits
+   until 15:40 (your subscription's limit) and starts by itself.") instead of what the session
+   would run.
+5. **Every write of a source's limits is version-checked (R-limitsrmw)**: two writes landing
+   together both stand.

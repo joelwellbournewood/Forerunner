@@ -283,6 +283,7 @@ describe("the credential chooser with both credentials, the subscription first (
     expect(
       needsOf({
         registryTools: [],
+        codeCommands: "first_choice",
         task: { ...task, acceptance_criteria: task.criteria },
       }).hard,
     ).toEqual([]);
@@ -301,6 +302,7 @@ describe("the credential chooser with both credentials, the subscription first (
     expect(
       needsOf({
         registryTools: [],
+        codeCommands: "first_choice",
         task: {
           title: "Hosting",
           outcome: "Uses the owner's choice of host",

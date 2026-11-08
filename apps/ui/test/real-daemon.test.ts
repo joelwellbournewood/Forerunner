@@ -10430,3 +10430,96 @@ describe("the UI client against the real daemon: the plan card's figure is the S
     }
   }, 120_000);
 });
+
+/**
+ * leftovers7-web (wave 14): the Start check while every ready task's credential waits
+ * (R-startcred). The client's `startCheck` against the real daemon, as the Start dialog reads it.
+ */
+describe("leftovers7-web: the Start check names a credential wait (R-startcred)", () => {
+  it("with the only key refused and two ready tasks, start-check says they wait for a new key, with where to save one", async () => {
+    const refused = ["sk-ant-api03-", "refused", "8".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-11-08T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-startcred-"));
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_api_key: refused }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    try {
+      const notes = await client.createProject({ name: "Notes", goal: "Two notes" });
+      for (const title of ["Write note A", "Write note B"])
+        await client.createTask(notes.id, {
+          title,
+          outcome: `${title} is written`,
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+      // Before any session: the key is not marked yet, so the check cannot know (it says what
+      // the session runs). One session meets the refusal; from then on the check says so.
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: notes.id });
+      const sessionId = first.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const check = await client.startCheck(notes.id);
+      // Before: blocked null, the dialog said 'This session runs "Write note A" ...'.
+      expect(check.blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet. Waits for a new API key: save one in Settings.",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // POST /sessions refuses with the same sentence, as for any check that blocks.
+      const again = await client
+        .startSession({ agentId, projectId: notes.id })
+        .catch((e: unknown) => e);
+      expect(again).toBeInstanceOf(ApiError);
+      expect((again as ApiError).message).toContain("Waits for a new API key");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});

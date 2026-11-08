@@ -781,9 +781,15 @@ export class RouterTaskBilling implements TaskBillingPort {
    * The projects whose wait is over now (U-078): every source with waiting projects that serves
    * again (its rest ended, and no refusal stands: a new credential was saved). Their entries are
    * taken off the source, and a refusal a new credential ended is cleared with its card; the
-   * caller starts each project's session. A source still resting or refused keeps its list.
+   * caller starts each project's session. A source still resting or refused keeps its list,
+   * except a project whose work another credential serves now (`servesNow`, R-refusedstays: a
+   * subscription saved while the only key is refused; before, its tasks kept "Waits for a new
+   * API key" and nothing started). `servesNow` asks the billing pick as the task runs would, so
+   * 'Wait' still holds work to a first choice that rests or was refused.
    */
-  async takeReady(): Promise<{ projectId: string; agentId: string; sourceId: string }[]> {
+  async takeReady(
+    servesNow?: (projectId: string) => Promise<boolean>,
+  ): Promise<{ projectId: string; agentId: string; sourceId: string }[]> {
     const rows = await this.opts.store.billingSource.list(
       { human_id: this.opts.humanId },
       { limit: 100 },
@@ -802,21 +808,29 @@ export class RouterTaskBilling implements TaskBillingPort {
         refusedSince({ limits: limits as BillingSource["limits"], credentialRef }, this.opts.vault);
       if (typeof listed.limits.refusedAt !== "string" && !waitingOf(listed.limits).length) continue;
       refused = (await refusedNowOf(listed.limits as JsonObject)) !== null;
+      // A source that cannot serve: the projects whose work another credential serves now
+      // (async, so asked before the write).
+      const servedElsewhere = new Set<string>();
+      const stuck =
+        refused || !!restingUntilOf({ limits: listed.limits as BillingSource["limits"] }, now);
+      if (stuck && servesNow)
+        for (const w of waitingOf(listed.limits))
+          if (await servesNow(w.projectId).catch(() => false)) servedElsewhere.add(w.projectId);
       await updateSourceLimits(this.opts.store, listed.id, (limits) => {
-        taken = [];
         stale = typeof limits.refusedAt === "string" && !refused;
         const waiting = waitingOf(limits);
         const free =
           !refused && !restingUntilOf({ limits: limits as BillingSource["limits"] }, now);
-        if (!stale && !(free && waiting.length)) return null;
+        taken = free ? waiting : waiting.filter((w) => servedElsewhere.has(w.projectId));
+        const kept = free ? [] : waiting.filter((w) => !servedElsewhere.has(w.projectId));
+        if (!stale && !taken.length) return null;
         const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, waiting: _l, ...rest } = limits;
-        if (free) taken = waiting;
         return {
           ...rest,
           ...(refused && limits.refusedAt ? { refusedAt: limits.refusedAt } : {}),
           ...(refused && limits.refusedKey ? { refusedKey: limits.refusedKey } : {}),
           ...(refused && limits.refusedWhy ? { refusedWhy: limits.refusedWhy } : {}),
-          ...(!free && waiting.length ? { waiting } : {}),
+          ...(kept.length ? { waiting: kept } : {}),
         };
       });
       const row = listed;

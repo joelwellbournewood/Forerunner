@@ -1327,6 +1327,9 @@ export function createDaemonApp(
           ? intake.state
           : null,
       planWait: intake?.wait ?? null,
+      // R-startcred: only asked while tasks would run (the pick is read-only).
+      credentialWait:
+        r.runnable.length > 0 ? await rt.billing.waits.now(projectId).catch(() => null) : null,
     });
   };
 

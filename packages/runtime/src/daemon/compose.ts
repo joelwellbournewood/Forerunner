@@ -208,7 +208,13 @@ import {
   StoreSharedSecretService,
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
-import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
+import {
+  CODE_COMMANDS_SETTING,
+  codeCommandsOf,
+  MID_SESSION_LIMIT_SETTING,
+  midSessionLimitOf,
+  type TaskBillingPort,
+} from "../session/billing.ts";
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
@@ -222,7 +228,12 @@ import {
   hasDependenciesToInstall,
   needsOf,
 } from "../session/credential-choice.ts";
-import type { CredentialWait } from "../session/credential-wait.ts";
+import {
+  type CredentialWait,
+  credentialWaitOf,
+  saveLink,
+  waitSentence,
+} from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
@@ -822,6 +833,13 @@ export interface RuntimeApp {
     waits: {
       wake(): Promise<number>;
       credentialSaved(kind: "api_key" | "subscription"): Promise<number>;
+      /**
+       * R-startcred: when no ready task of the project can run now because its credential rests
+       * or was refused, the wait's sentence and where to save a new credential; else null.
+       */
+      now(
+        projectId: string,
+      ): Promise<{ text: string; save: { label: string; to: string } | null } | null>;
     };
   };
   chfPerUsd: () => number;
@@ -2647,6 +2665,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     tokens,
     driver,
+    // R-planningstart: a start asked for while a planning call runs waits for it in the
+    // scheduler's queue (the scheduler is made below: a planning call before it exists, while
+    // the daemon composes, holds nothing).
+    holdAgent: (agentId) => {
+      try {
+        return scheduler.hold(agentId);
+      } catch {
+        return () => undefined;
+      }
+    },
     // The planning call follows the person's order for purpose `interactive` (ADR 0100).
     provider: intakeProvider,
     // U-078: planning that meets a refused or resting credential waits for it like task work
@@ -3387,9 +3415,51 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    * while it still has ready work; a plan from the brief that waited is drafted again (the
    * review of credential-limits: before, planning that met a refusal stayed "Planning failed").
    */
+  /**
+   * Whether a task of the project would run now, as its own pick would decide (R-refusedstays,
+   * R-startcred): the billing pick of each ready task (its specialist's needs and its words, the
+   * person's 'When my first choice runs out mid-session'), read-only. The wait the first of them
+   * meets when none can run; null when one can (or the project has no ready task).
+   */
+  const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> => {
+    const ready = await store.task.readyTasks(projectId, { limit: 20 }).catch(() => []);
+    const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
+    const mode = midSessionLimitOf(prefs?.[MID_SESSION_LIMIT_SETTING]);
+    let first: CredentialWait | null = null;
+    for (const task of ready) {
+      const spec = specialists(canonicalSpecialistName(task.specialist ?? "coder"));
+      const needs = needsOf({
+        registryTools: spec?.registryTools ?? spec?.allowedTools ?? [],
+        task,
+        codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+      });
+      try {
+        await taskBilling.pick({
+          agentId: agent.id,
+          agentOwnerHumanId: human.id,
+          runner: "pc",
+          modelTier: "sonnet",
+          purpose: "session",
+          needs,
+          ...(mode === "wait" ? { waitOnRest: true } : {}),
+        });
+        return null;
+      } catch (e) {
+        const wait = credentialWaitOf(e);
+        if (!wait) return null;
+        first ??= wait;
+      }
+    }
+    return first;
+  };
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
-      const ready = await taskBilling.takeReady();
+      // R-refusedstays: a project kept on a source that cannot serve is taken too when another
+      // credential serves its work now (a subscription saved while the only key is refused).
+      const ready = await taskBilling.takeReady(async (projectId) => {
+        const work = await store.task.readyTasks(projectId, { limit: 1 }).catch(() => []);
+        return work.length > 0 && (await credentialWaitNow(projectId)) === null;
+      });
       let started = 0;
       const plans: { projectId: string; sourceId: string; agentId: string }[] = [];
       for (const projectId of [...new Set(ready.map((w) => w.projectId))]) {
@@ -3409,12 +3479,31 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           await taskBilling.noteWait(entry.sourceId, projectId, entry.agentId);
           continue;
         }
-        await scheduler.request({
+        // R-wakeorder: the wait leaves the source only once its start is known to run. A start
+        // that fails (the runner refused it) or only waits in the scheduler's queue (memory,
+        // lost when the app quits) puts it back, so the rows keep saying what they wait for
+        // and the start comes again, after a restart too. A session of this project that runs
+        // now takes the work itself (its own pick notes a new wait if it must wait).
+        const keep = () =>
+          taskBilling
+            .noteWait(entry.sourceId, projectId, entry.agentId)
+            .catch((e: unknown) =>
+              logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
+            );
+        if (scheduler.activeStart(entry.agentId)?.req.projectId === projectId) continue;
+        if (scheduler.pendingStarts(entry.agentId).some((p) => p.req.projectId === projectId)) {
+          await keep();
+          continue;
+        }
+        const start = await scheduler.requestStart({
           agentId: entry.agentId,
           projectId,
           trigger: "budget_reset",
           reason: "a Claude credential it waited for can serve again",
         });
+        if (start.result === "started")
+          void scheduler.runOutcome(start.id)?.then((o) => (o.ok ? undefined : keep()));
+        else await keep();
         started++;
       }
       // The plans that waited are drafted again, in the background as at creation; if the
@@ -3443,8 +3532,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       return started;
     },
     credentialSaved: async (kind) => {
+      // R-refusedstays: a credential of a kind this install had no row for (a subscription
+      // saved while only a refused key was) gets its row now, as at the next start; before, it
+      // could serve nothing until Forerunner started again.
+      await seedBillingSources({ store, vault, humanId: human.id, env, planAllowance }).catch(
+        (e: unknown) =>
+          logger.warn("the new credential's billing row was not added", {
+            error: errorMessage(e),
+          }),
+      );
       await taskBilling.credentialSaved(kind);
       return credentialWaits.wake();
+    },
+    now: async (projectId) => {
+      const wait = await credentialWaitNow(projectId);
+      if (!wait) return null;
+      return {
+        text: waitSentence(wait, { timezone: human.timezone, nowMs: clock.now() }),
+        save: wait.reason === "refused" ? saveLink(wait.kind) : null,
+      };
     },
   };
   scheduleModelWatch(scheduler, { timezone: human.timezone });

@@ -477,6 +477,11 @@ export interface FakeDaemonState {
    */
   intake: Record<string, IntakeStatusView>;
   /**
+   * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
+   * (as `RuntimeApp.billing.waits.now`): the Start check says "Nothing can run yet. <text>".
+   */
+  credentialWaitNow: Record<string, { text: string; save: { label: string; to: string } | null }>;
+  /**
    * Where each project's files are on this computer (design §3.10), as the daemon's card says
    * (`folder`); a project without an entry has none yet. `files` are what `GET
    * /projects/:id/files` lists and reads, by project.
@@ -989,6 +994,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     events: clone(EVENTS),
     requests: clone(REQUESTS),
     intake: {},
+    credentialWaitNow: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
     copies: {},
@@ -2389,6 +2395,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         action: wait?.save ? { kind: "link", label: wait.save.label, to: wait.save.to } : null,
       };
     }
+    // As the daemon (R-startcred): tasks would run, but each one's credential waits.
+    const credentialWait = state.credentialWaitNow[id];
+    if (credentialWait && !view.blocked && view.runnable.length > 0)
+      view.blocked = {
+        kind: "nothing_runnable",
+        sentence: `Nothing can run yet. ${credentialWait.text}`,
+        action: credentialWait.save
+          ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
+          : null,
+      };
     return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {
