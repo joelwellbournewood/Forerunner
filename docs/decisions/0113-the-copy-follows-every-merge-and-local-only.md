@@ -246,3 +246,13 @@ your change out of the way and the copy follows again.") instead of "As merged o
 updated 14:05" with a time that no longer moves. The person's files are still never touched: the
 copy waits for them. A fetch that fails (GitHub not answering) is not a copy that stopped
 following: the next poll fetches again, and nothing is said.
+
+## Amendment: git's words in any language ('leftovers7-tailmerge', 2026-11-09)
+
+Why the copy stopped following (R-copystuck) is read from git's own message, and so is a push's
+refusal. Git speaks the person's language, so on a git that prints in German the Files line fell
+back to "Git could not bring it to what is merged" with no file. The copy's git, the task
+branches' git and the empty repository's first push now run with git's messages untranslated
+(`LC_ALL=C`, an empty `LANGUAGE`; `GitOpsOptions.untranslated`); nothing else about them changes,
+and every other git call keeps the process's language. The stopped state is a file in the copy's
+`.git` and is tested across a restart of the composed runtime.

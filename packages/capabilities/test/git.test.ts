@@ -664,6 +664,38 @@ describe("GitOps", { timeout: 120_000 }, () => {
     expect(existsSync(join(wt, "guide.md"))).toBe(false);
   });
 
+  it("untranslated: git runs in the C locale with no language list for a caller that reads its words; other calls keep the process's language (leftovers7-tailmerge, TM-6)", async () => {
+    const calls: NodeJS.ProcessEnv[] = [];
+    const runner = async (_argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> => {
+      calls.push(opts.env ?? {});
+      return {
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        timedOut: false,
+        durationMs: 1,
+      };
+    };
+    const was = { LANGUAGE: process.env.LANGUAGE, LC_ALL: process.env.LC_ALL };
+    process.env.LANGUAGE = "de";
+    process.env.LC_ALL = "de_DE.UTF-8";
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "fr-wt-"));
+      mkdirSync(join(dir, ".git"));
+      await new GitOps({ cwd: dir, identity, runner, untranslated: true }).status();
+      await new GitOps({ cwd: dir, identity, runner }).status();
+    } finally {
+      for (const [k, v] of Object.entries(was))
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+    }
+    const [plain, own] = [calls[0], calls[1]];
+    expect([plain?.LC_ALL, plain?.LANGUAGE]).toEqual(["C", ""]);
+    expect([own?.LC_ALL, own?.LANGUAGE]).toEqual(["de_DE.UTF-8", "de"]);
+  });
+
   it("finishUnfinished ends a merge the person resolved, skips a rebase commit the resolution emptied, and leaves one with markers under way (leftovers7-tailmerge, TM-2)", async () => {
     const { url } = await bareRepo();
     const root = mkdtempSync(join(tmpdir(), "fr-wt-"));

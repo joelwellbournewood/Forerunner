@@ -706,6 +706,8 @@ export class PrTaskExecutor implements TaskExecutor {
       identity: this.deps.identity,
       // merged-copy: no push of a task branch carries Local only or a review's try folder.
       neverPush: NEVER_PUSHED,
+      // TM-6: a refused push is told apart by git's words (`pushFailedWords`), in any language.
+      untranslated: true,
     });
   }
 

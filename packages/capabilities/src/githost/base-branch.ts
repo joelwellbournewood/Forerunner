@@ -56,6 +56,8 @@ export async function ensureBaseBranch(input: EnsureBaseInput): Promise<EnsureBa
       cwd: input.scratchDir,
       ...(input.auth ? { auth: input.auth } : {}),
       ...(input.identity ? { identity: input.identity } : {}),
+      // TM-6: the first push's refusal is told apart by git's words (`firstPushFailedWords`).
+      untranslated: true,
     });
     await scratch.init(base);
     const message = await input.first(input.scratchDir);

@@ -165,7 +165,11 @@ with their milestone.
   rejected]", else git's first line that is not its framing, redacted; the host's progress lines,
   "remote: Resolving deltas ...", are never the reason); `pushFailedWords` (a task's branch) and
   `firstPushFailedWords` (an empty repository's first commit) word them. The runner cuts a
-  task's reason at 200 characters, so these stay under it for a usual name. `GitOps` reports a
+  task's reason at 200 characters, so these stay under it for a usual name. Their git runs
+  with `GitOpsOptions.untranslated` (the PR executor's `gitFor`, `ensureBaseBranch`'s scratch;
+  TM-6, leftovers7-tailmerge: `UNTRANSLATED_ENV`, `LC_ALL=C` and an empty `LANGUAGE`), so
+  git's words are read in English whatever the person's language; other GitOps keep the
+  process's language. `GitOps` reports a
   failed command as `git push <branch> failed: <git's stderr>`, so git's first line shares a line
   with that header: `pushFailure` takes the header off before reading the lines. With git's
   default configuration the host's `remote:` line is git's first line; before (CI on 193e579), it

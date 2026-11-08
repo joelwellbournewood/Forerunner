@@ -6149,7 +6149,12 @@ default branch as the host has it after every merge, not only at a session's end
   since leftovers7-merge2 (R-copystuck) says why: `backToBase` returns `copyStoppedOf(error)`
   (`changed` for local changes the checkout would overwrite, `in_the_way` for untracked or ignored
   files it would overwrite, else `other`, with the files git named), kept as the record's
-  `stopped` until a refresh succeeds; the person's files are never touched.
+  `stopped` until a refresh succeeds; the person's files are never touched. The copy's git
+  (`gitOf`) runs with `untranslated` (TM-6, leftovers7-tailmerge: `LC_ALL=C`, `LANGUAGE`
+  empty), so the words `copyStoppedOf` reads are git's English ones whatever the person's
+  language; before, a git in another language left the Files line at `other` with no file. The
+  stopped state is a file in the copy's `.git`, so it crosses a restart (tested in
+  `loop-docs.test.ts` and, composed twice on one home, `merged-copy-restart.test.ts`).
 - Every checkout in the copy (`backToBase`, and `checkout`'s switch to a docs branch) goes
   through `switchCopy` (review of merged-copy, bench W8): git replaces ignored files without a
   word, and a repository that started tracking `Local only/notes.txt` (a collaborator's commit

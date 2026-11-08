@@ -162,6 +162,14 @@ export interface GitOpsOptions {
    * the remote's default branch does not is refused with one sentence (`neverPushedWords`).
    */
   neverPush?: readonly string[];
+  /**
+   * TM-6 (leftovers7-tailmerge): git's own messages untranslated (`LC_ALL=C`, `LANGUAGE`
+   * empty) for a caller that reads them: the copy's "local changes ... would be overwritten"
+   * (`copyStoppedOf`), a push's refusal (`pushFailedWords`), the remote's credential prompt
+   * (`must`). Without it, git speaks the process's language, as before; a person's git in
+   * another language then gave the Files line without the file names.
+   */
+  untranslated?: boolean;
 }
 
 /**
@@ -193,6 +201,14 @@ const COMMIT_MAKERS = new Set([
   "am",
   "stash",
 ]);
+/**
+ * TM-6: the environment that keeps git's messages untranslated (`GitOpsOptions.untranslated`):
+ * the C locale for messages, and no language list (GNU gettext reads `LANGUAGE` first).
+ */
+export const UNTRANSLATED_ENV: Readonly<Record<string, string>> = {
+  LC_ALL: "C",
+  LANGUAGE: "",
+};
 /** The name git commits under when the person never set one (the address is `EMAIL`'s). */
 const FALLBACK_NAME = "Forerunner";
 
@@ -258,6 +274,8 @@ export class GitOps {
       GIT_ASKPASS: "",
       SSH_ASKPASS: "",
       GCM_INTERACTIVE: "never",
+      // TM-6: messages a caller parses are in git's own words, whatever the person's language.
+      ...(this.opts.untranslated ? UNTRANSLATED_ENV : {}),
     };
     const scope =
       this.opts.auth?.token && remoteUrl ? tokenScope(remoteUrl, this.opts.auth.origin) : null;
