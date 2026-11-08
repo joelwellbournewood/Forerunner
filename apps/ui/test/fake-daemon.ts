@@ -491,7 +491,16 @@ export interface FakeDaemonState {
    */
   copies: Record<
     string,
-    { updatedAt: string | null; localOnly: { folder: string | null; line: string } | null }
+    {
+      updatedAt: string | null;
+      localOnly: { folder: string | null; line: string } | null;
+      /** leftovers7-merge2 (R-copystuck): the copy stopped following what is merged, and why. */
+      stopped?: {
+        reason: "changed" | "in_the_way" | "other";
+        files: string[];
+        line: string;
+      };
+    }
   >;
   /**
    * `GET /projects/:id/pull-requests` by project (ADR 0106): the PRs that wait for the person,

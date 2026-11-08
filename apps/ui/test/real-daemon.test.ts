@@ -10572,4 +10572,31 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     await rt.githostWatcher?.pollOnce();
     expect(await cards()).toHaveLength(1);
   }, 120_000);
+
+  it("a copy that cannot follow a merge says so on GET /projects/:id/files, with the reason and the file; it follows again once the change is moved away (R-copystuck)", async () => {
+    const project = await client.createProject({ name: "Stuck copy", goal: "x", repos: [FULL] });
+    // The watcher's read of main brings this computer's copy to it.
+    await rt.githostWatcher?.pollOnce();
+    const first = await client.projectFiles(project.id);
+    const folder = first.folder ?? "";
+    expect(first.copy?.updatedAt).toBeTruthy();
+    expect(first.copy?.stopped).toBeUndefined();
+    // The person edits README.md in the copy; a merge on GitHub then changes README.md too.
+    writeFileSync(join(folder, "README.md"), "# my own notes\n");
+    await host.seedCommit(FULL, { "README.md": "# l7m2, merged\n" }, "Merge the readme", "main");
+    await rt.githostWatcher?.pollOnce();
+    const stuck = await client.projectFiles(project.id);
+    expect(stuck.copy?.stopped).toEqual({
+      reason: "changed",
+      files: ["README.md"],
+      line: "You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.",
+    });
+    expect(stuck.copy?.updatedAt).toBe(first.copy?.updatedAt);
+    // Moved away (put back as it was): the next poll brings the copy to what is merged.
+    await run(["git", "-C", folder, "checkout", "--", "README.md"]);
+    await rt.githostWatcher?.pollOnce();
+    const after = await client.projectFiles(project.id);
+    expect(after.copy?.stopped).toBeUndefined();
+    expect(readFileSync(join(folder, "README.md"), "utf8")).toBe("# l7m2, merged\n");
+  }, 120_000);
 });

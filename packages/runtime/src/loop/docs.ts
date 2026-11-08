@@ -194,6 +194,22 @@ export interface CopyRecord {
   localOnly: "folder" | "tracked" | "taken" | "none";
   /** The person's files renamed "(yours)" for the repository's, relative to the copy. */
   kept?: string[];
+  /**
+   * R-copystuck (leftovers7-merge2): the last refresh could not bring the copy to what is merged,
+   * and why; absent once one did. `updatedAt` keeps the time of the last real update.
+   */
+  stopped?: CopyStopped;
+}
+
+/**
+ * Why this computer's copy stopped following what is merged (R-copystuck): `changed`, a file the
+ * person changed in the copy that a merge changes too; `in_the_way`, a file of theirs (untracked
+ * or ignored) where a merge brings one; `other`, git refused for another reason (on Windows, a
+ * path in another letter case). `files` are relative to the copy, with forward slashes.
+ */
+export interface CopyStopped {
+  reason: "changed" | "in_the_way" | "other";
+  files: string[];
 }
 
 /** What the Files tab says about a repository project's copy (`GET /projects/:id/files`). */
@@ -202,6 +218,54 @@ export interface CopyView {
   updatedAt: string | null;
   /** The Local only folder and its line; `folder` null with the sentence when there is none. */
   localOnly: { folder: string | null; line: string } | null;
+  /**
+   * R-copystuck: present while the copy cannot follow what is merged, with why and one line
+   * for the person (`copyStoppedLine`); `updatedAt` is then the time of its last real update.
+   */
+  stopped?: CopyStopped & { line: string };
+}
+
+/** "a.md, b.md and 2 more" for the files of a line. */
+function fileList(files: readonly string[]): string {
+  const shown = files.slice(0, 3);
+  const more = files.length - shown.length;
+  if (more > 0) return `${shown.join(", ")} and ${more} more`;
+  return shown.length <= 1
+    ? (shown[0] ?? "")
+    : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+/**
+ * R-copystuck: the Files tab's line for a copy that stopped following what is merged: what is
+ * in the way and what to do (design §5: one sentence, the files by name). Polish owns the words.
+ */
+export function copyStoppedLine(s: CopyStopped): string {
+  const one = s.files.length === 1;
+  const list = fileList(s.files);
+  if (s.reason === "changed" && s.files.length)
+    return `You changed ${list} in this copy, and a merge changed ${one ? "it" : "them"} too: move your change out of the way and the copy follows again.`;
+  if (s.reason === "in_the_way" && s.files.length)
+    return `${list} in this copy ${one ? "is" : "are"} in the way of ${one ? "a merged file" : "merged files"}: move ${one ? "it" : "them"} and the copy follows again.`;
+  return "Git could not bring it to what is merged; it tries again at the next merge.";
+}
+
+/** Why git refused to put the copy on the default branch, from its words (R-copystuck). */
+export function copyStoppedOf(error: unknown): CopyStopped {
+  const text = errorMessage(error);
+  const files = [
+    ...new Set(
+      text
+        .split(/\r?\n/)
+        .filter((l) => /^\t/.test(l))
+        .map((l) => l.trim().replace(/\\/g, "/"))
+        .filter(Boolean),
+    ),
+  ];
+  if (/local changes to the following files would be overwritten/i.test(text))
+    return { reason: "changed", files };
+  if (/(untracked|ignored) working tree files would be (overwritten|removed)/i.test(text))
+    return { reason: "in_the_way", files };
+  return { reason: "other", files: [] };
 }
 
 /** The copy's record, or null before the first refresh (or when it cannot be read). */
@@ -385,6 +449,10 @@ export class ProjectDocs implements ProjectDocsPort {
                 ),
               }
             : null,
+      // R-copystuck: the copy stopped following what is merged, and why.
+      ...(record?.stopped
+        ? { stopped: { ...record.stopped, line: copyStoppedLine(record.stopped) } }
+        : {}),
     };
   }
 
@@ -943,9 +1011,10 @@ export class ProjectDocs implements ProjectDocsPort {
     const base = `origin/${target.base}`;
     const hasBase = await git.hasRef(base);
     // A copy that could not be put on the default branch (a file the person changed in it that
-    // the merge also changed) keeps the time of its last real update.
-    const moved =
-      hasBase && opts.checkout !== false ? await this.backToBase(git, dir, target) : true;
+    // the merge also changed) keeps the time of its last real update, and says why (R-copystuck).
+    const stopped =
+      hasBase && opts.checkout !== false ? await this.backToBase(git, dir, target) : null;
+    const moved = !stopped;
     const before = readCopyRecord(dir);
     const tracked = hasBase ? ((await git.trackedUnder(base, [LOCAL_ONLY_DIR])) ?? []) : [];
     // Never removes the Local only line an earlier settle wrote: when the repository starts
@@ -973,6 +1042,7 @@ export class ProjectDocs implements ProjectDocsPort {
         : { updatedAt: before.updatedAt, head: before.head }),
       localOnly,
       ...(kept.length ? { kept } : {}),
+      ...(stopped ? { stopped } : {}),
     };
     try {
       writeFileSync(join(dir, ".git", COPY_RECORD), JSON.stringify(record), "utf8");
@@ -990,13 +1060,13 @@ export class ProjectDocs implements ProjectDocsPort {
     git: GitOps,
     dir: string,
     target: Pick<ProjectRepoTarget, "base">,
-  ): Promise<boolean> {
+  ): Promise<CopyStopped | null> {
     try {
       await this.switchCopy(git, dir, target.base, `origin/${target.base}`);
-      return true;
+      return null;
     } catch (e) {
       this.logger.warn("docs clone not back on the default branch", { error: errorMessage(e) });
-      return false;
+      return copyStoppedOf(e);
     }
   }
 

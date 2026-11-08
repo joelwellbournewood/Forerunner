@@ -1220,6 +1220,19 @@ export const ProjectFilesView = z.object({
     .object({
       updatedAt: z.string().nullable(),
       localOnly: z.object({ folder: z.string().nullable(), line: z.string() }).nullable(),
+      /**
+       * leftovers7-merge2 (R-copystuck): present while the copy cannot be brought to what is
+       * merged: why (`changed`, a file the person changed here that a merge changes too;
+       * `in_the_way`, a file of theirs where a merge brings one; `other`), the files, and the
+       * tab's line. `updatedAt` is then the time of its last real update. Absent otherwise.
+       */
+      stopped: z
+        .object({
+          reason: z.enum(["changed", "in_the_way", "other"]),
+          files: z.array(z.string()),
+          line: z.string(),
+        })
+        .optional(),
     })
     .nullable()
     .optional(),
