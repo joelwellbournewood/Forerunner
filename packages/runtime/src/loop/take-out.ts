@@ -23,7 +23,7 @@ import { parsePullUrl } from "./merge.ts";
  * commit, else the host's), names the done tasks that built on it (`builtOn`), and asks the PR
  * executor (`PrTaskExecutor.takeOut`) for a branch from the default branch that reverts it by
  * the way it was merged (a merge commit, a squash, a rebase; anything else is refused with
- * `UNKNOWN_SHAPE`). The branch is pushed (never the default branch) and a pull request
+ * `unknownShapeSentence`). The branch is pushed (never the default branch) and a pull request
  * "Take out: <title>" is opened whose body names those tasks; the task's merge record keeps it
  * (`take_out_pr_number`, `take_out_pr_url`, `take_out_state: "open"`), so its row reads "Taken
  * out in #9 (waiting for you to merge)" and the Overview lists it under Waiting for you to merge
@@ -106,8 +106,31 @@ export class TaskTakeOut {
     return out;
   }
 
-  /** "Take this work out" on task `taskId` (see the module comment). */
+  /**
+   * "Take this work out" on task `taskId` (see the module comment). One at a time per task: a
+   * second press while the first runs is refused, so two clicks never open two pull requests.
+   */
   async takeOut(taskId: string): Promise<TaskTakeOutAnswer> {
+    if (this.running.has(taskId))
+      return {
+        state: "refused",
+        sentence: "Its work is being taken out now: the answer comes in a moment.",
+        number: null,
+        url: null,
+        builtOn: [],
+      };
+    this.running.add(taskId);
+    try {
+      return await this.takeOutNow(taskId);
+    } finally {
+      this.running.delete(taskId);
+    }
+  }
+
+  /** The tasks whose take-out runs now in this process. */
+  private readonly running = new Set<string>();
+
+  private async takeOutNow(taskId: string): Promise<TaskTakeOutAnswer> {
     const { store, host } = this.deps;
     const refused = (sentence: string, builtOn: string[] = []): TaskTakeOutAnswer => ({
       state: "refused",
