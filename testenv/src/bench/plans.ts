@@ -613,14 +613,23 @@ export function intakeProposal(input: IntakeInput, opts: PlanOptions): Record<st
     docs,
     firstSession: {
       summary: `Start with ${estimated[0]?.title ?? "the first task"} and the tasks that follow from it.`,
-      items: estimated.map((t, i) => ({
-        key: t.key,
-        estimateUsdMicro: 150_000 + i * 25_000,
-        rationale:
-          i === 0
-            ? "nothing else can start before it"
-            : `follows ${t.dependsOn.join(", ") || "the plan order"}`,
-      })),
+      // Every task in plan order, the person's questions at no cost, as the live model lists
+      // them (packages/runtime/test/fixtures/intake-live1.json: estimateUsdMicro 0). Before
+      // (R-testpaths, leftovers7-merge), the person's task was left out, so the stand-in never
+      // reached a first session that starts with a question for the person.
+      items: plan.tasks.map((t) => {
+        const i = estimated.indexOf(t);
+        return {
+          key: t.key,
+          estimateUsdMicro: t.specialist === "person" ? 0 : 150_000 + i * 25_000,
+          rationale:
+            t.specialist === "person"
+              ? "a question for the person, no specialist cost"
+              : i === 0
+                ? "nothing else can start before it"
+                : `follows ${t.dependsOn.join(", ") || "the plan order"}`,
+        };
+      }),
     },
   };
 }

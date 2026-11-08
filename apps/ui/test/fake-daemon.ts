@@ -523,6 +523,12 @@ export interface FakeDaemonState {
   pullRequestReads: Record<string, number>;
   /** How many times `GET /projects` was read (leftovers7-merge: the list follows other changes). */
   projectListReads: number;
+  /**
+   * A test holds the sessions it starts (`POST /__test/hold-sessions`): their scripted events
+   * play, but they end only when stopped (R-testpaths: the e2e's Stop now ran only when the
+   * machine was fast enough to see it before the session ended by itself).
+   */
+  holdSessions: boolean;
   /** merged-actions: set by a test, the next Take this work out conflicts in these files. */
   takeOutConflict: string[] | null;
   /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
@@ -985,6 +991,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequestMergeOutcome: null,
     pullRequestReads: {},
     projectListReads: 0,
+    holdSessions: false,
     takeOutConflict: null,
     docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
@@ -1194,6 +1201,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.runnerKeys = { ...(options.runnerKeys ?? {}) };
     state.desktop = { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } };
     state.speedQuality = {};
+    state.holdSessions = false;
+    return c.json({ ok: true });
+  });
+  app.post("/__test/hold-sessions", async (c) => {
+    const body = (await c.req.json()) as { hold: boolean };
+    state.holdSessions = body.hold === true;
     return c.json({ ok: true });
   });
   app.post("/__test/fail", async (c) => {
@@ -7150,7 +7163,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           }
           pushEvent(session, type, text, level, { step: session.steps, ...extra }, cost);
           emit("session.changed", clone(session));
-          if (i === script.length - 1) {
+          if (i === script.length - 1 && !state.holdSessions) {
             session.status = "completed";
             session.statusText = "Done";
             session.stopReason = "completed";

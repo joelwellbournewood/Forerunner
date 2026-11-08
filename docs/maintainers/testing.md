@@ -2637,6 +2637,13 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 
 ## Bench: the real daemon and the real UI with a stand-in model
 
+Test paths that reach the case they are named for (R-testpaths, leftovers7-merge): the stand-in
+planner lists a person's question task in `firstSession.items` at `estimateUsdMicro: 0`, in plan
+order, as the live model does (`testenv/test/bench-role-player.test.ts`); the fake daemon's
+`POST /__test/hold-sessions {hold}` keeps the sessions it starts running until they are stopped
+(reset clears it), so `apps/ui/e2e/session.spec.ts` "Stop now asks once" always clicks Stop now
+(before, a session that ended first sent it down an "already Done" branch under load).
+
 `scripts/bench/` starts the real daemon (`fr daemon` on an isolated `FORERUNNER_HOME`) and the
 real UI dev server, and gives Playwright scripts a recorder (`recorder.cjs`: `openApp`, `step`
 screenshots and visible text, `api`, problems from the console and the network). `--githost

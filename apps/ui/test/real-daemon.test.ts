@@ -10279,6 +10279,39 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     );
   };
 
+  it("a pull request that builds on a task not accepted yet offers no Merge and says so; after an in-app Merge, Files lists the merged file with no watcher poll (R-testpaths)", async () => {
+    const project = await client.createProject({ name: "Not yet", goal: "x", repos: [FULL] });
+    const a = await doneTask(project.id, "Add the shelf", "shelf.ts");
+    const b = await doneTask(project.id, "Add the shelf label", "shelf-label.ts", {
+      from: a.branch,
+      dependsOn: [a.task.id],
+    });
+    // A goes back to review (sent back): B's row cannot merge until A is accepted again.
+    await rt.store.task.patch(a.task.id, { status: "in_review" });
+    const rowB = (await client.projectPullRequests(project.id)).waiting.find(
+      (w) => w.number === b.pr.number,
+    );
+    expect(rowB?.merge).toMatchObject({
+      state: "blocked",
+      canMerge: false,
+      sentence: `#${b.pr.number} builds on "Add the shelf", which is not accepted yet: it can merge once that one is.`,
+    });
+    // Accepted again: the chain merges in the app, and Files has both files at once.
+    await rt.store.task.patch(a.task.id, { status: "done" });
+    const paths = async () => (await client.projectFiles(project.id)).entries.map((e) => e.path);
+    expect(await paths()).not.toContain("shelf-label.ts");
+    await mergeNow(project.id, b.pr.number, b.task.id);
+    await eventually(
+      async () => {
+        const now = await paths();
+        return now.includes("shelf.ts") && now.includes("shelf-label.ts");
+      },
+      "Files to list the merged files with no watcher poll (at least 10 s)",
+      async () => JSON.stringify(await paths()),
+      15_000,
+    );
+  }, 120_000);
+
   it("Redo while the task's work is being taken out is refused in words; the take-out stays listed and the task stays as it was (R-pin)", async () => {
     const project = await client.createProject({ name: "Taking out", goal: "x", repos: [FULL] });
     const a = await doneTask(project.id, "Add the old banner", "banner.ts");
