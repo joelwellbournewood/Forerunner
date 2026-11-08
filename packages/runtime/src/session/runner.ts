@@ -95,6 +95,7 @@ import {
   closeFinishedWork,
   collectEndState,
   type LastSessionOutcome,
+  MERGE_WAITS,
   type NamedTask,
   sessionResultLines,
   sessionUpdateLine,
@@ -2419,7 +2420,10 @@ export class SessionRunner {
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
       openTasks: endState.openTasks,
       mergedPrs: merges.filter((m) => m.status === "merged").length,
-      openPrs: merges.filter((m) => m.status !== "merged").length,
+      // merge-in-app: a merge that waits for its checks (or a silent GitHub) merges by itself
+      // later, so it is not one the person must merge.
+      openPrs: merges.filter((m) => m.status !== "merged" && !MERGE_WAITS.has(m.status)).length,
+      waitingPrs: merges.filter((m) => MERGE_WAITS.has(m.status)).length,
     };
     const resultLines = sessionResultLines(resultFacts);
     const summary = resultLines.join("\n");

@@ -28,7 +28,38 @@ describe("session log lines", () => {
         prUrl: "https://github.com/o/sample/pull/3",
         reason: "PR left open for you: autonomy level 2 does not merge (level 3 Trusted does)",
       }),
-    ).toBe("Pull request #3 waits for you to merge it: Forerunner merges only at Trusted.");
+      // merge-in-app: no level merges any more (the owner's decision of 2026-11-02), so an older
+      // event says what to do instead (before: "Forerunner merges only at Trusted").
+    ).toBe("Pull request #3 waits for you to merge it: press Merge on the Overview.");
+    // The merge step's status decides the words (merge-in-app): never the step's own message,
+    // and a merge that waits for its checks does not say it waits for the person.
+    const left = (status: string, reason: string) =>
+      describeEvent("pr.left_open", {
+        taskId: "t1",
+        prUrl: "https://github.com/o/sample/pull/6",
+        status,
+        reason: `PR left open for you: ${reason}`,
+      });
+    expect(left("not_allowed", 'the project\'s merge mode is "You press Merge"')).toBe(
+      "Pull request #6 waits for you to merge it: press Merge on the Overview.",
+    );
+    expect(left("checks_pending", "a check is still running after 0 s: ci/test")).toBe(
+      "Pull request #6 merges when its checks pass.",
+    );
+    expect(left("unreachable", "GitHub did not answer")).toBe(
+      "GitHub did not answer about pull request #6: Forerunner tries the merge again.",
+    );
+    expect(left("head_moved", "the PR head 1a2b3c4d5e6f is not the reviewed commit 0f9e8d7c")).toBe(
+      "Pull request #6 changed after the review, so it waits for you (Inbox).",
+    );
+    expect(
+      left(
+        "not_allowed",
+        "main changed since the review, and the repository has no automatic checks to test the two together",
+      ),
+    ).toBe(
+      "Pull request #6 waits for you: main changed since the review, and nothing tests the two together. Press Merge on the Overview if it should go in.",
+    );
     expect(
       describeEvent("pr.left_open", {
         taskId: "t1",

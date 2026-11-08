@@ -332,6 +332,7 @@ import {
   installIdentitySelectors,
   pickPrincipal,
 } from "./identity.ts";
+import { ProjectPullRequests } from "./pull-requests.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
@@ -800,6 +801,11 @@ export interface RuntimeApp {
    * the tasks that build on a merged, closed or redone one, and their merge records.
    */
   dependentBranches: DependentBranches;
+  /**
+   * A repository project's waiting pull requests and the person's Merge in the app
+   * (merge-in-app): `view` for GET /projects/:id/pull-requests, `merge` for the click.
+   */
+  pullRequests: ProjectPullRequests;
   /**
    * The grant a session of this agent on `projectId` starts with (ADR 0044), as `startSession`
    * computes it: the tools (`merge_pr` among them, J.9), the worktrees root, the git host's and
@@ -2298,6 +2304,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // an accepted task that holds work which went away while it was reviewed.
   const dependentBranches = new DependentBranches({ store, clock, merge, executor });
   merge.onMerged((e) => dependentBranches.dependencyMerged(e));
+  // The Overview's pull requests and the person's Merge in the app (merge-in-app): what each
+  // waiting pull request's Merge does (from its merge record and the repository's rules), and
+  // the click, answered at once, the merges in dependency order through the merge step above.
+  // Without a saved GitHub token the view says so and asks GitHub nothing (C-56); a git host
+  // a test injects stands for one.
+  const pullRequests = new ProjectPullRequests({
+    store,
+    host: gitHost,
+    ...(config?.githubApiBase ? { apiBase: config.githubApiBase } : {}),
+    ...(opts.gitHost ? {} : { hasToken: async () => !!(await githubTokenNow()) }),
+    merge,
+    agentId: agent.id,
+    changed: (projectId) => events.emit("project", { id: projectId }),
+  });
   // The repository projects the watcher reads the default branch of (onDefaultBranchHead).
   const repositoryProjects = async (): Promise<{ projectId: string; repo: RepoRef }[]> => {
     const out: { projectId: string; repo: RepoRef }[] = [];
@@ -4081,6 +4101,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     docs,
     merge,
     dependentBranches,
+    pullRequests,
     sessionGrant: async (projectId) =>
       sessionGrant(
         projectId ? await store.project.mustGet(projectId) : null,
@@ -4171,6 +4192,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await specialistApprovals.settled();
       remoteWatcher?.stop();
       githostWatcher?.stop();
+      // A Merge pressed in the app finishes its call before the store closes (merge-in-app);
+      // the records of the merges not started yet stay queued for the next start.
+      await pullRequests.idle();
       await browserManager.closeAll().catch((e: unknown) => {
         logger.warn("browser sessions did not close cleanly", { error: errorMessage(e) });
       });

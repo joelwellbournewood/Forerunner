@@ -111,7 +111,8 @@ describe("a waiting merge survives a restart (ADR 0111)", { timeout: 180_000 }, 
       autonomy_level: 3,
       summary_cache: {},
       data_assets: [],
-      settings: { members: [rt.agent.id] },
+      // merge-in-app: the merge mode frees the merge, not the level.
+      settings: { members: [rt.agent.id], merge_mode: "after_review" },
       small_project_mode: false,
       active: true,
     });
@@ -218,6 +219,18 @@ describe("a waiting merge survives a restart (ADR 0111)", { timeout: 180_000 }, 
       merge_sha: hostMerge.sha,
     });
     expect((await rt2.store.mergeRecord.forTask(waitingTask.id))?.state).toBe("waiting_checks");
+    // merge-in-app (the owner's decision of 2026-11-02): main moved meanwhile (the footer was
+    // merged), so the automatic mode first merges main into the branch (a normal push), and the
+    // repository's checks must pass on that head before it merges (before: merged at once as it
+    // was, with nothing testing the combined result).
+    await rt2.merge.retryWaiting();
+    expect((await github.getPullRequest(REPO, prWaiting.number)).merged).toBe(false);
+    const moved = await rt2.store.mergeRecord.forTask(waitingTask.id);
+    expect(moved).toMatchObject({ state: "waiting_checks" });
+    const updatedHead = (await github.getPullRequest(REPO, prWaiting.number)).head.sha;
+    expect(moved?.reviewed_head_sha).toBe(updatedHead);
+    expect(updatedHead).not.toBe(prWaiting.head.sha);
+    await check(updatedHead, "completed", "success");
     await rt2.merge.retryWaiting();
     const merged = await github.getPullRequest(REPO, prWaiting.number);
     expect(merged).toMatchObject({ merged: true, state: "closed" });
@@ -238,13 +251,15 @@ describe("a waiting merge survives a restart (ADR 0111)", { timeout: 180_000 }, 
       .trim()
       .split(" ")
       .slice(1);
-    expect(parents).toEqual([expect.any(String), prWaiting.head.sha]);
-    // One audit row for the retry's call, on a token of its own: not the session's.
+    expect(parents).toEqual([expect.any(String), updatedHead]);
+    // One audit row for each retry's call, on a token of its own: not the session's.
     const rows = (await rt2.store.auditLog.list({ tool: MERGE_PR_TOOL } as never)).filter(
       (r) => r.session_id !== "s-merge",
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ allowed: true, agent_id: rt2.agent.id });
-    expect(rows[0]?.session_id).toMatch(/^merge-/);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({ allowed: true, agent_id: rt2.agent.id });
+      expect(row.session_id).toMatch(/^merge-/);
+    }
   });
 });

@@ -1,10 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { HumanRequestView, ProjectCard, ProjectPullRequestView } from "../../api/client.ts";
+import type {
+  HumanRequestView,
+  ProjectCard,
+  ProjectPullRequestsView,
+  ProjectPullRequestView,
+} from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { ReadAloud } from "../../components/ReadAloud.tsx";
-import { buttonClassName, ErrorBanner, Loading } from "../../components/ui.tsx";
+import { Button, buttonClassName, ErrorBanner, Loading } from "../../components/ui.tsx";
 import { relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { elapsedWords, useNow } from "../../shell/ShellBars.tsx";
@@ -185,6 +190,7 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
           projectId={projectId}
           repository={project.repository}
           version={version}
+          card={project}
           changed={changed}
         />
       ) : project?.folder ? (
@@ -251,17 +257,29 @@ function groupOf(pr: ProjectPullRequestView): PrGroup {
  * Before (GitHub walk, 2026-11-02) the result said "5 reviewed pull requests wait for you to
  * merge" and no screen but the Tasks row's small "PR" linked one; this page named a folder of
  * this computer that held none of that work.
+ *
+ * merge-in-app (the owner's decision of 2026-11-02): each row has **Merge**, which merges it in
+ * the app (the pull requests it builds on first, each with a merge commit, through the safe
+ * merge step), or the sentence that says why not; one line says who merges the project's
+ * accepted work, with Change. The click is answered at once; the list is then read again every
+ * `pollMs` until the rows it merges are gone (merged) or carry a sentence. Before, merging was
+ * only on GitHub: "Merging on GitHub puts the work into the default branch."
  */
 function RepositoryFiles({
   projectId,
   repository,
   version,
+  card,
   changed,
+  pollMs = MERGE_POLL_MS,
 }: {
   projectId: string;
   repository: { fullName: string; url: string };
   version: string;
+  /** The project's card as the store has it now: a new one each time the daemon says it changed. */
+  card: ProjectCard;
   changed: string[];
+  pollMs?: number;
 }) {
   const client = useClient();
   const prs = useAsync(
@@ -272,7 +290,65 @@ function RepositoryFiles({
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);
+  // The Merge pressed last: what the daemon answered, the pull requests it merges, and the list
+  // as it was read before the answer (until a read after it comes, the click's sentence stands).
+  const [pressed, setPressed] = useState<{
+    order: number[];
+    sentence: string;
+    before: ProjectPullRequestsView | null;
+  } | null>(null);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const waiting: ProjectPullRequestView[] = prs.data?.waiting ?? [];
+  const inFlight = (pr: ProjectPullRequestView) =>
+    pr.merge?.state === "merging" || pr.merge?.state === "queued";
+  // A row that changes without the person (it waits for checks, its own or those of one it merges
+  // after, or merges now): each time the daemon says the project changed (a merge the watcher's
+  // retry made is one), the list is read again. The status sentence and progress do not move on a
+  // merge, so `version` alone missed it (bench, 2026-11-08: the rows stayed until a reload).
+  const settling = useRef(false);
+  settling.current = waiting.some((pr) => inFlight(pr) || pr.merge?.state === "waiting_checks");
+  useEffect(() => {
+    if (card && settling.current) reload();
+  }, [card, reload]);
+  // Follow a Merge while one of its pull requests is still listed as merging (a row that waits
+  // for checks, its own or those of one it merges after, is not: the project event of the merge
+  // that frees it reads the list again).
+  const following =
+    pressed !== null &&
+    (prs.data === pressed.before ||
+      pressed.order.some((n) => {
+        const row = waiting.find((w) => w.number === n);
+        return row ? inFlight(row) : false;
+      }));
+  useEffect(() => {
+    if (!following) return;
+    const t = setInterval(() => reload(), pollMs);
+    return () => clearInterval(t);
+  }, [following, reload, pollMs]);
+  // What the Merge pressed last came to, once nothing of it is in flight (review, 2026-11-08: the
+  // line kept the click's "Merging #12 and #13 in order." above rows that said neither could
+  // merge). Unknown while the list cannot be read: the line goes and the error says why.
+  const listed = prs.data !== null && prs.data !== undefined && !prs.data.error;
+  const outcome = pressed && listed && !following ? pressedOutcome(pressed.order, waiting) : null;
+  const press = async (pr: ProjectPullRequestView) => {
+    setBusy(true);
+    setMergeError(null);
+    try {
+      const answer = await client.mergePullRequest(projectId, pr.number);
+      if (answer.state === "refused") {
+        setPressed(null);
+        setMergeError(answer.sentence);
+      } else setPressed({ order: answer.order, sentence: answer.sentence, before: prs.data });
+      reload();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const mode = prs.data?.mode;
+  const kind = prs.data?.errorKind;
   return (
     <section aria-labelledby="files-title" data-testid="your-files">
       <h2 id="files-title" className="font-semibold">
@@ -285,17 +361,49 @@ function RepositoryFiles({
             {repository.fullName}
           </ExternalLink>
         </p>
+        {mode ? (
+          <p data-testid="merge-mode">
+            Merging:{" "}
+            {mode.key === "after_review" ? "automatically after review" : "you press Merge"} ·{" "}
+            <Link
+              to="/settings#other-settings"
+              className="text-blue-700 hover:underline dark:text-blue-300"
+              data-testid="merge-mode-change"
+            >
+              Change
+            </Link>
+          </p>
+        ) : null}
         {prs.error && !prs.data ? <ErrorBanner message={prs.error} onRetry={prs.reload} /> : null}
         {prs.data?.error ? (
-          <p className="text-neutral-600 dark:text-neutral-400" data-testid="prs-error">
-            {prs.data.error}
+          <p
+            className="flex flex-wrap items-center gap-2 text-neutral-600 dark:text-neutral-400"
+            data-testid="prs-error"
+          >
+            <span>{prs.data.error}</span>
+            {kind === "no_token" || kind === "refused" ? (
+              <Link to="/setup" className={buttonClassName("secondary")} data-testid="prs-connect">
+                Connect GitHub
+              </Link>
+            ) : null}
+          </p>
+        ) : null}
+        {pressed && (following || outcome) ? (
+          <p data-testid="merge-answer" role="status">
+            {outcome ?? pressed.sentence}
+          </p>
+        ) : null}
+        {mergeError ? (
+          <p className="text-red-700 dark:text-red-300" data-testid="merge-error" role="alert">
+            {mergeError}
           </p>
         ) : null}
         {waiting.length > 0 ? (
           <div data-testid="prs-waiting">
             <h3 className="font-medium">Waiting for you to merge</h3>
             <p className="text-xs text-neutral-500">
-              Merging on GitHub puts the work into the default branch.
+              Merge puts the work into main with a merge commit; one that builds on others merges
+              them first.
             </p>
             {PR_GROUPS.map((group) => {
               const prsOf = waiting.filter((pr) => groupOf(pr) === group.key);
@@ -305,13 +413,55 @@ function RepositoryFiles({
                   <p className="text-xs text-neutral-600 dark:text-neutral-400">{group.label}</p>
                   <ul className="space-y-0.5">
                     {prsOf.map((pr) => (
-                      <li key={pr.number} data-testid="pr-waiting" className="flex flex-wrap gap-2">
+                      <li
+                        key={pr.number}
+                        data-testid="pr-waiting"
+                        data-number={pr.number}
+                        data-merge-state={pr.merge?.state ?? "ready"}
+                        className="flex flex-wrap items-center gap-2"
+                      >
                         <span>
                           "{pr.title}" · pull request #{pr.number}
                         </span>
                         <ExternalLink href={pr.url} variant="inline" testId="pr-waiting-link">
                           Open
                         </ExternalLink>
+                        {inFlight(pr) ? (
+                          <span
+                            className="text-neutral-600 dark:text-neutral-400"
+                            data-testid="pr-merging"
+                          >
+                            Merging…
+                          </span>
+                        ) : pr.merge?.canMerge !== false ? (
+                          <Button
+                            variant="secondary"
+                            className="px-2 py-0.5 text-xs"
+                            disabled={busy || following}
+                            title={
+                              pr.merge?.first.length
+                                ? `Merges ${andWords(pr.merge.first.map((n) => `#${n}`))} first, then this one.`
+                                : "Puts it into main with a merge commit."
+                            }
+                            onClick={() => void press(pr)}
+                            data-testid="pr-merge"
+                          >
+                            Merge
+                          </Button>
+                        ) : null}
+                        {pr.merge?.first.length && pr.merge.canMerge && !inFlight(pr) ? (
+                          <span className="text-xs text-neutral-500" data-testid="pr-merge-first">
+                            Merges {andWords(pr.merge.first.map((n) => `#${n}`))} first.
+                          </span>
+                        ) : null}
+                        {pr.merge?.sentence ? (
+                          <span
+                            className="basis-full text-xs text-neutral-600 dark:text-neutral-400"
+                            data-testid="pr-merge-sentence"
+                          >
+                            {pr.merge.sentence}
+                          </span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -333,4 +483,33 @@ function RepositoryFiles({
       </div>
     </section>
   );
+}
+
+/** How often the Overview reads the pull requests again while a Merge it pressed runs. */
+export const MERGE_POLL_MS = 1500;
+
+/**
+ * What a Merge came to once none of its pull requests is in flight: "Merged #2, #3 and #4."
+ * when all are gone from the list (merged); otherwise those not merged, whose rows each say why
+ * (a check failed, it waits for its checks or behind one that does, a rule): "Merged #2. #3 and
+ * #4 are not merged yet: each row below says why."
+ */
+function pressedOutcome(order: readonly number[], waiting: readonly ProjectPullRequestView[]) {
+  const name = (n: number) => `#${n}`;
+  const left = order.filter((n) => waiting.some((w) => w.number === n));
+  const merged = order.filter((n) => !left.includes(n));
+  const done = merged.length ? `Merged ${andWords(merged.map(name))}.` : "";
+  if (!left.length) return done;
+  const notYet =
+    left.length === 1
+      ? `${name(left[0] as number)} is not merged yet: the row below says why.`
+      : `${andWords(left.map(name))} are not merged yet: each row below says why.`;
+  return done ? `${done} ${notYet}` : notYet;
+}
+
+/** "#2, #3 and #4". */
+function andWords(items: readonly string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }

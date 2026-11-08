@@ -97,6 +97,11 @@ import {
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
+import {
+  MERGE_MODE_WORDS,
+  mergeModeEffect,
+  mergesAfterSentence,
+} from "@forerunner/runtime/loop/merge-mode";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import {
   SANDBOX_WHY,
@@ -448,7 +453,30 @@ export interface FakeDaemonState {
    * `GET /projects/:id/pull-requests` by project (ADR 0106): the PRs that wait for the person,
    * or the host's error in words; a project without an entry has none waiting.
    */
-  pullRequests: Record<string, { waiting: ProjectPullRequestView[]; error: string | null }>;
+  pullRequests: Record<
+    string,
+    {
+      waiting: ProjectPullRequestView[];
+      error: string | null;
+      errorKind?: "no_token" | "refused" | "unreachable" | null;
+    }
+  >;
+  /**
+   * The person's Merge in the app (merge-in-app): the pull requests a click is merging, by
+   * project and number, with how many reads of GET pull-requests still show them merging; the
+   * next read after that drops them (merged), or shows `outcome`'s sentence when a test set one
+   * (the merge step left it to the person). `after`: the pull requests of the same click it
+   * merges after. A `waiting_checks` outcome is the first one's checks still running: it says
+   * "#N merges when its checks pass.", and the ones after it wait their turn with a sentence
+   * (`mergesAfterSentence`), as the daemon's view says them; neither is merging any more.
+   */
+  pullRequestMerges: Record<string, { number: number; reads: number; after: number[] }[]>;
+  pullRequestMergeOutcome:
+    | { state: "left_to_you" | "blocked"; sentence: string }
+    | { state: "waiting_checks" }
+    | null;
+  /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
+  pullRequestReads: Record<string, number>;
   /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
   docs: Record<string, DocView[]>;
   messages: MessageView[];
@@ -893,6 +921,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
     pullRequests: clone(PROJECT_PULL_REQUESTS),
+    pullRequestMerges: {},
+    pullRequestMergeOutcome: null,
+    pullRequestReads: {},
     docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
     killActive: false,
@@ -3297,6 +3328,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     for (const p of state.projects) {
       const first = p.repos?.[0]?.trim() ?? "";
       if (!/^[\w.-]+\/[\w.-]+$/.test(first)) continue;
+      // merge-in-app: who merges accepted work, as the daemon's row says it.
+      rows.push({
+        key: "project.merge_mode",
+        label: "Who merges accepted work",
+        scope: "project",
+        scopeId: p.id,
+        value: mergeModeOfFake(p.id),
+        description: `You press Merge (each accepted task's pull request waits for your Merge on ${p.name}'s Overview), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
+        risk: "medium",
+      });
       rows.push({
         key: "project.status_pull_request",
         label: "Status pull request",
@@ -4393,6 +4434,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     small_project_mode: "low",
     fast_mode: "medium",
     status_pull_request: "low",
+    // merge-in-app: medium, as SETTING_SPECS.merge_mode (turning automatic merges on asks a yes).
+    merge_mode: "medium",
     critic_ceiling: "medium",
     session_reserve_share: "medium",
     quiet_hours: "low",
@@ -4410,9 +4453,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
     projectId ? `${key}:${projectId}` : key;
+  /** A project's merge mode as the daemon reads it (`mergeModeOf`, merge-in-app): "you" unless set. */
+  const mergeModeOfFake = (projectId: string): "you" | "after_review" =>
+    state.settingValues[settingSlot("merge_mode", projectId)] === "after_review"
+      ? "after_review"
+      : "you";
+  const MERGE_MODE_LABELS = MERGE_MODE_WORDS;
+  const MERGE_MODE_EFFECTS = {
+    you: mergeModeEffect("you"),
+    after_review: mergeModeEffect("after_review"),
+  };
   const PROJECT_KEYS = new Set([
     "small_project_mode",
     "status_pull_request",
+    "merge_mode",
     "critic_ceiling",
     "session_reserve_share",
     "handover",
@@ -4761,6 +4815,51 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           apply: () => {
             state.fastMode[project.id] = value;
             return { before: { fast_mode: before }, after: { fast_mode: value } };
+          },
+        };
+      }
+      if (
+        key === "merge_mode" &&
+        project &&
+        (params.value === "you" || params.value === "after_review")
+      ) {
+        // The daemon's card for this key (`SETTING_SPECS.merge_mode`, merge-in-app): the mode in
+        // words and what the new one means, in the card and the sentence; the same value is
+        // refused; turning automatic merges off acts at once (narrows), on asks a yes.
+        const value = params.value;
+        const before = mergeModeOfFake(project.id);
+        const what = `who merges accepted work for ${project.name}`;
+        if (before === value && state.settingValues[settingSlot(key, project.id)] !== undefined)
+          return refuse(
+            `Who merges accepted work for ${project.name} is already ${MERGE_MODE_LABELS[before]}.`,
+          );
+        const effect = MERGE_MODE_EFFECTS[value];
+        return {
+          name,
+          params,
+          risk: value === "after_review" ? risk : "low",
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: MERGE_MODE_LABELS[before],
+              newValue: `${MERGE_MODE_LABELS[value]} (${effect})`,
+              scope: "project",
+              sentence: `Set ${what} from ${MERGE_MODE_LABELS[before]} to ${MERGE_MODE_LABELS[value]}: ${effect}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            value === "after_review" ? risk : "low",
+          ),
+          apply: () => {
+            const slot = settingSlot(key, project.id);
+            const had = state.settingValues[slot];
+            state.settingValues[slot] = value;
+            return {
+              before: { key, project_id: project.id, value: had ?? null },
+              after: { key, project_id: project.id, value },
+            };
           },
         };
       }
@@ -6333,10 +6432,89 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!project) return errorBody(c, 404, "not_found", "no such project");
     const repository = repositoryOf(project.repos);
     const prs = state.pullRequests[id];
+    state.pullRequestReads[id] = (state.pullRequestReads[id] ?? 0) + 1;
+    // merge-in-app: a Merge pressed in the app shows "merging" for a read, then the rows are
+    // gone (merged, as GitHub lists open pull requests only) or carry the outcome's sentence.
+    const merging = state.pullRequestMerges[id] ?? [];
+    if (prs)
+      for (const m of [...merging]) {
+        if (m.reads > 0) {
+          m.reads -= 1;
+          continue;
+        }
+        merging.splice(merging.indexOf(m), 1);
+        const row = prs.waiting.find((r) => r.number === m.number);
+        if (!row) continue;
+        const outcome = state.pullRequestMergeOutcome;
+        if (outcome?.state === "waiting_checks") {
+          // The first one's checks run; each later one waits its turn behind it (not merging).
+          row.merge = {
+            state: "waiting_checks",
+            canMerge: false,
+            sentence: m.after.length
+              ? mergesAfterSentence(m.number, m.after, m.after.slice(0, 1))
+              : `#${m.number} merges when its checks pass.`,
+            first: m.after,
+          };
+        } else if (outcome)
+          row.merge = {
+            state: outcome.state,
+            canMerge: outcome.state === "left_to_you",
+            sentence: outcome.sentence,
+            first: [],
+          };
+        else prs.waiting = prs.waiting.filter((r) => r.number !== m.number);
+      }
+    const mode = mergeModeOfFake(id);
     return c.json({
       repository,
       waiting: repository ? (prs?.waiting ?? []) : [],
       error: repository ? (prs?.error ?? null) : null,
+      errorKind: repository ? (prs?.errorKind ?? null) : null,
+      mode: { key: mode, label: MERGE_MODE_WORDS[mode] },
+    });
+  });
+  // The person's Merge on the Overview (merge-in-app), as the daemon answers it: at once, the
+  // pull requests it builds on first; a row that offers no Merge is refused with its sentence.
+  app.post("/projects/:id/pull-requests/:number/merge", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 403, "forbidden", "not your project");
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return errorBody(c, 400, "validation", "not a pull request number");
+    const prs = state.pullRequests[id];
+    const row = prs?.waiting.find((r) => r.number === number);
+    if (!prs || !row)
+      return c.json({
+        state: "refused",
+        sentence: `#${number} does not wait to be merged: it may be merged or closed already.`,
+        order: [],
+      });
+    if (row.merge && !row.merge.canMerge)
+      return c.json({
+        state: "refused",
+        sentence: row.merge.sentence ?? `#${number} cannot be merged here: merge it on GitHub.`,
+        order: [],
+      });
+    const order = [...(row.merge?.first ?? []), number];
+    const merging = state.pullRequestMerges[id] ?? [];
+    state.pullRequestMerges[id] = merging;
+    for (const [i, n] of order.entries()) {
+      const r = prs.waiting.find((w) => w.number === n);
+      if (!r) continue;
+      r.merge = { state: "merging", canMerge: false, sentence: null, first: [] };
+      merging.push({ number: n, reads: 1, after: order.slice(0, i) });
+    }
+    const names = order.map((n) => `#${n}`);
+    const list =
+      names.length <= 1
+        ? (names[0] ?? "")
+        : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    return c.json({
+      state: "queued",
+      sentence: order.length > 1 ? `Merging ${list} in order.` : `Merging ${list}.`,
+      order,
     });
   });
   app.get("/projects/:id/files", (c) => {

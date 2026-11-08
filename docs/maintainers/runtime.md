@@ -2767,14 +2767,34 @@ the worktree's HEAD.
 pull request: the session's accept (through `mergeReviewed`), the git host watcher's retry
 (`retryWaiting`, called from `GitHostWatcher.poll()` through its `retryMerges` dep), the resume at
 the daemon's start (`resumeAtStart`, next to `recoverInterruptedSessions`), and later the person's
-Merge in the app. It asks one gate first, `mayMerge(project, record, authority)`, with the project
-read again at every call: today's body frees an unattended merge only at autonomy level 3 or above
-and a person's click always (`authority.kind: "person"`, whose approval is added to
-`RunContext.approvals` for exactly that call); 'merge-in-app' replaces only that body with the
-merge mode. A refusal is one audit row on the hooks' audit port (`autonomy_insufficient: autonomy
-level 2 does not merge (level 3 Trusted does)`), the record `left_to_you` with the sentence
-("#4 waits for you to merge it: Forerunner merges by itself only at Trusted."), the task's reason
-as before, and no card (the level's normal course). Then `store.mergeRecord.claim` takes the
+Merge in the app. It asks one gate first, `mayMerge(project, record, authority, look)`, with the
+project read again at every call. Its body (merge-in-app, the owner's decision of 2026-11-02) reads
+the project's **merge mode** (`project.settings.merge_mode`, `src/loop/merge-mode.ts`:
+`mergeModeOf`, `MERGE_MODE_WORDS`; set with `settings.set merge_mode`): the person's click always
+approves (`authority.kind: "person"`), and so does a record their click approved that then waited
+(`record.approval === "person"`: the retry merges it once the pull requests its task builds on are
+merged, `look.openDependencies()`; until then the gate answers `wait`, which keeps the record as it
+is with no audit row, and when one of those went to the person it refuses with "#5 builds on #4,
+which is not merged: merge it first."); unattended, only "Merge automatically after review"
+(`after_review`) merges, and "You press Merge" (`you`, every project's default) refuses with
+`autonomy_insufficient: the project's merge mode is "You press Merge"` and the sentence "#4 waits
+for you to merge it: press Merge on the Overview." (no card). No autonomy level frees a merge:
+`merge_pr` is free at no level (`autonomy.ts` `FREE_AT.merge_pr = null`), and `call()` adds the
+approval key of exactly that `merge_pr` call to `RunContext.approvals` for the mode as for the
+click; the call's `approved_by` ("the project's merge mode (Merge automatically after review)" or
+"the person <id>") is the first field of its input, so the audit row says where the approval came
+from. In the automatic mode, when the base moved since the review (`look.baseChange()`: the
+branch's head against `reviewed_base_sha`, then `git merge-tree` of the reviewed head with the base
+against the reviewed head's own tree, so a base that moved only by work the reviewed head holds, a
+dependency merged with a merge commit, counts as unmoved) the gate asks for `update` when the
+repository has checks (`look.hasChecks()`: runs or statuses on the reviewed head or the base, or a
+rule's required checks; main is merged into the branch and every check must pass again on that
+head) and otherwise refuses: "#4 waits for you: main changed since the review, and this repository
+has no automatic checks to test the two together. Press Merge if it should go in." A conflict is
+left to the tool, which names the files on a card. A look that cannot reach the host says "cannot
+tell" (moved, has checks), so the tool then waits on the silent host as on a running check. A
+refusal is one audit row on the hooks' audit port, the record `left_to_you` with the sentence, the
+task's reason as before. Then `store.mergeRecord.claim` takes the
 record (`merging`, one more attempt, optimistic on the row's version, so two daemons on a shared
 store never merge one PR twice), and one `merge_pr` call goes through the hooks with
 `RunContext.unattended`: in a session on a token derived from the session's (`merge_pr` only, the
@@ -2788,6 +2808,53 @@ no row; a stop or an unexpected error during an attempt puts the record back to
 whose PR head moved to a commit that keeps exactly the reviewed change (`ownChangeId` of the new
 head equals the record's: the base merged in by a crashed earlier attempt or GitHub's Update
 branch) moves to that head and is tried again; any other moved head is `head_moved`.
+
+**Merge in the app (merge-in-app).** `ProjectPullRequests` (`src/daemon/pull-requests.ts`,
+`RuntimeApp.pullRequests`) serves `GET /projects/:id/pull-requests` (`view`) and
+`POST /projects/:id/pull-requests/:number/merge` (`merge`, in `docs-routes.ts` beside the GET). The
+view adds to each waiting pull request its `merge` (`ready`, `queued`, `merging`, `waiting_checks`,
+`left_to_you`, `blocked`, with `canMerge`, one sentence and `first`, the open pull requests it builds
+on in the order they merge), read from its merge record (`mergeOfRecord`; a record queued without
+the person's approval offers Merge in "You press Merge" and reads as merging in the automatic mode),
+from the repository's `allowMergeCommit` and each base's rules (`rulesBlock`, read once per view, so
+no row offers a Merge that cannot happen), and from what it builds on (a dependency not accepted yet
+blocks it with one sentence). A row the person's Merge queued behind pull requests whose checks
+still run (a `waiting_checks` row among its `first`) is `waiting_checks` too, not in flight, with
+"#6 merges after #5, once #5's checks pass." (`mergesAfterSentence` in `loop/merge-mode.ts`; review
+2026-11-08: it read "Merging…" for as long as those checks ran, and the Overview read the list every
+1.5 s all that time); the merge that frees it is a project event. And the project's `mode`. C-56:
+without a saved GitHub token (the
+daemon's `hasToken`; a git host a test injects stands for one) it asks GitHub nothing and says "Add
+a GitHub token in Settings to see the pull requests." (`errorKind: "no_token"`); a 401 says the
+token was refused, a 403 or 404 that it cannot read the repository (`refused`); anything else
+"GitHub did not answer, so the pull requests are not listed. Try again later." (`unreachable`), the
+error in the log only. `merge` answers at once: `refused` with the row's sentence, or `queued` with
+the order: `ReviewedPrMerge.approveInOrder(chain, humanId)` pins a record where there is none (no
+reviewed commit: the click merges the pull request as it is on GitHub now, and the answer says so)
+and moves every record of the chain to `queued` with `approval: "person"`, persisted before the
+answer, so a restart loses nothing; then `mergeApproved` runs in the background
+(`ProjectPullRequests.background`, awaited by `idle()` and at the daemon's close): each record
+through `mergeRecorded` on the person's click, in order; one that waits for its checks keeps the
+rest queued for the retry pass (which keeps the order, above), one left to the person leaves the
+rest to the person with "#5 builds on #4, which was not merged: merge #4 first." A docs pull request
+(no task, no record) merges as it is through `ReviewedPrMerge.mergeAsIs`: one `merge_pr` call on its
+own narrow token with the person's approval, the branch's rules read first; never unattended, in
+either mode. Every merge ends with `changed(projectId)`, a `project` event, so the Overview reads
+again.
+
+**What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
+(`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull
+request): "Merged", "Accepted · merges when its checks pass", "Accepted · merging", "Accepted ·
+waiting for you to merge" (the record's sentence as its detail where it says more than "press
+Merge"); a record the person's Merge queued behind tasks whose pull requests wait for their checks
+reads "Accepted · merges after #5" with the Overview row's sentence as its detail (`mergesAfterLabel`;
+`mergesBehind` walks `depends_on` through `TaskDisplayContext.tasks` and `merges`, whose `pr_number`
+names them); a task without a record stays "Done". The session result's builder "merges when its checks
+pass" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges when its checks
+pass." and "Left N reviewed pull requests for you to merge." counts only what waits for the person
+(`ResultFacts.waitingPrs`, `openPrs`). The Overview's Last result gets "Since then: merged #2, #3
+and #4." (`mergedSinceLine` in `views.ts`) for the pull requests the session left open whose record
+says merged now.
 
 **The tool (`mergePrTool`)** holds the rules for any caller: the PR head must be the record's
 commit (`head_moved` otherwise); **merge commits only** (`mergePullRequest(…, { sha, method:
@@ -3222,10 +3289,15 @@ merge step writes "PR left open for you: ..." over the reason); a docs PR's is n
 the default branch that waits in such a PR (`pullRequest` and the note "waiting in pull request
 #N: merge it to add it"). The runner's `task.files` event carries the task's `prUrl` and `branch`,
 and its line reads "Changed index.html, in pull request #2." (`prNumberWords`); `pr.left_open`
-reads "Pull request #3 waits for you to merge it: Forerunner merges only at Trusted."
-(`leftOpenWords`: the merge step's "PR left open for you:" prefix and URLs taken out, the level's
-refusal in the setting's name) and `pr.merged` "Merged pull request #5."; before, both carried the
-URL and "autonomy level 2 does not merge (level 3 Trusted does)". The chat's
+is worded from the merge step's `status` (`leftOpenLine`, merge-in-app): "Pull request #3
+waits for you to merge it: press Merge on the Overview." (`not_allowed`), "Pull request #3 merges
+when its checks pass." (`checks_pending`), "GitHub did not answer about pull request #3: Forerunner
+tries the merge again." (`unreachable`), "... so it waits for you (Inbox)." where a card asks the
+person, never the step's own message with commit ids; an older event without a status keeps
+`leftOpenWords` (its "autonomy level 2 does not merge" now reads "press Merge on the Overview");
+`pr.merged` reads "Merged pull request #5."; before, both carried the URL and "autonomy level 2
+does not merge (level 3 Trusted does)", and a merge that waited for its checks read as left for
+the person. The chat's
 `# Your files` for a repository project (`repositoryFacts`, `filesBlock`) names the repository,
 says the work waits in pull requests until the person merges it, lists the done tasks' PR links
 and this computer's copy of the default branch; a folder project's names the folder. With the

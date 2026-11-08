@@ -151,7 +151,7 @@ import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
-import { projectPullRequests, projectRepository } from "./pull-requests.ts";
+import { projectRepository } from "./pull-requests.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
@@ -671,11 +671,10 @@ export function createDaemonApp(
       docsInPullRequests: (project) => rt.docs.docsInPullRequests(project),
       // C-57: a repository project's status kept in the app is the Status the tab shows.
       statusDocRoot: (project) => rt.docs.statusDocRoot(project),
-      pullRequests: (project) =>
-        projectPullRequests(
-          { store: rt.store, host: rt.gitHost, apiBase: rt.config?.githubApiBase },
-          project,
-        ),
+      // merge-in-app: each waiting pull request says what Merge does, and the person's Merge
+      // (POST /projects/:id/pull-requests/:number/merge) is answered at once.
+      pullRequests: (project) => rt.pullRequests.view(project),
+      mergePullRequest: (project, number) => rt.pullRequests.merge(project, number, rt.human.id),
       who: daemonWho,
     }),
   );

@@ -20,6 +20,7 @@ import type {
   ProjectFileEntryView,
   ProjectFilesView,
   ProjectPullRequestsView,
+  PullRequestMergeAnswer,
 } from "./api-types.ts";
 import { ownsProject, type Who } from "./ownership.ts";
 import { reviewsView } from "./views.ts";
@@ -45,8 +46,10 @@ export interface DocsRoutesDeps {
    * project's status kept in the app while its status pull request is off; null otherwise.
    */
   statusDocRoot?: (project: ProjectRow) => string | null;
-  /** A repository project's pull requests that wait for the person (`projectPullRequests`). */
+  /** A repository project's pull requests that wait for the person (`ProjectPullRequests.view`). */
   pullRequests?: (project: ProjectRow) => Promise<ProjectPullRequestsView>;
+  /** The person's Merge in the app (`ProjectPullRequests.merge`, merge-in-app). */
+  mergePullRequest?: (project: ProjectRow, number: number) => Promise<PullRequestMergeAnswer>;
   who: () => Who;
 }
 
@@ -298,6 +301,20 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
       ? await deps.pullRequests(project)
       : { repository: null, waiting: [], error: null };
     return c.json(view);
+  });
+
+  // The person's Merge on the Overview (merge-in-app): answered at once; the merges run in the
+  // background in dependency order, each a merge commit with the person's click as its approval.
+  app.post("/projects/:id/pull-requests/:number/merge", async (c) => {
+    const project = await owned(c.req.param("id"));
+    if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return c.json({ code: "validation", message: "not a pull request number" }, 400);
+    if (!deps.mergePullRequest)
+      return c.json({ code: "not_found", message: "merging in the app is not available" }, 404);
+    const answer: PullRequestMergeAnswer = await deps.mergePullRequest(project, number);
+    return c.json(answer);
   });
 
   // The project's files (design §3.10): the folder its work is in, listed read-only, and one

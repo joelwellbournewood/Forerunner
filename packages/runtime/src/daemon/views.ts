@@ -250,6 +250,29 @@ export function milestoneView(m: MilestoneRow): MilestoneView {
   };
 }
 
+/**
+ * "Since then: merged #2, #3 and #4." (merge-in-app, design §5 rule 4): the pull requests a
+ * session left open (its handoff's merges) whose merge record says merged now, so the Overview
+ * does not keep "Left 3 reviewed pull requests for you to merge" as if nothing happened since.
+ */
+async function mergedSinceLine(store: StateStore, handoff: unknown): Promise<string[]> {
+  const merges = (handoff as { merges?: unknown } | null)?.merges;
+  if (!Array.isArray(merges)) return [];
+  const numbers: number[] = [];
+  for (const m of merges as { task_id?: unknown; status?: unknown }[]) {
+    if (typeof m?.task_id !== "string" || m.status === "merged") continue;
+    const record = await store.mergeRecord.forTask(m.task_id).catch(() => undefined);
+    if (record?.state === "merged" && record.pr_number) numbers.push(record.pr_number);
+  }
+  if (!numbers.length) return [];
+  const names = [...new Set(numbers)].sort((a, b) => a - b).map((n) => `#${n}`);
+  const list =
+    names.length <= 1
+      ? (names[0] ?? "")
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return [`Since then: merged ${list}.`];
+}
+
 export async function projectSummary(
   store: StateStore,
   projectId: string,
@@ -287,12 +310,16 @@ export async function projectSummary(
   // What became of the tasks the session left waiting for the person (C-54, design §5 rule 4):
   // the summary is the record of the end ("… needs your decision (Inbox)"); once such a task
   // moved on (its card answered, Mark done anyway, a cancel), one line says what it is now.
-  const since = s.last_session?.id
-    ? sinceLines(
-        blockedTaskIds((await store.session.get(s.last_session.id))?.handoff),
-        new Map(tasks.map((t) => [t.id, t])),
-        (t) => taskDisplay(t, ctx),
-      )
+  const lastRow = s.last_session?.id ? await store.session.get(s.last_session.id) : undefined;
+  const since = lastRow
+    ? [
+        ...sinceLines(blockedTaskIds(lastRow.handoff), new Map(tasks.map((t) => [t.id, t])), (t) =>
+          taskDisplay(t, ctx),
+        ),
+        // merge-in-app: the pull requests the session left open that are merged now (by the
+        // person's Merge, the retry, or on GitHub); the result still says it left them.
+        ...(await mergedSinceLine(store, lastRow.handoff)),
+      ]
     : [];
   return {
     goal: p.goal,

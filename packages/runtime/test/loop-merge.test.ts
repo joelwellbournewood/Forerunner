@@ -8,6 +8,7 @@ import { FakeGitHost, FakeProvider, type ScriptedReply } from "@forerunner/teste
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import { composeRuntime } from "../src/daemon/compose.ts";
+import { describeEvent } from "../src/daemon/views.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
@@ -23,6 +24,7 @@ import {
   mergePrTool,
   ReviewedPrMerge,
 } from "../src/loop/merge.ts";
+import type { MergeMode } from "../src/loop/merge-mode.ts";
 import type { SessionResult, TaskExecutor } from "../src/session/runner.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import {
@@ -91,6 +93,11 @@ interface MergeWorld {
 
 async function mergeWorld(opts: {
   autonomy: 2 | 3;
+  /**
+   * The project's merge mode (merge-in-app): what frees the merge after an accept. Unset: the
+   * default, "you" (the person presses Merge).
+   */
+  mode?: MergeMode;
   replies?: ScriptedReply[];
   /** Runs once the PR is open, before the review: the host's CI, a peer's push. */
   afterPr?: (m: MergeWorld, pr: OpenPr) => Promise<void>;
@@ -121,7 +128,11 @@ async function mergeWorld(opts: {
   });
   const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
   const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: w.clock });
-  await w.store.project.patch(w.project, { repos: [FULL], autonomy_level: opts.autonomy });
+  await w.store.project.patch(w.project, {
+    repos: [FULL],
+    autonomy_level: opts.autonomy,
+    ...(opts.mode ? { settings: { merge_mode: opts.mode } } : {}),
+  });
   const worktreeRoot = join(root, "worktrees");
   await mkdir(worktreeRoot, { recursive: true });
   const audit = new MemoryAudit();
@@ -288,7 +299,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 }, () => {
   it("level 3: the PR is merged on the host at the reviewed head, the audit row allows merge_pr, the task row and the summary record it", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: (mw, pr) => mw.check(pr.headSha, "ci/test", "completed", "success"),
     });
     const { taskId, result } = await m.run();
@@ -327,7 +339,7 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(await requestsFor(m.w, taskId)).toEqual([]);
   });
 
-  it("level 2: the hooks refuse merge_pr as autonomy_insufficient with the audit row, no approval is asked, the PR stays open", async () => {
+  it("the default mode ('You press Merge'): the gate refuses merge_pr as autonomy_insufficient with the audit row, no approval is asked, the PR stays open", async () => {
     const m = await mergeWorld({ autonomy: 2 });
     const { taskId, result } = await m.run();
     expect(result.completed).toEqual([taskId]);
@@ -336,7 +348,10 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     const rows = mergeRows(m.audit);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.allowed).toBe(false);
-    expect(rows[0]?.deniedReason).toMatch(/^autonomy_insufficient: autonomy level 2/);
+    // merge-in-app: the merge mode refuses (before: "autonomy level 2 does not merge").
+    expect(rows[0]?.deniedReason).toBe(
+      'autonomy_insufficient: the project\'s merge mode is "You press Merge"',
+    );
     expect(m.approvals.requests).toEqual([]);
     expect(result.merges[0]).toMatchObject({ taskId, status: "not_allowed" });
     // The session's own PRs, said as the session's (review, 2026-11-02): the Overview lists
@@ -350,7 +365,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("a red check is never merged: the human gets a request naming the check, the PR stays open", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: async (mw, pr) => {
         await mw.check(pr.headSha, "ci/lint", "completed", "success");
         await mw.check(pr.headSha, "ci/test", "completed", "failure");
@@ -372,7 +388,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("a check still running when the wait ends is never merged: the merge record waits for the retry, no card, the PR stays open", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: (mw, pr) => mw.check(pr.headSha, "ci/test", "in_progress"),
     });
     const { taskId, result } = await m.run();
@@ -387,11 +404,21 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
       state: "waiting_checks",
       last_outcome: "checks_pending",
     });
+    // merge-in-app: the result and the session line say it merges by itself, never that it was
+    // left for the person (before: "Left 1 reviewed pull request for you to merge." and "...
+    // waits for you to merge it: a check is still running after 0 s: ci/test.").
+    expect(result.summary).toContain("1 reviewed pull request merges when its checks pass.");
+    expect(result.summary).not.toContain("for you to merge");
+    const left = m.w.events.find((e) => e.type === "pr.left_open");
+    expect(describeEvent("pr.left_open", left?.payload ?? {})).toBe(
+      `Pull request #${(await m.pr()).number} merges when its checks pass.`,
+    );
   });
 
   it("a base that moved in the same file conflicts: the human gets a request naming the file, the PR stays open", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: async (mw) => {
         await mw.host.seedCommit(
           FULL,
@@ -408,48 +435,36 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     expect(request?.why).toContain("src/feature.ts");
   });
 
-  it("a base that moved elsewhere is merged as it is: no rebase, no force-push, a merge commit at the reviewed head", async () => {
-    let reviewedHead = "";
+  it("a base that moved elsewhere, on a repository with no automatic checks: the automatic mode leaves it to the person's Merge with one sentence, nothing rebased or forced", async () => {
+    // merge-in-app (the owner's decision of 2026-11-02): before, a base that moved was merged
+    // in by the automatic merge at once, although nothing tested the combined result on a
+    // repository without checks. The person's Merge merges it as it is (merge-record (a)).
     const m = await mergeWorld({
-      autonomy: 3,
-      afterPr: async (mw, pr) => {
-        reviewedHead = pr.headSha;
+      autonomy: 2,
+      mode: "after_review",
+      afterPr: async (mw) => {
         await mw.host.seedCommit(FULL, { "docs/notes.md": "notes\n" }, "main moved", "main");
       },
     });
-    const { result } = await m.run();
+    const { taskId, result } = await m.run();
     const pr = await m.pr();
-    expect(pr.merged).toBe(true);
-    // ADR 0111: before, the branch was rebased and force-pushed, which copied any work it had
-    // merged in; GitHub combines the two in the merge commit instead.
-    expect(result.merges[0]).toMatchObject({ status: "merged", headSha: reviewedHead });
-    expect(result.merges[0]?.rebased).toBeUndefined();
+    expect(pr).toMatchObject({ merged: false, state: "open" });
+    expect(result.merges[0]).toMatchObject({ status: "not_allowed" });
+    const record = await m.w.store.mergeRecord.forTask(taskId);
+    expect(record).toMatchObject({ state: "left_to_you", last_outcome: "not_allowed" });
+    expect(record?.sentence).toBe(
+      `#${pr.number} waits for you: main changed since the review, and this repository has no automatic checks to test the two together. Press Merge if it should go in.`,
+    );
     const forced = m.host.events().filter((e) => e.event === "push" && e.payload.forced === true);
     expect(forced).toEqual([]);
-    const parents = (
-      await run([
-        "git",
-        "--git-dir",
-        m.host.repo(FULL)?.dir ?? "",
-        "rev-list",
-        "--parents",
-        "-n",
-        "1",
-        result.merges[0]?.mergeSha ?? "",
-      ])
-    ).stdout
-      .trim()
-      .split(" ")
-      .slice(1);
-    expect(parents).toHaveLength(2);
-    expect(parents[1]).toBe(reviewedHead);
-    expect(await m.github.getFile(REPO, "src/feature.ts", "main")).not.toBeNull();
-    expect(await m.github.getFile(REPO, "docs/notes.md", "main")).not.toBeNull();
+    // Nothing for the person to fix: no card, the Overview's Merge is the way.
+    expect(await requestsFor(m.w, taskId)).toEqual([]);
   });
 
   it("a head pushed after the review is not the reviewed commit: never merged, the human is asked", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: async (mw, pr) => {
         await mw.host.seedCommit(
           FULL,
@@ -467,7 +482,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("a failing commit status (the status API external CIs report through) is never merged: the human gets a request naming it", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: async (mw, pr) => {
         await mw.check(pr.headSha, "ci/lint", "completed", "success");
         await mw.status(pr.headSha, "ci/jenkins", "failure");
@@ -484,7 +500,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("a pending commit status is waited for like a running check, a green one merges", async () => {
     const pending = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: (mw, pr) => mw.status(pr.headSha, "ci/jenkins", "pending"),
     });
     const left = await pending.run();
@@ -494,7 +511,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
       pendingChecks: ["ci/jenkins"],
     });
     const green = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: (mw, pr) => mw.status(pr.headSha, "ci/jenkins", "success"),
     });
     const ok = await green.run();
@@ -504,7 +522,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("no check on the head yet while the base branch reports CI is pending, never read as a repository without CI", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       afterPr: async (mw) => {
         const base = (await mw.pr()).base.sha;
         await mw.check(base, "ci/test", "completed", "success");
@@ -520,7 +539,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("the checks wait ends with the session's wall-clock cap, not after the full wait", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       checksWaitMs: 10 * 60_000,
       checksPollMs: 10_000,
       wallClockMs: 2 * 60_000,
@@ -546,7 +566,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("the kill switch during the checks wait stops the session: no merge, no request, the session is killed", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       checksWaitMs: 10 * 60_000,
       checksPollMs: 10_000,
       afterPr: (mw, pr) => mw.check(pr.headSha, "ci/test", "in_progress"),
@@ -568,7 +589,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("the kill switch pressed as the merge step starts stops the session: the refusal is not taken for the level's, nothing is written on the task", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       beforeMerge: async (mw) => {
         await mw.w.kill.stop("all", "kill switch");
       },
@@ -581,7 +603,7 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
   });
 
   it("a tier 3 task's accepting review goes to the human sign-off: no merge_pr call, the PR stays open", async () => {
-    const m = await mergeWorld({ autonomy: 3, riskTier: 3 });
+    const m = await mergeWorld({ autonomy: 2, mode: "after_review", riskTier: 3 });
     const { taskId, result } = await m.run();
     expect(result.completed).toEqual([]);
     expect(result.needsHuman).toEqual([taskId]);
@@ -592,7 +614,8 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
 
   it("a rejecting review never merges: no merge_pr call is made and the PR stays open", async () => {
     const m = await mergeWorld({
-      autonomy: 3,
+      autonomy: 2,
+      mode: "after_review",
       replies: [
         submitReply({
           grade: 40,
@@ -828,7 +851,7 @@ describe("the daemon's merge step (spec J.9)", { timeout: 120_000 }, () => {
    * merge called on a token issued from the daemon's own session grant (`rt.sessionGrant`):
    * what a session of the daemon would hold, tools and domains included.
    */
-  async function daemonMerge(autonomy: 2 | 3) {
+  async function daemonMerge(autonomy: 2 | 3, mode?: MergeMode) {
     const clock = new SimulatedClock("2026-10-23T09:00:00Z");
     const home = mkdtempSync(join(tmpdir(), "fr-merge-daemon-"));
     roots.push(home);
@@ -882,7 +905,7 @@ describe("the daemon's merge step (spec J.9)", { timeout: 120_000 }, () => {
       autonomy_level: autonomy,
       summary_cache: {},
       data_assets: [],
-      settings: { members: [rt.agent.id] },
+      settings: { members: [rt.agent.id], ...(mode ? { merge_mode: mode } : {}) },
       small_project_mode: false,
       active: true,
     });
@@ -965,14 +988,27 @@ describe("the daemon's merge step (spec J.9)", { timeout: 120_000 }, () => {
     }
   }
 
-  it("level 3 on the daemon's session grant and hooks: the PR is merged on the host, an allowed audit_log row", async () => {
-    const d = await daemonMerge(3);
+  it("'Merge automatically after review' on the daemon's session grant and hooks, at level 2: the PR is merged on the host, an allowed audit_log row that names the mode", async () => {
+    const d = await daemonMerge(2, "after_review");
     expect(d.grant.allowedTools).toContain(MERGE_PR_TOOL);
     expect(d.outcome).toMatchObject({ status: "merged" });
     expect(d.pr).toMatchObject({ merged: true, state: "closed" });
     expect(d.rows).toHaveLength(1);
     expect(d.rows[0]?.allowed).toBe(true);
+    // merge-in-app: the audit row says where the approval came from.
+    expect(d.rows[0]?.input_summary).toContain("Merge automatically after review");
     expect(d.task.reason).toContain("merged");
+  });
+
+  it("level 3 Trusted alone no longer merges (the owner's decision of 2026-11-02): in the default mode the PR stays open for the person's Merge, one refused audit_log row", async () => {
+    const d = await daemonMerge(3);
+    expect(d.outcome).toMatchObject({ status: "not_allowed" });
+    expect(d.pr).toMatchObject({ merged: false, state: "open" });
+    expect(d.rows).toHaveLength(1);
+    expect(d.rows[0]?.allowed).toBe(false);
+    expect(d.rows[0]?.denied_reason).toBe(
+      'autonomy_insufficient: the project\'s merge mode is "You press Merge"',
+    );
   });
 
   it("level 2 on the daemon's session grant and hooks: the refusal is an autonomy_insufficient audit_log row and the PR stays open", async () => {

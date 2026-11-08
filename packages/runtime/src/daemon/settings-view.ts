@@ -15,6 +15,7 @@ import { isAbsolute } from "@forerunner/platform";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import type { z } from "zod";
 import { parseRepoRef } from "../loop/docs.ts";
+import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import type { Money, SettingView } from "./api-types.ts";
@@ -243,6 +244,18 @@ export function settingsView(input: SettingsViewInput): Row[] {
         // C-57: a repository project's status as a pull request, off unless turned on.
         // Only a project on a host repository: a linked folder on this computer opens no pull
         // request, so the switch would change nothing there (C-57 review).
+        // merge-in-app: who merges accepted work, only where there is a pull request to merge.
+        ...(onHostRepository(p)
+          ? [
+              project({
+                key: `project.${MERGE_MODE_SETTING}`,
+                label: "Who merges accepted work",
+                value: mergeModeOf(p.settings),
+                description: `${MERGE_MODE_WORDS.you} (each accepted task's pull request waits for your Merge on ${p.name}'s Overview), or ${MERGE_MODE_WORDS.after_review.toLowerCase()} (Forerunner merges it once the critic accepted it)`,
+                risk: "medium",
+              }),
+            ]
+          : []),
         ...(onHostRepository(p)
           ? [
               project({

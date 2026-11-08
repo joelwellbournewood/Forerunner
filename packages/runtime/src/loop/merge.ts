@@ -37,6 +37,7 @@ import { SessionBudget } from "../enforcement/budget.ts";
 import { approvalKeyFor, type EnforcementHooks, type RunContext } from "../enforcement/hooks.ts";
 import type { AuditPort } from "../enforcement/ports.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
+import { MERGE_MODE_WORDS, mergeModeOf } from "./merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports.ts";
 
 /**
@@ -46,10 +47,10 @@ import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports
  * HEAD at the accept, the patch id of the task's own change), then goes through
  * `mergeRecorded`, the one way anything merges a task's pull request: the session's accept, the
  * git host watcher's retry (`retryWaiting`), the daemon's start (`resumeAtStart`), and the
- * person's Merge in the app. `mergeRecorded` asks one gate first (`mayMerge`: today unattended
- * only at autonomy level 3, the level read again at every call; otherwise the person's
- * approval), then makes one `merge_pr` tool call through the enforcement hooks with its audit
- * row: on a token derived from the session's in a session, on its own narrow token
+ * person's Merge in the app. `mergeRecorded` asks one gate first (`mayMerge`: unattended only in
+ * the project's mode "Merge automatically after review", the mode read again at every call;
+ * otherwise the person's Merge; merge-in-app), then makes one `merge_pr` tool call through the
+ * enforcement hooks, with the gate's approval for exactly that call, and its audit row: on a token derived from the session's in a session, on its own narrow token
  * (`merge_pr` only, that worktree, budget 0, a short expiry) outside one. The tool carries the
  * rules that hold for every caller:
  *
@@ -160,6 +161,12 @@ async function ciOf(
 }
 
 const MergePrInput = z.object({
+  /**
+   * What approved this merge (merge-in-app): the project's merge mode, or the person who pressed
+   * Merge. The tool does not read it; it is in the call so the audit row says where the
+   * approval came from (first, so the row's cut summary keeps it).
+   */
+  approved_by: z.string().min(1).max(300).optional(),
   /** The pull request's web URL (its host must be in the run's domain allowlist). */
   pr_url: z.string().min(1).max(2000),
   /** The reviewed commit (the merge record's); the PR head must be this one. */
@@ -618,29 +625,112 @@ export type MergeGate =
       reason: string;
       /** The record's sentence for the person. */
       sentence: string;
+      /**
+       * Not now, and not a refusal (merge-in-app): the person's Merge waits for the pull
+       * requests its task builds on to merge first. The record is kept as it is (no audit row,
+       * no card), and the next retry asks again.
+       */
+      wait?: boolean;
     };
 
 /**
- * The one gate every merge of a task's pull request asks (ADR 0111), with the project as it is
- * now: its body is read at every call, so a retry, the resume at the daemon's start and a
- * record made before a change all obey the setting of the moment. Today's body: the person's
- * click approves; unattended, only autonomy level 3 Trusted (or above) merges. 'merge-in-app'
- * replaces the body with the project's merge mode and keeps the signature.
+ * What the gate may look at beyond the project and the record (merge-in-app): `ReviewedPrMerge`
+ * builds it for each call from the host and the task's folder. Absent (a test's own call): the
+ * base counts as unmoved and nothing is waited for.
+ */
+export interface MergeLook {
+  /**
+   * What merging the base now would bring into what the review read: `none` when the base is
+   * where it was at the review, or moved only by work the reviewed head already holds (a
+   * dependency merged with a merge commit); `conflicts` when the two conflict (the tool then
+   * names the files to the person); `adds` otherwise, and when it cannot tell.
+   */
+  baseChange(): Promise<"none" | "adds" | "conflicts">;
+  /** Whether the repository runs automatic checks (on the reviewed head or on the base). */
+  hasChecks(): Promise<boolean>;
+  /**
+   * The open pull requests the task builds on that are not merged yet, by number; `merging`
+   * when that one's own merge is under way or waits (queued, merging, waiting for its checks).
+   */
+  openDependencies(): Promise<{ number: number; merging: boolean }[]>;
+}
+
+/** The record's `approved_by` for a merge the project's mode freed (the audit row says it too). */
+export const MERGE_MODE_APPROVAL = `the project's merge mode (${MERGE_MODE_WORDS.after_review})`;
+
+function prList(numbers: readonly number[]): string {
+  return listWords(numbers.map(prName));
+}
+
+/**
+ * The one gate every merge of a task's pull request asks (ADR 0111, amended by merge-in-app),
+ * with the project as it is now: its body is read at every call, so a retry, the resume at the
+ * daemon's start and a record made before a change all obey the setting of the moment.
+ *
+ * - The person's Merge in the app always approves (`authority.kind === "person"`), and so does
+ *   a record their click approved that then waited (its checks, a restart): the retry merges it
+ *   once the pull requests its task builds on are merged (in order; until then it waits).
+ * - Unattended, only the project's merge mode "Merge automatically after review" merges; "You
+ *   press Merge", the default, leaves every pull request for the person's Merge. No autonomy
+ *   level frees a merge (the owner's decision of 2026-11-02: merging is its own per-project
+ *   setting, separate from level 3, which also allows much more).
+ * - In the automatic mode, when the base moved since the review with work the reviewed head
+ *   does not hold, the base is merged in first and the repository's checks must pass on that
+ *   head (`update`); a repository with no automatic checks has nothing that tests the two
+ *   together, so that pull request waits for the person's Merge, with one sentence.
  */
 export async function mayMerge(
-  project: Pick<ProjectRow, "autonomy_level"> | null | undefined,
-  record: Pick<MergeRecordRow, "pr_number">,
+  project:
+    | (Pick<ProjectRow, "autonomy_level"> & Partial<Pick<ProjectRow, "settings">>)
+    | null
+    | undefined,
+  record: Pick<MergeRecordRow, "pr_number"> &
+    Partial<Pick<MergeRecordRow, "approval" | "approved_by">>,
   authority: MergeAuthority,
+  look?: MergeLook,
 ): Promise<MergeGate> {
+  const pr = prName(record.pr_number);
   if (authority.kind === "person")
     return { allowed: true, approval: "person", by: authority.humanId ?? "the person" };
-  const level = project?.autonomy_level ?? 0;
-  if (level >= 3) return { allowed: true, approval: "mode", by: `autonomy level ${level}` };
+  if (record.approval === "person") {
+    const first = (await look?.openDependencies()) ?? [];
+    const stuck = first.filter((d) => !d.merging).map((d) => d.number);
+    if (stuck.length)
+      // What it builds on waits for the person: waiting here would wait for ever.
+      return {
+        allowed: false,
+        code: "autonomy_insufficient",
+        reason: `${pr} builds on ${prList(stuck)}, which ${stuck.length === 1 ? "is" : "are"} not merged`,
+        sentence: `${pr} builds on ${prList(stuck)}, which ${stuck.length === 1 ? "is" : "are"} not merged: merge ${stuck.length === 1 ? "it" : "them"} first.`,
+      };
+    if (first.length)
+      return {
+        allowed: false,
+        wait: true,
+        code: "autonomy_insufficient",
+        reason: `${pr} merges after ${prList(first.map((d) => d.number))}`,
+        sentence: `${pr} merges after ${prList(first.map((d) => d.number))}.`,
+      };
+    return { allowed: true, approval: "person", by: record.approved_by ?? "the person" };
+  }
+  if (mergeModeOf(project?.settings) !== "after_review")
+    return {
+      allowed: false,
+      code: "autonomy_insufficient",
+      reason: `the project's merge mode is "${MERGE_MODE_WORDS.you}"`,
+      sentence: `${pr} waits for you to merge it: press Merge on the Overview.`,
+    };
+  // A conflict is the tool's to find and say (with the files, on a card): it merges nothing.
+  const change = look ? await look.baseChange() : "none";
+  if (change !== "adds") return { allowed: true, approval: "mode", by: MERGE_MODE_APPROVAL };
+  if (await look?.hasChecks())
+    return { allowed: true, approval: "mode", by: MERGE_MODE_APPROVAL, update: true };
   return {
     allowed: false,
     code: "autonomy_insufficient",
-    reason: `autonomy level ${level} does not merge (level 3 Trusted does)`,
-    sentence: `${prName(record.pr_number)} waits for you to merge it: Forerunner merges by itself only at Trusted.`,
+    reason:
+      "main changed since the review, and the repository has no automatic checks to test the two together",
+    sentence: `${pr} waits for you: main changed since the review, and this repository has no automatic checks to test the two together. Press Merge if it should go in.`,
   };
 }
 
@@ -862,6 +952,168 @@ export class ReviewedPrMerge implements MergePort {
     }
   }
 
+  // -------------------------------------------------------------------------------------
+  // The person's Merge in the app (merge-in-app)
+  // -------------------------------------------------------------------------------------
+
+  /**
+   * The person pressed Merge on a task's pull request (merge-in-app): `chain` is that task last,
+   * after the done tasks whose open pull requests it builds on, in the order they merge. Each
+   * record is approved by the person and queued, at once and persisted, before anything merges:
+   * the merges then run in that order (`mergeApproved`), and a merge that waits (its checks, a
+   * restart) is finished by the watcher's retry pass, which keeps the order (`mayMerge`). A task
+   * with no record (accepted before ADR 0111) gets one with no reviewed commit: the click merges
+   * its pull request as it is on GitHub now. Returns the records in order, the merged ones left
+   * out; nothing for a record already merging in this process.
+   */
+  async approveInOrder(chain: readonly TaskRow[], humanId: string): Promise<MergeRecordRow[]> {
+    const { store } = this.deps;
+    const out: MergeRecordRow[] = [];
+    for (const task of chain) {
+      if (!task.pr_url) continue;
+      let record = await store.mergeRecord.forTask(task.id);
+      if (record?.state === "merged" && record.pr_url === task.pr_url) continue;
+      if (!record || record.pr_url !== task.pr_url) {
+        const agentId =
+          record?.agent_id ?? task.owner_agent_id ?? this.deps.agentIds?.[0] ?? task.author_agent;
+        record = await store.mergeRecord.pin({
+          task_id: task.id,
+          project_id: task.project_id,
+          agent_id: agentId ?? "",
+          pr_number: parsePullUrl(task.pr_url)?.number ?? 0,
+          pr_url: task.pr_url,
+          reviewed_head_sha: "",
+          author_agent: agentId ?? "",
+        });
+      }
+      if (record.state === "merging" || this.inFlight.has(task.id)) {
+        out.push(record);
+        continue;
+      }
+      out.push(
+        await store.mergeRecord.move(record.id, "queued", {
+          approval: "person",
+          approved_by: humanId,
+          sentence: `${prName(record.pr_number)} merges now: you pressed Merge.`,
+        }),
+      );
+    }
+    return out;
+  }
+
+  /**
+   * The approved records merged one after another (merge-in-app), each through `mergeRecorded`
+   * on the person's click: never rebased, a merge commit each. The first that does not merge
+   * stops the rest: one that waits for its checks keeps them queued in order for the retry
+   * pass; one left to the person leaves them to the person too, with one sentence each.
+   */
+  async mergeApproved(
+    records: readonly MergeRecordRow[],
+    humanId: string,
+  ): Promise<MergeOutcome[]> {
+    const { store } = this.deps;
+    const out: MergeOutcome[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const current = await store.mergeRecord.get((records[i] as MergeRecordRow).id);
+      if (!current) continue;
+      if (current.state === "merged") continue;
+      const outcome = await this.mergeRecorded(current, { kind: "person", humanId });
+      out.push(outcome);
+      if (outcome.status === "merged") continue;
+      const after = await store.mergeRecord.get(current.id);
+      if (after?.state === "left_to_you") {
+        for (const later of records.slice(i + 1)) {
+          const row = await store.mergeRecord.get(later.id);
+          if (!row || row.state === "merged" || row.state === "merging") continue;
+          await store.mergeRecord.move(row.id, "left_to_you", {
+            approval: "none",
+            approved_by: null,
+            sentence: `${prName(row.pr_number)} builds on ${prName(current.pr_number)}, which was not merged: merge ${prName(current.pr_number)} first.`,
+            last_outcome: "not_allowed",
+          });
+        }
+      }
+      break;
+    }
+    return out;
+  }
+
+  /**
+   * A pull request with no task (Forerunner's docs: the scaffold, the plan's docs, the status)
+   * merged on the person's click, as it is on GitHub now (merge-in-app): one `merge_pr` call
+   * through the hooks on its own narrow token, with the person's approval, a merge commit, the
+   * branch's rules read first. Never unattended, in either mode.
+   */
+  async mergeAsIs(input: {
+    prUrl: string;
+    projectId: string | null;
+    agentId: string;
+    humanId: string;
+  }): Promise<{ status: MergeStatus; sentence: string; mergeSha?: string }> {
+    const { store, clock, tokens, host } = this.deps;
+    const ref = parsePullUrl(input.prUrl);
+    if (!ref)
+      return {
+        status: "failed",
+        sentence: "Forerunner could not read which pull request to merge.",
+      };
+    const pr = await host.getPullRequest(ref.repo, ref.number);
+    if (pr.merged) return { status: "merged", sentence: `${prName(ref.number)} is merged.` };
+    if (pr.state !== "open")
+      return { status: "closed", sentence: `${prName(ref.number)} was closed without merging.` };
+    const project = input.projectId ? await store.project.get(input.projectId) : null;
+    const now = clock.nowIso();
+    const subject = {
+      id: `pr-${ref.number}`,
+      task_id: "",
+      project_id: input.projectId,
+      agent_id: input.agentId,
+      pr_number: ref.number,
+      pr_url: input.prUrl,
+      reviewed_head_sha: pr.head.sha,
+      reviewed_base_sha: null,
+      own_change_id: null,
+      state: "queued",
+      approval: "person",
+      approved_by: input.humanId,
+      merge_sha: null,
+      method: null,
+      attempts: 0,
+      sentence: "",
+      last_outcome: null,
+      created_at: now,
+      updated_at: now,
+      author_agent: input.agentId,
+      author_human: input.humanId,
+      version: 1,
+    } as unknown as MergeRecordRow;
+    const runId = newId(clock.now());
+    const token = this.ownToken(subject, input.humanId, project, runId, null);
+    try {
+      const a = await this.call(
+        subject,
+        token,
+        null,
+        null,
+        { allowed: true, approval: "person", by: input.humanId },
+        project?.autonomy_level ?? 0,
+      );
+      if (a.status === "merged" || a.alreadyMerged)
+        return {
+          status: "merged",
+          sentence: `Merged ${prName(ref.number)} as it is on GitHub now.`,
+          ...(a.mergeSha ? { mergeSha: a.mergeSha } : {}),
+        };
+      this.logger.info("merge as it is", { prUrl: input.prUrl, status: a.status });
+      return {
+        status: a.status,
+        sentence: a.sentence ?? `${prName(ref.number)} was not merged: open it on GitHub.`,
+      };
+    } finally {
+      tokens.revoke(token.claims.id);
+    }
+  }
+
   private async run(
     pinned: MergeRecordRow,
     authority: MergeAuthority,
@@ -904,7 +1156,15 @@ export class ReviewedPrMerge implements MergePort {
         })
       : this.ownToken(record, owner, project, runId, worktree);
     try {
-      const gate = await (this.deps.gate ?? mayMerge)(project, record, authority);
+      const gate = await (this.deps.gate ?? mayMerge)(
+        project,
+        record,
+        authority,
+        this.lookFor(record, task, worktree),
+      );
+      // The person's Merge that waits for the pull requests it builds on (merge-in-app): not
+      // a refusal; the record stays as it is and the next retry asks again.
+      if (!gate.allowed && gate.wait) return this.outcomeOf(record, "checks_pending");
       if (!gate.allowed) {
         await this.deps.audit.append({
           sessionId: token.claims.sessionId,
@@ -999,6 +1259,8 @@ export class ReviewedPrMerge implements MergePort {
       },
     });
     const input: MergePrInput = {
+      // First, so the audit row's summary (cut at a few hundred characters) keeps it.
+      approved_by: gate.approval === "person" ? `the person ${gate.by}` : gate.by,
       pr_url: record.pr_url,
       head_sha: record.reviewed_head_sha,
       ...(worktree ? { worktree } : {}),
@@ -1029,10 +1291,11 @@ export class ReviewedPrMerge implements MergePort {
       billingSourceId: "",
       cwd: worktree ?? undefined,
       unattended: true,
-      // The person's click approves exactly this call; the hooks see the approval like any other.
-      ...(gate.approval === "person"
-        ? { approvals: new Set([approvalKeyFor(MERGE_PR_TOOL, input)]) }
-        : {}),
+      // The gate's approval (the project's merge mode, or the person's click) approves exactly
+      // this call, so no autonomy level frees a merge by itself (merge-in-app: `merge_pr` is
+      // free at no level); the hooks see the approval like any other, and the call's
+      // `approved_by` puts where it came from in the audit row.
+      approvals: new Set([approvalKeyFor(MERGE_PR_TOOL, input)]),
     };
     let admitted: Awaited<ReturnType<EnforcementHooks["beforeToolCall"]>>;
     try {
@@ -1043,12 +1306,9 @@ export class ReviewedPrMerge implements MergePort {
         status: "not_allowed",
         message:
           e.code === "autonomy_insufficient"
-            ? `autonomy level ${level} does not merge (level 3 Trusted does)`
+            ? `autonomy level ${level} does not allow the merge`
             : `the merge was refused (${e.code}: ${e.message})`,
-        sentence:
-          e.code === "autonomy_insufficient"
-            ? `${prName(record.pr_number)} waits for you to merge it: Forerunner merges by itself only at Trusted.`
-            : `Forerunner was not allowed to merge ${prName(record.pr_number)}: merge it on GitHub.`,
+        sentence: `Forerunner was not allowed to merge ${prName(record.pr_number)}: merge it on GitHub.`,
         updated: false,
       };
     }
@@ -1067,7 +1327,7 @@ export class ReviewedPrMerge implements MergePort {
         agentId: token.claims.agentId,
         humanId: token.claims.ownerHumanId,
         ...(token.claims.projectId ? { projectId: token.claims.projectId } : {}),
-        taskId: record.task_id,
+        ...(record.task_id ? { taskId: record.task_id } : {}),
         allowedPaths: admitted.claims.allowedPaths,
         signal,
         ...(worktree ? { cwd: worktree } : {}),
@@ -1095,6 +1355,83 @@ export class ReviewedPrMerge implements MergePort {
       ...(result.isError ? { isError: true } : {}),
     });
     return result.artifacts as unknown as MergePrArtifacts;
+  }
+
+  /**
+   * What the gate may look at for this record (merge-in-app, `MergeLook`): read only when the
+   * gate asks, from the host and the task's folder.
+   */
+  private lookFor(record: MergeRecordRow, task: TaskRow, worktree: string | null): MergeLook {
+    const { host, store } = this.deps;
+    const ref = parsePullUrl(record.pr_url);
+    return {
+      // Each look says "cannot tell" when the host does not answer (moved, has checks): the
+      // gate then lets the tool look, which waits on a silent host as on a running check.
+      baseChange: async () => {
+        if (!ref) return "adds";
+        try {
+          const pr = await host.getPullRequest(ref.repo, ref.number);
+          const baseHead = await host.getBranchHead(ref.repo, pr.base.ref);
+          if (baseHead && record.reviewed_base_sha && baseHead === record.reviewed_base_sha)
+            return "none";
+          if (!worktree || !record.reviewed_head_sha) return "adds";
+          // Moved: does merging it change the tree the review read? A base that moved only by
+          // work the reviewed head holds (its dependency merged with a merge commit) does not.
+          const token = await resolveGitToken(this.deps.token);
+          const repo = await host.getRepo(ref.repo);
+          const auth = token ? gitAuthFor(token, repo.cloneUrl) : undefined;
+          const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+          await git.fetch();
+          if (!(await git.hasRef(record.reviewed_head_sha))) return "adds";
+          const base = `origin/${pr.base.ref}`;
+          if ((await git.conflictFiles(record.reviewed_head_sha, base)).length) return "conflicts";
+          const combined = await git.mergeTree(record.reviewed_head_sha, base);
+          const own = await git.mergeTree(record.reviewed_head_sha, record.reviewed_head_sha);
+          return combined && own && combined === own ? "none" : "adds";
+        } catch (e) {
+          this.logger.warn("base not compared", { taskId: task.id, error: errorMessage(e) });
+          return "adds";
+        }
+      },
+      hasChecks: async () => {
+        if (!ref || !record.reviewed_head_sha) return false;
+        try {
+          const onHead = await ciOf(host, ref.repo, record.reviewed_head_sha);
+          if (onHead.runs.length || onHead.statuses.length) return true;
+          const pr = await host.getPullRequest(ref.repo, ref.number);
+          const baseHead = await host.getBranchHead(ref.repo, pr.base.ref);
+          if (baseHead) {
+            const onBase = await ciOf(host, ref.repo, baseHead);
+            if (onBase.runs.length || onBase.statuses.length) return true;
+          }
+          return (await host.getBranchRules(ref.repo, pr.base.ref)).requiredChecks.length > 0;
+        } catch (e) {
+          this.logger.warn("checks not read", { taskId: task.id, error: errorMessage(e) });
+          return true;
+        }
+      },
+      openDependencies: async () => {
+        const open: { number: number; merging: boolean }[] = [];
+        for (const id of task.depends_on ?? []) {
+          const dep = await store.task.get(id);
+          if (!dep?.pr_url) continue;
+          const depRecord = await store.mergeRecord.forTask(dep.id);
+          if (depRecord?.state === "merged") continue;
+          const depRef = parsePullUrl(dep.pr_url);
+          if (!depRef) continue;
+          // A silent host: the dependency counts as open, so nothing merges out of order.
+          const pr = await host.getPullRequest(depRef.repo, depRef.number).catch(() => null);
+          if (pr && (pr.state !== "open" || pr.merged)) continue;
+          const merging =
+            !!depRecord &&
+            (depRecord.state === "queued" ||
+              depRecord.state === "merging" ||
+              depRecord.state === "waiting_checks");
+          open.push({ number: depRef.number, merging });
+        }
+        return open.sort((a, b) => a.number - b.number);
+      },
+    };
   }
 
   /** Whether `head` (on the host) keeps exactly the record's reviewed change. */
@@ -1277,7 +1614,8 @@ export class ReviewedPrMerge implements MergePort {
       agentId: record.agent_id,
       ownerHumanId: owner,
       ...(record.project_id ? { projectId: record.project_id } : {}),
-      taskId: record.task_id,
+      // A docs pull request merged as it is (merge-in-app) has no task.
+      ...(record.task_id ? { taskId: record.task_id } : {}),
       allowedTools: [MERGE_PR_TOOL],
       allowedPaths: worktree ? [worktree] : [],
       allowedDomains: domains,

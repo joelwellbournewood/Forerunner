@@ -2,6 +2,12 @@ import type { PricingTable } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 // The module path, not the package index: the index imports this package back (a cycle).
 import { AUTONOMY_NAMES, type AutonomyLevel } from "@forerunner/runtime/enforcement/autonomy";
+import {
+  MERGE_MODE_SETTING,
+  MERGE_MODE_WORDS,
+  MERGE_MODES,
+  mergeModeEffect,
+} from "@forerunner/runtime/loop/merge-mode";
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
@@ -251,6 +257,23 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
         ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
         : "each session's status stays in the app (Docs, Status); no status pull request is opened",
     display: (value) => (value === true ? "on" : "off"),
+  },
+  // merge-in-app (the owner's decision of 2026-11-02, ADR 0111 amended): who merges a
+  // repository project's accepted work. "you" (the default): each pull request waits for the
+  // person's Merge in the app; "after_review": Forerunner merges it once the critic accepted it.
+  // Separate from the autonomy level, which frees no merge. Turning it on asks a yes, with
+  // what it means; turning it off acts at once.
+  [MERGE_MODE_SETTING]: {
+    key: MERGE_MODE_SETTING,
+    label: "who merges accepted work",
+    scope: "project",
+    risk: "medium",
+    schema: z.enum(MERGE_MODES),
+    narrows: (to) => to !== "after_review",
+    description:
+      "Who merges a repository project's accepted work: you (each pull request waits for your Merge on the Overview; the default) or after_review (Forerunner merges it once the critic accepted it).",
+    display: (value) => MERGE_MODE_WORDS[value === "after_review" ? "after_review" : "you"],
+    effect: (value) => mergeModeEffect(value === "after_review" ? "after_review" : "you"),
   },
   shared_with: {
     key: "shared_with",

@@ -124,6 +124,47 @@ describe("every setting is visible in Settings (U-060)", () => {
     );
   });
 
+  it("who merges accepted work: You press Merge by default; Merge automatically after review says what it means, asks a yes and is sent as settings.set (merge-in-app, U-028)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const row = await rowFor("project.merge_mode");
+    expect(within(row).getByTestId("setting-scope")).toHaveTextContent("Atlas");
+    expect(within(row).getByTestId("setting-label")).toHaveTextContent("Who merges accepted work");
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("You press Merge");
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    await user.selectOptions(within(dialog).getByTestId("setting-value"), "after_review");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    expect(postedCalls(harness, "/commands/execute")[0]?.body).toEqual({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "merge_mode", value: "after_review", project: "proj_atlas" },
+        },
+      ],
+      wordsUsed: "Settings: Who merges accepted work to Merge automatically after review",
+      source: "ui",
+      projectId: "proj_atlas",
+    });
+    // Automatic merges are a yes first, and the card says what they mean (owner-answers.md 1).
+    const pending = await within(dialog).findByTestId("command-pending");
+    expect(pending).toHaveAttribute("data-decision", "needs_yes");
+    expect(pending).toHaveTextContent("Merges show under your GitHub name");
+    expect(pending).toHaveTextContent("a comment on a merged pull request starts nothing");
+    expect(pending).toHaveTextContent("every accepted task goes live");
+    await user.click(within(pending).getByTestId("command-yes"));
+    await within(dialog).findByTestId("command-done");
+    expect(harness.daemon.state.settingValues["merge_mode:proj_atlas"]).toBe("after_review");
+    await user.click(within(dialog).getByTestId("command-close"));
+    await waitFor(async () =>
+      expect(
+        within(await rowFor("project.merge_mode")).getByTestId("setting-value-cell"),
+      ).toHaveTextContent("Merge automatically after review"),
+    );
+  });
+
   it("when my first choice runs out mid-session: Wait by default; Use the other one asks a yes and is sent as settings.set (U-078)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

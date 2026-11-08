@@ -154,6 +154,7 @@ export const PROJECT_PULL_REQUESTS: Record<
         url: "https://example.test/org/atlas/pull/11",
         branch: "fr/task_1",
         review: "critic",
+        merge: { state: "ready", canMerge: true, sentence: null, first: [] },
       },
     ],
     error: null,

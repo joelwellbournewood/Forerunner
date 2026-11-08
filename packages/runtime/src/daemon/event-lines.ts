@@ -406,16 +406,59 @@ function typeWords(type: string): string {
 }
 
 /**
- * Why a reviewed pull request was left open, after "waits for you to merge it": the level's
- * refusal as the setting's name ("Forerunner merges only at Trusted"), another reason as it
- * is with the merge step's prefix and any URL taken out.
+ * Why a reviewed pull request was left open, after "waits for you to merge it", for an event
+ * without the merge step's status (an older one): the merge mode's refusal (and the old level's,
+ * "autonomy level 2 does not merge", no longer true since merge-in-app) as what to do, another
+ * reason as it is with the merge step's prefix and any URL taken out.
  */
 export function leftOpenWords(reason: string): string {
   const r = reason.replace(/^PR left open for you:\s*/i, "").trim();
   if (!r) return "";
-  if (/^autonomy (level )?\d+ does not merge/i.test(r))
-    return ": Forerunner merges only at Trusted";
+  if (/^autonomy (level )?\d+ does not merge/i.test(r) || /merge mode is/i.test(r))
+    return ": press Merge on the Overview";
   return `: ${r.replace(/https?:\/\/\S+/g, "it").replace(/[.\s]+$/, "")}`;
+}
+
+/**
+ * The session line of a reviewed pull request the merge step did not merge (merge-in-app),
+ * worded from the step's status (the event carries no sentence, and its reason has commit ids):
+ * what happens next, and where the person acts when they must (a card in the Inbox, or Merge on
+ * the Overview). Before, "Pull request #3 waits for you to merge it: a check is still running:
+ * ci/test." stayed on the session page after the retry merged it by itself.
+ */
+export function leftOpenLine(prWords: string, status: string, reason: string): string {
+  const pr = prWords || "the pull request";
+  const PR = capital(pr);
+  switch (status) {
+    case "checks_pending":
+      return `${PR} merges when its checks pass.`;
+    case "unreachable":
+      return `GitHub did not answer about ${pr}: Forerunner tries the merge again.`;
+    case "not_allowed":
+      return /main changed since the review/i.test(reason)
+        ? `${PR} waits for you: main changed since the review, and nothing tests the two together. Press Merge on the Overview if it should go in.`
+        : /builds on #\d+/i.test(reason)
+          ? `${PR} waits for you: what it builds on was not merged.`
+          : `${PR} waits for you to merge it: press Merge on the Overview.`;
+    case "head_moved":
+      return `${PR} changed after the review, so it waits for you (Inbox).`;
+    case "conflict":
+      return `${PR} conflicts with main, so it waits for you (Inbox).`;
+    case "checks_failed":
+      return `A check failed on ${pr}, so it waits for you (Inbox).`;
+    case "blocked_by_rules":
+      return `${PR} waits for you: its branch's rules need what Forerunner cannot give (Inbox).`;
+    case "merge_commits_off":
+      return `${PR} waits for you: the repository allows no merge commits (Inbox).`;
+    case "closed":
+      return `${PR} was closed without merging.`;
+    case "unverified":
+      return `${PR} waits for you to merge it: Forerunner does not know which version the review read.`;
+    case "failed":
+      return `The merge of ${pr} failed, so it waits for you (Inbox).`;
+    default:
+      return `${PR} waits for you to merge it${leftOpenWords(reason)}.`;
+  }
 }
 
 /** "pull request #2" for a pull request's URL (`…/pull/2`), "" for none. */
@@ -513,8 +556,9 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
     // (level 3 Trusted does)."
     case "pr.merged":
       return `Merged ${prNumberWords(s("prUrl")) || "the reviewed pull request"}.`;
+    // merge-in-app: worded from the merge step's status (`leftOpenLine`).
     case "pr.left_open":
-      return `${capital(prNumberWords(s("prUrl")) || "the pull request")} waits for you to merge it${leftOpenWords(s("reason"))}.`;
+      return leftOpenLine(prNumberWords(s("prUrl")), s("status"), s("reason"));
     case "pr.merge_failed":
       return `${s("warning") || "The merge step failed; the pull request stays open."}`;
     case "context.headroom_unavailable":

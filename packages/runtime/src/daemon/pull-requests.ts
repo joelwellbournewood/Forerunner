@@ -1,7 +1,7 @@
 import type { GitHost, PullRequestInfo, RepoRef } from "@forerunner/capabilities";
 import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
-import { errorMessage, isAbsolute, redact } from "@forerunner/platform";
-import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
+import { errorMessage, ForerunnerError, isAbsolute, log, redact } from "@forerunner/platform";
+import type { MergeRecordRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import {
   DOCS_SCAFFOLD_BRANCH,
   isDocsBranch,
@@ -9,11 +9,19 @@ import {
   parseRepoRef,
   STATUS_BRANCH,
 } from "../loop/docs.ts";
+import { type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
+import {
+  MERGE_MODE_WORDS,
+  type MergeMode,
+  mergeModeOf,
+  mergesAfterSentence,
+} from "../loop/merge-mode.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
 import type {
   ProjectPullRequestsView,
   ProjectPullRequestView,
   ProjectRepositoryView,
+  PullRequestMergeAnswer,
 } from "./api-types.ts";
 
 /**
@@ -77,58 +85,441 @@ async function reviewOf(
   return review?.verdict === "accept" ? "critic" : "none";
 }
 
+/** The words of the merge step this view needs (merge-in-app), as `ReviewedPrMerge` has them. */
+export type InAppMergePort = Pick<
+  ReviewedPrMerge,
+  "approveInOrder" | "mergeApproved" | "mergeAsIs"
+>;
+
+export interface ProjectPullRequestsDeps {
+  store: StateStore;
+  host: GitHost;
+  apiBase?: string;
+  /**
+   * Whether a GitHub token is saved (C-56): without one GitHub is never asked, and the view says
+   * so with Connect GitHub. Absent: the host is asked.
+   */
+  hasToken?: () => Promise<boolean>;
+  /** The merge step (merge-in-app): the person's Merge goes through it. Absent: no Merge. */
+  merge?: InAppMergePort;
+  /** The install's agent: a docs pull request merged as it is is its. */
+  agentId?: string;
+  /** A merge in the background ended (merged or not): the project's screens read again. */
+  changed?: (projectId: string) => void;
+}
+
+/** The record outcomes a click cannot get past: the person acts on GitHub (or Redo). */
+const NO_CLICK: ReadonlySet<string> = new Set([
+  "checks_failed",
+  "conflict",
+  "head_moved",
+  "blocked_by_rules",
+  "merge_commits_off",
+  "rebuild_conflict",
+  "closed",
+]);
+
+/** "#4" for a pull request in a sentence. */
+const prName = (n: number) => `#${n}`;
+
+function andList(items: readonly string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The sentence a record says on the Overview: none where the row's own Merge says it. */
+function rowSentence(record: MergeRecordRow): string | null {
+  const s = record.sentence.trim();
+  if (!s || /press Merge on the Overview\.?$/.test(s)) return null;
+  return s;
+}
+
+/** What Merge does for a task's pull request, from its merge record (ADR 0111). */
+function mergeOfRecord(
+  record: MergeRecordRow | undefined,
+  pr: number,
+  mode: MergeMode,
+): NonNullable<ProjectPullRequestView["merge"]> {
+  const none = { first: [] as number[] };
+  if (!record) return { state: "ready", canMerge: true, sentence: null, ...none };
+  switch (record.state) {
+    case "queued":
+      // The person's Merge, waiting its turn; or an accept whose merge has not run yet, which
+      // the automatic mode merges by itself and "You press Merge" leaves for the click.
+      if (record.approval === "person")
+        return { state: "queued", canMerge: false, sentence: null, ...none };
+      return mode === "after_review"
+        ? { state: "merging", canMerge: false, sentence: null, ...none }
+        : { state: "ready", canMerge: true, sentence: null, ...none };
+    case "merging":
+    case "merged":
+      // Merged on the record while the host still lists it open: it is a moment away.
+      return { state: "merging", canMerge: false, sentence: null, ...none };
+    case "waiting_checks":
+      return {
+        state: "waiting_checks",
+        canMerge: false,
+        sentence: record.sentence.trim() || `${prName(pr)} merges when its checks pass.`,
+        ...none,
+      };
+    default:
+      return NO_CLICK.has(record.last_outcome ?? "")
+        ? { state: "blocked", canMerge: false, sentence: rowSentence(record), ...none }
+        : { state: "left_to_you", canMerge: true, sentence: rowSentence(record), ...none };
+  }
+}
+
 /**
- * The open pull requests that wait for the person: each done task's (nothing merged it: below
- * level 3 Trusted, merging is the person's), with who checked it (`reviewOf`), and Forerunner's
- * docs PRs (the scaffold, the intake's set, the status). A task still running or in review is not
- * waiting for a merge; a PR of someone else's is not listed. Read from the host when shown, so
- * a PR merged on GitHub is gone at once; a host that does not answer is said in words.
+ * A repository project's pull requests that wait for the person, and the person's Merge in the
+ * app (merge-in-app, the owner's decision of 2026-11-02: "you press Merge" with a one-click Merge
+ * on the Overview, in dependency order, merge commits only, the safe merge step).
+ *
+ * `view`: the open pull requests that wait for the person (each done task's, with who checked it,
+ * `reviewOf`; Forerunner's docs pull requests, the scaffold, the intake's set and the status),
+ * read from the host when shown, so a pull request merged on GitHub is gone at once. Each row
+ * says what Merge does (`merge`, from the task's merge record): offered, under way, merging when
+ * its checks pass, or why not (a rule Forerunner cannot meet and merge commits off are read once
+ * per view from the repository, so a row never offers a Merge that cannot happen; what it builds
+ * on is not accepted yet). A row that builds on other open pull requests names them (`first`):
+ * Merge merges those first. A task still running or in review is not waiting for a merge; a
+ * pull request of someone else's is not listed. GitHub's own refusals are said in words (C-56):
+ * no token (GitHub never asked), a refused token, GitHub not answering (the error to the log).
+ *
+ * `merge`: the person pressed Merge. The answer comes at once: the records of the chain (what it
+ * builds on first) are approved by the person and queued, persisted, and the merges then run in
+ * the background through the merge step (`ReviewedPrMerge.approveInOrder`, `mergeApproved`), each
+ * with a merge commit; one that waits for its checks is finished by the watcher's retry pass,
+ * after a restart too. A docs pull request merges as it is on GitHub now (`mergeAsIs`), never
+ * unattended in either mode.
  */
-export async function projectPullRequests(
-  deps: { store: StateStore; host: GitHost; apiBase?: string },
-  project: ProjectRow,
-): Promise<ProjectPullRequestsView> {
-  const repository = projectRepository(project, deps.apiBase);
-  const ref = repository ? parseRepoRef(repository.fullName) : null;
-  if (!repository || !ref) return { repository: null, waiting: [], error: null };
-  let prs: PullRequestInfo[];
-  try {
-    prs = await deps.host.listPullRequests(ref, { state: "open" });
-  } catch (e) {
+export class ProjectPullRequests {
+  private readonly logger = log("pull-requests");
+  private readonly running = new Set<Promise<unknown>>();
+  /** A docs pull request's Merge (it has no record): its outcome until the row is gone. */
+  private readonly docs = new Map<
+    string,
+    { state: "merging" | "left_to_you"; sentence: string | null }
+  >();
+
+  constructor(private readonly deps: ProjectPullRequestsDeps) {}
+
+  async view(project: ProjectRow): Promise<ProjectPullRequestsView> {
+    const { store, host } = this.deps;
+    const mode = mergeModeOf(project.settings);
+    const modeView = { key: mode, label: MERGE_MODE_WORDS[mode] };
+    const repository = projectRepository(project, this.deps.apiBase);
+    const ref = repository ? parseRepoRef(repository.fullName) : null;
+    if (!repository || !ref)
+      return { repository: null, waiting: [], error: null, errorKind: null, mode: modeView };
+    if (this.deps.hasToken && !(await this.deps.hasToken().catch(() => false)))
+      return {
+        repository,
+        waiting: [],
+        error: "Add a GitHub token in Settings to see the pull requests.",
+        errorKind: "no_token",
+        mode: modeView,
+      };
+    let prs: PullRequestInfo[];
+    try {
+      prs = await host.listPullRequests(ref, { state: "open" });
+    } catch (e) {
+      // The words for the person, the error for the log (C-56: the raw error was on the screen).
+      this.logger.warn("pull requests not listed", {
+        projectId: project.id,
+        error: redact(errorMessage(e)).slice(0, 300),
+      });
+      const code = e instanceof ForerunnerError ? e.code : "";
+      if (code === "provider_auth")
+        return {
+          repository,
+          waiting: [],
+          error:
+            "GitHub refused the saved token, so the pull requests are not listed: save a new one in Settings.",
+          errorKind: "refused",
+          mode: modeView,
+        };
+      if (code === "tool_not_allowed" || code === "not_found")
+        return {
+          repository,
+          waiting: [],
+          error: `The saved GitHub token cannot read ${repository.fullName}: give it access to the repository, or save another one in Settings.`,
+          errorKind: "refused",
+          mode: modeView,
+        };
+      return {
+        repository,
+        waiting: [],
+        error: "GitHub did not answer, so the pull requests are not listed. Try again later.",
+        errorKind: "unreachable",
+        mode: modeView,
+      };
+    }
+    const blockedBy = await this.rulesOf(ref, prs);
+    const tasks = await store.task.list({ project_id: project.id } as never, { limit: 2000 });
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const rows: ProjectPullRequestView[] = [];
+    const taskOfRow = new Map<number, TaskRow>();
+    for (const pr of [...prs].sort((a, b) => a.number - b.number)) {
+      const rule = blockedBy.get(pr.base.ref) ?? null;
+      const ruleSentence = rule ? rule(pr.number) : null;
+      const task = tasks.find((t) => t.branch === pr.head.ref || t.pr_url === pr.htmlUrl);
+      if (task) {
+        if (task.status !== "done") continue;
+        const record = await store.mergeRecord.forTask(task.id);
+        const own = mergeOfRecord(
+          record?.pr_number === pr.number ? record : undefined,
+          pr.number,
+          mode,
+        );
+        taskOfRow.set(pr.number, task);
+        rows.push({
+          kind: "task",
+          taskId: task.id,
+          title: task.title,
+          number: pr.number,
+          url: pr.htmlUrl,
+          branch: pr.head.ref,
+          review: await reviewOf(store, task),
+          merge: ruleSentence
+            ? { state: "blocked", canMerge: false, sentence: ruleSentence, first: [] }
+            : own,
+        });
+      } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr)) {
+        // Only this project's docs PRs (L-16): live, another project's stale scaffold PR on the
+        // same repository was listed as "The project's standard docs".
+        const clicked = this.docs.get(pr.htmlUrl);
+        rows.push({
+          kind: "docs",
+          taskId: null,
+          title: docsTitle(pr.head.ref),
+          number: pr.number,
+          url: pr.htmlUrl,
+          branch: pr.head.ref,
+          review: null,
+          merge: ruleSentence
+            ? { state: "blocked", canMerge: false, sentence: ruleSentence, first: [] }
+            : clicked?.state === "merging"
+              ? { state: "merging", canMerge: false, sentence: null, first: [] }
+              : {
+                  state: clicked ? "left_to_you" : "ready",
+                  canMerge: true,
+                  sentence: clicked?.sentence ?? null,
+                  first: [],
+                },
+        });
+      }
+    }
+    // Dependency order: what each task's pull request builds on merges first.
+    const rowOfTask = new Map<string, ProjectPullRequestView>();
+    for (const row of rows) if (row.taskId) rowOfTask.set(row.taskId, row);
+    // Each row's own state, before a row that waits behind another is said as waiting (below).
+    const ownState = new Map(rows.map((r) => [r.number, r.merge?.state]));
+    for (const row of rows) {
+      const task = row.taskId ? byId.get(row.taskId) : undefined;
+      if (!task || !row.merge) continue;
+      const chain = this.chainOf(task, byId, rowOfTask);
+      row.merge.first = chain.first;
+      // The person's Merge, queued behind pull requests whose checks still run: it waits its
+      // turn and says so; nothing about it is in flight until those merge (review, 2026-11-08:
+      // it said "Merging…" for as long as the checks ran, and the Overview read the list every
+      // 1.5 s all that time). The merge of the one before it is a project event: the Overview
+      // reads the list again then.
+      const waitingOn = chain.first.filter((n) => ownState.get(n) === "waiting_checks");
+      if (row.merge.state === "queued" && waitingOn.length) {
+        row.merge = {
+          state: "waiting_checks",
+          canMerge: false,
+          sentence: mergesAfterSentence(row.number, chain.first, waitingOn),
+          first: chain.first,
+        };
+        continue;
+      }
+      if (row.merge.state === "blocked" || !row.merge.canMerge) continue;
+      if (chain.notAccepted) {
+        row.merge = {
+          ...row.merge,
+          state: "blocked",
+          canMerge: false,
+          sentence: `${prName(row.number)} builds on "${chain.notAccepted}", which is not accepted yet: it can merge once that one is.`,
+        };
+        continue;
+      }
+      const stuck = chain.first
+        .map((n) => rows.find((r) => r.number === n))
+        .find((r) => r?.merge && r.merge.state === "blocked");
+      if (stuck)
+        row.merge = {
+          ...row.merge,
+          state: "blocked",
+          canMerge: false,
+          sentence: `${prName(row.number)} builds on ${prName(stuck.number)}, which Forerunner cannot merge: merge ${prName(stuck.number)} on GitHub first.`,
+        };
+    }
+    for (const [url] of this.docs) if (!prs.some((p) => p.htmlUrl === url)) this.docs.delete(url);
+    return { repository, waiting: rows, error: null, errorKind: null, mode: modeView };
+  }
+
+  /**
+   * The person pressed Merge on pull request `number` of `project`: answered at once (above).
+   * `humanId` is the person; their click is the approval of each merge in the chain.
+   */
+  async merge(
+    project: ProjectRow,
+    number: number,
+    humanId: string,
+  ): Promise<PullRequestMergeAnswer> {
+    const { merge, store } = this.deps;
+    const refused = (sentence: string): PullRequestMergeAnswer => ({
+      state: "refused",
+      sentence,
+      order: [],
+    });
+    if (!merge) return refused("Merging in the app is not available here: merge it on GitHub.");
+    const view = await this.view(project);
+    if (view.error) return refused(view.error);
+    const row = view.waiting.find((r) => r.number === number);
+    if (!row)
+      return refused(
+        `${prName(number)} does not wait to be merged: it may be merged or closed already.`,
+      );
+    if (!row.merge?.canMerge)
+      return refused(
+        row.merge?.sentence ??
+          (row.merge?.state === "waiting_checks" ||
+          row.merge?.state === "merging" ||
+          row.merge?.state === "queued"
+            ? `${prName(number)} is being merged.`
+            : `${prName(number)} cannot be merged here: merge it on GitHub.`),
+      );
+    if (row.kind === "docs") {
+      this.docs.set(row.url, { state: "merging", sentence: null });
+      this.background(project.id, async () => {
+        const out = await merge.mergeAsIs({
+          prUrl: row.url,
+          projectId: project.id,
+          agentId: this.deps.agentId ?? "",
+          humanId,
+        });
+        if (out.status === "merged") this.docs.delete(row.url);
+        else this.docs.set(row.url, { state: "left_to_you", sentence: out.sentence });
+      });
+      return {
+        state: "queued",
+        sentence: `Merging ${prName(number)} as it is on GitHub now.`,
+        order: [number],
+      };
+    }
+    const order = [...row.merge.first, number];
+    const chain: TaskRow[] = [];
+    let asItIs = false;
+    for (const n of order) {
+      const r = view.waiting.find((w) => w.number === n);
+      const task = r?.taskId ? await store.task.get(r.taskId) : undefined;
+      if (!task) continue;
+      if (!(await store.mergeRecord.forTask(task.id))?.reviewed_head_sha) asItIs = true;
+      chain.push(task);
+    }
+    // The person's approval is on the records before the answer: a restart finishes them.
+    const records = await merge.approveInOrder(chain, humanId);
+    this.background(project.id, () => merge.mergeApproved(records, humanId));
+    const names = andList(order.map(prName));
     return {
-      repository,
-      waiting: [],
-      error: `GitHub did not answer, so the pull requests are not listed (${redact(errorMessage(e)).slice(0, 160)}). Try again later.`,
+      state: "queued",
+      sentence:
+        order.length > 1
+          ? `Merging ${names} in order.`
+          : asItIs
+            ? `Merging ${names} as it is on GitHub now.`
+            : `Merging ${names}.`,
+      order,
     };
   }
-  const tasks = await deps.store.task.list({ project_id: project.id } as never, { limit: 2000 });
-  const waiting: ProjectPullRequestView[] = [];
-  for (const pr of [...prs].sort((a, b) => a.number - b.number)) {
-    const task = tasks.find((t) => t.branch === pr.head.ref || t.pr_url === pr.htmlUrl);
-    if (task) {
-      if (task.status !== "done") continue;
-      waiting.push({
-        kind: "task",
-        taskId: task.id,
-        title: task.title,
-        number: pr.number,
-        url: pr.htmlUrl,
-        branch: pr.head.ref,
-        review: await reviewOf(deps.store, task),
-      });
-    } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr)) {
-      // Only this project's docs PRs (L-16): live, another project's stale scaffold PR on the
-      // same repository was listed as "The project's standard docs".
-      waiting.push({
-        kind: "docs",
-        taskId: null,
-        title: docsTitle(pr.head.ref),
-        number: pr.number,
-        url: pr.htmlUrl,
-        branch: pr.head.ref,
-        review: null,
-      });
-    }
+
+  /** Every merge started here has ended (tests, the daemon's close). */
+  async idle(): Promise<void> {
+    while (this.running.size) await Promise.allSettled([...this.running]);
   }
-  return { repository, waiting, error: null };
+
+  private background(projectId: string, fn: () => Promise<unknown>): void {
+    const p: Promise<unknown> = fn()
+      .catch((e: unknown) => {
+        this.logger.warn("merge in the app failed", { projectId, error: errorMessage(e) });
+      })
+      .finally(() => {
+        this.running.delete(p);
+        this.deps.changed?.(projectId);
+      });
+    this.running.add(p);
+  }
+
+  /**
+   * The pull requests a task's builds on that are open and wait for a merge, in the order they
+   * merge (theirs first), and the first dependency that is not accepted yet.
+   */
+  private chainOf(
+    task: TaskRow,
+    byId: ReadonlyMap<string, TaskRow>,
+    rowOfTask: ReadonlyMap<string, ProjectPullRequestView>,
+    seen = new Set<string>(),
+  ): { first: number[]; notAccepted: string | null } {
+    const first: number[] = [];
+    let notAccepted: string | null = null;
+    for (const id of task.depends_on ?? []) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const dep = byId.get(id);
+      if (!dep) continue;
+      if (dep.status !== "done" && dep.status !== "cancelled") {
+        notAccepted ??= dep.title;
+        continue;
+      }
+      const depRow = rowOfTask.get(dep.id);
+      if (!depRow) continue;
+      const inner = this.chainOf(dep, byId, rowOfTask, seen);
+      notAccepted ??= inner.notAccepted;
+      for (const n of [...inner.first, depRow.number]) if (!first.includes(n)) first.push(n);
+    }
+    return { first, notAccepted };
+  }
+
+  /**
+   * What the repository's settings and each base branch's rules let Forerunner merge, read once
+   * per view (ADR 0111 points 5 and 6): a sentence per pull request where they let it merge
+   * nothing; nothing when they could not be read (the merge step reads them again).
+   */
+  private async rulesOf(
+    ref: RepoRef,
+    prs: readonly PullRequestInfo[],
+  ): Promise<Map<string, (n: number) => string>> {
+    const out = new Map<string, (n: number) => string>();
+    if (!prs.length) return out;
+    try {
+      const repo = await this.deps.host.getRepo(ref);
+      for (const base of new Set(prs.map((p) => p.base.ref))) {
+        if (repo.allowMergeCommit === false) {
+          out.set(
+            base,
+            (n) =>
+              `This repository does not allow merge commits, and Forerunner merges only with one: merge ${prName(n)} on GitHub, or allow merge commits in its settings.`,
+          );
+          continue;
+        }
+        const rules = await this.deps.host.getBranchRules(ref, base);
+        if (rulesBlock(rules, 0, base))
+          out.set(base, (n) => rulesBlock(rules, n, base)?.sentence ?? "");
+      }
+    } catch (e) {
+      this.logger.warn("branch rules not read", { error: errorMessage(e) });
+    }
+    return out;
+  }
+}
+
+/** The view alone (`ProjectPullRequests.view`), for a caller without the merge. */
+export async function projectPullRequests(
+  deps: ProjectPullRequestsDeps,
+  project: ProjectRow,
+): Promise<ProjectPullRequestsView> {
+  return new ProjectPullRequests(deps).view(project);
 }

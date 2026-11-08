@@ -1014,8 +1014,43 @@ export const ProjectPullRequestView = z.object({
    * docs PRs, which no critic reviews.
    */
   review: z.enum(["critic", "you", "none"]).nullable(),
+  /**
+   * What the Overview's Merge does for it (merge-in-app; absent from an older service):
+   * `ready`, Merge is offered; `queued` / `merging`, the person pressed Merge (or the session
+   * merges it) and it runs now; `waiting_checks`, it merges by itself when its checks pass, or,
+   * pressed, once those of the pull requests it merges after pass (not in flight either way);
+   * `left_to_you`, it waits for the person, and the sentence says why (Merge is offered when a
+   * click can merge it); `blocked`, Forerunner cannot merge it here (a rule it cannot meet,
+   * merge commits off, what it builds on is not accepted yet), and the sentence says what to do.
+   */
+  merge: z
+    .object({
+      state: z.enum(["ready", "queued", "merging", "waiting_checks", "left_to_you", "blocked"]),
+      /** True when the row offers Merge. */
+      canMerge: z.boolean(),
+      /** One sentence for the row: why there is no button, or what happens; null when none is needed. */
+      sentence: z.string().nullable(),
+      /** The open pull requests Merge merges first, in order: what this one builds on. */
+      first: z.array(z.number().int()),
+    })
+    .optional(),
 });
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
+
+/**
+ * `POST /projects/:id/pull-requests/:number/merge` (merge-in-app): the person's Merge, answered
+ * at once. `queued`: the merges run now in the background, in `order` (the pull requests it
+ * builds on first), each a merge commit through the merge step with the person's click as its
+ * approval; the Overview reads GET pull-requests until the rows are gone (merged) or carry a
+ * sentence. `refused`: nothing was started, and `sentence` says why (a rule, what it builds on,
+ * no longer waiting).
+ */
+export const PullRequestMergeAnswer = z.object({
+  state: z.enum(["queued", "refused"]),
+  sentence: z.string(),
+  order: z.array(z.number().int()),
+});
+export type PullRequestMergeAnswer = z.infer<typeof PullRequestMergeAnswer>;
 
 /**
  * `GET /projects/:id/pull-requests`: the repository and the open pull requests that wait for the
@@ -1026,6 +1061,14 @@ export const ProjectPullRequestsView = z.object({
   repository: ProjectRepositoryView.nullable(),
   waiting: z.array(ProjectPullRequestView),
   error: z.string().nullable(),
+  /**
+   * What `error` is about (C-56): `no_token`, no GitHub token is saved (GitHub was not asked);
+   * `refused`, GitHub refused the saved token; `unreachable`, GitHub did not answer. Null
+   * without an error; absent from an older service.
+   */
+  errorKind: z.enum(["no_token", "refused", "unreachable"]).nullable().optional(),
+  /** Who merges the project's accepted work (merge-in-app), for the Overview's line. */
+  mode: z.object({ key: z.enum(["you", "after_review"]), label: z.string() }).optional(),
 });
 export type ProjectPullRequestsView = z.infer<typeof ProjectPullRequestsView>;
 
@@ -2774,6 +2817,8 @@ export const DAEMON_ROUTES = {
     "GET /projects/:id/files (ProjectFilesView: the project's folder on this computer and its files and folders, read-only, without .git and node_modules; folder null before anything was written; design §3.10)",
   projectPullRequests:
     "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's, with who checked it (review: critic, you or none), and Forerunner's docs PRs (review null), read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0106)",
+  mergePullRequest:
+    "POST /projects/:id/pull-requests/:number/merge (PullRequestMergeAnswer, at once: queued with the order the merges run in, the pull requests it builds on first, each a merge commit through the merge step with the person's click as its approval; refused with the sentence why; merge-in-app)",
   projectFile:
     "GET /projects/:id/files/:path (ProjectFileContentView: one file's text under the folder, the path URL-encoded; content null for a file that is not text; 404 for a path that leaves the folder or does not exist)",
   milestones:

@@ -67,6 +67,7 @@ export const SETTING_LABELS: Record<string, string> = {
   handover: "Monthly handover test",
   fast_mode: "Opus fast mode",
   status_pull_request: "Status pull request",
+  merge_mode: "Who merges accepted work",
   speed_quality_offset: "Speed or quality",
   mid_session_limit: "When my first choice runs out mid-session",
 };
@@ -110,6 +111,16 @@ export const NOTIFY_CHANNELS = [
 export const MID_SESSION_LIMITS = [
   { value: "wait", label: "Wait for its reset; the tasks start by themselves" },
   { value: "use_other", label: "Use the other one at once (may cost money)" },
+] as const;
+
+/**
+ * "Who merges accepted work" (merge-in-app, the owner's decision of 2026-11-02): the person's
+ * Merge on the Overview (the default), or Forerunner once the critic accepted the work. The
+ * daemon's change card says what the second means before it is turned on.
+ */
+export const MERGE_MODES = [
+  { value: "you", label: "You press Merge" },
+  { value: "after_review", label: "Merge automatically after review" },
 ] as const;
 
 export const LANGUAGES = [
@@ -161,6 +172,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return option(NOTIFY_CHANNELS);
     case "mid_session_limit":
       return v === "use_other" ? MID_SESSION_LIMITS[1].label : MID_SESSION_LIMITS[0].label;
+    case "merge_mode":
+      return v === "after_review" ? MERGE_MODES[1].label : MERGE_MODES[0].label;
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":
@@ -307,6 +320,14 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
     case "fast_mode":
     case "status_pull_request":
       return select(leaf, ON_OFF, asBool, boolInitial, projectParam);
+    case "merge_mode":
+      return select(
+        leaf,
+        MERGE_MODES,
+        (v) => v,
+        (c) => (c === "after_review" ? "after_review" : "you"),
+        projectParam,
+      );
     case "critic_ceiling":
       return select(
         leaf,
