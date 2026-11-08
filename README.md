@@ -20,7 +20,14 @@ GitHub refuses deletions from it, so the owner deletes it).
   - group 6's triage of every leftover of groups 1 to 5 (`wave7g6-triage.json`), and wave 12's
     args and resume recipe (`wave7g6a-args.json`, `wave7g6a-resume.json`). Wave 12's three
     areas are in `phaseE.json` (keys `leftovers7-merge`, `leftovers7-session`,
-    `leftovers7-web`); `phaseE.before-wave7g6.json` is the spec before they were added.
+    `leftovers7-web`); `phaseE.before-wave7g6.json` is the spec before they were added;
+  - wave 12's result and its two fixers' reports (`wave7g6a-result.json`,
+    `wave7g6a-fix-merge.json`, `wave7g6a-fix-session.json`);
+  - wave 14, the continuation of wave 12: its args and resume recipe (`wave7g6c-args.json`,
+    `wave7g6c-resume.json`); its new area `leftovers7-merge2` is in `phaseE.json`, and
+    `phaseE.before-wave14.json` is the spec before it was added;
+  - wave 13's polish split (`wave7g6b-areas.json`), to be put into `phaseE.json` when wave 14 is
+    merged.
 
   Logs, screenshots and bench folders are left out.
 - `workflow-scripts/`: the workflow scripts that run the waves (`forerunner-phase-e6.js` runs
@@ -33,9 +40,11 @@ sites) ends at fa1a86f; CI and the Desktop app workflow are green on it. The fou
 `claude/nifty-knuth-f9udt0-backup/fix-*` branches from group 3 are no longer needed: all their
 commits are in that branch. Delete them on GitHub.
 
-Group 6 is two waves. Wave 12 (the real problems: leftovers7-merge, leftovers7-session,
-leftovers7-web) is running from fa1a86f. Next: wave 13 (polish, split into two areas), live
-check 2, and wave 8 (`frbench/collab/`). The plan is in docs/status/handoff/NEXT-SESSION.md.
+Group 6 has three waves. Wave 12 merged leftovers7-merge and leftovers7-session at ca2c58d but
+broke before their review, and leftovers7-web never started. Wave 14 is running from ca2c58d:
+leftovers7-web, the review and fix-up of the two merged areas, and leftovers7-merge2 (the five
+merge problems wave 12 did not start). Next: wave 13 (polish, two areas), live check 2, and wave
+8 (`frbench/collab/`). The plan is in docs/status/handoff/NEXT-SESSION.md.
 
 ## Restore on a fresh machine
 
@@ -57,6 +66,7 @@ scripts in `/tmp/frbench/workflow-scripts`. Copy them from there into the sessio
 ## Resume
 
 Start `forerunner-phase-e6.js` for the next group with the args described in
-NEXT-SESSION.md. To restart group 5 from scratch, use the args in `wave7g5-args.json`.
+NEXT-SESSION.md. To restart wave 14 from scratch, use the args in `wave7g6c-args.json` (they point at the
+wave 12 fixers' reports in `frbench/`).
 Each group's note lists the earlier groups' result files (`wave7g1-result.json` to
 `wave7g4-result.json`), whose leftovers the later areas fix.

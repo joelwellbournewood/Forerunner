@@ -1,0 +1,18 @@
+{
+ "wave": 14,
+ "runId": "wf_8c348d94-071",
+ "taskId": "wf3zoadki",
+ "launched": "2026-11-08T17:17:51.119Z",
+ "base": "ca2c58d40288215792350f643ea9d0eb58c82965",
+ "scriptPath": "/home/user/Forerunner/.claude/worktrees/_wf-scripts/forerunner-phase-e6.js",
+ "scriptSha1": "398c439d4904f0d2fbe6257bc9ee6e0d9d9e60f4",
+ "args": "/tmp/frbench/wave7g6c-args.json",
+ "recipe": "Workflow({scriptPath, resumeFromRunId: runId, args: <contents of the args file>}). Launch only from cwd /home/user/Forerunner, and never let the shell end a command outside it while a run is going: wave 12 broke (Cannot create agent worktree: not in a git repository) because the session cwd fell back to /home/user mid-run.",
+ "keys": [
+  "leftovers7-web",
+  "leftovers7-merge",
+  "leftovers7-session",
+  "leftovers7-merge2"
+ ],
+ "notes": "existingFixes for leftovers7-merge and leftovers7-session point at /tmp/frbench/wave7g6a-fix-*.json; leftovers7-merge2 is new in phaseE.json (backup before: phaseE.before-wave14.json)."
+}

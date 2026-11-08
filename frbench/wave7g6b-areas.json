@@ -1,0 +1,875 @@
+{
+ "base": "fa1a86f",
+ "areas": [
+  {
+   "key": "polish-words",
+   "title": "Polish, words: every sentence the daemon, the critic and the capabilities write, the Tasks screen's and the Inbox plan card's words, and the docs, as one sentence a person reads at a glance (design §5): CHF only, no ids, no tier or ladder words, no '(s)', true when read",
+   "problems": [
+    "[polish] later #53, #54 (#52): the done line 'Done: all N tasks. Your files: <path>' carries the whole workspace path with the project UUID (about 130 characters, pushes Start session onto a second line) and its button reads 'Open Files' where design §2 has [Open folder]. Still at HEAD: packages/runtime/src/daemon/project-status.ts:293-300. Say 'Done: all N tasks.' with the files action and leave the path to Your files (FolderPath).",
+    "[polish] later #55: the status sentence's 'Answer' links to /inbox while Home's Needs you rows link to /inbox#card-<id>. Still at HEAD: packages/runtime/src/daemon/project-status.ts:171-182 (action to '/inbox' at :181). Link the oldest card.",
+    "[polish] later #74: 'Who does it' shows \"Agent's choice\" while the cap line says '(coder limit)', and for a specialist the registry name ('writer-marketing limit') where the log says 'the writer'. Still at HEAD: apps/ui/src/pages/project/TasksTab.tsx:71-93 (TaskCap; :89 `({specialist ?? \"coder\"} limit)`), fed the raw specialist at :429 (`t.specialist ?? run?.specialist ?? null`) beside whoName (apps/ui/src/lib/task-actions.ts:235). Name the limit as the log and later #91's Costs labels name the specialist, and say nothing about 'coder' for Agent's choice. The drawer's Docker line is phase C verification's (owner decision 4).",
+    "[polish] later #94: withoutIds' IDS pattern also strips any parenthesis that starts with 'run ', 'task ', 'session ' or 'request ' (e.g. '(run node --check)', '(task list)'). Still at HEAD: packages/runtime/src/daemon/task-words.ts:152-154 (the first branch). Match ids only.",
+    "[polish] later #91: Costs' By specialist shows registry names ('writer-marketing', 'designer') where the log says 'the writer', and By model counts the critic's runs, giving 'Accepted 3 / 16'. Still at HEAD: packages/runtime/src/daemon/views.ts:967-977 (label = the registry key), :957-963 (runsByModel counts critic runs); shown at apps/ui/src/pages/project/CostsTab.tsx:106-107.",
+    "[polish] later #40: docs/maintainers/apps.md:97, the `summary` tab row, still describes the old typed and prioritised 'Next session' queue form; the project-page row (:96) is right.",
+    "[minor] L-9: the Tasks row and drawer describe a retry card ('Needs your decision · Its card is in the Inbox: try again, mark it done anyway, or cancel it.' with Try again) while the Inbox card is a sign-off (Accept the work, Send it back, Cancel task). Still at HEAD: packages/runtime/src/daemon/task-words.ts:206-218 (critic:signoff is the 'retry' kind), :455-466, :518-531; apps/ui/src/lib/task-actions.ts:74-75. Same fix as C-21.",
+    "[polish] L-13: smaller wording on the screens. Still at HEAD: (a) 'Waiting for you: 2 questions' when the open cards are a sign-off, a budget or a failed-task card (packages/runtime/src/daemon/project-status.ts:171-182; wave 7's P-questions: counts name the card kinds); (e) Reviews shows 'To fix: Resolve it and show the evidence' under an accepted info note (packages/critic/src/critic.ts:734 fills NO_ACTION_GIVEN, :1179; served at packages/runtime/src/daemon/views.ts:1022; shown at apps/ui/src/pages/project/ReviewsTab.tsx:149-153). (d) the Start dialog's 'as they become ready' is later #48's (polish-screens). Fixed at HEAD: (b) the deploy row's level (TasksTab.tsx:448 reviewLevelValue) and (c) New task's light review for ops-deploy (NewTaskDialog.tsx:199, :264-266, :319).",
+    "[minor] L-18: person-facing failure text shows raw markdown and is cut mid-word ('failed: **Result: the check fails. … `README.md`.** … but this branch doesn't h.') on the Overview's Last result, the Inbox card, the Updates line and the session result. Still at HEAD: packages/runtime/src/session/findings.ts:369 (said = the reason cut at 300 characters), packages/capabilities/src/githost/pr-executor.ts:846-851 (the empty-change reason is the raw summary plus '(no changes were made in the worktree)'), packages/runtime/src/daemon/task-words.ts:181-198 (plainReason strips only '**'). Wave 7's P-markdown: lead with 'The run changed no file.'",
+    "[polish] L-20: a one-task plan card says 'Writes this task and starts working on them now.', and on a repository project the card stays silent for about 7 s after Approve and start while the docs PR is pushed (buttons disabled, no words). Still at HEAD: packages/runtime/src/daemon/request-words.ts:414-416 (intakeCard's Approve explain: 'them' for one task), apps/ui/src/pages/InboxPage.tsx:1037-1058 (RequestCard's choices: only disabled={busy}, no line while a choice works). Expected: 'starts working on it now'; a short 'Writing the plan and its docs pull request…' while it works (a folder project: without the pull request).",
+    "[polish] L-21: an old session's page reads as current after the person acted: after the retry and the merge, session 1's page still says 'Ended: 1 task needs you'. Still at HEAD: packages/runtime/src/daemon/views.ts:452-457 (statusText from the handoff written at its end), packages/runtime/src/session/stop-words.ts:163-172 (endedStatusText). Expected: text that is still true when read, or clearly what the session left at its end.",
+    "[minor] R-2: on github.com over HTTPS, a push refused for lack of write access or because the repository is archived prints 'remote: Permission to o/r.git denied …' or 'remote: This repository was archived so it is read-only.' and then 'fatal: unable to access …: The requested URL returned error: 403'; pushFailure tests UNREACHABLE (/unable to access/) before REFUSED, so the person is told 'GitHub could not be reached. Try again later.' Still at HEAD: packages/capabilities/src/githost/push-words.ts:19-22, :35-39; the CHANGELOG line's 'an archived repository' example (CHANGELOG.md:92) does not hold over HTTPS.",
+    "[polish] R-3: REMOTE_PROGRESS skips a host's real reason that starts with a progress word (e.g. 'remote: Writing to this repository is disabled'), so the bracketed git reason is shown instead. Still at HEAD: packages/capabilities/src/githost/push-words.ts:27-28, :65.",
+    "[minor] C-19: when a code rule changes the critic's verdict, the shown summary stays the model's: the drawer read 'The critic sent it back for changes.' and then 'Accepted: 1 changed file match the brief.' Still at HEAD: packages/critic/src/critic.ts:728 (summary = submitted.summary), :808 (applyVerdictRules may change the verdict; the summary is returned unchanged). Expected: the shown summary says why first ('Sent back: the check \"test\" failed.'), then what the critic said; tested at GET /tasks/:id and in the drawer.",
+    "[minor] C-21: a task waiting on its sign-off reads 'Needs your decision' with 'try again, mark it done anyway, or cancel it' and the buttons Answer / Try again / Cancel, while its card is '\"X\" needs your sign-off' with Accept the work / Send it back / Cancel task; the row's Try again withdraws the sign-off card and reruns accepted work. Still at HEAD: packages/runtime/src/daemon/task-words.ts:206-218 (critic:signoff is 'retry'), :455-466, :518-531; apps/ui/src/lib/task-actions.ts:74-75; packages/runtime/src/daemon/api-types.ts:326 (cardKind enum). Expected: 'Needs your sign-off' on the row and in the drawer, the detail names the card's own choices, the row offers Answer and Cancel only; the card is unchanged. Tested at GET /projects/:id/tasks in a real-daemon case and on the Tasks screen, the fake daemon in the same commit.",
+    "[polish] C-23: the light review's choice still says 'the critic reads the work, nothing runs in isolation', while the project's checks and the page try now run for light reviews too. Still at HEAD: apps/ui/src/lib/task-actions.ts:219-228 (reviewLevelChoices, the light review at :225), shown by NewTaskDialog.tsx:264 and TaskDrawer.tsx:662 (asserted in apps/ui/test/tasks.test.tsx). Expected: a one-line meaning that is true now with no tier or checks words (e.g. 'Light review: the critic reads the work and tries it here; nothing runs in Docker').",
+    "[polish] C-39: a session whose only task the person cancelled ends with the result 'CHF 0.00.' and nothing else. Still at HEAD: packages/runtime/src/session/result.ts:180-370 (the ordered line builders have none for a task cancelled during the session). Expected: 'You cancelled \"X\"; nothing else ran. CHF 0.00.' as its own builder (at most three lines stay).",
+    "[minor] C-50: a run's reason is cut at a dot inside a file name in the 'could not do' line ('… The file index.html cannot be created …' becomes 'html cannot be created from it'). Still at HEAD: packages/runtime/src/daemon/event-lines.ts:97-110 (couldNotWords, the sentence regex at :100). Expected: the same sentence rule as quotedWords (packages/critic/src/followup.ts); a unit test with 'index.html' and 'data/members.csv'.",
+    "[minor] C-55: a data import into an empty repository fails with git's own text: the migration branch is made from origin/<default> without ensureBaseBranch. Still at HEAD: packages/runtime/src/data/import.ts:601 (git.createBranch(branch, `origin/${defaultBranch}`)); the PR executor uses ensureBaseBranch (pr-executor.ts:684). Expected: import.ts uses ensureBaseBranch and firstPushFailedWords; a test with an empty bare repository.",
+    "[polish] C-58: a repository project's status sentence is just 'Done: all N tasks.' with no pointer to the work, also while N pull requests wait for the person's Merge (wave 7's P-donewait). Still at HEAD: packages/runtime/src/daemon/project-status.ts:293-300 (the folder part only when input.folder is set; a repository card has folder null). Expected: 'Done: all 6 tasks. 6 pull requests wait for you to merge.' with the Overview link; decided with later #53 (the path out of the sentence); the taken-out count per the owner question below.",
+    "[polish] C-59: the session page and log name a task's branch with its 8-character task-id prefix ('branch fr/01a19c00-create-…'). Still at HEAD: packages/runtime/src/daemon/event-lines.ts:550-551 ('on the branch ${branch}'), packages/capabilities/src/githost/local-only.ts:122-130 (neverPushedWords, wave 7's P-branchid), apps/ui/src/pages/SessionPage.tsx:71, :394-397 (pullRequestsFromLog's branch shown as ' · branch …'). Expected: no id on a person's screen (design §5.3): the PR number and title, or the branch without the id prefix; the stored name stays unique (leftovers7-merge's same-title fix).",
+    "[polish] P7-1: a run's budget line says 'save only, it pauses at its budget …' and amounts under CHF 0.01 read 'CHF 0.00': packages/runtime/src/session/budget-pause.ts:200-206 (:202, :204).",
+    "[polish] P7-2: CHANGELOG [Unreleased] says 'A Ctrl-click on one of the app's own links keeps you where you are.', untrue since Q7: CHANGELOG.md:89-91 (docs/user-guide.md:949-950 is right).",
+    "[polish] P7-3: validation.md 'Gaps today' describes the window check's Ctrl-click step as before Q7 ('out of the app, and Ctrl on one of its own'; it now Ctrl- and Shift-clicks an app link and expects that page in the window): docs/maintainers/validation.md:165-166.",
+    "[minor] P7-5: the session result says a merge GitHub did not answer about 'merges when its checks pass': packages/runtime/src/session/result.ts:88 (MERGE_WAITS holds 'unreachable'), :329-341 (worded as checks); event-lines.ts:436 says it right.",
+    "[polish] P7-6: cards, Overview and Tasks say 'main' whatever the default branch is called ('rebuilt onto main', 'Puts it into main', 'takes its changes out of main', 'stays in main'): packages/runtime/src/session/dependent-branches.ts:84; packages/runtime/src/daemon/request-words.ts:830, :984, :1000; packages/runtime/src/daemon/event-lines.ts:438-439, :446; packages/runtime/src/loop/merge.ts:736; apps/ui/src/pages/project/SummaryTab.tsx:305 (PR_GROUPS), :498, :537 (RepositoryFiles); apps/ui/src/lib/task-actions.ts:56 (the preview sentence already uses the base, pull-requests.ts previewSentence). No view carries the base branch's name (api-types.ts has no such field) and the take-out explain is a static string shown at TaskDrawer.tsx:171, TasksTab.tsx:505 and :658: add the field (e.g. display.takeOut.base and the pull-requests view's repository) and word the explain per task, as P7-21's Cancel explain.",
+    "[polish] P7-7: a rebuild card and the record keep '#8, which is being redone' after the redo finished: packages/capabilities/src/githost/pr-executor.ts:325-336 (droppedWords, 'redone' at :331-332); the sentence is written once (packages/runtime/src/session/dependent-branches.ts:70-77, rebuiltWithoutSentence) and never updated.",
+    "[polish] P7-11: Tasks and the Overview word one blocked chain differently ('which was not merged: merge #12 first' vs 'which Forerunner cannot merge: merge #12 on GitHub first'): packages/runtime/src/loop/merge.ts:1034; packages/runtime/src/daemon/pull-requests.ts:427.",
+    "[polish] P7-13: maintainer docs and comments still say level 3 merges (no level merges since merge-in-app; packages/runtime/src/enforcement/autonomy.ts:45 FREE_AT.merge_pr is null): docs/maintainers/runtime.md:49-50 ('level 3 also merges reviewed PRs', not in the triage's list), :3040, :3432, :6136, :6158 (:3453 quotes the old text as 'before' and may stay); packages/runtime/src/daemon/compose.ts:858, :2475 (comments).",
+    "[polish] P7-14: the plan card repeats 'On your subscription its tests will not run: it cannot run commands there.' under every code task: packages/runtime/src/session/credential-choice.ts:137-140; packages/runtime/src/daemon/plan-tasks.ts:65-79 (one runsOn per task, shown per task at apps/ui/src/pages/InboxPage.tsx:346-388).",
+    "[polish] P7-15: 'Runs on your API key: it can read web pages here but not search, so the researcher reads pages whose address it knows.' is about 122 characters: packages/runtime/src/session/credential-choice.ts:124-125 (the dead branches at :126-127 per shared_files).",
+    "[polish] P7-17: the session's end line says '1 needs you' for a task that paused at its budget: packages/runtime/src/daemon/event-lines.ts:117-131 (endedCounts has no paused count; SessionResult.paused exists).",
+    "[minor] P7-18: the budget card's Cancel task always promises 'its work is set aside until you reopen it' (untrue in a folder project a later task built on), and its Done line names no stuck task: packages/runtime/src/daemon/request-words.ts:660-665 (cancelPausedExplain), :667-692 (budgetOutcome).",
+    "[minor] P7-19: a project-budget card's 'Open Settings' opens /settings at Basics, where the project's budget is not shown (its row is under Other settings): packages/runtime/src/daemon/request-words.ts:578-585 (budgetCard's link '/settings'); apps/ui/src/pages/SettingsPage.tsx:669-674 (BASIC_SETTING_KEYS), :1193 (#other-settings). Link the project source to '/settings#other-settings' as the Overview's Change does; the landing is P7-12's.",
+    "[polish] P7-20: Cancel on a ready task that holds work in progress (after Reopen) says only 'Drops it.' although its work is set aside: packages/runtime/src/daemon/cancel-words.ts:70-81 (cancelWorkKind null for a ready task); packages/commands/src/commands/task.ts:474-481 sets it aside for any task that is not running; packages/runtime/src/daemon/task-words.ts:347-348 cancelWorkOf feeds display.cancelWork, which the Cancel dialog (TasksTab.tsx:639) and, after P7-21, the drawer show.",
+    "[polish] P7-21: the drawer's 'What you can do' explains Cancel on a paused task only as 'Drops it.'; the set-aside line is in the Tasks tab's Cancel dialog only: apps/ui/src/lib/task-actions.ts:52 (ACTIONS.cancel.explain, static), apps/ui/src/pages/project/TaskDrawer.tsx:160-172 (prints ACTIONS[key].explain at :171, not cancelWorkLine; the dialog appends it at TasksTab.tsx:639, :658). One per-task explain in task-actions.ts (used by the drawer :171, the row's title TasksTab.tsx:505 and the dialog :658) serves this, P7-20's work-in-progress line and P7-6's take-out base.",
+    "[polish] P7-22: the injection notification is titled 'Instructions found in web_page content were ignored' and its body lists the scanner's rule ids ('Ignored 4 passages from … (approval_bypass, …)'): packages/runtime/src/notifications/producers.ts:434 (title with report.source), :395-410 (summarizeInjection).",
+    "[polish] P7-23: the web-search overshoot note says 'this step cost … The next step is checked against what is left.': packages/runtime/src/session/executor.ts:1223.",
+    "[minor] P7-24: Open this version, with a file of the old preview open in another program (EBUSY/EPERM on Windows), says only '#7's version could not be put on this computer. Try again, or open it on GitHub.': packages/runtime/src/daemon/pull-requests.ts:508-519.",
+    "[minor] P7-25: 'Opened #9 to take \"X\" out. It waits for you to merge it.' names no way back and grows to three sentences with the tasks built on it: packages/runtime/src/daemon/take-out-words.ts:28-38 (takeOutOpenedSentence).",
+    "[minor] P7-26: card titles are cut at the first ': ', '. ' or '? ' even inside a quoted task title ('Change \"Write the README'): packages/runtime/src/daemon/request-words.ts:139-152 (firstSentence, afterFirstSentence), used by genericCard (:1004-1080) and the title fallbacks of retryCard, budgetCard, cannotRunCard and mergeLeftOpenCard.",
+    "[minor] P7-27: with a proxy variable set, every failed page read (a mistyped host too) adds 'This computer reaches the internet through a proxy … pages cannot be read here' as a fact: packages/capabilities/src/web/fetch.ts:68-69 (PROXY_SENTENCE), :305 (viaProxy for any timeout or connect error), :319.",
+    "[minor] P7-29: the user guide says the review is told which search results the run saw but never opened; on the subscription that list is always empty (searchSeen is filled only by the loop driver): docs/user-guide.md:877-879; packages/runtime/src/session/executor.ts:1257, :1393.",
+    "[polish] P7-30: navigationInterruptedRetry's doc comment sits above GOTO_INTERRUPTED_TRIES (two doc blocks stacked): packages/capabilities/src/browser/session.ts:979-989.",
+    "[polish] P7-33: the science-evaluator's runs-on line is asserted only as not containing 'web pages': apps/ui/test/real-daemon.test.ts:7275, :7347; packages/runtime/test/credential-chooser.test.ts:419-421.",
+    "[polish] P7-34: the Reviews tab's session check reads 'Session review: 0 done task(s) … 2 finding(s).': packages/critic/src/session-review.ts:588-592, :332 (shown at apps/ui/src/pages/project/ReviewsTab.tsx:124)."
+   ],
+   "decisions": [],
+   "u_entries": [
+    "U-074"
+   ],
+   "root_causes": [
+    "packages/runtime/src/daemon/project-status.ts:171-182, :293-300: the waiting line counts every card as a question and links /inbox; the done line puts the folder path (with the project UUID) in the sentence, says 'Open Files', and says nothing for a repository project (later #53/#54/#55, L-13a, C-58).",
+    "packages/runtime/src/daemon/task-words.ts:152-154 (the IDS pattern's first branch), :206-218 (cardKindOf: critic:signoff is the 'retry' kind), :455-466 and :518-531 (the retry kind's 'Needs your decision' words); apps/ui/src/lib/task-actions.ts:74-75 (Try again on every retry-kind row) (later #94, L-9, C-21).",
+    "The Tasks screen's words are static or raw: apps/ui/src/lib/task-actions.ts ACTIONS (:52 Cancel 'Drops it.', :56 take_out 'out of main') and reviewLevelChoices (:225 the light review's old meaning), printed as they are by TaskDrawer.tsx:171 and TasksTab.tsx:505/:658; TaskCap (TasksTab.tsx:89) words the raw specialist or 'coder'; cancelWorkKind (cancel-words.ts:70-81) has no case for a ready task holding work (C-23, P7-6, P7-20, P7-21, later #74).",
+    "packages/runtime/src/daemon/views.ts: costFacts labels by registry key and counts the critic's runs per model (:957-977, later #91); the session's statusText is the handoff's count at its end (:452-457, stop-words.ts:164-172, L-21); findings' requiredAction is served for accepted info notes (:1022, critic.ts:734/:1179, L-13e).",
+    "Failure text: session/findings.ts:369 cuts the reason at 300 characters; pr-executor.ts:846-851 makes the empty-change reason the raw report; plainReason (task-words.ts:181-198) strips only '**' (L-18).",
+    "handoffs.json 'polish' items carry their own evidence, at HEAD: C-19 critic.ts:728/:808; C-39 result.ts:180-370; C-50 event-lines.ts:97-110; C-55 data/import.ts:601; C-58 project-status.ts:293-300; C-59 event-lines.ts:550-551, local-only.ts:122-130, SessionPage.tsx:71/:394-397; R-2/R-3 push-words.ts:19-28, :35-39, :65; L-20 request-words.ts:414-416 with InboxPage.tsx:1037-1058.",
+    "wave 7 leftovers (wave7g6-triage polish_add) in the words files: request-words.ts firstSentence (:139-152), budgetCard's link (:578-585), cancelPausedExplain/budgetOutcome (:660-692), 'main' (:830, :984, :1000); result.ts MERGE_WAITS (:88, :329-341); event-lines.ts endedCounts (:117-131) and 'main' (:438-446); budget-pause.ts:200-206; credential-choice.ts:124-140 and plan-tasks.ts:65-79; producers.ts:395-434; executor.ts:1223; pull-requests.ts:427, :508-519; merge.ts:736, :1034; take-out-words.ts:28-38; dependent-branches.ts:70-84 and pr-executor.ts droppedWords :325-336; fetch.ts:68-69/:305/:319; session-review.ts:332, :588-592; no view carries the base branch's name (P7-6).",
+    "Docs written before the change they describe and never revisited: CHANGELOG.md:89-91 (Q7), validation.md:165-166 (Q7), runtime.md level 3 merges (:49-50, :3040-:6158) and compose.ts:858/:2475, user-guide.md:877-879 (search results on the subscription), apps.md:97 (the old Next session form); a doc comment on the wrong declaration (browser/session.ts:979-989); two relaxed assertions (P7-33)."
+   ],
+   "fix_scope": "One commit per words file or screen (or per sentence and the test that reads it), each wording asserted at its boundary: a unit test of the function that writes it, a real-daemon case in polish-words' own describe block of apps/ui/test/real-daemon.test.ts for every text a route serves (GET /projects and /projects/:id status lines, /projects/:id/tasks and /tasks/:id display, /sessions/:id statusText, /inbox card words, /projects/:id/costs, /projects/:id/reviews), the fake daemon (apps/ui/test/fake-daemon.ts, fake-tasks.ts) changed in the same commit where a route's shape or a mirrored text changes (C-21's sign-off kind, P7-6's base field), and a screen check in a new apps/ui/test/polish-words.test.tsx (the Tasks row and drawer, New task's review choice, the Inbox plan card, the session page's pull request line). An existing assertion (unit, UI, real-daemon, e2e) of a text this area changes is updated in the same commit, that assertion only (e.g. real-daemon.test.ts:1280 'Your files:', :3391/:4858 'Needs your decision', :3700 'starts working on them now'; tasks.test.tsx 'nothing runs in isolation', 'coder limit', 'out of main'; home.test.tsx, plain-words.test.tsx and e2e/smoke.spec.ts 'Waiting for you: 2 questions'; session.test.tsx 'branch fr/'). Design §5 rules: one sentence a person reads at a glance (status ≤ 80 characters, consequence ≤ 100, card body ≤ 2 sentences, result ≤ 3 lines, notification title ≤ 60 and body ≤ 140), what needs you first, names not ids (no task-id branch prefix, no rule ids, no source names such as web_page), true when read (L-21, P7-7), no '(s)' plurals, no tier, ladder or verdict words, no JSON or markdown, CHF only with two decimals ('less than CHF 0.01' below a centime), errors say what went wrong and what to do (R-2, P7-24, P7-27). Rewords on top of wave 12's logic: in the shared files shared_files names the functions polish-words may change; no logic change beyond what an item names (C-55's ensureBaseBranch, C-21's sign-off kind and its Answer/Cancel row, L-21's read-time count, P7-20's work-in-progress check, P7-21's per-task explain, L-20's busy line, R-2's order of tests, P7-14's once-per-plan line, P7-6's base branch field). C-39's line is its own builder appended to result.ts's ordered list (at most three lines stay). writing-rules.test.ts (system-text's, 4a8ec47) extended to every new or changed text. Docs in the same commits: CHANGELOG [Unreleased] (one line per person-visible change; R-2's example made true; P7-2), docs/maintainers/runtime.md (P7-13 and the sections of the files it changes), capabilities.md, critic.md, notifications.md, data.md (C-55), apps.md (#40's summary row and the Tasks and Inbox rows it changes), validation.md (P7-3), user-guide.md (P7-29 and the Tasks and Inbox paragraphs it changes); U-074's row in UPDATE-LOG.md. Settings' rows and change sentences (P7-10, P7-28, P7-31, later #30/#43) are polish-screens'. Items moved out earlier stay out: C-30, C-37 ('budget-resume'), C-53 ('merged-copy'), C-56 ('merge-in-app'), C-60 ('merged-actions'), C-70, C-71 ('sites'); the BillingOrderSection.tsx words ('credential-chooser'); Q7 ('polish-desktop'). The items assigned to polish-screens are not done here.",
+   "files": [
+    "packages/runtime/src/daemon/project-status.ts (the waiting and done lines; 'screens' (wave 5) keeps the ready line)",
+    "packages/runtime/src/daemon/task-words.ts (IDS, cardKindOf and the sign-off kind's words, plainReason, cancelWorkOf's work-in-progress input; wave 12 keeps the merge state by mode and the credential wait)",
+    "packages/runtime/src/daemon/api-types.ts (the sign-off cardKind; the base-branch field for P7-6)",
+    "packages/runtime/src/daemon/request-words.ts (all its words: firstSentence, budgetCard's link, cancelPausedExplain, budgetOutcome, rebuildTitle and the take-out notice's 'main', intakeCard's Approve explain; leftovers7-merge keeps which choices the rebuild card offers; the '/setup' links at :903-907 stay)",
+    "packages/runtime/src/daemon/event-lines.ts (couldNotWords, endedCounts, the task.files branch words, the merge lines' 'main')",
+    "packages/runtime/src/daemon/views.ts (costFacts' labels and model run counts, the session's statusText, findings' requiredAction), packages/runtime/src/session/stop-words.ts (endedStatusText)",
+    "packages/runtime/src/daemon/cancel-words.ts, take-out-words.ts, plan-tasks.ts (the repeated runs-on line only), pull-requests.ts (row sentence :427 and preview refusal :508-519 only)",
+    "packages/runtime/src/daemon/compose.ts (the comments at :858 and :2475 only)",
+    "packages/runtime/src/session/result.ts (MERGE_WAITS words, C-39's builder), budget-pause.ts, findings.ts (:369), credential-choice.ts (sentences), dependent-branches.ts (sentences), executor.ts (:1223 only)",
+    "packages/runtime/src/loop/merge.ts (sentences at :736 and :1034 only)",
+    "packages/runtime/src/notifications/producers.ts (injection title and body), packages/runtime/src/data/import.ts (C-55)",
+    "packages/capabilities/src/githost/push-words.ts, local-only.ts (neverPushedWords only), pr-executor.ts (droppedWords and the empty-change summary only), packages/capabilities/src/web/fetch.ts (the proxy sentence), packages/capabilities/src/browser/session.ts (the doc comment)",
+    "packages/critic/src/critic.ts (C-19's shown summary; the default required action for notes), packages/critic/src/session-review.ts (the summary words only)",
+    "The Tasks screen: apps/ui/src/lib/task-actions.ts (actionsFor, ACTIONS' explains, reviewLevelChoices; leftovers7-merge keeps Redo while a take-out is open), apps/ui/src/pages/project/TasksTab.tsx (TaskCap and the action explains), apps/ui/src/pages/project/TaskDrawer.tsx (the action explains)",
+    "apps/ui/src/pages/InboxPage.tsx (RequestCard's line while a choice works, L-20; the plan card's runs-on line if P7-14 shows it once per plan), apps/ui/src/pages/project/SummaryTab.tsx (PR_GROUPS' take-out label and RepositoryFiles' two Merge sentences only; leftovers7-web keeps ResearchReads), apps/ui/src/pages/SessionPage.tsx (pullRequestsFromLog only)",
+    "tests: packages/runtime/test/writing-rules.test.ts and the unit tests of each file above, packages/capabilities/test/push-words and web-fetch tests, packages/critic/test, packages/runtime/test/credential-chooser.test.ts (:419-421), apps/ui/test/real-daemon.test.ts, fake-daemon.ts and fake-tasks.ts (own describe block; existing assertions of texts it changes), a new apps/ui/test/polish-words.test.tsx; existing UI tests and e2e specs only where they assert a text it changes",
+    "docs: CHANGELOG.md [Unreleased], docs/maintainers/apps.md (:97 and the Tasks and Inbox rows it changes), runtime.md, capabilities.md, critic.md, notifications.md, data.md, validation.md (:165-166), docs/user-guide.md (:877-879 and the Tasks and Inbox paragraphs it changes), docs/status/UPDATE-LOG.md (U-074)"
+   ],
+   "acceptance": [
+    "GET /projects/:id (real-daemon, polish-words block): a finished folder project's statusLine reads 'Done: all N tasks.' (≤ 80 characters, no path, no UUID) with the files action; a finished repository project with N open pull requests reads 'Done: all N tasks. N pull requests wait for you to merge.' linking the Overview (later #53/#54, C-58).",
+    "GET /projects/:id: with one open card the status action links /inbox#card-<oldest id>; with a sign-off card and a budget card the text names the kinds, not '2 questions' (later #55, L-13a).",
+    "task-words unit test: withoutIds('(run node --check)') keeps the parenthesis and still strips '(task 01a1…)' and bare UUIDs (later #94).",
+    "GET /projects/:id/costs: By specialist labels read as the log names the specialist ('the writer'), and By model's accepted count compares work runs only (later #91).",
+    "docs check: apps.md's `summary` row describes the one 'Note for the next session' box (later #40); CHANGELOG [Unreleased] and validation.md describe Q7 as built (P7-2, P7-3); runtime.md and compose.ts say no level merges (P7-13); the user guide says the unopened-results list is on the API key only (P7-29).",
+    "GET /projects/:id/tasks (real-daemon) and polish-words.test.tsx with the fake daemon in the same commit: a task waiting on its sign-off reads 'Needs your sign-off', its detail names accept the work, send it back or cancel it, and the row and drawer offer Answer and Cancel only; the card is unchanged (C-21, L-9).",
+    "Tasks screen (polish-words.test.tsx, real-daemon GET /projects/:id/tasks): an Agent's choice row's cap line names no 'coder' and a specialist's names it as the log does, not by registry name (later #74); New task's and Edit's light review choice says what is true now with no tier or checks words (C-23); the drawer's Cancel on a paused task, and Cancel on a ready task holding work in progress (row, dialog and drawer), include the set-aside line (P7-20, P7-21).",
+    "GET /projects/:id/reviews: an accepted info note has no 'To fix' line (L-13e).",
+    "writing-rules test with the live walk's report: the failed-task card, the Overview's Last result, the Updates line and the session result carry no '**', no backticks and no word cut mid-way; an empty change reads 'The run changed no file.' first (L-18).",
+    "GET /sessions/:id (real-daemon): after the person answered the card and the pull request merged, statusText no longer says '1 task needs you' (L-21).",
+    "Inbox (real-daemon GET /inbox and polish-words.test.tsx): a one-task plan card's Approve and start explain says 'starts working on it now'; while Approve and start works the card shows 'Writing the plan and its docs pull request…' (a folder project: without the pull request) (L-20).",
+    "push-words unit tests with git's HTTPS 403 shapes: 'remote: Permission to o/r.git denied' and 'remote: This repository was archived …' are refusals quoting the host's line with what to do; only a real network failure says GitHub could not be reached; 'remote: Writing to this repository is disabled' is the reason shown; the CHANGELOG example holds (R-2, R-3).",
+    "GET /tasks/:id after a rule changed the verdict: the shown summary starts with why ('Sent back: the check \"test\" failed.'), never 'Accepted' under a sent-back review (C-19).",
+    "result.ts test: a session whose only task the person cancelled ends 'You cancelled \"X\"; nothing else ran. CHF 0.00.' (C-39).",
+    "event-lines unit test: couldNotWords keeps 'index.html' and 'data/members.csv' whole (C-50).",
+    "import test with an empty bare repository: the import makes its branch through ensureBaseBranch and a refusal reads firstPushFailedWords, not git's text (C-55).",
+    "event-lines, local-only and polish-words.test.tsx (session page): no branch with the task-id prefix on a person's screen; the stored branch stays unique (C-59).",
+    "Each polish_add item's test idea passes at its boundary (wave7g6-triage.json polish_add): budgetLineWords has no 'save only' and says 'less than CHF 0.01' (P7-1); an 'unreachable' merge reads '#N merges once GitHub answers.' (P7-5); a repository whose default branch is 'trunk' says 'trunk' on the rebuild card, the merge lines, the take-out explain on the row and in the drawer, the Overview label and the notice (P7-6, real-daemon and polish-words.test.tsx); the rebuild sentence no longer says 'is being redone' after the redo's PR opened (P7-7); the chain sentence is one string on Tasks and the Overview (P7-11); the plan card says 'tests will not run' once (P7-14); the research runs-on line ≤ 100 characters (P7-15); a paused task ends as '1 paused at its budget' (P7-17); the budget card's Cancel explain and Done line are true in a folder project a later task built on (P7-18); the project-budget card's Open Settings links /settings#other-settings (P7-19); the injection notification's title names a web page or search result and its body no rule ids (P7-22); the overshoot note says 'this call' (P7-23); EBUSY reads 'open in another program: close it and try again' (P7-24); the take-out answer is at most two sentences and names the way back (P7-25); a quoted title with ': ' stays whole in the card title (P7-26); with a proxy set an ENOTFOUND says the host was not found and the proxy only as a condition (P7-27); the doc comment sits on navigationInterruptedRetry (P7-30); the science-evaluator's runs-on line asserted exactly (or as null) in credential-chooser.test.ts:419-421 and at real-daemon.test.ts:7275 and :7347, tightened in place (P7-33); no '(s)' in a session review summary (P7-34).",
+    "The writing-rules test (4a8ec47) extended to every new or changed text; pnpm check, pnpm test:integration, pnpm test:e2e and the UI suite green; bench before/after (--provider bench) of the Home card, the Tasks row and drawer of a sign-off task and of a paused task, the Inbox plan card while Approve and start works, the Reviews tab, a session page and a failed-task card."
+   ],
+   "depends_on": [
+    "wave 12 merged (leftovers7-merge: pr-executor.ts, local-only.ts, dependent-branches.ts, merge.ts, pull-requests.ts cache, task-words.ts merge state, task-actions.ts Redo; leftovers7-session: critic.ts refused review, session-review.ts paused tasks, executor.ts, plan-tasks.ts estimate, task-words.ts credential wait; leftovers7-web: credential-choice.ts inputs, compose.ts credential wake, SummaryTab.tsx ResearchReads): polish-words rewords on top of their logic",
+    "runs beside polish-screens (wave 13, disjoint files except SessionPage.tsx, compose.ts, the shared docs and the append-only test files, as shared_files names)",
+    "P7-19's landing on the row needs polish-screens' P7-12 (hash scroll after the rows load); polish-words asserts the link target only",
+    "the owner's answer on how taken-out tasks count in the done line (owner_questions) before C-58's wording is final; build the recommendation meanwhile"
+   ],
+   "handoff_items": [
+    "L-9",
+    "L-13",
+    "L-18",
+    "L-20",
+    "L-21",
+    "R-2",
+    "R-3",
+    "C-19",
+    "C-21",
+    "C-23",
+    "C-39",
+    "C-50",
+    "C-55",
+    "C-58",
+    "C-59"
+   ],
+   "owner_questions": [
+    "How should the project line count tasks whose work was taken out (wave7g6-triage owner_questions)? (a) keep 'Done: all N tasks.' (rows say 'Taken out in #N'); (b) 'Done: all 6 tasks; 2 taken out.'; (c) taken-out tasks no longer count as done. Recommendation (b), folded into C-58's repository done line (project-status.ts:293-300). Build (b) unless the owner answers otherwise."
+   ],
+   "size": "large in count (46 items), small in each: one function's sentence and its unit test, a real-daemon case where a route serves it; about 35 package files, the Tasks screen's three files, the Inbox card's busy line and 9 docs. Logic only where an item names it (C-21's sign-off kind, C-55, L-21, P7-20/P7-21's per-task explain, P7-6's base field, L-20's busy line, R-2)."
+  },
+  {
+   "key": "polish-screens",
+   "title": "Polish, screens: the app's pages and components say one thing once: one start button, one button per action, one time format, a palette that asks before Stop all, Settings and setup that are true (CHF, '0 means no cap', the default cap, the step you left, change cards without JSON or a 290-character value, the site rule in two short sentences), a Start dialog that counts right, and links that land where they point",
+   "problems": [
+    "[polish] later #56: when tasks are ready the project header has two buttons that open the same Start dialog ('Continue' in the status and 'Start session'). Still at HEAD: apps/ui/src/components/ProjectState.tsx:99-107 (the status's start action), apps/ui/src/pages/ProjectPage.tsx:134-143 (Start session). Keep one.",
+    "[polish] later #57: project tab links keep the whole query: /files?path=script.js then Tasks gives /tasks?path=script.js. Still at HEAD: apps/ui/src/pages/ProjectPage.tsx:98 (tabTo keeps location.search). Keep only the Tasks filters.",
+    "[polish] later #59: the command palette's 'Stop all sessions' stops without asking once, is listed while nothing runs, and its other state reads 'Resume all sessions' where the header says Allow sessions again (design §3.1). Still at HEAD: apps/ui/src/shell/Shell.tsx:100-116 (toggleKill), apps/ui/src/shell/commands.ts:133-138.",
+    "[polish] later #61: opening a project from Home switches the active project, which writes a Changes entry ('Switch project: …'): noise in Changes. Still at HEAD: apps/ui/src/store/context.tsx:394-420 (wordsUsed at :407), called from apps/ui/src/pages/HomePage.tsx:75.",
+    "[polish] later #63: the no-key bar also shows on /setup itself, where its Connect points to the same page. Still at HEAD: apps/ui/src/shell/ShellBars.tsx:226-245 (NoKeyBar does not look at the route), rendered at apps/ui/src/shell/Shell.tsx:409.",
+    "[polish] later #66: the session title uses the browser's locale time ('12:01 AM'); the design example is 24-hour ('14:05'). Still at HEAD: apps/ui/src/pages/SessionPage.tsx:35-40 (startedAtWords, toLocaleTimeString with the browser's locale). P7-9 extends it to the rest of the screen.",
+    "[polish] later #48 (second half) and #69: the Start dialog says '… continues with up to N more as they become ready' for tasks ready now (planSentence counts runnable and later together), and its stuck lines print raw statuses '(ready)', '(draft)', '(failed)', '(cancelled)'. Still at HEAD: apps/ui/src/pages/project/StartSessionDialog.tsx:86-97 (planSentence), :41-57 (waitsOnText). The budget sentence is phase C continuity's (38e6ee6); also L-13's Start dialog point.",
+    "[polish] later #43 (#51, #68; #38): '0 means no cap' for money fields (design §6, docs/design/core-experience.md:395). Still at HEAD: budget.set refuses 0 for every scope (packages/commands/src/commands/budget.ts:124-129, amountChf/amountUsdMicro positive) and Settings refuses it in words (apps/ui/src/pages/SettingsPage.tsx:186-200, asChf and moneyProblem). A task's budget of 0 is already accepted (commands/task.ts:645, :1090; NewTaskDialog.tsx:159-183; TaskDrawer.tsx:593-608): what is left is the project budget (accept 0 as none) and the Settings words that say so; the task budget fields already explain an empty budget (NewTaskDialog.tsx:303-306, TaskDrawer.tsx:685-688) and stay as they are. The monthly cap is a limit enforced in code: keep it positive and say so, unless the owner decides otherwise.",
+    "[polish] later #30, #99, #38 (Settings): still at HEAD: the calibration change sentence shows raw JSON ('Set the monthly critic calibration from unset to {\"enabled\":false,…}': packages/commands/src/commands/settings.ts:491-506 has no display, show() :576-579 JSON.stringify); the calibration row says 'up to USD 10' and its field 'Budget for the run (USD)' (apps/ui/src/pages/SettingsFields.tsx:219, :283-290; packages/runtime/src/daemon/settings-view.ts:162); the monthly cap row says 'high' risk (settings-view.ts:98) while lowering it files a 'medium' card (packages/commands/src/commands/budget.ts:208-214). Fixed at HEAD: the model rows read 'light review'/'full review' (ModelSettingsSection.tsx:63-68), small-project mode reads 'the light review' (settings-view.ts:231-236), the calibration row names the review level. (BillingOrderSection.tsx:133-137 moved to 'credential-chooser' earlier.) CHF, never USD.",
+    "[polish] later #28, #99: the default monthly cap reads CHF 150.40 while setup says 'CHF 150 a month' (packages/runtime/src/daemon/compose.ts:1434 stores round(150/0.8) USD with no CHF figure; settings-view.ts:58-71 capMoney and budget.ts:103-112 convert back at the day's rate: store the CHF figure beside it as budget.set does); reopening setup mid-way restarts at Welcome (apps/ui/src/pages/SetupPage.tsx:257). Also wave 7's P-welcome: the refused card's 'Save a new key' (session/credential-wait.ts:216-221, request-words.ts:903-907, both '/setup') opens Welcome, and Continue needs a name typed first when setup was skipped.",
+    "[polish] later #30: intake takes about 42 s with only 'Drafting…'. Still at HEAD: apps/ui/src/pages/project/IntakeBanner.tsx:100 ('Drafting the plan from your brief… It lands in your Inbox for you to approve.', no word on how long). Say it usually takes about a minute.",
+    "[polish] later #79: decision questions are kept as the card asked them ('Where should the page be published: GitHub Pages, Netlify, or only as a local file?'), not short as in the design's example ('Where is the page published?', core-experience.md:345-349). Still at HEAD: packages/runtime/src/daemon/decision-views.ts:29-45 serves the question as asked; apps/ui/src/pages/project/DecisionsSection.tsx:12-18 (sentence) joins it whole. Without a model call: drop the options after the colon when the answer names one of them, in the Overview's sentence.",
+    "[polish] C-45: Start dialog: with nothing fitting the budget, each left-out task gets its own 'needs about …, more than this session's work budget …' line saying the same thing; and 'the tasks that run first take about Z' adds up every runnable estimate, including tasks that run after the one left out. Still at HEAD: apps/ui/src/pages/project/StartSessionDialog.tsx:127-153 (one line per check.overBudget; first = the sum of all check.runnable). Expected: one line for all tasks larger than the work budget; 'run first' sums only the tasks ordered before the one left out. Tested in the Start dialog UI test.",
+    "[polish] P7-4: the session page's stream badge reads 'finished', 'live', 'polling every 5 s' or the raw mode value: apps/ui/src/pages/SessionPage.tsx:287-298 (the ': mode' fallback at :297).",
+    "[polish] P7-8: Home's Needs you row offers 'Answer' on every card, the refused-key card included, whose only action is 'Save a new key': apps/ui/src/pages/HomePage.tsx:162-169 (the card's own link is in GET /inbox's links, request-words.ts:903-907).",
+    "[polish] P7-9: times are written three ways on one screen ('Waits until 04:36', log '04:32:05 AM', Settings 'Nov 03, 2026, 04:36 AM'); extends later #66: apps/ui/src/lib/time.ts:3-14 (formatDateTime), :36-41 (formatTime), apps/ui/src/pages/SessionPage.tsx:36-41, :490, apps/ui/src/pages/BillingOrderSection.tsx:35. Already 24-hour: apps/ui/src/pages/project/FilesTab.tsx:16-22, packages/runtime/src/session/credential-wait.ts:128.",
+    "[polish] P7-10: the 'Who merges accepted work' change card shows the label plus the whole 290-character effect inside its monospace value: packages/commands/src/commands/settings.ts:679-682 (newValueOf: `${show} (${effect})` for every key with an effect), the effect from packages/runtime/src/loop/merge-mode.ts:36-40 (mergeModeEffect). Expected: the value is the label ('Merge automatically after review') and the effect the card's sentence; one rule for Settings' change cards with later #30's calibration display and P7-31's site rule.",
+    "[minor] P7-12: the Overview's 'Change' link (/settings#other-settings, /settings#sandbox) opens Settings at the top, not at its row: apps/ui/src/pages/SettingsPage.tsx:957 (useScrollToHash(true) runs before the rows load), apps/ui/src/lib/use-hash-scroll.ts:9-18 (finds no element; its effect never runs again).",
+    "[polish] P7-16: after Start the dialog shows 'Started: …' beside a Start button that is enabled again: apps/ui/src/pages/project/StartSessionDialog.tsx:262-271 (stays open and re-checks, design §3.6), :406-418 (Start enabled whenever nothing blocks).",
+    "[polish] P7-28: the 'Web pages research may read' row and dialog description is one long paragraph with \"Static hosts's research\" and 'on both credentials': packages/runtime/src/daemon/settings-view.ts:311 (the project.web_access row's description; PROXY_ROW_WORDS :45 appended when proxied). Expected: at most two short sentences, no \"s's\", no 'credentials'.",
+    "[polish] P7-31: the site-rule change sentence has a double colon ('… from Any public website to Only these websites: example.com: research reads …'): packages/runtime/src/wiring/web-access.ts:514-524 (webAccessWords, 'Only these websites: ' at :518), used as the display at packages/commands/src/commands/settings.ts:376 inside 'Set X from a to b: <effect>'. Expected: one colon (e.g. '… to only example.com: research reads only these websites …'); fix with P7-32, which reads the same function.",
+    "[polish] P7-32: 'Saved as:' shows five sites then 'and N more' before saving: apps/ui/src/pages/WebAccessInput.tsx:137 (webAccessWords → siteNames(v.only, 5), packages/runtime/src/wiring/web-access.ts:518). Expected: every site listed before saving (with P7-31's change to webAccessWords, or a list in the input)."
+   ],
+   "decisions": [],
+   "u_entries": [
+    "U-077",
+    "U-047",
+    "U-030",
+    "U-074"
+   ],
+   "root_causes": [
+    "apps/ui/src/pages/ProjectPage.tsx:98 (tabTo keeps location.search), :135-142 (Start session beside the status's Continue); apps/ui/src/components/ProjectState.tsx:99-107 (later #56, #57).",
+    "apps/ui/src/shell/Shell.tsx:100-116 (toggleKill acts without asking), apps/ui/src/shell/commands.ts:133-138 (listed while nothing runs; 'Resume all sessions'), apps/ui/src/shell/ShellBars.tsx:226-245 (NoKeyBar ignores the route); apps/ui/src/store/context.tsx:394-420 (opening a project from Home runs project.switch with words, a Changes row) (later #59, #61, #63).",
+    "Times: apps/ui/src/lib/time.ts:3-14, :32-37 and SessionPage.tsx:35-40 use the browser's locale (AM/PM, seconds); BillingOrderSection.tsx:35 formatDateTime; FilesTab.tsx and credential-wait.ts are 24-hour (later #66, P7-9); the stream badge's raw fallback (SessionPage.tsx:286-298, P7-4).",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:41-57 (raw statuses), :86-97 (runnable and later counted together), :127-153 (one over-budget line per task; 'first' sums every runnable), :262-271 and :406-418 (Start enabled again after a start) (later #48/#69, C-45, P7-16).",
+    "Settings and setup: packages/commands/src/commands/budget.ts:124-129 and SettingsPage.tsx:186-200 refuse 0; packages/commands/src/commands/settings.ts:491-530 (calibration and model_watch without display) with show() :576-579, and newValueOf :679-682 (label plus the whole effect, merge-mode.ts:36-40); SettingsFields.tsx:219, :283-290 (USD); settings-view.ts:98 vs budget.ts:208-214 (risk), :162 (USD 10), :311 (the sites row in one paragraph); webAccessWords (web-access.ts:514-524) shown inside 'from a to b: <effect>' (settings.ts:376) and capped at five sites (WebAccessInput.tsx:137); compose.ts:1434 (the first human's cap without its CHF figure) with settings-view.ts:58-71 capMoney; SetupPage.tsx:257 (always Welcome); SettingsPage.tsx:957 with use-hash-scroll.ts:9-18 (scrolls before the rows exist) (later #43, #30/#99/#38, #28/#99, P7-10, P7-12, P7-28, P7-31, P7-32).",
+    "Smaller screens: IntakeBanner.tsx:100 (no word on how long); DecisionsSection.tsx:12-18 (the question whole); HomePage.tsx:162-169 (Answer on every card) (later #30, #79, P7-8)."
+   ],
+   "fix_scope": "One commit per screen: the project header and tabs (#56, #57); the shell and palette (#59, #63); Home (#61, P7-8); the session page and times (#66, P7-4, P7-9); the Start dialog (#48/#69, C-45, P7-16); Settings and setup (#43, #30/#99/#38, #28/#99, P7-12) with Settings' change cards and the site rule (P7-10, P7-28, P7-31, P7-32: one rule for what a change card's value and sentence are); the Overview's decisions and intake banner (#79, #30). Each wording asserted at the boundary the person uses: the screen's UI test of the visible text (the existing apps/ui/test/*.test.tsx of the screens it owns, or a new apps/ui/test/polish-screens.test.tsx), the e2e walk where one exists, a real-daemon case in its own describe block for every route this area changes (budget.set with 0 on a project, the first human's cap read through GET /settings, a settings.set merge_mode and web_access change card through GET /inbox), the fake daemon in the same commit. An existing assertion of a text this area changes is updated in the same commit, that assertion only (e.g. project.test.tsx 'as they become ready', session.test.tsx and sse.test.ts 'polling every 5 s', settings tests 'up to USD', web-access.test.tsx and real-daemon.test.ts:5300 'Only these websites:'). Design §5: one sentence a person reads at a glance, no raw statuses in parentheses, 24-hour HH:MM everywhere on a screen, CHF only, no ids, no JSON; one button per action (one start button; one action per Home row, the card's own; the palette's Stop all asks once and is listed only while something runs, its other state 'Allow sessions again'). Design §6: a project's and a task's budget accept 0 and read 'no budget' ('0 means no cap' where it is true); the monthly cap stays positive and says why, unless the owner decides otherwise (owner_questions; record the answer in U-074). The daemon's other sentences are polish-words'; this area owns the Settings words in packages/commands (budget.ts, settings.ts), settings-view.ts and webAccessWords, and in compose.ts only the first human's insert. SetupPage picks the first step not done (a refused or missing key opens the Claude step), so the '/setup' links stay. Docs in the same commits: the route rows of the screens it changes in docs/maintainers/apps.md, commands.md (budget.set, settings.set's displays), the runtime.md sections of settings-view.ts, the first human's cap and webAccessWords, the user-guide paragraphs about those screens, its own CHANGELOG [Unreleased] lines (appended), U-077 and its U-074 bullet in UPDATE-LOG.md (U-047 and U-030 come from phaseE's polish u_entries with no item here: add a note only if an item changes what they describe). Before/after screenshots of each screen on a fresh bench (--provider bench). The items assigned to polish-words are not done here (the Tasks screen, the Inbox plan card, the session page's pull request line).",
+   "files": [
+    "apps/ui/src/pages/ProjectPage.tsx, apps/ui/src/components/ProjectState.tsx",
+    "apps/ui/src/shell/Shell.tsx, apps/ui/src/shell/commands.ts, apps/ui/src/shell/ShellBars.tsx (NoKeyBar; StoppedBar stays as 'screens' left it)",
+    "apps/ui/src/store/context.tsx (switchActiveProject), apps/ui/src/pages/HomePage.tsx",
+    "apps/ui/src/pages/SessionPage.tsx (startedAtWords, the stream badge, log stamps; not pullRequestsFromLog, which polish-words may change), apps/ui/src/lib/time.ts, apps/ui/src/pages/BillingOrderSection.tsx (the time format only, through formatDateTime), apps/ui/src/pages/project/FilesTab.tsx (only if the owner answers the Files line question)",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx (planSentence, waitsOnText, BlockerLines' budget lines, the state after Start; leftovers7-web's credential wait line stays)",
+    "apps/ui/src/pages/SettingsPage.tsx, apps/ui/src/pages/SettingsFields.tsx, apps/ui/src/lib/use-hash-scroll.ts, apps/ui/src/pages/SetupPage.tsx, apps/ui/src/pages/WebAccessInput.tsx",
+    "apps/ui/src/pages/project/IntakeBanner.tsx, apps/ui/src/pages/project/DecisionsSection.tsx",
+    "packages/commands/src/commands/budget.ts (params and describe: 0 on a project budget; monthlyCeilingOf for #28 if needed), packages/commands/src/commands/settings.ts (its words: the calibration and model_watch displays, show(), newValueOf, the web_access display), packages/runtime/src/loop/merge-mode.ts (mergeModeEffect's words, if P7-10 needs it)",
+    "packages/runtime/src/daemon/settings-view.ts (the monthly cap row's risk, the calibration description, capMoney, the web access row), packages/runtime/src/wiring/web-access.ts (webAccessWords only; leftovers7-web keeps webAccessOf), packages/runtime/src/daemon/compose.ts (the first human's insert at :1434 only)",
+    "tests: the existing apps/ui/test/*.test.tsx of its screens (project, shell, home, session, sse, start dialog, settings, settings-basics, setup-assistant, project-overview, web-access) or a new apps/ui/test/polish-screens.test.tsx, apps/ui/e2e where a walk covers the screen, apps/ui/test/real-daemon.test.ts and fake-daemon.ts (own describe block; existing assertions of texts it changes), packages/commands/test budget and settings tests, packages/runtime/test settings-view and web-access tests",
+    "docs: docs/maintainers/apps.md (the rows of the screens it changes), docs/maintainers/commands.md (budget.set, settings.set displays), docs/maintainers/runtime.md (the sections of settings-view.ts, compose.ts' first human, webAccessWords), docs/user-guide.md (those screens' paragraphs), CHANGELOG.md [Unreleased] (appended lines), docs/status/UPDATE-LOG.md (U-077; its U-074 bullet)"
+   ],
+   "acceptance": [
+    "Project header (UI test and bench screenshot): with ready tasks there is one start button; after Files, the Tasks tab link has no ?path= and keeps the Tasks filters (later #56, #57).",
+    "Shell (UI test): the palette lists Stop all only while something runs, asks once before stopping, and its other state reads 'Allow sessions again'; on /setup no no-key bar shows (later #59, #63).",
+    "Home (UI test, real-daemon GET /changes): opening a project from Home writes nothing to Changes; a refused-key card's row offers 'Save a new key' to /setup, not Answer (later #61, P7-8).",
+    "Session page with the browser locale en-US (UI test): the title, the log stamps and BillingOrderSection's 'Resting until' read 24-hour HH:MM like 'Waits until 04:36'; the stream badge reads plain words and never a raw mode (later #66, P7-9, P7-4).",
+    "Start dialog (UI test): with two ready tasks it says 'This session runs \"X\" (about CHF …) and 1 more' with no 'as they become ready' and no '(ready)'/'(draft)' in a stuck line; two tasks over the work budget give one line; 'run first' sums only the tasks before the one left out; after Start no second enabled Start beside 'Started: …' (later #48/#69, C-45, P7-16, L-13d).",
+    "Settings (UI test and real-daemon): a project budget of 0 is accepted and reads 'no budget', money fields explain 0 where it means no cap, the monthly cap's 0 is refused in words saying why (unless the owner decides otherwise); no JSON in the calibration change card or change log, no 'USD' and no 'tier' anywhere in Settings; the monthly cap row's risk matches its card; a fresh install's default cap reads CHF 150.00; /settings#other-settings opened before the rows load lands on the row (data-targeted, scrollIntoView called); the merge_mode change card's value is its label ('Merge automatically after review') and the effect is the card's sentence (P7-10); the 'Web pages research may read' row for a project named 'Static hosts' is at most two short sentences with no \"s's\" and no 'credentials' (P7-28, settings-view test); the site-rule change sentence has one colon (P7-31, commands test); 'Saved as:' with 7 sites lists all 7 (P7-32, web-access UI test) (later #43, #30/#99/#38, #28/#99, P7-10, P7-12, P7-28, P7-31, P7-32).",
+    "Setup (setup-assistant UI test): reopening setup after the Claude step was skipped opens the Claude step, Continue needs no name typed again, and the refused card's 'Save a new key' lands there (later #28, wave 7's P-welcome).",
+    "Overview (UI tests): the intake banner says it usually takes about a minute; a decision reads as a short question with the answer ('Where is the page published? Only as a local file for now.') when the answer names one of the options, without a model call (later #30, #79).",
+    "pnpm check, pnpm test:integration, pnpm test:e2e and the UI suite green; before/after screenshots of each screen on a fresh bench (--provider bench)."
+   ],
+   "depends_on": [
+    "wave 12 merged (leftovers7-web: StartSessionDialog.tsx's credential wait line, web-access.ts' webAccessOf, compose.ts' credential wake; leftovers7-merge: apps/ui/e2e/session.spec.ts): polish-screens changes the screens on top of them",
+    "runs beside polish-words (wave 13, disjoint files except SessionPage.tsx, compose.ts, the shared docs and the append-only test files, as shared_files names)",
+    "the owner's answer on the monthly cap's 0 (owner_questions) before #43's monthly-cap words are final; build the recommendation meanwhile",
+    "the owner's answer on the Files line's time (owner_questions) before FilesTab.tsx changes; without it only P7-9's formats change"
+   ],
+   "handoff_items": [
+    "C-45"
+   ],
+   "owner_questions": [
+    "Monthly cap and 0 (later #43; design §6 says money fields explain 0 as 'no cap'): should 0 on the monthly cap mean no cap? Built: refused for every scope. Recommendation: accept 0 for a task's and a project's budget (no budget) and keep the monthly cap positive, since it is a limit enforced in code, with the field saying so; record the answer in U-074 (AGENTS.md: a choice about what a person sees goes to the owner).",
+    "What should the time on the Files line mean (wave7g6-triage owner_questions)? (a) last confirmed as merged, worded 'checked HH:MM'; (b) when the copy's head last moved. Recommendation (a): true as built, words only (FilesTab.tsx repositoryLine); apply only if the owner answers, beside P7-9's 24-hour times."
+   ],
+   "size": "medium in count (22 items), larger in each: component behaviour (the palette's confirm, one start button, hash scroll after load, the setup step, the Start dialog after Start, the 0 budget through budget.set) and Settings' rows and change cards (calibration and merge_mode values, the site rule and its input), each with a UI or commands test, the fake daemon in the same commit and before/after screenshots."
+  }
+ ],
+ "shared_files": [
+  "apps/ui/src/pages/SessionPage.tsx: polish-screens owns it (startedAtWords later #66, the stream badge P7-4, log stamps P7-9); polish-words may change only pullRequestsFromLog (C-59: the branch it returns carries no task-id prefix, or none; the line that prints it at :396 stays).",
+  "packages/runtime/src/daemon/compose.ts: wave 12's leftovers7-web keeps the credential wake and the chooser; polish-words may change only the comments at :858 and :2475 (P7-13); polish-screens may change only the first human's insert in composeRuntime (:1434, later #28: the CHF 150 figure beside the USD cap).",
+  "apps/ui/src/lib/task-actions.ts: polish-words owns its words (actionsFor's sign-off row C-21/L-9, ACTIONS' explains P7-6/P7-21, reviewLevelChoices C-23) on top of wave 12's leftovers7-merge rule (Redo while a take-out is open); polish-screens does not change it.",
+  "apps/ui/src/pages/project/TasksTab.tsx and TaskDrawer.tsx: polish-words owns them in wave 13 (TaskCap later #74; the action explains at TaskDrawer.tsx:171, TasksTab.tsx:505 and :658 for P7-6/P7-21; C-21's row); polish-screens does not change them (later #43 leaves the task budget field's 'Empty: …' hint at TaskDrawer.tsx:685-688 as it is).",
+  "apps/ui/src/pages/InboxPage.tsx: polish-words owns it in wave 13 (RequestCard's line while a choice works, L-20; the plan card's runs-on line once per plan, P7-14); polish-screens does not change it (P7-10's change card is worded in settings.ts and read through GET /inbox).",
+  "apps/ui/src/pages/project/SummaryTab.tsx: wave 12's leftovers7-web keeps ResearchReads' state; polish-words may change only PR_GROUPS' take-out label (:305) and RepositoryFiles' two Merge sentences (:498, :537) (P7-6: the base branch's name from the field polish-words adds); polish-screens does not change it (P7-12 lands the Overview's Change link in SettingsPage, not here).",
+  "packages/runtime/src/daemon/request-words.ts: polish-words owns its words (firstSentence P7-26, budgetCard's Open Settings link P7-19, cancelPausedExplain and budgetOutcome P7-18, rebuildTitle and the take-out notice's 'main' P7-6, intakeCard's Approve explain L-20, generic card words), on top of wave 12's leftovers7-merge logic (which choices the rebuild card offers); polish-screens does not change it (the '/setup' links at :903-907 stay: later #28 makes SetupPage pick the step).",
+  "packages/runtime/src/daemon/settings-view.ts: polish-screens owns its words (the human.monthly_cap row's risk :98, the calibration description :162, capMoney :58-71, the 'Web pages research may read' row :311 P7-28); polish-words does not change it.",
+  "packages/commands/src/commands/settings.ts: polish-screens owns its words (the calibration and model_watch displays later #30/#99, show(), newValueOf P7-10, the web_access display :376 P7-31); polish-words does not change it.",
+  "packages/commands/src/commands/budget.ts: polish-screens owns it for later #43 (params and describe: 0 on a project budget means no budget; the monthly cap stays positive unless the owner decides) and for #28's monthlyCeilingOf if the default cap's CHF figure needs it; polish-words does not change it.",
+  "packages/runtime/src/wiring/web-access.ts: wave 12's leftovers7-web owns webAccessOf; polish-screens owns webAccessWords and siteNames' use in it (:508-524, P7-31 and P7-32 together); polish-words does not change it.",
+  "packages/runtime/src/daemon/task-words.ts: wave 12 keeps its logic (leftovers7-merge the merge state by mode :417-419, leftovers7-session the credential wait :610-615); polish-words owns IDS (:152-154), cardKindOf and the sign-off kind's words (C-21/L-9), plainReason (L-18) and cancelWorkOf's work-in-progress input (P7-20) on top of it; polish-screens does not change it.",
+  "packages/runtime/src/daemon/views.ts: polish-words owns costFacts (later #91), the session view's statusText (L-21) and findings' requiredAction (L-13); polish-screens does not change it.",
+  "packages/runtime/src/session/dependent-branches.ts: wave 12's leftovers7-merge owns the logic (owed rebuilds, the conflict notice, the rebuild card's filing); polish-words owns the sentences ('rebuilt onto main' :84 P7-6, the 'is being redone' words P7-7); polish-screens does not change it.",
+  "packages/runtime/src/loop/merge.ts: wave 12's leftovers7-merge owns the logic (the retry pass, the Update, the lock); polish-words may change only the sentences at :736 (P7-6) and :1034 (P7-11).",
+  "packages/runtime/src/daemon/pull-requests.ts: wave 12's leftovers7-merge owns the cache of reads; polish-words may change only the row sentence (:427, P7-11) and the preview refusal (:508-519, P7-24).",
+  "packages/capabilities/src/githost/pr-executor.ts: wave 12's leftovers7-merge owns all logic; polish-words may change only droppedWords (:325-336, P7-7) and the empty-change summary sentence (:846-851, L-18).",
+  "packages/capabilities/src/githost/local-only.ts: wave 12's leftovers7-merge owns excludeNeverPushed; polish-words may change only neverPushedWords (:122-130, C-59).",
+  "packages/runtime/src/session/executor.ts: wave 12's leftovers7-session owns the logic; polish-words may change only the overshoot note (:1223, P7-23).",
+  "packages/critic/src/critic.ts: wave 12's leftovers7-session owns the outcome of a review a limit or credential refused; polish-words owns C-19's shown summary (:728, :808) and the default required action for notes (:734, :1179, L-13).",
+  "packages/critic/src/session-review.ts: wave 12's leftovers7-session owns how paused tasks count; polish-words may change only the summary words (:332, :588-592, P7-34).",
+  "packages/runtime/src/daemon/plan-tasks.ts: wave 12's leftovers7-session owns the estimate figure; polish-words owns the repeated runs-on line, once per plan (P7-14).",
+  "packages/runtime/src/session/credential-choice.ts: wave 12's leftovers7-web owns the inputs (refused and resting marks, the task's words); polish-words owns the sentences (:124-140, P7-14, P7-15).",
+  "apps/ui/src/pages/project/StartSessionDialog.tsx: wave 12's leftovers7-web owns the credential wait line; polish-screens owns planSentence, waitsOnText, BlockerLines' budget lines (C-45), budgetProblem and the state after Start (P7-16); polish-words does not change it.",
+  "apps/ui/test/real-daemon.test.ts, apps/ui/test/fake-daemon.ts and apps/ui/test/fake-tasks.ts: append-only for new cases in each area's own describe block ('polish-words, wave 13', 'polish-screens, wave 13'); an existing case is edited only where it asserts (or the fake mirrors) a text the area changes, that assertion only, in the same commit (e.g. polish-words: real-daemon.test.ts:1280 'Your files:', :3391/:4858 'Needs your decision', :3700 'starts working on them now', fake-daemon.ts:2051 'out of main', and P7-33 tightens :7275/:7347 in place; polish-screens: :5300 'Only these websites:'); the area that changes a route's shape changes the fake in the same commit (polish-words: the sign-off display kind for C-21, the base-branch field for P7-6; polish-screens: budget.set with 0 on a project).",
+  "apps/ui/test/*.test.tsx and apps/ui/e2e: new checks go to polish-words' new apps/ui/test/polish-words.test.tsx, or to polish-screens' own screens' test files (project, shell, home, session, sse, start dialog, settings, settings-basics, setup-assistant, project-overview, web-access) or its new apps/ui/test/polish-screens.test.tsx; either area updates an existing assertion of a text it changes, that assertion only (polish-words: tasks.test.tsx and inbox.test.tsx texts, home.test.tsx, plain-words.test.tsx and e2e/smoke.spec.ts 'Waiting for you: 2 questions', session.test.tsx 'branch fr/'; polish-screens: project.test.tsx 'as they become ready', session.test.tsx and sse.test.ts 'polling every 5 s', settings tests 'up to USD').",
+  "docs/maintainers/apps.md, docs/user-guide.md and CHANGELOG.md: each area changes only the apps.md rows and user-guide paragraphs of the screens and texts its items change; polish-words also the `summary` row (:97, later #40), the guide's :877-879 (P7-29), CHANGELOG [Unreleased] :89-92 (P7-2, R-2's example) and its own lines; polish-screens appends its own lines at the end of CHANGELOG [Unreleased]. docs/maintainers/validation.md (P7-3), capabilities.md, critic.md, notifications.md and data.md are polish-words' only; commands.md is polish-screens' only.",
+  "docs/maintainers/runtime.md: each area changes only the sections of the files it changes (wave 12's areas edit it first); polish-words also P7-13's level 3 lines (:49-50, :3040, :3432, :6136, :6158); polish-screens the sections of settings-view.ts' rows, the first human's monthly cap and webAccessWords.",
+  "docs/status/UPDATE-LOG.md: polish-words owns U-074's row and its notes; polish-screens owns U-077 (and U-047, U-030 if an item of its changes them) and adds its U-074 items as its own bullet."
+ ],
+ "assignment": [
+  {
+   "item_tag": "later #53, #54",
+   "source": "polish#1",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/project-status.ts:293-300"
+   ]
+  },
+  {
+   "item_tag": "later #55",
+   "source": "polish#2",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/project-status.ts:171-182"
+   ]
+  },
+  {
+   "item_tag": "later #56",
+   "source": "polish#3",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/components/ProjectState.tsx:99-107",
+    "apps/ui/src/pages/ProjectPage.tsx:134-143"
+   ]
+  },
+  {
+   "item_tag": "later #57",
+   "source": "polish#4",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/ProjectPage.tsx:98"
+   ]
+  },
+  {
+   "item_tag": "later #59",
+   "source": "polish#5",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/shell/Shell.tsx:100-116",
+    "apps/ui/src/shell/commands.ts:133-138"
+   ]
+  },
+  {
+   "item_tag": "later #61",
+   "source": "polish#6",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/store/context.tsx:394-420",
+    "apps/ui/src/pages/HomePage.tsx:75"
+   ]
+  },
+  {
+   "item_tag": "later #63",
+   "source": "polish#7",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/shell/ShellBars.tsx:226-245",
+    "apps/ui/src/shell/Shell.tsx:409"
+   ]
+  },
+  {
+   "item_tag": "later #66",
+   "source": "polish#8",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/SessionPage.tsx:35-40"
+   ]
+  },
+  {
+   "item_tag": "later #48, #69",
+   "source": "polish#9",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:86-97",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:41-57"
+   ]
+  },
+  {
+   "item_tag": "later #74",
+   "source": "polish#10",
+   "area": "polish-words",
+   "files": [
+    "apps/ui/src/pages/project/TasksTab.tsx:71-93",
+    "apps/ui/src/pages/project/TasksTab.tsx:429"
+   ]
+  },
+  {
+   "item_tag": "later #94",
+   "source": "polish#11",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/task-words.ts:152-154"
+   ]
+  },
+  {
+   "item_tag": "later #43",
+   "source": "polish#12",
+   "area": "polish-screens",
+   "files": [
+    "packages/commands/src/commands/budget.ts:124-129",
+    "apps/ui/src/pages/SettingsPage.tsx:186-200",
+    "apps/ui/src/pages/SettingsPage.tsx:250-260"
+   ]
+  },
+  {
+   "item_tag": "later #30, #99, #38 (Settings)",
+   "source": "polish#13",
+   "area": "polish-screens",
+   "files": [
+    "packages/commands/src/commands/settings.ts:491-506",
+    "packages/commands/src/commands/settings.ts:576-579",
+    "apps/ui/src/pages/SettingsFields.tsx:219",
+    "apps/ui/src/pages/SettingsFields.tsx:283-290",
+    "packages/runtime/src/daemon/settings-view.ts:98",
+    "packages/runtime/src/daemon/settings-view.ts:162"
+   ]
+  },
+  {
+   "item_tag": "later #28, #99",
+   "source": "polish#14",
+   "area": "polish-screens",
+   "files": [
+    "packages/runtime/src/daemon/compose.ts:1434",
+    "packages/runtime/src/daemon/settings-view.ts:58-71",
+    "apps/ui/src/pages/SetupPage.tsx:257"
+   ]
+  },
+  {
+   "item_tag": "later #30 (intake)",
+   "source": "polish#15",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/project/IntakeBanner.tsx:100"
+   ]
+  },
+  {
+   "item_tag": "later #79",
+   "source": "polish#16",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/project/DecisionsSection.tsx:12-18"
+   ]
+  },
+  {
+   "item_tag": "later #91",
+   "source": "polish#17",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/views.ts:957-977"
+   ]
+  },
+  {
+   "item_tag": "later #40",
+   "source": "polish#18",
+   "area": "polish-words",
+   "files": [
+    "docs/maintainers/apps.md:97"
+   ]
+  },
+  {
+   "item_tag": "L-9",
+   "source": "polish#19",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/task-words.ts:206-218",
+    "packages/runtime/src/daemon/task-words.ts:455-466",
+    "packages/runtime/src/daemon/task-words.ts:518-531",
+    "apps/ui/src/lib/task-actions.ts:74-75"
+   ]
+  },
+  {
+   "item_tag": "L-13",
+   "source": "polish#20",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/project-status.ts:171-182",
+    "packages/runtime/src/daemon/views.ts:1022",
+    "packages/critic/src/critic.ts:734"
+   ]
+  },
+  {
+   "item_tag": "L-18",
+   "source": "polish#21",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/findings.ts:369",
+    "packages/capabilities/src/githost/pr-executor.ts:846-851",
+    "packages/runtime/src/daemon/task-words.ts:181-198"
+   ]
+  },
+  {
+   "item_tag": "L-20",
+   "source": "polish#22",
+   "area": "polish-words",
+   "files": [
+    "apps/ui/src/pages/InboxPage.tsx:1037-1058",
+    "packages/runtime/src/daemon/request-words.ts:414-416"
+   ]
+  },
+  {
+   "item_tag": "L-21",
+   "source": "polish#23",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/views.ts:452-457",
+    "packages/runtime/src/session/stop-words.ts:163-172"
+   ]
+  },
+  {
+   "item_tag": "R-2",
+   "source": "polish#24",
+   "area": "polish-words",
+   "files": [
+    "packages/capabilities/src/githost/push-words.ts:19-22",
+    "packages/capabilities/src/githost/push-words.ts:35-39",
+    "CHANGELOG.md:92"
+   ]
+  },
+  {
+   "item_tag": "R-3",
+   "source": "polish#25",
+   "area": "polish-words",
+   "files": [
+    "packages/capabilities/src/githost/push-words.ts:27-28",
+    "packages/capabilities/src/githost/push-words.ts:65"
+   ]
+  },
+  {
+   "item_tag": "C-19",
+   "source": "polish#26",
+   "area": "polish-words",
+   "files": [
+    "packages/critic/src/critic.ts:728",
+    "packages/critic/src/critic.ts:808"
+   ]
+  },
+  {
+   "item_tag": "C-21",
+   "source": "polish#27",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/task-words.ts:206-218",
+    "packages/runtime/src/daemon/task-words.ts:455-466",
+    "packages/runtime/src/daemon/task-words.ts:518-531",
+    "packages/runtime/src/daemon/api-types.ts:326",
+    "apps/ui/src/lib/task-actions.ts:74-75"
+   ]
+  },
+  {
+   "item_tag": "C-23",
+   "source": "polish#28",
+   "area": "polish-words",
+   "files": [
+    "apps/ui/src/lib/task-actions.ts:219-228"
+   ]
+  },
+  {
+   "item_tag": "C-39",
+   "source": "polish#29",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/result.ts:180-370"
+   ]
+  },
+  {
+   "item_tag": "C-45",
+   "source": "polish#30",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:127-153"
+   ]
+  },
+  {
+   "item_tag": "C-50",
+   "source": "polish#31",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/event-lines.ts:97-110"
+   ]
+  },
+  {
+   "item_tag": "C-55",
+   "source": "polish#32",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/data/import.ts:601"
+   ]
+  },
+  {
+   "item_tag": "C-58",
+   "source": "polish#33",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/project-status.ts:293-300"
+   ]
+  },
+  {
+   "item_tag": "C-59",
+   "source": "polish#34",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/event-lines.ts:550-551",
+    "packages/capabilities/src/githost/local-only.ts:122-130",
+    "apps/ui/src/pages/SessionPage.tsx:56-75"
+   ]
+  },
+  {
+   "item_tag": "P7-1",
+   "source": "polish_add#1",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/budget-pause.ts:200-206"
+   ]
+  },
+  {
+   "item_tag": "P7-2",
+   "source": "polish_add#2",
+   "area": "polish-words",
+   "files": [
+    "CHANGELOG.md:89-91"
+   ]
+  },
+  {
+   "item_tag": "P7-3",
+   "source": "polish_add#3",
+   "area": "polish-words",
+   "files": [
+    "docs/maintainers/validation.md:165-166"
+   ]
+  },
+  {
+   "item_tag": "P7-4",
+   "source": "polish_add#4",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/SessionPage.tsx:286-298"
+   ]
+  },
+  {
+   "item_tag": "P7-5",
+   "source": "polish_add#5",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/result.ts:88",
+    "packages/runtime/src/session/result.ts:329-341"
+   ]
+  },
+  {
+   "item_tag": "P7-6",
+   "source": "polish_add#6",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/dependent-branches.ts:84",
+    "packages/runtime/src/daemon/request-words.ts:830",
+    "packages/runtime/src/daemon/request-words.ts:984",
+    "packages/runtime/src/daemon/request-words.ts:1000",
+    "packages/runtime/src/daemon/event-lines.ts:438-439",
+    "packages/runtime/src/daemon/event-lines.ts:446",
+    "packages/runtime/src/loop/merge.ts:736",
+    "apps/ui/src/pages/project/SummaryTab.tsx:305",
+    "apps/ui/src/pages/project/SummaryTab.tsx:498",
+    "apps/ui/src/pages/project/SummaryTab.tsx:537",
+    "apps/ui/src/lib/task-actions.ts:56",
+    "packages/runtime/src/daemon/api-types.ts",
+    "apps/ui/src/pages/project/TaskDrawer.tsx:171",
+    "apps/ui/src/pages/project/TasksTab.tsx:505",
+    "apps/ui/src/pages/project/TasksTab.tsx:658"
+   ]
+  },
+  {
+   "item_tag": "P7-7",
+   "source": "polish_add#7",
+   "area": "polish-words",
+   "files": [
+    "packages/capabilities/src/githost/pr-executor.ts:325-336",
+    "packages/runtime/src/session/dependent-branches.ts:70-77"
+   ]
+  },
+  {
+   "item_tag": "P7-8",
+   "source": "polish_add#8",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/HomePage.tsx:162-169"
+   ]
+  },
+  {
+   "item_tag": "P7-9",
+   "source": "polish_add#9",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/lib/time.ts:3-14",
+    "apps/ui/src/lib/time.ts:32-37",
+    "apps/ui/src/pages/SessionPage.tsx:35-40",
+    "apps/ui/src/pages/SessionPage.tsx:490",
+    "apps/ui/src/pages/BillingOrderSection.tsx:35"
+   ]
+  },
+  {
+   "item_tag": "P7-10",
+   "source": "polish_add#10",
+   "area": "polish-screens",
+   "files": [
+    "packages/commands/src/commands/settings.ts:679-682"
+   ]
+  },
+  {
+   "item_tag": "P7-11",
+   "source": "polish_add#11",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/loop/merge.ts:1034",
+    "packages/runtime/src/daemon/pull-requests.ts:427"
+   ]
+  },
+  {
+   "item_tag": "P7-12",
+   "source": "polish_add#12",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/SettingsPage.tsx:957",
+    "apps/ui/src/lib/use-hash-scroll.ts:9-18"
+   ]
+  },
+  {
+   "item_tag": "P7-13",
+   "source": "polish_add#13",
+   "area": "polish-words",
+   "files": [
+    "docs/maintainers/runtime.md:49-50",
+    "docs/maintainers/runtime.md:3040",
+    "docs/maintainers/runtime.md:3432",
+    "docs/maintainers/runtime.md:6136",
+    "docs/maintainers/runtime.md:6158",
+    "packages/runtime/src/daemon/compose.ts:858",
+    "packages/runtime/src/daemon/compose.ts:2475"
+   ]
+  },
+  {
+   "item_tag": "P7-14",
+   "source": "polish_add#14",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/credential-choice.ts:137-140",
+    "packages/runtime/src/daemon/plan-tasks.ts:65-79"
+   ]
+  },
+  {
+   "item_tag": "P7-15",
+   "source": "polish_add#15",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/credential-choice.ts:124-127"
+   ]
+  },
+  {
+   "item_tag": "P7-16",
+   "source": "polish_add#16",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:262-271",
+    "apps/ui/src/pages/project/StartSessionDialog.tsx:406-418"
+   ]
+  },
+  {
+   "item_tag": "P7-17",
+   "source": "polish_add#17",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/event-lines.ts:117-131"
+   ]
+  },
+  {
+   "item_tag": "P7-18",
+   "source": "polish_add#18",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/request-words.ts:660-665",
+    "packages/runtime/src/daemon/request-words.ts:667-692"
+   ]
+  },
+  {
+   "item_tag": "P7-19",
+   "source": "polish_add#19",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/request-words.ts:578-585"
+   ]
+  },
+  {
+   "item_tag": "P7-20",
+   "source": "polish_add#20",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/cancel-words.ts:70-81",
+    "packages/runtime/src/daemon/task-words.ts:347-348"
+   ]
+  },
+  {
+   "item_tag": "P7-21",
+   "source": "polish_add#21",
+   "area": "polish-words",
+   "files": [
+    "apps/ui/src/lib/task-actions.ts:52",
+    "apps/ui/src/pages/project/TaskDrawer.tsx:160-172",
+    "apps/ui/src/pages/project/TasksTab.tsx:505",
+    "apps/ui/src/pages/project/TasksTab.tsx:658"
+   ]
+  },
+  {
+   "item_tag": "P7-22",
+   "source": "polish_add#22",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/notifications/producers.ts:434",
+    "packages/runtime/src/notifications/producers.ts:395-410"
+   ]
+  },
+  {
+   "item_tag": "P7-23",
+   "source": "polish_add#23",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/session/executor.ts:1223"
+   ]
+  },
+  {
+   "item_tag": "P7-24",
+   "source": "polish_add#24",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/pull-requests.ts:508-519"
+   ]
+  },
+  {
+   "item_tag": "P7-25",
+   "source": "polish_add#25",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/take-out-words.ts:28-38"
+   ]
+  },
+  {
+   "item_tag": "P7-26",
+   "source": "polish_add#26",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/src/daemon/request-words.ts:139-152"
+   ]
+  },
+  {
+   "item_tag": "P7-27",
+   "source": "polish_add#27",
+   "area": "polish-words",
+   "files": [
+    "packages/capabilities/src/web/fetch.ts:68-69",
+    "packages/capabilities/src/web/fetch.ts:305",
+    "packages/capabilities/src/web/fetch.ts:319"
+   ]
+  },
+  {
+   "item_tag": "P7-28",
+   "source": "polish_add#28",
+   "area": "polish-screens",
+   "files": [
+    "packages/runtime/src/daemon/settings-view.ts:311"
+   ]
+  },
+  {
+   "item_tag": "P7-29",
+   "source": "polish_add#29",
+   "area": "polish-words",
+   "files": [
+    "docs/user-guide.md:877-879"
+   ]
+  },
+  {
+   "item_tag": "P7-30",
+   "source": "polish_add#30",
+   "area": "polish-words",
+   "files": [
+    "packages/capabilities/src/browser/session.ts:979-989"
+   ]
+  },
+  {
+   "item_tag": "P7-31",
+   "source": "polish_add#31",
+   "area": "polish-screens",
+   "files": [
+    "packages/runtime/src/wiring/web-access.ts:514-524",
+    "packages/commands/src/commands/settings.ts:376"
+   ]
+  },
+  {
+   "item_tag": "P7-32",
+   "source": "polish_add#32",
+   "area": "polish-screens",
+   "files": [
+    "apps/ui/src/pages/WebAccessInput.tsx:137"
+   ]
+  },
+  {
+   "item_tag": "P7-33",
+   "source": "polish_add#33",
+   "area": "polish-words",
+   "files": [
+    "packages/runtime/test/credential-chooser.test.ts:419-421",
+    "apps/ui/test/real-daemon.test.ts:7275",
+    "apps/ui/test/real-daemon.test.ts:7347"
+   ]
+  },
+  {
+   "item_tag": "P7-34",
+   "source": "polish_add#34",
+   "area": "polish-words",
+   "files": [
+    "packages/critic/src/session-review.ts:588-592",
+    "packages/critic/src/session-review.ts:332"
+   ]
+  }
+ ],
+ "dropped": []
+}

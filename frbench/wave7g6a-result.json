@@ -1,0 +1,97 @@
+{
+ "merged": [
+  "fix/leftovers7-merge (14 commits, d6f4ce2..b0ecd2e) as merge commit a2caf52: R-branch, R-dirtyworktree, R-exclude (x2), R-mergeretry (x2), R-queuedwords, R-overviewcalls (UI side only, the server-side cache was dropped again in b0ecd2e), R-pin, R-rebuildcard, R-repooffer, R-takeoutdep, R-testpaths. The area left no report. The branch held finished, signed commits with tests and docs, and its last Playwright run in its worktree passed (16:42). It covers 11 of the area's 16 problems; the other 5 were never started (see problems_left).",
+  "fix/leftovers7-session (11 commits, 118eeb0..7f886af) as merge commit ca2c58d: R-criticbudget, R-criticcred, R-waitqueue, R-startedline, R-recovery, R-sessreview, R-failedrun, R-planunit, R-chatcache, R-estimates, plus a lint/format commit and a bench stand-in fix. The area left no report. All 10 of its problems are addressed, ADRs 0100 and 0112 are amended, and runtime.md, critic.md, apps.md, testing.md and user-guide.md are updated. Its task list stopped at 'docs, bench before/after, full validation, report' (in progress), and its last Playwright run passed (16:42).",
+  "leftovers7-web: NOT merged. No fix/leftovers7-web branch or worktree exists (git branch -a, git worktree list and the reflog show nothing), so the area produced no work."
+ ],
+ "head_sha": "ca2c58d40288215792350f643ea9d0eb58c82965",
+ "pushed": true,
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts (append-only per shared_files): both areas appended a describe block at the end of the file, and the two blocks shared the closing '}, 120_000);\\n});'. Resolved by keeping the leftovers7-merge describe whole, then the leftovers7-session describe whole. Checked with git diff against each branch: no line of either side was lost. git grep -n '^<<<<<<< ' finds nothing.",
+  "Auto-merged without conflict and checked by hand: task-words.ts (merge: queued words by mergeMode at the queued case; session: credential wait only for tasks whose reason is CREDENTIAL_WAIT_REASON; disjoint hunks, as shared_files says), task-display.ts (merge: mergeMode in loadTaskDisplayContext; session: 'credential_refused' run outcome), fake-daemon.ts, inbox.test.tsx, tasks.test.tsx, runtime.md, apps.md, testing.md, user-guide.md."
+ ],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "pnpm lint",
+   "result": "pass (exit 0)"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "pass (exit 0)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "pass (exit 0)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "pass: 472 files, 4856 passed, 6 skipped (328.6 s)"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "pass: docs-check ok (82 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "pass: link-check ok (206 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "pass: clean (2065 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "pass: 5 files passed, 6 skipped; 30 tests passed, 74 skipped (Postgres cases skip without FORERUNNER_TEST_PG, as expected)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "pass: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test",
+   "result": "pass: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "pass: Failures: None (report /tmp/forerunner-injection-report/injection-report.md)"
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 pnpm test (no git identity, checked: git config user.email rc=1)",
+   "result": "pass: 472 files, 4856 passed, 6 skipped"
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 (cd apps/ui && pnpm vitest run --config vitest.config.ts)",
+   "result": "pass: 85 files, 941 tests"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "pass: 34 passed"
+  },
+  {
+   "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+   "result": "not run: neither area touched apps/desktop (git diff 98e741e..HEAD -- apps/desktop is empty)"
+  },
+  {
+   "command": "signature check: git rev-list origin/claude/nifty-knuth-f9udt0..HEAD (27 commits), grep '^gpgsig'",
+   "result": "all 27 signed, nothing printed"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "pushed 98e741e..ca2c58d on the first try, no force"
+  }
+ ],
+ "smoke": "node scripts/bench/start.mjs --name merge-w12 --daemon-port 48410 --ui-port 2010 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w12: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. Approve and start wrote 2 tasks and started the session, the session completed with 2/2 tasks done, index.html/styles.css/script.js were written, Files and the Overview show them, and the chat names a task. The journey script needed no change. The bench was stopped with scripts/bench/stop.mjs and its home deleted. Result: /tmp/frbench/merge-w12/steps/smoke-result.json; logs: /tmp/frbench/merge-w12-logs/.",
+ "problems_left": [
+  "leftovers7-web: none of its 16 problems was worked on, because no branch exists. Still open: the browser sandbox fallback on any launch failure (major, security boundary), the site rule failing open, Read's updatedToolOutput shape on the subscription, late usage not booked after Stop or kill, modelUsage priced at the run model, the stale 'Research reads:' line, a refused-key wait not ended by a new subscription, limits written back without a version check, the credential wake dropping waits before a start, starts refused during a planning call, the Start dialog promising a run while the only credential is refused, runs-on ignoring Refused/Resting, needsPersonsAnswers matching 'owner's decision', New task's runs-on ignoring the typed words, GET /inbox running the chooser per plan task per poll, and no code_commands restart test. The whole area needs a new run.",
+  "leftovers7-merge, 5 of its 16 problems never started: (1) rebuilds that could not run are kept only in memory and are lost across a restart (dependent-branches-restart.test.ts acceptance); (2) no shared worktree lock between a rebuild and a merge or mergeChecked's update path; (3) chain of three with a busy middle: the third PR keeps the first task's pre-squash commits; (4) no conflict notice when an open task PR's mergeable turns false after another merge; (5) when this computer's copy cannot follow a merge, Files still says 'As merged on GitHub'.",
+  "leftovers7-merge R-overviewcalls is only partly done: b0ecd2e dropped the minute-long server cache of repository settings and branch rules because it showed GitHub rule changes up to a minute late and broke two real-daemon contract cases. Each look at the project's own changes still makes about 4 GitHub calls; only the UI's extra reloads on other projects' changes were removed.",
+  "Neither area wrote a report, so these are missing: live_check steps for check_in_the_app, notes_for_other_areas for polish (wave 13), the list of new or changed sentences, and per-area not_done. New sentences polish should review, found in the merged code: 'Stopped: Anthropic refused the credential' (task-display.ts runOutcomeWords), mergedUpdateWords 'Merged #N: \"<title>\".', redoWhileTakingOutSentence in take-out-words.ts, the repo.create refusal 'A card in your Inbox already asks to create a repository for \"X\": answer it there.' with the card's ask, the rebuild card's Merge/Redo explains in request-words.ts, and the session area's critic pause/wait and recovery lines (runner.ts, review-refusal.ts, recovery.ts).",
+  "Neither area went through the workflow's review or fixup step, because the fix steps returned no report. The merged code is green on every suite here, but no independent reviewer has checked it.",
+  "Not run here: CI on Windows and Linux and the Desktop app workflow for ca2c58d."
+ ]
+}

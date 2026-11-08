@@ -1,0 +1,272 @@
+{
+ "area": "leftovers7-merge",
+ "branch": "fix/leftovers7-merge",
+ "head_sha": "b0ecd2e5767d4c01ee5a65ab5954f5f2fa7e4de1",
+ "commits": [
+  {
+   "sha": "d6f4ce2",
+   "subject": "pr-executor: one branch per task, never the first eight characters of its id (R-branch, U-028)"
+  },
+  {
+   "sha": "298f201",
+   "subject": "pr-executor: a run cut short by a crash leaves nothing for the next one to trip on (R-dirtyworktree, W6-24)"
+  },
+  {
+   "sha": "0355119",
+   "subject": "local-only: a reused worktree follows a repository that starts tracking \"Local only\" (R-exclude, U-037)"
+  },
+  {
+   "sha": "256537e",
+   "subject": "merge: the retry pass reads the checks before a gated call, and a merge it makes is an Update (R-mergeretry, U-028)"
+  },
+  {
+   "sha": "e91e3a2",
+   "subject": "task-words: a queued accept reads \"Accepted · merging\" in the automatic merge mode, as the Overview says (R-queuedwords, U-028)"
+  },
+  {
+   "sha": "70d1b09",
+   "subject": "pull-requests: the Overview keeps a repository's rules a minute and reads its list only for its own project's changes (R-overviewcalls)"
+  },
+  {
+   "sha": "30c954e",
+   "subject": "real-daemon: the Update case reads GET /inbox with the daemon's human (R-mergeretry)"
+  },
+  {
+   "sha": "5fc71b0",
+   "subject": "merge-record: a redo's new pull request moves the record through the graph; no Redo while a take-out is open (R-pin, U-037)"
+  },
+  {
+   "sha": "65a0cdb",
+   "subject": "dependent-branches: the rebuild card offers Merge and Redo, never \"I merged it\" while the PR is open (R-rebuildcard, U-028)"
+  },
+  {
+   "sha": "05c0011",
+   "subject": "repo-create: a linked repository withdraws the agent's offer; Chat's repo.create points to an open offer (R-repooffer, U-037)"
+  },
+  {
+   "sha": "e53810c",
+   "subject": "pr-executor: Take this work out never reverts a dependency's work carried in a merge commit (R-takeoutdep, U-037)"
+  },
+  {
+   "sha": "a62edaa",
+   "subject": "bench, e2e: test paths reach the case they are named for (R-testpaths)"
+  },
+  {
+   "sha": "6475805",
+   "subject": "local-only: only a task's worktree drops the Local only exclude line; this computer's copy keeps it (R-exclude)"
+  },
+  {
+   "sha": "b0ecd2e",
+   "subject": "pull-requests: read the rules at every look again; the Overview's own reads stay narrowed (R-overviewcalls)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "[major] R-branch: two tasks with the same title created in one repository within about 65 s got the same branch (fr/<first 8 hex of the UUIDv7>-<slug>). The second found the first's open pull request by branch name, resumed it and force-pushed its own work onto it. On the bench both tasks pointed at PR #2, and the result said 'Left 2 reviewed pull requests' while only one was listed.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'leftovers of wave 7, merge side' > 'two tasks titled 'Write the guide' created a second apart get two branches and two pull requests; the second carries none of the first's commits (R-branch)' and '... a task whose stored branch is another task's (made before the fix) does not take over that task's pull request (R-branch)'; apps/ui/test/real-daemon.test.ts 'leftovers of wave 7, merge side (leftovers7-merge)' > 'two tasks titled 'Write the guide' created together get two pull requests, each with its own work (R-branch)' (failed: same pr_url)",
+   "how": "New taskBranchName(task) in pr-executor.ts builds fr/<last 8 hex of the id, its random part>-<title>, keeping the old shape. openedForAnotherTask(pr, taskId) reads the 'Task <id>, session' line in Forerunner's PR body. A PR on the task's branch that names another task is never resumed: a task that stored a shared name before this fix moves to its own name (unusedBranch, which also backs freshBranch). take-out.ts's fallback branch name uses taskBranchName too.",
+   "check_in_the_app": "Bench (--githost): create a project on bench/seeded, add two tasks both titled 'Write the guide' a second apart, then Start session. On the Overview under 'Waiting for you to merge' there are two rows, each with its own Merge, and GET /tasks/:id gives each task its own prUrl. Evidence: /tmp/frbench/fix-leftovers7-merge-evidence/02-before-same-titles-overview.png (one PR #2) and 04-after-same-titles-overview.png (#3 and #4). Live check (session lead, forerunner-sandbox): create two tasks with the same title within a minute and run a session. GitHub gets two PRs from two branches fr/<8hex>-<title> with different hex, and neither PR has an 'Updated by session' comment from the other task."
+  },
+  {
+   "problem": "[minor] R-dirtyworktree (W6-24 for a crash): a run cut short by a crash or by closing the app left uncommitted files in the task's worktree with no work-in-progress commit. The next run either carried them into its own work or was refused by git ('untracked working tree files would be overwritten by checkout'). A rebase left half done made the next conflict card name no file and lost the task's commit.",
+   "u_ids": [
+    "W6-24"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'a run the app's close or a crash cut short leaves files with no marker; the next run is not refused by git, starts clean and keeps them under the failed ref (R-dirtyworktree, W6-24)' (git checkout -B refused) and 'a rebase a crash left half done in the task's worktree is ended before the next run, which updates its pull request (R-dirtyworktree)' (summary 'rebase conflict in ' with no file)",
+   "how": "Right after the fetch, executeIn now calls cleanAfterCutShortRun. It runs GitOps.abortUnfinished() (new: ends a rebase, merge, revert or cherry-pick that is in progress, found with git rev-parse --git-path) and then, if the worktree is dirty, setLeftoversAside under refs/forerunner/failed/<task>, the same as for a failed run.",
+   "check_in_the_app": "Bench with --githost and a task on bench/seeded whose specialist is slow (FORERUNNER_BENCH_DELAY_MS=3000). Start a session and run restart-daemon.mjs --hard while the run writes, then Start again. The task finishes with a PR, the daemon log has no 'untracked working tree files would be overwritten', and in the task's worktree under <home>/worktrees/<task> 'git for-each-ref refs/forerunner/failed/' lists the leftovers. Live: not needed (no model behaviour involved)."
+  },
+  {
+   "problem": "[minor] R-exclude: a reused task worktree kept '/Local only/' in .git/info/exclude after the repository started tracking a folder named Local only, so new files the agent wrote there were silently left out of its commit and out of its changed files.",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'after the repository starts tracking 'Local only/', a reused worktree commits a new file there (R-exclude)'",
+   "how": "excludeNeverPushed(dir, folders, { dropOthers }) now removes Forerunner's own line for a NEVER_PUSHED folder that is no longer in folders, but only for task worktrees (the PR executor passes dropOthers). This computer's copy stays append-only, so the person's '(yours)' files stay out of git. That case was caught by loop-docs.test.ts and fixed in 6475805. pr-executor's excludedFolders(git, target) is used both for the exclude and for the run's changedFiles/ownFiles filter.",
+   "check_in_the_app": "Bench: a repository project whose main later gets a tracked 'Local only/a.txt'. Redo a task that writes 'Local only/b.txt': its PR on the fake GitHub contains Local only/b.txt and the task drawer lists it under files changed. In Files, the person's own Local only files on this computer's copy still never appear in a docs commit."
+  },
+  {
+   "problem": "[minor] R-mergeretry: every minute the watcher's retry pass made a full gated merge_pr call for each waiting record (its own token, one audit row, about 5 GitHub calls), up to 1440 times per record. A merge made by the retry or by the start-up resume posted no Inbox Update (design §3.8).",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/merge-record.test.ts 'the retry pass reads the checks first and says what it merged (R-mergeretry)' > 'checks still running: no token, no audit row, the attempt counted; once green one audit row, the merge, and one Update 'Merged #N'' and '> the start-up resume: a record a dead process left merging that GitHub merged meanwhile posts the Update once'; at the boundary: real-daemon.test.ts '... on the fake GitHub (leftovers7-merge)' > 'a Merge that waited for its checks and merged later by the retry pass is one Update in GET /inbox (R-mergeretry)'",
+   "how": "ReviewedPrMerge.stillWaiting(record) runs before mergeRecorded for a waiting_checks/checks_pending record. It reads the PR and the check runs and statuses on the reviewed head. While they are pending (PR open, same head, not in conflict) it only counts the attempt (attempts+1, so the one-day limit still applies). tellMerged(task, record) sends one message, mergedUpdateWords: 'Merged #N: \"<title>\".', with the project and task set. It is sent for a merge made by the retry (authority not person, no session) and for one found merged by resumeAtStart. A session merge and the person's own click send none.",
+   "check_in_the_app": "Overview of a repository project whose repository has a check still running on the PR: press Merge. The row says '#N merges when its checks pass.' While the check runs, the daemon's audit log gets no merge_pr rows per minute. When the check passes, the next watcher poll merges it and the Inbox's Updates list shows 'Merged #N: \"<task>\".' once. Live (forerunner-sandbox has no checks): after a plain Merge, the Inbox gets no Update, because it was the person's own click."
+  },
+  {
+   "problem": "[minor] R-queuedwords: in the automatic merge mode, a queued record without the person's approval read 'merging' on the Overview but 'Accepted · waiting for you to merge' on the Tasks row.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts '... on the fake GitHub (leftovers7-merge)' > ''Merge automatically after review': an accepted task whose merge has not run reads the same on the Tasks tab and the Overview, and neither says it waits for you (R-queuedwords)' (got 'Accepted · waiting for you to merge')",
+   "how": "TaskDisplayContext.mergeMode is filled by loadTaskDisplayContext from the project's settings. taskDisplay's queued case gives 'Accepted · merging' in after_review and keeps 'Accepted · waiting for you to merge' otherwise.",
+   "check_in_the_app": "Settings > Other settings: set 'Who merges accepted work' to 'Merge automatically after review' for a repository project with an accepted task whose merge has not run yet. The Tasks row reads 'Accepted · merging', the same as the Overview row. Switch back to 'You press Merge': both read 'waiting for you to merge' and the Overview offers Merge."
+  },
+  {
+   "problem": "[minor] R-overviewcalls (UI half): while a pull-request row was settling (waiting_checks), the Overview read its list again on every new copy of its card. The project list is reloaded for any project's change, so other projects' changes made it read again too (12 reads instead of 2 in the test).",
+   "u_ids": [],
+   "failing_test_before": "apps/ui/test/project-overview.test.tsx 'the Overview reads its pull requests again only when its own project changes (R-overviewcalls)' > 'a row that waits for its checks: ten refreshes of the project list for other changes add no read; this project's change reads it again' (12 reads, not 2)",
+   "how": "The UI store's 'projects' reducer (apps/ui/src/store/store.ts) keeps the existing object for any card whose content has not changed. RepositoryFiles' settling reload therefore runs only when this project's own card changes, through project.upsert on its project.changed event. The fake daemon counts GET /projects (projectListReads). The server-side minute cache of rules was tried and dropped: see not_done.",
+   "check_in_the_app": "Overview of a repository project with a row reading '#N merges when its checks pass.' Answer cards and run sessions in another project: the daemon log shows no GET /projects/:id/pull-requests for this project from those changes. A merge in this project (a project.changed event) still refreshes the rows."
+  },
+  {
+   "problem": "[minor] R-pin: a redo's new PR moved a merged merge record back to queued outside the state graph and cleared its take-out fields. Redo was offered while a take-out PR was open, and that PR was then neither listed nor settled.",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "packages/state/test/suite.ts 'merge records (ADR 0111)' > 'a redo's new pull request moves a merged record back to queued through the graph; an open take-out stays on it (R-pin)' (SQLite and Postgres); apps/ui/test/real-daemon.test.ts 'Redo while the task's work is being taken out is refused in words; the take-out stays listed and the task stays as it was (R-pin)' (Redo was accepted)",
+   "how": "MERGE_RECORD_TRANSITIONS now has merged: ['queued'], and pin goes through assertTransition. pin keeps an open take-out and clears only a merged or closed one. task.reopen (commands) refuses Redo while take_out_state is open, with redoWhileTakingOutSentence (take-out-words.ts): '\"X\" is being taken out in #9: merge or close #9 first, then redo it.' task-actions.ts offers no action on a Done row whose takeOut.state is 'open', and the fake's actionTarget refuses the same way. data-model.md was regenerated and ADR 0113 amended.",
+   "check_in_the_app": "Tasks tab: take a merged task out ('Take this work out'). Its row says 'Taken out in #N (waiting for you to merge)' and offers no Redo. Typing 'redo <task>' in Chat gets the refusal sentence. Merge #N on the Overview: the row says 'Taken out in #N' and Redo is offered again."
+  },
+  {
+   "problem": "[minor] R-rebuildcard: the card filed when a rebuild voided a review was the merge step's left-open card, offering 'I merged it' (primary) and 'Leave it open'. 'I merged it' wrote 'merged by you' on the task while the PR was still open, and no Merge or Redo was offered.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'the rebuild card offers Merge and Redo, never 'I merged it' while the pull request is open; Merge merges it through the merge step and the card says so (R-rebuildcard)' and 'the rebuild card's Redo makes the task ready again; nothing is merged (R-rebuildcard)'; apps/ui/test/inbox.test.tsx 'a rebuild's card offers Merge and Redo ...' (shows the choices and sends 'Merge')",
+   "how": "New REBUILD_CARD_OPTIONS in merge.ts: rebuilt → ['Merge','Redo'], conflict → ['Redo','Leave it open']. fileLeftOpenRequest takes options. DependentBranches.card passes them, both on a new card and when it updates an open left-open card. syncPrAnswers applies Merge through deps.merge (ReviewedPrMerge.approveInOrder + mergeApproved, the person's approval through the gated step, as the Overview's Merge does). Without that dependency it queues the record with approval 'person' for the retry pass. Redo uses TaskRepo.reopen → ready, then resumeWork through deps.start. request-words gives each option its line and the card its outcome ('Merged #N.' / 'Redone: ...'). compose passes merge and ...resumeStart to syncPrAnswers (one hunk).",
+   "check_in_the_app": "Live check (phaseE7-live.md §1, the new optional step): under 'Merge automatically after review', close a dependency's PR on GitHub before its dependent merges. After one poll the Inbox has one card '\"<dependent>\" was rebuilt without pull request #A' with buttons Merge and Redo and no 'I merged it'. Merge merges the dependent and the card says 'Merged #B.'. Redo instead makes the task Ready and starts a session, which opens a PR from a fresh branch."
+  },
+  {
+   "problem": "[minor] R-repooffer: the repository offer and the chat's repo_create could both be open for one project. Nothing withdrew the offer once a repository was linked, so its 'Create the repository' then failed with a warning. The chat card was generic ('a GitHub repository for X', lowercase yes/no).",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "packages/runtime/test/repo-create.test.ts 'a repository made on the project page while the agent's offer is open withdraws the offer: one card at most, never a warning (R-repooffer)' and 'Chat asks for a repository while the agent's offer is open: no second card, the answer points to the offer (R-repooffer)'",
+   "how": "withdrawRepoOffers(store, projectId) runs after RepoCreator.create links a repository, and RepoProposals.sync runs withdrawLinked for a link made any other way. An offer answered after a link is marked already_linked and sends no warning. repo.create's plan refuses for any source except ui while an offer is open: 'A card in your Inbox already asks to create a repository for \"X\": answer it there.' The command's card now has an ask (a question title with Yes/No that say what they do). ADR 0097 amended.",
+   "check_in_the_app": "A project without a repository that has code work planned: its Inbox offer 'Create a repository for \"X\"?' is open. Type 'create a repository for X' in Chat: the answer points to the offer and no second card appears. Press 'Create a repository' on the project page and confirm: the offer moves to Answered with 'Closed: it no longer needs you.' and no warning message appears."
+  },
+  {
+   "problem": "[minor] R-takeoutdep: 'Take this work out' on a dependent PR that GitHub merged with a merge commit carrying its dependency's commits reverted the merge whole with -m 1, so the dependency's work left main too.",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "packages/capabilities/test/take-out.test.ts 'a dependent merged on GitHub with a merge commit that carried its dependency's work: Take this work out never takes the dependency's files out of main (R-takeoutdep)' (menu.ts gone from main)",
+   "how": "takeOutIn now asks carriesDependencyWork(git, task, mergeSha) before using a mainline plan. It checks whether any dependency of the task (direct or through others), by its branch on the host or its record's reviewed commit, is in the merged parent but not the first parent. If so the result is unknown_shape: 'was merged in a way Forerunner cannot undo safely; undo it on GitHub'. ADR 0113 amended.",
+   "check_in_the_app": "On a fake GitHub (or the sandbox): merge a dependent task's PR on GitHub with 'Create a merge commit' before its dependency's PR. Then press 'Take this work out' on the dependent. The answer says '#N was merged in a way Forerunner cannot undo safely; undo it on GitHub.' and main still has the dependency's files."
+  },
+  {
+   "problem": "[minor] R-testpaths: some tests never reached the case they were named for. The bench stand-in planner left the person's questions out of firstSession.items. The e2e 'Stop now asks once' took its 'already Done' branch under load. The chain's 'not accepted yet' row and Files after an in-app Merge had no boundary case.",
+   "u_ids": [],
+   "failing_test_before": "testenv/test/bench-role-player.test.ts 'a plan with a task for the person lists it in the first session at no cost, as the live model does (R-testpaths: live replies list it at 0)'. The e2e and real-daemon cases pass on the current code; they cover paths no test reached.",
+   "how": "plans.ts lists every task in plan order, the person's at estimateUsdMicro 0, as in intake-live1.json. New fake-daemon hook POST /__test/hold-sessions {hold} keeps started sessions running until stopped (reset clears it). session.spec.ts always clicks Stop now, checks that nothing is sent before the confirmation and that exactly one stop is sent after. New real-daemon case: B's row is blocked with '... which is not accepted yet' while A is back in review; then the chain is merged in the app and GET /projects/:id/files lists both files without a watcher poll.",
+   "check_in_the_app": "Bench with FORERUNNER_BENCH_PERSON=1: the plan's first session (model-call log, intake reply) lists the person's task at 0. Live (phaseE7-live.md §5 new step): a plan with a person task prices the person's questions at 0."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "R-overviewcalls, server side: each Overview look still makes 4 GitHub calls (listPullRequests, getRepo, getBranchRules per base).",
+   "why": "A cache was built (readKept: the repository settings and branch rules kept a minute, then keyed on the open PRs too) and dropped. It made the Overview show a rule set or removed on GitHub for up to a minute, which breaks design §1 ('what the app says is true now'). The existing real-daemon cases 'a branch rule that needs an approving review ...' and 'Forerunner's docs pull request merges on the click ...' assert the rules of the moment, and the second still failed with the PR-keyed cache. The UI fix removes the reads caused by other projects' changes, which was the bulk. A cheaper rules read needs a decision on how stale the Overview may be (session lead or owner)."
+  },
+  {
+   "problem": "R-conflict: no conflict notice. An open task PR whose mergeable turned false after another merge is never noticed; the Overview keeps offering Merge and no card is filed.",
+   "why": "Not built for lack of time in this wave. It needs a watcher change (pullRequestState returns early for open PRs, dependent-branches.ts:120), a per-project card with dedupe, and a compose wiring hunk (compose belongs to leftovers7-web). Verified still true at HEAD. ADR 0111's known gap is kept."
+  },
+  {
+   "problem": "R-owed: rebuilds that could not run (busy or dirty worktree, failed step) are remembered only in memory (DependentBranches.owed). A squash-merge seen while the dependent was busy, followed by a restart, is never rebuilt.",
+   "why": "Not built for lack of time. It needs persisted state (a column on merge_record or a project setting) plus a restart test. Verified still true at HEAD: dependent-branches.ts owed is a Map; sweep re-finds only redone or cancelled dependencies. ADR 0111's known gap is kept."
+  },
+  {
+   "problem": "R-lock: there is no shared worktree lock. A merge already under way when a dependency closes can finish before the rebuild pushes, and ReviewedPrMerge's own git steps in a task worktree are not serialised with a rebuild of that worktree.",
+   "why": "Not built for lack of time. pr-executor's worktreesInUse/inWorktree are still module-private, and loop/merge.ts builds GitOps on the task worktree without them. The fix needs an exported lock used by both, plus a host-held merge test. ADR 0111's known gap is kept."
+  },
+  {
+   "problem": "R-chain: in a chain of three, if the middle task's worktree is busy when the first is squash-merged, the third follows the rebuilt middle through rebuiltTo and is not rebuilt.",
+   "why": "Not built for lack of time. It needs a careful change to heldState/rebuiltTo in pr-executor.ts and a three-task composed test with a held worktree. Verified the code path is unchanged at HEAD."
+  },
+  {
+   "problem": "R-copystuck: when this computer's copy cannot be brought to what is merged, Files keeps saying 'As merged on GitHub, updated HH:MM' and never says why it stopped following.",
+   "why": "Not built for lack of time. It needs a new CopyView field, a GET /projects/:id/files shape change with its fake daemon and real-daemon case, and the UI line. Verified still true at HEAD (docs.ts only logs)."
+  },
+  {
+   "problem": "Notification for the merged-later Update (R-mergeretry).",
+   "why": "The Update is an Inbox message filed from loop/merge.ts. A desktop notification would need the notifier wired in compose.ts, which belongs to leftovers7-web; the fix scope said to file the Update from merge.ts. Named in ADR 0111's amendment."
+  },
+  {
+   "problem": "Bench before/after for the budget-refused review and for the rebuild card.",
+   "why": "The budget-refused review belongs to leftovers7-session. The rebuild card is covered by composed and UI tests (dependent-branches-merge.test.ts, inbox.test.tsx), but I did not walk it on the bench: it needs a PR closed on the bench's stand-in GitHub between sessions. Its live step is in check_in_the_app."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+   "result": "exit 0. Unit: 471 files, 4847 passed, 6 skipped. Lint: 69 warnings (all were there before), 0 errors. docs:check in pnpm check cannot diff against origin/main here, so it was run separately below."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (48 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (Postgres not set; expected); 30 tests passed, 74 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files passed, 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 85 files, 939 tests passed. The first full run failed 1 merge-in-app real-daemon case on the rules cache; the cache was removed in b0ecd2e and the rerun is green."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 34 passed (includes the stricter e2e/session.spec.ts 'Stop now asks once')"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found"
+  },
+  {
+   "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-leftovers7-merge-evidence/01-before-same-titles-tasks.png",
+   "/tmp/frbench/fix-leftovers7-merge-evidence/02-before-same-titles-overview.png",
+   "/tmp/frbench/fix-leftovers7-merge-evidence/before-same-titles.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-leftovers7-merge-evidence/03-after-same-titles-tasks.png",
+   "/tmp/frbench/fix-leftovers7-merge-evidence/04-after-same-titles-overview.png",
+   "/tmp/frbench/fix-leftovers7-merge-evidence/after-same-titles.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/merge-record.test.ts '(c) a merge whose checks still run is kept ... one audit row each'",
+   "why": "R-mergeretry: the retry pass that finds the checks still running reads them and makes no gated call, so the audit rows are [true, true] (the session's call and the merge), not [true, true, true]."
+  },
+  {
+   "test": "packages/runtime/test/merge-in-app.test.ts 'a Merge whose first PR waits for its checks keeps the order ...'",
+   "why": "R-mergeretry: the pass while A's checks run adds no audit row (rowsBefore, not rowsBefore + 1)."
+  },
+  {
+   "test": "packages/state/test/schema.test.ts 'migrates a v5 database forward ...' (merged record moves)",
+   "why": "R-pin: merged → queued is now in the graph (a redo's new PR, made by pin). The test now asserts that merged → merging and merged → waiting_checks are still refused, instead of merged → queued."
+  },
+  {
+   "test": "apps/ui/test/tasks.test.tsx 'a merged task's row and drawer offer Take this work out ...'",
+   "why": "R-pin: while the take-out PR #41 is open, the row offers no Redo (actions [] instead of ['Redo']). The test also checks that the fake daemon refuses a Redo in the daemon's words."
+  }
+ ],
+ "new_problems": [
+  "phaseE.json shared_files lists pr-executor.ts as 'leftovers7-session: all logic', but my area spec ('files') and fix_scope give pr-executor.ts's logic to leftovers7-merge, and leftovers7-session's file list does not include it. It looks like a rename slip from 'leftovers7-run'. I changed pr-executor.ts logic (taskBranchName, openedForAnotherTask, unusedBranch, cleanAfterCutShortRun, excludedFolders, carriesDependencyWork) and did not touch droppedWords.",
+  "The rebuild card's Merge on a rebuilt_changed record (own change differs from the reviewed one) goes to head_moved and back to the person, the same as the Overview's Merge for that PR. The person who pressed Merge after 'look at it before you merge it' may expect it to merge the current head. This is existing merge-step behaviour (keepsOwnChange), unchanged by me; worth a decision.",
+  "The merge step makes two gated calls when the record's reviewed head is the pre-rebuild head (head_moved, then the record moves to the rebuilt head when the own change is the same). Each call writes an audit row. This is visible in dependent-branches-merge.test.ts R-rebuildcard and is existing behaviour."
+ ],
+ "notes_for_other_areas": [
+  "Polish (wave 13) — new sentences to review, all in the design §5 style, CHF-free and id-free: loop/merge.ts mergedUpdateWords → 'Merged #N: \"<title>\".' (Inbox Update); daemon/take-out-words.ts redoWhileTakingOutSentence → '\"X\" is being taken out in #9: merge or close #9 first, then redo it.'; daemon/request-words.ts mergeLeftOpenCard explains for the rebuild card ('Merges #8 as it is now, as Merge on the Overview does.', 'The task is done again from main; a session starts for it.') and mergeLeftOpenOutcome ('Merged #8.', 'Merging #8.', 'Redone: the task is ready again and a session runs it.'); commands/repo.ts assertNoOpenOffer ('A card in your Inbox already asks to create a repository for \"X\": answer it there.') and the repo.create card's ask ('Create the private GitHub repository o/x for \"X\"? Its tasks then run on branches with pull requests.'); task-words.ts queued case now reuses 'Accepted · merging' for after_review.",
+  "Polish C-59 (no id on screen): branch names are still fr/<8 hex>-<title>, but the 8 hex are now the id's random end (pr-executor.ts taskBranchName). They are unique per task, so any branch display polish builds can drop the hex as long as the stored task.branch keeps it.",
+  "Functions polish depends on: pr-executor.ts taskBranchName, openedForAnotherTask; merge.ts REBUILD_CARD_OPTIONS, fileLeftOpenRequest(options), mergedUpdateWords, ReviewedPrMerge.stillWaiting/tellMerged; pr-answers.ts leftOpenAnswer (now also 'merge'/'redo'), PrAnswersDeps.merge/start; repo-create.ts withdrawRepoOffers, RepoProposals.withdrawLinked/openOfferFor; task-words.ts TaskDisplayContext.mergeMode; task-actions.ts (done + takeOut open → []); apps/ui/src/store/store.ts 'projects' reducer keeps unchanged card objects.",
+  "compose.ts (leftovers7-web's file): one hunk, syncPrAnswers({..., merge, ...resumeStart}) in syncApprovals, so the rebuild card's Merge and Redo work. Please keep it when merging.",
+  "task-words.ts: I changed only the queued-by-mode lines (and the import / the mergeMode context field). task-display.ts gained mergeMode from the project row it already read (the 'linked' line now reuses that row).",
+  "Fake daemon (append-only): projectListReads counter on GET /projects, holdSessions plus POST /__test/hold-sessions (cleared by reset), and fake-tasks.ts actionTarget refuses Redo while takeOut is open.",
+  "Live checks for the session lead: phaseE7-live.md §1 'Second chain' gets the new rebuild-card step (close a dependency's PR under 'Merge automatically after review': the card offers Merge and Redo, Merge says 'Merged #B.'). Add a same-title step (two tasks titled alike within a minute → two PRs, two branches). Note that forerunner-sandbox has no checks, so the retry pass's quiet waiting and the merged-later Update can only be shown on a repository with checks."
+ ]
+}

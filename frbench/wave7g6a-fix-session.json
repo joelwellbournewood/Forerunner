@@ -1,0 +1,258 @@
+{
+ "area": "leftovers7-session",
+ "branch": "fix/leftovers7-session",
+ "head_sha": "7f886afb3ff21231752c46cf557d70f8a8cbd4df",
+ "commits": [
+  {
+   "sha": "118eeb0d1ca9d2807597a9daa17bf2da3dd2b613",
+   "subject": "critic: a review a limit or a credential refused is a pause or a wait, never a verdict (U-042, U-078)"
+  },
+  {
+   "sha": "8de7f51e1308cf871ad8f1cd8647b491aad070e5",
+   "subject": "session: under Wait only the tasks that must wait wait, and the start line comes when the run starts (U-078, W5-20)"
+  },
+  {
+   "sha": "e992dcd554312e6b95e249b10f2d38523d08e1f3",
+   "subject": "session: an interrupted session says what it did and spent, and is the project's last session"
+  },
+  {
+   "sha": "741ba41b41929d6e406f90d6fa8a476dac2b142c",
+   "subject": "critic: the session review grades a task paused at a budget as a pause (U-042)"
+  },
+  {
+   "sha": "6f9b911bec8b56176966d2d0bd4b0fe4a967c9a3",
+   "subject": "executor: a run a credential stopped is \"Stopped at the usage limit\" or \"refused\", never \"Failed\" (U-078)"
+  },
+  {
+   "sha": "def1fe1b23cfea4343b51dcd3a5bff9eaa77f1a0",
+   "subject": "session: a stop at the subscription's share keeps no CHF amount (U-042)"
+  },
+  {
+   "sha": "266cb832dc73877c58f77c1c15ca099fc5b3e304",
+   "subject": "chat: a turn's line is the cached start of its message, so the next turn reads its history from the cache"
+  },
+  {
+   "sha": "9e3fe561dbeca1f0f70f6c12484a305748655794",
+   "subject": "test: lint and format the new adapter and recovery cases"
+  },
+  {
+   "sha": "57153134dd7689272e74e715aa477cef089821ae",
+   "subject": "docs: the prompt cache stand-in keys a prefix by the blocks the adapter sends"
+  },
+  {
+   "sha": "b48a67cd70c66d0a47ef9e83f54cef3606c18311",
+   "subject": "inbox: the plan card shows each task at the figure the Start dialog will show (U-074)"
+  },
+  {
+   "sha": "7f886afb3ff21231752c46cf557d70f8a8cbd4df",
+   "subject": "bench: the chat stand-in reads the person's line from the message's stable start"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "R-criticbudget (major): a task whose run fit the project's budget but whose critic review did not counted as a failed try. The critic turned the refused review into an 'escalate' verdict ('Critic review did not complete (budget_exceeded)'). The ladder then ran the coder 3 more times, each review was refused the same way, and the task ended on '\"X\" failed 4 times'.",
+   "u_ids": [
+    "R-criticbudget",
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"a review refused at the project's budget pauses the task\" (before: attempt 3, '\"Review page\" failed 4 times')",
+   "how": "packages/critic/src/critic.ts: a run that captured no verdict because a budget refused it now writes its Run row (budget_exceeded) and no Review or finding, then throws refusedReviewError (details.review = \"refused\"). A refusal after the verdict was recorded still completes the review. New packages/runtime/src/session/review-refusal.ts (reviewRefusalOf). runner.ts has a ReviewRefused branch: the task goes to needs_human with the limit's title and the one budget card (fileBudgetStopCard), the log line 'critic.review_paused' reads '\"X\" paused before its review: the project's budget of CHF 0.01 has no room for it.', no try is counted, and the session ends at a stop that ends sessions (reviewStopSource). ADR 0112 amended 2026-11-08; critic.md, runtime.md and the user guide updated. This shares its commit with R-criticcred because both run through one code path.",
+   "check_in_the_app": "1) Create a project with one small task (e.g. 'Write the club page'). 2) Open the project's Settings and set the project's budget to CHF 0.01. 3) Click Start session. Expected on the session page log: 'The coder started \"Write the club page\"', 'The coder finished ...', then a warning line '\"Write the club page\" paused before its review: the project's budget of CHF 0.01 has no room for it.' and 'Stopped at the project's budget: 1 needs you.' Only one coder run appears, with no 'The critic sent ... back' and no 'Trying again'. 4) Tasks tab: the row reads 'Paused at the project's budget', and its drawer shows one coder run and no failed try. 5) Inbox: exactly one card, '\"Write the club page\" paused at the project's budget of CHF 0.01', with Open Settings and Cancel task. There is no 'failed 4 times' card. 6) Raise the budget: the task goes on by itself and the critic reviews it once. Bench before/after: /tmp/frbench/fix-leftovers7-session/{before,after}/01-04*.png"
+  },
+  {
+   "problem": "R-criticcred: a critic review that met a credential's usage limit, or Anthropic's refusal with no other credential, became a verdict (sent back / escalate). When the critic threw instead, a 'could not be reviewed' card was filed beside the credential's own card, and nothing reviewed the task at the reset.",
+   "u_ids": [
+    "R-criticcred",
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/credential-wait-session.test.ts \"a review that meets a credential's usage limit waits for it\" / \"no verdict, no failed try and no card: the task waits until the reset, and the review runs by itself then, after a restart too\" (before: attempt 1, sent back)",
+   "how": "Same commit as R-criticbudget. The critic writes the refused review's Run row with outcome usage_limit or credential_refused (credentialRunOutcome) and throws. The critic port (loop/critic.ts) wraps the error with withReviewWait, which takes the routed provider's waitNow, else the refused source's row, and keeps the project on that source (RoutedProvider.noteWait). The runner gives the task back to ready with CREDENTIAL_WAIT_REASON, emits billing.fallback with the wait sentence, and files no card. Under Wait the session goes on; the reset starts a session that reviews the task once. ADR 0100 point 16 added.",
+   "check_in_the_app": "1) In Settings, set 'When my first choice runs out mid-session' to Wait, and use a single credential (subscription or API key) that is near its usage limit. 2) Start a session on a project with one task, so the limit is reached while the critic reviews it. Expected: the task row reads 'Waits until HH:MM, your <credential>'s limit' and the drawer says it starts by itself. There is no 'Failed', no 'sent back', no 'could not be reviewed' card, and no try is counted. The Inbox shows at most the credential's own card (only for a refused key). After the reset a session starts by itself and the review completes (Accepted). With a refused key, the row reads 'Waits for a new API key'; saving a new key starts it."
+  },
+  {
+   "problem": "R-waitqueue: under 'When my first choice runs out mid-session: Wait', the session ended at the first task that had to wait. It skipped the rest of the queue, including tasks whose first choice (e.g. the API key for research) could serve now, and every ready task of the project then read 'Waits until ...' (ADR 0100 point 10 says only the tasks whose first choice rests wait).",
+   "u_ids": [
+    "R-waitqueue",
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/credential-wait-session.test.ts \"the research task on the API key runs in the same session; only the code task waits, and its row alone says so\" (before: the research task stayed ready, the session ended at the first wait)",
+   "how": "runner.ts: a waiting task goes back to ready with CREDENTIAL_WAIT_REASON (exported from session/credential-wait.ts) and the session continues. Each task's own pick decides; a task whose pick waits makes no model call. The session ends with stop reason credential_wait once nothing else runs (waitedForCredential). A second task waiting on the same credential logs its line as a detail (billing.fallback repeat: true goes to the detail audience in event-audience.ts). task-words.ts shows the project's credentialWait label only on a row whose reason is CREDENTIAL_WAIT_REASON. ADR 0100 point 17; runtime.md and the user guide updated.",
+   "check_in_the_app": "1) Set up two credentials: the subscription as first choice for code, and an API key that research (web reading) routes to. 2) Set mid-session to Wait. 3) Have a project with one code task and one research task, and start a session when the subscription is at its limit. Expected: the research task runs and reaches Done in the same session. Only the code task's row reads 'Waits until HH:MM, your subscription's limit'; other ready rows read Ready. The session summary ends 'Waits until HH:MM (your subscription's limit) ...' and a second waiting task does not repeat the wait line in the person's log (it shows under Details)."
+  },
+  {
+   "problem": "R-startedline / W5-20: the session log's start line was written before the executor picked the credential and the specialist. A task whose pick then waited read 'The coder started \"X\"' just before its wait line although nothing ran, and a research task handed to a specialist that can reach the web named the planned specialist instead of the one that ran.",
+   "u_ids": [
+    "R-startedline",
+    "W5-20"
+   ],
+   "failing_test_before": "packages/runtime/test/session-keeps-going.test.ts \"the start line names who runs, when the run starts ...\"; packages/runtime/test/specialist-handover.test.ts (no onStarted; the web-reader was never named)",
+   "how": "TaskExecutor.execute takes ctx.onStarted({specialist}). executor.ts calls it after the pick and any hand-over, just before the run row is inserted. runner.ts writes the 'started' line lazily: on onStarted, else at the first step, else after return unless the pick waited for a credential. Same commit as R-waitqueue.",
+   "check_in_the_app": "1) Start a session on a project with a research task that needs the web, on a setup where research is handed to the web-reader. Expected: the session log reads 'The web-reader started \"<task>\"', not the researcher. 2) With mid-session Wait and the first choice at its limit, a task that waits shows only its 'Waits until ...' line, with no 'The coder started ...' line before it."
+  },
+  {
+   "problem": "R-recovery: after a crash, the session page read 'Interrupted: Forerunner closed: nothing done. CHF 0.00.' and the Overview read 'No session yet', although the session had finished and paid for a task before the daemon died.",
+   "u_ids": [
+    "R-recovery"
+   ],
+   "failing_test_before": "packages/runtime/test/session-recovery.test.ts \"a session that finished a task before the crash says what it did and spent, and is the project's last session\" (before: 'nothing done. CHF 0.00.', lastSession null)",
+   "how": "session/recovery.ts endDeadSession counts the tasks its runs worked on that are done and takes its spend from the cost ledger rows for the session (else the row's own count). Both go on the session.ended event (completed, spentUsdMicro). recordLastSession writes summary_cache.last_session with a LastSessionOutcome, unless a later session of the project already ended. runtime.md updated.",
+   "check_in_the_app": "1) Start a session on a project with two tasks. 2) Wait for the log line 'The coder finished \"<first task>\"'. 3) Quit Forerunner hard: end the daemon process from Task Manager, or close it from the tray while the second task runs. 4) Reopen Forerunner. Expected: the session page's last line reads 'Interrupted: Forerunner closed: 1 done. CHF 0.0x.', not 'nothing done. CHF 0.00.'. The project's Overview shows this session as the last session (stop reason interrupted), not 'No session yet'."
+  },
+  {
+   "problem": "R-sessreview: a session whose tasks all paused at their budgets got 'Session review: sent back for changes (grade 70, 2 findings)', with 'No planned task was done: 1 of 1 waits for the person' and 'Session spent CHF ... and no task reached done', although a pause is neither a failure nor a question for the person (ADR 0112).",
+   "u_ids": [
+    "R-sessreview",
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"a tiny budget hears no wrap-up and pauses at its budget with the save only\" (before: session review verdict revise, 'No planned task was done'), plus the wrap-up case's findings",
+   "how": "The runner's handoff names the paused tasks (handoff.paused: tasks with their budget card open). packages/critic/src/session-review.ts pausedOf() leaves them out of plannedWaiting. When every planned task that is not done paused (onlyPaused), the review adds neither the waiting finding nor the 'spent and no task reached done' finding. The estimate check stays. critic.md updated.",
+   "check_in_the_app": "Repeat the R-criticbudget steps (project budget CHF 0.01, one task, Start session). On the session page, open Details and then Session review. Expected: no 'sent back for changes' verdict caused by the pause, no finding 'No planned task was done: 1 of 1 waits for the person', and no 'Session spent CHF ... and no task reached done'. A cost-over-estimate finding may still appear if the run cost more than planned."
+  },
+  {
+   "problem": "R-failedrun: the task drawer listed a run that a usage limit or Anthropic's refusal stopped as 'Failed', although the task went back to ready without counting a try and its row said it waits.",
+   "u_ids": [
+    "R-failedrun",
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/credential-wait-session.test.ts \"a usage limit reads 'Stopped at the usage limit'; a refused key 'Stopped: Anthropic refused the credential'\" (before: GET /tasks/:id runs showed 'Failed')",
+   "how": "session/executor.ts decides the credential stop before it writes the Run row: the outcome is usage_limit or credential_refused instead of the driver's error. daemon/task-display.ts maps credential_refused to 'Stopped: Anthropic refused the credential'. runtime.md updated.",
+   "check_in_the_app": "1) Start a session while the only credential is at its usage limit. 2) Open the task's drawer. Expected: the run is listed as 'Stopped at the usage limit', not 'Failed', and the task is Ready / 'Waits until ...'. 3) With a revoked API key, the run reads 'Stopped: Anthropic refused the credential'."
+  },
+  {
+   "problem": "R-planunit: a session that ended at the subscription's share stored that share's cap (a plan-level value, not money) as if it were USD, in stopCapChfMicro on the session's result and on the project's last session. Only the readers' care kept this wrong-unit amount off the screen.",
+   "u_ids": [
+    "R-planunit",
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/session-keeps-going.test.ts \"a stop at the subscription's share keeps no CHF amount; a stop at the project's budget keeps its amount\" (before: stopCapChfMicro 1)",
+   "how": "runner.ts sets stopCapUsdMicro to null when the stop's source is the plan share, both for a run's pause and for a review's pause. The project's budget and the month's cap keep their amounts. runtime.md updated.",
+   "check_in_the_app": "1) With the subscription as first choice and a share limit set in Settings, run sessions until one stops at the subscription's share. Expected: the session page and the Overview's last session say it stopped at the subscription's share with no CHF amount for the limit. Screens did not show the amount before either, so the visible change is none; the stored state no longer carries a wrong-unit figure. 2) A stop at the project's budget still names 'the project's budget of CHF N'."
+  },
+  {
+   "problem": "R-chatcache: chat turns paid the cache-write price on their whole history and read only the tools and the system prompt from the cache. The turn's message was '<facts of now>\\n\\n<line>' while the next turn replays the line alone, so the history prefix never matched (bench-api: turns 2 and 3 each read 5,615 tokens and wrote 749 and 453).",
+   "u_ids": [
+    "R-chatcache"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation.test.ts \"the second turn reads more than the system and the tools from the cache: the first turn's line\" (before: read 4,760 = system and tools only)",
+   "how": "conversation/agent.ts now sends '<line>\\n\\n<facts>' with ChatMessage.stableChars set to the line's length. provider/anthropic.ts (stableSplit, cacheHistory) sends such a message as two text blocks with the cache breakpoint on the line, so turn N's cache entry ends at the line that turn N+1 replays. testenv PromptCacheSim keys a prefix by the blocks the adapter sends. The bench role-player's chatLine reads the person's line from the stable start (commit 7f886af; this was needed by four UI chat cases). New test: anthropic-provider.test.ts \"a message with a stable start goes as two blocks, marked on the start\". runtime.md and testing.md updated.",
+   "check_in_the_app": "1) With an API key, open a project's Chat and send three short lines one after another. 2) Read the model-call lines in the daemon log, or the usage under the session's Details. Expected: turn 2's cache read is larger than the system prompt plus tools alone (more than ~5,615 tokens on the bench-api setup) because it includes turn 1's line, and turn 3 reads more again. Cache writes are only the new turn, not the whole history. The replies still answer the person's line, not the facts."
+  },
+  {
+   "problem": "R-estimates: the plan card in the Inbox showed the plan's bounded guess per task, while the Start dialog priced the same tasks with the learned estimates (the guess times the ratio learned for that specialist and kind). After a few tasks of a kind, the two screens gave different amounts for the same tasks.",
+   "u_ids": [
+    "R-estimates",
+    "U-074"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"the plan card's figure is the Start dialog's\" (the card kept the guess after three samples at half of it); apps/ui/test/inbox.test.tsx \"the plan card's figures\" (CHF 0.32 instead of CHF 0.16)",
+   "how": "GET /inbox now gives each plan task an estimateUsdMicro value: planEstimateUsdMicro over the plan's figure, with the task's specialist, tier and budget shaped as the apply shapes them, and 0 for the person's questions. This is in daemon/plan-tasks.ts PlanTasksDeps.estimate, wired in server.ts. InboxPage costOf prefers it and falls back to the plan's own figure for an older daemon. The task still stores the bounded guess as est_cost_usd_micro, so the Start dialog does not scale it twice. The fake daemon gives the same field (planEstimateRatio). runtime.md, apps.md and the user guide updated.",
+   "check_in_the_app": "1) After several finished tasks of one kind (e.g. coder tasks that cost less than estimated), create a new project from a brief so the intake files a plan card. 2) In the Inbox, note each task's 'about CHF ...' on the plan card. 3) Click Approve and start, stop the session at once, then open Start session on the project. Expected: each task's figure in the Start dialog equals the figure the plan card showed. Before the fix the card showed the higher unscaled guess."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "A task paused or waiting before its review is reviewed only after its specialist runs again: the next session reruns the run (continuing from its saved work) and then the critic reviews it once. This costs one more specialist call.",
+   "why": "The run's result is not kept for a later review-only pass. A session that reviews a paused task without rerunning it needs new persisted state and a runner path, which is beyond this round's scope. It is recorded as 'Not built' in the ADR 0112 amendment of 2026-11-08."
+  },
+  {
+   "problem": "Live check against a real credential for R-criticcred, R-waitqueue, R-failedrun and R-chatcache (real usage limits, refused keys, real cache numbers).",
+   "why": "This round may use only the stand-in (--provider bench) and fixtures; bench-live and the real API key or token are forbidden. These are covered at the person's boundary by the composed-daemon tests (credential-wait-session.test.ts, GET /tasks/:id), PromptCacheSim and the UI suite. The bench walk covered R-criticbudget, R-sessreview and R-planunit."
+  },
+  {
+   "problem": "One commit per problem: R-criticbudget and R-criticcred share 118eeb0, and R-waitqueue and R-startedline share 8de7f51.",
+   "why": "Each pair changes the same runner branch: the review-refusal branch, and the wait/started-line ordering in the task loop. Splitting them would have left an intermediate commit with half a code path and failing tests."
+  },
+  {
+   "problem": "Desktop shell checks (cargo fmt/clippy/test).",
+   "why": "apps/desktop/src-tauri was not touched by this area."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check",
+   "result": "EXIT 0: lint, lint:paths, typecheck, unit tests 472 files / 4841 passed, 6 skipped, docs:check, docs:links, secret-scan clean (2065 files). Only the existing biome warnings remain."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (44 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0: 5 files passed, 6 skipped; 30 tests passed, 73 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 85 files, 934 tests passed"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "34 passed (1.2m); the local config was removed afterwards and not committed"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "bench walk (--provider bench, ports 48391/1991): project budget CHF 0.01, one task, Start session; before on fa1a86f, after on this branch",
+   "result": "Before: 'The critic sent ... back: No review: the critic run ended with budget_exceeded ... Trying again.', a second coder run, attempt 1. After: one coder run, '\"Write the club page\" paused before its review: the project's budget of CHF 0.01 has no room for it.', task 'Paused at the project's budget', attempt 0, one Inbox card (Open Settings, Cancel task). The bench was stopped and its home deleted."
+  },
+  {
+   "command": "git status --short; git rev-parse HEAD fix/leftovers7-session",
+   "result": "clean tree; both at 7f886afb3ff21231752c46cf557d70f8a8cbd4df"
+  }
+ ],
+ "new_problems": [
+  "The Inbox card for a review paused at the project's budget uses the run-pause body: 'It stopped before it could say where it stood; its work so far is kept.' Here the coder had finished and only the review is paused (/tmp/frbench/fix-leftovers7-session/after/03-after-inbox.txt). This is polish: the card could say the work is done and waits for its review.",
+  "At tiny budgets the amounts read as a contradiction: 'Stopped at the project's budget of CHF 0.01. CHF 0.00.' and 'The coder finished ... (CHF 0.00)', while the budget has no room. A spend of CHF 0.005 is rounded down to 0.00 (/tmp/frbench/fix-leftovers7-session/after/04-after-session.txt). This was already the case before this area's changes.",
+  "Existing biome warnings (not errors) remain in `pnpm lint`: useOptionalChain at apps/ui/test/fake-daemon.ts:2784 and :2825 and packages/capabilities/src/email/inbound.ts:323; noNonNullAssertion in packages/capabilities/test/email-auth.test.ts, email-commands.test.ts and email-policy.test.ts."
+ ],
+ "notes_for_other_areas": [
+  "critic.review can now throw a refusal instead of returning a verdict: ForerunnerError with details.review === \"refused\" (REVIEW_REFUSED) and code budget_exceeded / provider_usage_limit / provider_auth / unavailable. Use reviewRefusalOf(e) from packages/runtime/src/session/review-refusal.ts. Any new caller of the critic must treat this as no verdict and no failed try.",
+  "withReviewWait(e, {provider, store, nowMs, projectId, agentId}) in session/review-refusal.ts attaches the credential wait (RoutedProvider.waitNow, else the source row) and calls RoutedProvider.noteWait(sourceId, projectId, agentId).",
+  "New event type 'critic.review_paused' (REVIEW_PAUSED_EVENT in session/budget-pause.ts, words from reviewPausedWords). It has the person audience in event-audience.ts and its text comes from event-lines.ts.",
+  "billing.fallback events may carry repeat: true, meaning a second task waits for the same credential. event-audience.ts sends those to the detail audience.",
+  "CREDENTIAL_WAIT_REASON ('waits for a Claude credential: back to ready') is exported from session/credential-wait.ts. task-words.ts shows the project's credentialWait label only on a ready task with that reason, so fakes and tests that seed a waiting task must set it.",
+  "TaskExecutor.execute ctx accepts onStarted({specialist}), called after the credential pick and any hand-over. The runner's 'started' line comes from it.",
+  "Run rows may now have outcome usage_limit or credential_refused (executor and critic). task-display.ts words: 'Stopped at the usage limit' and 'Stopped: Anthropic refused the credential'.",
+  "The session handoff has a new field paused: string[] (tasks paused at a budget with their card open). The session review's pausedOf() reads it.",
+  "session.ended from crash recovery now carries completed and spentUsdMicro, and recovery writes summary_cache.last_session (recordLastSession) with a LastSessionOutcome.",
+  "GET /inbox requests[].planTasks[] has a new estimateUsdMicro (number | null): the Start dialog's figure for that task. PlanTasksDeps.estimate {project, of} is in daemon/plan-tasks.ts, and the fake daemon accepts planEstimateRatio.",
+  "ChatMessage.stableChars (provider/types.ts): the Anthropic adapter sends such a message as two text blocks with the cache mark on the stable start. The chat turn message is now '<line>\\n\\n<facts>', so tests reading the turn should use startsWith(line). The bench role-player's chatLine and testenv PromptCacheSim follow the same layout.",
+  "A session stopped at the subscription's share keeps stopCapUsdMicro / stopCapChfMicro null; only the project's budget and the month's cap keep amounts."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-leftovers7-session/before/01-before-tasks-tab.png",
+   "/tmp/frbench/fix-leftovers7-session/before/02-before-drawer.png",
+   "/tmp/frbench/fix-leftovers7-session/before/03-before-inbox.png",
+   "/tmp/frbench/fix-leftovers7-session/before/04-before-session.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-leftovers7-session/after/01-after-tasks-tab.png",
+   "/tmp/frbench/fix-leftovers7-session/after/02-after-drawer.png",
+   "/tmp/frbench/fix-leftovers7-session/after/03-after-inbox.png",
+   "/tmp/frbench/fix-leftovers7-session/after/04-after-session.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/closeout-conversation.test.ts (turn text: endsWith(text) -> startsWith(text))",
+   "why": "R-chatcache: the chat turn's message now starts with the person's line (the cached stable start), followed by the facts of now."
+  },
+  {
+   "test": "packages/runtime/test/conversation-memory.test.ts (second[2].content endsWith('what did I just ask?') -> startsWith)",
+   "why": "Same layout change as R-chatcache: line first, then facts."
+  },
+  {
+   "test": "apps/ui/test/tasks.test.tsx \"a ready task that waits for a Claude credential says until when ...\" and \"a project whose tasks wait for a new key says so in its status ...\" (the seeded task now has reason CREDENTIAL_WAIT_REASON)",
+   "why": "R-waitqueue: only a task the session put back to wait for a credential shows the project's wait; a plain ready task now reads Ready. Assertions are unchanged."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts \"a plan naming a specialist this install does not have: the card says the task will wait (C-68)\" (expected planTasks entries now include estimateUsdMicro: null)",
+   "why": "R-estimates added estimateUsdMicro to each plan task in GET /inbox; this plan's first session names no figure, so the field is null. Other expectations are unchanged."
+  }
+ ]
+}
