@@ -461,6 +461,18 @@ export function failedRef(taskId: string): string {
   return `refs/forerunner/failed/${safeSegment(taskId)}`;
 }
 
+/**
+ * TM-1 (leftovers7-tailmerge): the failed task's one sentence when its run changed nothing and
+ * the pull request open on its branch was closed (`closeEmptied`): after a redo from the base
+ * ("Redone from main, it changed nothing, so #4 was closed."), or a pull request that held no
+ * change either. Polish owns the words.
+ */
+export function emptiedSentence(prNumber: number, redone: boolean, base = "main"): string {
+  return redone
+    ? `Redone from ${base}, it changed nothing, so #${prNumber} was closed.`
+    : `It changed nothing and #${prNumber} held no change, so #${prNumber} was closed.`;
+}
+
 /** The first words of a work-in-progress commit's subject. */
 export const WIP_SUBJECT = "Work in progress: ";
 
@@ -875,11 +887,23 @@ export class PrTaskExecutor implements TaskExecutor {
     const commit = await git.commitAll(
       `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}\n\nTask ${task.id}.`,
     );
-    if (!commit.committed && !existingPr) {
+    // TM-1 (leftovers7-tailmerge): whether the branch holds any change of the task's own, from
+    // where its work starts (the base, with the work it builds on), not whether this run
+    // committed: a redo from the base ("Drop the branch and retry from scratch", a card's Redo)
+    // that commits nothing holds nothing, although a pull request is open (before, main's head
+    // was force-pushed to it and the empty pull request went to review and then to Merge); a run
+    // that continues a paused task's work and adds nothing more still holds that work.
+    if (!(await this.holdsOwnChange(git, target, excluded, commit.committed || !!existingPr))) {
+      const closed = existingPr
+        ? await this.closeEmptied(target, existingPr, task, dropped)
+        : false;
       return {
         ...result,
         outcome: "failed",
-        summary: `${result.summary}\n(no changes were made in the worktree)`,
+        summary:
+          closed && existingPr
+            ? emptiedSentence(existingPr.number, dropped, target.base)
+            : `${result.summary}\n(no changes were made in the worktree)`,
         checksPassed: false,
       };
     }
@@ -993,6 +1017,76 @@ export class PrTaskExecutor implements TaskExecutor {
   private async excludedFolders(git: GitOps, target: Target): Promise<readonly string[]> {
     const tracked = await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]);
     return tracked?.length ? [TRY_DIR] : NEVER_PUSHED;
+  }
+
+  /**
+   * TM-1: whether the checked-out branch holds a change of the task's own (a file it changes
+   * from where its work started: `DEPS_BASE_REF`, else the base), never counting Local only or a
+   * review's try folder. A git failure answers `fallback` (the old rule: this run committed, or a
+   * pull request is open), so an unreadable diff never fails a run that did work.
+   */
+  private async holdsOwnChange(
+    git: GitOps,
+    target: Target,
+    excluded: readonly string[],
+    fallback: boolean,
+  ): Promise<boolean> {
+    try {
+      const files = (await git.hasRef(DEPS_BASE_REF))
+        ? await git.filesBetween(DEPS_BASE_REF)
+        : await git.changedFiles(`origin/${target.base}`);
+      return files.some((f) => underNeverPushed([f], excluded).length === 0);
+    } catch (e) {
+      this.logger.warn("the task's own change was not read", { error: errorMessage(e) });
+      return fallback;
+    }
+  }
+
+  /**
+   * TM-1 (ADR 0111, leftovers7-tailmerge): a run that left its branch with no change of its own
+   * while a pull request is open on it closes that pull request, with one comment saying why,
+   * instead of pushing the base's head to it (an empty pull request the app would offer for
+   * Merge). Its branch on the host is kept as it was. After a redo from the base, the pull
+   * request holds only the work the person dropped; otherwise it holds no change either. False
+   * when the host refused (the pull request then stays as it was, and so does the branch).
+   */
+  private async closeEmptied(
+    target: Target,
+    pr: PullRequestInfo,
+    task: TaskRow,
+    redone: boolean,
+  ): Promise<boolean> {
+    try {
+      await this.deps.host.commentOnPullRequest(
+        target.repo,
+        pr.number,
+        redone
+          ? `Forerunner did this task again from ${target.base} and it changed nothing, so this pull request is closed. Its branch is kept.`
+          : "Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.",
+      );
+    } catch (e) {
+      this.logger.warn("emptied pull request not commented", {
+        taskId: task.id,
+        pr: pr.number,
+        error: errorMessage(e),
+      });
+    }
+    try {
+      await this.deps.host.updatePullRequest(target.repo, pr.number, { state: "closed" });
+      this.logger.info("pull request closed: the run changed nothing", {
+        taskId: task.id,
+        pr: pr.number,
+        redone,
+      });
+      return true;
+    } catch (e) {
+      this.logger.warn("emptied pull request not closed", {
+        taskId: task.id,
+        pr: pr.number,
+        error: errorMessage(e),
+      });
+      return false;
+    }
   }
 
   /** The task's own files on its branch: from the base its work started on, never Local only. */

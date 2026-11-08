@@ -338,3 +338,20 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
   its behaviour with an admin token is checked against GitHub's documentation.
 - **Retry inside the session for longer**: rejected; a session would hold the one-session rule
   for the length of someone's CI, and a sleep or a closed app would still lose the merge.
+
+## Amendment: the leftovers of waves 12 and 14, merge side ('leftovers7-tailmerge', 2026-11-09)
+
+1. **A redo that changes nothing leaves no empty pull request.** "No change" is now read from
+   the branch, not from the run's commit: the task's own files from where its work started
+   (the base, with the work it builds on). A redo from the base (the conflict notice's or a
+   rebuild card's Redo, "Drop the branch and retry from scratch") whose run changes nothing ends
+   as a fresh task with no change does: `failed`, with its failed-task card. The pull request
+   open on the branch is closed, with one comment saying why, instead of receiving the base's
+   head; its branch on the host stays as it was, so nothing the person dropped is deleted, and
+   Try again opens a new pull request from a fresh branch. Closing was chosen over keeping it
+   out of Merge: the pull request then holds only the work the person chose to drop, a failed
+   task's pull request is not listed on the Overview anyway, and "Mark done anyway" would
+   otherwise list it again with that dropped work and a Merge. Before, main's head was
+   force-pushed to the branch, the empty pull request went to review, and the app offered it
+   for Merge (bench, wave 14: it merged with no diff). The same reading keeps a run that
+   continues a paused task's work, and adds nothing more, out of "no changes".

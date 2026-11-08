@@ -290,7 +290,18 @@ with their milestone.
   rebuild card's Redo, R-rebuildcard's fix-up) is read as "dropped" (`conflictAnswer`), so its
   next run starts again from the base and the open pull request gets the new work; before, that
   redo resumed the open branch, rebuilt it again and hit the same conflict. No
-  changes means `failed`. A task without a repository runs in the folder `workspaceFor` names
+  changes means `failed`: the branch holds no file of the task's own from where its work
+  started (`holdsOwnChange`: from `DEPS_BASE_REF`, else the base; Local only and the try folder
+  never count; a git error falls back to "this run committed, or a pull request is open"), not
+  "this run committed nothing" (TM-1, leftovers7-tailmerge, ADR 0111 amended 2026-11-09).
+  Before, a redo from the base (Drop, a card's Redo) that changed nothing on a task with an
+  open pull request force-pushed the base's head to it, and the empty pull request went to
+  review and was offered for Merge; a run that continued a paused task's work and added
+  nothing more failed "no changes" although its branch held that work. A pull request open on
+  the branch is now closed instead (`closeEmptied`: one comment saying why, then the close;
+  the branch on the host stays as it was) and the result's summary is one sentence
+  (`emptiedSentence`: "Redone from main, it changed nothing, so #4 was closed."); a close the
+  host refuses leaves the pull request and the old summary. A task without a repository runs in the folder `workspaceFor` names
   (U-037, ADR 0097: the runtime passes the project's workspace for a project with no repository
   link), kept as a local git repository: `inWorkspace` writes a `.gitignore` for caches when the
   folder has none (`ensureWorkspaceGitignore`, `WORKSPACE_GITIGNORE`: `__pycache__/`, `*.pyc`,

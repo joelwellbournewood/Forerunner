@@ -364,7 +364,11 @@ a new branch (the old name with "-r2"), so a branch GitHub kept after the merge 
 the way; the old pull request stays as it was. **Redo** on a rebuild's card (either card above)
 does the task again from the default branch: its next run starts the branch afresh from there
 (as "Drop the branch and retry from scratch" does), and #8 gets the new work, with only the
-task's own commit on top of the default branch.
+task's own commit on top of the default branch. If that redo changes nothing (the default
+branch already has what the task asks for), the task fails as any task with no change does
+("Failed: Redone from main, it changed nothing, so #8 was closed.", with **Try again**, **Mark
+done anyway** and **Cancel task** on its card): #8 is closed on GitHub with a comment saying why,
+its branch is kept, and nothing empty is offered for Merge.
 
 **Merging: you press Merge, or Forerunner merges after review.** Each repository project has a
 setting **Who merges accepted work** (Settings, Other settings; the Overview's line "Merging: you

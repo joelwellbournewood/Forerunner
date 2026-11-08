@@ -1802,3 +1802,171 @@ describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_00
     await s.w.store.close();
   });
 });
+
+/**
+ * Leftovers of waves 12 and 14, merge side (leftovers7-tailmerge, wave 13): a redo from the
+ * base that changes nothing, a conflict the person resolved in the task's folder, a paused redo.
+ */
+describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
+  type Inner = TaskExecutor & { withWorktree: (dir: string) => TaskExecutor };
+  type Result = Awaited<ReturnType<TaskExecutor["execute"]>>;
+  /** A run that does `work` in its folder and ends done (or as `result` says). */
+  function agent(work: (dir: string) => Promise<void> | void, result: Partial<Result> = {}): Inner {
+    return {
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree(dir) {
+        return {
+          async execute() {
+            await work(dir);
+            return {
+              outcome: "done",
+              summary: "Wrote it.",
+              costUsdMicro: 1000,
+              checksPassed: true,
+              ...result,
+            };
+          },
+        };
+      },
+    };
+  }
+
+  async function setup() {
+    const w = await world();
+    const repo = { owner: "o", name: "sample" };
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Edit the readme",
+      outcome: "the readme says what the task says",
+      acceptance_criteria: ["the readme is edited"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 100_000,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = (inner: Inner) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () => ({ clone: w.bare, repo, base: "main" }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async () => {
+      const t = await w.store.task.mustGet(task.id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const lines = async (args: string[]) =>
+      (await run(["git", "--git-dir", w.bare, ...args], { allowFailure: true })).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+    const wt = join(w.root, "wt", task.id);
+    const gitIn = (args: string[]) =>
+      run(["git", "-C", wt, ...args], { allowFailure: true }).then((r) => r.stdout.trim());
+    /** main changes README.md on the host (someone else's merge). */
+    const mainChangesReadme = async (text: string) => {
+      const seed = new GitOps({ cwd: join(w.root, "seed"), identity });
+      writeFileSync(join(w.root, "seed", "README.md"), text);
+      await seed.commitAll("main changes README.md");
+      await seed.push("main");
+    };
+    /**
+     * The task done once (its pull request open), main then changing the same line, and its next
+     * run (sent back) stopping at the rebase conflict with the person's card.
+     */
+    const conflicted = async () => {
+      const first = await exec(
+        agent((dir) => writeFileSync(join(dir, "README.md"), "# sample by the task\n")),
+      ).execute(await ctx());
+      expect(first.outcome, first.summary).toBe("in_review");
+      await w.store.task.patch(task.id, { branch: first.branch ?? "", pr_url: first.prUrl ?? "" });
+      await mainChangesReadme("# sample by main\n");
+      const second = await exec(
+        agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")),
+      ).execute(await ctx());
+      expect(second.outcome, second.summary).toBe("needs_human");
+      const card = (await w.store.humanRequest.list({ task_id: task.id } as never)).find(
+        (r) => (r.change_card as { key?: string } | null)?.key === "githost:rebase_conflict",
+      );
+      if (!card) throw new Error("no conflict card");
+      const pr = (await w.host.listPullRequests(repo, { state: "all" }))[0];
+      if (!pr) throw new Error("no pull request");
+      return { first, second, card, branch: first.branch ?? "", pr };
+    };
+    /** The person's answer as the runtime applies it (`syncPrAnswers`). */
+    const answer = async (card: { id: string }, outcome: "resolved" | "dropped") => {
+      const row = await w.store.humanRequest.mustGet(card.id);
+      await w.store.humanRequest.patch(row.id, {
+        change_card: {
+          ...((row.change_card ?? {}) as Record<string, unknown>),
+          applied_at: w.clock.nowIso(),
+          outcome,
+        } as never,
+      });
+    };
+    return { w, repo, task, exec, ctx, lines, wt, gitIn, conflicted, answer, mainChangesReadme };
+  }
+
+  it("'Drop the branch and retry from scratch' whose run changes nothing: the task fails as a fresh one with no change does, and its pull request is closed, never emptied to main's head (TM-1)", async () => {
+    const s = await setup();
+    const { branch, card, pr } = await s.conflicted();
+    const held = await s.lines(["log", "--format=%s", `main..${branch}`]);
+    expect(held.length).toBeGreaterThan(0);
+    await s.answer(card, "dropped");
+    // The redo from main does the work again and finds main already says it all.
+    const redo = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "README.md"), "# sample by main\n")))
+      .execute(await s.ctx());
+    // Before: no commit, but an open pull request, so main's head was force-pushed to the branch
+    // and the task went to review with an empty pull request that the app then offered for Merge.
+    expect(redo.outcome, redo.summary).toBe("failed");
+    expect(redo.summary).toBe(`Redone from main, it changed nothing, so #${pr.number} was closed.`);
+    expect(redo.prUrl).toBeUndefined();
+    const after = await s.w.host.getPullRequest(s.repo, pr.number);
+    expect([after.state, after.merged]).toEqual(["closed", false]);
+    // The branch on the host is as it was: nothing of it was replaced by main's head.
+    expect(await s.lines(["log", "--format=%s", `main..${branch}`])).toEqual(held);
+    const said = await s.w.host.listPullRequestComments(s.repo, pr.number);
+    // The host marks the agent's own comments; the words are the first line.
+    expect(said.map((c) => c.body.split(/\r?\n/)[0])).toEqual([
+      "Forerunner did this task again from main and it changed nothing, so this pull request is closed. Its branch is kept.",
+    ]);
+    await s.w.store.close();
+  });
+
+  it("a run that continues a paused task's work and adds nothing more goes to review with that work, never 'no changes' (TM-1's sibling)", async () => {
+    const s = await setup();
+    const paused = await s
+      .exec(
+        agent((dir) => writeFileSync(join(dir, "README.md"), "# sample by the task\n"), {
+          outcome: "paused",
+          summary: "Where I stopped: the readme is written.\nLeft to do: nothing.",
+        }),
+      )
+      .execute(await s.ctx());
+    expect(paused.outcome).toBe("paused");
+    const next = await s.exec(agent(() => undefined)).execute(await s.ctx());
+    // Before: the run committed nothing and had no pull request, so it failed with "no changes
+    // were made" although its branch held the paused run's work.
+    expect(next.outcome, next.summary).toBe("in_review");
+    expect(next.changedFiles).toEqual(["README.md"]);
+    expect(await s.lines(["show", `${next.branch}:README.md`])).toEqual(["# sample by the task"]);
+    await s.w.store.close();
+  });
+});

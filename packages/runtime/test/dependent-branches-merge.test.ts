@@ -6,6 +6,8 @@ import { join, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
+import { ProjectPullRequests } from "../src/daemon/pull-requests.ts";
+import { loadTaskDisplayContext, taskDisplay } from "../src/daemon/task-display.ts";
 import { requestViews } from "../src/daemon/views.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
@@ -1045,5 +1047,104 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(`${cards[0]?.title} ${cards[0]?.body}`).toContain(
       `"Write the other page" (pull request #${prB}) and "Write the page" (pull request #${prA}) both change index.html`,
     );
+  });
+});
+
+/**
+ * Leftovers of waves 12 and 14, merge side (leftovers7-tailmerge, wave 13), composed as above:
+ * the runner, the PR executor, the critic, the merge step, the watcher and the fake GitHub.
+ */
+describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  /** The person's answer, as the Inbox sends it (one of the card's options), then applied. */
+  const answer = async (m: ChainWorld, row: { id: string; version: number }, label: string) => {
+    await m.w.store.humanRequest.answer(row.id, row.version, label, m.w.human);
+    return syncPrAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      merge: m.merge,
+    });
+  };
+  /** What the Overview lists (GET /projects/:id/pull-requests) and what the Tasks row says. */
+  const screens = async (m: ChainWorld, taskId: string) => {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    const task = await m.w.store.task.mustGet(taskId);
+    return { waiting: view.waiting, row: taskDisplay(task, ctx) };
+  };
+  /** A runs and its pull request merges; B, on the same lines, then conflicts with main. */
+  async function conflictingPair() {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    return { m, a, b, prB };
+  }
+  /** B's next attempt (the stand-in names its run by the attempt), whose run changes nothing. */
+  const redoChangingNothing = async (m: ChainWorld, taskId: string) => {
+    const ready = await m.w.store.task.mustGet(taskId);
+    expect(ready.status).toBe("ready");
+    await m.w.store.task.patch(taskId, { attempt: ready.attempt + 1 });
+    // Main already says what the task says: done again from main, it changes nothing.
+    m.writes.set(ready.title, { "index.html": "<h1>one</h1>\n" });
+    await m.session();
+    return m.w.store.task.mustGet(taskId);
+  };
+
+  it("the conflict notice's Redo whose run changes nothing: no empty pull request is left open and offered for Merge; the task fails in one sentence and the Overview lists nothing for it (TM-1)", async () => {
+    const { m, b, prB } = await conflictingPair();
+    await m.poll();
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [view] = await requestViews(m.w.store, rows);
+    if (!view || !rows[0]) throw new Error("no conflict card");
+    const redo = view.choices?.find((c) => c.label === "Redo");
+    expect((await answer(m, rows[0], redo?.label ?? "")).redone).toBe(1);
+    const after = await redoChangingNothing(m, b.id);
+    // Before: the run committed nothing, main's head was force-pushed to the open pull request,
+    // the task was accepted and the empty pull request waited for the person's Merge.
+    const sentence = `Redone from main, it changed nothing, so #${prB} was closed.`;
+    expect([after.status, after.reason]).toEqual(["failed", sentence]);
+    const pr = await m.pr(b.id);
+    expect([pr.state, pr.merged]).toEqual(["closed", false]);
+    expect(await m.hostGit("rev-parse", `refs/heads/${pr.head.ref}`)).not.toBe(
+      await m.hostGit("rev-parse", "refs/heads/main"),
+    );
+    await m.poll();
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.map((w) => w.number)).not.toContain(prB);
+    expect(row.label).toBe(`Failed: ${sentence}`);
+    // Its record offers nothing more: the pull request was closed.
+    expect(await m.record(b.id)).toMatchObject({ state: "left_to_you", last_outcome: "closed" });
+  });
+
+  it("'Drop the branch and retry from scratch' whose run changes nothing: the same, one sentence and a closed pull request (TM-1)", async () => {
+    const { m, b, prB } = await conflictingPair();
+    // The Tasks tab's Redo: the run resumes the open pull request's branch, and its rebase onto
+    // main conflicts: the person's conflict card.
+    const done = await m.w.store.task.mustGet(b.id);
+    await m.w.store.task.reopen(b.id, done.version, "ready", "Redo asked by you");
+    await m.w.store.task.patch(b.id, { attempt: done.attempt + 1 });
+    await m.session();
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("needs_human");
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [view] = await requestViews(m.w.store, rows);
+    const drop = view?.choices?.find((c) => c.label === "Drop the branch and retry from scratch");
+    if (!rows[0] || !drop) throw new Error("no rebase conflict card");
+    expect((await answer(m, rows[0], drop.label)).dropped).toBe(1);
+    const after = await redoChangingNothing(m, b.id);
+    const sentence = `Redone from main, it changed nothing, so #${prB} was closed.`;
+    expect([after.status, after.reason]).toEqual(["failed", sentence]);
+    expect((await m.pr(b.id)).state).toBe("closed");
+    await m.poll();
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.map((w) => w.number)).not.toContain(prB);
+    expect(row.label).toBe(`Failed: ${sentence}`);
   });
 });
