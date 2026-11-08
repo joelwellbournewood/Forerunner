@@ -3025,6 +3025,19 @@ refused with 'A card in your Inbox already asks to create a repository for "X": 
 there.' (the project page's own Create, `source: "ui"`, goes on); the command's card has an `ask`
 ('Create the private GitHub repository o/x for "X"? Its tasks then run on branches with pull
 requests.'), so a chat answer waits as that question with Yes and No that say what they do.
+The other order (the fix-up after the review): a `repo.create` change card filed first (Chat,
+voice, or one the project page's dialog previewed and the person closed) is the one card, so
+`consider` files no offer while one is open (`asksForRepository`, which also finds it inside a
+composed plan), and a link by any path withdraws the open `repo.create` change cards of the
+project as well as the offer (`withdrawRepoOffers`, `repoCardProject`). The executor's closure
+behind a withdrawn or expired `repo.create` card is dropped (`RepoProposals.withdrawLinked` →
+`dropClosedClosures`, through the optional `RepoCommandRunner.pending`/`cancel`, which the
+`CommandLoop` has), at once when `RepoCreator` linked it (`whenLinked`, registered by
+`RepoProposals`) and at the next sync otherwise, so Chat no longer reads it back as waiting and a
+late Yes is refused. Before, the offer was filed beside such a card and, once either was answered,
+the other's Yes posted 'Your answer to the change card "…" was not applied: … already has a
+repository'. Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
+offer's Yes closing a previewed card, a link made another way).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull

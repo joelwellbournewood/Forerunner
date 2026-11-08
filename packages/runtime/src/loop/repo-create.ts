@@ -38,21 +38,59 @@ import type { CommandResultView } from "./ports.ts";
  */
 
 /**
- * Withdraws the open repository offers of a project that has a repository now (R-repooffer,
- * leftovers7-merge): the Inbox then says "Closed: it no longer needs you." Returns how many.
+ * Whether a change card of the command executor (a `human_request` the executor filed for a
+ * `repo.create` asked in Chat, by voice or on the project page, `CommandExecutor.createPending`)
+ * asks for a repository for the project. `alone`: only a card of that one command, not a plan of
+ * several that holds it (withdrawing that would drop its other changes too).
+ */
+export function asksForRepository(
+  card: unknown,
+  projectId: string,
+  opts: { alone?: boolean } = {},
+): boolean {
+  const c = card as JsonObject | null;
+  if (!c || typeof c !== "object" || typeof c.email_token !== "string") return false;
+  if (c.decision !== "needs_yes" && c.decision !== "needs_device") return false;
+  const one = (p: unknown) =>
+    (p as JsonObject | null)?.command === "repo.create" &&
+    (p as JsonObject | null)?.projectId === projectId;
+  if (one(c)) return true;
+  return (
+    !opts.alone && c.command === "compose" && Array.isArray(c.parts) && c.parts.some((p) => one(p))
+  );
+}
+
+/** The project a card asks a repository for: the agent's offer or a `repo.create` change card. */
+function repoCardProject(row: Pick<HumanRequestRow, "change_card" | "project_id">): string | null {
+  const card = row.change_card as JsonObject | null;
+  const key = card?.key;
+  if (typeof key === "string" && key.startsWith(ANSWER_CARD_KEYS.repoCreatePrefix))
+    return key.slice(ANSWER_CARD_KEYS.repoCreatePrefix.length);
+  return row.project_id && asksForRepository(card, row.project_id, { alone: true })
+    ? row.project_id
+    : null;
+}
+
+/**
+ * Withdraws every open card that asks for a repository for a project that has one now
+ * (R-repooffer, leftovers7-merge and its fix-up): the agent's offer and the `repo.create` change
+ * cards of Chat, voice and the project page (one previewed and left). The Inbox then says
+ * "Closed: it no longer needs you." and no answer to them can fail with a warning any more.
+ * Before, only the offer was withdrawn, so a Chat card filed first stayed open beside the linked
+ * repository and its Yes posted "was not applied". The executor's closure behind a withdrawn
+ * change card is dropped by `RepoProposals.withdrawLinked`. Returns how many were withdrawn.
  */
 export async function withdrawRepoOffers(
   store: Pick<StateStore, "humanRequest" | "project">,
   projectId: string,
 ): Promise<number> {
   if (((await store.project.get(projectId))?.repos.length ?? 0) === 0) return 0;
-  const key = `${ANSWER_CARD_KEYS.repoCreatePrefix}${projectId}`;
   const open = await store.humanRequest.list({ status: "open", project_id: projectId } as never, {
     limit: 200,
   });
   let n = 0;
   for (const row of open)
-    if ((row.change_card as JsonObject | null)?.key === key) {
+    if (repoCardProject(row) === projectId) {
       await store.humanRequest.withdraw(row.id, row.version);
       n++;
     }
@@ -103,8 +141,17 @@ const NO_TOKEN =
 
 export class RepoCreator implements RepoCommandPort {
   private readonly logger = log("repo-create");
+  private readonly linkedListeners = new Set<(projectId: string) => Promise<unknown>>();
 
   constructor(private readonly deps: RepoCreatorDeps) {}
+
+  /**
+   * Called once a repository this creator made is linked, after the open cards asking for one
+   * were withdrawn (`RepoProposals` drops the executor's closures behind them here).
+   */
+  whenLinked(listener: (projectId: string) => Promise<unknown>): void {
+    this.linkedListeners.add(listener);
+  }
 
   async preview(req: {
     projectId: string;
@@ -178,10 +225,15 @@ export class RepoCreator implements RepoCommandPort {
     }
     await store.project.patch(project.id, { repos: [info.fullName] });
     await this.audit(req, project, info, true, `created and linked; ${files} file(s) pushed`);
-    // R-repooffer: the agent's open offer for this project needs nobody any more.
+    // R-repooffer: the agent's open offer for this project, and any other card asking for a
+    // repository for it (Chat's, a previewed one of the project page), need nobody any more.
     await withdrawRepoOffers(store, project.id).catch((e) =>
       this.logger.warn("repository offer not withdrawn", { error: errorMessage(e) }),
     );
+    for (const listener of this.linkedListeners)
+      await listener(project.id).catch((e: unknown) =>
+        this.logger.warn("repository cards not closed", { error: errorMessage(e) }),
+      );
     this.deps.onLinked?.(project.id);
     this.logger.info("repository created and linked", {
       projectId: project.id,
@@ -284,12 +336,17 @@ export interface RepoCommandRunner {
       actor?: { kind: "human" | "agent"; id: string };
     },
   ): Promise<CommandResultView>;
+  /** The executor's change cards still waiting for a yes (`CommandLoop.pending`). */
+  pending?(humanId?: string): readonly { id: string; cardJson: Record<string, unknown> }[];
+  /** Drops one (`CommandLoop.cancel`): its card was withdrawn, so no yes may run it. */
+  cancel?(pendingId: string, by: { kind: "human" | "agent"; id: string }): Promise<unknown>;
 }
 
 export interface RepoProposalsDeps {
   store: StateStore;
   clock: Clock;
-  creator: Pick<RepoCreator, "preview">;
+  /** `whenLinked`: the creator says when it linked one, so the closed cards' closures go. */
+  creator: Pick<RepoCreator, "preview"> & Partial<Pick<RepoCreator, "whenLinked">>;
   commands: RepoCommandRunner;
   humanId: string;
   agentId: string;
@@ -308,7 +365,9 @@ export type RepoProposalOutcome =
 export class RepoProposals {
   private readonly logger = log("repo-create");
 
-  constructor(private readonly deps: RepoProposalsDeps) {}
+  constructor(private readonly deps: RepoProposalsDeps) {
+    deps.creator.whenLinked?.((projectId) => this.withdrawLinked(projectId));
+  }
 
   /**
    * After a session planned (`SessionRunnerDeps.onPlanned`): a project without a repository
@@ -328,6 +387,11 @@ export class RepoProposals {
     const key = `${REPO_PROPOSAL_KEY_PREFIX}${project.id}`;
     const open = await store.humanRequest.open({ humanId: this.deps.humanId }, { limit: 500 });
     if (open.some((r) => (r.change_card as JsonObject | null)?.key === key)) return "already_asked";
+    // Fix-up of R-repooffer: the person asked for one already (Chat, voice, a card the project
+    // page previewed) and that card waits in the Inbox: it is the one card for this repository.
+    // Before, the offer was filed beside it, and once either was answered the other's yes
+    // posted "was not applied".
+    if (open.some((r) => asksForRepository(r.change_card, project.id))) return "already_asked";
     let preview: RepoPreview;
     try {
       preview = await this.deps.creator.preview({ projectId: project.id, private: true });
@@ -461,10 +525,13 @@ export class RepoProposals {
   }
 
   /**
-   * R-repooffer (leftovers7-merge): an open offer whose project has a repository now (made from
-   * Chat or the project page, or linked by hand) is withdrawn: the Inbox says "Closed: it no
-   * longer needs you." Before, it stayed open and its "Create the repository" then failed with a
-   * warning. Called by `sync` and by `RepoCreator` once it linked one (`withdrawFor`).
+   * R-repooffer (leftovers7-merge and its fix-up): every open card asking for a repository for
+   * a project that has one now (made from Chat, the project page or the offer, or linked another
+   * way) is withdrawn: the agent's offer and the `repo.create` change cards. The Inbox says
+   * "Closed: it no longer needs you." Before, they stayed open and their yes then failed with a
+   * warning. The executor's closure behind each withdrawn change card is dropped too, so no yes in
+   * Chat or the project page's dialog runs it later. Called by `sync` and by `RepoCreator` once
+   * it linked one (`whenLinked`).
    */
   async withdrawLinked(projectId?: string): Promise<number> {
     const { store } = this.deps;
@@ -472,10 +539,8 @@ export class RepoProposals {
     const open = await store.humanRequest.open({ humanId: this.deps.humanId }, { limit: 500 });
     const projects = new Set<string>();
     for (const row of open) {
-      const key = (row.change_card as JsonObject | null)?.key;
-      if (typeof key !== "string" || !key.startsWith(REPO_PROPOSAL_KEY_PREFIX)) continue;
-      const id = key.slice(REPO_PROPOSAL_KEY_PREFIX.length);
-      if (!projectId || id === projectId) projects.add(id);
+      const id = repoCardProject(row);
+      if (id && (!projectId || id === projectId)) projects.add(id);
     }
     for (const id of projects) {
       try {
@@ -487,7 +552,31 @@ export class RepoProposals {
         });
       }
     }
+    await this.dropClosedClosures(projectId);
     return n;
+  }
+
+  /**
+   * The executor's closures behind `repo.create` change cards that were withdrawn or expired:
+   * dropped, so Chat no longer reads them back as waiting and no late yes runs them. An answered
+   * card is left alone: the answered-cards sync applies it.
+   */
+  private async dropClosedClosures(projectId?: string): Promise<void> {
+    const { commands, store } = this.deps;
+    if (!commands.pending || !commands.cancel) return;
+    for (const p of commands.pending(this.deps.humanId)) {
+      const cardProject = p.cardJson.projectId;
+      if (p.cardJson.command !== "repo.create" || typeof cardProject !== "string") continue;
+      if (projectId && cardProject !== projectId) continue;
+      const row = await store.humanRequest.get(p.id).catch(() => undefined);
+      if (row && (row.status === "open" || row.status === "answered")) continue;
+      await commands.cancel(p.id, { kind: "human", id: this.deps.humanId }).catch((e: unknown) =>
+        this.logger.warn("closed repository card not dropped", {
+          id: p.id,
+          error: errorMessage(e),
+        }),
+      );
+    }
   }
 
   /** The open offer for a project, if any (a chat's `repo.create` points to it). */

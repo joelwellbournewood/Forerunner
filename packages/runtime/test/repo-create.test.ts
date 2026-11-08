@@ -566,6 +566,152 @@ describe("a repository for a project without one (U-037)", () => {
     expect(before).toContain(offer.id);
   });
 
+  /**
+   * The project's open Inbox cards that ask for a repository (the agent's offer, a Chat or
+   * project page card), as the Inbox lists them; the session's plan card is not one.
+   */
+  async function openCardsOf(projectId: string) {
+    const inbox = await json(await req("/inbox"));
+    return (
+      inbox.requests as Array<{
+        id: string;
+        projectId: string | null;
+        status: string;
+        title: string;
+        version: number;
+        outcome?: string | null;
+        choices: Array<{ label: string }>;
+      }>
+    ).filter(
+      (r) => r.projectId === projectId && r.status === "open" && /repository/i.test(r.title),
+    );
+  }
+
+  /** The person's messages, newest first, as one text. */
+  const messagesText = async () =>
+    (await rt.store.message.inbox({ humanId: rt.human.id }, { limit: 100 }))
+      .map((m) => m.body)
+      .join("\n");
+
+  it(
+    "Chat asks for a repository before the agent would offer one: the agent files no offer beside it, and its Yes leaves nothing open and no warning (fixup R-repooffer, the other order)",
+    async () => {
+      const { id } = await projectWithCodeWork("Bat Count");
+      const asked = await json(
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "repo.create", params: { project: id, private: true } }],
+            source: "text",
+            projectId: id,
+            wordsUsed: "create a repository for Bat Count",
+          }),
+        }),
+      );
+      expect(asked.status).toBe("pending");
+      // The session plans code work: before, it filed the offer too, two cards for one
+      // repository, and once one was answered the other's Yes posted "was not applied".
+      await session(id);
+      const open = await openCardsOf(id);
+      expect(open.map((r) => r.id)).toEqual([String(asked.pendingId)]);
+      const card = open[0];
+      if (!card) throw new Error("no card");
+      const yes = card.choices[0]?.label;
+      if (!yes) throw new Error(`the card shows no choices: ${JSON.stringify(card)}`);
+      await answer(card, yes);
+      const linked = (await rt.store.project.mustGet(id)).repos;
+      if (linked.length === 0)
+        throw new Error(
+          `not linked after "${yes}": open cards ${JSON.stringify(await openCardsOf(id))}; messages: ${await messagesText()}`,
+        );
+      expect(linked).toEqual(["alice/bat-count"]);
+      expect(await openCardsOf(id)).toEqual([]);
+      expect(await messagesText()).not.toMatch(/was not applied|was not created/);
+      // A later session has nothing to offer: the project has its repository.
+      await session(id);
+      expect(await proposalCard(id)).toBeUndefined();
+    },
+    REPO_WORK_MS,
+  );
+
+  it(
+    "a repository linked by any path closes every open card that asks for one: the offer and the project page's previewed card both say Closed, the closed card's Yes creates nothing, and no warning (fixup R-repooffer)",
+    async () => {
+      const { id } = await projectWithCodeWork("Pond Census");
+      await session(id);
+      const offer = await proposalCard(id);
+      if (!offer) throw new Error("no proposal card");
+      // The project page's dialog: Preview files its card; the person closes the dialog.
+      const previewed = await json(
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "repo.create", params: { project: id, private: true } }],
+            source: "ui",
+            projectId: id,
+            wordsUsed: "Create a repository (project page)",
+          }),
+        }),
+      );
+      expect(previewed.status).toBe("pending");
+      // The offer's own first option creates and links it.
+      await answer(offer, offer.options[0] as string);
+      expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/pond-census"]);
+      // Before: the previewed card stayed open beside a linked repository.
+      expect(await openCardsOf(id)).toEqual([]);
+      const closed = await rt.store.humanRequest.mustGet(String(previewed.pendingId));
+      expect(closed.status).toBe("withdrawn");
+      const inbox = await json(await req("/inbox"));
+      const shown = (inbox.requests as Array<{ id: string; status: string; outcome?: string }>)
+        .filter((r) => r.id === closed.id)
+        .map((r) => [r.status, r.outcome]);
+      expect(shown).toEqual([["withdrawn", "Closed: it no longer needs you."]]);
+      // Nothing waits behind it any more: no Yes in Chat or the dialog can run it.
+      const pendings = (await json(await req("/commands/pending"))) as unknown as Array<{
+        id: string;
+      }>;
+      expect(pendings.map((p) => p.id)).not.toContain(closed.id);
+      const late = await json(
+        await req(`/commands/${closed.id}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        }),
+      );
+      expect(late.status).toBe("refused");
+      expect(await messagesText()).not.toMatch(/was not applied|was not created/);
+    },
+    REPO_WORK_MS,
+  );
+
+  it(
+    "a Chat card for a project linked another way meanwhile is closed, not left to fail (fixup R-repooffer)",
+    async () => {
+      const { id } = await projectWithCodeWork("Hedge Log");
+      const asked = await json(
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "repo.create", params: { project: id, private: true } }],
+            source: "text",
+            projectId: id,
+            wordsUsed: "create a repository for Hedge Log",
+          }),
+        }),
+      );
+      expect(asked.status).toBe("pending");
+      // The project gets a repository another way (an import of its GitHub repository).
+      await rt.store.project.patch(id, { repos: ["alice/hedge-log-old"] });
+      // The next answer or poll applies what is due.
+      await rt.syncApprovals();
+      expect(await openCardsOf(id)).toEqual([]);
+      expect((await rt.store.humanRequest.mustGet(String(asked.pendingId))).status).toBe(
+        "withdrawn",
+      );
+      expect(await messagesText()).not.toMatch(/was not applied|was not created/);
+    },
+    REPO_WORK_MS,
+  );
+
   it("names a repository after its project", () => {
     expect(repoNameFor("Garden Planner", "0abc")).toBe("garden-planner");
     expect(repoNameFor("Zürich Café: v2!", "0abc")).toBe("zurich-cafe-v2");

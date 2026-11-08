@@ -427,7 +427,10 @@ the same. When a session plans code work for such a project, your agent asks in 
 autonomy level, Autopilot too, and so does a "create a repository" the agent decides on in
 Chat: nothing is created under your GitHub account without your yes. The offer does not hold
 any work, so the project's line does not count it as a question. A public repository always
-needs your confirmation on this device.
+needs your confirmation on this device. There is one card per repository, whichever way you
+ask first: while a card for it waits in the Inbox (from Chat, the agent, or a **Preview** on the
+project page you closed), no second one is filed, and once the project has a repository every
+card still asking for one closes ("Closed: it no longer needs you.").
 
 **Note for the next session** on the Overview is one box: type what the agent should know
 and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note
