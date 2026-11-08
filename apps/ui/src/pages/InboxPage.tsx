@@ -316,7 +316,13 @@ function IntakeCard({
   const tasks = [...card.milestones.flatMap((m) => m.tasks), ...card.looseTasks];
   const isPerson = (t: IntakeCardTask) => t.specialist === "person";
   const estimate = new Map(card.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
-  const costOf = (t: IntakeCardTask) => (t.key !== null ? estimate.get(t.key) : undefined);
+  // The daemon's figure, as the Start dialog will price the task (the learned estimate; the
+  // leftovers of wave 7), else the plan's own.
+  const costOf = (t: IntakeCardTask) => {
+    const now = hereOf(t)?.estimateUsdMicro;
+    if (typeof now === "number") return now;
+    return t.key !== null ? estimate.get(t.key) : undefined;
+  };
   const agentTasks = tasks.filter((t) => !isPerson(t));
   const estimated = agentTasks.filter((t) => costOf(t) !== undefined);
   const total = estimated.reduce((s, t) => s + (costOf(t) ?? 0), 0);

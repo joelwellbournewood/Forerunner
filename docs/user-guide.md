@@ -590,7 +590,9 @@ The cards you meet most:
   and address"), the plan starts with a task for you ("Give the real menu, hours and address",
   "you: answer its questions") and the work that uses it waits for your answers instead of
   using placeholders. What your project gives its own people ("we will send subscribers a
-  weekly email") is the work, not something you give. **Approve and start** writes the tasks and
+  weekly email") is the work, not something you give. Each task's "about CHF ..." is what the
+  Start dialog will say for it: once Forerunner has seen what tasks of that kind really cost,
+  both use what it learned. **Approve and start** writes the tasks and
   starts working on them now (or, when the work waits for your answers first, says so and puts
   their card in your Inbox: "the work starts once you answer its questions in the Inbox").
   **Change the plan** opens a box: say what to change and the agent drafts a new plan

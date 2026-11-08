@@ -5285,7 +5285,13 @@ subscription); no credential meets every hard need; api_key lacks webSearch" and
 come from the same functions: `RuntimeApp.chooser.forTask({ specialist, projectId, task })`
 (`credentialChoiceFor` over `RouterTaskBilling.savedKinds()`, the saved credentials in the
 person's order, and `hasDependenciesToInstall` of the project's folder) gives `{ kind, line }`, the
-sentence the plan card (`GET /inbox` `planTasks`, `daemon/plan-tasks.ts`), New task and Settings
+sentence the plan card (`GET /inbox` `planTasks`, `daemon/plan-tasks.ts`; each plan task there
+also carries `estimateUsdMicro`, the figure the Start dialog will show for the task the plan
+writes: `planEstimateUsdMicro` over the learned estimates, the plan shaped as the apply shapes
+it, 0 for the person's questions, while the task itself keeps the plan's bounded guess as its
+`est_cost_usd_micro`; the leftovers of wave 7: the card showed the guess while the Start dialog
+showed it times the learned ratio; `real-daemon.test.ts` "the plan card's figure is the Start
+dialog's"), New task and Settings
 show (`choiceLine`: "Runs on your API key: it can read web pages here but not search, so the
 researcher reads pages whose address it knows." when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your

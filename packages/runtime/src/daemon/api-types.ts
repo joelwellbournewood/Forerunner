@@ -794,6 +794,13 @@ export const HumanRequestView = z.object({
         specialist: z.string().nullable(),
         unknown: z.string().nullable(),
         runsOn: CredentialRunsOn.nullable(),
+        /**
+         * What the task is estimated to cost now, as the Start dialog prices it once written
+         * (the learned estimate over the plan's figure; the leftovers of wave 7); 0 for the
+         * person's questions; null for a task the first session does not plan. Absent from an
+         * older service (the card then shows the plan's own figure).
+         */
+        estimateUsdMicro: z.number().int().nullable().optional(),
       }),
     )
     .nullable()

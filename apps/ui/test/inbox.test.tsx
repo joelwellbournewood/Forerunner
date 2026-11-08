@@ -1525,3 +1525,96 @@ describe("Inbox", () => {
     expect(screen.queryByTestId("mark-all-read")).toBeNull();
   });
 });
+
+// The leftovers of wave 7 (R-estimates, leftovers7-session): the plan card showed the plan's
+// bounded guess while the Start dialog showed that figure times the learned ratio, so after a
+// few tasks of a kind the two screens gave different amounts for the same tasks. The card now
+// shows the daemon's figure (`planTasks[].estimateUsdMicro`, as the Start dialog prices it).
+describe("the plan card's figures (leftovers7-session)", () => {
+  it("each task and the total show the figure the Start dialog will show, not the plan's own guess", async () => {
+    const harness = createHarness();
+    // What the estimates learned for these tasks: they cost half the plan's guess.
+    harness.daemon.state.planEstimateRatio = 0.5;
+    harness.daemon.state.requests.unshift({
+      id: "req_intake_learned",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Atlas": 1 milestone(s), 2 task(s), 1 doc(s) and a first-session plan.',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Foundations",
+                successCriteria: ["CI green"],
+                targetDate: null,
+                tasks: [
+                  {
+                    key: "scaffold",
+                    title: "Scaffold the repository",
+                    outcome: "skeleton",
+                    acceptanceCriteria: [],
+                    priority: 8,
+                    dependsOn: [],
+                    specialist: "coder",
+                  },
+                  {
+                    key: "readme",
+                    title: "Write the README",
+                    outcome: "a README",
+                    acceptanceCriteria: [],
+                    priority: 6,
+                    dependsOn: ["scaffold"],
+                    specialist: "coder",
+                  },
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "Scaffold first.",
+            items: [
+              { key: "scaffold", estimateUsdMicro: 400_000 },
+              { key: "readme", estimateUsdMicro: 250_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    // Before: "about CHF 0.32" and "about CHF 0.20", the plan's guess.
+    await waitFor(() =>
+      expect(
+        within(card)
+          .getAllByTestId("intake-task")
+          .map((t) => t.textContent),
+      ).toEqual([
+        "Scaffold the repository · coder · about CHF 0.16",
+        'Write the README · coder · about CHF 0.10 · after "Scaffold the repository"',
+      ]),
+    );
+    expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+      "About CHF 0.26 for the 2 tasks",
+    );
+  });
+});

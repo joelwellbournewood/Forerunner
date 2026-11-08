@@ -19,6 +19,7 @@ import {
   type RuntimeApp,
 } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
+import { planEstimateUsdMicro } from "@forerunner/runtime/estimates/model";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
@@ -10018,4 +10019,83 @@ describe("the UI client against the real daemon: a take-out and a preview surviv
       await host.stop();
     }
   }, 180_000);
+});
+
+// leftovers7-session (R-estimates): the plan card showed the plan's bounded guess per task while
+// the Start dialog priced the same tasks with the learned estimates (`planEstimateUsdMicro`), so
+// after a few tasks of a kind the two screens gave different amounts. `GET /inbox` now gives
+// each plan task the figure the Start dialog will show (`planTasks[].estimateUsdMicro`), and the
+// task keeps the plan's guess as its own estimate.
+describe("the UI client against the real daemon: the plan card's figure is the Start dialog's (leftovers7-session)", () => {
+  it("after three samples of a kind at half the guess, each plan task's figure equals what the Start dialog prices for the task it writes", async () => {
+    // Each stand-in reply waits, so nothing the started session runs finishes (and teaches the
+    // estimates more) before the figures are compared.
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_DELAY_MS: "3000" });
+    try {
+      const brief = "A page that shows a random quote";
+      const project = await client.createProject({
+        name: "Learned quote",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const cardNow = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open",
+        );
+      const before = await cardNow();
+      if (!before?.planTasks) throw new Error(`no plan card: ${JSON.stringify(before)}`);
+      // Three finished tasks of each kind the plan holds, at half their estimates.
+      for (const specialist of new Set(before.planTasks.map((t) => t.specialist))) {
+        if (!specialist) continue;
+        for (let tier = 0; tier <= 3; tier++)
+          for (let i = 0; i < 3; i++)
+            rt.estimates.observeTask(
+              {
+                id: `sample-${specialist}-${tier}-${i}`,
+                specialist,
+                risk_tier: tier,
+                est_cost_usd_micro: 100_000,
+                budget_usd_micro: 0,
+              },
+              { usdMicro: 50_000, wallMs: 60_000, at: new Date().toISOString() },
+            );
+      }
+      const card = await cardNow();
+      if (!card?.planTasks) throw new Error("no plan card after the samples");
+      const view = intakeCardOf(card.changeCard);
+      if (!view) throw new Error("the plan card did not read as one");
+      const guess = new Map(view.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
+      const shown = card.planTasks.filter((t) => t.specialist !== null && guess.has(t.key ?? ""));
+      expect(shown.length).toBeGreaterThan(0);
+      // The card's figure is no longer the plan's own guess (before: always the guess).
+      for (const t of shown)
+        expect(t.estimateUsdMicro, t.title).toBeLessThan(guess.get(t.key ?? "") ?? 0);
+
+      await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+      const tasks = await rt.store.task.list({ project_id: project.id } as never, { limit: 50 });
+      for (const t of shown) {
+        const row = tasks.find((r) => r.title === t.title);
+        if (!row) throw new Error(`no task "${t.title}"`);
+        // The task keeps the plan's guess; the Start dialog prices it with what was learned,
+        // which is what the card showed.
+        expect(row.est_cost_usd_micro, t.title).toBe(guess.get(t.key ?? ""));
+        expect(planEstimateUsdMicro(rt.estimates, row), t.title).toBe(t.estimateUsdMicro);
+      }
+      // Nothing is left running for the next case.
+      for (const s of await client.sessions({ projectId: project.id }))
+        if (s.status === "running") await client.stopSession(s.id).catch(() => undefined);
+      await eventually(
+        async () =>
+          (await client.sessions({ projectId: project.id })).every((s) => s.status !== "running"),
+        "the session Approve and start began to end",
+        async () => (await client.sessions({ projectId: project.id })).map((s) => s.status).join(),
+        30_000,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

@@ -1,6 +1,7 @@
-import type { HumanRequestRow } from "@forerunner/state";
+import type { HumanRequestRow, ProjectRow, TaskRow } from "@forerunner/state";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { PERSON_SPECIALIST } from "../session/person-questions.ts";
+import { type ShapedPlan, shapeProjectPlan } from "../session/project-plan.ts";
 import type { CredentialRunsOn, HumanRequestView } from "./api-types.ts";
 
 /**
@@ -20,6 +21,26 @@ export interface PlanTasksDeps {
     projectId: string | null;
     task: { title: string; outcome: string; acceptance_criteria: readonly string[] };
   }): Promise<CredentialRunsOn | null>;
+  /**
+   * What a task of the plan is estimated to cost now, as the Start dialog prices the task the
+   * plan writes (`planEstimateUsdMicro` over the learned estimates; the leftovers of wave 7:
+   * the card showed the plan's bounded guess while the Start dialog showed that figure times
+   * the learned ratio). `project` shapes the plan as the apply does (its tier and budget per
+   * task). Absent: the plan's own figure.
+   */
+  estimate?: {
+    project: Pick<ProjectRow, "name" | "small_project_mode">;
+    of(
+      task: Pick<
+        TaskRow,
+        | "specialist"
+        | "risk_tier"
+        | "est_cost_usd_micro"
+        | "budget_usd_micro"
+        | "actual_cost_usd_micro"
+      >,
+    ): number;
+  };
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -41,6 +62,38 @@ function planTasksOfCard(card: unknown): Record<string, unknown>[] | null {
   ];
 }
 
+/** The first session's figure per plan task key (the plan's bounded guess, what the task stores). */
+function firstSessionFigures(card: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!isRecord(card) || !isRecord(card.proposal)) return out;
+  const first = card.proposal.firstSession;
+  if (!isRecord(first) || !Array.isArray(first.items)) return out;
+  for (const i of first.items.filter(isRecord)) {
+    const key = str(i.key);
+    const n = typeof i.estimateUsdMicro === "number" ? i.estimateUsdMicro : null;
+    if (key && n !== null && Number.isFinite(n)) out.set(key, Math.max(0, Math.round(n)));
+  }
+  return out;
+}
+
+/** The plan as the apply writes it, by task key; null when it does not shape. */
+function shapedByKey(
+  card: unknown,
+  project: Pick<ProjectRow, "name" | "small_project_mode">,
+): Map<string, ShapedPlan["unassigned"][number]> | null {
+  if (!isRecord(card) || !isRecord(card.proposal) || !isRecord(card.proposal.plan)) return null;
+  let shaped: ShapedPlan;
+  try {
+    shaped = shapeProjectPlan(card.proposal.plan as never, project);
+  } catch {
+    return null;
+  }
+  const out = new Map<string, ShapedPlan["unassigned"][number]>();
+  for (const t of [...shaped.milestones.flatMap((m) => m.tasks), ...shaped.unassigned])
+    if (t.key) out.set(t.key, t);
+  return out;
+}
+
 /** `planTasks` of an open plan card; null for any other card, or one that is answered. */
 export async function planTaskViews(
   row: Pick<HumanRequestRow, "change_card" | "project_id" | "status">,
@@ -49,6 +102,23 @@ export async function planTaskViews(
   if (row.status !== "open") return null;
   const tasks = planTasksOfCard(row.change_card);
   if (!tasks) return null;
+  const figures = firstSessionFigures(row.change_card);
+  const shaped = deps.estimate ? shapedByKey(row.change_card, deps.estimate.project) : null;
+  const estimateOf = (key: string | null, person: boolean): number | null => {
+    const figure = key !== null ? figures.get(key) : undefined;
+    if (figure === undefined) return null;
+    // The person's questions cost nothing (no specialist runs), whatever the reply guessed.
+    if (person) return 0;
+    const t = key !== null ? shaped?.get(key) : undefined;
+    if (!deps.estimate || !t) return figure;
+    return deps.estimate.of({
+      specialist: t.specialist,
+      risk_tier: t.riskTier,
+      est_cost_usd_micro: figure,
+      budget_usd_micro: t.budgetUsdMicro,
+      actual_cost_usd_micro: 0,
+    });
+  };
   const out: PlanTaskView[] = [];
   for (const t of tasks) {
     const title = str(t.title);
@@ -62,6 +132,7 @@ export async function planTaskViews(
       title,
       specialist: known,
       unknown: named && !person && !known ? named : null,
+      estimateUsdMicro: estimateOf(str(t.key), person),
       runsOn: known
         ? await deps
             .forTask({

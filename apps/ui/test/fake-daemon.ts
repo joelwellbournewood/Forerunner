@@ -622,6 +622,12 @@ export interface FakeDaemonState {
    * not listening), the case the panel must roll back from.
    */
   voiceRefusePress: boolean;
+  /**
+   * The learned cost ratio of the plan's tasks (leftovers7-session): as the daemon, `GET /inbox`
+   * gives each plan task the figure the Start dialog will show (the plan's figure times it).
+   * Absent: 1 (nothing learned).
+   */
+  planEstimateRatio?: number;
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -2630,6 +2636,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           has: (name) => name in FAKE_REGISTRY_TOOLS,
           forTask: async ({ specialist, projectId, task }) =>
             runsOnFor(specialist, projectId, task),
+          // As the daemon: the figure the Start dialog will show (leftovers7-session).
+          estimate: {
+            project: { name: r.projectId ?? "", small_project_mode: false },
+            of: (t) => Math.round(t.est_cost_usd_micro * (state.planEstimateRatio ?? 1)),
+          },
         },
       );
       if (planTasks) r.planTasks = planTasks;

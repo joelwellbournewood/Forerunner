@@ -23,6 +23,7 @@ import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcrip
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
 import { readKillRequest, writeKillRequest } from "../enforcement/killfile.ts";
+import { planEstimateUsdMicro } from "../estimates/model.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes, type DeviceConfirmation } from "../extensions/routes.ts";
 import type { ExtensionView } from "../extensions/types.ts";
@@ -1756,9 +1757,22 @@ export function createDaemonApp(
     // U-078, C-68: an open plan card's tasks as this install would run them now (who does each,
     // where it runs and why), so the card says it before the person approves.
     for (const [i, row] of requests.entries()) {
+      // The figure each plan task shows is the one the Start dialog shows once it is written
+      // (the learned estimate over the plan's guess; the leftovers of wave 7).
+      const planProject = row.project_id
+        ? await rt.store.project.get(row.project_id).catch(() => undefined)
+        : undefined;
       const planTasks = await planTaskViews(row, {
         has: (name) => rt.specialists(name) !== undefined,
         forTask: (input) => rt.chooser.forTask(input),
+        ...(planProject
+          ? {
+              estimate: {
+                project: planProject,
+                of: (t) => planEstimateUsdMicro(rt.estimates, t as TaskRow),
+              },
+            }
+          : {}),
       });
       const view = reqViews[i];
       if (planTasks && view) view.planTasks = planTasks;
