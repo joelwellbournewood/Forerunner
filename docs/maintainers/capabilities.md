@@ -200,6 +200,16 @@ with their milestone.
   request whose body carries the outcome, the acceptance criteria (no heading when there are
   none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
+  **One branch per task** (R-branch, leftovers7-merge): the branch is
+  `taskBranchName(task)`, `fr/<the id's last 8 hex characters>-<title>`, stored on the task at
+  its first run. Before, it took the id's first 8 characters, which are a UUIDv7's creation
+  time and the same for 65 s: two tasks titled alike created within a minute got one branch,
+  and the second found the first's open pull request by branch name, resumed it and pushed its
+  work onto it. A pull request found on the task's branch whose body names another task
+  (`openedForAnotherTask`: "Task <id>, session ..." from `openOrUpdatePr`) is never resumed:
+  a task that stored such a name before the fix moves to its own (`unusedBranch`, the name or
+  `-r<n>`). Tests: `pr-executor.test.ts` "leftovers of wave 7, merge side"; the real daemon
+  (`real-daemon.test.ts`, same describe) lists two pull requests for two such tasks.
   **A task that waits for unmerged work builds on it** (C-49, ADR 0106; kept true by ADR
   0111, 'dependent-branches'): `unmergedDependencies` walks `depends_on` (deepest first) for
   done tasks of the project whose branch still has an open pull request on the host;

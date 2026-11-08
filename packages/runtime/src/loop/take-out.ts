@@ -1,4 +1,9 @@
-import type { GitHost, PullRequestInfo, TakeOutGitResult } from "@forerunner/capabilities";
+import {
+  type GitHost,
+  type PullRequestInfo,
+  type TakeOutGitResult,
+  taskBranchName,
+} from "@forerunner/capabilities";
 import { errorMessage, log, redact } from "@forerunner/platform";
 import type { MergeMethod, MergeRecordRow, StateStore, TaskRow } from "@forerunner/state";
 import type { TaskTakeOutAnswer } from "../daemon/api-types.ts";
@@ -179,7 +184,8 @@ export class TaskTakeOut {
       (record?.state === "merged" && record.merge_sha) || pr.mergeCommitSha || record?.merge_sha;
     if (!mergeSha) return refused(unknownShapeSentence(ref.number));
     const later = (await this.builtOn(task)).map((t) => t.title);
-    const branch = `${task.branch?.trim() || `fr/${task.id.slice(0, 8).toLowerCase()}`}-take-out`;
+    // Never the id's time part alone (R-branch): two tasks of one minute shared it.
+    const branch = `${task.branch?.trim() || taskBranchName(task)}-take-out`;
     let done: TakeOutGitResult;
     try {
       done = await this.deps.git.takeOut({

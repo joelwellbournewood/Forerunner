@@ -33,7 +33,7 @@ import {
   underNeverPushed,
 } from "./local-only.ts";
 import { pushFailedWords } from "./push-words.ts";
-import type { GitHost, MergeMethod, RepoRef } from "./types.ts";
+import type { GitHost, MergeMethod, PullRequestInfo, RepoRef } from "./types.ts";
 
 /**
  * Branch-and-PR flow around a task executor (spec F: code changes only via branches and PRs,
@@ -336,6 +336,35 @@ export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state
     default:
       return name;
   }
+}
+
+/**
+ * A task's branch name: `fr/<8 characters of its id>-<its title>` (R-branch, leftovers7-merge).
+ * The 8 characters are the id's random end, never its start: a UUIDv7 starts with its creation
+ * time, which is the same for 65 s, so two tasks titled alike created within a minute got one
+ * branch and the second pushed its work onto the first's pull request. An id that is not a UUID
+ * (tests, imports) gives its own first characters.
+ */
+export function taskBranchName(task: Pick<TaskRow, "id" | "title">): string {
+  const hex = task.id.toLowerCase().replace(/[^0-9a-f]/g, "");
+  const own =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(task.id) &&
+    hex.length === 32
+      ? hex.slice(-8)
+      : safeSegment(task.id.toLowerCase(), "task").slice(0, 8);
+  return `fr/${own}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+}
+
+/**
+ * Whether a pull request Forerunner opened names another task than `taskId` (its body ends
+ * "Task <id>, session <id>. Opened by Forerunner."): that pull request is never this task's.
+ */
+export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: string): boolean {
+  const named =
+    /\bTask ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}), session /i.exec(
+      pr.body ?? "",
+    )?.[1];
+  return !!named && named.toLowerCase() !== taskId.toLowerCase();
 }
 
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */
@@ -664,10 +693,7 @@ export class PrTaskExecutor implements TaskExecutor {
     dir: string,
   ): Promise<TaskExecutionResult> {
     const { task } = ctx;
-    let branch =
-      task.branch ||
-      this.deps.branchFor?.(task) ||
-      `fr/${task.id.slice(0, 8)}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+    let branch = task.branch || this.deps.branchFor?.(task) || taskBranchName(task);
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
     const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
     const git = await this.gitFor(target, dir);
@@ -705,13 +731,22 @@ export class PrTaskExecutor implements TaskExecutor {
       return this.continueResolved(ctx, { git, dir, branch, target, answered });
     }
     const dropped = answered?.outcome === "dropped";
-    const existingPr = (
+    let existingPr: PullRequestInfo | undefined = (
       await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
     )[0];
+    // R-branch (leftovers7-merge): a pull request on this branch that another task opened is
+    // never this task's to resume or push onto. A name made before branch names were unique
+    // per task (two tasks titled alike within 65 s shared one) moves to the task's own name.
+    const another = !!existingPr && openedForAnotherTask(existingPr, task.id);
+    if (another) {
+      branch = await this.unusedBranch(git, target, taskBranchName(task));
+      existingPr = undefined;
+    }
     // A redo of a task whose pull request was merged or closed starts again on a fresh branch
     // (the old name with a short suffix): a branch GitHub keeps after a merge (delete-on-merge
     // off) never makes its push fail, and the old pull request stays as it was.
-    if (task.branch && !existingPr) branch = await this.freshBranch(git, target, task.branch);
+    if (task.branch && !existingPr && !another)
+      branch = await this.freshBranch(git, target, task.branch);
     if (branch !== task.branch) await this.deps.store.task.patch(task.id, { branch });
     // budget-resume: the task's own work in progress (a pause, a question, a stop) on its local
     // branch: this run continues from it. "Drop the branch and retry from scratch" drops it.
@@ -1179,9 +1214,16 @@ export class PrTaskExecutor implements TaskExecutor {
     });
     if (prs.some((p) => p.state === "open") || !prs.some((p) => p.state === "closed"))
       return current;
-    const stem = current.replace(/-r\d+$/, "");
-    for (let n = 2; n < 100; n++) {
-      const name = `${stem}-r${n}`;
+    return this.unusedBranch(git, target, current.replace(/-r\d+$/, ""), 2);
+  }
+
+  /**
+   * `stem` when neither the host nor a pull request has used it, else `<stem>-r<n>` for the
+   * first unused n (from `from`).
+   */
+  private async unusedBranch(git: GitOps, target: Target, stem: string, from = 1): Promise<string> {
+    for (let n = from; n < 100; n++) {
+      const name = n === 1 ? stem : `${stem}-r${n}`;
       if (await git.hasRef(`origin/${name}`)) continue;
       const used = await this.deps.host.listPullRequests(target.repo, { state: "all", head: name });
       if (used.length === 0) return name;

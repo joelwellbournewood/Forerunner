@@ -1555,3 +1555,138 @@ describe("a paused task keeps its work and continues from it (budget-resume)", {
     await s.w.store.close();
   });
 });
+
+describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_000 }, () => {
+  type Inner = TaskExecutor & { withWorktree: (dir: string) => TaskExecutor };
+  /** A run that does `work` in its folder and ends done (or as `result` says). */
+  function agent(
+    work: (dir: string) => Promise<void> | void,
+    result: Partial<Awaited<ReturnType<TaskExecutor["execute"]>>> = {},
+  ): Inner {
+    return {
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree(dir) {
+        return {
+          async execute() {
+            await work(dir);
+            return {
+              outcome: "done",
+              summary: "Wrote it.",
+              costUsdMicro: 1000,
+              checksPassed: true,
+              ...result,
+            };
+          },
+        };
+      },
+    };
+  }
+
+  async function setup() {
+    const w = await world();
+    const newTask = (title: string) =>
+      w.store.task.insert({
+        project_id: w.project,
+        title,
+        outcome: "the file is written",
+        acceptance_criteria: ["the file exists"],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 100_000,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+    const exec = (inner: Inner) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async (id: string) => {
+      const t = await w.store.task.mustGet(id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const lines = async (args: string[]) =>
+      (await run(["git", "--git-dir", w.bare, ...args], { allowFailure: true })).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+    const onHost = (branch: string) => lines(["ls-tree", "-r", "--name-only", branch]);
+    const subjects = (range: string) => lines(["log", "--format=%s", range]);
+    const gitIn = (dir: string, args: string[]) =>
+      run(["git", "-C", dir, ...args], { allowFailure: true }).then((r) => r.stdout.trim());
+    return { w, newTask, exec, ctx, onHost, subjects, gitIn };
+  }
+
+  it("two tasks titled 'Write the guide' created a second apart get two branches and two pull requests; the second carries none of the first's commits (R-branch)", async () => {
+    const s = await setup();
+    const first = await s.newTask("Write the guide");
+    await s.w.clock.advance(1000);
+    const second = await s.newTask("Write the guide");
+    // The cause: a UUIDv7's first 8 characters are its time, the same for 65 s.
+    expect(second.id.slice(0, 8)).toBe(first.id.slice(0, 8));
+    const a = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n")))
+      .execute(await s.ctx(first.id));
+    const b = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(second.id));
+    expect(a.outcome, a.summary).toBe("in_review");
+    expect(b.outcome, b.summary).toBe("in_review");
+    expect(b.branch).not.toBe(a.branch);
+    expect(b.prUrl).not.toBe(a.prUrl);
+    // No id on a person's screen is polish's (C-59); the name still reads as the task's.
+    expect(b.branch).toMatch(/^fr\/[0-9a-f]{8}-write-the-guide$/);
+    const prs = await s.w.host.listPullRequests({ owner: "o", name: "sample" });
+    expect(prs.map((p) => p.head.ref).sort()).toEqual([a.branch, b.branch].sort());
+    expect(await s.onHost(b.branch ?? "")).toEqual(["README.md", "notes.md"]);
+    expect(await s.subjects(`main..${b.branch}`)).toEqual(["Write the guide"]);
+    // The first task's pull request got nothing of the second's.
+    expect(await s.onHost(a.branch ?? "")).toEqual(["README.md", "guide.md"]);
+    expect(await s.w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1)).toEqual([]);
+    await s.w.store.close();
+  });
+
+  it("a task whose stored branch is another task's (made before the fix) does not take over that task's pull request (R-branch)", async () => {
+    const s = await setup();
+    const first = await s.newTask("Write the guide");
+    const second = await s.newTask("Write the guide");
+    const a = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n")))
+      .execute(await s.ctx(first.id));
+    expect(a.outcome, a.summary).toBe("in_review");
+    // As an older version left it: the second task stored the first one's branch name.
+    await s.w.store.task.patch(second.id, { branch: a.branch ?? "" });
+    const b = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(second.id));
+    expect(b.outcome, b.summary).toBe("in_review");
+    expect(b.branch).not.toBe(a.branch);
+    expect(b.prUrl).not.toBe(a.prUrl);
+    expect((await s.w.store.task.mustGet(second.id)).branch).toBe(b.branch);
+    expect(await s.onHost(a.branch ?? "")).toEqual(["README.md", "guide.md"]);
+    expect(await s.onHost(b.branch ?? "")).toEqual(["README.md", "notes.md"]);
+    expect(await s.w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1)).toEqual([]);
+    await s.w.store.close();
+  });
+});

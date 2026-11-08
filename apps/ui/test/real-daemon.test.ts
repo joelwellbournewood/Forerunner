@@ -10019,3 +10019,75 @@ describe("the UI client against the real daemon: a take-out and a preview surviv
     }
   }, 180_000);
 });
+
+describe("the UI client against the real daemon: leftovers of wave 7, merge side (leftovers7-merge)", () => {
+  // A session on a repository behind the memory host (bare repositories, as the bench's
+  // stand-in for GitHub serves them), read through the UI's client.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  const host = new MemoryGitHost("alice");
+
+  beforeAll(async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-l7m-"));
+    const bare = join(dir, "guides.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(dir, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(dir, "seed", "README.md"), "# guides\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "guides", private: true, cloneUrl: bare });
+    ({ rt, client } = await composeWithRolePlayer({}, { gitHost: host }));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("two tasks titled 'Write the guide' created together get two pull requests, each with its own work (R-branch)", async () => {
+    const project = await client.createProject({
+      name: "Two guides",
+      goal: "Two guides with one title",
+      repos: ["o/guides"],
+    });
+    const create = (file: string) =>
+      client.createTask(project.id, {
+        title: "Write the guide",
+        outcome: `${file} is written`,
+        riskTier: 1,
+        specialist: "coder",
+      });
+    const first = await create("guide.md");
+    const second = await create("notes.md");
+    // The cause: both ids start with the same 8 characters (their creation time).
+    expect(second.id.slice(0, 8)).toBe(first.id.slice(0, 8));
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    const states = async () =>
+      (await client.tasks(project.id))
+        .map((t) => `${t.title}=${t.status} (${t.reason}) ${t.prUrl ?? ""}`)
+        .join(", ");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end (at least 10 s of real time)",
+      states,
+      90_000,
+    );
+    const a = (await client.task(first.id)).task;
+    const b = (await client.task(second.id)).task;
+    expect([a.status, b.status], await states()).toEqual(["done", "done"]);
+    expect(a.prUrl).toMatch(/^memory:\/\/o\/guides\/pull\/\d+$/);
+    expect(b.prUrl).toMatch(/^memory:\/\/o\/guides\/pull\/\d+$/);
+    expect(b.prUrl).not.toBe(a.prUrl);
+    // The Overview lists both, each under its own task.
+    const view = await client.projectPullRequests(project.id);
+    const rows = view.waiting.filter((w) => w.kind === "task");
+    expect(rows.map((w) => w.taskId).sort()).toEqual([first.id, second.id].sort());
+    expect(new Set(rows.map((w) => w.url))).toEqual(new Set([a.prUrl, b.prUrl]));
+    expect(new Set(rows.map((w) => w.branch)).size).toBe(2);
+  }, 150_000);
+});

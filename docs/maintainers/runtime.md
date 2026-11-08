@@ -2944,7 +2944,9 @@ the task is not done, has no pull request, its pull request is not merged ("clos
 you do not want it"), or a take-out is open or merged already. The merge commit is the record's
 (`merge_sha` when `merged`) or the host's `mergeCommitSha`; `builtOn(task)` lists the done tasks
 that depend on it, directly or through another. `PrTaskExecutor.takeOut` (capabilities) makes the
-branch `<task branch>-take-out` from the default branch in a clone of its own and reverts by the
+branch `<task branch>-take-out` (a task with no branch: `taskBranchName(task)`, never the id's
+first 8 characters, which two tasks of one minute share; R-branch) from the default branch in a
+clone of its own and reverts by the
 shape it reads from git (`takeOutPlan`: a merge commit with `-m 1`, a rebase merge's copies
 matched by patch id, a squash), pushes it forced with a lease (never the default branch, through
 `neverPush`) and returns `pushed`, `conflict` (the files; nothing pushed, the clone reset),
