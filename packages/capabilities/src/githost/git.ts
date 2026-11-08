@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import {
   errorMessage,
   ForerunnerError,
+  isAbsolute,
   join,
   type RunOptions,
   type RunResult,
@@ -441,6 +442,28 @@ export class GitOps {
 
   async checkout(ref: string): Promise<void> {
     this.must(await this.git(["checkout", ref]), `checkout ${ref}`);
+  }
+
+  /**
+   * Ends a rebase, merge, revert or cherry-pick a process that went away left half done (the
+   * app closed or crashed mid-step), so the next checkout and rebase are not refused. Returns
+   * the steps ended; one that was not under way is left alone.
+   */
+  async abortUnfinished(): Promise<string[]> {
+    const ended: string[] = [];
+    const steps: [string, string[]][] = [
+      ["rebase-merge", ["rebase", "--abort"]],
+      ["rebase-apply", ["rebase", "--abort"]],
+      ["MERGE_HEAD", ["merge", "--abort"]],
+      ["REVERT_HEAD", ["revert", "--abort"]],
+      ["CHERRY_PICK_HEAD", ["cherry-pick", "--abort"]],
+    ];
+    for (const [marker, abort] of steps) {
+      const at = (await this.git(["rev-parse", "--git-path", marker])).stdout.trim();
+      if (!at || !existsSync(isAbsolute(at) ? at : join(this.opts.cwd, at))) continue;
+      if ((await this.git(abort)).code === 0) ended.push(abort[0] ?? marker);
+    }
+    return ended;
   }
 
   async status(): Promise<{ dirty: boolean; files: string[] }> {

@@ -3760,8 +3760,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         agentId: agent.id,
         ...resumeStart,
       }),
-      // A rebase conflict and a reviewed PR left open (U-028): each option does what it says.
-      pullRequests: await syncPrAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      // A rebase conflict and a reviewed PR left open (U-028): each option does what it says;
+      // a rebuild's card merges through the merge step or redoes the task (R-rebuildcard).
+      pullRequests: await syncPrAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        merge,
+        ...resumeStart,
+      }),
       // A session review that needed the human (U-033): acknowledge, or correct the summary.
       sessionReviews: await syncSessionReviewAnswers({ store, clock, humanId: human.id }),
       // An approved session plan (spec J.6, J.7; ADR 0053) becomes a "message" start bound to

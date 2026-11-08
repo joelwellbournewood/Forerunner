@@ -211,7 +211,17 @@ export function reduce(state: UiState, action: UiAction): UiState {
     case "agents":
       return { ...state, agents: action.agents };
     case "projects": {
-      const projects = action.projects;
+      // The list is read again for any project's change (a card in the Inbox, a session): a card
+      // that says the same keeps its object, so a screen that follows its own project's card
+      // reads again only when that project changed (R-overviewcalls, leftovers7-merge: the
+      // Overview read its pull requests from GitHub for every other project's change while a row
+      // waited for its checks). `project.upsert` (the project's own change event) always
+      // replaces it.
+      const before = new Map(state.projects.map((p) => [p.id, p]));
+      const projects = action.projects.map((p) => {
+        const old = before.get(p.id);
+        return old && JSON.stringify(old) === JSON.stringify(p) ? old : p;
+      });
       let activeProjectId = state.activeProjectId;
       const stillThere = activeProjectId && projects.some((p) => p.id === activeProjectId);
       if (!stillThere) {

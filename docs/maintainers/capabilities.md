@@ -200,6 +200,16 @@ with their milestone.
   request whose body carries the outcome, the acceptance criteria (no heading when there are
   none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
+  **One branch per task** (R-branch, leftovers7-merge): the branch is
+  `taskBranchName(task)`, `fr/<the id's last 8 hex characters>-<title>`, stored on the task at
+  its first run. Before, it took the id's first 8 characters, which are a UUIDv7's creation
+  time and the same for 65 s: two tasks titled alike created within a minute got one branch,
+  and the second found the first's open pull request by branch name, resumed it and pushed its
+  work onto it. A pull request found on the task's branch whose body names another task
+  (`openedForAnotherTask`: "Task <id>, session ..." from `openOrUpdatePr`) is never resumed:
+  a task that stored such a name before the fix moves to its own (`unusedBranch`, the name or
+  `-r<n>`). Tests: `pr-executor.test.ts` "leftovers of wave 7, merge side"; the real daemon
+  (`real-daemon.test.ts`, same describe) lists two pull requests for two such tasks.
   **A task that waits for unmerged work builds on it** (C-49, ADR 0106; kept true by ADR
   0111, 'dependent-branches'): `unmergedDependencies` walks `depends_on` (deepest first) for
   done tasks of the project whose branch still has an open pull request on the host;
@@ -307,7 +317,13 @@ with their milestone.
   rebase-conflict card); "Drop the branch and retry from scratch" and the fresh path drop the
   marker, and a run that went to review removes it; a pushed work in progress with no pull
   request is replaced by a force-with-lease push. A `failed` or `timeout` result's leftovers go
-  to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. In a
+  to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. A run
+  the app's close or a crash cut short does neither (both happen only after the inner executor
+  returns): the next run first ends a git step left half done (`GitOps.abortUnfinished`: a
+  rebase, merge, revert or cherry-pick) and sets uncommitted leftovers aside under the same ref
+  (`cleanAfterCutShortRun`, R-dirtyworktree, leftovers7-merge), before any checkout. Before, it
+  carried them into its own work, git refused its `checkout -B` ("untracked working tree files
+  would be overwritten"), or a half-done rebase made the next conflict card name no file. In a
   project's folder (`inWorkspace`) a pause is one commit of its own with the same message and
   marker; the task's next run keeps that commit's files out of its snapshot
   (`GitOps.commitAllExcept`, while `builtOnBy` finds no later task's "Workspace before" or work
@@ -339,8 +355,12 @@ with their milestone.
   { mainline })` takes commits back on the current branch (`git revert --no-edit`, `-m 1` for a
   merge commit's change against its first parent), aborting on a conflict with the files named;
   `commitsNotIn(from, to)` lists a branch's own commits that `from` lacks, oldest first, without
-  merge commits. `PrTaskExecutor.takeOut({ task, number, mergeSha, headSha, branch })` (a new
-  method; the runtime's `TaskTakeOut` calls it) works in a clone of its own
+  merge commits. A merge commit whose merged side carries a commit of a task this one waits for
+  (`carriesDependencyWork`: the dependency's branch on the host or its record's reviewed commit,
+  in the merged parent and not in the first) is `unknown_shape` (R-takeoutdep, leftovers7-merge:
+  `-m 1` took the dependency's work out of main too). `PrTaskExecutor.takeOut({ task, number,
+  mergeSha, headSha, branch })` (a new method; the runtime's `TaskTakeOut` calls it) works in a
+  clone of its own
   (`<worktreeRoot>/<task>-take-out`, under the same per-folder lock as a worktree, never the
   task's worktree), fetches (and `refs/pull/<n>/head` when the head is on no branch), checks the
   merge commit is in the default branch, asks `takeOutPlan(git, mergeSha, headSha)` how to take it
@@ -362,7 +382,14 @@ with their milestone.
   computer and that agents can use. `LOCAL_ONLY_DIR` ("Local only"), `TRY_DIR`
   (".forerunner-try", a review's try folder, W6-26) and `NEVER_PUSHED` (both).
   `excludeNeverPushed(dir, folders)` appends `/<folder>/` to the clone's `.git/info/exclude`
-  (idempotent; `.gitignore` untouched). `GitOpsOptions.neverPush`: before every `push`,
+  (idempotent; `.gitignore` untouched); with `{ dropOthers: true }` (the PR executor's task
+  worktrees only: this computer's copy keeps the person's own files there out of git) it also
+  removes Forerunner's line for a `NEVER_PUSHED` folder not in `folders` (R-exclude,
+  leftovers7-merge: a reused worktree kept `/Local only/`
+  after the repository started tracking a folder of that name, so the agent's new files there
+  were silently left out of the commit). The PR executor's `excludedFolders(git, target)` is
+  `[TRY_DIR]` when the base tracks Local only, else both, for the exclude and for the files a
+  run reports as changed. `GitOpsOptions.neverPush`: before every `push`,
   `neverPushedIn(branch, defaultBranch)` lists the paths under those folders the push would
   upload (tracked at the tip, or touched by any commit no remote branch has: `git log <branch>
   --not --remotes=origin`), a folder the remote's default branch already tracks being the

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { recordedCalls, resetDaemon } from "./helpers.ts";
+import { holdSessions, recordedCalls, resetDaemon } from "./helpers.ts";
 
 test.beforeEach(async ({ request }) => resetDaemon(request));
 
@@ -61,6 +61,9 @@ test("start a session from the project page and watch the live view fill over SS
 });
 
 test("Stop now asks once, then posts to /sessions/:id/stop", async ({ page, request }) => {
+  // The session runs until it is stopped (R-testpaths: before, a session that ended first sent
+  // the test down an "already Done" branch, so Stop now went untested under load).
+  await holdSessions(request, true);
   const res = await request.post(
     `http://127.0.0.1:${process.env.FORERUNNER_UI_FAKE_PORT}/sessions`,
     {
@@ -75,14 +78,15 @@ test("Stop now asks once, then posts to /sessions/:id/stop", async ({ page, requ
   await expect(page.getByTestId("session-header")).toContainText("Atlas · session at");
   await expect(page.getByTestId("session-header")).not.toContainText(session.id);
   const stop = page.getByTestId("stop-now");
-  // An ended session has no stop buttons at all.
-  if ((await stop.count()) > 0) {
-    await stop.click();
-    await page.getByTestId("stop-session").click();
-    await expect(page.getByTestId("session-status")).toHaveText("Stopped by you");
-    const calls = await recordedCalls(request);
-    expect(calls.some((c) => c.path === `/sessions/${session.id}/stop`)).toBe(true);
-  } else {
-    await expect(page.getByTestId("session-status")).toHaveText("Done");
-  }
+  await expect(stop).toBeVisible();
+  await stop.click();
+  // It asks once: nothing is sent before the confirmation.
+  expect(
+    (await recordedCalls(request)).some((c) => c.path === `/sessions/${session.id}/stop`),
+  ).toBe(false);
+  await page.getByTestId("stop-session").click();
+  await expect(page.getByTestId("session-status")).toHaveText("Stopped by you");
+  const calls = await recordedCalls(request);
+  expect(calls.filter((c) => c.path === `/sessions/${session.id}/stop`)).toHaveLength(1);
+  await holdSessions(request, false);
 });

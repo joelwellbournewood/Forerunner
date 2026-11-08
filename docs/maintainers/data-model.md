@@ -149,7 +149,7 @@ below 80% of the cap, `warn80` from 80%, `stopped` at 100%; a cap of 0 means no 
 - `merging` -> `merged`, `waiting_checks`, `left_to_you`, `queued`
 - `waiting_checks` -> `merging`, `left_to_you`, `merged`, `queued`
 - `left_to_you` -> `queued`, `merging`, `waiting_checks`, `merged`
-- `merged` -> (terminal)
+- `merged` -> `queued`
 
 `queue_item.status`:
 

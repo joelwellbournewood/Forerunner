@@ -383,7 +383,9 @@ merge the way it was made: a merge commit, a squash or a rebase you did on GitHu
 the answer and the pull request name the finished tasks that built on it ("Add the receipt"
 built on it: check it still works once #9 is merged). The task's row then says "Taken out in #9
 (waiting for you to merge)", and the pull request waits on the Overview under **Taking work
-out**, where **Merge** merges it; the row then says "Taken out in #9". If later work changed the
+out**, where **Merge** merges it; the row then says "Taken out in #9". While #9 is open the row
+offers no **Redo**, and asking for one in Chat says to merge or close #9 first; once #9 is merged
+or closed, **Redo** is offered again. If later work changed the
 same lines, nothing is opened: the answer and one Inbox notice ("<task>" could not be taken out,
 with the files and what to do; **Got it** closes it) say which files, and you undo it on GitHub by
 hand or ask in Chat for a task that does it. A merge made in a way Forerunner cannot undo safely is

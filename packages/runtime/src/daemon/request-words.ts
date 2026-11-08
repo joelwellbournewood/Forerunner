@@ -848,7 +848,12 @@ function mergeLeftOpenCard(
       ? "Closes this card and notes on the task that you merged it."
       : /^leave/i.test(label)
         ? "Closes this card; the pull request stays open on GitHub."
-        : null,
+        : // A rebuild's card (R-rebuildcard): the pull request is open; polish owns these words.
+          /^merge$/i.test(label)
+          ? `Merges ${prOfCard(card).replace(/^pull request /, "")} as it is now, as Merge on the Overview does.`
+          : /^redo$/i.test(label)
+            ? "The task is done again from main; a session starts for it."
+            : null,
     tone: i === 0 ? "primary" : "secondary",
     confirm: null,
     input: null,
@@ -871,6 +876,15 @@ function mergeLeftOpenCard(
 function mergeLeftOpenOutcome(card: JsonObject): string | null {
   if (card.outcome === "merged") return `Noted: you merged ${prOfCard(card)}.`;
   if (card.outcome === "left_open") return `Left open: ${prOfCard(card)} stays open on GitHub.`;
+  // A rebuild's card (R-rebuildcard): what the Merge came to, or the Redo.
+  const pr = prOfCard(card).replace(/^pull request /, "");
+  if (card.outcome === "merging")
+    return card.merge_result === "merged"
+      ? `Merged ${pr}.`
+      : typeof card.merge_result === "string" && card.merge_result
+        ? card.merge_result
+        : `Merging ${pr}.`;
+  if (card.outcome === "redone") return "Redone: the task is ready again and a session runs it.";
   return null;
 }
 

@@ -12,6 +12,7 @@ import {
   createRolePlayer,
   detectRole,
   filesNamed,
+  intakeProposal,
   judgeCriterion,
   ModelCallLog,
   reviewedTitle,
@@ -349,6 +350,30 @@ describe("bench role-player: intake", () => {
     // What it did is in the plan's reason, in words.
     expect(proposal.plan.reason).toMatch(/removed "Check that index\.html/);
     expect(proposal.plan.reason).toMatch(/added "Write the README/);
+  });
+
+  it("a plan with a task for the person lists it in the first session at no cost, as the live model does (R-testpaths: live replies list it at 0)", () => {
+    const proposal = intakeProposal(
+      { project: "Quote page", goal: "A page of quotes", brief: BRIEF, smallProject: false },
+      { kind: "default", personTask: true, risk2: [] },
+    ) as {
+      plan: { milestones: { tasks: { key: string; specialist: string }[] }[] };
+      firstSession: { items: { key: string; estimateUsdMicro: number }[] };
+    };
+    const tasks = proposal.plan.milestones.flatMap((m) => m.tasks);
+    const person = tasks.find((t) => t.specialist === "person");
+    expect(person).toBeDefined();
+    // Before: the person's questions were left out of the first session, so no test path
+    // reached a session that starts with a question for the person.
+    expect(proposal.firstSession.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key));
+    expect(proposal.firstSession.items.find((i) => i.key === person?.key)?.estimateUsdMicro).toBe(
+      0,
+    );
+    expect(
+      proposal.firstSession.items
+        .filter((i) => i.key !== person?.key)
+        .every((i) => i.estimateUsdMicro > 0),
+    ).toBe(true);
   });
 
   it("Change the plan: later changes win, words it cannot place leave the plan as it was and are named, the last task is never dropped", async () => {

@@ -88,10 +88,18 @@ function gitDirOf(dir: string): string | null {
  * The folders in `folders` kept out of git in the clone at `dir`, through its
  * `.git/info/exclude` (whatever `.gitignore` the project has, and without changing it): `git
  * add -A` then never stages them. Idempotent; false when the clone has no `.git` folder.
+ *
+ * With `dropOthers` (a task's worktree), Forerunner's line for a never-pushed folder that is not
+ * in `folders` any more is removed (R-exclude, leftovers7-merge): a reused task worktree kept
+ * '/Local only/' after the repository started tracking a folder of that name, so new files the
+ * agent wrote there were silently left out of its commit. Without it (this computer's copy,
+ * where the person's own files in that folder must stay out of git) lines are only added.
+ * Lines the clone's owner wrote are kept as they are.
  */
 export function excludeNeverPushed(
   dir: string,
   folders: readonly string[] = NEVER_PUSHED,
+  opts: { dropOthers?: boolean } = {},
 ): boolean {
   const gitDir = gitDirOf(dir);
   if (!gitDir) return false;
@@ -99,10 +107,17 @@ export function excludeNeverPushed(
   mkdirSync(info, { recursive: true });
   const file = join(info, "exclude");
   const had = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const lines = new Set(had.split(/\r?\n/).map((l) => l.trim()));
-  const missing = folders.map((f) => `/${f}/`).filter((l) => !lines.has(l));
+  const wanted = new Set(folders.map((f) => `/${f}/`));
+  const stale = new Set(
+    opts.dropOthers ? NEVER_PUSHED.map((f) => `/${f}/`).filter((l) => !wanted.has(l)) : [],
+  );
+  const kept = had.split(/\r?\n/).filter((l) => !stale.has(l.trim()));
+  const keptText = kept.join("\n");
+  if (keptText !== had) writeFileSync(file, keptText, "utf8");
+  const lines = new Set(kept.map((l) => l.trim()));
+  const missing = [...wanted].filter((l) => !lines.has(l));
   if (!missing.length) return true;
-  const head = had && !had.endsWith("\n") ? "\n" : "";
+  const head = keptText && !keptText.endsWith("\n") ? "\n" : "";
   appendFileSync(
     file,
     `${head}# Forerunner: never committed or uploaded (Local only, a review's try).\n${missing.join("\n")}\n`,

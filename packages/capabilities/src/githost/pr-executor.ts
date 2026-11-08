@@ -33,7 +33,7 @@ import {
   underNeverPushed,
 } from "./local-only.ts";
 import { pushFailedWords } from "./push-words.ts";
-import type { GitHost, MergeMethod, RepoRef } from "./types.ts";
+import type { GitHost, MergeMethod, PullRequestInfo, RepoRef } from "./types.ts";
 
 /**
  * Branch-and-PR flow around a task executor (spec F: code changes only via branches and PRs,
@@ -336,6 +336,35 @@ export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state
     default:
       return name;
   }
+}
+
+/**
+ * A task's branch name: `fr/<8 characters of its id>-<its title>` (R-branch, leftovers7-merge).
+ * The 8 characters are the id's random end, never its start: a UUIDv7 starts with its creation
+ * time, which is the same for 65 s, so two tasks titled alike created within a minute got one
+ * branch and the second pushed its work onto the first's pull request. An id that is not a UUID
+ * (tests, imports) gives its own first characters.
+ */
+export function taskBranchName(task: Pick<TaskRow, "id" | "title">): string {
+  const hex = task.id.toLowerCase().replace(/[^0-9a-f]/g, "");
+  const own =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(task.id) &&
+    hex.length === 32
+      ? hex.slice(-8)
+      : safeSegment(task.id.toLowerCase(), "task").slice(0, 8);
+  return `fr/${own}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+}
+
+/**
+ * Whether a pull request Forerunner opened names another task than `taskId` (its body ends
+ * "Task <id>, session <id>. Opened by Forerunner."): that pull request is never this task's.
+ */
+export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: string): boolean {
+  const named =
+    /\bTask ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}), session /i.exec(
+      pr.body ?? "",
+    )?.[1];
+  return !!named && named.toLowerCase() !== taskId.toLowerCase();
 }
 
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */
@@ -664,21 +693,19 @@ export class PrTaskExecutor implements TaskExecutor {
     dir: string,
   ): Promise<TaskExecutionResult> {
     const { task } = ctx;
-    let branch =
-      task.branch ||
-      this.deps.branchFor?.(task) ||
-      `fr/${task.id.slice(0, 8)}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+    let branch = task.branch || this.deps.branchFor?.(task) || taskBranchName(task);
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
     const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
     const git = await this.gitFor(target, dir);
-    if (existsSync(join(dir, ".git"))) await git.fetch();
-    else await git.clone(target.clone);
+    if (existsSync(join(dir, ".git"))) {
+      await git.fetch();
+      await this.cleanAfterCutShortRun(git, task);
+    } else await git.clone(target.clone);
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
     // .gitignore the project has (the push checks it again: a forced add gets past this). A
     // repository that tracks a folder named Local only keeps it as its own: only the try's.
-    const tracksLocalOnly = !!(await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]))
-      ?.length;
-    excludeNeverPushed(dir, tracksLocalOnly ? [TRY_DIR] : NEVER_PUSHED);
+    const excluded = await this.excludedFolders(git, target);
+    excludeNeverPushed(dir, excluded, { dropOthers: true });
     // An empty repository (just created on GitHub) gets its first commit, a README with the
     // project's name and goal, so the task has a branch to start from (ADR 0106).
     await ensureBaseBranch({
@@ -705,13 +732,22 @@ export class PrTaskExecutor implements TaskExecutor {
       return this.continueResolved(ctx, { git, dir, branch, target, answered });
     }
     const dropped = answered?.outcome === "dropped";
-    const existingPr = (
+    let existingPr: PullRequestInfo | undefined = (
       await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
     )[0];
+    // R-branch (leftovers7-merge): a pull request on this branch that another task opened is
+    // never this task's to resume or push onto. A name made before branch names were unique
+    // per task (two tasks titled alike within 65 s shared one) moves to the task's own name.
+    const another = !!existingPr && openedForAnotherTask(existingPr, task.id);
+    if (another) {
+      branch = await this.unusedBranch(git, target, taskBranchName(task));
+      existingPr = undefined;
+    }
     // A redo of a task whose pull request was merged or closed starts again on a fresh branch
     // (the old name with a short suffix): a branch GitHub keeps after a merge (delete-on-merge
     // off) never makes its push fail, and the old pull request stays as it was.
-    if (task.branch && !existingPr) branch = await this.freshBranch(git, target, task.branch);
+    if (task.branch && !existingPr && !another)
+      branch = await this.freshBranch(git, target, task.branch);
     if (branch !== task.branch) await this.deps.store.task.patch(task.id, { branch });
     // budget-resume: the task's own work in progress (a pause, a question, a stop) on its local
     // branch: this run continues from it. "Drop the branch and retry from scratch" drops it.
@@ -895,8 +931,9 @@ export class PrTaskExecutor implements TaskExecutor {
       changedFiles = (await git.hasRef(DEPS_BASE_REF))
         ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
-      // Never the work's: Local only and a review's try folder (merged-copy).
-      changedFiles = changedFiles.filter((f) => underNeverPushed([f]).length === 0);
+      // Never the work's: Local only and a review's try folder (merged-copy); a Local only the
+      // repository tracks is its own, and a file the task wrote there is its work (R-exclude).
+      changedFiles = changedFiles.filter((f) => underNeverPushed([f], excluded).length === 0);
     } catch {
       // the diff is informational (peer overlap detection); never fail the PR for it
     }
@@ -952,13 +989,24 @@ export class PrTaskExecutor implements TaskExecutor {
     return null;
   }
 
+  /**
+   * The folders a task branch of this repository never stages (merged-copy, W6-26): Local only
+   * and a review's try folder, or only the try's when the base tracks a folder named Local only
+   * (the repository's own, R-exclude).
+   */
+  private async excludedFolders(git: GitOps, target: Target): Promise<readonly string[]> {
+    const tracked = await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]);
+    return tracked?.length ? [TRY_DIR] : NEVER_PUSHED;
+  }
+
   /** The task's own files on its branch: from the base its work started on, never Local only. */
   private async ownFiles(git: GitOps, target: Target): Promise<string[]> {
     try {
       const files = (await git.hasRef(DEPS_BASE_REF))
         ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
-      return files.filter((f) => underNeverPushed([f]).length === 0);
+      const excluded = await this.excludedFolders(git, target);
+      return files.filter((f) => underNeverPushed([f], excluded).length === 0);
     } catch {
       return [];
     }
@@ -1030,6 +1078,32 @@ export class PrTaskExecutor implements TaskExecutor {
    * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
    * next run's checkout carried the files over, or git refused when main had changed them.
    */
+  /**
+   * R-dirtyworktree (W6-24 for a crash): a run the app's close or a crash cut short leaves its
+   * files uncommitted in the task's worktree, with no work-in-progress commit (that and the
+   * leftovers set aside happen only after the inner executor returns). Before, the next run
+   * carried them into its work, or git refused its checkout ("untracked working tree files
+   * would be overwritten"). Now a step left half done (a rebase, a merge) is ended and the
+   * leftovers are set aside under the failed ref, as a failed run's are, so the run starts clean
+   * and nothing is lost. A work-in-progress commit is untouched: it is committed, not leftovers.
+   */
+  private async cleanAfterCutShortRun(git: GitOps, task: TaskRow): Promise<void> {
+    try {
+      const ended = await git.abortUnfinished();
+      if (ended.length)
+        this.logger.info("a cut-short run's unfinished git step was ended", {
+          taskId: task.id,
+          ended,
+        });
+      if ((await git.status()).dirty) await this.setLeftoversAside(git, task);
+    } catch (e) {
+      this.logger.warn("a cut-short run's leftovers were not set aside", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+  }
+
   private async setLeftoversAside(git: GitOps, task: TaskRow): Promise<void> {
     try {
       const files = await git.setAside(
@@ -1179,9 +1253,16 @@ export class PrTaskExecutor implements TaskExecutor {
     });
     if (prs.some((p) => p.state === "open") || !prs.some((p) => p.state === "closed"))
       return current;
-    const stem = current.replace(/-r\d+$/, "");
-    for (let n = 2; n < 100; n++) {
-      const name = `${stem}-r${n}`;
+    return this.unusedBranch(git, target, current.replace(/-r\d+$/, ""), 2);
+  }
+
+  /**
+   * `stem` when neither the host nor a pull request has used it, else `<stem>-r<n>` for the
+   * first unused n (from `from`).
+   */
+  private async unusedBranch(git: GitOps, target: Target, stem: string, from = 1): Promise<string> {
+    for (let n = from; n < 100; n++) {
+      const name = n === 1 ? stem : `${stem}-r${n}`;
       if (await git.hasRef(`origin/${name}`)) continue;
       const used = await this.deps.host.listPullRequests(target.repo, { state: "all", head: name });
       if (used.length === 0) return name;
@@ -1617,6 +1698,11 @@ export class PrTaskExecutor implements TaskExecutor {
     if (head && !(await git.hasRef(head))) head = null;
     const plan = await takeOutPlan(git, req.mergeSha, head);
     if (!plan) return { kind: "unknown_shape" };
+    // R-takeoutdep (leftovers7-merge): a merge commit whose merged side carries work of a task
+    // this one built on (a dependency merged by GitHub through it, out of dependency order) is
+    // not reverted whole with -m 1, which took the dependency's work out of main too.
+    if (plan.mainline && (await this.carriesDependencyWork(git, req.task, req.mergeSha)))
+      return { kind: "unknown_shape" };
     await git.createBranch(req.branch, base);
     const reverted = await git.revert(plan.commits, plan.mainline ? { mainline: 1 } : {});
     if (!reverted.ok) {
@@ -1638,6 +1724,43 @@ export class PrTaskExecutor implements TaskExecutor {
       sure: plan.sure,
       commits: plan.commits,
     };
+  }
+
+  /**
+   * Whether the merge commit `mergeSha` brought in, on its merged side, a commit of a task
+   * `task` waits for (directly or through others) that main did not have before it: the
+   * dependency's branch on the host, or the commit its merge record reviewed.
+   */
+  private async carriesDependencyWork(
+    git: GitOps,
+    task: TaskRow,
+    mergeSha: string,
+  ): Promise<boolean> {
+    const [before, merged] = await git.parentsOf(mergeSha);
+    if (!before || !merged) return false;
+    const seen = new Set<string>([task.id]);
+    const queue = [...(task.depends_on ?? [])];
+    while (queue.length) {
+      const id = queue.shift() as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const dep = await this.deps.store.task.get(id);
+      if (!dep) continue;
+      queue.push(...(dep.depends_on ?? []));
+      const heads = new Set<string>();
+      const record = await this.deps.store.mergeRecord.forTask(dep.id).catch(() => undefined);
+      if (record?.reviewed_head_sha) heads.add(record.reviewed_head_sha);
+      if (dep.branch) {
+        const onHost = await git.resolveRef(`origin/${dep.branch}`);
+        if (onHost) heads.add(onHost);
+      }
+      for (const sha of heads) {
+        if (!(await git.hasRef(sha))) continue;
+        if ((await git.isAncestor(sha, merged)) && !(await git.isAncestor(sha, before)))
+          return true;
+      }
+    }
+    return false;
   }
 
   /** The pull request's "Builds on" line as it is now (`withBuildsOn`); a failure is logged. */

@@ -704,3 +704,60 @@ describe("the Overview's Last result is true now (C-54, design §5 rule 4)", () 
     );
   });
 });
+
+/**
+ * R-overviewcalls (leftovers7-merge): while a pull request waits for its checks (up to a day),
+ * the Overview read the list again on every new copy of its project's card, and the project
+ * list is read again for any project's change (a card in the Inbox, a session): every Overview
+ * of a repository project asked GitHub four times for each such event.
+ */
+describe("the Overview reads its pull requests again only when its own project changes (R-overviewcalls)", () => {
+  const waitingRow = (n: number, title: string) => ({
+    kind: "task" as const,
+    taskId: `task_${n}`,
+    title,
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: `fr/${n}`,
+    review: "critic" as const,
+    merge: {
+      state: "waiting_checks" as const,
+      canMerge: false,
+      sentence: `#${n} merges when its checks pass.`,
+      first: [],
+    },
+  });
+
+  it("a row that waits for its checks: ten refreshes of the project list for other changes add no read; this project's change reads it again", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [waitingRow(5, "Add the page")],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness, liveEvents(harness));
+    const files = await screen.findByTestId("your-files");
+    expect(await within(files).findByTestId("pr-merge-sentence")).toHaveTextContent(
+      "#5 merges when its checks pass.",
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    const reads = harness.daemon.state.pullRequestReads.proj_atlas ?? 0;
+    const listed = harness.daemon.state.projectListReads;
+    // A card came and went ten times elsewhere: the project list is read again each time.
+    for (let i = 0; i < 10; i++) {
+      for (const l of harness.daemon.state.listeners)
+        l("inbox.changed", { needsYouCount: i + 1, blockingCount: 0 });
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    await waitFor(() => expect(harness.daemon.state.projectListReads).toBeGreaterThan(listed + 3), {
+      timeout: 10_000,
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(harness.daemon.state.pullRequestReads.proj_atlas ?? 0).toBe(reads);
+    // This project changed (a merge the watcher's retry made): the list is read again.
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    await waitFor(
+      () => expect(harness.daemon.state.pullRequestReads.proj_atlas ?? 0).toBeGreaterThan(reads),
+      { timeout: 10_000 },
+    );
+  }, 30_000);
+});

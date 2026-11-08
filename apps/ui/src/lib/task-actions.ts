@@ -103,7 +103,10 @@ export function actionsFor(
     case "failed":
       return ["try_again", "edit", "cancel"];
     case "done":
-      // merged-actions: a task whose work is in main can be taken out (`display.takeOut`).
+      // merged-actions: a task whose work is in main can be taken out (`display.takeOut`). While
+      // its take-out pull request is open, Redo is not offered (R-pin, leftovers7-merge: the
+      // redo's new pull request would drop the take-out from the list); the row says it waits.
+      if (task?.display?.takeOut?.state === "open") return [];
       return task?.display?.takeOut?.state === "offered" ? ["redo", "take_out"] : ["redo"];
     case "cancelled":
       return ["reopen"];

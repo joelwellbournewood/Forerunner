@@ -246,7 +246,23 @@ ten minutes).
 Known gaps: the conflict notice (an open task pull request whose `mergeable` turned false after
 another merge, one card per project) is not built; the rebuild card still offers "I merged it" and
 "Leave it open" (Merge and Redo would fit); a merge the retry makes outside a session posts no
-Update.
+Update. (The last two are closed by the leftovers7-merge amendment below.)
+
+## Amendment: the leftovers of wave 7, merge side ('leftovers7-merge', 2026-11-08)
+
+1. **The retry pass reads the checks first.** A record waiting for its checks is looked at with two
+   reads (the pull request, the runs and statuses on its reviewed commit) before any gated call;
+   while they run the attempt is counted and nothing else happens (no token, no audit row). Before,
+   each pass made the full `merge_pr` call for every waiting record every minute, up to 1440 times.
+2. **A merge the app made by itself is an Update.** The retry pass and the resume at the daemon's
+   start file one Inbox message ('Merged #4: "Add the page".'); a session's merge (its result says
+   it) and the person's own click do not. A notification for it is not built (the daemon's
+   notifier is wired in compose).
+3. **The rebuild card offers what can be done.** The card a rebuild files offers Merge and Redo (a
+   conflicted rebuild: Redo and Leave it open), never "I merged it" while the pull request is
+   open. Merge is the Overview's Merge for that pull request (the person's approval, through the
+   gated step); Redo makes the task ready again and starts a session, as every answer that makes
+   a task runnable does.
 
 ## Consequences
 

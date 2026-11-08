@@ -15,6 +15,7 @@ import { Repository } from "../src/repos/base.ts";
 import { allColumns, type ColumnDef, ENTITIES, type EntityDef, tableOrder } from "../src/schema.ts";
 import type { StateStore } from "../src/store.ts";
 import type { BaseRow, TaskRow } from "../src/types.ts";
+import { canTransition, MERGE_RECORD_TRANSITIONS } from "../src/workflow.ts";
 
 /**
  * Conformance suite run against every adapter. `fresh(clock)` must return an empty,
@@ -2461,6 +2462,60 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect((await pinFor(t.id, s.alice.id, "f".repeat(40))).reviewed_head_sha).toBe(
           "d".repeat(40),
         );
+      });
+
+      it("a redo's new pull request moves a merged record back to queued through the graph; an open take-out stays on it (R-pin)", async () => {
+        const t = await store.task.insert({ project_id: s.project.id, title: "Add the page" });
+        const first = await pinFor(t.id, s.alice.id, "a".repeat(40));
+        // The graph says it: a merged record goes back to queued only for a redo's new PR.
+        expect(canTransition(MERGE_RECORD_TRANSITIONS, "merged", "queued")).toBe(true);
+        expect(canTransition(MERGE_RECORD_TRANSITIONS, "merged", "merging")).toBe(false);
+        await store.mergeRecord.move(first.id, "merged", {
+          merge_sha: "e".repeat(40),
+          method: "merge",
+          take_out_pr_number: 9,
+          take_out_pr_url: "https://github.com/o/r/pull/9",
+          take_out_state: "open",
+        });
+        const redo = await store.mergeRecord.pin({
+          task_id: t.id,
+          project_id: s.project.id,
+          agent_id: s.alice.id,
+          pr_number: 12,
+          pr_url: "https://github.com/o/r/pull/12",
+          reviewed_head_sha: "f".repeat(40),
+        });
+        expect(redo).toMatchObject({
+          id: first.id,
+          state: "queued",
+          pr_number: 12,
+          merge_sha: null,
+          method: null,
+          attempts: 0,
+          // The take-out of the old work is still open on GitHub: it stays listed and settled.
+          take_out_pr_number: 9,
+          take_out_pr_url: "https://github.com/o/r/pull/9",
+          take_out_state: "open",
+        });
+        // A take-out already merged or closed belongs to the old work: the redo starts clean.
+        await store.mergeRecord.move(first.id, "merged", {
+          merge_sha: "1".repeat(40),
+          take_out_state: "merged",
+        });
+        const again = await store.mergeRecord.pin({
+          task_id: t.id,
+          project_id: s.project.id,
+          agent_id: s.alice.id,
+          pr_number: 15,
+          pr_url: "https://github.com/o/r/pull/15",
+          reviewed_head_sha: "2".repeat(40),
+        });
+        expect(again).toMatchObject({
+          state: "queued",
+          take_out_pr_number: null,
+          take_out_pr_url: null,
+          take_out_state: null,
+        });
       });
 
       it("claim takes a record once; the retry lists only the owning agent's waiting records", async () => {

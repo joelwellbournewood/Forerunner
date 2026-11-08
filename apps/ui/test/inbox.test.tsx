@@ -128,6 +128,61 @@ describe("Inbox", () => {
     ).toHaveAttribute("href", "/projects/proj_atlas/tasks?task=task_2");
   });
 
+  it("a rebuild's card offers Merge and Redo, each with what it does, never 'I merged it' while the pull request is open; Merge sends that option (R-rebuildcard)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const sentence =
+      "#8 was rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you: look at it before you merge it, or send it back.";
+    harness.daemon.state.requests.unshift({
+      id: "req_rebuilt",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_1",
+      taskTitle: "Index the documentation pages",
+      sessionId: null,
+      kind: "decision",
+      why: `The critic accepted "Index the documentation pages", but pull request #8 was not merged. ${sentence}`,
+      steps: [],
+      options: ["Merge", "Redo"],
+      blocking: false,
+      risk: "medium",
+      changeCard: {
+        key: "merge:left_open",
+        task_id: "task_1",
+        pr_url: "https://example.test/org/atlas/pull/8",
+        status: "head_moved",
+        sentence,
+        rebuild: "rebuilt_without",
+        without: [4],
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-08T14:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const requests = await screen.findAllByTestId("request");
+    const card = requests.find(
+      (r) => r.getAttribute("data-request-id") === "req_rebuilt",
+    ) as HTMLElement;
+    expect(within(card).getByTestId("request-title")).toHaveTextContent(
+      '"Index the documentation pages" was rebuilt without pull request #4',
+    );
+    const options = within(card).getAllByTestId("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Merge", "Redo"]);
+    expect(card).not.toHaveTextContent("I merged it");
+    expect(card).toHaveTextContent("Merges #8 as it is now, as Merge on the Overview does.");
+    expect(card).toHaveTextContent("The task is done again from main; a session starts for it.");
+    await user.click(within(card).getByRole("button", { name: "Merge" }));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/requests/req_rebuilt/answer")[0]?.body).toEqual({
+        version: 1,
+        answer: "Merge",
+      }),
+    );
+  });
+
   it("posts the chosen option with the request version; the card is replaced by its Done line and listed under Answered", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

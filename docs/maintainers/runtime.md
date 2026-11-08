@@ -2871,7 +2871,18 @@ store never merge one PR twice), and one `merge_pr` call goes through the hooks 
 worktree only, budget 0); outside one on its own narrow token (`tokens.issue`: `merge_pr` only,
 the worktree only, the PR's host only when it is the git host's (`allowedDomains`), no secret,
 budget 0, ten minutes, the project's level as it is now, `sessionId` `merge-<record id>`),
-revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. While Stop all
+revoked after the call. The hooks' `beforeToolCall` and its audit row are unchanged. **The retry
+pass reads the checks first** (R-mergeretry, leftovers7-merge): a `waiting_checks` record whose
+last outcome was `checks_pending` is looked at with two reads (`stillWaiting`: the pull request,
+then the runs and statuses on its reviewed commit); while they still run (the pull request open,
+on that commit, not in conflict) the attempt is counted (`attempts + 1`, so a day of waiting still
+reaches `MAX_MERGE_ATTEMPTS` and the person's card) and nothing else happens: no token, no audit
+row. Anything else, and the day's last attempt, takes the gated call as before. Before, every
+pass made the full call for every waiting record, every minute (a token, an audit row and about
+five GitHub calls each). **A merge the app made by itself is an Update**: one Inbox message
+(`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
+for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
+says it) and the person's own click (answered where they pressed it) add none. While Stop all
 holds the agent (`stopped`, the daemon's `kill.isFrozen`) the retry pass tries nothing and writes
 no row; a stop or an unexpected error during an attempt puts the record back to
 `waiting_checks`, never `merging` for good. A record
@@ -2886,8 +2897,12 @@ view adds to each waiting pull request its `merge` (`ready`, `queued`, `merging`
 `left_to_you`, `blocked`, with `canMerge`, one sentence and `first`, the open pull requests it builds
 on in the order they merge), read from its merge record (`mergeOfRecord`; a record queued without
 the person's approval offers Merge in "You press Merge" and reads as merging in the automatic mode),
-from the repository's `allowMergeCommit` and each base's rules (`rulesBlock`, read once per view, so
-no row offers a Merge that cannot happen), and from what it builds on (a dependency not accepted yet
+from the repository's `allowMergeCommit` and each base's rules (`rulesBlock`, read at every look,
+so no row offers a Merge that cannot happen and a rule changed on GitHub shows at once; a cache of
+them was tried for R-overviewcalls and dropped: it showed a rule removed on GitHub for up to a
+minute, and the contract cases read the rules of the moment. What R-overviewcalls kept is the UI's
+side: the Overview reads the list only on its own project's changes, `apps.md`), and from what it
+builds on (a dependency not accepted yet
 blocks it with one sentence). A row the person's Merge queued behind pull requests whose checks
 still run (a `waiting_checks` row among its `first`) is `waiting_checks` too, not in flight, with
 "#6 merges after #5, once #5's checks pass." (`mergesAfterSentence` in `loop/merge-mode.ts`; review
@@ -2944,7 +2959,9 @@ the task is not done, has no pull request, its pull request is not merged ("clos
 you do not want it"), or a take-out is open or merged already. The merge commit is the record's
 (`merge_sha` when `merged`) or the host's `mergeCommitSha`; `builtOn(task)` lists the done tasks
 that depend on it, directly or through another. `PrTaskExecutor.takeOut` (capabilities) makes the
-branch `<task branch>-take-out` from the default branch in a clone of its own and reverts by the
+branch `<task branch>-take-out` (a task with no branch: `taskBranchName(task)`, never the id's
+first 8 characters, which two tasks of one minute share; R-branch) from the default branch in a
+clone of its own and reverts by the
 shape it reads from git (`takeOutPlan`: a merge commit with `-m 1`, a rebase merge's copies
 matched by patch id, a squash), pushes it forced with a lease (never the default branch, through
 `neverPush`) and returns `pushed`, `conflict` (the files; nothing pushed, the clone reset),
@@ -2967,6 +2984,12 @@ UI's fake daemon imports. A pull request of one commit squash-merged or rebase-m
 same shape: `takeOutPlan` returns `sure: false` and the body says "(#4, merged)". `taskDisplay()`'s merged case (`mergedDisplay`) reads the
 record: "Merged" with `takeOut: { state: "offered" }`, "Taken out in #9 (waiting for you to
 merge)" (`open`), "Taken out in #9" (`merged`); a take-out closed without merging offers it again.
+While a take-out is open, Redo is refused in words (`task.reopen`, `redoWhileTakingOutSentence`:
+'"X" is being taken out in #9: merge or close #9 first, then redo it.') and the Tasks row offers
+no action (R-pin, leftovers7-merge: the redo's new pull request queued the record again and
+cleared its take-out, which was then listed and settled nowhere). The redo's new pull request
+moves a merged record back to `queued` through the graph (`merged -> queued`, data-model.md);
+an open take-out a record redone before this rule still has stays on it.
 `ProjectPullRequests.view` lists each open take-out (`TaskTakeOut.openOf`) as a `take_out` row
 (title "Take out: <title>", `taskId` the task, no review) whose Merge merges it as it is through
 `mergeAsIs`, then marks it merged (`TaskTakeOut.merged`); before listing, `TaskTakeOut.settle`
@@ -2992,7 +3015,16 @@ merge on GitHub then finish the take-outs and a merge removes the preview).
 `REPO_OFFER_BODY` below it and gives each answer its line ("Makes it on GitHub, private, with the
 project's folder as its first commit." / "Tasks keep running in the project's folder; the agent
 does not ask again."). Before, a project named "Birds: a counter" read 'Create a repository for
-"Birds' (`packages/runtime/test/repo-create.test.ts`).
+"Birds' (`packages/runtime/test/repo-create.test.ts`). **One card per repository** (R-repooffer,
+leftovers7-merge): once the project has a repository (created on the project page or by an
+answered chat card, `RepoCreator.create`, or linked by hand, which `RepoProposals.sync` finds at
+its next pass, `withdrawLinked`), the open offer is withdrawn (`withdrawRepoOffers`; the Inbox:
+"Closed: it no longer needs you."), and an offer answered after a link is marked
+`already_linked` with no warning. A `repo.create` from Chat or voice while the offer is open is
+refused with 'A card in your Inbox already asks to create a repository for "X": answer it
+there.' (the project page's own Create, `source: "ui"`, goes on); the command's card has an `ask`
+('Create the private GitHub repository o/x for "X"? Its tasks then run on branches with pull
+requests.'), so a chat answer waits as that question with Yes and No that say what they do.
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull
@@ -3001,7 +3033,11 @@ waiting for you to merge" (the record's sentence as its detail where it says mor
 Merge"); a record the person's Merge queued behind tasks whose pull requests wait for their checks
 reads "Accepted · merges after #5" with the Overview row's sentence as its detail (`mergesAfterLabel`;
 `mergesBehind` walks `depends_on` through `TaskDisplayContext.tasks` and `merges`, whose `pr_number`
-names them); a task without a record stays "Done". The session result's builder "merges when its checks
+names them); a task without a record stays "Done". A `queued` record the person did not approve
+reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTaskDisplayContext`):
+"Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
+and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
+mode read "waiting for you", although the retry merges it by itself). The session result's builder "merges when its checks
 pass" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges when its checks
 pass." and "Left N reviewed pull requests for you to merge." counts only what waits for the person
 (`ResultFacts.waitingPrs`, `openPrs`). The Overview's Last result gets "Since then: merged #2, #3
@@ -3952,7 +3988,17 @@ running the specialist again), "Drop the branch and retry from scratch" moves it
 "Cancel the task" cancels it; a task no longer `needs_human` is `task_moved_on`. A PR left
 open (task `done`): "I merged it" writes `merged by you: <PR> (request <id>)` on the task's
 `reason` (the person's act, `author_human`), "Leave it open" writes `left open by you: ...`;
-the task stays `done`. An answer outside the options is recorded `unrecognized_answer` and
+the task stays `done`. **The card a dependent branch's rebuild files** (R-rebuildcard,
+leftovers7-merge; `DependentBranches.card`, `REBUILD_CARD_OPTIONS` in `loop/merge.ts`): its pull
+request is still open, so it never offers "I merged it" (which noted a merge that did not
+happen): a rebuild that kept the task's work (`rebuilt_without`, `rebuilt_changed`) offers
+**Merge** ("Merges #8 as it is now, as Merge on the Overview does.": `syncPrAnswers`' `merge`
+dep, the daemon's `ReviewedPrMerge`, `approveInOrder` then `mergeApproved`, the person's approval
+through the gated step; the card's outcome "Merged #8." or the record's sentence; without the
+dep the record is approved and queued for the retry pass) and **Redo** ("The task is done again
+from main; a session starts for it.": `TaskRepo.reopen` to `ready`, then `resumeWork` through the
+`start` dep); one that conflicted offers **Redo** and **Leave it open**. A left-open card already
+open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
 then the task's next run: the person's resolved branch opened as the PR after a restart with

@@ -1519,7 +1519,19 @@ describe("Take this work out (merged-actions, the owner's decision of 2026-11-02
         "Taken out in #41 (waiting for you to merge)",
       ),
     );
-    expect(actionsOf(await rowOf("task_1"))).toEqual(["Redo"]);
+    // While #41 is open nothing is offered: Redo's new pull request would drop the take-out
+    // from the Overview's list (R-pin, leftovers7-merge; before, Redo stayed offered).
+    expect(actionsOf(await rowOf("task_1"))).toEqual([]);
+    // The daemon refuses a Redo from elsewhere (Chat) in words, and the task stays as it is.
+    const sent = await harness.client
+      .taskAction("task_1", {
+        action: "redo",
+        version: harness.daemon.state.tasks.find((t) => t.id === "task_1")?.version ?? 0,
+      })
+      .catch((e: unknown) => e);
+    expect(String((sent as Error).message)).toContain(
+      '"Index the documentation pages" is being taken out in #41: merge or close #41 first, then redo it.',
+    );
     // The drawer links the pull request that takes it out.
     const link = await within(await screen.findByTestId("task-drawer")).findByTestId(
       "drawer-take-out",

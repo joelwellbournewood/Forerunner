@@ -1555,3 +1555,250 @@ describe("a paused task keeps its work and continues from it (budget-resume)", {
     await s.w.store.close();
   });
 });
+
+describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_000 }, () => {
+  type Inner = TaskExecutor & { withWorktree: (dir: string) => TaskExecutor };
+  /** A run that does `work` in its folder and ends done (or as `result` says). */
+  function agent(
+    work: (dir: string) => Promise<void> | void,
+    result: Partial<Awaited<ReturnType<TaskExecutor["execute"]>>> = {},
+  ): Inner {
+    return {
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree(dir) {
+        return {
+          async execute() {
+            await work(dir);
+            return {
+              outcome: "done",
+              summary: "Wrote it.",
+              costUsdMicro: 1000,
+              checksPassed: true,
+              ...result,
+            };
+          },
+        };
+      },
+    };
+  }
+
+  async function setup() {
+    const w = await world();
+    const newTask = (title: string) =>
+      w.store.task.insert({
+        project_id: w.project,
+        title,
+        outcome: "the file is written",
+        acceptance_criteria: ["the file exists"],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 100_000,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+    const exec = (inner: Inner) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async (id: string) => {
+      const t = await w.store.task.mustGet(id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const lines = async (args: string[]) =>
+      (await run(["git", "--git-dir", w.bare, ...args], { allowFailure: true })).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+    const onHost = (branch: string) => lines(["ls-tree", "-r", "--name-only", branch]);
+    const subjects = (range: string) => lines(["log", "--format=%s", range]);
+    const gitIn = (dir: string, args: string[]) =>
+      run(["git", "-C", dir, ...args], { allowFailure: true }).then((r) => r.stdout.trim());
+    return { w, newTask, exec, ctx, onHost, subjects, gitIn };
+  }
+
+  it("two tasks titled 'Write the guide' created a second apart get two branches and two pull requests; the second carries none of the first's commits (R-branch)", async () => {
+    const s = await setup();
+    const first = await s.newTask("Write the guide");
+    await s.w.clock.advance(1000);
+    const second = await s.newTask("Write the guide");
+    // The cause: a UUIDv7's first 8 characters are its time, the same for 65 s.
+    expect(second.id.slice(0, 8)).toBe(first.id.slice(0, 8));
+    const a = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n")))
+      .execute(await s.ctx(first.id));
+    const b = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(second.id));
+    expect(a.outcome, a.summary).toBe("in_review");
+    expect(b.outcome, b.summary).toBe("in_review");
+    expect(b.branch).not.toBe(a.branch);
+    expect(b.prUrl).not.toBe(a.prUrl);
+    // No id on a person's screen is polish's (C-59); the name still reads as the task's.
+    expect(b.branch).toMatch(/^fr\/[0-9a-f]{8}-write-the-guide$/);
+    const prs = await s.w.host.listPullRequests({ owner: "o", name: "sample" });
+    expect(prs.map((p) => p.head.ref).sort()).toEqual([a.branch, b.branch].sort());
+    expect(await s.onHost(b.branch ?? "")).toEqual(["README.md", "notes.md"]);
+    expect(await s.subjects(`main..${b.branch}`)).toEqual(["Write the guide"]);
+    // The first task's pull request got nothing of the second's.
+    expect(await s.onHost(a.branch ?? "")).toEqual(["README.md", "guide.md"]);
+    expect(await s.w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1)).toEqual([]);
+    await s.w.store.close();
+  });
+
+  it("a task whose stored branch is another task's (made before the fix) does not take over that task's pull request (R-branch)", async () => {
+    const s = await setup();
+    const first = await s.newTask("Write the guide");
+    const second = await s.newTask("Write the guide");
+    const a = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n")))
+      .execute(await s.ctx(first.id));
+    expect(a.outcome, a.summary).toBe("in_review");
+    // As an older version left it: the second task stored the first one's branch name.
+    await s.w.store.task.patch(second.id, { branch: a.branch ?? "" });
+    const b = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(second.id));
+    expect(b.outcome, b.summary).toBe("in_review");
+    expect(b.branch).not.toBe(a.branch);
+    expect(b.prUrl).not.toBe(a.prUrl);
+    expect((await s.w.store.task.mustGet(second.id)).branch).toBe(b.branch);
+    expect(await s.onHost(a.branch ?? "")).toEqual(["README.md", "guide.md"]);
+    expect(await s.onHost(b.branch ?? "")).toEqual(["README.md", "notes.md"]);
+    expect(await s.w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1)).toEqual([]);
+    await s.w.store.close();
+  });
+
+  it("a run the app's close or a crash cut short leaves files with no marker; the next run is not refused by git, starts clean and keeps them under the failed ref (R-dirtyworktree, W6-24)", async () => {
+    const s = await setup();
+    const task = await s.newTask("Write the guide");
+    const wt = join(s.w.root, "wt", task.id);
+    // The first run writes an untracked file and changes a tracked one, then the app goes away
+    // before anything after the run (no work-in-progress commit, no leftovers set aside).
+    await expect(
+      s
+        .exec(
+          agent(() => {
+            writeFileSync(join(wt, "guide.md"), "half a guide\n");
+            writeFileSync(join(wt, "README.md"), "# sample, half edited\n");
+            throw new Error("the app was closed");
+          }),
+        )
+        .execute(await s.ctx(task.id)),
+    ).rejects.toThrow("the app was closed");
+    expect(await s.gitIn(wt, ["status", "--porcelain"])).not.toBe("");
+    // Meanwhile main gets a guide.md of its own (someone else's merge).
+    const seed = new GitOps({ cwd: join(s.w.root, "seed"), identity });
+    writeFileSync(join(s.w.root, "seed", "guide.md"), "main's guide\n");
+    await seed.commitAll("main adds guide.md");
+    await seed.push("main");
+    let saw: { guide: string; readme: string } | null = null;
+    const next = await s
+      .exec(
+        agent((dir) => {
+          saw = {
+            guide: readFileSync(join(dir, "guide.md"), "utf8"),
+            readme: readFileSync(join(dir, "README.md"), "utf8"),
+          };
+          writeFileSync(join(dir, "notes.md"), "# Notes\n");
+        }),
+      )
+      .execute(await s.ctx(task.id));
+    expect(next.outcome, next.summary).toBe("in_review");
+    // It started from main as it is now, without the cut-short run's files.
+    expect(saw).toEqual({ guide: "main's guide\n", readme: "# sample\n" });
+    expect(await s.onHost(next.branch ?? "")).toEqual(["README.md", "guide.md", "notes.md"]);
+    expect(next.changedFiles).toEqual(["notes.md"]);
+    // The leftovers are kept, not lost: the failed ref holds both files as they were left.
+    const failed = `refs/forerunner/failed/${task.id}`;
+    expect(await s.gitIn(wt, ["show", `${failed}:guide.md`])).toBe("half a guide");
+    expect(await s.gitIn(wt, ["show", `${failed}:README.md`])).toBe("# sample, half edited");
+    await s.w.store.close();
+  });
+
+  it("a rebase a crash left half done in the task's worktree is ended before the next run, which updates its pull request (R-dirtyworktree)", async () => {
+    const s = await setup();
+    const task = await s.newTask("Write the guide");
+    const wt = join(s.w.root, "wt", task.id);
+    const first = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "README.md"), "# sample by the task\n")))
+      .execute(await s.ctx(task.id));
+    expect(first.outcome, first.summary).toBe("in_review");
+    // main changes the same line; the app went away in the middle of the rebase onto it.
+    const seed = new GitOps({ cwd: join(s.w.root, "seed"), identity });
+    writeFileSync(join(s.w.root, "seed", "README.md"), "# sample by main\n");
+    await seed.commitAll("main changes README.md");
+    await seed.push("main");
+    await s.gitIn(wt, ["fetch", "-q", "origin"]);
+    await s.gitIn(wt, ["rebase", "origin/main"]);
+    expect(await s.gitIn(wt, ["status"])).toContain("rebase in progress");
+    const next = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(task.id));
+    // The rebase was ended first, so the run's own rebase onto main names its conflict, in
+    // README.md, on the person's conflict card (before: "rebase conflict in " with no file,
+    // and the task's commit was lost with the half-done rebase).
+    expect(next.outcome).toBe("needs_human");
+    expect(next.summary).toBe("rebase conflict in README.md");
+    expect(await s.gitIn(wt, ["status"])).not.toContain("rebase in progress");
+    const card = (await s.w.store.humanRequest.list({ status: "open" } as never)).find(
+      (r) => r.task_id === task.id,
+    );
+    expect(card?.why).toContain("conflicts in README.md");
+    await s.w.store.close();
+  });
+
+  it("after the repository starts tracking 'Local only/', a reused worktree commits a new file there (R-exclude)", async () => {
+    const s = await setup();
+    const task = await s.newTask("Write the page");
+    const wt = join(s.w.root, "wt", task.id);
+    const first = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "page.html"), "<h1>page</h1>\n")))
+      .execute(await s.ctx(task.id));
+    expect(first.outcome, first.summary).toBe("in_review");
+    expect(readFileSync(join(wt, ".git", "info", "exclude"), "utf8")).toContain("/Local only/");
+    // The repository then tracks a folder of that name: it is the repository's own.
+    const seed = new GitOps({ cwd: join(s.w.root, "seed"), identity });
+    mkdirSync(join(s.w.root, "seed", "Local only"), { recursive: true });
+    writeFileSync(join(s.w.root, "seed", "Local only", "a.txt"), "the repository's\n");
+    await seed.commitAll("a folder named Local only");
+    await seed.push("main");
+    const next = await s
+      .exec(
+        agent((dir) => {
+          mkdirSync(join(dir, "Local only"), { recursive: true });
+          writeFileSync(join(dir, "Local only", "b.txt"), "the task's\n");
+        }),
+      )
+      .execute(await s.ctx(task.id));
+    expect(next.outcome, next.summary).toBe("in_review");
+    expect(await s.onHost(next.branch ?? "")).toContain("Local only/b.txt");
+    expect(next.changedFiles).toContain("Local only/b.txt");
+    // Forerunner's own line for it is gone; the try folder's stays.
+    const exclude = readFileSync(join(wt, ".git", "info", "exclude"), "utf8");
+    expect(exclude).not.toContain("/Local only/");
+    expect(exclude).toContain("/.forerunner-try/");
+    await s.w.store.close();
+  });
+});
