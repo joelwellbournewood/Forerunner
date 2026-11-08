@@ -2726,7 +2726,9 @@ the store, kept for the task's project through `RoutedProvider.noteWait`), and `
 returns `{ refused }` (`reviewRefusalOf`). A budget's refusal pauses the task as a run's pause
 does (ADR 0112 point 6): `needs_human` with `budgetStopTitle`, one card (`fileBudgetStopCard`,
 the limit from the refusal's level: `reviewStopSource`, the critic's own run cap being the
-session's), the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
+session's; `reviewWaits: true` puts `review_waits` on it, so its body says "The work is done; its
+review waits for room in the budget." instead of the run pause's "It stopped before it could say
+where it stood", `pausedWorkSentence`, TR-14), the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
 of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the session's budget or an
 outer limit ends the session there; no try is counted and no ladder card is filed. A
 credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the

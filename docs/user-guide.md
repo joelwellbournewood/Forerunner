@@ -860,7 +860,8 @@ December."), links Settings, and the task goes on by itself once you raised that
 removed it) in Settings, or the new month began; until then it stays paused with its card.
 The same holds when the limit is reached by the critic's review rather than by the run: the
 task pauses at that limit with the same card ('"Contact page" paused before its review: the
-project's budget of CHF 0.01 has no room for it.' in the log), it does not count as a failed
+project's budget of CHF 0.01 has no room for it.' in the log; the card says "The work is done;
+its review waits for room in the budget."), it does not count as a failed
 try, and once it goes on its next session finishes it and the critic reviews it once.
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the

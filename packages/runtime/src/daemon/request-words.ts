@@ -596,6 +596,10 @@ function budgetCard(
  * stop): its work so far is kept.
  */
 function pausedWorkSentence(card: JsonObject): string | null {
+  // TR-14: the specialist finished and only its review waits (a review a limit refused): the
+  // run-pause words ("It stopped before it could say where it stood") were not true of it.
+  if (card.review_waits === true)
+    return "The work is done; its review waits for room in the budget.";
   const done = str(card.done);
   const left = Array.isArray(card.left)
     ? card.left.filter((t): t is string => typeof t === "string" && t.trim() !== "")

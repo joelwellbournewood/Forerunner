@@ -132,6 +132,12 @@ export interface BudgetStopCardInput {
   stop: BudgetStop;
   /** The run's "Where I stopped" and "Left to do" (data), when it wrote them. */
   handoff?: RunHandoff | null;
+  /**
+   * The specialist finished and only the critic's review waits for room (TR-14: a review a
+   * limit refused, ADR 0112 point 6). The card then says the work is done, not that the run
+   * stopped before it could say where it stood.
+   */
+  reviewWaits?: boolean;
   /** Now (ISO), for when a month's limit resets. */
   now?: string;
   /** The day's CHF per USD for the amounts on the card. */
@@ -182,6 +188,7 @@ export async function fileBudgetStopCard(
       stopped_by: stop.stoppedBy ?? input.handoff?.stoppedBy ?? "budget",
       done: left.done,
       left: left.left,
+      ...(input.reviewWaits ? { review_waits: true } : {}),
       ...(stop.source === "month" || stop.source === "plan"
         ? { resets_at: nextMonthStart(input.now ?? new Date(0).toISOString()) }
         : {}),

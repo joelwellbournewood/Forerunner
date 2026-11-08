@@ -2075,6 +2075,8 @@ export class SessionRunner {
                   runId: result.runId ?? null,
                   stop,
                   handoff: null,
+                  // TR-14: the specialist finished; only the review waits for room.
+                  reviewWaits: true,
                   now: clock.nowIso(),
                   chfPerUsd: rate,
                 });
