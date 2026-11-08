@@ -15,15 +15,14 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-08 12:20 UTC (wave 7 group 5 running)
+## Status at 2026-11-08 15:30 UTC (wave 7 group 6 part 1 running)
 
 The weekly limit reset on 2026-11-08 at 05:00 UTC and the work resumed then, on the included
 plan (no paid extra usage). Session `claude/nifty-knuth-f9udt0` carries on; its scheduled
 check-ins pick the work up if a run stops.
 
-- **Merged and pushed at a9d4b76.** CI is green on it. The Desktop app workflow's Linux build
-  is green; its Windows build stopped when GitHub answered 504 to the WiX download (a network
-  error, after every test had passed) and was re-run. Merged so far:
+- **Merged and pushed at fa1a86f.** CI and the Desktop app workflow (Windows and Linux builds,
+  the installed-app check and the real-window check) are green on it. Merged so far:
   - phase C (verification, continuity, GitHub result, research on the web);
   - phase E wave 5 (answers, screens, noise, bench) and wave 6 (stops, asking, decisions,
     verification);
@@ -39,6 +38,12 @@ check-ins pick the work up if a run stops.
     month cap or the project's budget it goes on by itself once that limit is raised or
     resets); research on the API key searches the web (at most 10 searches a task, priced in
     the estimate). ADRs 0112 and 0107 are amended;
+  - wave 7 group 5: "Take this work out" on a merged task opens a pull request that removes its
+    changes from main (merge, squash and rebase merges; you merge it); "Open this version" puts
+    a waiting pull request's files in a folder on this computer; no repository is created
+    without a yes, at any level; research reads any public website, or only (or never) the
+    sites listed per project, on both credentials, never this PC or the home network. ADRs 0097,
+    0107 and 0113 are amended;
   - F2: the real window on Windows CI, and Docker full review on Linux;
   - test temp files go in one folder per run, removed at its end.
 - **The owner's decisions of 2026-11-02** are built in waves 7 and 8: merging, Autopilot, the
@@ -46,39 +51,47 @@ check-ins pick the work up if a run stops.
   rules, Ctrl-click, the status issue, the standard repository guide and collaboration. Their
   full text is in the plan files backup below. Each is recorded in its ADR as it is built; the
   user-guide entries are checked in phase G.
-- **Running now: wave 7 group 5.** Merged-task actions: "Open this version" on a waiting pull
-  request, "Take this work out" on merged work, and no repository created without a yes. Site
-  rules: research reads any public website, with per-project "only these" or "never these"
-  lists that work the same on both credentials, and never this PC or the home network.
-  Workflow run `wf_b3c7133a-8f5`, started 11:26 UTC on a9d4b76.
-- **Real problems group 4 found, for group 6:** two same-titled tasks created in one repository
-  within about 65 seconds get the same branch (branch names use the first 8 characters of the
-  task id); a critic review refused at the project's budget counts as a failed try (the retry
-  ladder files "failed 4 times") instead of pausing the task. Polish items are in
-  `wave7g4-result.json`.
+- **Group 6 is two waves.** Every leftover of groups 1 to 5 (246 items, 210 after merging
+  duplicates) was checked against the code at fa1a86f (`wave7g6-triage.json` in the plan
+  files): 42 real problems, 34 new polish items, 14 live-check steps, 11 owner questions, 2 for
+  wave 8, the rest already fixed or not a problem.
+  - **Running now: wave 12**, the real problems in three areas with separate files:
+    leftovers7-merge (16: same-titled tasks sharing a branch first, then rebuilds, take-out,
+    the merge retry, the copy, the repository offer), leftovers7-session (10: a review refused
+    at a budget or by a credential pauses or waits instead of failing, "Wait" keeps the queue
+    going, recovery, the session review, run rows, estimates, chat caching) and leftovers7-web
+    (16: the agent browser keeps Chromium's sandbox, the site rule never fails open, the
+    subscription's hooks and bookings, credential waits and the chooser). Workflow run
+    `wf_294ae3cd-fb8`, started 15:13 UTC on fa1a86f.
+  - **Next: wave 13, polish** (the 34 planned items and the 34 new ones), split into two areas
+    with separate files (words in the runtime and docs; the screens), after wave 12 is merged.
 - **The plan files are on GitHub:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`
-  (refreshed after group 4). It holds the wave 7 and 8 specs, the owner's decisions, the
-  leftovers, each wave's results, the collaboration audit, the workflow scripts and the resume
-  recipes. Its README says how to restore them and resume, on this machine or a fresh one.
-  Delete it once wave 8 is merged.
+  (refreshed after wave 12 started). It holds the wave 7 and 8 specs, the owner's decisions,
+  the leftovers and their triage, each wave's results, the collaboration audit, the workflow
+  scripts and the resume recipes. Its README says how to restore them and resume, on this
+  machine or a fresh one. Delete it once wave 8 is merged.
 - **Backup branches to delete:** the four `claude/nifty-knuth-f9udt0-backup/fix-*` branches
   (merge-in-app, credential-chooser, cost, merged-copy) are fully merged. The session cannot
   delete branches (GitHub answers 403), so the owner deletes them.
 - **Next, in order:**
-  1. group 5: merged-task actions, site rules (running);
-  2. group 6: polish, with group 4's two real problems first;
-  3. live check 2 with the real model (it now includes budget resume and web search);
+  1. wave 12: the real problems of groups 1 to 5 (running);
+  2. wave 13: polish;
+  3. live check 2 with the real model (it now includes budget resume, web search, the site
+     rules, take-out and the preview; the triage lists the steps to add);
   4. wave 8: 16 areas in 8 groups (collaboration, the status issue, the repository guide);
   5. then F, G, G2 and H, as below.
 - **Session-lead write-ups left for phase G** (the area agents may not edit them): the
   UPDATE-LOG entries (U-028, U-037, U-078, L-15, L-22 from group 3; U-042, C-36, W6-7, W6-23,
-  C-30, C-37 from group 4's budget resume; group 4's web search entries), docs/requirements.md
-  J.9 and J.10, and the CHANGELOG lines. Each area's suggested words are in its result file.
+  C-30, C-37 from group 4's budget resume; group 4's web search entries; Q7 from group 1;
+  group 5's take-out, preview, repository offer and site-rule entries: Q6, C-60, C-66, C-70,
+  C-71, W6-29, W6-30, R-9), docs/requirements.md J.9 and J.10, and the CHANGELOG lines. Each
+  area's suggested words are in its result file.
 - **Cost estimate for waves 7 and 8,** from what earlier rounds used: about USD 2,200 at API
   prices (1,800 to 2,700), about three quarters of one week's included limit. Used so far
-  since the estimate: about USD 270 (group 3's remaining work about 115, group 4 about 160).
+  since the estimate: about USD 520 (group 3's remaining work about 115, group 4 about 160,
+  group 5 about 160, the group 6 triage about 90).
 - **API spend for live checks:** about USD 6 of the owner's USD 40.
-- **Open owner questions** (defaults are built if unanswered): 9 on collaboration
+- **Open owner questions** (today's behaviour stays until answered): 9 on collaboration
   (`collab/owner-summary.md`) and 6 from waves 5 and 6 (`owner-questions-wave56.md`), both in
   the plan files; from group 3, U-078 (does "Wait" also hold a refused API key's work, as built;
   should running commands be a hard need for code tasks on a project with dependencies) and
@@ -86,7 +99,12 @@ check-ins pick the work up if a run stops.
   built). ADRs 0100 and 0113 give the options. From group 4, W6-23: should a task whose
   estimate alone is more than the session's work budget also get an Inbox card? As built it
   gets the Start dialog's warning and a line in the session's result, and no card, since it
-  never ran.
+  never ran. The group 6 triage adds 11 (`wave7g6-triage.json` owner_questions), several of
+  them sharper forms of U-078 and W6-23: whether Redo or Try again on a Tasks row starts work;
+  what "Wait" holds when a credential rests, is refused or reaches a plan-share or monthly cap;
+  whether a large Local only folder is copied into every run; what the time on the Files line
+  means; whether a conflicting take-out offers to draft a revert task; how the project line
+  counts taken-out work.
 
 ## Progress, and the plan from here (approved by the owner, 2026-11-01 evening)
 
