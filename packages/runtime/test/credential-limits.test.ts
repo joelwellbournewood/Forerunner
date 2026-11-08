@@ -16,6 +16,7 @@ import type {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { openRefusedCards } from "../src/session/credential-wait.ts";
 import { filePersonQuestions } from "../src/session/person-questions.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { waitingOf } from "../src/wiring/billing-pick.ts";
@@ -709,6 +710,59 @@ describe("leftovers7-tailrun, wave 13: the Start check reads, and asks the run's
       // The run's own pick: the subscription takes it.
       await run(rt, project.id);
       expect(sdkCalls).toBeGreaterThan(0);
+    } finally {
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false });
+    }
+  }, 120_000);
+
+  it("TR-10: a subscription takes the work of a refused key: setup needs no restart, its runs get Claude Code's tools, and the refused key's card closes", async () => {
+    const clock = new SimulatedClock("2026-11-09T14:00:00Z");
+    let sdkCalls = 0;
+    const offered: string[][] = [];
+    const sdkQuery: QueryLike = ({ options }) => {
+      sdkCalls++;
+      offered.push(((options ?? {}).allowedTools as string[] | undefined) ?? []);
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc", tools: [] };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "Wrote it. Lesson: none.",
+          total_cost_usd: 0,
+        };
+      })();
+    };
+    const w = world(clock, { sdkQuery });
+    await w.vault.set(SECRET_NAMES.anthropic, REFUSED);
+    const { rt, req } = await w.start();
+    try {
+      const { project } = await twoTasks(rt);
+      await run(rt, project.id);
+      // The key was refused: one card says so, and the work waits on the key.
+      expect(await openRefusedCards(rt.store, rt.human.id)).toHaveLength(1);
+      // The person adds a Claude subscription instead of a new key.
+      const saved = await json<{ ok: boolean; status: { restartNeeded: boolean } }>(
+        req("/setup/anthropic", { value: OAUTH }),
+      );
+      expect(saved.ok).toBe(true);
+      // Before: true, though the running daemon serves the subscription at once.
+      expect(saved.status.restartNeeded).toBe(false);
+      await until("the waiting work to run on the subscription", async () =>
+        sdkCalls > 0 ? null : `sdk calls ${sdkCalls}`,
+      );
+      // Its runs get Claude Code's own tools (before: the grant was read at the start, without
+      // a subscription, so the subscription's runs could not read or edit a file).
+      expect(offered[0]).toContain("Read");
+      // Nothing waits on the refused key any more: its card is closed (before: it kept saying
+      // "The work that needs it waits and starts by itself then.").
+      await until("the refused key's card to close", async () => {
+        const open = await openRefusedCards(rt.store, rt.human.id);
+        return open.length === 0 ? null : `${open.length} open`;
+      });
+      const inbox = await json<InboxView>(req("/inbox"));
+      const card = inbox.requests.find((r) => /refused your API key/.test(r.title ?? ""));
+      expect(card?.status).not.toBe("open");
     } finally {
       await rt.kill.stop("all", "test over", { by: "you", freeze: false });
     }

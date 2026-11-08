@@ -769,7 +769,8 @@ Press Start and it runs then." and **Start** stays on; press it (or **Continue w
 stopped**) and the work starts by itself at 15:40. Only looking starts nothing. If
 you add a Claude subscription instead of a new key, the work that waited starts by itself on the
 subscription when your order lets it go there (with no order chosen, tasks use the
-subscription first); under **Wait** a first choice that rests or was refused still holds its
+subscription first), with no restart, and once no work waits on the refused key its card closes
+("Closed: it no longer needs you."; it comes back if work needs that key again); under **Wait** a first choice that rests or was refused still holds its
 work. A session you start while a new project's plan is being drafted waits for the planning to
 finish ("queued") and then runs. A review waits the same way: when the critic's review of a finished
 task meets a limit or a refusal and no other credential can do it, the task goes back to Ready

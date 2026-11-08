@@ -1574,6 +1574,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const rowFor = (ref: string) => billingRows.find((r) => r.credential_ref === ref && r.enabled);
   const hasKey = await vault.has(SECRET_NAMES.anthropic);
   const hasOauth = await vault.has(SECRET_NAMES.anthropicOauth);
+  // TR-10: whether a Claude subscription is saved now, for the sessions' grant (Claude Code's
+  // tools): set at the start and when one is saved in the setup assistant (`credentialSaved`),
+  // so a subscription saved while the daemon runs is served without a restart.
+  let subscriptionSaved = hasOauth;
   const billingSourceId =
     (hasKey ? rowFor(SECRET_NAMES.anthropic)?.id : undefined) ??
     (hasOauth ? rowFor(SECRET_NAMES.anthropicOauth)?.id : undefined) ??
@@ -3188,7 +3192,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ...tools.names(),
       ...capabilityTools().map((t) => t.name),
       ...extensions.bridgedTools().map((t) => t.name),
-      ...(hasOauth ? claudeCodeToolNames() : []),
+      ...(subscriptionSaved ? claudeCodeToolNames() : []),
       // Anthropic's web search on an API key ('web-search'): the provider runs it, so it is no
       // registered tool; a run token carries it only where the executor offers the run search.
       ...(webSearchOn ? [WEB_SEARCH_TOOL] : []),
@@ -3624,6 +3628,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             error: errorMessage(e),
           }),
       );
+      if (kind === "subscription") subscriptionSaved = true;
       await taskBilling.credentialSaved(kind);
       return credentialWaits.wake();
     },

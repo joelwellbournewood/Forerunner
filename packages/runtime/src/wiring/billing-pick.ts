@@ -789,7 +789,7 @@ export class RouterTaskBilling implements TaskBillingPort {
    * serve again, after a restart too. One entry per project.
    */
   async noteWait(sourceId: string, projectId: string, agentId: string): Promise<void> {
-    await updateSourceLimits(this.opts.store, sourceId, (limits) => {
+    const row = await updateSourceLimits(this.opts.store, sourceId, (limits) => {
       const waiting = waitingOf(limits);
       if (waiting.some((w) => w.projectId === projectId)) return null;
       return {
@@ -797,6 +797,21 @@ export class RouterTaskBilling implements TaskBillingPort {
         waiting: [...waiting, { projectId, agentId, since: this.opts.clock.nowIso() }],
       };
     });
+    // TR-10: work waits on a refused credential again after its card was closed (another
+    // credential had taken the work): the card that asks for a new one is filed again.
+    if (row && this.opts.store.humanRequest && row.kind !== "fake") {
+      const source = {
+        limits: row.limits as BillingSource["limits"],
+        credentialRef: row.credential_ref ?? "",
+      };
+      if (await refusedSince(source, this.opts.vault).catch(() => null))
+        await fileRefusedCard(this.opts.store as Pick<StateStore, "humanRequest">, {
+          humanId: this.opts.humanId,
+          agentId: null,
+          sourceId: row.id,
+          kind: row.kind,
+        }).catch(() => undefined);
+    }
   }
 
   /**
@@ -823,6 +838,10 @@ export class RouterTaskBilling implements TaskBillingPort {
       // refusal written meanwhile is read again, so it is either taken here or kept.
       let taken: { projectId: string; agentId: string; since: string }[] = [];
       let stale = false;
+      // TR-10: the source stays refused and another credential took all the work that waited on
+      // it: nothing waits on it any more, so its card ("The work that needs it waits ...") is
+      // withdrawn ("Closed: it no longer needs you."); a later wait on it files the card again.
+      let nothingWaits = false;
       if (typeof listed.limits.refusedAt !== "string" && !waitingOf(listed.limits).length) continue;
       // The credential the vault holds now (async, so read before the write). Whether the
       // source is refused is judged from the copy each write works on (TR-4): a refusal written
@@ -853,6 +872,7 @@ export class RouterTaskBilling implements TaskBillingPort {
           !refusedHere && !restingUntilOf({ limits: limits as BillingSource["limits"] }, now);
         taken = free ? waiting : waiting.filter((w) => servedElsewhere.has(w.projectId));
         const kept = free ? [] : waiting.filter((w) => !servedElsewhere.has(w.projectId));
+        nothingWaits = refusedHere && taken.length > 0 && kept.length === 0;
         if (!stale && !taken.length) return null;
         const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, waiting: _l, ...rest } = limits;
         return {
@@ -864,7 +884,7 @@ export class RouterTaskBilling implements TaskBillingPort {
         };
       });
       const row = listed;
-      if (stale && this.opts.store.humanRequest)
+      if ((stale || nothingWaits) && this.opts.store.humanRequest)
         await closeRefusedCards(
           this.opts.store as Pick<StateStore, "humanRequest">,
           this.opts.humanId,

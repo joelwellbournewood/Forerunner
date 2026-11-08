@@ -6145,7 +6145,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     setup.restartNeeded =
       (c.github && !setupStartedWith.github) ||
       (c.anthropicApiKey && !setupStartedWith.anthropicApiKey) ||
-      (c.subscription && !setupStartedWith.subscription);
+      // leftovers7-tailrun TR-10: a subscription saved beside an API key is served at once.
+      (c.subscription && !setupStartedWith.subscription && !setupStartedWith.anthropicApiKey);
   };
   app.get("/setup", (c) => c.json(setup));
   app.post("/setup/profile", async (c) => {

@@ -170,3 +170,41 @@ describe("leftovers7-tailrun, wave 13: a refusal written while the waits are tak
     await store.close();
   });
 });
+
+describe("leftovers7-tailrun, wave 13: the refused key's card says the truth about the work (TR-10)", () => {
+  it("the card closes when another credential takes all the work, and is filed again when work waits on the key again", async () => {
+    const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = await store.human.insert({
+      name: "J",
+      email: "",
+      timezone: "UTC",
+      notify_prefs: {},
+      default_autonomy: 2,
+      monthly_cap_usd_micro: 1,
+      locale: "en",
+    });
+    const vault = new MemoryVault({ [SECRET_NAMES.anthropic]: API_KEY });
+    const rows = await seedBillingSources({ store, vault, humanId: human.id });
+    const key = rows.find((r) => r.kind === "api_key");
+    if (!key) throw new Error("no api_key row");
+    const billing = new RouterTaskBilling({ store, vault, clock, humanId: human.id });
+    await billing.refuse(key.id, "invalid x-api-key");
+    await billing.noteWait(key.id, "proj-a", "alice");
+    expect(await openRefusedCards(store, human.id)).toHaveLength(1);
+    // A subscription serves proj-a's work now: it is taken off the refused key.
+    const taken = await billing.takeReady(async () => true);
+    expect(taken.map((t) => t.projectId)).toEqual(["proj-a"]);
+    const row = await store.billingSource.mustGet(key.id);
+    expect(typeof row.limits.refusedAt).toBe("string");
+    // Nothing waits on the key: the card is closed (before: it stayed open, saying the work
+    // waits for a new key).
+    expect(await openRefusedCards(store, human.id)).toHaveLength(0);
+    // A research task needs the key again and waits on it: the card is back, one.
+    await billing.noteWait(key.id, "proj-b", "alice");
+    expect(await openRefusedCards(store, human.id)).toHaveLength(1);
+    await billing.noteWait(key.id, "proj-c", "alice");
+    expect(await openRefusedCards(store, human.id)).toHaveLength(1);
+    await store.close();
+  });
+});

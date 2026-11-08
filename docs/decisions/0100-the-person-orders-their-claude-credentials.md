@@ -349,3 +349,9 @@ the retry ladder counted it as a failed try, and nothing reviewed the task at th
 3. **A refusal written while the waits are taken survives (TR-4).** `takeReady` judges the
    refusal in the copy each version-checked write works on, against the credential the vault
    holds, so a refusal written between its read and its write is kept with its card.
+4. **A subscription that takes a refused key's work (TR-10).** Saved while the daemon runs beside
+   an API key, it is served without a restart: its billing row is added (R-refusedstays) and the
+   sessions' grant carries Claude Code's tools from then on (it was read once at the start), so
+   the setup assistant no longer asks for a restart. Once no work waits on the refused key, its
+   card ("The work that needs it waits and starts by itself then.") is withdrawn ("Closed: it no
+   longer needs you."); a later wait on that key files it again. The key stays marked refused.

@@ -555,7 +555,13 @@ attempt starts on, its needs with the person's answers read by `personAnswered`;
 'Wait' still holds work to a first choice that rests or was refused) and requests one session start each (`budget_reset`) while the project has ready work.
 `credentialSaved` also seeds a billing row for a credential of a kind the install had none of
 (`seedBillingSources`: a subscription saved while only a refused key was could serve nothing
-until a restart). R-wakeorder: the wait leaves the source only once its start is known to run:
+until a restart), and a subscription saved so turns on Claude Code's tools in the sessions' grant
+(`subscriptionSaved`, read by `sessionGrant`; TR-10: it was read once at the start, so the
+subscription's runs got none), so the setup route answers `restartNeeded: false` for a
+subscription saved beside an API key. When another credential takes all the work that waited on
+a source that stays refused, `takeReady` withdraws its card ("Closed: it no longer needs you.";
+it said "The work that needs it waits ..."), and `noteWait` files it again when work waits on
+the refused source once more (TR-10; test `billing-limits.test.ts`, `credential-limits.test.ts`). R-wakeorder: the wait leaves the source only once its start is known to run:
 a start the runner refuses (its `runOutcome` not ok) or one that only waits in the scheduler's
 queue (memory) is noted again (`noteWait`), so it survives a quit; a project whose session runs
 now is left to it, and one with a start already queued is not asked twice. R-planningstart: a
