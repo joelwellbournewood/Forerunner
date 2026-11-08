@@ -21,6 +21,7 @@ import type {
   ProjectFilesView,
   ProjectPullRequestsView,
   PullRequestMergeAnswer,
+  PullRequestPreviewAnswer,
 } from "./api-types.ts";
 import { ownsProject, type Who } from "./ownership.ts";
 import { reviewsView } from "./views.ts";
@@ -50,6 +51,8 @@ export interface DocsRoutesDeps {
   pullRequests?: (project: ProjectRow) => Promise<ProjectPullRequestsView>;
   /** The person's Merge in the app (`ProjectPullRequests.merge`, merge-in-app). */
   mergePullRequest?: (project: ProjectRow, number: number) => Promise<PullRequestMergeAnswer>;
+  /** "Open this version" of a waiting pull request (`ProjectPullRequests.preview`, merged-actions). */
+  previewPullRequest?: (project: ProjectRow, number: number) => Promise<PullRequestPreviewAnswer>;
   /**
    * What the Files tab says about a repository project's copy (`ProjectDocs.copyView`,
    * merged-copy): when it was last brought to what is merged, and its Local only folder.
@@ -319,6 +322,20 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     if (!deps.mergePullRequest)
       return c.json({ code: "not_found", message: "merging in the app is not available" }, 404);
     const answer: PullRequestMergeAnswer = await deps.mergePullRequest(project, number);
+    return c.json(answer);
+  });
+
+  // "Open this version" on a waiting pull request (merged-actions): its files in a folder on
+  // this computer beside the project's copy, replacing the project's earlier preview.
+  app.post("/projects/:id/pull-requests/:number/preview", async (c) => {
+    const project = await owned(c.req.param("id"));
+    if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return c.json({ code: "validation", message: "not a pull request number" }, 400);
+    if (!deps.previewPullRequest)
+      return c.json({ code: "not_found", message: "previews are not available" }, 404);
+    const answer: PullRequestPreviewAnswer = await deps.previewPullRequest(project, number);
     return c.json(answer);
   });
 

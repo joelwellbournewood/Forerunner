@@ -329,6 +329,17 @@ with their milestone.
   paused task keeps its work and continues from it". `GitOps` gained `commitAll(message, { allowEmpty })`, `hasCommits`, `stageAll`, `stagedFiles`
   and `setRemote` for it and for the repository creation; `createRepo` takes `autoInit` (default
   true, the host's README commit; false: an empty repository for a first push).
+- **A pull request's preview and taking merged work out** (merged-actions, the owner's decisions
+  of 2026-11-02 "pr_preview" and "merging"). `GitOps.fetchRef(ref)` fetches one ref of the
+  remote (GitHub's `refs/pull/<n>/head` for a pull request whose branch is gone; false when the
+  remote has none); `worktreeAdd(dir, rev)` makes a second working folder of the clone at a commit
+  with no branch (`git worktree add --detach`), `worktreeRemove(dir)` removes it whatever was
+  changed in it and prunes a folder that is gone (the runtime's `ProjectDocs.previewPullRequest`
+  puts a waiting pull request's version beside the project's copy with them); `revert(commits,
+  { mainline })` takes commits back on the current branch (`git revert --no-edit`, `-m 1` for a
+  merge commit's change against its first parent), aborting on a conflict with the files named;
+  `commitsNotIn(from, to)` lists a branch's own commits that `from` lacks, oldest first, without
+  merge commits.
 - **Local only** (`local-only.ts`, merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md),
   the owner's decision of 2026-11-02): a repository project's folder that never leaves this
   computer and that agents can use. `LOCAL_ONLY_DIR` ("Local only"), `TRY_DIR`

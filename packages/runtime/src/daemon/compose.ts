@@ -2498,10 +2498,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       );
       copyRefreshes.add(refresh);
     },
+    // merged-actions: "Open this version" of a waiting pull request, beside the copy and under
+    // its lock (`ProjectDocs.previewPullRequest`).
+    previews: docs,
   });
   // merged-copy: the copy follows every merge (a session's, a retry's, Merge in the app, one
   // the watcher saw on GitHub).
   merge.onMerged(({ task }) => refreshProjectCopy(task.project_id));
+  // merged-actions: a pull request's preview goes once it is merged (here) or closed (the
+  // watcher's onPullRequestState, below); the Overview's read drops one GitHub merged or closed
+  // before either said so (a docs pull request has no task).
+  const dropPreviewOf = (projectId: string | null, number: number): Promise<void> =>
+    projectId
+      ? docs.dropPreview(projectId, number).then(
+          () => undefined,
+          (e: unknown) =>
+            logger.warn("pull request preview not removed", {
+              projectId,
+              error: errorMessage(e),
+            }),
+        )
+      : Promise.resolve();
+  merge.onMerged(({ task, record }) => dropPreviewOf(task.project_id, record.pr_number));
   // The repository projects the watcher reads the default branch of (onDefaultBranchHead).
   const repositoryProjects = async (): Promise<{ projectId: string; repo: RepoRef }[]> => {
     const out: { projectId: string; repo: RepoRef }[] = [];
@@ -4030,6 +4048,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         // method, a close), and the default branch's head once per poll and project.
         onPullRequestState: async (pr, info) => {
           await dependentBranches.pullRequestState(pr, info);
+          if (info.state !== "open") await dropPreviewOf(pr.projectId, pr.number);
           if (info.state !== "open" && pr.projectId) events.emit("project", { id: pr.projectId });
         },
         repositoryProjects,

@@ -677,6 +677,8 @@ export function createDaemonApp(
       // (POST /projects/:id/pull-requests/:number/merge) is answered at once.
       pullRequests: (project) => rt.pullRequests.view(project),
       mergePullRequest: (project, number) => rt.pullRequests.merge(project, number, rt.human.id),
+      // merged-actions: "Open this version" of a waiting pull request, beside the copy.
+      previewPullRequest: (project, number) => rt.pullRequests.preview(project, number),
       // merged-copy: when the copy was last brought to what is merged; its Local only folder.
       copyView: (project) => rt.docs.copyView(project),
       who: daemonWho,

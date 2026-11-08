@@ -6636,6 +6636,31 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       order,
     });
   });
+  // "Open this version" (merged-actions), as the daemon's `ProjectPullRequests.preview` answers
+  // it: a waiting pull request's folder beside the copy, replacing the project's earlier
+  // preview; the row then carries it (`preview`). A pull request that does not wait is refused.
+  app.post("/projects/:id/pull-requests/:number/preview", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 403, "forbidden", "not your project");
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return errorBody(c, 400, "validation", "not a pull request number");
+    const prs = state.pullRequests[id];
+    const row = prs?.waiting.find((r) => r.number === number);
+    if (!prs || !row)
+      return c.json({
+        state: "refused",
+        sentence: `#${number} does not wait to be merged: it may be merged or closed already.`,
+        folder: null,
+        number,
+      });
+    const folder = `/home/you/.forerunner/worktrees/docs/previews/${id}/pr-${number}`;
+    const sentence = `#${number} as it would be merged. Changes here are not kept.`;
+    for (const r of prs.waiting) r.preview = null;
+    row.preview = { folder, sentence };
+    return c.json({ state: "ready", sentence, folder, number });
+  });
   app.get("/projects/:id/files", (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id))

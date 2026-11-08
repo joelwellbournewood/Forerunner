@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import {
   dropKeptSame,
   ensureBaseBranch,
@@ -31,6 +39,7 @@ import {
 import {
   type Clock,
   errorMessage,
+  ForerunnerError,
   fromPosix,
   isAbsolute,
   join,
@@ -77,6 +86,15 @@ import type {
  * that git never sees (`.git/info/exclude`) and Forerunner never uploads (`local-only.ts`).
  */
 export const DOCS_SCAFFOLD_BRANCH = "fr/docs-scaffold";
+
+/**
+ * The folder under the docs clones' root that holds each project's pull request preview
+ * ('merged-actions': `<worktreeRoot>/previews/<project id>/pr-<n>`), beside the copies.
+ */
+export const PREVIEWS_DIR = "previews";
+
+/** The preview's record beside its folder: which pull request, and whether it merged cleanly. */
+const PREVIEW_RECORD = "preview.json";
 
 /** Forerunner's branch for `docs/status.md` in a repository: one pull request at a time. */
 export const STATUS_BRANCH = "fr/status";
@@ -385,6 +403,124 @@ export class ProjectDocs implements ProjectDocsPort {
     } catch {
       return null;
     }
+  }
+
+  /** `<worktreeRoot>/previews/<project id>`: where a project's pull request preview lives. */
+  previewRoot(projectId: string): string {
+    return join(this.deps.worktreeRoot, PREVIEWS_DIR, safeSegment(projectId, "project"));
+  }
+
+  /**
+   * The project's pull request preview on this computer now (`pr-<n>` under `previewRoot`, with
+   * its record `preview.json`), or null. Reads the folder only (no git): true while it is there.
+   */
+  previewOf(
+    projectId: string,
+  ): { number: number; folder: string; combined: boolean; base: string } | null {
+    const root = this.previewRoot(projectId);
+    let record: { number?: unknown; combined?: unknown; base?: unknown };
+    try {
+      record = JSON.parse(readFileSync(join(root, PREVIEW_RECORD), "utf8")) as typeof record;
+    } catch {
+      return null;
+    }
+    if (typeof record.number !== "number" || !Number.isInteger(record.number)) return null;
+    const folder = join(root, `pr-${record.number}`);
+    if (!existsSync(join(folder, ".git"))) return null;
+    return {
+      number: record.number,
+      folder,
+      combined: record.combined !== false,
+      base: typeof record.base === "string" ? record.base : "main",
+    };
+  }
+
+  /**
+   * "Open this version" on a pull request that waits to be merged (merged-actions, the owner's
+   * decision of 2026-11-02, "pr_preview"): the pull request's files on this computer to try
+   * before merging. Under the copy's lock (`withCopy`), the copy is fetched and the pull
+   * request's head checked out into a folder beside it (`previewRoot`/`pr-<n>`, a second working
+   * folder of the copy's clone with no branch: `git worktree add --detach`), replacing any earlier
+   * preview of the project. When the default branch moved past what the pull request started
+   * from, it is merged in there (never pushed), so the folder holds what merging would give;
+   * when the two do not merge cleanly the folder keeps the pull request's own version and
+   * `combined` is false. Nothing runs there, and the project's Local only folder is not copied
+   * into it. Dropped when the pull request is merged or closed (`dropPreview`).
+   */
+  async previewPullRequest(
+    project: ProjectRow,
+    pr: { number: number; headRef: string; headSha: string },
+  ): Promise<{ folder: string; number: number; combined: boolean; base: string }> {
+    const target = await this.deps.repoFor(project);
+    if (!target)
+      throw new ForerunnerError("not_found", "This project has no repository to preview.");
+    if (!existsSync(join(this.copyDir(project.id), ".git"))) await this.refreshCopy(project);
+    return this.withCopy(project.id, async (dir) => {
+      const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
+      const git = this.gitOf(dir, auth);
+      await git.fetch();
+      if (!(await git.hasRef(pr.headSha))) await git.fetchRef(`refs/pull/${pr.number}/head`);
+      if (!(await git.hasRef(pr.headSha)))
+        throw new ForerunnerError(
+          "not_found",
+          `#${pr.number}'s version is not on GitHub any more: open it on GitHub.`,
+        );
+      await this.removePreviews(git, project.id);
+      const root = this.previewRoot(project.id);
+      mkdirSync(root, { recursive: true });
+      const folder = join(root, `pr-${pr.number}`);
+      await git.worktreeAdd(folder, pr.headSha);
+      let combined = true;
+      const base = `origin/${target.base}`;
+      if ((await git.hasRef(base)) && !(await git.isAncestor(base, pr.headSha))) {
+        const there = new GitOps({
+          cwd: folder,
+          identity: this.deps.identity ?? WORKSPACE_IDENTITY,
+        });
+        const merged = await there.mergeFrom(
+          base,
+          `Preview of #${pr.number} merged with ${target.base}`,
+          { noFastForward: true },
+        );
+        combined = merged.ok;
+      }
+      writeFileSync(
+        join(root, PREVIEW_RECORD),
+        `${JSON.stringify({ number: pr.number, combined, base: target.base, sha: pr.headSha })}\n`,
+        "utf8",
+      );
+      this.logger.info("pull request preview", { projectId: project.id, pr: pr.number, combined });
+      return { folder, number: pr.number, combined, base: target.base };
+    });
+  }
+
+  /**
+   * Removes the project's pull request preview (whichever it is, or only when it is of
+   * `number`): the pull request was merged or closed. Under the copy's lock. True when one went.
+   */
+  async dropPreview(projectId: string, number?: number): Promise<boolean> {
+    const now = this.previewOf(projectId);
+    if (!now || (number !== undefined && now.number !== number)) return false;
+    return this.withCopy(projectId, async (dir) => {
+      if (existsSync(join(dir, ".git")))
+        await this.removePreviews(this.gitOf(dir, undefined), projectId);
+      rmSync(this.previewRoot(projectId), { recursive: true, force: true });
+      this.logger.info("pull request preview removed", { projectId, pr: now.number });
+      return true;
+    });
+  }
+
+  /** Every preview folder of the project, removed from the copy's clone (inside `withCopy`). */
+  private async removePreviews(git: GitOps, projectId: string): Promise<void> {
+    const root = this.previewRoot(projectId);
+    let names: string[] = [];
+    try {
+      names = readdirSync(root);
+    } catch {
+      return;
+    }
+    for (const name of names) if (/^pr-\d+$/.test(name)) await git.worktreeRemove(join(root, name));
+    rmSync(join(root, PREVIEW_RECORD), { force: true });
   }
 
   /**

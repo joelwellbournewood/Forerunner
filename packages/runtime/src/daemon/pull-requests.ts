@@ -22,6 +22,7 @@ import type {
   ProjectPullRequestView,
   ProjectRepositoryView,
   PullRequestMergeAnswer,
+  PullRequestPreviewAnswer,
 } from "./api-types.ts";
 
 /**
@@ -106,6 +107,30 @@ export interface ProjectPullRequestsDeps {
   agentId?: string;
   /** A merge in the background ended (merged or not): the project's screens read again. */
   changed?: (projectId: string) => void;
+  /**
+   * The project's pull request preview beside its copy (merged-actions: `ProjectDocs`'s
+   * `previewPullRequest`, `previewOf`, `dropPreview`). Absent: no "Open this version".
+   */
+  previews?: PullRequestPreviewPort;
+}
+
+/** "Open this version" of a waiting pull request (merged-actions), as `ProjectDocs` has it. */
+export interface PullRequestPreviewPort {
+  previewPullRequest(
+    project: ProjectRow,
+    pr: { number: number; headRef: string; headSha: string },
+  ): Promise<{ folder: string; number: number; combined: boolean; base: string }>;
+  previewOf(
+    projectId: string,
+  ): { number: number; folder: string; combined: boolean; base: string } | null;
+  dropPreview(projectId: string, number?: number): Promise<boolean>;
+}
+
+/** What a preview's row says with its folder (design §5: what it is, and that nothing is kept). */
+export function previewSentence(number: number, combined: boolean, base: string): string {
+  return combined
+    ? `#${number} as it would be merged. Changes here are not kept.`
+    : `#${number} as its branch has it: it does not merge cleanly with ${base} yet. Changes here are not kept.`;
 }
 
 /** The record outcomes a click cannot get past: the person acts on GitHub (or Redo). */
@@ -357,7 +382,96 @@ export class ProjectPullRequests {
         };
     }
     for (const [url] of this.docs) if (!prs.some((p) => p.htmlUrl === url)) this.docs.delete(url);
+    await this.attachPreview(project.id, prs, rows);
     return { repository, waiting: rows, error: null, errorKind: null, mode: modeView };
+  }
+
+  /**
+   * The project's preview on its pull request's row (merged-actions); a preview whose pull
+   * request is no longer open (merged or closed on GitHub, and the watcher has not said so yet)
+   * is removed now.
+   */
+  private async attachPreview(
+    projectId: string,
+    open: readonly PullRequestInfo[],
+    rows: ProjectPullRequestView[],
+  ): Promise<void> {
+    const previews = this.deps.previews;
+    if (!previews) return;
+    const now = previews.previewOf(projectId);
+    for (const row of rows) row.preview = null;
+    if (!now) return;
+    if (!open.some((p) => p.number === now.number)) {
+      await previews.dropPreview(projectId, now.number).catch((e: unknown) => {
+        this.logger.warn("pull request preview not removed", { projectId, error: errorMessage(e) });
+      });
+      return;
+    }
+    const row = rows.find((r) => r.number === now.number);
+    if (row)
+      row.preview = {
+        folder: now.folder,
+        sentence: previewSentence(now.number, now.combined, now.base),
+      };
+  }
+
+  /**
+   * "Open this version" (merged-actions): the waiting pull request `number`'s files on this
+   * computer, beside the project's copy and under its lock (`ProjectDocs.previewPullRequest`),
+   * replacing the project's earlier preview. Only a pull request the Overview lists as waiting.
+   */
+  async preview(project: ProjectRow, number: number): Promise<PullRequestPreviewAnswer> {
+    const refused = (sentence: string): PullRequestPreviewAnswer => ({
+      state: "refused",
+      sentence,
+      folder: null,
+      number,
+    });
+    const previews = this.deps.previews;
+    if (!previews) return refused("Opening a pull request's version is not available here.");
+    const repository = projectRepository(project, this.deps.apiBase);
+    const ref = repository ? parseRepoRef(repository.fullName) : null;
+    if (!ref) return refused("This project has no repository.");
+    const view = await this.view(project);
+    if (view.error) return refused(view.error);
+    if (!view.waiting.some((r) => r.number === number))
+      return refused(
+        `${prName(number)} does not wait to be merged: it may be merged or closed already.`,
+      );
+    let pr: PullRequestInfo;
+    try {
+      pr = await this.deps.host.getPullRequest(ref, number);
+    } catch (e) {
+      this.logger.warn("pull request not read for its preview", {
+        projectId: project.id,
+        error: redact(errorMessage(e)).slice(0, 300),
+      });
+      return refused("GitHub did not answer, so its version was not opened. Try again later.");
+    }
+    try {
+      const out = await previews.previewPullRequest(project, {
+        number,
+        headRef: pr.head.ref,
+        headSha: pr.head.sha,
+      });
+      return {
+        state: "ready",
+        sentence: previewSentence(number, out.combined, out.base),
+        folder: out.folder,
+        number,
+      };
+    } catch (e) {
+      this.logger.warn("pull request preview failed", {
+        projectId: project.id,
+        pr: number,
+        error: redact(errorMessage(e)).slice(0, 300),
+      });
+      return refused(
+        e instanceof ForerunnerError && e.code === "not_found"
+          ? e.message
+          : `${prName(number)}'s version could not be put on this computer. Try again, or open it on GitHub.`,
+      );
+    }
   }
 
   /**

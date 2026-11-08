@@ -1,5 +1,12 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9325,5 +9332,191 @@ describe("the UI client against the real daemon: research searches the web on th
     } finally {
       await rt.close();
     }
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: Open this version and Take this work out (merged-actions, U-037)", () => {
+  // The owner's decisions of 2026-11-02: "'Open this version' on a waiting PR: its files on the
+  // PC to try before merging" and "'Take this work out' (revert PR naming later tasks that built
+  // on it)". Before, a waiting pull request could be looked at only on GitHub, and nothing took
+  // merged work out. Real git on the testenv fake GitHub behind the daemon's GitHub client.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let github: GitHubHost;
+  let token = "";
+  let work = "";
+  const FULL = "alice/shop";
+  const REPO = { owner: "alice", name: "shop" };
+  const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    work = mkdtempSync(join(tmpdir(), "fr-ui-real-merged-actions-"));
+    const clock = new SystemClock();
+    host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    await host.createRepo({
+      owner: "alice",
+      name: "shop",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# shop\n" },
+    });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const vault = new MemoryVault();
+    await vault.set(SECRET_NAMES.github, token);
+    ({ rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+        vault,
+        config: {
+          version: 1,
+          profile: "default",
+          timezone: "UTC",
+          githubApiBase: host.baseUrl,
+          anthropicApiBase: "http://an.test",
+          repos: [],
+          credentials: { github: true, anthropic: false, anthropicSubscription: false },
+          stateUrl: "sqlite::memory:",
+        },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /** A done task with its pull request on the host, as a session leaves it. */
+  async function doneTask(
+    projectId: string,
+    title: string,
+    file: string,
+    opts: { from?: string; dependsOn?: string[]; content?: string } = {},
+  ) {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "done",
+      priority: 1,
+      depends_on: opts.dependsOn ?? [],
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      author_agent: rt.agent.id,
+    });
+    const dir = join(work, `wt-${task.id}`);
+    const git = new GitOps({ cwd: dir, identity, auth: { token } });
+    await git.clone(host.cloneUrl(FULL));
+    const branch = `fr/${file.replace(/\W+/g, "-")}-${task.id.slice(-6).toLowerCase()}`;
+    await git.createBranch(branch, opts.from ? `origin/${opts.from}` : "origin/main");
+    writeFileSync(join(dir, file), opts.content ?? `export const f = "${file}";\n`);
+    await git.commitAll(`Add ${file}`);
+    await git.push(branch);
+    const pr = await github.createPullRequest(REPO, {
+      title,
+      body: "",
+      head: branch,
+      base: "main",
+    });
+    await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch });
+    await rt.store.mergeRecord.pin({
+      task_id: task.id,
+      project_id: projectId,
+      agent_id: rt.agent.id,
+      pr_number: pr.number,
+      pr_url: pr.htmlUrl,
+      reviewed_head_sha: pr.head.sha,
+      author_agent: rt.agent.id,
+    });
+    return { task, pr, branch, dir, git };
+  }
+
+  const hostGit = async (...args: string[]) =>
+    (await run(["git", "--git-dir", host.repo(FULL)?.dir ?? "", ...args])).stdout.trim();
+
+  it("Open this version on a waiting PR: its version in a folder on this computer, as merging would give it, under the copy's lock; the row says so; the folder goes once the PR is merged", async () => {
+    const project = await client.createProject({ name: "Shop", goal: "A shop", repos: [FULL] });
+    const a = await doneTask(project.id, "Add the cart", "cart.ts");
+    // main moves after the pull request left it: the preview holds both, as a merge would.
+    await host.seedCommit(REPO, { "news.md": "# News\n" }, "Add the news", "main");
+    const before = await client.projectPullRequests(project.id);
+    expect(before.waiting.find((w) => w.number === a.pr.number)?.preview ?? null).toBeNull();
+    // The copy's lock is held (a refresh or a docs write runs): the preview waits for it.
+    let release: () => void = () => undefined;
+    const held = rt.docs.withCopy(
+      project.id,
+      () =>
+        new Promise<void>((r) => {
+          release = r;
+        }),
+    );
+    let settled = false;
+    const pressed = client.previewPullRequest(project.id, a.pr.number).finally(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(settled, "the preview went ahead while the copy's lock was held").toBe(false);
+    release();
+    await held;
+    const answer = await pressed;
+    expect(answer).toEqual({
+      state: "ready",
+      sentence: `#${a.pr.number} as it would be merged. Changes here are not kept.`,
+      folder: expect.any(String),
+      number: a.pr.number,
+    });
+    const folder = answer.folder ?? "";
+    expect(folder.startsWith(join(rt.dirs.worktrees, "docs", "previews"))).toBe(true);
+    expect(readFileSync(join(folder, "cart.ts"), "utf8")).toBe('export const f = "cart.ts";\n');
+    expect(readFileSync(join(folder, "news.md"), "utf8")).toBe("# News\n");
+    // Not the copy, and no Local only in it.
+    expect(folder).not.toBe(rt.docs.copyDir(project.id));
+    expect(existsSync(join(folder, "Local only"))).toBe(false);
+    // The row carries it, read again (after a reload too).
+    const after = await client.projectPullRequests(project.id);
+    expect(after.waiting.find((w) => w.number === a.pr.number)?.preview).toEqual({
+      folder,
+      sentence: answer.sentence,
+    });
+    // Nothing was pushed: main and the PR's branch are as they were.
+    expect(await hostGit("rev-parse", a.branch)).toBe(a.pr.head.sha);
+    // A pull request that does not wait is refused with a sentence.
+    expect(await client.previewPullRequest(project.id, 999)).toEqual({
+      state: "refused",
+      sentence: "#999 does not wait to be merged: it may be merged or closed already.",
+      folder: null,
+      number: 999,
+    });
+    // Merged in the app: the preview is removed.
+    await client.mergePullRequest(project.id, a.pr.number);
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(a.task.id))?.state === "merged",
+      "the pull request to be merged",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(a.task.id)),
+      30_000,
+    );
+    await eventually(
+      async () => !existsSync(folder),
+      "the preview folder to be removed after the merge",
+      async () => JSON.stringify(readdirSync(join(rt.dirs.worktrees, "docs", "previews"))),
+      15_000,
+    );
+    // A pull request closed on GitHub: the Overview's next read removes its preview.
+    const b = await doneTask(project.id, "Add the till", "till.ts");
+    const second = await client.previewPullRequest(project.id, b.pr.number);
+    expect(second.state).toBe("ready");
+    expect(existsSync(join(second.folder ?? "", "till.ts"))).toBe(true);
+    await github.updatePullRequest(REPO, b.pr.number, { state: "closed" });
+    const closed = await client.projectPullRequests(project.id);
+    expect(closed.waiting.some((w) => w.number === b.pr.number)).toBe(false);
+    expect(existsSync(second.folder ?? "")).toBe(false);
   }, 120_000);
 });

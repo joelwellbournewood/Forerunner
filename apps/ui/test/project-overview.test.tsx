@@ -227,9 +227,10 @@ describe("a project linked to a repository: its pull requests on the Overview (A
       "https://github.com/org/atlas",
     );
     const rows = await within(files).findAllByTestId("pr-waiting");
-    // merge-in-app: each row has Merge (before: Open only, merging was GitHub's).
+    // merge-in-app: each row has Merge (before: Open only, merging was GitHub's); merged-actions:
+    // and Open this version (before: the PR could be looked at on GitHub only).
     expect(rows.map((r) => r.textContent)).toEqual([
-      '"Index the documentation pages" · pull request #11OpenMerge',
+      '"Index the documentation pages" · pull request #11OpenMergeOpen this version',
     ]);
     expect(within(rows[0] as HTMLElement).getByTestId("pr-waiting-link")).toHaveAttribute(
       "href",
@@ -275,25 +276,25 @@ describe("a project linked to a repository: its pull requests on the Overview (A
     const titles = (rows: NodeListOf<Element>) => [...rows].map((r) => r.textContent);
     expect(within(files).getByTestId("prs-critic")).toHaveTextContent("Reviewed by the critic");
     expect(titles(await group("prs-critic"))).toEqual([
-      '"Create the page skeleton in index.html" · pull request #2OpenMerge',
-      '"Style the page in styles.css" · pull request #3OpenMerge',
+      '"Create the page skeleton in index.html" · pull request #2OpenMergeOpen this version',
+      '"Style the page in styles.css" · pull request #3OpenMergeOpen this version',
     ]);
     expect(within(files).getByTestId("prs-you")).toHaveTextContent("Accepted by you at sign-off");
     expect(titles(await group("prs-you"))).toEqual([
-      '"Add the deploy script" · pull request #5OpenMerge',
+      '"Add the deploy script" · pull request #5OpenMergeOpen this version',
     ]);
     expect(within(files).getByTestId("prs-not-reviewed")).toHaveTextContent(
       "Marked done without the critic's review",
     );
     expect(titles(await group("prs-not-reviewed"))).toEqual([
-      '"Write the README" · pull request #4OpenMerge',
+      '"Write the README" · pull request #4OpenMergeOpen this version',
     ]);
     const docs = within(files).getByTestId("prs-docs");
     expect(docs).toHaveTextContent("Forerunner's docs, merge them when you like");
     expect(docs).not.toHaveTextContent("Reviewed");
     expect(titles(await group("prs-docs"))).toEqual([
-      `"The project's docs from the plan" · pull request #1OpenMerge`,
-      '"Project status (docs/status.md)" · pull request #6OpenMerge',
+      `"The project's docs from the plan" · pull request #1OpenMergeOpen this version`,
+      '"Project status (docs/status.md)" · pull request #6OpenMergeOpen this version',
     ]);
     // Each one opens on GitHub.
     expect(within(docs).getAllByTestId("pr-waiting-link")[1]).toHaveAttribute(
@@ -530,6 +531,97 @@ describe("Merge in the app (merge-in-app, the owner's decision of 2026-11-02)", 
     expect(within(rows[1] as HTMLElement).getByTestId("pr-merge-sentence")).toHaveTextContent(
       "#8 merges when its checks pass.",
     );
+  });
+});
+
+describe("Open this version on a waiting pull request (merged-actions, the owner's decision of 2026-11-02)", () => {
+  it("each waiting row offers Open this version with its line; a click sends the PR's number and the row shows the folder with its sentence and Open folder, which opens that folder; a second PR replaces it", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        {
+          kind: "task",
+          taskId: "task_1",
+          title: "Index the documentation pages",
+          number: 11,
+          url: "https://example.test/org/atlas/pull/11",
+          branch: "fr/task_1",
+          review: "critic",
+          merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+        },
+        {
+          kind: "docs",
+          taskId: null,
+          title: "The project's standard docs",
+          number: 12,
+          url: "https://example.test/org/atlas/pull/12",
+          branch: "fr/docs-scaffold",
+          review: null,
+          merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+        },
+      ],
+      error: null,
+    };
+    const opened: string[] = [];
+    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args: { path: string }) => {
+        if (cmd === "open_folder") opened.push(args.path);
+        return null;
+      },
+    };
+    const user = userEvent.setup();
+    try {
+      renderApp("/projects/proj_atlas", harness);
+      const files = await screen.findByTestId("your-files");
+      const rows = await within(files).findAllByTestId("pr-waiting");
+      const first = rows[0] as HTMLElement;
+      // Before: the row offered Open (on GitHub) and Merge only.
+      const button = within(first).getByTestId("pr-preview");
+      expect(button).toHaveTextContent("Open this version");
+      expect(button).toHaveAttribute(
+        "title",
+        "Puts its files in a folder on this computer, to try before you merge it.",
+      );
+      expect(within(rows[1] as HTMLElement).getByTestId("pr-preview")).toBeInTheDocument();
+      expect(within(files).queryByTestId("pr-preview-block")).toBeNull();
+      await user.click(button);
+      const block = await within(first).findByTestId("pr-preview-block");
+      expect(within(block).getByTestId("pr-preview-sentence")).toHaveTextContent(
+        "#11 as it would be merged. Changes here are not kept.",
+      );
+      const folder = "/home/you/.forerunner/worktrees/docs/previews/proj_atlas/pr-11";
+      expect(within(block).getByTestId("pr-preview-folder-path")).toHaveTextContent(folder);
+      expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/11/preview")).toHaveLength(1);
+      // Open folder opens that folder, and says so on the button.
+      const open = within(block).getByTestId("pr-preview-folder-open");
+      expect(open).toHaveAttribute("title", "Opens #11's version on this computer.");
+      await user.click(open);
+      expect(opened).toEqual([folder]);
+      // The docs pull request's version replaces it: one preview per project.
+      await user.click(within(rows[1] as HTMLElement).getByTestId("pr-preview"));
+      expect(
+        await within(rows[1] as HTMLElement).findByTestId("pr-preview-sentence"),
+      ).toHaveTextContent("#12 as it would be merged. Changes here are not kept.");
+      await waitFor(() => expect(within(first).queryByTestId("pr-preview-block")).toBeNull());
+    } finally {
+      delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it("a pull request that no longer waits: the row says why, and no folder is shown", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const row = (await within(files).findAllByTestId("pr-waiting"))[0] as HTMLElement;
+    // Merged on GitHub meanwhile: the daemon no longer lists it as waiting.
+    const prs = harness.daemon.state.pullRequests.proj_atlas;
+    if (prs) prs.waiting = [];
+    await user.click(within(row).getByTestId("pr-preview"));
+    expect(await within(row).findByTestId("pr-preview-error")).toHaveTextContent(
+      "#11 does not wait to be merged: it may be merged or closed already.",
+    );
+    expect(within(row).queryByTestId("pr-preview-block")).toBeNull();
   });
 });
 

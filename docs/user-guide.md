@@ -366,6 +366,15 @@ merge by itself). Forerunner's own docs pull requests merge only when you press 
 are on GitHub now. If the pull requests cannot be listed, the Overview says why: no GitHub token
 (with **Connect GitHub**), a token GitHub refused, or GitHub not answering.
 
+**Open this version** on a row puts that pull request's files in a folder on this computer, so
+you can try it before you merge it: the row then says "#7 as it would be merged. Changes here are
+not kept." with the folder, **Open folder** and **Copy path**. When main changed since the pull
+request was made, the folder holds both, as merging would give them; when the two do not merge
+cleanly it holds the pull request's own version and says so. Nothing runs there by itself, your
+Local only folder is not in it, and nothing you change there is uploaded or kept: one project has
+one such folder at a time (the next Open this version replaces it), and it is removed when the
+pull request is merged or closed.
+
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed

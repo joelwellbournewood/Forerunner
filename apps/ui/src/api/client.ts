@@ -114,6 +114,8 @@ import {
   ProjectSummary as ProjectSummarySchema,
   type PullRequestMergeAnswer,
   PullRequestMergeAnswer as PullRequestMergeAnswerSchema,
+  type PullRequestPreviewAnswer,
+  PullRequestPreviewAnswer as PullRequestPreviewAnswerSchema,
   type RemoveSourceView,
   RemoveSourceView as RemoveSourceViewSchema,
   type RenameAgentBody,
@@ -325,6 +327,7 @@ export type {
   ProjectSettingsView,
   ProjectSummary,
   PullRequestMergeAnswer,
+  PullRequestPreviewAnswer,
   QueueItemView,
   RemoveSourceView,
   ReviewsView,
@@ -815,6 +818,11 @@ export interface DaemonClient {
    * dependency order in the daemon; read `projectPullRequests` again to follow them.
    */
   mergePullRequest(projectId: string, number: number): Promise<PullRequestMergeAnswer>;
+  /**
+   * "Open this version" on a waiting pull request (merged-actions): its files in a folder on
+   * this computer, replacing the project's earlier preview; the answer names the folder.
+   */
+  previewPullRequest(projectId: string, number: number): Promise<PullRequestPreviewAnswer>;
   /** One file of the project's folder, its text inline (null when it is not text). */
   projectFile(
     projectId: string,
@@ -1293,6 +1301,12 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(
         routePath("mergePullRequest", { id: projectId, number: String(number) }),
         PullRequestMergeAnswerSchema,
+        {},
+      ),
+    previewPullRequest: (projectId, number) =>
+      post(
+        routePath("previewPullRequest", { id: projectId, number: String(number) }),
+        PullRequestPreviewAnswerSchema,
         {},
       ),
     projectFile: (projectId, path, signal) =>

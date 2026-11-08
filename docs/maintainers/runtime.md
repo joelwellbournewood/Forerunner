@@ -2912,6 +2912,31 @@ own narrow token with the person's approval, the branch's rules read first; neve
 either mode. Every merge ends with `changed(projectId)`, a `project` event, so the Overview reads
 again.
 
+**Open this version (merged-actions, the owner's decision of 2026-11-02, "pr_preview").**
+`POST /projects/:id/pull-requests/:number/preview` (`ProjectPullRequests.preview`, in
+`docs-routes.ts` beside Merge) puts a waiting pull request's files on this computer to try before
+merging: only a pull request the view lists as waiting (task or docs), else `refused` with "#7 does
+not wait to be merged: it may be merged or closed already."; the PR's head is read from the host
+and `ProjectDocs.previewPullRequest` (`loop/docs.ts`), under the copy's lock (`withCopy`, so a
+refresh or a docs write at the same moment waits, and the preview waits for them), clones the copy
+when it is missing, fetches (and `refs/pull/<n>/head` when the head is on no branch), removes the
+project's earlier preview and checks the head out into `<worktrees>/docs/previews/<project>/pr-<n>`
+(`GitOps.worktreeAdd`: a second working folder of the copy's clone with no branch). When the
+default branch moved past what the pull request started from, it is merged in there with a merge
+commit that is never pushed, so the folder holds what merging would give; a merge that does not go
+cleanly is aborted and the folder keeps the branch's own version. `preview.json` beside it records
+the number and whether it merged cleanly; `previewOf` reads it (no git), and the view puts it on
+the row (`ProjectPullRequestView.preview`: the folder and `previewSentence`: "#7 as it would be
+merged. Changes here are not kept." or "#7 as its branch has it: it does not merge cleanly with
+main yet. Changes here are not kept."). Nothing runs there and Local only is not copied in (the
+folder is a plain checkout; nothing reads it as evidence). One preview per project: the next one
+replaces it, and it is removed (`dropPreview`, under the lock, `GitOps.worktreeRemove` and the
+record) when its pull request is merged (`merge.onMerged`), closed (the watcher's
+`onPullRequestState`), or found neither open nor listed by the view's next read (a docs pull
+request merged on GitHub, a close the watcher has not read yet). Tests: `apps/ui/test/
+real-daemon.test.ts` "Open this version on a waiting PR ..." (the lock, main merged in, the row's
+preview, a refused number, removed after a merge and after a close).
+
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull
 request): "Merged", "Accepted · merges when its checks pass", "Accepted · merging", "Accepted ·

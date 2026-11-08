@@ -1070,8 +1070,30 @@ export const ProjectPullRequestView = z.object({
       first: z.array(z.number().int()),
     })
     .optional(),
+  /**
+   * Its version on this computer, made by "Open this version" (merged-actions, the owner's
+   * decision of 2026-11-02, "pr_preview"): the folder and the one sentence the row says with it.
+   * Null (or absent from an older service) when it has none; one pull request per project has
+   * one at a time, and it goes when the pull request is merged or closed.
+   */
+  preview: z.object({ folder: z.string(), sentence: z.string() }).nullable().optional(),
 });
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
+
+/**
+ * `POST /projects/:id/pull-requests/:number/preview` (merged-actions): "Open this version" of a
+ * pull request that waits to be merged. `ready`: its files are in `folder` on this computer, as
+ * merging would give them (or as its branch has them, when it does not merge cleanly yet; the
+ * sentence says which), replacing the project's earlier preview; nothing runs there and nothing
+ * done there is kept. `refused`: no folder, and `sentence` says why.
+ */
+export const PullRequestPreviewAnswer = z.object({
+  state: z.enum(["ready", "refused"]),
+  sentence: z.string(),
+  folder: z.string().nullable(),
+  number: z.number().int(),
+});
+export type PullRequestPreviewAnswer = z.infer<typeof PullRequestPreviewAnswer>;
 
 /**
  * `POST /projects/:id/pull-requests/:number/merge` (merge-in-app): the person's Merge, answered
@@ -2905,6 +2927,8 @@ export const DAEMON_ROUTES = {
     "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's, with who checked it (review: critic, you or none), and Forerunner's docs PRs (review null), read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0106)",
   mergePullRequest:
     "POST /projects/:id/pull-requests/:number/merge (PullRequestMergeAnswer, at once: queued with the order the merges run in, the pull requests it builds on first, each a merge commit through the merge step with the person's click as its approval; refused with the sentence why; merge-in-app)",
+  previewPullRequest:
+    "POST /projects/:id/pull-requests/:number/preview (PullRequestPreviewAnswer: ready with the folder on this computer that holds the waiting pull request's version, as merging would give it, beside the project's copy and under its lock, replacing the project's earlier preview; refused with the sentence why; merged-actions)",
   projectFile:
     "GET /projects/:id/files/:path (ProjectFileContentView: one file's text under the folder, the path URL-encoded; content null for a file that is not text; 404 for a path that leaves the folder or does not exist)",
   milestones:
