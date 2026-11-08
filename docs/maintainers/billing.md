@@ -161,6 +161,26 @@ five-minute entry lifetime, counted from the start of the request that wrote or 
 `cacheSavingsUsdMicro` values cache reads at the full input price. Tests: `pricing.test.ts`
 ("the pre-call worst case of a cached conversation").
 
+**Web search ('web-search', the owner's decision of 2026-11-02, ADR 0107 amended 2026-11-08):**
+Anthropic bills each web search on an API key at USD 10 per 1,000 (`WEB_SEARCH_USD_MICRO`,
+10,000 micro-USD), on top of the tokens; a failed search is not billed, and a search's results
+are counted as input inside the same call. `TokenUsage.web_search_requests` (the provider's
+`usage.server_tool_use.web_search_requests`) adds that price in `costOf`, so the runtime's
+`pricingFor` cost, the ledger row, the budget hooks, the Run row and the bench's model-call log
+hold it. `webSearchWorstCaseUsdMicro(n, model)` is what `n` searches may add to a call before it
+is made: `n` x (the search price + `WEB_SEARCH_RESULT_TOKENS` (20,000) at the price a new input
+token can cost, the cache-write price, never below the input price); the agent loop adds it to
+the call's `estimateUsdMicro` and sets the call's `max_uses` so it fits the money left, for a
+work run only the money below its wrap-up line (ADR 0112). The whole estimate goes to every cap;
+the run's wrap-up line and its wrap-up use the tokens' worst case alone, so offering search moves
+neither (review of 'web-search': ten searches' worst case had moved a research run's reserve to
+about 60% of its cap). The allowance is about three times the provider's own example of one
+search's results; a call that used more is seen by the next precheck, and the run's log names
+it. Live check 4 measures it. Tests: `loop-web-search.test.ts` ("the run's cost holds the
+search", "max_uses never lets the searches' worst case pass the money left", the allowance and
+the overshoot, "offering search leaves a research run's wrap-up line where it is", "a run that
+reaches its line hears the wrap-up at the same spend").
+
 **Fast mode rows (spec D.20, ADR 0057):** Opus fast mode is the same model requested with
 the provider's speed parameter, priced apart under its own row named for the variant:
 `<canonical base id>-fast` (`FAST_MODE_SUFFIX`). `claude-opus-5-5-fast` is the published

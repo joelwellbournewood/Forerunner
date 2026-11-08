@@ -10,6 +10,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { BILLING_PICK_AUDIT_TOOL, CODE_COMMANDS_SETTING } from "../src/session/billing.ts";
+import { abilityTable, credentialChoiceFor } from "../src/session/credential-choice.ts";
 import {
   NO_WEB_ACCESS_LINE,
   NO_WEB_SEARCH_LINE,
@@ -17,7 +18,11 @@ import {
   SEARCH_ONLY_LINE,
 } from "../src/session/executor.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
-import { type ChooserFacts, capabilitiesOf } from "../src/wiring/billing-pick.ts";
+import {
+  type ChooserFacts,
+  capabilitiesOf,
+  DEFAULT_CHOOSER_FACTS,
+} from "../src/wiring/billing-pick.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -153,8 +158,8 @@ describe("the credential chooser with both credentials, the subscription first (
   const clock = new SimulatedClock("2026-11-03T09:00:00Z");
   const sdk = fakeSdk();
   const provider = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
-  // The state between this area and 'web-search' / 'sites': no search on the key, no pages on
-  // the subscription (the composition's defaults); the test turns them on for one case.
+  // The state between 'web-search' and 'sites': search on the key, no pages on the subscription
+  // (the composition's defaults); the test turns pages on for one case.
   const facts: Partial<ChooserFacts> = {};
   let rt: RuntimeApp;
   let home: string;
@@ -203,24 +208,26 @@ describe("the credential chooser with both credentials, the subscription first (
     };
   }
 
-  it("a researcher runs on the API key, which can read pages but not search yet, and the plan card says so", async () => {
+  it("a researcher runs on the API key, the one that both reads pages and searches here, and the plan card says so", async () => {
     const r = await run("researcher", { title: "Compare two static site generators" });
     expect(r.res.outcome).toBe("done");
     expect(r.kind).toBe("api_key");
     expect(r.onLoop).toBe(true);
     expect(r.onSdk).toBe(false);
+    // This composition's API key runs on a scripted provider, which runs no server tool: the run
+    // is not offered web search, and its brief says so ('web-search').
     expect(r.loopBrief).toContain(NO_WEB_SEARCH_LINE.slice(0, 40));
-    // The pick says why, in its audit row: none can do every need, the key reads pages.
-    expect(r.reason).toContain("no credential meets every hard need; api_key lacks webSearch");
+    // The pick says why, in its audit row: only the key reads pages, and it meets every need.
+    expect(r.reason).toContain("chooser: only api_key meets webRead (first choice subscription)");
+    expect(r.reason).not.toContain("lacks webSearch");
     // The plan card's and New task's sentence (the same words).
     expect(await rt.chooser.forTask({ specialist: "researcher", projectId })).toEqual({
       kind: "api_key",
-      line: "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.",
+      line: "Runs on your API key: only it can read web pages here.",
     });
   });
 
   it("with search and page reading on both credentials, the person's order decides: the subscription", async () => {
-    facts.keySearch = true;
     facts.subscriptionPages = true;
     try {
       const r = await run("researcher", { title: "Compare two hosting offers" });
@@ -234,7 +241,6 @@ describe("the credential chooser with both credentials, the subscription first (
         line: null,
       });
     } finally {
-      delete facts.keySearch;
       delete facts.subscriptionPages;
     }
   });
@@ -311,7 +317,7 @@ describe("the credential chooser with both credentials, the subscription first (
     }
     expect(table.rows.map((r) => [r.label, ...r.cells.map((c) => c.words)])).toEqual([
       ["Read web pages", "Yes", "Not yet"],
-      ["Search the web", "Not yet", "Yes"],
+      ["Search the web", "Yes", "Yes"],
       [
         "Run commands (its tests)",
         "Yes, in a separate folder; a full review waits for Docker",
@@ -320,6 +326,41 @@ describe("the credential chooser with both credentials, the subscription first (
       ["Ask you while it works", "Yes", "No: it lists its questions in its report"],
       ["What it costs", "Money per use", "Your plan's limits, no money per use"],
     ]);
+  });
+});
+
+// Review of 'web-search': with the account's search switched off, Settings said "Not yet" under
+// the API key and the plan card "but not search yet", a promise the code does not keep (§5.9).
+describe("an API key whose web search is off ('web-search')", () => {
+  const facts = (over: Partial<ChooserFacts>): ChooserFacts => ({
+    ...DEFAULT_CHOOSER_FACTS,
+    ...over,
+  });
+  const searchCell = (f: ChooserFacts) =>
+    abilityTable(f, ["api_key", "subscription"]).rows.find((r) => r.need === "webSearch")?.cells[0]
+      ?.words;
+
+  it("Settings says why the key does not search, never 'Not yet'", () => {
+    expect(searchCell(facts({}))).toBe("Yes");
+    expect(searchCell(facts({ keySearch: false, keySearchOff: true }))).toBe(
+      "No: switched off for this API key",
+    );
+    expect(searchCell(facts({ keySearch: false }))).toBe("No: search is off here");
+    expect(searchCell(facts({ webFetch: false }))).toBe("No: the page reader is off here");
+  });
+
+  it("the plan card says research reads pages by address on the key, without 'yet'", () => {
+    const choice = credentialChoiceFor({
+      kindsInOrder: ["subscription", "api_key"],
+      needs: { hard: ["webRead", "webSearch"], better: [] },
+      facts: facts({ keySearch: false, keySearchOff: true }),
+      specialist: "researcher",
+      dependencies: false,
+    });
+    expect(choice).toEqual({
+      kind: "api_key",
+      line: "Runs on your API key: it can read web pages here but not search, so the researcher reads pages whose address it knows.",
+    });
   });
 });
 

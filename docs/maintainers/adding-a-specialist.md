@@ -162,7 +162,8 @@ commands, onDropped })` maps each runnable entry's `allowed_tools` accordingly:
 | `cc:Glob`, `cc:Grep`, `cc:LS` | `list_dir` | as written |
 | `cc:Bash` | `run_command`, only when `requires_sandbox: true` or the composition sandboxes every command (the daemon always does) | as written |
 | `cc:WebFetch` | `web_fetch` (the web capability's page reader, ADR 0107), while it is registered (the daemon registers it unless `FORERUNNER_WEB_FETCH=off`) | as written |
-| `cc:WebSearch`, `cc:Task`, `cc:TodoWrite` | dropped (`unmapped`; no search provider on an API key) | as written |
+| `cc:WebSearch` | `web_search`: Anthropic's web search, a server tool the provider runs inside the call ('web-search', ADR 0107 amended), offered while the composition has search on (`LoopToolOptions.serverTools`; the daemon unless `FORERUNNER_WEB_SEARCH=off`); the executor grants it per run only where the run can search | as written |
+| `cc:Task`, `cc:TodoWrite` | dropped (`unmapped`) | as written |
 | a Forerunner name (`ext:<id>:<tool>`, `run_command`, ...) | itself while the tool is registered at the lookup, else dropped (`unavailable`) | itself |
 
 `loopToolsFor(allowedTools, { available, commands })` returns `{ tools, dropped }`; order follows
@@ -177,8 +178,11 @@ carries the mapped names, so the hooks check what the driver calls. The eval run
 same function (`run_command` only with a sandbox port) and logs its drops. A specialist that
 reads the web names `cc:WebFetch`: on the loop driver (an API key) it gets `web_fetch`, which
 reads public pages and the hosts on the project's site list (ADR 0107), on the SDK driver the
-Agent SDK's own `WebFetch`. `cc:WebSearch` has no loop equivalent; a researcher on an API key is
-told in its brief to read pages by address. An entry that names a web tool and gets none on the
+Agent SDK's own `WebFetch`. `cc:WebSearch` is Anthropic's web search on an API key, offered on a
+run only beside the page reader, on a provider that runs it, while search is not refused for the
+key or the project's lists and the task has searches left of its ten; the brief then says to
+cite only pages opened with `web_fetch` (and otherwise to read pages by address). An entry that
+names a web tool and gets none on the
 run's driver (a runtime with no web reader) goes to a specialist that reaches the web there
 when one fits, else runs without the web and is told so in its brief (U-044, ADR 0107); it never
 waits for the person for a missing tool, and the intake plans no web work only on an install

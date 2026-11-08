@@ -2750,6 +2750,26 @@ requests (api.anthropic.com, or a base) to it and the rest on: tests pass it as
 `composeRuntime`'s `fetchImpl` with no injected provider, so the routed provider, the billing
 sources, the refused and resting marks and a key saved in the vault all run
 (`packages/runtime/test/credential-limits.test.ts`, `messages-api-stand-in.test.ts`).
+**Web search on the stand-in ('web-search').** The stand-in plays Anthropic's server tool:
+a request may offer `web_search_*`; the model behind it searches (`server_tool_use` and
+`server_tool_result` stream events; the fake's `ReplyBody.searches`, with `pending` for a search
+the API defers beside the app's tools) and the stand-in streams each search as the API does, its
+results sealed with an opaque `encrypted_content` it remembers. On every later request it checks
+that each server block it issued comes back byte for byte and answers a changed one, a pending
+search without the tool, or a follow-up with more than tool results with the API's 400
+(`refusals`); it runs a pending search at the start of the next request (results from
+`search.results`), continues a `pause_turn`, adds `resultTokens` (default 1,500) of input per
+search and reports `usage.server_tool_use`; past `max_uses` a search is a `max_uses_exceeded`
+result. `search.enabled: false` is the "not enabled" 400 of an account whose administrator
+switched search off; `orgAllowedDomains` makes an allowed list outside it a 400; a wildcard
+domain is refused as the API refuses it. Its request log says `webSearch`, `serverBlocksBack`
+and `searchesRun`; `searches` lists what it ran. `searchRuleFromEnv` reads the bench's knobs
+(`FORERUNNER_BENCH_API_SEARCH=off`, `FORERUNNER_BENCH_API_ORG_DOMAINS`,
+`FORERUNNER_BENCH_API_SEARCH_TOKENS`); the role-player searches when a request offers it
+(`FORERUNNER_BENCH_SEARCH_RESULTS`, `url|title` entries; `FORERUNNER_BENCH_SEARCH_MODE`
+`complete`, `mixed` or `pause`) and opens the first two results with `web_fetch`. Tests:
+`web-search-provider.test.ts`, `loop-web-search.test.ts`, `research-search.test.ts` and the
+real-daemon case "research searches the web on the API key".
 `fr daemon --provider bench-api` (a repository checkout only, `daemonFetch`) composes the
 same way with the role-player behind the stand-in (`benchApiFetch`) and logs each request in
 `<home>/bench/api-requests.jsonl`; `start.mjs --api-key refused|limited|ok` writes a key of

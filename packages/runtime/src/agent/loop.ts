@@ -11,7 +11,7 @@ import {
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
-import type { InjectionReport } from "../injection/scan.ts";
+import { type InjectionReport, scanForInjection } from "../injection/scan.ts";
 import type {
   ChatMessage,
   ContentBlock,
@@ -20,9 +20,17 @@ import type {
   StopReason,
   ToolResultBlock,
   Usage,
+  WebSearchHit,
 } from "../provider/types.ts";
-import { collectStream, providerCapabilities } from "../provider/types.ts";
+import {
+  collectStream,
+  pendingServerToolUses,
+  providerCapabilities,
+  WEB_SEARCH_LISTS_CODE,
+  WEB_SEARCH_OFF_CODE,
+} from "../provider/types.ts";
 import { USAGE_LIMIT_CODE } from "../provider/usage-limit.ts";
+import { WEB_SEARCH_TOOL } from "../registry/tools.ts";
 import type { ToolRegistry, ToolSpec } from "./tools.ts";
 
 /**
@@ -69,6 +77,13 @@ export const CACHE_TTL_MARGIN_MS = 30_000;
  * driver, PostToolUse's `additionalContext` on the Agent SDK path. The brief says what the two
  * headings are for (`session/executor.ts`).
  */
+/**
+ * How often in a row a run continues a turn the provider paused (`pause_turn`, a long web search;
+ * 'web-search'). Each continuation is a model call, counted against the run's and the session's
+ * step caps like any other; past this the run ends with an error that says so.
+ */
+export const MAX_PAUSE_CONTINUATIONS = 5;
+
 export const WRAP_UP_TEXT =
   "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: as a list.";
 
@@ -80,6 +95,12 @@ export interface RunPricing {
    * started less than `CACHE_TTL_MS` less `CACHE_TTL_MARGIN_MS` ago); 0 or absent, none.
    */
   estimate(inputTokens: number, maxOutputTokens: number, cachedInputTokens?: number): number;
+  /**
+   * The worst case of `n` web searches in one call, on top of `estimate` ('web-search':
+   * `webSearchWorstCaseUsdMicro`). Absent: the run never searches.
+   */
+  searches?(n: number): number;
+  /** A call's cost from its usage, its web searches included. */
   cost(usage: Usage): number;
 }
 
@@ -166,6 +187,22 @@ export interface RunRequest {
    * line (`WRAP_UP_TEXT`, ADR 0112). Absent (chat, planning, reviews): it never hears one.
    */
   wrapUp?: string;
+  /**
+   * Anthropic's web search ('web-search', the owner's decision of 2026-11-02): offered on each
+   * call while the run's token grants `web_search`, the provider runs it
+   * (`ModelProvider.serverWebSearch`) and `pricing.searches` prices it. Each call's `max_uses` is
+   * set here, in code: the smaller of `limit` less the searches made and what the money left
+   * pays at `pricing.searches`'s worst case; 0 leaves the tool out. A refusal of the search (the
+   * account switched it off, the server refused the project's lists) ends search for the run and
+   * the call is made again without it, never a failure.
+   */
+  webSearch?: {
+    /** Searches this run may still make (the task's cap less its earlier runs' searches). */
+    limit: number;
+    /** The project's lists in the server's form (`wiring/web-ports.ts`); never both. */
+    allowedDomains?: string[];
+    blockedDomains?: string[];
+  };
 }
 
 /** Per-run context-layer measurement, recorded on the Run row (ADR 0003 section 3). */
@@ -221,6 +258,35 @@ export type RunEvent =
       transforms: string[];
     }
   | { type: "warning"; message: string }
+  /**
+   * One web search the provider ran in a call ('web-search'): its words and its results' plain
+   * fields (the page text stays sealed), or the error it gave; `flagged` when the plain fields
+   * read like instructions (the injection scan).
+   */
+  | {
+      type: "web_search";
+      id: string;
+      query: string;
+      results: WebSearchHit[];
+      errorCode?: string;
+      flagged?: InjectionReport;
+    }
+  /**
+   * The provider refused the call's web search ('web-search'): `off`, the account switched it
+   * off; `lists`, it refused the project's site lists. The call is made again without it.
+   */
+  | { type: "web_search_refused"; reason: "off" | "lists"; message: string }
+  /**
+   * A call with web searches cost more than its worst case allowed for ('web-search'): its
+   * results were larger than `WEB_SEARCH_RESULT_TOKENS` a search. The next call's precheck sees
+   * the spend and refuses a call that no longer fits.
+   */
+  | {
+      type: "web_search_overshoot";
+      searches: number;
+      costUsdMicro: number;
+      estimateUsdMicro: number;
+    }
   /**
    * The run's wrap-up line, at its first call (ADR 0112): its cap, the reserve and the line;
    * `saveOnly` when the budget is too small to wrap up; `firstCallUsdMicro`, that call's worst
@@ -283,6 +349,12 @@ export interface RunResult {
   /** The run was told to wrap up (`RunRequest.wrapUp`, ADR 0112). */
   wrapUpSent: boolean;
   context: RunContextStats;
+  /** Web searches the provider ran for this run, billed ('web-search'). */
+  webSearches?: number;
+  /** Every search result the run saw, by address, in order ('web-search'); not its page text. */
+  searchResults?: WebSearchHit[];
+  /** The provider refused the run's web search, and why ('web-search'). */
+  webSearchRefused?: "off" | "lists";
 }
 
 export interface LoopDriverDeps {
@@ -379,6 +451,21 @@ export class LoopAgentDriver {
     let pending: string | undefined;
     let finishCurrent = false;
     let wrapUpSent = false;
+    // ADR 0112's wrap-up is due but waits while a search is pending ('web-search'): nothing may
+    // follow the tool results of a mixed step, and a paused turn goes back as it is.
+    let wrapUpDue = false;
+    // 'web-search': whether this run may search (the token, the provider, the pricing), what it
+    // searched and saw, and how often in a row the provider paused the turn.
+    let searchOn =
+      !!req.webSearch &&
+      claims.allowedTools.includes(WEB_SEARCH_TOOL) &&
+      req.provider.serverWebSearch === true &&
+      typeof req.pricing.searches === "function";
+    let searchesMade = 0;
+    const searchResults: WebSearchHit[] = [];
+    const searchQueries = new Map<string, string>();
+    let webSearchRefused: "off" | "lists" | undefined;
+    let pauses = 0;
     const emit = (ev: RunEvent) => req.onEvent?.(ev);
     const toolDefs = req.tools.definitions(
       claims.allowedTools,
@@ -465,8 +552,42 @@ export class LoopAgentDriver {
             );
           maxOut = fitMaxTokens(priceAt, floor, ceiling, room);
         }
-        const estimate = priceAt(maxOut);
-        const pre = await this.deps.hooks.beforeModelCall(ctx, estimate);
+        // 'web-search': the call's `max_uses`, set here from the money left after the call's own
+        // worst case and the searches the run may still make; a search the last turn left pending
+        // runs at the start of this call whatever, so the tool stays and its price is counted.
+        // The searches are paid only from the money below the run's wrap-up line (ADR 0112, its
+        // amendment in ADR 0107 of 2026-11-08): offering them never eats the reserve kept to
+        // finish, so near the line fewer are offered, and none once past it or told to wrap up.
+        const pendingSearches = pendingServerToolUses(messages).length;
+        const tokensWorstCase = priceAt(maxOut);
+        let maxUses = 0;
+        if (searchOn || pendingSearches > 0) {
+          const left = Math.max(0, (req.webSearch?.limit ?? 0) - searchesMade);
+          const per = req.pricing.searches?.(1) ?? 0;
+          if (searchOn && left > 0 && !wrapUpDue) {
+            let spare = (await this.deps.hooks.callRoomUsdMicro(ctx)) - tokensWorstCase;
+            const line = req.budget.lineFor(
+              claims.runId,
+              claims.budgetUsdMicro,
+              tokensWorstCase,
+              ctx.phase,
+            );
+            if (line)
+              spare = Math.min(
+                spare,
+                line.lineUsdMicro - req.budget.spentByRunId(claims.runId) - tokensWorstCase,
+              );
+            maxUses = Math.min(left, per > 0 ? Math.max(0, Math.floor(spare / per)) : left);
+          }
+          maxUses = Math.max(maxUses, pendingSearches);
+        }
+        const searchUsdMicro = maxUses > 0 ? (req.pricing.searches?.(maxUses) ?? 0) : 0;
+        const estimate = tokensWorstCase + searchUsdMicro;
+        // Every cap gets the whole worst case, the searches included; the run's wrap-up line is
+        // fixed and checked on the tokens' worst case alone, so offering search moves neither
+        // (review of 'web-search': ten searches' worst case kept 60% of a research run's cap in
+        // reserve and told it to wrap up after a tenth).
+        const pre = await this.deps.hooks.beforeModelCall(ctx, estimate, tokensWorstCase);
         if (pre.line) emit({ type: "budget_line", ...pre.line });
         if (pre.decision === "finish_current" && !finishCurrent) {
           finishCurrent = true;
@@ -476,8 +597,17 @@ export class LoopAgentDriver {
           });
         }
         // ADR 0112: the call that takes a task's run past its wrap-up line carries the wrap-up,
-        // once, as a text block after the last tool results (never inside one).
-        if (pre.decision === "wrap_up" && req.wrapUp && !wrapUpSent) {
+        // once, as a text block after the last tool results (never inside one). While a search
+        // is pending or a paused turn is continued ('web-search'), it waits for the next call:
+        // text after those tool results, or after a paused turn, would end the turn unfinished.
+        if (pre.decision === "wrap_up") wrapUpDue = true;
+        if (
+          wrapUpDue &&
+          req.wrapUp &&
+          !wrapUpSent &&
+          pendingSearches === 0 &&
+          messages.at(-1)?.role !== "assistant"
+        ) {
           wrapUpSent = true;
           finishCurrent = true;
           appendText(messages, req.wrapUp);
@@ -499,6 +629,18 @@ export class LoopAgentDriver {
               system: req.system,
               messages,
               tools: toolDefs,
+              ...(maxUses > 0
+                ? {
+                    webSearch: {
+                      maxUses,
+                      ...(req.webSearch?.allowedDomains?.length
+                        ? { allowedDomains: req.webSearch.allowedDomains }
+                        : req.webSearch?.blockedDomains?.length
+                          ? { blockedDomains: req.webSearch.blockedDomains }
+                          : {}),
+                    },
+                  }
+                : {}),
               max_tokens: maxOut,
               effort: req.effort,
               ...(req.thinking === "off" ? { thinking: "off" as const } : {}),
@@ -533,6 +675,20 @@ export class LoopAgentDriver {
           // words reach the caller, which rests or marks the source and tells the person. Before,
           // a refusal became "model call failed", a passing error tried again at once.
           const failed = response.error;
+          // 'web-search': the account switched search off, or the server refused the project's
+          // lists. Search ends for this run and the same call is made again without the tool
+          // (never without the lists, which the page reader keeps); the task never fails for it.
+          if (
+            failed &&
+            maxUses > 0 &&
+            pendingSearches === 0 &&
+            (failed.code === WEB_SEARCH_OFF_CODE || failed.code === WEB_SEARCH_LISTS_CODE)
+          ) {
+            searchOn = false;
+            webSearchRefused = failed.code === WEB_SEARCH_OFF_CODE ? "off" : "lists";
+            emit({ type: "web_search_refused", reason: webSearchRefused, message: failed.message });
+            continue;
+          }
           if (
             failed &&
             (failed.code === USAGE_LIMIT_CODE ||
@@ -568,6 +724,22 @@ export class LoopAgentDriver {
         cachedPrefix =
           response.usage.cache_read_input_tokens + response.usage.cache_creation_input_tokens;
         cacheFrom = callStartedAt;
+        // 'web-search': each search the provider ran is a line of the run's log and an audit row,
+        // its results' plain fields pass the injection scan (the page text stays sealed: it
+        // reaches the model without Forerunner's data envelope), and a call whose searches cost
+        // more than allowed for is named.
+        const searched = await this.searchesOf(response.content, searchQueries, ctx, emit);
+        for (const s of searched.results) searchResults.push(s);
+        for (const r of searched.flagged) reports.push(r);
+        const billedSearches = response.usage.server_tool_use?.web_search_requests ?? searched.ran;
+        searchesMade += billedSearches;
+        if (billedSearches > 0 && callCost > estimate)
+          emit({
+            type: "web_search_overshoot",
+            searches: billedSearches,
+            costUsdMicro: callCost,
+            estimateUsdMicro: estimate,
+          });
         // Whole milliseconds from here on: the Run row's timing columns are integers.
         const ttftMs = wholeMs(response.time_to_first_token_ms) ?? 0;
         ttfts.push(ttftMs);
@@ -619,8 +791,27 @@ export class LoopAgentDriver {
             { retryable: false, details: { stopReason: "max_tokens", maxTokens: maxOut } },
           );
         }
-        messages.push({ role: "assistant", content: response.content });
+        // A turn with a server tool's blocks, or a paused one, keeps the provider's own copy, which
+        // goes back exactly as it came ('web-search').
+        messages.push({
+          role: "assistant",
+          content: response.content,
+          ...(response.raw ? { raw: response.raw } : {}),
+        });
         if (text) finalText = text;
+        // A paused turn (a long web search) goes back unchanged in the next call, which
+        // continues it; a few times in a row at most, each counted as a step.
+        if (response.stop_reason === "pause_turn") {
+          pauses++;
+          if (pauses > MAX_PAUSE_CONTINUATIONS)
+            throw new ForerunnerError(
+              "provider_error",
+              `The provider paused this step ${pauses} times in a row while it searched the web; the run stopped there.`,
+              { retryable: false, details: { stopReason: "pause_turn" } },
+            );
+          continue;
+        }
+        pauses = 0;
 
         if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
           if (response.stop_reason === "max_tokens") {
@@ -797,7 +988,63 @@ export class LoopAgentDriver {
       finishCurrent,
       wrapUpSent,
       billingSourceId: ctx.billingSourceId,
+      webSearches: searchesMade,
+      searchResults,
+      ...(webSearchRefused ? { webSearchRefused } : {}),
     };
+  }
+
+  /**
+   * The web searches in one reply ('web-search'): for each result block, the search's words
+   * (from its `server_tool_use`, in this reply or an earlier one), its results' plain fields
+   * scanned for instructions, a `web_search` event and one audit row. `ran`: the searches that
+   * returned results (the count when the provider reports no usage for them).
+   */
+  private async searchesOf(
+    content: readonly ContentBlock[],
+    queries: Map<string, string>,
+    ctx: RunContext,
+    emit: (ev: RunEvent) => void,
+  ): Promise<{ results: WebSearchHit[]; flagged: InjectionReport[]; ran: number }> {
+    const results: WebSearchHit[] = [];
+    const flagged: InjectionReport[] = [];
+    let ran = 0;
+    for (const b of content) {
+      if (b.type === "server_tool_use") {
+        queries.set(b.id, typeof b.input.query === "string" ? b.input.query : "");
+        continue;
+      }
+      if (b.type !== "server_tool_result") continue;
+      const query = queries.get(b.tool_use_id) ?? "";
+      if (!b.errorCode) ran++;
+      results.push(...b.results);
+      const plain = b.results.map((r) => [r.title, r.url, r.pageAge ?? ""].join("\n")).join("\n\n");
+      const report = plain ? scanForInjection(plain, "web_page") : null;
+      if (report?.suspicious) {
+        flagged.push(report);
+        emit({ type: "injection_flagged", tool: b.name, report });
+      }
+      emit({
+        type: "web_search",
+        id: b.tool_use_id,
+        query,
+        results: b.results,
+        ...(b.errorCode ? { errorCode: b.errorCode } : {}),
+        ...(report?.suspicious ? { flagged: report } : {}),
+      });
+      await this.deps.hooks.afterServerToolCall(
+        ctx,
+        b.name,
+        { query },
+        {
+          summary: b.errorCode
+            ? `failed: ${b.errorCode} (not billed)`
+            : `${b.results.length === 1 ? "1 result" : `${b.results.length} results`}: ${b.results.map((r) => r.url).join(" ")}`,
+          ...(report?.suspicious ? { flagged: report } : {}),
+        },
+      );
+    }
+    return { results, flagged, ran };
   }
 
   private async *tapText(
@@ -938,6 +1185,11 @@ function addUsage(total: Usage, u: Usage): void {
   total.output_tokens += u.output_tokens;
   total.cache_read_input_tokens += u.cache_read_input_tokens;
   total.cache_creation_input_tokens += u.cache_creation_input_tokens;
+  const searches = u.server_tool_use?.web_search_requests ?? 0;
+  if (searches > 0)
+    total.server_tool_use = {
+      web_search_requests: (total.server_tool_use?.web_search_requests ?? 0) + searches,
+    };
 }
 
 function isFatal(code: string): boolean {

@@ -430,13 +430,14 @@ describe("Inbox", () => {
       ),
     );
     // Both credentials, the subscription first (no order chosen): research goes to the API key,
-    // the only one that reads pages here, and the card says so before the person approves.
+    // the only one that reads pages here (and, since 'web-search', searches too), and the card
+    // says so before the person approves.
     searchOnly.unmount();
     renderApp("/inbox", withPlan(createHarness()));
     card = await screen.findByTestId("intake-card");
     await waitFor(() =>
       expect(runsOnLines(card)).toEqual([
-        "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.",
+        "Runs on your API key: only it can read web pages here.",
         null,
       ]),
     );

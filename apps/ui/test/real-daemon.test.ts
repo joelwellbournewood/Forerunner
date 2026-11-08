@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -7166,8 +7166,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
   // Credential-shaped fixtures, built by concatenation so no scanner sees a token.
   const oauth = ["sk-ant-oat01-", "chooser", "0".repeat(40)].join(""); // not-a-secret
   const apiKey = ["sk-ant-api03-", "chooser", "0".repeat(40)].join(""); // not-a-secret
-  const RESEARCH_LINE =
-    "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.";
+  // Since 'web-search' the API key reads pages and searches: only it does both here.
+  const RESEARCH_LINE = "Runs on your API key: only it can read web pages here.";
 
   it("both credentials, the subscription first: the plan card, New task and Settings say the same words", async () => {
     const both = await composeWithRolePlayer(
@@ -7220,7 +7220,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
         models.credentials?.rows.map((r) => [r.label, ...r.cells.map((c) => c.words)]),
       ).toEqual([
         ["Read web pages", "Yes", "Not yet"],
-        ["Search the web", "Not yet", "Yes"],
+        // Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02).
+        ["Search the web", "Yes", "Yes"],
         [
           "Run commands (its tests)",
           "Yes, in a separate folder; a full review waits for Docker",
@@ -9146,4 +9147,183 @@ describe("the UI client against the real daemon: a paused task keeps its work an
     );
     expect(await gitOf(wt, ["ls-files", "members.md"])).toBe("members.md");
   }, 150_000);
+});
+
+describe("the UI client against the real daemon: research searches the web on the API key ('web-search')", () => {
+  // The owner's decision of 2026-11-02 (Q5): Anthropic's web search on the API key, capped per
+  // task, sourced only once a page was opened. As `fr daemon --provider bench-api` composes it:
+  // no injected provider, the routed provider over the vault's key calls the Messages API
+  // stand-in, which plays Anthropic's server (searches, sealed results it checks come back byte
+  // for byte) with the bench's role-player behind it; the pages are this computer's test server,
+  // on the project's site list. Before, the researcher's tools had no search, its brief said
+  // "Web search is not available on this run" and it read only the addresses the brief named.
+  const key = ["sk-ant-api03-", "search", "8".repeat(40)].join(""); // not-a-secret
+  let server: Server;
+  let base = "";
+  const hits: string[] = [];
+  const PAGES: Record<string, [string, string]> = {
+    "/hosts/alpha": ["Alpha Pages free tier", "Alpha Pages gives 100 GB of bandwidth a month."],
+    "/hosts/beta": ["Beta Static free plan", "Beta Static allows 3 sites and 10 GB of storage."],
+    "/hosts/gamma": ["Gamma Host pricing", "Gamma Host builds 300 minutes a month for free."],
+  };
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      hits.push(`${req.method} ${req.url}`);
+      const page = PAGES[(req.url ?? "/").split("?")[0] ?? ""];
+      res.writeHead(page ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        page
+          ? `<!doctype html><html><head><title>${page[0]}</title></head><body><main><h1>${page[0]}</h1><p>${page[1]}</p></main></body></html>`
+          : "not found",
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(async () => {
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  it("a researcher task searches, opens two of the three results, writes its notes citing only those, and the review is told which it never opened", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-search-"));
+    const results = Object.entries(PAGES).map(([path, [title]]) => `${base}${path}|${title}`);
+    const callLog = join(home, "model-calls.jsonl");
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0", FORERUNNER_BENCH_SEARCH_RESULTS: results.join(",") },
+        new ModelCallLog({ file: callLog }),
+      ),
+    );
+    const criticCalls: ModelRequest[] = [];
+    const stream = model.stream.bind(model);
+    model.stream = (req) => {
+      if (detectRole(req).role === "critic")
+        criticCalls.push({ ...req, messages: structuredClone(req.messages) });
+      return stream(req);
+    };
+    const standIn = messagesApiStandIn({ model, clock: new SystemClock(), search: {} });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new ShiftedClock("2026-03-05T08:00:00Z"),
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_api_key: key }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    try {
+      // Settings' "What each can do here": the API key searches the web now.
+      const models = await client.modelSettings();
+      expect(models.credentials?.rows.find((r) => r.need === "webSearch")?.cells[0]?.words).toBe(
+        "Yes",
+      );
+      const project = await client.createProject({ name: "Hosts", goal: "Pick a host" });
+      // The pages are on this computer: the site list names it, as for an intranet page; the
+      // block list holds a "*." entry, which web search takes as the bare domain.
+      const row = await rt.store.project.mustGet(project.id);
+      await client.updateProjectSettings(project.id, {
+        version: row.version,
+        settings: {
+          browser: { allowedDomains: ["127.0.0.1"], blockedDomains: ["*.example.org"] },
+        },
+      });
+      const task = await client.createTask(project.id, {
+        title: "Compare the free tiers of static site hosts",
+        outcome: "research/hosts.md compares the free tiers of static site hosts, with sources",
+        acceptanceCriteria: ["research/hosts.md names each host and the source of each figure"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "researcher",
+        riskTier: 1,
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () =>
+          `${(await client.session(sessionId)).status}; ${(await client.tasks(project.id)).map((t) => t.status).join(", ")}`,
+        30_000,
+      );
+      expect(standIn.refusals).toEqual([]);
+      const done = await client.task(task.id);
+      expect(done.task.status).toBe("done");
+      // The API saw the server tool with max_uses of at most 10 and the block list in the
+      // server's form, and got the search's blocks back unchanged on the next request.
+      const asked = standIn.requests.filter((r) => r.webSearch);
+      expect(asked.length).toBeGreaterThan(0);
+      for (const r of asked) {
+        expect(Number(r.webSearch?.max_uses)).toBeGreaterThan(0);
+        expect(Number(r.webSearch?.max_uses)).toBeLessThanOrEqual(10);
+        expect(r.webSearch?.blocked_domains).toEqual(["example.org"]);
+      }
+      expect(standIn.requests.some((r) => (r.serverBlocksBack ?? 0) >= 2)).toBe(true);
+      expect(standIn.searches.map((s) => s.urls.length)).toEqual([3]);
+      // It opened the first two results, never the third.
+      expect(hits).toEqual(["GET /hosts/alpha", "GET /hosts/beta"]);
+      // Its notes cite only the pages it opened.
+      const file = await client.projectFile(project.id, "research/hosts.md");
+      expect(file.content).toContain(`${base}/hosts/alpha`);
+      expect(file.content).toContain(`${base}/hosts/beta`);
+      expect(file.content).not.toContain(`${base}/hosts/gamma`);
+      // The session's log: the search and the pages, one short line each.
+      const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+      expect(lines).toContain("searched the web for compare the free tiers of static site hosts");
+      expect(lines).toContain(`read the web page ${new URL(base).host}/hosts/alpha`);
+      // Offering search leaves the run's wrap-up line where it is (review of 'web-search': ten
+      // searches' worst case had moved it to CHF 0.77, a reserve of CHF 1.23).
+      expect(lines).toContain(
+        "This run may spend CHF 2.00: at CHF 1.60 it is told to wrap up, keeping a reserve of CHF 0.40 to finish.",
+      );
+      expect(lines.some((l) => l?.startsWith("Told the researcher to wrap up"))).toBe(false);
+      // The run's cost holds the search's USD 0.01, and its row counts the task's searches.
+      const work = (await rt.store.run.forTask(task.id)).find((r) => r.specialist === "researcher");
+      expect(work?.artifacts).toContainEqual({ webSearches: 1 });
+      expect(work?.cost_usd_micro ?? 0).toBeGreaterThan(10_000);
+      // The review is told which search result it never opened: no source.
+      const shown = criticCalls.map((c) => JSON.stringify(c.messages)).join("\n");
+      expect(shown).toContain(`web search result, page not opened: ${base}/hosts/gamma`);
+      expect(shown).toContain("is not sourced");
+      expect(shown).toContain(`### web page ${base}/hosts/alpha`);
+      // The model-call log shows the server tool, the blocks sent back and the search count.
+      const logged = readFileSync(callLog, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+      const searched = logged.find(
+        (l) => (l.reply as { searches?: unknown[] } | undefined)?.searches?.length,
+      );
+      expect(searched?.webSearch).toMatchObject({ blockedDomains: ["example.org"] });
+      expect(
+        (searched?.reply as { usage?: { server_tool_use?: unknown } } | undefined)?.usage
+          ?.server_tool_use,
+      ).toEqual({ web_search_requests: 1 });
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

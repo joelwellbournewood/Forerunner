@@ -222,6 +222,37 @@ describe("session budget", () => {
   it("a review run has no wrap-up line", () => {
     const b = mk(10_000_000);
     expect(b.precheck("r1", 1_000_000, 900_000, "review")).toEqual({ decision: "allow" });
+    expect(b.lineFor("r1", 1_000_000, 100_000, "review")).toBeUndefined();
+  });
+
+  // Review of 'web-search': a call that may search carries ten searches' worst case (USD 0.60),
+  // which fixed the line (reserve 2 x 0.66 of a USD 1.00 cap: save only) and decided the wrap-up.
+  // The line estimate is the call's tokens alone; the caps still get the whole estimate.
+  it("the line and the wrap-up follow the call's estimate without its searches; the caps the whole of it", () => {
+    const b = mk(10_000_000);
+    // Before the first call, lineFor says the line that call fixes, and fixes nothing.
+    expect(b.lineFor("r1", 1_000_000, 60_000, "work")?.lineUsdMicro).toBe(800_000);
+    expect(b.wrapUpLineOf("r1")).toBeUndefined();
+    expect(b.precheck("r1", 1_000_000, 660_000, "work", 60_000).line).toEqual({
+      capUsdMicro: 1_000_000,
+      reserveUsdMicro: 200_000,
+      lineUsdMicro: 800_000,
+      firstCallUsdMicro: 60_000,
+      saveOnly: false,
+    });
+    expect(b.lineFor("r1", 1_000_000, 999_000, "work")?.lineUsdMicro).toBe(800_000);
+    b.record("r1", 600_000);
+    // 600 000 + 60 000 stays below the line, though 600 000 + 360 000 would not: no wrap-up.
+    expect(b.precheck("r1", 1_000_000, 360_000, "work", 60_000).decision).toBe("allow");
+    b.record("r1", 200_000);
+    expect(b.precheck("r1", 1_000_000, 60_000, "work", 60_000).decision).toBe("wrap_up");
+    // The run's cap is checked on the whole estimate.
+    expect(() => b.precheck("r1", 1_000_000, 260_000, "work", 60_000)).toThrow(
+      /run budget would be exceeded/,
+    );
+    // A run first seen with spend booked has no line to read either.
+    b.record("r9", 1);
+    expect(b.lineFor("r9", 1_000_000, 60_000, "work")).toBeUndefined();
   });
 
   it("estimates conservatively from input tokens and max output", () => {

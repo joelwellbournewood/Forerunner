@@ -16,6 +16,14 @@ export const RUN_COMMAND_TOOL = "run_command";
 export const WEB_FETCH_TOOL = "web_fetch";
 
 /**
+ * Name of the loop driver's `cc:WebSearch` ('web-search', the owner's decision of 2026-11-02):
+ * Anthropic's web search, a tool the provider runs inside the call (a server tool), never a
+ * tool of the runtime's registry. It stands in a run token so the token decides whether the
+ * loop offers it; the loop sends it as the server tool (`ModelRequest.webSearch`).
+ */
+export const WEB_SEARCH_TOOL = "web_search";
+
+/**
  * The audit row kind for a registry tool a run will not offer (ADR 0043 item 5, ADR 0044):
  * written by the composition for the loop driver's mapping and by the executor when the SDK
  * path withholds `cc:Bash`. Declared here so neither the session layer nor the composition
@@ -40,8 +48,9 @@ export type SpecialistDriver = "loop" | "sdk";
  * Read-only tools map to read-only tools; every editing tool maps to `write_file`; the
  * search tools map to `list_dir` (the model reads what it finds); `Bash` maps to the sandboxed
  * command runner; `WebFetch` maps to the web capability's page reader (ADR 0107), offered only
- * where the composition registered it. `WebSearch`, `Task`, `TodoWrite` have no equivalent
- * here: no search provider exists on an API key (ADR 0107). Only the table's own entries count
+ * where the composition registered it; `WebSearch` maps to Anthropic's web search, a server tool
+ * offered only where the composition turned it on (`LoopToolOptions.serverTools`, 'web-search').
+ * `Task`, `TodoWrite` have no equivalent here. Only the table's own entries count
  * (`Object.hasOwn`): `cc:constructor` or `cc:__proto__` is an unknown name, never a lookup
  * through Object's prototype.
  */
@@ -57,6 +66,7 @@ export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = Ob
   LS: "list_dir",
   Bash: RUN_COMMAND_TOOL,
   WebFetch: WEB_FETCH_TOOL,
+  WebSearch: WEB_SEARCH_TOOL,
 });
 
 /** The loop driver's built-in for one Claude Code tool name (without the prefix), if any. */
@@ -91,6 +101,11 @@ export interface LoopToolOptions {
    * true; the eval runner passes whether it holds a sandbox port.
    */
   commands?: boolean;
+  /**
+   * Tools the provider runs itself that this runtime offers ('web-search': `web_search` while web
+   * search is on). They are no registered tools, so `available` never lists them.
+   */
+  serverTools?: readonly string[];
 }
 
 /**
@@ -131,7 +146,7 @@ export function loopToolsFor(
       });
       continue;
     }
-    if (!opts.available.includes(mapped)) {
+    if (!opts.available.includes(mapped) && !(opts.serverTools ?? []).includes(mapped)) {
       dropped.push({
         tool: name,
         reason: "unavailable",

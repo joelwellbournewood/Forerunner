@@ -32,6 +32,8 @@ export interface ScriptReply {
   /** Time to the end of the content; the remainder after `ttftMs` is slept before message_end. */
   totalMs?: number;
   error?: string;
+  /** Events yielded after the text, as a provider sends them (a server tool's blocks, 'web-search'). */
+  events?: StreamEvent[];
 }
 
 export class ScriptedProvider implements ModelProvider {
@@ -67,6 +69,7 @@ export class ScriptedProvider implements ModelProvider {
         yield { type: "text_delta", text: chunk };
       }
     }
+    for (const ev of r.events ?? []) yield ev;
     let n = 0;
     for (const t of r.tools ?? []) {
       const id = `tu_${this.i}_${n++}`;

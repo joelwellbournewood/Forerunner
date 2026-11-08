@@ -80,11 +80,71 @@ export interface ThinkingBlock {
   type: "thinking";
   text: string;
 }
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock;
+/**
+ * A tool the provider ran itself, inside the call (Anthropic's web search, 'web-search', ADR
+ * 0107 amended): what it was asked, as the app reads it. The block that goes back to the
+ * provider is the message's `raw` copy, never this one.
+ */
+export interface ServerToolUseBlock {
+  type: "server_tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+/** One search result as the app reads it: the plain fields; the page text stays sealed. */
+export interface WebSearchHit {
+  url: string;
+  title: string;
+  pageAge?: string;
+}
+/**
+ * The result of a server tool's call (`server_tool_use` with the same id): for web search the
+ * results' plain fields, or the error code the provider gave (`max_uses_exceeded`, ...). The
+ * result's sealed content (`encrypted_content`) is only in the message's `raw` copy.
+ */
+export interface ServerToolResultBlock {
+  type: "server_tool_result";
+  tool_use_id: string;
+  name: string;
+  results: WebSearchHit[];
+  errorCode?: string;
+}
+export type ContentBlock =
+  | TextBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | ThinkingBlock
+  | ServerToolUseBlock
+  | ServerToolResultBlock;
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string | ContentBlock[];
+  /**
+   * The provider's own blocks of an assistant turn, exactly as it sent them ('web-search'): set
+   * when the turn holds a server tool's blocks (a search and its sealed results, which must go
+   * back unchanged or the next request is refused) or paused (`pause_turn`). The adapter sends
+   * this instead of `content`; nothing else edits it (context compression, the prompt cache's
+   * marks and the Headroom proxy keep off it). `content` is the app's own reading of the turn.
+   */
+  raw?: readonly Record<string, unknown>[];
+}
+
+/**
+ * Anthropic's web search on a call ('web-search', the owner's decision of 2026-11-02): offered
+ * by the loop driver when the run's token grants `web_search` and the provider can run it
+ * (`ModelProvider.serverWebSearch`). `maxUses` is set by code from the money left (at least 1);
+ * the project's lists in the server's form (`wiring/web-ports.ts`), never both in one request.
+ */
+export interface WebSearchOptions {
+  maxUses: number;
+  allowedDomains?: string[];
+  blockedDomains?: string[];
+}
+
+/** The server tools a call ran (Anthropic's `usage.server_tool_use`). */
+export interface ServerToolUsage {
+  web_search_requests: number;
 }
 
 export interface ToolDefinition {
@@ -99,6 +159,11 @@ export interface ModelRequest {
   system?: string;
   messages: ChatMessage[];
   tools?: ToolDefinition[];
+  /**
+   * Anthropic's web search on this call ('web-search'): sent as the server tool beside `tools`
+   * by a provider that can run it (`serverWebSearch`), ignored by every other provider.
+   */
+  webSearch?: WebSearchOptions;
   max_tokens: number;
   effort?: EffortLevel;
   /**
@@ -154,6 +219,11 @@ export interface Usage {
   output_tokens: number;
   cache_read_input_tokens: number;
   cache_creation_input_tokens: number;
+  /**
+   * The server tools the call ran ('web-search'): each web search is billed apart (USD 10 per
+   * 1,000) and its results are in `input_tokens`. Absent: none ran.
+   */
+  server_tool_use?: ServerToolUsage;
 }
 
 export type StopReason =
@@ -161,6 +231,11 @@ export type StopReason =
   | "tool_use"
   | "max_tokens"
   | "stop_sequence"
+  /**
+   * The provider paused a long server-tool turn ('web-search'): the turn goes back unchanged
+   * (the message's `raw`) in the next request, which continues it.
+   */
+  | "pause_turn"
   | "aborted"
   | "error";
 
@@ -176,6 +251,21 @@ export type StreamEvent =
   | { type: "tool_use_start"; id: string; name: string }
   | { type: "tool_use_delta"; id: string; partial_json: string }
   | { type: "tool_use_end"; id: string; input: Record<string, unknown> }
+  /** A server tool's call, complete ('web-search'): the provider runs it, not the app. */
+  | { type: "server_tool_use"; id: string; name: string; input: Record<string, unknown> }
+  /** A server tool's result, complete: the plain fields of each result, or its error code. */
+  | {
+      type: "server_tool_result";
+      tool_use_id: string;
+      name: string;
+      results: WebSearchHit[];
+      errorCode?: string;
+    }
+  /**
+   * The turn's blocks exactly as the provider sent them, before `message_end`, when the turn
+   * holds a server tool's blocks or paused: the loop keeps them as the message's `raw`.
+   */
+  | { type: "raw_content"; blocks: Record<string, unknown>[] }
   | {
       type: "message_end";
       stop_reason: StopReason;
@@ -218,8 +308,44 @@ export interface ModelResponse {
   duration_ms: number;
   /** The source that paid, when the provider chose it (`message_end.billing`). */
   billing?: CallBilling;
+  /**
+   * The turn's blocks exactly as the provider sent them (`raw_content`), when it holds a server
+   * tool's blocks or paused ('web-search'): the loop keeps them as the message's `raw`.
+   */
+  raw?: Record<string, unknown>[];
   /** Set with `stop_reason: "error"`: the provider's error event, as it said it. */
   error?: { code: string; message: string; resetAt?: string; sourceId?: string };
+}
+
+/**
+ * The error codes of a call refused for its web search ('web-search', ADR 0107 amended): the
+ * account's administrator switched web search off (`WEB_SEARCH_OFF_CODE`), or the server tool
+ * refused the project's site lists (`WEB_SEARCH_LISTS_CODE`: a wildcard domain, an allowed list
+ * outside the organisation's). The loop makes the call again without the tool; never a failure.
+ */
+export const WEB_SEARCH_OFF_CODE = "provider_web_search_off";
+export const WEB_SEARCH_LISTS_CODE = "provider_web_search_lists";
+
+/** The name of Anthropic's web search tool in a call and in its `server_tool_use` blocks. */
+export const WEB_SEARCH_SERVER_TOOL = "web_search";
+
+/**
+ * The ids of the server tool calls in `messages` that have no result yet ('web-search'): a call
+ * the provider deferred because the turn also asked for the app's tools (a mixed step), or that
+ * a paused turn ends with. The next request must still offer the server tool, and nothing may
+ * follow the app's tool results in that request's last message.
+ */
+export function pendingServerToolUses(messages: readonly ChatMessage[]): string[] {
+  const asked: string[] = [];
+  const answered = new Set<string>();
+  for (const m of messages) {
+    if (typeof m.content === "string") continue;
+    for (const b of m.content) {
+      if (b.type === "server_tool_use") asked.push(b.id);
+      else if (b.type === "server_tool_result") answered.add(b.tool_use_id);
+    }
+  }
+  return asked.filter((id) => !answered.has(id));
 }
 
 export interface ModelProvider {
@@ -232,6 +358,12 @@ export interface ModelProvider {
   readonly fastMode?: boolean;
   /** What this provider accepts beyond the common request; absent: no temperature (ADR 0072). */
   readonly capabilities?: ProviderDeclaredCapabilities;
+  /**
+   * True when the provider runs Anthropic's web search itself (`ModelRequest.webSearch`): the
+   * Anthropic Messages adapter on an API key ('web-search'). Absent or false: the executor never
+   * offers search on a run of this provider.
+   */
+  readonly serverWebSearch?: boolean;
   /** Models this provider offers, ranked cheapest first inside each tier. */
   listModels(): Promise<ModelRef[]>;
   /** Streams events; the final event is message_end or error. */
@@ -274,6 +406,7 @@ export async function collectStream(
     cache_creation_input_tokens: 0,
   };
   let billing: CallBilling | undefined;
+  let raw: Record<string, unknown>[] | undefined;
   const flushText = () => {
     if (text) {
       content.push({ type: "text", text });
@@ -319,6 +452,23 @@ export async function collectStream(
         tools.delete(ev.id);
         break;
       }
+      case "server_tool_use":
+        flushText();
+        content.push({ type: "server_tool_use", id: ev.id, name: ev.name, input: ev.input });
+        break;
+      case "server_tool_result":
+        flushText();
+        content.push({
+          type: "server_tool_result",
+          tool_use_id: ev.tool_use_id,
+          name: ev.name,
+          results: ev.results,
+          ...(ev.errorCode ? { errorCode: ev.errorCode } : {}),
+        });
+        break;
+      case "raw_content":
+        raw = ev.blocks;
+        break;
       case "message_end":
         stop = ev.stop_reason;
         usage = ev.usage;
@@ -351,5 +501,6 @@ export async function collectStream(
     time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
     duration_ms: now() - t0,
     ...(billing ? { billing } : {}),
+    ...(raw ? { raw } : {}),
   };
 }

@@ -268,6 +268,20 @@ export interface TaskExecutionResult {
   handoff?: RunHandoff;
   /** The web pages the run read (ADR 0107); the critic checks cited claims against them. */
   webSources?: WebSource[];
+  /**
+   * The web search results the run saw ('web-search'): their address and title, and the
+   * injection scan's rules when their plain fields read like instructions. A result whose page
+   * was not opened is no source; the critic is told which those are (`webSourceEvidence`).
+   */
+  searchSeen?: SearchSeen[];
+}
+
+/** One web search result a run saw ('web-search'), as the critic is told of it. */
+export interface SearchSeen {
+  url: string;
+  title: string;
+  /** The injection scan's rules, when the result's plain fields read like instructions. */
+  flagged?: string[];
 }
 
 /** Where a run paused at a budget, in micro-USD (`TaskExecutionResult.budgetStop`). */
@@ -614,6 +628,11 @@ export function stepLine(step: Extract<TaskStep, { kind: "tool" }>): string {
     return `ran ${cut(cmd || "a command")}: ${step.isError ? "failed" : "ok"}`;
   }
   if (name === "ask_person") return "asked you a question (Inbox)";
+  // 'web-search': Anthropic's search on an API key, Claude Code's WebSearch on a subscription.
+  if (name === "web_search" || name === "websearch") {
+    const query = inputField(step.input, "query");
+    return query ? `searched the web for ${cut(query)}${failed}` : `searched the web${failed}`;
+  }
   if (name === "web_fetch" || name === "webfetch") {
     const url = inputField(step.input, "url");
     return url ? `read the web page ${cut(webPageName(url))}${failed}` : `read a web page${failed}`;

@@ -17,6 +17,8 @@ export type {
   ModelTier,
   ProviderCapabilities,
   ProviderDeclaredCapabilities,
+  ServerToolResultBlock,
+  ServerToolUseBlock,
   StopReason,
   StreamEvent,
   TextBlock,
@@ -25,4 +27,6 @@ export type {
   ToolResultBlock,
   ToolUseBlock,
   Usage,
+  WebSearchHit,
+  WebSearchOptions,
 } from "../../../packages/runtime/src/provider/types.ts";

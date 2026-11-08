@@ -15,6 +15,7 @@ import {
   type DroppedTool,
   loopToolsFor,
   WEB_FETCH_TOOL,
+  WEB_SEARCH_TOOL,
 } from "../src/registry/tools.ts";
 import { KNOWN_CLAUDE_CODE_TOOLS } from "../src/registry/types.ts";
 import { RUN_COMMAND_TOOL } from "../src/session/executor.ts";
@@ -70,16 +71,40 @@ function registryWith(tools: string[], requiresSandbox = true) {
 
 /** The loop driver's tools in the daemon: the file tools plus the web page reader (ADR 0107). */
 const LOOP_TOOLS = [...BUILT_INS, WEB_FETCH_TOOL];
+/** The provider's own tools the daemon offers on an API key: Anthropic's web search ('web-search'). */
+const SERVER_TOOLS = [WEB_SEARCH_TOOL];
 
 describe("loopToolsFor: the loop driver's equivalents of the registry's Claude Code tools", () => {
   it.each(Object.entries(CLAUDE_CODE_TOOL_EQUIVALENTS))(
     "cc:%s yields %s and nothing else",
     (cc, builtIn) => {
-      const m = loopToolsFor([`cc:${cc}`], { available: LOOP_TOOLS });
+      const m = loopToolsFor([`cc:${cc}`], { available: LOOP_TOOLS, serverTools: SERVER_TOOLS });
       expect(m).toEqual({ tools: [builtIn], dropped: [] });
-      expect(LOOP_TOOLS).toContain(builtIn);
+      expect([...LOOP_TOOLS, ...SERVER_TOOLS]).toContain(builtIn);
     },
   );
+
+  it("cc:WebSearch yields Anthropic's web search where the runtime offers it, else it is dropped as unavailable ('web-search')", () => {
+    expect(
+      loopToolsFor(["cc:WebFetch", "cc:WebSearch"], {
+        available: LOOP_TOOLS,
+        serverTools: SERVER_TOOLS,
+      }),
+    ).toEqual({ tools: [WEB_FETCH_TOOL, WEB_SEARCH_TOOL], dropped: [] });
+    // Search switched off on this install (FORERUNNER_WEB_SEARCH=off): never offered.
+    expect(loopToolsFor(["cc:WebSearch"], { available: LOOP_TOOLS })).toEqual({
+      tools: [],
+      dropped: [
+        {
+          tool: "cc:WebSearch",
+          reason: "unavailable",
+          message: "cc:WebSearch maps to web_search, which is not registered in this runtime",
+        },
+      ],
+    });
+    // Never by its bare name either: only `cc:WebSearch` of a registry entry grants it.
+    expect(loopToolsFor([WEB_SEARCH_TOOL], { available: LOOP_TOOLS }).tools).toEqual([]);
+  });
 
   it("cc:WebFetch yields the web page reader where the runtime registered it, else it is dropped as unavailable (ADR 0107)", () => {
     expect(loopToolsFor(["cc:Read", "cc:WebFetch"], { available: LOOP_TOOLS })).toEqual({
@@ -102,8 +127,8 @@ describe("loopToolsFor: the loop driver's equivalents of the registry's Claude C
     const without = KNOWN_CLAUDE_CODE_TOOLS.filter(
       (t) => !Object.hasOwn(CLAUDE_CODE_TOOL_EQUIVALENTS, t),
     );
-    // No web search on the loop driver: no search provider exists on an API key (ADR 0107).
-    expect(without).toEqual(["WebSearch", "Task", "TodoWrite"]);
+    // Web search maps to Anthropic's server tool on an API key ('web-search'); these have none.
+    expect(without).toEqual(["Task", "TodoWrite"]);
     for (const t of without) {
       expect(loopToolsFor([`cc:${t}`], { available: BUILT_INS })).toEqual({
         tools: [],

@@ -186,7 +186,8 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
       .map((r) => [...r.querySelectorAll("th, td")].map((c) => c.textContent));
     expect(rows).toEqual([
       ["Read web pages", "Yes", "Not yet"],
-      ["Search the web", "Not yet", "Yes"],
+      // Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02).
+      ["Search the web", "Yes", "Yes"],
       ["Run commands (its tests)", "Yes, in the sandbox", "No"],
       ["Ask you while it works", "Yes", "No: it lists its questions in its report"],
       ["What it costs", "Money per use", "Your plan's limits, no money per use"],

@@ -280,8 +280,17 @@ export const BILLING_REST_AUDIT_TOOL = "billing.rest";
 export interface ChooserFacts {
   /** The loop driver's page reader is registered (`web_fetch`, unless `FORERUNNER_WEB_FETCH=off`). */
   webFetch: boolean;
-  /** Web search on the API key: not offered yet ('web-search' turns it on for the API key). */
+  /**
+   * Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02): on
+   * unless `FORERUNNER_WEB_SEARCH=off` or the account switched it off for every saved key (the
+   * mark `wiring/web-search.ts` keeps on the key's billing source).
+   */
   keySearch: boolean;
+  /**
+   * The account switched web search off for every saved API key (the mark a refusal leaves;
+   * `keySearch` is then false): only the words read it, to say why ('web-search', review).
+   */
+  keySearchOff?: boolean;
   /** Forerunner's page reader on the subscription: not yet ('sites' turns it on there). */
   subscriptionPages: boolean;
   /** `cc:Bash` on the SDK path (`FORERUNNER_SDK_HOST_COMMANDS`): commands outside the sandbox. */
@@ -290,10 +299,13 @@ export interface ChooserFacts {
   dockerReady?: boolean | null;
 }
 
-/** The facts of an install with nothing switched (the page reader on, no host commands). */
+/**
+ * The facts of an install with nothing switched (the page reader and web search on the API key,
+ * no host commands).
+ */
 export const DEFAULT_CHOOSER_FACTS: ChooserFacts = Object.freeze({
   webFetch: true,
-  keySearch: false,
+  keySearch: true,
   subscriptionPages: false,
   hostCommands: false,
   dockerReady: null,
@@ -304,13 +316,16 @@ export const DEFAULT_CHOOSER_FACTS: ChooserFacts = Object.freeze({
  * 2026-11-02): the one place 'web-search' and 'sites' change for their kind.
  *
  * - **API key** (and plan credits; the loop driver): reads web pages when the page reader is on,
- *   searches only once 'web-search' lands, runs commands in the sandbox (Docker for a full
- *   review, which waits for it; ADR 0101), and can ask the person (`ask_person`, ADR 0095).
+ *   searches with Anthropic's web search beside it unless search is switched off ('web-search',
+ *   `keySearch`; never without the page reader, since a search result alone sources nothing),
+ *   runs commands in the sandbox (Docker for a full review, which waits for it; ADR 0101), and
+ *   can ask the person (`ask_person`, ADR 0095).
  * - **Claude subscription** (Claude Code through the Agent SDK): searches the web, opens no page
  *   until 'sites' lands (the hooks refuse every page: an entry's domain list is empty), runs no
  *   command unless host commands are on (no sandbox lease covers the subprocess), and cannot ask
  *   the person while it works (it lists its questions in its report).
- * - **fake** (an install without credentials): the loop driver, as the API key.
+ * - **fake** (an install without credentials): the loop driver, as the API key, without search
+ *   (the stand-in model runs no server tool).
  */
 export function capabilitiesOf(kind: BillingSourceKind, facts: ChooserFacts): CredentialAbilities {
   if (kind === "subscription")
@@ -320,7 +335,13 @@ export function capabilitiesOf(kind: BillingSourceKind, facts: ChooserFacts): Cr
       commands: facts.hostCommands,
       askPerson: false,
     };
-  return { webRead: facts.webFetch, webSearch: facts.keySearch, commands: true, askPerson: true };
+  return {
+    webRead: facts.webFetch,
+    // A search is offered only beside the page reader: a result alone sources nothing.
+    webSearch: kind !== "fake" && facts.keySearch && facts.webFetch,
+    commands: true,
+    askPerson: true,
+  };
 }
 
 /**

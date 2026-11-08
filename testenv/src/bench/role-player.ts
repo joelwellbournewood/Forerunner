@@ -8,6 +8,7 @@ import {
 } from "../provider/fake-provider.ts";
 import { PromptCacheSim } from "../provider/prompt-cache.ts";
 import type {
+  ChatMessage,
   ModelProvider,
   ModelRequest,
   ModelResponse,
@@ -15,6 +16,7 @@ import type {
   StreamEvent,
   ToolDefinition,
   Usage,
+  WebSearchHit,
 } from "../provider/types.ts";
 import { type LoggedReply, type ModelCallLog, requestFields } from "./call-log.ts";
 import {
@@ -98,6 +100,16 @@ export interface BenchOptions {
    * tokens, so a session's budget can be used up on the bench (the stand-in's calls are tiny).
    */
   usage?: { title: string; inputTokens: number }[];
+  /**
+   * Web search on the API key ('web-search', `--provider bench-api` only: the Messages API
+   * stand-in plays Anthropic's server): what a search finds (FORERUNNER_BENCH_SEARCH_RESULTS,
+   * `url|title` entries separated by commas; default: three pages under example.com named after
+   * the task) and how the researcher's first search goes (FORERUNNER_BENCH_SEARCH_MODE):
+   * `complete` (default: the search and the first two pages in one step), `mixed` (the search
+   * left pending beside the first page: Anthropic's mixed step) or `pause` (the search, then the
+   * turn paused: `pause_turn`).
+   */
+  search?: { results: WebSearchHit[]; mode: "complete" | "mixed" | "pause" };
   /** `ok`, or a planted intake failure (FORERUNNER_BENCH_INTAKE=malformed|error). */
   intake: "ok" | "malformed" | "error";
   /**
@@ -162,8 +174,13 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
   const criticDelay = Number((env.FORERUNNER_BENCH_CRITIC_DELAY_MS ?? "").trim() || 0);
   // FORERUNNER_BENCH_PLAN: `chain`, `research`, or both (`chain,research`).
   const plans = list(env.FORERUNNER_BENCH_PLAN).map((v) => v.toLowerCase());
+  const searchMode = (env.FORERUNNER_BENCH_SEARCH_MODE ?? "").trim().toLowerCase();
   return {
     log,
+    search: {
+      results: searchResultsFromEnv(env.FORERUNNER_BENCH_SEARCH_RESULTS),
+      mode: searchMode === "mixed" || searchMode === "pause" ? searchMode : "complete",
+    },
     plan: {
       kind: plans.includes("chain") ? "chain" : "default",
       research: plans.includes("research"),
@@ -200,12 +217,57 @@ function usageKnobs(raw: string | undefined): { title: string; inputTokens: numb
   });
 }
 
+/**
+ * `FORERUNNER_BENCH_SEARCH_RESULTS`: `url|title` entries separated by commas ('web-search');
+ * empty: none (the researcher's search then finds three pages under example.com).
+ */
+export function searchResultsFromEnv(raw: string | undefined): WebSearchHit[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [url, ...title] = entry.split("|");
+      return { url: (url ?? "").trim(), title: title.join("|").trim() || (url ?? "").trim() };
+    })
+    .filter((h) => /^https?:\/\//.test(h.url));
+}
+
+/** A web search the stand-in model runs in a reply ('web-search'): Anthropic's server plays it. */
+interface AnswerSearch {
+  query: string;
+  results: WebSearchHit[];
+  /** Left for the API to run at the next request (a mixed step). */
+  pending?: boolean;
+}
+
 /** What the stand-in decided to answer, before it becomes stream events. */
 interface Answer {
   text: string;
   toolCalls: { name: string; input: Record<string, unknown> }[];
+  /** Web searches in this reply, after the text and before the tool calls ('web-search'). */
+  searches?: AnswerSearch[];
+  /** `pause_turn`: the turn pauses after its searches ('web-search'). */
+  pause?: boolean;
   error?: { code: string; message: string; retryable: boolean };
   injected?: string;
+}
+
+/** The search results a conversation holds ('web-search'), in order. */
+function searchResultsIn(messages: readonly ChatMessage[]): WebSearchHit[] {
+  const out: WebSearchHit[] = [];
+  for (const m of messages)
+    if (typeof m.content !== "string")
+      for (const b of m.content)
+        if (b.type === "server_tool_result") for (const r of b.results) out.push(r);
+  return out;
+}
+
+/** Whether the conversation holds a web search the model asked for ('web-search'). */
+function searchedIn(messages: readonly ChatMessage[]): boolean {
+  return messages.some(
+    (m) => typeof m.content !== "string" && m.content.some((b) => b.type === "server_tool_use"),
+  );
 }
 
 const text = (t: string, injected?: string): Answer => ({
@@ -304,10 +366,28 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
         const hit = opts.usage.find((u) => title.toLowerCase().includes(u.title.toLowerCase()));
         if (hit) usage.input_tokens += hit.inputTokens;
       }
-      const stop: StopReason = a.error ? "error" : a.toolCalls.length ? "tool_use" : "end_turn";
+      const stop: StopReason = a.error
+        ? "error"
+        : a.toolCalls.length
+          ? "tool_use"
+          : a.pause
+            ? "pause_turn"
+            : "end_turn";
+      // 'web-search': each search that ran is billed; the stand-in API adds its result tokens.
+      const ran = (a.searches ?? []).filter((s) => !s.pending).length;
+      if (ran) usage.server_tool_use = { web_search_requests: ran };
       const logged: LoggedReply = {
         text: a.text,
         toolCalls: a.toolCalls,
+        ...(a.searches?.length
+          ? {
+              searches: a.searches.map((s) => ({
+                query: s.query,
+                urls: s.results.map((r) => r.url),
+                ...(s.pending ? { pending: true } : {}),
+              })),
+            }
+          : {}),
         stopReason: stop,
         ...(a.error ? { error: { code: a.error.code, message: a.error.message } } : {}),
         usage,
@@ -338,6 +418,18 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
       }
       for (const chunk of a.text ? chunkText(a.text, 80) : [])
         yield { type: "text_delta", text: chunk };
+      // 'web-search': the search and, unless the API is to run it later, its results.
+      for (const [i, s] of (a.searches ?? []).entries()) {
+        const id = `srvtoolu_bench_${seq}_${i}`;
+        yield { type: "server_tool_use", id, name: "web_search", input: { query: s.query } };
+        if (!s.pending)
+          yield {
+            type: "server_tool_result",
+            tool_use_id: id,
+            name: "web_search",
+            results: s.results,
+          };
+      }
       // Tool-use ids are unique per call and position, as a real provider's are.
       for (const [i, c] of a.toolCalls.entries()) {
         const id = `toolu_bench_${seq}_${i}`;
@@ -692,6 +784,46 @@ function specialistAnswer(
   // 4a. Research: read the web pages the brief names, when the page reader is offered (the
   // researcher and the science-evaluator on an API key, ADR 0107), then write from them.
   const urls = urlsNamed(`${brief.title}\n${brief.outcome}\n${brief.criteria.join("\n")}`);
+  // 'web-search': offered Anthropic's search (bench-api), it searches first and opens the first
+  // two results with web_fetch; a source is only a page it opened.
+  if (req.webSearch && offered(req.tools, "web_fetch")) {
+    const found = searchResultsIn(req.messages);
+    const fetched = calls.filter((c) => c.name === "web_fetch").map((c) => String(c.input.url));
+    if (!searchedIn(req.messages)) {
+      const results = opts.search?.results.length
+        ? opts.search.results
+        : [1, 2, 3].map((n) => ({
+            url: `https://example.com/${slug(brief.title)}-${n}`,
+            title: `${brief.title} (${n})`,
+          }));
+      const query = brief.title.toLowerCase().slice(0, 80);
+      const mode = opts.search?.mode ?? "complete";
+      const first = [...urls, ...results.map((r) => r.url)].slice(0, mode === "mixed" ? 1 : 2);
+      if (mode === "pause")
+        return {
+          text: `Searching the web for ${query}.`,
+          toolCalls: [],
+          searches: [{ query, results }],
+          pause: true,
+          injected: "search=pause",
+        };
+      return {
+        text: `Searching the web for ${query}, then reading ${first.join(", ")}.`,
+        searches: [{ query, results, ...(mode === "mixed" ? { pending: true } : {}) }],
+        toolCalls: first.map((url) => ({ name: "web_fetch", input: { url } })),
+        ...(mode === "mixed" ? { injected: "search=mixed" } : {}),
+      };
+    }
+    const toOpen = [...urls, ...found.map((r) => r.url)]
+      .filter((u, i, all) => all.indexOf(u) === i)
+      .slice(0, 2)
+      .filter((u) => !fetched.includes(u));
+    if (toOpen.length)
+      return {
+        text: `Reading ${toOpen.join(", ")}.`,
+        toolCalls: toOpen.map((url) => ({ name: "web_fetch", input: { url } })),
+      };
+  }
   if (urls.length && offered(req.tools, "web_fetch") && !did("web_fetch"))
     return {
       text: `Reading ${urls.join(", ")}.`,

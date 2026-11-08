@@ -454,6 +454,19 @@ export class FakeProvider implements ModelProvider {
     for (const text of chunkText(reply.text ?? "", this.chunkChars)) {
       out.push({ type: "text_delta", text });
     }
+    // A search the provider ran itself ('web-search'): its call, then its result unless deferred.
+    (reply.searches ?? []).forEach((s, i) => {
+      const id = s.id ?? `srvtoolu_fake_${callIndex}_${i}`;
+      out.push({ type: "server_tool_use", id, name: "web_search", input: { query: s.query } });
+      if (!s.pending)
+        out.push({
+          type: "server_tool_result",
+          tool_use_id: id,
+          name: "web_search",
+          results: structuredClone(s.results ?? []),
+          ...(s.errorCode ? { errorCode: s.errorCode } : {}),
+        });
+    });
     (reply.toolCalls ?? []).forEach((call, i) => {
       const id = call.id ?? `toolu_fake_${callIndex}_${i}`;
       out.push({ type: "tool_use_start", id, name: call.name });
@@ -475,7 +488,14 @@ export class FakeProvider implements ModelProvider {
           cache_read_input_tokens: 0,
           cache_creation_input_tokens: 0,
         };
-    return { ...input, output_tokens: output, ...reply.usage };
+    // Each search that ran is billed apart, as Anthropic bills it ('web-search').
+    const searched = (reply.searches ?? []).filter((s) => !s.pending && !s.errorCode).length;
+    return {
+      ...input,
+      output_tokens: output,
+      ...(searched ? { server_tool_use: { web_search_requests: searched } } : {}),
+      ...reply.usage,
+    };
   }
 
   /** Sleeps on the clock until `due` (wall ms). False when the signal aborted meanwhile. */

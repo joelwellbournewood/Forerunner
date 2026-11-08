@@ -175,14 +175,21 @@ export class SessionBudget {
    * answers `wrap_up`, once; a save-only line never does. The run's first call carries its line,
    * and so does a refusal of that call (`details.line`): a budget below one call's worst case is
    * refused before the call, and its line ("save only") is still said.
+   * `lineEstimateUsdMicro`: the call's worst case without its web searches ('web-search', the
+   * loop's token estimate; default the whole estimate). It fixes the run's line and decides the
+   * wrap-up, so offering search moves neither; the caps get the whole estimate. The loop pays a
+   * call's searches only from the money below the line (`lineFor`), so before the wrap-up the
+   * whole estimate stays below the line too.
    */
   precheck(
     runId: string,
     runCapUsdMicro: number,
     estimateUsdMicro: number,
     phase: "work" | "review",
+    lineEstimateUsdMicro: number = estimateUsdMicro,
   ): PrecheckDecision {
     checkAmount(estimateUsdMicro, "budget estimate");
+    checkAmount(lineEstimateUsdMicro, "budget estimate");
     const runSpent = this.spentByRunId(runId);
     let first: RunWrapUpLine | undefined;
     let line = phase === "work" ? this.runLines.get(runId) : undefined;
@@ -191,7 +198,7 @@ export class SessionBudget {
     // first seen with spend already booked (never in the drivers, which check before every
     // call) has none.
     if (phase === "work" && !line && runSpent === 0) {
-      first = wrapUpLineOf(runCapUsdMicro, estimateUsdMicro);
+      first = wrapUpLineOf(runCapUsdMicro, lineEstimateUsdMicro);
       line = { ...first, wrapped: false };
       this.runLines.set(runId, line);
     }
@@ -204,7 +211,10 @@ export class SessionBudget {
     }
     if (phase !== "work") return local;
     const wrap =
-      !!line && !line.saveOnly && !line.wrapped && runSpent + estimateUsdMicro > line.lineUsdMicro;
+      !!line &&
+      !line.saveOnly &&
+      !line.wrapped &&
+      runSpent + lineEstimateUsdMicro > line.lineUsdMicro;
     if (wrap && line) line.wrapped = true;
     return {
       decision: wrap ? "wrap_up" : local.decision,
@@ -218,6 +228,26 @@ export class SessionBudget {
     if (!line) return undefined;
     const { wrapped: _wrapped, ...rest } = line;
     return rest;
+  }
+
+  /**
+   * The work run's wrap-up line, or, before its first call, the line that call fixes with this
+   * worst case (`wrapUpLineOf`); a read only, `precheck` fixes it. Undefined for a review run
+   * and a run first seen with spend booked, which have none. The loop pays a call's web searches
+   * only from the money below it ('web-search'), so they never eat the reserve kept to finish.
+   */
+  lineFor(
+    runId: string,
+    runCapUsdMicro: number,
+    firstCallUsdMicro: number,
+    phase: "work" | "review",
+  ): RunWrapUpLine | undefined {
+    if (phase !== "work") return undefined;
+    const line = this.wrapUpLineOf(runId);
+    if (line) return line;
+    return this.spentByRunId(runId) === 0
+      ? wrapUpLineOf(runCapUsdMicro, firstCallUsdMicro)
+      : undefined;
   }
 
   /**

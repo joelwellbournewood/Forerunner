@@ -373,17 +373,19 @@ describe("the subscription path (ADR 0044)", () => {
     const key = (await rt.billing.sources()).find((s) => s.kind === "api_key");
     const run = (await rt.store.run.forTask(w.task.id))[0];
     expect(run).toMatchObject({ specialist: "researcher", billing_source_id: key?.id });
-    // The loop run offers the page reader, and its brief says search is not available.
+    // The loop run offers the page reader; this test's scripted provider runs no server tool, so
+    // the run is not offered web search and its brief says so ('web-search').
     const req = provider.calls[provider.calls.length - 1];
     expect((req?.tools ?? []).map((t) => t.name)).toContain("web_fetch");
     expect(JSON.stringify(req?.messages)).toContain("Web search is not available on this run");
     // The pick's audit row says why the API key came first: the chooser (U-078, which replaced
-    // C-64's "research reads web pages on the API key first") found that only the key reads pages.
+    // C-64's "research reads web pages on the API key first") found that only the key reads
+    // pages; since 'web-search' the key also searches, so it meets every hard need.
     const pick = (await rt.store.auditLog.list({ runId: res.runId })).find(
       (r) => r.tool === BILLING_PICK_AUDIT_TOOL,
     );
     expect(pick?.result_summary).toMatch(
-      /chooser: only api_key meets webRead \(first choice subscription\); no credential meets every hard need; api_key lacks webSearch/,
+      /chooser: only api_key meets webRead \(first choice subscription\)$/,
     );
     // A coder's task keeps the subscription first (no order chosen): only web work moves.
     const coder = await seedTask("Add a footer");

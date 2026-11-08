@@ -12,6 +12,8 @@ import {
   PRICING_FILE_NAME,
   type PricingTable,
   type RateSource,
+  WEB_SEARCH_RESULT_TOKENS,
+  WEB_SEARCH_USD_MICRO,
 } from "@forerunner/billing";
 import {
   type email as agentEmail,
@@ -188,6 +190,7 @@ import {
   type SpecialistDriver,
   seedRegistry,
   TOOL_UNMAPPED_AUDIT,
+  WEB_SEARCH_TOOL,
 } from "../registry/index.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
@@ -334,7 +337,13 @@ import { assertAnswerAccepted, isChatOnlyCard } from "../wiring/request-answers.
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
-import { webFetchEnabled, webReadSitesResolver } from "../wiring/web-ports.ts";
+import {
+  webFetchEnabled,
+  webReadSitesResolver,
+  webSearchEnabled,
+  webSearchListsResolver,
+} from "../wiring/web-ports.ts";
+import { WebSearchMarks } from "../wiring/web-search.ts";
 import type { SpeakStartedView } from "./api-types.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord, scaffoldProjectDocs } from "./create-project.ts";
@@ -1107,6 +1116,8 @@ export interface SpecialistSpecOptions {
   driver: SpecialistDriver;
   /** The loop driver's tool names right now (`toolsForRun().names()`). */
   tools: () => readonly string[];
+  /** Tools the provider runs itself that this runtime offers ('web-search': `web_search`). */
+  serverTools?: () => readonly string[];
   /** Whether the entry may get `run_command` (`cc:Bash`); default: when it requires a sandbox. */
   commands?: (d: SpecialistDef) => boolean;
   /** Told at every lookup about each name the loop driver will not offer; never silent. */
@@ -1147,6 +1158,7 @@ export function specialistSpecFrom(
       const mapping = loopToolsFor(d.allowed_tools, {
         available: opts.tools(),
         commands: opts.commands ? opts.commands(d) : d.requires_sandbox,
+        ...(opts.serverTools ? { serverTools: opts.serverTools() } : {}),
       });
       for (const drop of mapping.dropped) opts.onDropped?.(d.name, drop);
       allowedTools = mapping.tools;
@@ -1517,12 +1529,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     "";
   const personalRunner =
     opts.billing?.personalRunner ?? env.FORERUNNER_RUNNER_PERSONAL?.trim() !== "0";
+  // Anthropic's web search on the API key ('web-search', the owner's decision of 2026-11-02):
+  // on unless `FORERUNNER_WEB_SEARCH=off`; the marks a refusal leaves on the key's billing
+  // source (search switched off for the account, a project's lists refused), read at the start,
+  // after a refusal and on the scheduler's tick.
+  const webSearchOn = webSearchEnabled(env);
+  const webSearchMarks = new WebSearchMarks({ store, vault, clock, humanId: human.id });
+  await webSearchMarks.refresh();
   // What this install offers each credential (U-078, the chooser's `capabilitiesOf` inputs): the
   // page reader, host commands and Docker, read at every pick (the three are declared below and
   // read only once a pick is made); 'web-search' and 'sites' add theirs here.
   const chooserFacts = (): ChooserFacts => ({
     webFetch: webFetchOn,
-    keySearch: false,
+    // 'web-search': the API key searches unless this install or the account switched it off.
+    keySearch: webSearchOn && !webSearchMarks.keySearchOff(),
+    keySearchOff: webSearchMarks.keySearchOff(),
     subscriptionPages: false,
     hostCommands: sdkHostCommands,
     dockerReady: (() => {
@@ -1755,6 +1776,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         maxOutputTokens,
         cachedInputTokens,
       ),
+    searches: (n) => pricingForProvider(p, modelOf(), pricingTable).searches?.(n) ?? 0,
     cost: (usage) => pricingForProvider(p, modelOf(), pricingTable).cost(usage),
   });
 
@@ -1831,6 +1853,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // every call; each refusal is an audit row with its reason. `FORERUNNER_WEB_FETCH=off` leaves
   // it out, and then the intake plans no web work and the plan card says so.
   const webFetchOn = webFetchEnabled(env);
+  // 'web-search': the lists a run's search is sent with, read per run.
+  const webSearchLists = webSearchListsResolver(store.project);
   if (webFetchOn)
     tools.register(
       web.webFetchTool({
@@ -2073,6 +2097,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // daemon's `run_command` refuses to run with no working directory. No command reaches the
     // host either way, which is the promise `commands` stands for.
     commands: () => true,
+    // 'web-search': `cc:WebSearch` is Anthropic's web search on an API key, offered while this
+    // install has it on; the executor grants it per run only where the run can search.
+    serverTools: () => (webSearchOn ? [WEB_SEARCH_TOOL] : []),
     onDropped: droppedTools.onDropped,
     extraDomains: (_d, mapped) =>
       mapped.some((t) => browserToolNames.has(t)) ? browserDomains : [],
@@ -2219,6 +2246,31 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       billing: taskBilling,
       // A loop pick runs on the provider of the picked source (its own key), never re-routed.
       ...(routed ? { providerFor: providerForSource } : {}),
+      // 'web-search': the project's lists in the server's form, unless search is off for the
+      // run's key or those lists; a refusal leaves its mark on the key's billing source.
+      ...(webSearchOn
+        ? {
+            webSearch: {
+              listsFor: async ({
+                sourceId,
+                projectId,
+              }: {
+                sourceId: string;
+                projectId: string;
+              }) => {
+                // The chooser's view follows what this run finds (a key saved since the mark).
+                await webSearchMarks.refresh();
+                if (await webSearchMarks.offFor(sourceId)) return null;
+                const lists = await webSearchLists(projectId);
+                return (await webSearchMarks.listsRefused(sourceId, projectId, lists))
+                  ? null
+                  : lists;
+              },
+              refused: (input: Parameters<WebSearchMarks["refused"]>[0]) =>
+                webSearchMarks.refused(input),
+            },
+          }
+        : {}),
       sdk: {
         driver: sdkDriver,
         credential: (source) => credentialFor(source, vault),
@@ -3006,6 +3058,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ...capabilityTools().map((t) => t.name),
       ...extensions.bridgedTools().map((t) => t.name),
       ...(hasOauth ? claudeCodeToolNames() : []),
+      // Anthropic's web search on an API key ('web-search'): the provider runs it, so it is no
+      // registered tool; a run token carries it only where the executor offers the run search.
+      ...(webSearchOn ? [WEB_SEARCH_TOOL] : []),
       // The runtime's merge step (J.9, ADR 0062); no model is offered it (no registry has it).
       MERGE_PR_TOOL,
     ],
@@ -3217,6 +3272,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         .catch((e: unknown) =>
           logger.warn("work waiting for a credential not started", { error: errorMessage(e) }),
         );
+      // 'web-search': a key saved since search was switched off for the old one ends the mark.
+      await webSearchMarks.refresh();
       // budget-resume: a task paused at this month's cap, the project's budget or the
       // subscription's share goes on by itself once that limit changed (raised in Settings, a
       // new month) and has room; room alone never wakes it (the review of budget-resume).
@@ -4235,6 +4292,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         if (!spec) return null;
         const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
         const project = projectId ? await store.project.get(projectId).catch(() => null) : null;
+        // 'web-search': a key saved since search was switched off for the old one ends the mark.
+        await webSearchMarks.refresh();
         return credentialChoiceFor({
           kindsInOrder: await taskBilling.savedKinds(),
           needs: needsOf({
@@ -4247,7 +4306,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           dependencies: project ? hasDependenciesToInstall(docs.docsDirsFor(project)[0]) : false,
         });
       },
-      table: async () => abilityTable(chooserFacts(), await taskBilling.savedKinds()),
+      table: async () => {
+        await webSearchMarks.refresh();
+        return abilityTable(chooserFacts(), await taskBilling.savedKinds());
+      },
     },
     tools,
     executor,
@@ -4616,11 +4678,14 @@ function pricingForProvider(
   if (p && p.name === "anthropic") return pricingFor(modelId, table);
   return {
     estimate: (i: number, o: number) => i + o,
+    // A search is a search's price and its result tokens, one micro-USD each ('web-search').
+    searches: (n: number) => n * (WEB_SEARCH_USD_MICRO + WEB_SEARCH_RESULT_TOKENS),
     cost: (u) =>
       u.input_tokens +
       (u.cache_read_input_tokens ?? 0) +
       (u.cache_creation_input_tokens ?? 0) +
-      u.output_tokens,
+      u.output_tokens +
+      (u.server_tool_use?.web_search_requests ?? 0) * WEB_SEARCH_USD_MICRO,
   };
 }
 

@@ -39,6 +39,7 @@ export async function collectFakeStream(
   const tools = new Map<string, { name: string; json: string }>();
   let stop: StopReason = "end_turn";
   let usage: Usage = { ...ZERO_USAGE };
+  let raw: Record<string, unknown>[] | undefined;
   const flushText = () => {
     if (text) {
       content.push({ type: "text", text });
@@ -58,6 +59,7 @@ export async function collectFakeStream(
       usage,
       time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
       duration_ms: now() - t0,
+      ...(raw ? { raw } : {}),
     };
     return error ? { response, error } : { response };
   };
@@ -88,6 +90,23 @@ export async function collectFakeStream(
         tools.delete(ev.id);
         break;
       }
+      case "server_tool_use":
+        flushText();
+        content.push({ type: "server_tool_use", id: ev.id, name: ev.name, input: ev.input });
+        break;
+      case "server_tool_result":
+        flushText();
+        content.push({
+          type: "server_tool_result",
+          tool_use_id: ev.tool_use_id,
+          name: ev.name,
+          results: ev.results,
+          ...(ev.errorCode ? { errorCode: ev.errorCode } : {}),
+        });
+        break;
+      case "raw_content":
+        raw = ev.blocks;
+        break;
       case "message_end":
         stop = ev.stop_reason;
         usage = ev.usage;

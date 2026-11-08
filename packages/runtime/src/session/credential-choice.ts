@@ -105,7 +105,7 @@ function canWords(needs: readonly TaskNeed[]): string {
  * on the person's first choice and that one can do all it needs). The plan card, New task and
  * Settings show this sentence:
  * - none can do every hard need: what the chosen one can do and what follows ("Runs on your API
- *   key: it can read web pages here but not search yet, so the researcher reads pages whose
+ *   key: it can read web pages here but not search, so the researcher reads pages whose
  *   address it knows.");
  * - only the chosen one can ("Runs on your API key: only it can read web pages here.");
  * - it runs where it cannot run commands on a project whose checks need its dependencies
@@ -122,7 +122,7 @@ export function choiceLine(
   const needs = new Set(choice.hard);
   if (lacks.size) {
     if (lacks.has("webSearch") && needs.has("webRead") && !lacks.has("webRead"))
-      return `${runsOn}: it can read web pages here but not search yet, so ${who} reads pages whose address it knows.`;
+      return `${runsOn}: it can read web pages here but not search, so ${who} reads pages whose address it knows.`;
     if (lacks.has("webRead") && needs.has("webSearch") && !lacks.has("webSearch"))
       return `${runsOn}: it can search the web here but not open pages yet, so ${who} works from search results.`;
     if (lacks.has("webRead"))
@@ -199,7 +199,21 @@ export function abilityTable(
       {
         need: "webSearch",
         label: "Search the web",
-        cells: [cell(key.webSearch, key.webSearch ? "Yes" : "Not yet"), cell(sub.webSearch, "Yes")],
+        // 'web-search': the key searches unless something switched it off; the cell says what
+        // (review of 'web-search': "Not yet" promised what the code does not do, §5.9).
+        cells: [
+          cell(
+            key.webSearch,
+            key.webSearch
+              ? "Yes"
+              : !facts.webFetch
+                ? "No: the page reader is off here"
+                : facts.keySearchOff
+                  ? "No: switched off for this API key"
+                  : "No: search is off here",
+          ),
+          cell(sub.webSearch, "Yes"),
+        ],
       },
       {
         need: "commands",
