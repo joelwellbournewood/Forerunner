@@ -234,6 +234,8 @@ describe("what a specialist is told (design §4.6)", () => {
     expect(constraints).toContain(
       "- Git's read commands (git status, git diff, git log) work in the folder, to see what you changed.",
     );
+    // A project's folder of its own has no Local only folder: the brief names none.
+    expect(constraints).not.toContain("Local only");
   });
 
   it("a task on a repository's branch is told Forerunner commits, pushes and opens the pull request (GitHub walk, 2026-11-02)", async () => {
@@ -258,6 +260,10 @@ describe("what a specialist is told (design §4.6)", () => {
     );
     expect(constraints).toContain("Git's read commands (git status, git diff, git log) work");
     expect(constraints).not.toContain("in the project's folder after the run");
+    // merged-copy (ADR 0113): the person's Local only folder, what it is and what not to do.
+    expect(constraints).toContain(
+      "- A folder named \"Local only\" in the project's folder, when there is one, holds the person's own files on this computer and is never uploaded: read or change them when the task needs it, and put their content into your work only when the task asks for it.",
+    );
   });
 
   it("the brief tells the truth about how the work is checked, and a task without criteria is held to its outcome (ADR 0104)", async () => {

@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
+import { underNeverPushed } from "@forerunner/capabilities";
 import type { TriedEvidence } from "@forerunner/critic";
 import { type AppDirs, isInside, join, normalize, safeSegment } from "@forerunner/platform";
 
@@ -49,7 +50,10 @@ export const MAX_PAGES_TRIED = 3;
  */
 export function pagesToTry(changedFiles: readonly string[], root: string | undefined): string[] {
   if (!root) return [];
-  const files = changedFiles.map((f) => f.replace(/\\/g, "/"));
+  // Never a page of Local only or of a try folder (merged-copy, ADR 0113): not the work's.
+  const files = changedFiles
+    .map((f) => f.replace(/\\/g, "/"))
+    .filter((f) => underNeverPushed([f]).length === 0);
   const pages = files.filter(
     (f) => /\.html?$/i.test(f) && !f.split("/").some((s) => s === "node_modules" || s === ".git"),
   );

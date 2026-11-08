@@ -2697,6 +2697,8 @@ async function composeWithRolePlayer(
   chatCalls: ModelRequest[];
   /** The critic's calls the stand-in received, in order (what each review was given). */
   criticCalls: ModelRequest[];
+  /** The specialists' calls (merged-copy: what a run saw of its folder, tool results included). */
+  specialistCalls: ModelRequest[];
 }> {
   const home = mkdtempSync(join(tmpdir(), "fr-ui-real-needs-me-"));
   const bench = benchOptionsFromEnv(
@@ -2707,11 +2709,14 @@ async function composeWithRolePlayer(
   const intakeCalls: ModelRequest[] = [];
   const chatCalls: ModelRequest[] = [];
   const criticCalls: ModelRequest[] = [];
+  const specialistCalls: ModelRequest[] = [];
   const stream = provider.stream.bind(provider);
   provider.stream = (req) => {
     const role = detectRole(req).role;
     if (role === "intake") intakeCalls.push(req);
     if (role === "critic") criticCalls.push({ ...req, messages: structuredClone(req.messages) });
+    if (role === "specialist")
+      specialistCalls.push({ ...req, messages: structuredClone(req.messages) });
     // A copy: the loop appends the reply to the same messages after the call.
     if (role === "chat") chatCalls.push({ ...req, messages: structuredClone(req.messages) });
     return stream(req);
@@ -2742,7 +2747,7 @@ async function composeWithRolePlayer(
     },
     (input, init) => Promise.resolve(app.request(input, init)),
   );
-  return { rt, client, bench, intakeCalls, chatCalls, criticCalls };
+  return { rt, client, bench, intakeCalls, chatCalls, criticCalls, specialistCalls };
 }
 
 /** A PNG of one pixel: what a try's screenshot file holds here. */
@@ -8596,6 +8601,257 @@ describe("the UI client against the real daemon: Merge in the app (merge-in-app,
     expect((await client.projectPullRequests(project.id)).mode).toEqual({
       key: "after_review",
       label: "Merge automatically after review",
+    });
+  }, 120_000);
+});
+
+describe("the UI client against the real daemon: this computer's copy follows every merge (merged-copy, ADR 0113)", () => {
+  // The owner's decision of 2026-11-02: a repository project's copy on this computer refreshes
+  // after every merge, in the app or on GitHub, so Files and Open folder show the merged work.
+  // Before (bench, 2026-11-03): a pull request merged on the git host stayed out of Files until
+  // a session ended, and a project made from a brief had no copy at all until then (W6-25).
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let github: GitHubHost;
+  let token = "";
+  let home = "";
+  let criticCalls: ModelRequest[] = [];
+  let specialistCalls: ModelRequest[] = [];
+  const identity = { name: "Alice", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), "fr-ui-real-copy-"));
+    host = await FakeGitHost.start({ rootDir: join(home, "host") });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    for (const name of ["copy", "brief", "local", "taken"])
+      await host.createRepo({
+        owner: "alice",
+        name,
+        private: true,
+        defaultBranch: "main",
+        initialFiles: { "README.md": `# ${name}\n` },
+      });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    github = new GitHubHost({ token, baseUrl: host.baseUrl, clock: new SystemClock() });
+    const vault = new MemoryVault();
+    await vault.set("github_token", token);
+    // The watcher's poll is driven by the case (pollOnce), never by the clock.
+    ({ rt, client, criticCalls, specialistCalls } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: github,
+        vault,
+        tryIt: false,
+        githostWatch: { enabled: true, pollMs: 86_400_000 },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /** A pull request of the person's own, opened and merged on the host (not through the app). */
+  const mergeOnHost = async (name: string, branch: string, file: string, text: string) => {
+    const dir = join(home, `person-${branch.replace(/\W+/g, "-")}`);
+    const git = new GitOps({ cwd: dir, identity, auth: { token } });
+    await git.clone(host.cloneUrl(`alice/${name}`));
+    await git.createBranch(branch, "origin/main");
+    const parts = file.split("/");
+    if (parts.length > 1) mkdirSync(join(dir, ...parts.slice(0, -1)), { recursive: true });
+    writeFileSync(join(dir, ...parts), text);
+    await git.commitAll(`Add ${file}`);
+    await git.push(branch);
+    const pr = await github.createPullRequest(
+      { owner: "alice", name },
+      { title: `Add ${file}`, body: "", head: branch, base: "main" },
+    );
+    const merged = await github.mergePullRequest({ owner: "alice", name }, pr.number, {
+      method: "merge",
+    });
+    expect(merged.merged).toBe(true);
+    return pr;
+  };
+  const paths = async (projectId: string) =>
+    (await client.projectFiles(projectId)).entries.map((e) => e.path);
+
+  it("a pull request and a docs PR merged on GitHub: after one watcher poll and no session, Files and Docs show them with when the copy was updated", async () => {
+    const project = await client.createProject({
+      name: "Copy",
+      goal: "A page whose files show once merged",
+      repos: ["alice/copy"],
+    });
+    const before = await client.projectFiles(project.id);
+    expect(before.entries.map((e) => e.path)).toContain("README.md");
+    expect(before.entries.map((e) => e.path)).not.toContain("page.html");
+    const firstUpdate = before.copy?.updatedAt ?? "";
+    expect(firstUpdate, "the scaffold brought the copy to main").not.toBe("");
+
+    // The person merges a pull request of their own and the scaffold's docs PR on GitHub.
+    await mergeOnHost("copy", "person/page", "page.html", "<h1>Page</h1>\n");
+    const scaffold = (await github.listPullRequests({ owner: "alice", name: "copy" })).find(
+      (p) => p.head.ref === "fr/docs-scaffold",
+    );
+    expect(scaffold, "the scaffold's docs pull request").toBeDefined();
+    expect(
+      (
+        await github.mergePullRequest({ owner: "alice", name: "copy" }, scaffold?.number ?? 0, {
+          method: "merge",
+        })
+      ).merged,
+    ).toBe(true);
+    // Not yet: nothing has told this computer.
+    expect(await paths(project.id)).not.toContain("page.html");
+
+    await rt.githostWatcher?.pollOnce();
+    const after = await client.projectFiles(project.id);
+    expect(after.entries.map((e) => e.path)).toEqual(
+      expect.arrayContaining(["README.md", "page.html", "docs/overview.md"]),
+    );
+    expect(after.copy?.updatedAt ?? "").not.toBe("");
+    expect((after.copy?.updatedAt ?? "") >= firstUpdate).toBe(true);
+    expect((await client.projectFile(project.id, "page.html")).content).toContain("<h1>Page</h1>");
+    const overview = (await client.docs(project.id)).find((d) => d.path === "docs/overview.md");
+    expect(overview).toMatchObject({ exists: true, note: "from this PC's copy of the repository" });
+    // No session ran for it.
+    expect(await client.sessions({ projectId: project.id })).toEqual([]);
+
+    // The next poll with main where the copy is: nothing is fetched again, the copy stays.
+    await rt.githostWatcher?.pollOnce();
+    expect(await paths(project.id)).toContain("page.html");
+  }, 120_000);
+
+  it("a project made from a brief has its copy while its plan waits, with no watcher poll: the draft makes it (W6-25)", async () => {
+    const brief = "A page that greets the visitor";
+    const project = await client.createProject({
+      name: "Brief copy",
+      goal: goalFromBrief(brief),
+      brief,
+      intake: true,
+      repos: ["alice/brief"],
+    });
+    await rt.intake.inFlight(project.id);
+    const me = await client.me();
+    expect(
+      (await client.inbox(me.id)).requests.some(
+        (r) => r.projectId === project.id && r.status === "open",
+      ),
+      "the plan waits for the person",
+    ).toBe(true);
+    // Before: no copy until a session ended, then (merged-copy) until the watcher's first poll,
+    // up to a minute later; the Docs tab read README.md as not written yet meanwhile. Now the
+    // draft makes it: no poll runs here (the watcher's are driven by the cases).
+    const files = await client.projectFiles(project.id);
+    expect(files.folder).not.toBeNull();
+    expect(files.entries.map((e) => e.path)).toContain("README.md");
+    expect((await client.docs(project.id)).find((d) => d.path === "README.md")).toMatchObject({
+      exists: true,
+      note: "from this PC's copy of the repository",
+    });
+  }, 120_000);
+
+  it("Local only: listed in Files with its line, in the task's folder during its run, and never on GitHub, in the PR or in the review", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({
+      name: "Local",
+      goal: "A summary written beside the person's own notes",
+      repos: ["alice/local"],
+    });
+    const folder = (await client.projectFiles(project.id)).copy?.localOnly?.folder ?? "";
+    expect(folder, "the Local only folder").not.toBe("");
+    writeFileSync(join(folder, "notes.txt"), "the person's own notes\n");
+    const listed = await client.projectFiles(project.id);
+    expect(listed.entries.map((e) => e.path)).toContain("Local only/notes.txt");
+    expect(listed.copy?.localOnly?.line).toBe("Never uploaded. Agents can read and change it.");
+
+    const task = await client.createTask(project.id, {
+      title: "Write the summary in summary.md",
+      outcome: "summary.md sums up the project in three lines",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const before = specialistCalls.length;
+    const started = await client.startSession({ agentId, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      "the session to end",
+      async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+      60_000,
+    );
+    const row = await rt.store.task.mustGet(task.id);
+    expect(row.status).toBe("done");
+    // The run saw the file in its folder (its listing of the folder).
+    const seenByRun = specialistCalls
+      .slice(before)
+      .map((c) => JSON.stringify(c.messages))
+      .join("\n");
+    expect(seenByRun).toContain("Local only/notes.txt");
+    // Never on GitHub: the task's branch carries its own file only, and so does its PR.
+    const onBranch = await run([
+      "git",
+      "--git-dir",
+      host.repo("alice/local")?.dir ?? "",
+      "ls-tree",
+      "-r",
+      "--name-only",
+      row.branch ?? "",
+    ]);
+    expect(onBranch.stdout).toContain("summary.md");
+    expect(onBranch.stdout).not.toContain("Local only");
+    const pr = (await github.listPullRequests({ owner: "alice", name: "local" })).find(
+      (p) => p.head.ref === row.branch,
+    );
+    expect(pr?.body ?? "").not.toContain("Local only");
+    // Not evidence: the critic's diff and file list never name it.
+    const review = criticCalls
+      .map((c) => JSON.stringify(c.messages))
+      .filter((m) => m.includes("Write the summary in summary.md"));
+    expect(review.length).toBeGreaterThan(0);
+    for (const m of review) expect(m).not.toContain("Local only");
+    // The person's file is as it was; the task's folder keeps no copy.
+    expect((await client.projectFile(project.id, "Local only/notes.txt")).content).toBe(
+      "the person's own notes\n",
+    );
+    expect(readdirSync(join(rt.dirs.worktrees, task.id))).not.toContain("Local only");
+  }, 120_000);
+
+  it("a collaborator commits a file into Local only on GitHub: after one watcher poll the person's own file is still in Files as '(yours)', and the line says so (review of merged-copy)", async () => {
+    // Before (bench W8): the watcher's refresh replaced the person's Local only/notes.txt with
+    // the repository's without a word; Files said only that the repository has such a folder.
+    const project = await client.createProject({
+      name: "Taken",
+      goal: "Notes the team starts to share",
+      repos: ["alice/taken"],
+    });
+    const folder = (await client.projectFiles(project.id)).copy?.localOnly?.folder ?? "";
+    expect(folder, "the Local only folder").not.toBe("");
+    writeFileSync(join(folder, "notes.txt"), "the person's own notes\n");
+    writeFileSync(join(folder, "drafts.txt"), "the person's drafts\n");
+    await mergeOnHost("taken", "team/notes", "Local only/notes.txt", "the team's notes\n");
+    await rt.githostWatcher?.pollOnce();
+    const after = await client.projectFiles(project.id);
+    expect(after.entries.map((e) => e.path)).toEqual(
+      expect.arrayContaining([
+        "Local only/notes.txt",
+        "Local only/notes (yours).txt",
+        "Local only/drafts.txt",
+      ]),
+    );
+    expect((await client.projectFile(project.id, "Local only/notes (yours).txt")).content).toBe(
+      "the person's own notes\n",
+    );
+    expect((await client.projectFile(project.id, "Local only/notes.txt")).content).toBe(
+      "the team's notes\n",
+    );
+    expect((await client.projectFile(project.id, "Local only/drafts.txt")).content).toBe(
+      "the person's drafts\n",
+    );
+    expect(after.copy?.localOnly).toEqual({
+      folder: null,
+      line: 'No Local only folder here any more: this repository now has a folder of that name. Your files in it stay on this computer; the one named like the repository\'s is now "notes (yours).txt".',
     });
   }, 120_000);
 });

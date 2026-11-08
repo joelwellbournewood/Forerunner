@@ -2280,8 +2280,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       worktreeRoot: dirs.worktrees,
       token: githubTokenNow,
       identity: gitIdentity,
+      // merged-copy (ADR 0113): the project's Local only folder, in its copy on this computer,
+      // goes into each run's worktree and back after it.
+      localOnlyFor: async (task) => {
+        const project = await store.project.get(task.project_id);
+        return project ? docs.localOnlyFolder(project) : null;
+      },
     });
   const executor = prExecutor(true);
+  // merged-copy: a run's Local only copy the app left when it closed or crashed during the run
+  // is copied back now, before any session starts.
+  try {
+    executor.recoverLocalOnly();
+  } catch (e) {
+    logger.warn("Local only copies not recovered at the start", { error: errorMessage(e) });
+  }
   // A repository for a project that has none (U-037, ADR 0097): the `repo.create` command's
   // port, with the person's GitHub token; the project's agent proposes one (`repoProposals`,
   // below) when a plan holds code work.
@@ -2293,7 +2306,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     identity: gitIdentity,
     projectsRoot: dataAssets.projectsRoot,
     worktreeRoot: dirs.worktrees,
-    onLinked: (projectId) => events.emit("project", { id: projectId }),
+    onLinked: (projectId) => {
+      events.emit("project", { id: projectId });
+      // merged-copy (W6-25): this computer's copy of the new repository, made at once.
+      void refreshProjectCopy(projectId);
+    },
   });
   // Assigned once the command loop exists (the runner is built before it).
   let repoProposals: RepoProposals | null = null;
@@ -2317,6 +2334,29 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: githubTokenNow,
     identity: gitIdentity,
   });
+  // merged-copy (ADR 0113, the owner's decision of 2026-11-02): this computer's copy of a
+  // repository project follows every merge, so Files, Open folder and the chat's docs search
+  // show the merged work: after each merge the app makes or hears of (`merge.onMerged`, below),
+  // at the watcher's read of the default branch's head (a merge by anyone, on GitHub's website
+  // too), when a repository is linked and after the intake wrote its docs. Under the copy's lock
+  // (`ProjectDocs.withCopy`), which every docs write takes too. A refresh that changed the copy
+  // tells the project's screens; a failure is logged and the copy is read as it was.
+  const refreshProjectCopy = async (
+    projectId: string,
+    at?: { head: string; base: string },
+  ): Promise<void> => {
+    try {
+      const project = await store.project.get(projectId);
+      if (!project) return;
+      const done = await docs.refreshCopy(project, at ?? {});
+      if (done.refreshed) events.emit("project", { id: projectId });
+    } catch (e) {
+      logger.warn("this computer's copy of the repository not refreshed", {
+        projectId,
+        error: errorMessage(e),
+      });
+    }
+  };
   // The merge of a reviewed PR (spec J.9, ADR 0062 and 0111): after an accepting review the
   // reviewed commit is pinned in the task's merge record, then one `merge_pr` call through the
   // gate and the hooks, with a merge commit, after the branch's rules; level 3 merges once the
@@ -2379,6 +2419,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     changed: (projectId) => events.emit("project", { id: projectId }),
   });
+  // merged-copy: the copy follows every merge (a session's, a retry's, Merge in the app, one
+  // the watcher saw on GitHub).
+  merge.onMerged(({ task }) => refreshProjectCopy(task.project_id));
   // The repository projects the watcher reads the default branch of (onDefaultBranchHead).
   const repositoryProjects = async (): Promise<{ projectId: string; repo: RepoRef }[]> => {
     const out: { projectId: string; repo: RepoRef }[] = [];
@@ -3872,7 +3915,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           if (info.state !== "open" && pr.projectId) events.emit("project", { id: pr.projectId });
         },
         repositoryProjects,
-        onDefaultBranchHead: (project) => dependentBranches.sweep(project.projectId),
+        // merged-copy: and this computer's copy brought to that head (a merge by anyone, a docs
+        // PR merged on GitHub's website); a copy already there is not fetched again.
+        onDefaultBranchHead: async (project, sha) => {
+          await Promise.all([
+            dependentBranches.sweep(project.projectId),
+            refreshProjectCopy(project.projectId, { head: sha, base: project.branch }),
+          ]);
+        },
         onInjection: async (report, origin, projectId) => {
           const rules = [...new Set(report.matches.map((m) => m.rule))].sort();
           await store.auditLog.append({

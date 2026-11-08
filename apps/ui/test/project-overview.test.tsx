@@ -1,10 +1,13 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { EventSourceLike, StreamOptions } from "../src/api/sse.ts";
+import { AppRoutes } from "../src/routes.tsx";
+import { AppProvider } from "../src/store/context.tsx";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
-/** An `/events` EventSource wired to the fake daemon's listeners, open at once. */
+/** The daemon's `/events` stream from the fake daemon's listeners, open at once. */
 function liveEvents(harness: Harness): StreamOptions {
   const factory = (_url: string): EventSourceLike => {
     const listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
@@ -47,11 +50,14 @@ describe("Files (design §3.10)", () => {
     expect(within(tab).getByTestId("folder-path")).toHaveTextContent(
       "/home/alice/.local/share/forerunner/worktrees/proj_atlas",
     );
-    // Atlas is linked to org/atlas: the folder is this computer's copy of what is merged, and
-    // the page says where the work in pull requests is (ADR 0106).
-    expect(await within(tab).findByTestId("files-repository")).toHaveTextContent(
-      "This computer's copy of org/atlas as merged. Work waiting in a pull request is on the Overview.",
+    // Atlas is linked to org/atlas: the folder is this computer's copy, and the page says where
+    // the work in pull requests is (ADR 0106). Not brought to what is merged yet (no time):
+    // it claims nothing about merges (review of merged-copy).
+    const line = await within(tab).findByTestId("files-repository");
+    expect(line).toHaveTextContent(
+      "This computer's copy of org/atlas. Work waiting in a pull request is on the Overview.",
     );
+    expect(line).not.toHaveTextContent("as merged");
     // In a browser the path is to copy; Open folder is the desktop app's.
     expect(within(tab).getByTestId("folder-copy")).toHaveTextContent("Copy path");
     expect(within(tab).queryByTestId("folder-open")).toBeNull();
@@ -79,6 +85,119 @@ describe("Files (design §3.10)", () => {
     first.unmount();
     renderApp("/projects/proj_beacon/files");
     expect(await screen.findByTestId("files-empty")).toHaveTextContent("Nothing written yet.");
+  });
+
+  it("a repository project's copy says when it is as merged on GitHub, lists Local only with its line and Open folder, and follows a merge without a reload (merged-copy, U-037)", async () => {
+    // Before (2026-11-03, bench): a pull request merged on the git host stayed out of Files
+    // until a session ended, the page never said when the copy was brought up to date, and
+    // there was no folder of the person's own that Forerunner never uploads.
+    const harness = createHarness();
+    const today = new Date();
+    today.setHours(14, 5, 0, 0);
+    const copyDir = "/home/alice/.local/share/forerunner/worktrees/proj_atlas";
+    harness.daemon.state.copies.proj_atlas = {
+      updatedAt: today.toISOString(),
+      localOnly: {
+        folder: `${copyDir}/Local only`,
+        line: "Never uploaded. Agents can read and change it.",
+      },
+    };
+    const atlasFiles = harness.daemon.state.files.proj_atlas ?? [];
+    atlasFiles.push({
+      path: "Local only/notes.txt",
+      content: "my notes",
+      updatedAt: today.toISOString(),
+    });
+    const opened: string[] = [];
+    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args: { path: string }) => {
+        if (cmd === "open_folder") opened.push(args.path);
+        return null;
+      },
+    };
+    const user = userEvent.setup();
+    try {
+      render(
+        <AppProvider
+          client={harness.client}
+          store={harness.store}
+          streamOptions={liveEvents(harness)}
+        >
+          <MemoryRouter initialEntries={["/projects/proj_atlas/files"]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </AppProvider>,
+      );
+      const tab = await screen.findByTestId("files-tab");
+      expect(await within(tab).findByTestId("files-repository")).toHaveTextContent(
+        "This computer's copy of org/atlas. As merged on GitHub, updated 14:05. Work waiting in a pull request is on the Overview.",
+      );
+      const local = within(tab).getByTestId("local-only");
+      expect(within(local).getByTestId("local-only-line")).toHaveTextContent(
+        "Local only · Never uploaded. Agents can read and change it.",
+      );
+      expect(within(local).getByTestId("local-only-folder-path")).toHaveTextContent(
+        `${copyDir}/Local only`,
+      );
+      // Open folder opens the Local only folder itself, and says so.
+      const open = within(local).getByTestId("local-only-folder-open");
+      expect(open).toHaveAttribute("title", "Opens the Local only folder.");
+      await user.click(open);
+      await waitFor(() => expect(opened).toEqual([`${copyDir}/Local only`]));
+      // Its files are listed with the others.
+      expect(
+        within(tab)
+          .getAllByTestId("file-row")
+          .map((r) => r.dataset.path),
+      ).toContain("Local only/notes.txt");
+
+      // A merge brought the copy up to date (the daemon says the project changed): the list
+      // and the time follow without a reload.
+      atlasFiles.push({
+        path: "site/footer.html",
+        content: "<footer></footer>",
+        updatedAt: today.toISOString(),
+      });
+      const later = new Date(today);
+      later.setMinutes(7);
+      (harness.daemon.state.copies.proj_atlas ?? { updatedAt: null }).updatedAt =
+        later.toISOString();
+      for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+      await waitFor(() =>
+        expect(
+          within(tab)
+            .getAllByTestId("file-row")
+            .map((r) => r.dataset.path),
+        ).toContain("site/footer.html"),
+      );
+      expect(within(tab).getByTestId("files-repository")).toHaveTextContent(
+        "As merged on GitHub, updated 14:07.",
+      );
+    } finally {
+      delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it("a repository that already has a folder named Local only gets none, with one sentence (merged-copy)", async () => {
+    const harness = createHarness();
+    harness.daemon.state.copies.proj_atlas = {
+      updatedAt: null,
+      localOnly: {
+        folder: null,
+        line: "No Local only folder here: this repository already has a folder of that name.",
+      },
+    };
+    renderApp("/projects/proj_atlas/files", harness);
+    const local = await screen.findByTestId("local-only");
+    expect(within(local).getByTestId("local-only-line")).toHaveTextContent(
+      "No Local only folder here: this repository already has a folder of that name.",
+    );
+    expect(within(local).queryByTestId("local-only-folder")).toBeNull();
+    // Not brought up to date yet: the line says what the folder is, without a time or a claim
+    // about merges.
+    expect(screen.getByTestId("files-repository")).toHaveTextContent(
+      "This computer's copy of org/atlas. Work waiting in a pull request is on the Overview.",
+    );
   });
 
   it("the Overview's Your files names the folder and links to Files (a project's folder)", async () => {

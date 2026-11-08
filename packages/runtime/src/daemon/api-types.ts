@@ -1127,6 +1127,20 @@ export const ProjectFilesView = z.object({
   folder: z.string().nullable(),
   entries: z.array(ProjectFileEntryView),
   truncated: z.boolean(),
+  /**
+   * merged-copy (ADR 0113): a repository project's copy on this computer, which follows every
+   * merge: `updatedAt` is when it was last brought to what is merged on the host (null before
+   * the first time); `localOnly` is its Local only folder with the line the tab shows ("Never
+   * uploaded. Agents can read and change it."), or `folder` null with the sentence when the
+   * repository already has a folder of that name. Absent (or null) for a project without one.
+   */
+  copy: z
+    .object({
+      updatedAt: z.string().nullable(),
+      localOnly: z.object({ folder: z.string().nullable(), line: z.string() }).nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type ProjectFilesView = z.infer<typeof ProjectFilesView>;
 
@@ -2878,7 +2892,7 @@ export const DAEMON_ROUTES = {
   docs: "GET /projects/:id/docs (DocView[]: the standard doc set in order, read from the project's linked folder, this install's docs clone or its workspace, without fetching; drift from the open critic findings)",
   doc: "GET /projects/:id/docs/:path (DocContentView: one doc of the set or a decision record docs/decisions/<name>.md, the path URL-encoded; 404 for a path outside them or a doc not written yet)",
   projectFiles:
-    "GET /projects/:id/files (ProjectFilesView: the project's folder on this computer and its files and folders, read-only, without .git and node_modules; folder null before anything was written; design §3.10)",
+    "GET /projects/:id/files (ProjectFilesView: the project's folder on this computer and its files and folders, read-only, without .git and node_modules; folder null before anything was written; for a repository project `copy` says when this computer's copy was last brought to what is merged and names its Local only folder with its line, ADR 0113; design §3.10)",
   projectPullRequests:
     "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's, with who checked it (review: critic, you or none), and Forerunner's docs PRs (review null), read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0106)",
   mergePullRequest:

@@ -9,6 +9,7 @@ import {
   type RunResult,
   run,
 } from "@forerunner/platform";
+import { NEVER_PUSHED_CAUSE, neverPushedWords, underNeverPushed } from "./local-only.ts";
 
 /**
  * Local git operations through argv arrays (never shell strings). Branch and PR flow (spec F):
@@ -141,6 +142,13 @@ export interface GitOpsOptions {
   timeoutMs?: number;
   /** Process runner (tests record argv and env); default the platform's `run`. */
   runner?: (argv: readonly string[], opts?: RunOptions) => Promise<RunResult>;
+  /**
+   * Folders a push never carries to the host (`local-only.ts` `NEVER_PUSHED`: Local only and a
+   * review's try folder, ADR 0113): before every push the branch is checked in code, since
+   * `git add -f` gets past `.git/info/exclude`, and a branch that tracks a path under one that
+   * the remote's default branch does not is refused with one sentence (`neverPushedWords`).
+   */
+  neverPush?: readonly string[];
 }
 
 /**
@@ -417,8 +425,18 @@ export class GitOps {
     return false;
   }
 
-  async createBranch(name: string, from = "HEAD"): Promise<void> {
-    this.must(await this.git(["checkout", "-B", name, from]), `checkout -B ${name}`);
+  /**
+   * `checkout -B name from`. With `keepIgnored` (merged-copy, ADR 0113) an ignored file the
+   * checkout would replace stops it instead (`--no-overwrite-ignore`): by default git overwrites
+   * ignored files without a word, and the person's Local only files are ignored ones.
+   */
+  async createBranch(
+    name: string,
+    from = "HEAD",
+    opts: { keepIgnored?: boolean } = {},
+  ): Promise<void> {
+    const keep = opts.keepIgnored ? ["--no-overwrite-ignore"] : [];
+    this.must(await this.git(["checkout", ...keep, "-B", name, from]), `checkout -B ${name}`);
   }
 
   async checkout(ref: string): Promise<void> {
@@ -558,6 +576,13 @@ export class GitOps {
       throw new ForerunnerError("autonomy_insufficient", `force-pushing ${branch} needs a human`);
     }
     const remote = opts.remote ?? "origin";
+    if (this.opts.neverPush?.length) {
+      const held = await this.neverPushedIn(branch, opts.defaultBranch, remote);
+      if (held.length)
+        throw new ForerunnerError("path_not_allowed", neverPushedWords(branch, held), {
+          details: { cause: NEVER_PUSHED_CAUSE, paths: held.slice(0, 20) },
+        });
+    }
     const args = ["push", "-u", remote, branch];
     if (opts.force) args.splice(1, 0, "--force-with-lease");
     // The push URL as git will use it (pushurl and insteadOf / pushInsteadOf applied).
@@ -567,6 +592,64 @@ export class GitOps {
       url = r.code === 0 ? r.stdout.trim() : null;
     }
     this.must(await this.git(args, {}, url), `push ${branch}`);
+  }
+
+  /**
+   * The paths under the `neverPush` folders that a push of `ref` would upload: tracked at its
+   * tip, or touched by any of its commits no remote branch has yet (an agent's own commit that
+   * added a file and a later one that removed it still carry it). A folder the remote's default
+   * branch already tracks is the repository's own and is not checked. Tip names are read raw
+   * (`-z`) and the log's unquoted, so names with spaces or non-ASCII letters compare as they are.
+   */
+  async neverPushedIn(ref: string, defaultBranch?: string, remote = "origin"): Promise<string[]> {
+    const guarded: string[] = [];
+    for (const f of this.opts.neverPush ?? []) {
+      const onBase = defaultBranch
+        ? await this.trackedUnder(`${remote}/${defaultBranch}`, [f])
+        : null;
+      if (!onBase?.length) guarded.push(f);
+    }
+    if (!guarded.length) return [];
+    const atTip = await this.trackedUnder(ref, guarded);
+    if (atTip === null) {
+      // A branch that cannot be read is never pushed unchecked.
+      this.must(await this.git(["rev-parse", "--verify", `${ref}^{commit}`]), `ls-tree ${ref}`);
+      return [];
+    }
+    const log = this.must(
+      await this.git([
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--format=",
+        "--name-only",
+        ref,
+        "--not",
+        `--remotes=${remote}`,
+        "--",
+        ...guarded,
+      ]),
+      `log ${ref}`,
+    );
+    const touched = underNeverPushed(
+      log.stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean),
+      guarded,
+    );
+    return [...new Set([...atTip, ...touched])];
+  }
+
+  /**
+   * The files `rev` tracks under the folders (relative, forward slashes, read raw with `-z`);
+   * null when `rev` names no commit here.
+   */
+  async trackedUnder(rev: string, folders: readonly string[]): Promise<string[] | null> {
+    if (!folders.length) return [];
+    const r = await this.git(["ls-tree", "-r", "-z", "--name-only", rev, "--", ...folders]);
+    if (r.code !== 0) return null;
+    return underNeverPushed(r.stdout.split("\0").filter(Boolean), folders);
   }
 
   /** True when `ancestor` is reachable from `of` (the base has not moved past the branch). */

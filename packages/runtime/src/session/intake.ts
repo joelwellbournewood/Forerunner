@@ -431,9 +431,12 @@ export interface IntakeDeps {
   /**
    * The G.5 scaffold (`ProjectDocs`, ADR 0058): a rejected proposal ends the deferral of a
    * creation with `intake: true` by scaffolding the standard set from the templates. Absent,
-   * a rejection scaffolds nothing.
+   * a rejection scaffolds nothing. After an approval wrote the docs to the repository, this
+   * computer's copy is brought to it at once (`refreshCopy`, merged-copy W6-25): before, a
+   * project made from a brief had no copy until its first session ended, and its Docs tab read
+   * README.md as "not written yet".
    */
-  docs?: Pick<ProjectDocsPort, "scaffoldProject">;
+  docs?: Pick<ProjectDocsPort, "scaffoldProject" | "refreshCopy">;
   /**
    * Whether specialists reach the web on this install (U-044, ADR 0107): true with a Claude
    * subscription, whose runs go through the Agent SDK with `cc:WebFetch` and `cc:WebSearch`, and
@@ -1158,6 +1161,11 @@ export class IntakeService {
   enqueue(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
     const running = this.jobs.get(projectId);
     if (running) return running;
+    // W6-25 (review of merged-copy): this computer's copy of the project's repository is made
+    // while the plan is drafted, so the Docs and Files tabs read it while the plan waits (before,
+    // only from the watcher's first poll, up to a minute later). Part of the job, so nothing of
+    // it keeps running once the job is done; a failure is logged and the plan goes on.
+    const copy = this.copyWhileDrafting(projectId);
     const job = this.propose(projectId, opts)
       .catch(async (e: unknown) => {
         const wait = await this.waitFor(e, projectId);
@@ -1176,7 +1184,8 @@ export class IntakeService {
         }
         throw e;
       })
-      .finally(() => {
+      .finally(async () => {
+        await copy;
         this.jobs.delete(projectId);
         // After the delete: the status read on the announcement is no longer "drafting".
         try {
@@ -1229,6 +1238,21 @@ export class IntakeService {
     const read = planRead(changed?.change_card as JsonObject | undefined);
     void this.enqueue(projectId, changes.length ? { changes, read } : {}).catch(() => undefined);
     return this.status(projectId);
+  }
+
+  /** The project's copy of its repository, brought to what is merged; never throws. */
+  private async copyWhileDrafting(projectId: string): Promise<void> {
+    const refresh = this.deps.docs?.refreshCopy;
+    if (!refresh) return;
+    try {
+      const project = await this.deps.store.project.get(projectId);
+      if (project?.repos[0]) await refresh.call(this.deps.docs, project);
+    } catch (e) {
+      this.logger.warn("this computer's copy not made while the plan is drafted", {
+        projectId,
+        error: errorMessage(e),
+      });
+    }
   }
 
   /** The background job of a project while it runs (tests await it), else null. */
@@ -2147,6 +2171,18 @@ export class IntakeService {
     } catch (e) {
       docs = { error: redact(cut(errorMessage(e))) };
       this.logger.warn("intake docs not written", { requestId: row.id, error: errorMessage(e) });
+    }
+    // W6-25: this computer's copy of the repository, so Docs and Files read it at once (one
+    // fetch after the docs write's own clone and push; nothing is left running behind it).
+    if ("target" in docs && docs.target === "repository") {
+      try {
+        await this.deps.docs?.refreshCopy?.(project);
+      } catch (e) {
+        this.logger.warn("this computer's copy not made after the intake", {
+          projectId: project.id,
+          error: errorMessage(e),
+        });
+      }
     }
     const after = await store.humanRequest.mustGet(row.id);
     await store.humanRequest.patch(row.id, {

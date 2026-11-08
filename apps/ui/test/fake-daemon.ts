@@ -473,6 +473,16 @@ export interface FakeDaemonState {
   folders: Record<string, string>;
   files: Record<string, { path: string; content: string | null; updatedAt: string }[]>;
   /**
+   * merged-copy (ADR 0113): what `GET /projects/:id/files` says of a repository project's copy
+   * (`copy`: when it was last brought to what is merged, its Local only folder and line), by
+   * project; a project without an entry answers `copy: null`, as the daemon does before the
+   * first refresh of a copy or for a project without a repository.
+   */
+  copies: Record<
+    string,
+    { updatedAt: string | null; localOnly: { folder: string | null; line: string } | null }
+  >;
+  /**
    * `GET /projects/:id/pull-requests` by project (ADR 0106): the PRs that wait for the person,
    * or the host's error in words; a project without an entry has none waiting.
    */
@@ -964,6 +974,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     intake: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
+    copies: {},
     pullRequests: clone(PROJECT_PULL_REQUESTS),
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
@@ -6645,7 +6656,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         updatedAt: f.updatedAt,
       })),
     ].sort((a, b) => a.path.localeCompare(b.path));
-    return c.json({ folder, entries, truncated: false });
+    // merged-copy: a repository project's copy, as the daemon's `ProjectDocs.copyView` says it.
+    return c.json({ folder, entries, truncated: false, copy: state.copies[id] ?? null });
   });
   app.get("/projects/:id/files/:path", (c) => {
     const id = c.req.param("id");

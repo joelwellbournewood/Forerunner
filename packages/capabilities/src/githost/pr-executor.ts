@@ -19,6 +19,19 @@ import { ensureBaseBranch } from "./base-branch.ts";
 // branch-rules.ts reads DEPS_BASE_REF from this module; both are used only inside functions.
 import { holdsMergedWork, ownChangeId } from "./branch-rules.ts";
 import { GitOps, type GitTokenSource, gitAuthFor, resolveGitToken } from "./git.ts";
+import {
+  copyLocalOnlyBack,
+  copyLocalOnlyIn,
+  excludeNeverPushed,
+  hasLocalOnlyCopy,
+  isNeverPushed,
+  keptBesideSentence,
+  LOCAL_ONLY_DIR,
+  NEVER_PUSHED,
+  recoverLocalOnlyCopies,
+  TRY_DIR,
+  underNeverPushed,
+} from "./local-only.ts";
 import { pushFailedWords } from "./push-words.ts";
 import type { GitHost, MergeMethod, RepoRef } from "./types.ts";
 
@@ -110,6 +123,13 @@ export interface PrTaskExecutorDeps {
   identity?: { name: string; email: string };
   /** Branch naming; default fr/<task-id-prefix>-<slug>. */
   branchFor?: (task: TaskRow) => string;
+  /**
+   * The project's Local only folder on this computer (merged-copy, ADR 0113: `ProjectDocs
+   * .localOnlyFolder`, in the project's copy): copied into the task's worktree before each run
+   * and back after it (`local-only.ts`), so the agent (and the Docker sandbox, which mounts only
+   * the worktree) can use it. Null (or absent): the project has none.
+   */
+  localOnlyFor?: (task: TaskRow) => Promise<string | null>;
 }
 
 type ExecuteCtx = Parameters<TaskExecutor["execute"]>[0];
@@ -417,6 +437,8 @@ export function ensureWorkspaceGitignore(dir: string): boolean {
 
 export class PrTaskExecutor implements TaskExecutor {
   private readonly logger = log("pr-executor");
+  /** The sentence a task's run left about Local only (the person's changes kept), by task. */
+  private readonly localOnlyWords = new Map<string, string>();
 
   constructor(private readonly deps: PrTaskExecutorDeps) {}
 
@@ -431,7 +453,86 @@ export class PrTaskExecutor implements TaskExecutor {
     }
     const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
     // A rebuild of this task's branch (a dependency merged, closed or redone) waits for the run.
-    return inWorktree(dir, () => this.executeIn(ctx, target, dir));
+    return inWorktree(dir, async () => {
+      try {
+        const result = await this.executeIn(ctx, target, dir);
+        // merged-copy: the person changed a Local only file during the run; the task's result
+        // says so first, never the pull request or the commit (they name no Local only file).
+        const kept = this.localOnlyWords.get(task.id);
+        return kept ? { ...result, summary: `${kept}\n\n${result.summary}` } : result;
+      } finally {
+        this.localOnlyWords.delete(task.id);
+      }
+    });
+  }
+
+  /**
+   * At the daemon's start (merged-copy): a run's Local only copy that was never copied back (the
+   * app closed or crashed during the run) is copied back now, by the same rules. Returns how many.
+   */
+  recoverLocalOnly(): number {
+    return recoverLocalOnlyCopies(this.deps.worktreeRoot);
+  }
+
+  /**
+   * The inner executor with the project's Local only folder in the worktree for its run
+   * (merged-copy, ADR 0113): a copy an earlier run left is recovered first, the folder is
+   * copied in, and back after the run whatever it returned or threw; the sentence for a file
+   * the person changed meanwhile is kept for the task's result. A task branch that tracks a
+   * folder named Local only (the repository started tracking one before the copy's next
+   * refresh said so) gets none: its folder is the repository's, which the copy in would have
+   * replaced and the pull request then deleted (review of merged-copy).
+   */
+  private withLocalOnly(
+    task: TaskRow,
+    dir: string,
+    inner: TaskExecutor,
+    git: GitOps,
+  ): TaskExecutor {
+    const folderFor = this.deps.localOnlyFor;
+    if (!folderFor) return inner;
+    const back = () => {
+      try {
+        const words = keptBesideSentence(copyLocalOnlyBack(dir));
+        if (words) this.localOnlyWords.set(task.id, words);
+      } catch (e) {
+        // The marker stays: the next run or the next start copies back by the same rules.
+        this.logger.warn("Local only not copied back", { taskId: task.id, error: errorMessage(e) });
+      }
+    };
+    return {
+      execute: async (c) => {
+        if (hasLocalOnlyCopy(dir)) back();
+        const source = await folderFor(task);
+        if (!source) return inner.execute(c);
+        if ((await git.trackedUnder("HEAD", [LOCAL_ONLY_DIR]))?.length) {
+          const why = "Local only: the task's branch has a folder of that name; none copied in";
+          this.logger.info(why, { taskId: task.id });
+          return inner.execute(c);
+        }
+        try {
+          copyLocalOnlyIn({
+            source,
+            worktree: dir,
+            taskTitle: task.title,
+            now: this.deps.clock.nowIso(),
+          });
+        } catch (e) {
+          // The run goes on without the folder; nothing of the person's was moved.
+          this.logger.warn("Local only not copied into the run", {
+            taskId: task.id,
+            error: errorMessage(e),
+          });
+          back();
+          return inner.execute(c);
+        }
+        try {
+          return await inner.execute(c);
+        } finally {
+          back();
+        }
+      },
+    };
   }
 
   /** The git of a task's worktree, with the person's token scoped to the clone URL's origin. */
@@ -442,6 +543,8 @@ export class PrTaskExecutor implements TaskExecutor {
       // Scoped to the clone URL's origin; a local path or SSH remote gets no header.
       auth,
       identity: this.deps.identity,
+      // merged-copy: no push of a task branch carries Local only or a review's try folder.
+      neverPush: NEVER_PUSHED,
     });
   }
 
@@ -460,6 +563,12 @@ export class PrTaskExecutor implements TaskExecutor {
     const git = await this.gitFor(target, dir);
     if (existsSync(join(dir, ".git"))) await git.fetch();
     else await git.clone(target.clone);
+    // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
+    // .gitignore the project has (the push checks it again: a forced add gets past this). A
+    // repository that tracks a folder named Local only keeps it as its own: only the try's.
+    const tracksLocalOnly = !!(await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]))
+      ?.length;
+    excludeNeverPushed(dir, tracksLocalOnly ? [TRY_DIR] : NEVER_PUSHED);
     // An empty repository (just created on GitHub) gets its first commit, a README with the
     // project's name and goal, so the task has a branch to start from (ADR 0106).
     await ensureBaseBranch({
@@ -562,9 +671,12 @@ export class PrTaskExecutor implements TaskExecutor {
       await git.createBranch(branch, depsBase ?? `origin/${target.base}`);
     }
 
-    const inner = this.deps.inner.withWorktree
-      ? this.deps.inner.withWorktree(dir)
-      : this.deps.inner;
+    const inner = this.withLocalOnly(
+      task,
+      dir,
+      this.deps.inner.withWorktree ? this.deps.inner.withWorktree(dir) : this.deps.inner,
+      git,
+    );
     const result = await inner.execute({ ...ctx, task: { ...task, branch } });
     if (result.outcome !== "done" && result.outcome !== "in_review") return result;
 
@@ -624,6 +736,8 @@ export class PrTaskExecutor implements TaskExecutor {
       changedFiles = (await git.hasRef(DEPS_BASE_REF))
         ? await git.filesBetween(DEPS_BASE_REF)
         : await git.changedFiles(`origin/${target.base}`);
+      // Never the work's: Local only and a review's try folder (merged-copy).
+      changedFiles = changedFiles.filter((f) => underNeverPushed([f]).length === 0);
     } catch {
       // the diff is informational (peer overlap detection); never fail the PR for it
     }
@@ -632,7 +746,10 @@ export class PrTaskExecutor implements TaskExecutor {
     } catch (e) {
       return {
         outcome: "failed",
-        summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
+        // merged-copy: the push guard's own sentence (a forced add of a Local only file).
+        summary: isNeverPushed(e)
+          ? errorMessage(e)
+          : pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
         costUsdMicro: result.costUsdMicro,
         branch,
       };
@@ -1271,6 +1388,8 @@ export class PrTaskExecutor implements TaskExecutor {
     const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
     if (!existsSync(join(dir, ".git"))) await git.init("main");
     ensureWorkspaceGitignore(dir);
+    // W6-26: a review's try folder a daemon that died mid-review left is never committed.
+    excludeNeverPushed(dir, [TRY_DIR]);
     const before = `Workspace before "${task.title}" (task ${task.id})`;
     await git.commitAll(before, { allowEmpty: !(await git.hasCommits()) });
     const inner = this.deps.inner.withWorktree
@@ -1377,7 +1496,10 @@ export class PrTaskExecutor implements TaskExecutor {
       } catch (e) {
         return {
           outcome: "failed",
-          summary: pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
+          // merged-copy: a branch that carries Local only files is refused in its own words.
+          summary: isNeverPushed(e)
+            ? errorMessage(e)
+            : pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e),
           costUsdMicro: 0,
           branch,
         };

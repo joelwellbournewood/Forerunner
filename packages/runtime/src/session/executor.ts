@@ -425,8 +425,19 @@ export function gitConstraints(
       ? `Forerunner commits your changes on the branch ${branch}, pushes it and opens the pull request after the run: do not commit, push or open a pull request yourself. A criterion that asks for a commit, a push or a pull request is Forerunner's step: do not report it as not met.`
       : "Forerunner commits your changes in the project's folder after the run: do not commit yourself. A criterion that asks for a commit is Forerunner's step: do not report it as not met.",
     "Git's read commands (git status, git diff, git log) work in the folder, to see what you changed.",
+    // merged-copy (ADR 0113): a repository project's run has the person's Local only folder in
+    // its worktree; the push refuses a branch that carries any of it.
+    ...(branch ? [LOCAL_ONLY_BRIEF_LINE] : []),
   ];
 }
+
+/**
+ * The brief's line about the Local only folder of a repository project (merged-copy, ADR 0113):
+ * what it holds, that it never leaves this computer, and that its content goes into the work
+ * only when the task asks for it.
+ */
+export const LOCAL_ONLY_BRIEF_LINE =
+  "A folder named \"Local only\" in the project's folder, when there is one, holds the person's own files on this computer and is never uploaded: read or change them when the task needs it, and put their content into your work only when the task asks for it.";
 
 /** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
 export function retryConstraints(

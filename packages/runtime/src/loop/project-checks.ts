@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { LOCAL_ONLY_DIR } from "@forerunner/capabilities";
 import type { CheckCommand } from "@forerunner/critic";
 import { join, type RunOptions, type RunResult } from "@forerunner/platform";
 import { TRY_FOLDER } from "./try-plan.ts";
@@ -430,7 +431,9 @@ export const MAX_PROJECT_FILES = 200;
 
 /**
  * The files of the task's folder as the critic's list (relative paths, forward slashes, at most
- * `MAX_PROJECT_FILES`), without `.git`, `node_modules` and other dot folders.
+ * `MAX_PROJECT_FILES`), without `.git`, `node_modules` and other dot folders, and without the
+ * project's Local only folder (merged-copy, ADR 0113: the person's own files, never evidence;
+ * the run's copy is gone by the review, this keeps a stray one out too).
  */
 export function projectFileList(root: string | undefined, max = MAX_PROJECT_FILES): string[] {
   if (!root || !isDir(root)) return [];
@@ -445,6 +448,7 @@ export function projectFileList(root: string | undefined, max = MAX_PROJECT_FILE
     for (const e of entries) {
       if (out.length >= max) return;
       if (e === "node_modules" || e.startsWith(".")) continue;
+      if (!prefix && e === LOCAL_ONLY_DIR) continue;
       const p = join(dir, e);
       if (isDir(p)) {
         if (depth < 4) walk(p, `${prefix}${e}/`, depth + 1);

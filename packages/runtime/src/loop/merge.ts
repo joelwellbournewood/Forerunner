@@ -9,6 +9,7 @@ import {
   type GitTokenSource,
   gitAuthFor,
   type MergeMethod,
+  NEVER_PUSHED,
   ownChangeId,
   type RepoRef,
   resolveGitToken,
@@ -361,6 +362,8 @@ async function mergeChecked(
       cwd: input.worktree,
       ...(auth ? { auth } : {}),
       ...(deps.identity ? { identity: deps.identity } : {}),
+      // merged-copy (ADR 0113): bringing the base in never uploads Local only or a try folder.
+      neverPush: NEVER_PUSHED,
     });
     await git.fetch();
     const base = `origin/${pr.base.ref}`;
