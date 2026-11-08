@@ -154,6 +154,9 @@ const NO_CLICK: ReadonlySet<string> = new Set([
 /** "#4" for a pull request in a sentence. */
 const prName = (n: number) => `#${n}`;
 
+/** How long the view keeps a repository's settings and a branch's rules (R-overviewcalls). */
+export const RULES_KEPT_MS = 60_000;
+
 function andList(items: readonly string[]): string {
   return items.length <= 1
     ? (items[0] ?? "")
@@ -233,6 +236,8 @@ export class ProjectPullRequests {
     string,
     { state: "merging" | "left_to_you"; sentence: string | null }
   >();
+  /** The repository settings and branch rules read lately (`readKept`), by repository and base. */
+  private readonly kept = new Map<string, { at: number; value: unknown }>();
 
   constructor(private readonly deps: ProjectPullRequestsDeps) {}
 
@@ -646,9 +651,24 @@ export class ProjectPullRequests {
   }
 
   /**
-   * What the repository's settings and each base branch's rules let Forerunner merge, read once
-   * per view (ADR 0111 points 5 and 6): a sentence per pull request where they let it merge
-   * nothing; nothing when they could not be read (the merge step reads them again).
+   * A read of the repository's settings or a base branch's rules, kept `RULES_KEPT_MS`
+   * (R-overviewcalls, leftovers7-merge): they change rarely, and the merge step reads them again
+   * before every merge, so the view need not ask GitHub at every look (a settling row reads the
+   * list on every change of its project, for up to a day). A failed read is not kept.
+   */
+  private async readKept<T>(key: string, read: () => Promise<T>): Promise<T> {
+    const now = this.deps.store.clock.now();
+    const kept = this.kept.get(key);
+    if (kept && now - kept.at < RULES_KEPT_MS) return kept.value as T;
+    const value = await read();
+    this.kept.set(key, { at: now, value });
+    return value;
+  }
+
+  /**
+   * What the repository's settings and each base branch's rules let Forerunner merge, read at
+   * most once a minute (ADR 0111 points 5 and 6): a sentence per pull request where they let it
+   * merge nothing; nothing when they could not be read (the merge step reads them again).
    */
   private async rulesOf(
     ref: RepoRef,
@@ -657,7 +677,9 @@ export class ProjectPullRequests {
     const out = new Map<string, (n: number) => string>();
     if (!prs.length) return out;
     try {
-      const repo = await this.deps.host.getRepo(ref);
+      const repo = await this.readKept(`${ref.owner}/${ref.name}`, () =>
+        this.deps.host.getRepo(ref),
+      );
       for (const base of new Set(prs.map((p) => p.base.ref))) {
         if (repo.allowMergeCommit === false) {
           out.set(
@@ -667,7 +689,9 @@ export class ProjectPullRequests {
           );
           continue;
         }
-        const rules = await this.deps.host.getBranchRules(ref, base);
+        const rules = await this.readKept(`${ref.owner}/${ref.name}#${base}`, () =>
+          this.deps.host.getBranchRules(ref, base),
+        );
         if (rulesBlock(rules, 0, base))
           out.set(base, (n) => rulesBlock(rules, n, base)?.sentence ?? "");
       }

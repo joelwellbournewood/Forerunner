@@ -100,3 +100,48 @@ describe("the Overview's pull requests say why they are not listed, in words (C-
     expect(logged.join("\n")).toContain("ECONNRESET");
   });
 });
+
+/**
+ * R-overviewcalls (leftovers7-merge): every read of a repository project's Overview asked GitHub
+ * for the repository's settings and each base branch's rules again (4 calls a read with the
+ * list), and a settling row reads the list on every card change, for up to a day.
+ */
+describe("the Overview's pull requests read the repository's settings and rules once a minute (R-overviewcalls)", () => {
+  it("consecutive views within the minute make one getRepo and one getBranchRules per base; the list is read each time", async () => {
+    const { w, project } = await world();
+    const memory = new MemoryGitHost("alice");
+    await memory.createRepo({ owner: "o", name: "app", private: true });
+    await memory.createPullRequest(
+      { owner: "o", name: "app" },
+      { title: "One", body: "", head: "fr/one", base: "main" },
+    );
+    await memory.createPullRequest(
+      { owner: "o", name: "app" },
+      { title: "Two", body: "", head: "fr/two", base: "release" },
+    );
+    const calls: string[] = [];
+    const host = new Proxy(memory, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          if (prop === "getRepo" || prop === "getBranchRules" || prop === "listPullRequests")
+            calls.push(prop === "getBranchRules" ? `${String(prop)} ${String(args[1])}` : prop);
+          return value.apply(target, args);
+        };
+      },
+    });
+    const prs = new ProjectPullRequests({ store: w.store, host });
+    for (let i = 0; i < 3; i++) await prs.view(project);
+    const count = (name: string) => calls.filter((c) => c === name).length;
+    expect(count("listPullRequests")).toBe(3);
+    expect(count("getRepo")).toBe(1);
+    expect(count("getBranchRules main")).toBe(1);
+    expect(count("getBranchRules release")).toBe(1);
+    // A minute later they are read again.
+    await w.clock.advance(61_000);
+    await prs.view(project);
+    expect(count("getRepo")).toBe(2);
+    expect(count("getBranchRules main")).toBe(2);
+  });
+});

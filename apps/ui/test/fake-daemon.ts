@@ -521,6 +521,8 @@ export interface FakeDaemonState {
     | null;
   /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
   pullRequestReads: Record<string, number>;
+  /** How many times `GET /projects` was read (leftovers7-merge: the list follows other changes). */
+  projectListReads: number;
   /** merged-actions: set by a test, the next Take this work out conflicts in these files. */
   takeOutConflict: string[] | null;
   /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
@@ -982,6 +984,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
     pullRequestReads: {},
+    projectListReads: 0,
     takeOutConflict: null,
     docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
@@ -1509,7 +1512,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       researchReads: researchReadsLine(webAccessFake(p.id)),
     };
   };
-  app.get("/projects", (c) => c.json(state.projects.map(projectCardOf)));
+  app.get("/projects", (c) => {
+    state.projectListReads += 1;
+    return c.json(state.projects.map(projectCardOf));
+  });
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
