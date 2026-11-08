@@ -10260,11 +10260,11 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     const merged = `Merged #${c.pr.number}: "Add the late notes".`;
     // While the checks run, the retry pass says nothing.
     await rt.merge.retryWaiting();
-    expect((await client.inbox()).messages.map((m) => m.body)).not.toContain(merged);
+    expect((await client.inbox(rt.human.id)).messages.map((m) => m.body)).not.toContain(merged);
     await checkRun(c.pr.head.sha, "completed", "success");
     await rt.merge.retryWaiting();
     expect((await rt.store.mergeRecord.forTask(c.task.id))?.state).toBe("merged");
-    const bodies = (await client.inbox()).messages.map((m) => m.body);
+    const bodies = (await client.inbox(rt.human.id)).messages.map((m) => m.body);
     expect(bodies.filter((b) => b === merged)).toHaveLength(1);
   }, 120_000);
 });
