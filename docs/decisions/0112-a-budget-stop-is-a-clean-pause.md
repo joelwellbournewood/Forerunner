@@ -286,3 +286,31 @@ run's returned cost before the tail arrives). (2) **Each model at its own price*
 (R-modelusage): a message is priced at its own model, and the result's `modelUsage` is booked
 per model at that model's price, less what the messages already booked for it; the ledger row
 names the model. A model the price table does not know is priced as the run's model.
+
+## Amendment 2026-11-09 (the run-side leftovers of waves 12 and 14, 'leftovers7-tailrun')
+
+1. **The tail reaches the task's spent figure (TR-13).** A killed run's late usage was booked in
+   the ledger, the session's spend and the Run row, but the task's `actual_cost_usd_micro` was
+   written by the runner from the row it read after the run returned, so the tail never reached
+   it (and a late write would have raced that one). Both additions now go through
+   `task.addCost` (one `UPDATE ... + ?` statement, as `session.recordSpend`): the runner adds the
+   run's cost, `lateRunCost` adds the tail after the Run row. The task's spent figure equals the
+   ledger's sum for the task.
+2. **A review paused at a budget says the work is done (TR-14).** The card of a review a limit
+   refused (point 6 of the amendment of 'leftovers7-session') carries `review_waits`, and its body
+   says "The work is done; its review waits for room in the budget." instead of the run pause's
+   "It stopped before it could say where it stood; its work so far is kept."
+3. **Still not built: a review-only pass (TR-15).** When only the review was refused, the next
+   session still runs the specialist again before the critic reviews (one more specialist call;
+   at the task's own budget Continue may have to be pressed twice). What it needs: (a) the run's
+   result kept for the review (summary, final report, changed files, PR and branch, web sources
+   and search results, checks) on the specialist's Run row (`artifacts`, a `review_pending`
+   entry, so no migration) with the head it reviewed (the branch's commit, or the project
+   folder's commit of the paused work); (b) the runner, before `execute`, taking a task whose
+   latest work run has an unconsumed `review_pending` entry, an unchanged attempt and an unchanged
+   head, and going straight to `reviewTask` with that result, then clearing the entry whatever the
+   verdict; (c) the executor preparing the review's workspace without running the specialist
+   (`PrTaskExecutor` checks the branch out into a worktree; a project folder is already in
+   place), since the critic's project checks and its tries run in that workspace; (d) a restart
+   test (compose twice: the review-only pass after a restart, the model-call log showing one
+   specialist call in all). A changed head or attempt falls back to today's rerun.
