@@ -551,7 +551,9 @@ your phone, is Stop now; "stop after this task" in Chat is Stop after this task.
 Quitting Forerunner while a session runs reads "Stopped: Forerunner was closed". If Forerunner
 crashed while a session ran, the next start of Forerunner ends that session ("Interrupted:
 Forerunner closed"), puts its task back to Ready ("Forerunner closed while it ran") and posts one
-line in the Inbox; the next Start works at once. Stop on a session that nothing runs any more
+line in the Inbox; the next Start works at once. Its page still says what it finished and what it
+spent before Forerunner closed ("Interrupted: Forerunner closed: 1 done. CHF 0.01."), with the same
+amount in "Spent of this session's budget", and the Overview shows it as the last session. Stop on a session that nothing runs any more
 ends it the same way.
 
 ## Inbox
