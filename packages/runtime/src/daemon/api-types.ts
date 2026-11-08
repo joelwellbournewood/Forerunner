@@ -1520,6 +1520,11 @@ export const StartCheckView = z.object({
    * and what that session finishes makes more tasks ready, so it is never "nothing can run".
    */
   busy: z.boolean().default(false),
+  /**
+   * TR-12: what makes it busy is a plan the agent drafts now (a New project's brief), not a
+   * session: a Start waits for the plan, and the dialog says so. False from an older daemon.
+   */
+  planning: z.boolean().default(false),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 

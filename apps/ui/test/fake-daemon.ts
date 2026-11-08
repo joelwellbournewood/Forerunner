@@ -252,6 +252,11 @@ export interface FakeDaemonOptions {
    */
   startOutcome?: "started" | "queued" | "deferred";
   /**
+   * leftovers7-tailrun TR-12: the agent drafts a plan now (a planning call holds it), as the
+   * daemon's `planning`; with `startOutcome: "queued"` a Start waits for the plan.
+   */
+  agentPlanning?: boolean;
+  /**
    * With `startOutcome: "queued"`: the project the agent's other session works on. A start on
    * it with nothing ready waits for that session; on any other project it is refused, as the
    * daemon's `busyHere` decides (later #38). Unset: a project none of the tests start.
@@ -922,6 +927,7 @@ function fakeStartCheck(
     blocked,
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
     busy: opts.busy ?? false,
+    planning: false,
     waitingForSandbox:
       sandbox && !sandbox.ready && sandboxTasks.length > 0
         ? {
@@ -2387,6 +2393,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         busyHere: options.busyProjectId === id,
       },
     );
+    // leftovers7-tailrun TR-12: a planning call holds the agent, as the daemon says it.
+    if (options.agentPlanning) {
+      view.busy = true;
+      view.planning = true;
+    }
     // As the daemon: with no task yet because the plan waits (or is drafted), the button is
     // the plan card (design §3.3, §3.6).
     const intake = state.intake[id]?.state;

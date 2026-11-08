@@ -568,7 +568,9 @@ now is left to it, and one with a start already queued is not asked twice. R-pla
 planning call holds the agent through `Scheduler.hold` (`IntakeDeps.holdAgent`, from the session
 row's insert to its close), so a session start asked for meanwhile (Start, the wake, a schedule)
 is queued ("queued", not the runner's "already working in another session") and runs when
-planning ends; everything after the planning session started (its first message, its budget, the
+planning ends; the Start check counts the hold as busy and says `planning: true` when only a
+planning call holds the agent (`Scheduler.isHeld`, TR-12), so the dialog names the plan, not a
+session; everything after the planning session started (its first message, its budget, the
 calls) is in the one try whose finally closes the session and releases the hold (TR-7: a throw
 before that try left the agent held and every start queued until a restart). R-startcred: `RuntimeApp.billing.waits.now(projectId)` is the wait every ready
 task's pick meets now (`waitSentence` and `saveLink`), and `startBlocked`'s `credentialWait` fact

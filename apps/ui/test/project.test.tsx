@@ -671,3 +671,31 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
   });
 });
+
+/**
+ * leftovers7-tailrun, wave 13 (TR-12): while the agent drafts a plan (a New project's brief),
+ * the Start dialog said "This session runs ..." as if it started at once (the check's `busy` did
+ * not count the planning call's hold), and after Start "Queued: your agent is in another
+ * session", while the person sees "Drafting the plan", not a session.
+ */
+describe("leftovers7-tailrun, wave 13: Start while a plan is drafted (TR-12)", () => {
+  it("the dialog says the plan is being drafted, and after Start that this one starts when it is ready", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ startOutcome: "queued", agentPlanning: true });
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+      /^Your agent is drafting a plan; this session starts once it is ready\.$/,
+    );
+    // Before: 'This session runs "..." (about CHF ...)' and "Starts after the current session".
+    expect(dialog).not.toHaveTextContent("This session runs");
+    expect(dialog).not.toHaveTextContent("Starts after the current session");
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+      "Queued: your agent is drafting a plan. This one starts when the plan is ready.",
+    );
+    expect(dialog).not.toHaveTextContent("your agent is in another session");
+  });
+});

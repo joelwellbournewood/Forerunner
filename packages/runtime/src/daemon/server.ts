@@ -1354,7 +1354,11 @@ export function createDaemonApp(
     const monthLeftUsd = await monthLeftUsdMicro();
     // Busy: a Start waits for the running session ("Starts after the current session"), on
     // whichever project it runs; whether that is a reason to wait or to refuse is the blocker's.
-    const busy = rt.scheduler.isActive(rt.agent.id);
+    // TR-12: a planning call holds the agent too (R-planningstart), and a Start waits for it:
+    // `planning` says so, so the dialog names the plan, not a session.
+    const sessionRuns = rt.scheduler.isActive(rt.agent.id);
+    const planning = !sessionRuns && rt.scheduler.isHeld(rt.agent.id);
+    const busy = sessionRuns || planning;
     const blocked = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
     const view: StartCheckView = {
       projectId: r.projectId,
@@ -1366,6 +1370,7 @@ export function createDaemonApp(
       later: r.later.map(named),
       blocked,
       busy,
+      planning,
       monthLeft: monthLeftUsd === null ? null : money(monthLeftUsd, rate),
       waiting: r.waiting.map((w) => ({
         taskId: w.taskId,

@@ -11098,4 +11098,43 @@ describe("leftovers7-tailrun, wave 13", () => {
       await rt.close();
     }
   }, 120_000);
+  it("TR-12: while a planning call holds the agent the Start check says so; a Start queues behind it", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Planned", goal: "Two notes" });
+      await client.createTask(project.id, {
+        title: "Write note A",
+        outcome: "note A is written",
+        acceptanceCriteria: ["it is written"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const idle = await client.startCheck(project.id);
+      expect([idle.busy, idle.planning]).toEqual([false, false]);
+      // Another project's plan is being drafted (New project with a brief): it holds the agent.
+      const release = rt.scheduler.hold(agentId);
+      try {
+        const check = await client.startCheck(project.id);
+        // Before: busy false, so the dialog said "This session runs ..." as if it started now.
+        expect(check.busy).toBe(true);
+        expect(check.planning).toBe(true);
+        expect(check.blocked).toBeNull();
+        const started = await client.startSession({ agentId, projectId: project.id });
+        expect(started.result).toBe("queued");
+      } finally {
+        release();
+      }
+      // The plan is drafted: the start that waited runs; nothing holds the agent any more.
+      const after = await client.startCheck(project.id);
+      expect(after.planning).toBe(false);
+    } finally {
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false }).catch(() => undefined);
+      await rt.close();
+    }
+  }, 120_000);
 });
