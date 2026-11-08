@@ -19,6 +19,7 @@ import { MERGE_PR_TOOL, ReviewedPrMerge } from "../src/loop/merge.ts";
 import type { MergeMode } from "../src/loop/merge-mode.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
 import { GitHostWatcher } from "../src/session/githost-watcher.ts";
+import { syncPrAnswers } from "../src/session/pr-answers.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
 import {
   closingReply,
@@ -439,6 +440,72 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     await m.merge.retryWaiting();
     expect((await m.pr(b.id)).merged).toBe(false);
     expect((await m.record(b.id)).state).toBe("left_to_you");
+  });
+
+  /** A closes without merging; B, built on it, is rebuilt without it: its card. */
+  async function rebuiltWithout() {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    await m.poll();
+    const rows = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [view] = await requestViews(m.w.store, rows);
+    if (!view || !rows[0]) throw new Error("no rebuild card");
+    return { m, b, prB, row: rows[0], view };
+  }
+  const answerCard = async (
+    m: Awaited<ReturnType<typeof chainWorld>>,
+    row: { id: string; version: number },
+    label: string,
+  ) => {
+    await m.w.store.humanRequest.answer(row.id, row.version, label, m.w.human);
+    return syncPrAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      merge: m.merge,
+    });
+  };
+
+  it("the rebuild card offers Merge and Redo, never 'I merged it' while the pull request is open; Merge merges it through the merge step and the card says so (R-rebuildcard)", async () => {
+    const { m, b, prB, row, view } = await rebuiltWithout();
+    expect(view.choices?.map((c) => c.label)).toEqual(["Merge", "Redo"]);
+    expect(view.choices?.map((c) => c.label)).not.toContain("I merged it");
+    expect(view.choices?.[0]?.explain).toBe(
+      `Merges #${prB} as it is now, as Merge on the Overview does.`,
+    );
+    const rowsBefore = m.audit.entries.filter((e) => e.tool === MERGE_PR_TOOL).length;
+    const done = await answerCard(m, row, view.choices?.[0]?.label ?? "");
+    expect(done.merging).toBe(1);
+    expect((await m.pr(b.id)).merged).toBe(true);
+    expect(await m.record(b.id)).toMatchObject({ state: "merged", approval: "person" });
+    // Gated calls with the person's approval in their audit rows (the first finds the rebuilt
+    // head and follows it, as the Overview's Merge does, since the task's own change is the one
+    // reviewed).
+    const rows = m.audit.entries.filter((e) => e.tool === MERGE_PR_TOOL).slice(rowsBefore);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.allowed && r.inputSummary.includes(`the person ${m.w.human}`))).toBe(
+      true,
+    );
+    // The task's reason never says "merged by you" for a merge it made.
+    expect((await m.w.store.task.mustGet(b.id)).reason).not.toMatch(/merged by you/);
+    const answered = await m.w.store.humanRequest.mustGet(row.id);
+    const [after] = await requestViews(m.w.store, [answered]);
+    expect(after?.outcome).toBe(`Merged #${prB}.`);
+  });
+
+  it("the rebuild card's Redo makes the task ready again; nothing is merged (R-rebuildcard)", async () => {
+    const { m, b, row, view } = await rebuiltWithout();
+    const done = await answerCard(m, row, view.choices?.[1]?.label ?? "");
+    expect(done.redone).toBe(1);
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("ready");
+    expect((await m.pr(b.id)).merged).toBe(false);
+    const answered = await m.w.store.humanRequest.mustGet(row.id);
+    const [after] = await requestViews(m.w.store, [answered]);
+    expect(after?.outcome).toBe("Redone: the task is ready again and a session runs it.");
   });
 
   it("(d) a dependency redone: the dependent is rebuilt without it at the next poll, its review is void", async () => {

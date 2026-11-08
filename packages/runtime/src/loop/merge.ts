@@ -1748,6 +1748,17 @@ export function mergedUpdateWords(prNumber: number, title: string): string {
 
 export const MERGE_LEFT_OPEN_KEY = "merge:left_open";
 export const MERGE_LEFT_OPEN_OPTIONS = ["I merged it", "Leave it open"] as const;
+/**
+ * The options of the card a dependent branch's rebuild files (R-rebuildcard, leftovers7-merge):
+ * the pull request is still open, so "I merged it" would note a merge that did not happen.
+ * A rebuild that kept the task's work (rebuilt without what it built on, or onto main) offers
+ * Merge (as the Overview's Merge: the person's approval, through the merge step) and Redo (the
+ * task is done again from main, in a session); one that conflicted offers Redo and Leave it open.
+ */
+export const REBUILD_CARD_OPTIONS = {
+  rebuilt: ["Merge", "Redo"],
+  conflict: ["Redo", "Leave it open"],
+} as const;
 
 export async function fileLeftOpenRequest(
   store: Pick<StateStore, "humanRequest">,
@@ -1759,6 +1770,8 @@ export async function fileLeftOpenRequest(
     outcome: MergeOutcome;
     /** More of the card's fields (dependent-branches: `rebuild`, what a rebuild did). */
     card?: JsonObject;
+    /** Its options (a rebuild's card: `REBUILD_CARD_OPTIONS`); else `MERGE_LEFT_OPEN_OPTIONS`. */
+    options?: readonly string[];
   },
 ): Promise<HumanRequestRow> {
   const { task, outcome } = input;
@@ -1778,7 +1791,7 @@ export async function fileLeftOpenRequest(
       4000,
     ),
     steps: STEPS[outcome.status] ?? [],
-    options: [...MERGE_LEFT_OPEN_OPTIONS],
+    options: [...(input.options ?? MERGE_LEFT_OPEN_OPTIONS)],
     blocking: false,
     risk: "medium",
     change_card: {

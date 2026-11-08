@@ -3978,7 +3978,17 @@ running the specialist again), "Drop the branch and retry from scratch" moves it
 "Cancel the task" cancels it; a task no longer `needs_human` is `task_moved_on`. A PR left
 open (task `done`): "I merged it" writes `merged by you: <PR> (request <id>)` on the task's
 `reason` (the person's act, `author_human`), "Leave it open" writes `left open by you: ...`;
-the task stays `done`. An answer outside the options is recorded `unrecognized_answer` and
+the task stays `done`. **The card a dependent branch's rebuild files** (R-rebuildcard,
+leftovers7-merge; `DependentBranches.card`, `REBUILD_CARD_OPTIONS` in `loop/merge.ts`): its pull
+request is still open, so it never offers "I merged it" (which noted a merge that did not
+happen): a rebuild that kept the task's work (`rebuilt_without`, `rebuilt_changed`) offers
+**Merge** ("Merges #8 as it is now, as Merge on the Overview does.": `syncPrAnswers`' `merge`
+dep, the daemon's `ReviewedPrMerge`, `approveInOrder` then `mergeApproved`, the person's approval
+through the gated step; the card's outcome "Merged #8." or the record's sentence; without the
+dep the record is approved and queued for the retry pass) and **Redo** ("The task is done again
+from main; a session starts for it.": `TaskRepo.reopen` to `ready`, then `resumeWork` through the
+`start` dep); one that conflicted offers **Redo** and **Leave it open**. A left-open card already
+open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
 then the task's next run: the person's resolved branch opened as the PR after a restart with

@@ -12,6 +12,7 @@ import {
   fileLeftOpenRequest,
   MERGE_LEFT_OPEN_KEY,
   type MergedEvent,
+  REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
 import type { MergeOutcome, MergePort, MergeRequest } from "../loop/ports.ts";
@@ -271,6 +272,10 @@ export class DependentBranches {
   ): Promise<void> {
     // The pull requests it was rebuilt without, for the card's title (request-words.ts).
     const without = dropped.flatMap((d) => (d.number ? [d.number] : []));
+    // R-rebuildcard: the pull request is open, so the card offers what the person can do now.
+    const options = [
+      ...(rebuild === "conflict" ? REBUILD_CARD_OPTIONS.conflict : REBUILD_CARD_OPTIONS.rebuilt),
+    ];
     const { store } = this.deps;
     try {
       const open = (
@@ -279,6 +284,7 @@ export class DependentBranches {
       if (open) {
         await store.humanRequest.patch(open.id, {
           why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+          options,
           change_card: {
             ...((open.change_card ?? {}) as JsonObject),
             sentence,
@@ -304,6 +310,7 @@ export class DependentBranches {
           sentence,
         },
         card: { rebuild, without },
+        options,
       });
     } catch (e) {
       this.logger.warn("rebuild card not filed", { taskId: task.id, error: errorMessage(e) });
