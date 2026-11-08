@@ -1,9 +1,17 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { createClient } from "../src/api/client.ts";
 import { reviewLevelChoices, specialistName } from "../src/lib/task-actions.ts";
 import { TASKS } from "./fixtures.ts";
-import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
+import {
+  createHarness,
+  fetchFromApp,
+  type Harness,
+  postedCalls,
+  renderApp,
+  testConfig,
+} from "./helpers.tsx";
 
 /**
  * polish-words (wave 13): what the screens say, read where the person reads it, with the fake
@@ -162,5 +170,87 @@ describe("polish-words, wave 13: the Tasks screen", () => {
   });
 });
 
-// Keep `render` imported for later cases of this file (the Inbox card, the session page).
+describe("polish-words, wave 13: the Inbox plan card", () => {
+  /** A harness whose answers wait until `release()`: what the card shows while one works. */
+  function heldAnswers() {
+    const harness = createHarness();
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const fetchApp = fetchFromApp(harness.daemon.app);
+    harness.client = createClient(testConfig(), async (input, init) => {
+      const url = input;
+      if (init?.method === "POST" && /\/requests\/[^/]+\/answer$/.test(url)) await held;
+      return fetchApp(input, init);
+    });
+    return { harness, release: () => release() };
+  }
+
+  const planCard = (harness: Harness, repos: string[]) => {
+    {
+      const p = harness.daemon.state.projects.find((x) => x.id === "proj_atlas");
+      if (p) p.repos = repos;
+    }
+    harness.daemon.state.requests.unshift({
+      ...(harness.daemon.state.requests[0] as (typeof harness.daemon.state.requests)[number]),
+      id: "req_plan",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      taskTitle: null,
+      kind: "approval",
+      why: 'Intake for "Atlas".',
+      steps: [],
+      options: ["Approve and start", "Change the plan", "Reject"],
+      blocking: true,
+      changeCard: {
+        key: "intake:proj_atlas",
+        docs_target: "workspace",
+        applied_at: null,
+        proposal: {
+          plan: { tasks: [{ key: "notes", title: "Write the notes", specialist: "coder" }] },
+          docs: { "README.md": "# Atlas" },
+        },
+      } as never,
+      status: "open",
+      answer: null,
+    });
+  };
+
+  it("a one-task plan starts working on 'it', and the card says what it does while Approve works (L-20)", async () => {
+    const user = userEvent.setup();
+    const { harness, release } = heldAnswers();
+    planCard(harness, []); // a folder project: no repository
+    renderApp("/inbox", harness);
+    const card = (await screen.findAllByTestId("request")).find(
+      (c) => c.getAttribute("data-request-id") === "req_plan",
+    ) as HTMLElement;
+    expect(card).toHaveTextContent("Writes this task and starts working on it now.");
+    expect(card).not.toHaveTextContent("working on them now");
+    await user.click(within(card).getByRole("button", { name: "Approve and start" }));
+    expect(await within(card).findByTestId("choice-working")).toHaveTextContent(
+      "Writing the plan…",
+    );
+    release();
+    await waitFor(() => expect(postedCalls(harness, "/requests/req_plan/answer")).toHaveLength(1));
+  });
+
+  it("on a repository the line names the docs pull request (L-20)", async () => {
+    const user = userEvent.setup();
+    const { harness, release } = heldAnswers();
+    planCard(harness, ["o/atlas"]);
+    renderApp("/inbox", harness);
+    const card = (await screen.findAllByTestId("request")).find(
+      (c) => c.getAttribute("data-request-id") === "req_plan",
+    ) as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Approve and start" }));
+    expect(await within(card).findByTestId("choice-working")).toHaveTextContent(
+      "Writing the plan and its docs pull request…",
+    );
+    release();
+  });
+});
+
+// Keep `render` imported for later cases of this file (the session page).
 void render;

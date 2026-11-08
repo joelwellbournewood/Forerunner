@@ -324,7 +324,8 @@ export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state
     case "closed":
       return `${name}, which was closed`;
     case "redone":
-      return `${name}, which is being redone`;
+      // P7-7: true whenever read; "which is being redone" stayed on the card after the redo.
+      return `${name}, whose task was reopened`;
     case "cancelled":
       return `${name}, whose task was cancelled`;
     case "copied":

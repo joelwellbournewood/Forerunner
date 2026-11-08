@@ -162,9 +162,7 @@ describe("Tasks tab (design §3.5)", () => {
     // No specialist chosen yet: the agent's choice, and the cap is the coder's (the planner's);
     // the line names no specialist the row does not show (polish-words, later #74).
     expect(waiting).toHaveTextContent("Agent's choice");
-    expect(within(waiting).getByTestId("task-cap")).toHaveTextContent(
-      "each run stops at CHF 2.40",
-    );
+    expect(within(waiting).getByTestId("task-cap")).toHaveTextContent("each run stops at CHF 2.40");
     expect(within(waiting).getByTestId("task-cap")).not.toHaveTextContent(/coder/);
     // A task for the person: "You", and no run limit (no specialist runs it).
     const mine = await rowOf("task_me");
@@ -1278,7 +1276,9 @@ describe("Tasks tab (design §3.5)", () => {
     const level = within(dialog).getByTestId("task-risk-tier") as HTMLSelectElement;
     const labels = [...level.options].map((o) => o.textContent ?? "");
     expect(labels.join(" / ")).not.toMatch(/checks only|automatic checks|tier/i);
-    expect(labels).toContain("Light review: the critic reads the work and tries it here; nothing runs in Docker");
+    expect(labels).toContain(
+      "Light review: the critic reads the work and tries it here; nothing runs in Docker",
+    );
     expect([...level.options].map((o) => o.value)).not.toContain("0");
   });
 

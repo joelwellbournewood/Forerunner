@@ -2,7 +2,7 @@ import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource } from "@forerunner/bi
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import { NO_ACTION_GIVEN, saidByName } from "@forerunner/critic";
-import { ForerunnerError } from "@forerunner/platform";
+import { ForerunnerError, isAbsolute } from "@forerunner/platform";
 import type {
   AgentRow,
   ChangeLogRow,
@@ -725,9 +725,16 @@ export async function requestContexts(
       "projectName" | "taskTitle"
     >
   >();
+  // L-20: which projects work on a repository (the plan card's line while Approve and start
+  // writes its docs pull request).
+  const onRepository = new Map<string, boolean>();
   for (const r of rows) {
-    if (r.project_id && !projects.has(r.project_id))
-      projects.set(r.project_id, (await store.project.get(r.project_id))?.name ?? r.project_id);
+    if (r.project_id && !projects.has(r.project_id)) {
+      const p = await store.project.get(r.project_id);
+      projects.set(r.project_id, p?.name ?? r.project_id);
+      const first = p?.repos[0]?.trim() ?? "";
+      onRepository.set(r.project_id, !!first && !isAbsolute(first));
+    }
     let tasks: TaskRow[] = [];
     if (r.task_id) {
       const task = await store.task.get(r.task_id);
@@ -757,6 +764,7 @@ export async function requestContexts(
     out.set(r.id, {
       projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
       taskTitle: null,
+      ...(r.project_id && onRepository.get(r.project_id) ? { projectRepository: true } : {}),
       ...(r.status === "open"
         ? { credentialGoesOn: await credentialGoesOnFor(store, r).catch(() => null) }
         : {}),

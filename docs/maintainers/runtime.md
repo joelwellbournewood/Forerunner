@@ -3241,8 +3241,9 @@ alone (its `onMerged` was heard). `dependencyMerged` (an `onMerged` listener) an
 `rebuildFor(projectId, taskId)`, which is `PrTaskExecutor.rebuildDependents` with `beforePush`
 settling each dependent's record before its push: a dependency dropped whose work is not in main
 (closed, redone, cancelled) voids the review, `left_to_you` with "#8 was rebuilt without #4,
-which was closed. It was reviewed with #4's changes, so it waits for you: look at it before you
-merge it, or send it back." (`rebuiltWithoutSentence`; "which is being redone", "whose task was
+which was closed. It was reviewed with #4's changes, so it waits for you: look at it, then
+merge it or redo the task." (`rebuiltWithoutSentence`; the card offers Merge and Redo, W14-3;
+"whose task was reopened", true whenever read, P7-7, polish-words; "whose task was
 cancelled") and one card; a rebuild that only dropped what main has (a squash or rebase merge)
 keeps the record, moved to the new head with its `own_change_id`, when `ownChangeId` is
 unchanged, else `left_to_you` with `rebuiltChangedSentence` and one card; a rebuild that
@@ -5461,8 +5462,8 @@ it, 0 for the person's questions, while the task itself keeps the plan's bounded
 `est_cost_usd_micro`; the leftovers of wave 7: the card showed the guess while the Start dialog
 showed it times the learned ratio; `real-daemon.test.ts` "the plan card's figure is the Start
 dialog's"), New task and Settings
-show (`choiceLine`: "Runs on your API key: it can read web pages here but not search, so the
-researcher reads pages whose address it knows." when the key's search is off, "Runs on your API key: only it can read web
+show (`choiceLine`: "Runs on your API key: it reads web pages here but cannot search, so it reads
+known addresses." (within 100 characters, P7-15, polish-words) when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your
 subscription its tests will not run: it cannot run commands there."); `chooser.table()` is
 Settings' "What each can do here" (`abilityTable`). Tests: `credential-chooser.test.ts` (research
@@ -5626,7 +5627,7 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   chooser reads and on the scheduler's tick). `chooserFacts.keySearch` is
   `webSearchOn && !keySearchOff()` and `keySearchOff` the mark itself, which only the words read
   (Settings: "No: switched off for this API key", else "No: search is off here"; the plan card:
-  "it can read web pages here but not search"); `capabilitiesOf` searches on the key only beside
+  "it reads web pages here but cannot search"); `capabilitiesOf` searches on the key only beside
   the page reader.
 Tests: `web-search-provider.test.ts` (the adapter through the Messages API stand-in: the tool
 sent, the blocks back byte for byte, a changed result refused, the mixed step, `pause_turn`,

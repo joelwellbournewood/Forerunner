@@ -828,6 +828,8 @@ function RequestCard({
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  /** What the card says while a choice's answer is sent (L-20: "Writing the plan…"). */
+  const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** The choice asked to be confirmed, or whose words are being typed (`input: "text"`). */
   const [pending, setPending] = useState<Choice | null>(null);
@@ -849,6 +851,7 @@ function RequestCard({
       setError(describeError(err));
     } finally {
       setBusy(false);
+      setWorking(null);
     }
   };
   /** A click on a choice: asked once first when it says so; its note or words go with it. */
@@ -861,6 +864,7 @@ function RequestCard({
       setPending(c);
       return;
     }
+    if (!busy) setWorking(c.working ?? null);
     const n = note.trim();
     void send(c.input === "note" && n ? { choice: c.label, note: n } : c.label);
   };
@@ -1065,6 +1069,15 @@ function RequestCard({
             </li>
           ))}
         </ul>
+      ) : null}
+      {busy && working ? (
+        <p
+          className="mt-2 text-sm text-neutral-700 dark:text-neutral-300"
+          role="status"
+          data-testid="choice-working"
+        >
+          {working}
+        </p>
       ) : null}
       {!challenge && !questions && !pending && takesText(request) ? (
         <form

@@ -338,7 +338,7 @@ never repeats work that is already in the default branch:
 - **#4 closed without merging, or its task redone or cancelled**: #8 is rebuilt without #4. It was
   reviewed with #4's changes, so it no longer merges by itself: one Inbox card says so ("#8 was
   rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you:
-  look at it before you merge it, or send it back."). Look at it on GitHub, then merge it
+  look at it, then merge it or redo the task."). Look at it on GitHub, then merge it
   yourself, or press **Redo** on its task.
 - If #8 cannot be rebuilt without #4 (it changes #4's own files), its branch stays as it was and
   one card says so ("#8 could not be rebuilt without #4, which was closed: both change
@@ -629,6 +629,8 @@ The cards you meet most:
   both use what it learned. **Approve and start** writes the tasks and
   starts working on them now (or, when the work waits for your answers first, says so and puts
   their card in your Inbox: "the work starts once you answer its questions in the Inbox").
+  While it writes them the card says so ("Writing the plan…", and on a repository "Writing the
+  plan and its docs pull request…", which takes a few seconds).
   **Change the plan** opens a box: say what to change and the agent drafts a new plan
   for you to approve; it is told the plan you read, so "drop the first task" works. To start
   without the task for you, say so ("drop the task that asks me for content", "I have nothing
@@ -797,7 +799,8 @@ ends with a small table, **What each can do here**:
   and the plan card has nothing to say. If your account's administrator has switched web search
   off for your API key, the table says "No: switched off for this API key" under search, and
   research runs on the subscription when you have one; with the API key alone the plan card says
-  "it can read web pages here but not search". The science evaluator reads pages and has no
+  "it reads web pages here but cannot search, so it reads known addresses". The science evaluator
+  reads pages and has no
   search, on either credential.
 - **A task that needs your answers** (its words say it needs your decision) runs where it can
   ask you while it works: the API key ("Runs on your API key: only it can ask you questions

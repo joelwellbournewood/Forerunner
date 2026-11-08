@@ -121,8 +121,9 @@ export function choiceLine(
   const lacks = new Set(choice.lacks);
   const needs = new Set(choice.hard);
   if (lacks.size) {
+    // P7-15: within 100 characters (it was about 122).
     if (lacks.has("webSearch") && needs.has("webRead") && !lacks.has("webRead"))
-      return `${runsOn}: it can read web pages here but not search, so ${who} reads pages whose address it knows.`;
+      return `${runsOn}: it reads web pages here but cannot search, so it reads known addresses.`;
     if (lacks.has("webRead") && needs.has("webSearch") && !lacks.has("webSearch"))
       return `${runsOn}: it can search the web here but not open pages yet, so ${who} works from search results.`;
     if (lacks.has("webRead"))

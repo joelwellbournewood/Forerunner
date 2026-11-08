@@ -247,7 +247,10 @@ export function reviewLevelChoices(dockerReady: boolean | null): { tier: number;
   return [
     // C-23: the project's checks and the page's try run for a light review too (ADR 0104); only
     // Docker is what the full review adds.
-    { tier: 1, label: "Light review: the critic reads the work and tries it here; nothing runs in Docker" },
+    {
+      tier: 1,
+      label: "Light review: the critic reads the work and tries it here; nothing runs in Docker",
+    },
     { tier: 2, label: `Full review: ${docker}` },
     { tier: 3, label: `Full review and your sign-off: ${docker}` },
   ];

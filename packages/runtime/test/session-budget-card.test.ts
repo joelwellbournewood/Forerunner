@@ -190,7 +190,7 @@ describe("a task the session's budget stops pauses at the first stop with one ca
       }),
       expect.objectContaining({
         label: "Cancel task",
-        explain: "Drops it; its work is set aside until you reopen it.",
+        explain: "Drops it; its work is set aside unless a later task built on it.",
         tone: "danger",
       }),
     ]);
@@ -348,7 +348,7 @@ describe("Cancel task on a paused task's card (budget-resume)", () => {
     );
     const cancel = (card.choices as Json[]).find((c) => c.label === "Cancel task") as Json;
     expect(cancel.explain).toBe(
-      'Drops it; its work is set aside until you reopen it; "Index of the appendix" will be stuck.',
+      'Drops it; its work is set aside; "Index of the appendix" will be stuck.',
     );
     expect(cancel.confirm).toBe(
       'Cancel "Long appendix"? "Index of the appendix" waits on it and will be stuck.',
@@ -362,7 +362,8 @@ describe("Cancel task on a paused task's card (budget-resume)", () => {
     const after = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (r) => r.id === request.id,
     ) as Json;
-    // Nothing of it was in the folder (no run wrote there): it is only cancelled.
-    expect(after.outcome).toBe('"Long appendix" was cancelled.');
+    // Nothing of it was in the folder (no run wrote there): it is only cancelled, and what waits
+    // P7-18 (polish-words): the Done line names what is stuck now.
+    expect(after.outcome).toBe('"Long appendix" was cancelled. "Index of the appendix" is stuck.');
   }, 60_000);
 });

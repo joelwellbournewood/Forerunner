@@ -761,6 +761,8 @@ export const HumanRequestView = z.object({
         tone: z.enum(["primary", "secondary", "danger"]),
         confirm: z.string().nullable(),
         input: z.enum(["note", "text"]).nullable(),
+        /** The line the card shows while this answer is sent (L-20); absent: none. */
+        working: z.string().nullable().optional(),
       }),
     )
     .optional(),

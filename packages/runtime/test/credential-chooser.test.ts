@@ -406,7 +406,8 @@ describe("an API key whose web search is off ('web-search')", () => {
     });
     expect(choice).toEqual({
       kind: "api_key",
-      line: "Runs on your API key: it can read web pages here but not search, so the researcher reads pages whose address it knows.",
+      // P7-15 (polish-words): within 100 characters (it was 122).
+      line: "Runs on your API key: it reads web pages here but cannot search, so it reads known addresses.",
     });
   });
 });
@@ -457,6 +458,6 @@ describe("the science-evaluator on a Claude subscription alone (U-078)", () => {
     // The plan card and New task: nothing it cannot do about the web there.
     expect(
       (await rt.chooser.forTask({ specialist: "science-evaluator", projectId }))?.line ?? "",
-    ).not.toContain("web pages");
+    ).toBe(""); // P7-33 (polish-words): exactly nothing to say, not only no "web pages".
   });
 });

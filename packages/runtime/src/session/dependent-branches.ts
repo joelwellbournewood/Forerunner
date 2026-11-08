@@ -89,7 +89,8 @@ function andList(items: readonly string[]): string {
 /**
  * The record's sentence when a rebuild dropped work that is not in the default branch (ADR
  * 0111): "#8 was rebuilt without #4, which was closed. It was reviewed with #4's changes, so it
- * waits for you: look at it before you merge it, or send it back."
+ * waits for you: look at it, then merge it or redo the task." (W14-3: the card offers Merge and
+ * Redo; before, "or send it back", which no button did.)
  */
 export function rebuiltWithoutSentence(
   pr: number | null,
@@ -97,7 +98,7 @@ export function rebuiltWithoutSentence(
 ): string {
   const gone = dropped.filter((d) => d.state !== "copied");
   const theirs = gone.length === 1 ? `${prName(gone[0]?.number)}'s changes` : "their changes";
-  return `${prName(pr)} was rebuilt without ${andList(gone.map(droppedWords))}. It was reviewed with ${theirs}, so it waits for you: look at it before you merge it, or send it back.`;
+  return `${prName(pr)} was rebuilt without ${andList(gone.map(droppedWords))}. It was reviewed with ${theirs}, so it waits for you: look at it, then merge it or redo the task.`;
 }
 
 /** A rebuild onto main (a dependency merged by squash or rebase) that changed the task's own change. */
@@ -105,7 +106,7 @@ export function rebuiltChangedSentence(
   pr: number | null,
   dropped: readonly Pick<HeldDependency, "number" | "title" | "state">[],
 ): string {
-  return `${prName(pr)} was rebuilt onto main once ${andList(dropped.map((d) => prName(d.number)))} ${dropped.length === 1 ? "was" : "were"} merged, and its own change is no longer the one reviewed, so it waits for you: look at it before you merge it, or send it back.`;
+  return `${prName(pr)} was rebuilt onto main once ${andList(dropped.map((d) => prName(d.number)))} ${dropped.length === 1 ? "was" : "were"} merged, and its own change is no longer the one reviewed, so it waits for you: look at it, then merge it or redo the task.`;
 }
 
 /** A rebuild that conflicted: the pull request still holds the work it built on. */

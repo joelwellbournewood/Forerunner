@@ -30,9 +30,9 @@ import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
-import { saidByName } from "../../../packages/critic/src/followup.ts";
 import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
+import { saidByName } from "../../../packages/critic/src/followup.ts";
 import {
   AcceptingCriticProvider,
   ScriptedProvider,
@@ -4622,7 +4622,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         "Adds CHF 0.08 to its budget and starts a session that goes on from where it stopped.",
         "primary",
       ],
-      ["Cancel task", "Drops it; its work is set aside until you reopen it.", "danger"],
+      ["Cancel task", "Drops it; its work is set aside unless a later task built on it.", "danger"],
     ]);
     // The session's result points at the card that is there; the Tasks tab says the same.
     expect(session.summary).toContain(
@@ -7274,7 +7274,8 @@ describe("the UI client against the real daemon: research on a Claude subscripti
       const runsOn = Object.fromEntries(models.specialists.map((x) => [x.name, x.runsOn]));
       expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
       expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
-      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
+      // P7-33 (polish-words): asserted exactly, not only as not naming web pages.
+      expect(runsOn["science-evaluator"]).toEqual({ kind: "subscription", line: null });
     } finally {
       await sub.rt.close();
     }
@@ -7346,7 +7347,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
       const runsOn = Object.fromEntries(models.specialists.map((s) => [s.name, s.runsOn]));
       expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
       expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
-      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
+      // P7-33 (polish-words): asserted exactly, not only as not naming web pages.
+      expect(runsOn["science-evaluator"]).toEqual({ kind: "subscription", line: null });
       // Settings' "What each can do here": the capability function's output.
       expect(models.credentials?.columns).toEqual([
         { kind: "api_key", name: "API key", saved: true },
@@ -11071,12 +11073,10 @@ describe("polish-words, wave 13", () => {
       to: `/inbox#card-${signoff.id}`,
     });
     const long = await seedTask(project.id, "Write the long guide", { status: "needs_human" });
-    await card(
-      project.id,
-      long.id,
-      { key: "task:budget_stop", task_id: long.id, source: "task" },
-      ["Continue", "Cancel task"],
-    );
+    await card(project.id, long.id, { key: "task:budget_stop", task_id: long.id, source: "task" }, [
+      "Continue",
+      "Cancel task",
+    ]);
     const two = (await client.project(project.id)).statusLine;
     expect(two?.text).toBe("Waiting for you: 1 sign-off and 1 paused task");
     expect(two?.action?.to).toBe(`/inbox#card-${signoff.id}`);
@@ -11246,4 +11246,110 @@ describe("polish-words, wave 13", () => {
       /needs you/,
     );
   }, 90_000);
+});
+
+describe("polish-words, wave 13: the Inbox cards through the real daemon", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({}));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const intakeCard = async (projectId: string, titles: string[]) => {
+    const me = await client.me();
+    return rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: projectId,
+      task_id: null,
+      session_id: null,
+      kind: "approval",
+      why: "Intake",
+      steps: [],
+      options: ["approve", "change", "reject"],
+      blocking: true,
+      risk: "medium",
+      change_card: {
+        key: `intake:${projectId}`,
+        docs_target: "workspace",
+        applied_at: null,
+        proposal: {
+          plan: {
+            tasks: titles.map((title, i) => ({ key: `t${i}`, title, specialist: "coder" })),
+          },
+          docs: { "README.md": "# Notes" },
+        },
+      },
+      author_agent: rt.agent.id,
+    } as never);
+  };
+
+  it("a one-task plan's Approve and start says 'it' and what it does while it works; on a repository, the docs pull request (L-20)", async () => {
+    const me = await client.me();
+    const folder = await client.createProject({ name: "One note", goal: "A note" });
+    const one = await intakeCard(folder.id, ["Write the note in note.md"]);
+    const card = (await client.inbox(me.id)).requests.find((r) => r.id === one.id);
+    const approve = card?.choices?.find((c) => c.label === "Approve and start");
+    expect(approve?.explain).toBe("Writes this task and starts working on it now.");
+    expect(approve?.working).toBe("Writing the plan…");
+    const repo = await client.createProject({ name: "Repo notes", goal: "Notes" });
+    await rt.store.project.patch(repo.id, { repos: ["o/notes"] } as never);
+    const two = await intakeCard(repo.id, ["Write the note", "Check the note"]);
+    const card2 = (await client.inbox(me.id)).requests.find((r) => r.id === two.id);
+    const approve2 = card2?.choices?.find((c) => c.label === "Approve and start");
+    expect(approve2?.explain).toBe("Writes these 2 tasks and starts working on them now.");
+    expect(approve2?.working).toBe("Writing the plan and its docs pull request…");
+  });
+
+  it("a project budget's card opens Settings at Other settings; Cancel promises nothing untrue (P7-18, P7-19)", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Budgeted", goal: "A guide" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the long guide",
+      outcome: "guide.md exists",
+      acceptance_criteria: ["guide.md exists"],
+      risk_tier: 1,
+      status: "needs_human",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "paused",
+    } as never);
+    const request = await rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: project.id,
+      task_id: task.id,
+      session_id: null,
+      kind: "approval",
+      why: '"Write the long guide" paused at the project\'s budget.',
+      steps: [],
+      options: ["Cancel task"],
+      blocking: true,
+      risk: "medium",
+      change_card: {
+        key: "task:budget_stop",
+        task_id: task.id,
+        source: "project",
+        done: null,
+        left: [],
+        title: '"Write the long guide" paused at the project\'s budget',
+      },
+      author_agent: rt.agent.id,
+    } as never);
+    const card = (await client.inbox(me.id)).requests.find((r) => r.id === request.id);
+    expect(card?.links?.[0]).toMatchObject({
+      label: "Open Settings",
+      to: "/settings#other-settings",
+    });
+    expect(card?.choices?.[0]?.explain).toBe(
+      "Drops it; its work is set aside unless a later task built on it.",
+    );
+  });
 });

@@ -110,11 +110,7 @@ export interface TaskDisplayContext {
       Partial<
         Pick<
           MergeRecordRow,
-          | "pr_number"
-          | "take_out_pr_number"
-          | "take_out_pr_url"
-          | "take_out_state"
-          | "last_outcome"
+          "pr_number" | "take_out_pr_number" | "take_out_pr_url" | "take_out_state" | "last_outcome"
         >
       >
   >;

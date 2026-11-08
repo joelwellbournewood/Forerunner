@@ -132,7 +132,7 @@ describe("Inbox", () => {
     const user = userEvent.setup();
     const harness = createHarness();
     const sentence =
-      "#8 was rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you: look at it before you merge it, or send it back.";
+      "#8 was rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you: look at it, then merge it or redo the task.";
     harness.daemon.state.requests.unshift({
       id: "req_rebuilt",
       projectId: "proj_atlas",
@@ -1318,7 +1318,7 @@ describe("Inbox", () => {
           .map((e) => e.textContent),
       ).toEqual([
         "Adds CHF 0.40 to its budget and starts a session that goes on from where it stopped.",
-        "Drops it; its work is set aside until you reopen it.",
+        "Drops it; its work is set aside unless a later task built on it.",
       ]);
       expect(within(card).queryByTestId("option-link")).toBeNull();
       expect(within(card).queryByTestId("free-text")).toBeNull();

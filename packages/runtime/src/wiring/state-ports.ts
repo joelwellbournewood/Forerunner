@@ -1,5 +1,6 @@
 import { ForerunnerError } from "@forerunner/platform";
-import type { DecisionRow, HumanRequestRow, StateStore } from "@forerunner/state";
+import type { DecisionRow, HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
+import { leftOpenCardTitle } from "../daemon/request-words.ts";
 import { type ActionClass, ALWAYS_HUMAN } from "../enforcement/autonomy.ts";
 import { approvalKeyFor } from "../enforcement/hooks.ts";
 import type {
@@ -289,7 +290,14 @@ export function decisionPairs(
   }
   const chosen = answerText(r.answer);
   if (!chosen) return [];
-  return [{ question: cardQuestion(r.why), chosen, options: r.options.map(optionLabel) }];
+  // W14-3 (polish-words): a pull request left to the person is asked as its card titles it now
+  // ('"X" conflicts with main'), not by the filing words before the card's sentence.
+  const leftOpenTask =
+    key === "merge:left_open" ? /^The critic accepted "(.+?)", but /.exec(r.why)?.[1] : undefined;
+  const question = leftOpenTask
+    ? leftOpenCardTitle(card as JsonObject, leftOpenTask)
+    : cardQuestion(r.why);
+  return [{ question, chosen, options: r.options.map(optionLabel) }];
 }
 
 /**

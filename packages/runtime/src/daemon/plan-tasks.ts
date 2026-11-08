@@ -148,5 +148,31 @@ export async function planTaskViews(
         : null,
     });
   }
-  return out;
+  return onceForThePlan(out);
+}
+
+/**
+ * A runs-on line the same for several tasks ("On your subscription its tests will not run: it
+ * cannot run commands there.") is said once, under the first of them, for all of them (P7-14:
+ * the plan card repeated it under every code task).
+ */
+function onceForThePlan(tasks: PlanTaskView[]): PlanTaskView[] {
+  const count = new Map<string, number>();
+  for (const t of tasks)
+    if (t.runsOn?.line) count.set(t.runsOn.line, (count.get(t.runsOn.line) ?? 0) + 1);
+  const said = new Set<string>();
+  return tasks.map((t) => {
+    const line = t.runsOn?.line;
+    const n = line ? (count.get(line) ?? 0) : 0;
+    if (!line || n < 2 || !t.runsOn) return t;
+    if (said.has(line)) return { ...t, runsOn: { ...t.runsOn, line: null } };
+    said.add(line);
+    return {
+      ...t,
+      runsOn: {
+        ...t.runsOn,
+        line: line.replace(/\bits tests will not run\b/, `the tests of ${n} tasks will not run`),
+      },
+    };
+  });
 }

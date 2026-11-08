@@ -473,3 +473,184 @@ describe("polish-words, wave 13: the words a person reads (design §5)", () => {
     expect(cardKindOf(signoff("retry_ladder_exhausted"))).toBe("retry");
   });
 });
+
+describe("polish-words, wave 13: the Inbox cards' words (design §5)", () => {
+  const row = (over: Partial<HumanRequestRow>): HumanRequestRow =>
+    ({
+      id: "r1",
+      human_id: "h",
+      project_id: "p",
+      task_id: null,
+      session_id: null,
+      kind: "approval",
+      why: "seed",
+      steps: [],
+      options: [],
+      blocking: true,
+      risk: "medium",
+      change_card: null,
+      status: "open",
+      answer: null,
+      answered_by: null,
+      answered_at: null,
+      created_at: "2026-11-08T10:00:00.000Z",
+      updated_at: "2026-11-08T10:00:00.000Z",
+      version: 1,
+      ...over,
+    }) as HumanRequestRow;
+  const plan = (n: number) => ({
+    key: "intake:p",
+    proposal: {
+      plan: {
+        tasks: Array.from({ length: n }, (_, i) => ({ key: `t${i}`, title: `Task ${i}` })),
+      },
+    },
+  });
+
+  it("a one-task plan starts working on 'it'; Approve says what it does while it works (L-20)", () => {
+    const one = requestWords(
+      row({ options: ["approve", "change", "reject"], change_card: plan(1) as never }),
+      { projectName: "Notes" },
+    );
+    const approve = one.choices.find((c) => c.label === "Approve and start");
+    expect(approve?.explain).toBe("Writes this task and starts working on it now.");
+    expect(approve?.working).toBe("Writing the plan…");
+    const two = requestWords(
+      row({ options: ["approve", "change", "reject"], change_card: plan(2) as never }),
+      { projectName: "Notes", projectRepository: true },
+    );
+    const approve2 = two.choices.find((c) => c.label === "Approve and start");
+    expect(approve2?.explain).toBe("Writes these 2 tasks and starts working on them now.");
+    expect(approve2?.working).toBe("Writing the plan and its docs pull request…");
+  });
+
+  it("a card titled by its first sentence keeps a quoted title whole (P7-26)", () => {
+    const w = requestWords(
+      row({
+        kind: "decision",
+        why: 'Change "Write the README: how to open it" to a light review? It costs less.',
+        options: ["Yes", "No"],
+      }),
+      {},
+    );
+    expect(w.title).toBe('Change "Write the README: how to open it" to a light review?');
+    expect(w.body).toBe("It costs less.");
+  });
+
+  it("a project budget's card opens Other settings; Cancel says what is true in a folder, and its Done line names what is stuck (P7-18, P7-19)", () => {
+    const card = {
+      key: "task:budget_stop",
+      task_id: "t",
+      source: "project",
+      done: null,
+      left: [],
+      title: '"Write the guide" paused at the project\'s budget',
+    };
+    const open = requestWords(row({ options: ["Cancel task"], change_card: card as never }), {
+      taskTitle: "Write the guide",
+      waiting: ["Write the index"],
+    });
+    expect(open.links).toEqual([
+      expect.objectContaining({ label: "Open Settings", to: "/settings#other-settings" }),
+    ]);
+    expect(open.choices[0]?.explain).toBe(
+      'Drops it; its work is set aside; "Write the index" will be stuck.',
+    );
+    expect(open.choices[0]?.explain?.length).toBeLessThanOrEqual(100);
+    const month = requestWords(
+      row({ options: ["Cancel task"], change_card: { ...card, source: "month" } as never }),
+      { taskTitle: "Write the guide" },
+    );
+    expect(month.links[0]?.to).toBe("/settings");
+    const done = requestWords(
+      row({
+        status: "answered",
+        options: ["Cancel task"],
+        change_card: { ...card, outcome: "cancel", set_aside: 2 } as never,
+      }),
+      { taskTitle: "Write the guide", waiting: ["Write the index"] },
+    );
+    expect(done.outcome).toBe(
+      '"Write the guide" was cancelled; its work is set aside until you reopen it. "Write the index" is stuck.',
+    );
+  });
+
+  it("a left-open card's title says what it is about now, and the Overview's Decisions line asks the same (W14-3)", async () => {
+    const { decisionPairs } = await import("../src/wiring/state-ports.ts");
+    const { leftOpenCardTitle } = await import("../src/daemon/request-words.ts");
+    const conflict = {
+      key: "merge:left_open",
+      pr_url: "https://github.com/o/r/pull/4",
+      notice: "conflict",
+      base: "trunk",
+    };
+    expect(leftOpenCardTitle(conflict, "Write the welcome page")).toBe(
+      '"Write the welcome page" conflicts with trunk',
+    );
+    const [pair] = decisionPairs({
+      why: 'The critic accepted "Write the welcome page", but pull request #4 was not merged. #4 conflicts with trunk in index.html: resolve the conflict on GitHub, or redo the task.',
+      steps: [],
+      options: ["Redo", "Leave it open"],
+      answer: "Redo" as never,
+      change_card: conflict as never,
+    });
+    expect(pair?.question).toBe('"Write the welcome page" conflicts with trunk');
+    expect(pair?.chosen).toBe("Redo");
+  });
+});
+
+describe("polish-words, wave 13: the plan card's runs-on lines", () => {
+  it("'its tests will not run' is said once for the plan, under the first task (P7-14)", async () => {
+    const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
+    const line = "On your subscription its tests will not run: it cannot run commands there.";
+    const views = await planTaskViews(
+      {
+        status: "open",
+        project_id: "p",
+        change_card: {
+          key: "intake:p",
+          proposal: {
+            plan: {
+              tasks: [
+                { key: "a", title: "Build the page", specialist: "coder" },
+                { key: "b", title: "Add the script", specialist: "coder" },
+                { key: "c", title: "Write the README", specialist: "writer-marketing" },
+              ],
+            },
+          },
+        } as never,
+      },
+      {
+        has: () => true,
+        forTask: async ({ specialist }) =>
+          specialist === "coder"
+            ? { kind: "subscription", line }
+            : { kind: "subscription", line: null },
+      },
+    );
+    expect(views?.map((v) => v.runsOn?.line ?? null)).toEqual([
+      "On your subscription the tests of 2 tasks will not run: it cannot run commands there.",
+      null,
+      null,
+    ]);
+    expect(views?.[0]?.runsOn?.line?.length).toBeLessThanOrEqual(100);
+  });
+
+  it("research on the API key without search says so within 100 characters (P7-15)", async () => {
+    const { choiceLine } = await import("../src/session/credential-choice.ts");
+    const said = choiceLine(
+      {
+        kind: "api_key",
+        lacks: ["webSearch"],
+        hard: ["webRead", "webSearch"],
+        onlyIt: [],
+        lost: [],
+      } as never,
+      { specialist: "researcher", dependencies: false },
+    );
+    expect(said).toBe(
+      "Runs on your API key: it reads web pages here but cannot search, so it reads known addresses.",
+    );
+    expect(violations(said ?? "", 100)).toEqual([]);
+  });
+});
