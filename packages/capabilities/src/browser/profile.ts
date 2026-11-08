@@ -180,15 +180,29 @@ export interface LaunchedProfile {
   unsandboxed: string | null;
 }
 
-/** The line of a failed launch that says why (Playwright puts the browser's own words last). */
-function launchRefusal(e: unknown): string {
-  const lines = errorMessage(e)
+/**
+ * The browser's own line saying its sandbox could not start (Linux as root, a kernel or a
+ * container without user namespaces, Playwright's own "Chromium sandboxing failed!"), or null
+ * when the launch failed for another reason (a timeout, a profile another Chromium holds, a
+ * missing library). R-sandbox: only such a refusal lets the browser run without its sandbox.
+ * The markers are the ones Chromium and Playwright print when the sandbox cannot start; a line
+ * that merely mentions the sandbox (Chromium's "InitializeSandbox() called with multiple
+ * threads" warning, a profile path in the call log's `<launching>` command line) is not one.
+ * Playwright's own first line is never read as the browser's words.
+ */
+export function sandboxRefusalOf(e: unknown): string | null {
+  const said = errorMessage(e)
     .split("\n")
     .map((l) => l.trim())
-    .filter(Boolean);
-  const said = lines.find((l) => /sandbox/i.test(l) && !/^browserType\./.test(l));
-  return (said ?? lines[0] ?? "it did not start").slice(0, 200);
+    .filter(Boolean)
+    .find(
+      (l) => !/^browserType\./.test(l) && !/^-?\s*<launching>/.test(l) && SANDBOX_REFUSED.test(l),
+    );
+  return said ? said.slice(0, 200) : null;
 }
+
+const SANDBOX_REFUSED =
+  /No usable sandbox|sandboxing failed|without --no-sandbox|crbug\.com\/(?:638180|357670)|SUID sandbox|setuid sandbox|move to new namespace/i;
 
 interface UaCache {
   executable: string;
@@ -317,7 +331,9 @@ export async function launchAgentBrowser(opts: LaunchProfileOptions): Promise<La
   };
 
   // W6-30 (as C-17 did for the page try): Chromium's own sandbox on; Playwright's default is off.
-  // Where it cannot start with it, the agent browser runs without it and the log says why.
+  // Where the browser says its sandbox cannot start, the agent browser runs without it and the
+  // log says why; any other launch failure is an error, never a reason to drop the sandbox
+  // (R-sandbox).
   const launchContext =
     opts.launchContext ??
     ((dir: string, o: Parameters<typeof chromium.launchPersistentContext>[1]) =>
@@ -330,7 +346,9 @@ export async function launchAgentBrowser(opts: LaunchProfileOptions): Promise<La
         try {
           return await launchContext(dirs.profile, { ...options, chromiumSandbox: true });
         } catch (e) {
-          unsandboxed = launchRefusal(e);
+          const refusal = sandboxRefusalOf(e);
+          if (refusal === null) throw e;
+          unsandboxed = refusal;
           logger.warn(
             "the agent browser runs without Chromium's own sandbox on this computer: it could not start with it",
             { agentId: opts.agentId, why: unsandboxed },

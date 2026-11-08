@@ -304,10 +304,16 @@ an exception. The runtime's critic loop calls it through `TryItPort` (compose: s
 Chromium, skipped with the reason without one).
 
 The agent browser (`profile.ts` `launchAgentBrowser`, W6-30, the same class as C-17) starts
-its persistent context with `chromiumSandbox: true` too; where Chromium cannot start with it, it
-runs without it for that and every later launch of the profile, the log says why ("the agent
-browser runs without Chromium's own sandbox on this computer", with the browser's line) and
-`LaunchedProfile.unsandboxed` carries the reason (null with the sandbox).
+its persistent context with `chromiumSandbox: true` too; where Chromium says its sandbox cannot
+start, it runs without it for that and every later launch of the profile, the log says why ("the
+agent browser runs without Chromium's own sandbox on this computer", with the browser's line) and
+`LaunchedProfile.unsandboxed` carries the reason (null with the sandbox). Only such a refusal
+drops the sandbox (R-sandbox, `sandboxRefusalOf`): the browser's or Playwright's own markers
+("No usable sandbox", "Chromium sandboxing failed!", "without --no-sandbox", crbug 638180 or
+357670, the SUID or setuid sandbox, "Failed to move to new namespace"), never Playwright's first
+line or the call log's `<launching>` command line (a profile path may hold the word). Any other
+first-launch failure (a timeout, a profile another Chromium holds) is the `unavailable` error,
+not retried without the sandbox and with no unsandboxed line in the log.
 `LaunchProfileOptions.launchContext` is the seam (`test/browser-profile.test.ts`). A navigation
 that another one interrupts is asked for again when the other went to Chromium's error page or
 to the very same address (R-9, `navigationInterruptedRetry`), at most `GOTO_INTERRUPTED_TRIES`
@@ -315,7 +321,9 @@ to the very same address (R-9, `navigationInterruptedRetry`), at most `GOTO_INTE
 
 Chromium's own sandbox (C-17, ADR 0110): `launchBrowser` starts it with `chromiumSandbox: true`
 (Playwright's default turns it off and adds `--no-sandbox`). Where it cannot start with it
-(Linux as root, no user namespaces) a light review's page is opened without it and every try's
+(Linux as root, no user namespaces: `sandboxRefusalOf` names it, as for the agent browser; any
+other launch failure is `{ unavailable: "the browser did not start (…)" }` for both kinds of
+review, R-sandbox) a light review's page is opened without it and every try's
 output ends "the browser ran without its own sandbox: it could not start with it on this
 computer (<the browser's line>)" (`NO_BROWSER_SANDBOX`); with `requireBrowserSandbox` (a full
 review's page) it is `{ unavailable: "the browser could not start with its own sandbox on this
@@ -326,8 +334,7 @@ that cannot be stored (`the screenshots could not be stored (…)`) are `unavail
 left running. `launch` and `serve` are seams for tests (`test/try-page.test.ts`: a launcher that
 refuses the sandbox as root does, a server that throws). Every `PageTry` has `kind: "page"`; a
 command and a server are tried by the runtime in the task's sandbox (`try-run.ts`). The agent
-browser (`profile.ts`) still launches with Playwright's default; it browses only its allowlist,
-and turning its sandbox on is open (`docs/status/handoff`, phase E verification report).
+browser (`profile.ts`) starts with the sandbox too (W6-30, above).
 
 ## How to change it
 

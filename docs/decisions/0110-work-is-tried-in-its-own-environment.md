@@ -160,3 +160,17 @@ C-17, L-4, L-5, R-1; `/tmp/frbench/handoffs.json` "verification"):
   be a finding the task cannot remove; told instead.
 - **Running the task's changed scripts only, and flagging the change**: "test: passed" would still
   mean the task's own file passed; the script as it was is what the person's project calls "test".
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-web'): only a sandbox refusal drops the sandbox
+
+Point 4's fallback, and the agent browser's (W6-30), happened after **any** failed first launch:
+a timeout or a profile another Chromium held was read as "it could not start with its own
+sandbox", and the browser then ran without it (R-sandbox). Now `sandboxRefusalOf`
+(`packages/capabilities/src/browser/profile.ts`) decides: only the browser's or Playwright's own
+words that the sandbox cannot start ("No usable sandbox", "Chromium sandboxing failed!", "without
+--no-sandbox", crbug 638180 or 357670, the SUID or setuid sandbox, "Failed to move to new
+namespace") let a light review's page, or the agent browser, start without it. Any other failure
+is a browser that did not start: the page is "not tried: the browser did not start (…)" for both
+kinds of review, and the agent browser is unavailable for that call. Playwright's first line and
+the call log's command line are never read as the reason, so a profile path holding the word
+"sandbox" cannot trigger it.

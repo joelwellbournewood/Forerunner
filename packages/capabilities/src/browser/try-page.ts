@@ -11,7 +11,7 @@ import {
   safeSegment,
 } from "@forerunner/platform";
 import { type Browser, chromium, type LaunchOptions } from "playwright";
-import { resolveChromiumExecutable } from "./profile.ts";
+import { resolveChromiumExecutable, sandboxRefusalOf } from "./profile.ts";
 
 /**
  * "Try it" for a page (ADR 0104, the owner's decision of 2026-11-01: work a person will use is
@@ -217,7 +217,10 @@ async function launchBrowser(
   try {
     return { browser: await launch({ ...base, chromiumSandbox: true }), unsandboxed: null };
   } catch (e) {
-    const why = sandboxRefusal(e);
+    // R-sandbox: only the browser's own word that its sandbox cannot start drops it; a timeout
+    // or any other failure is a browser that did not start.
+    const why = sandboxRefusalOf(e);
+    if (why === null) return { unavailable: `the browser did not start (${firstLine(e)})` };
     if (opts.requireBrowserSandbox)
       return {
         unavailable: `the browser could not start with its own sandbox on this computer (${why}), and a page of a full-review task is only opened with it`,
@@ -228,16 +231,6 @@ async function launchBrowser(
       return { unavailable: `the browser did not start (${firstLine(e2)})` };
     }
   }
-}
-
-/** The line of a failed launch that says why (Playwright puts the browser's own words last). */
-function sandboxRefusal(e: unknown): string {
-  const lines = errorMessage(e)
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const said = lines.find((l) => /sandbox/i.test(l) && !/^browserType\./.test(l));
-  return (said ?? lines[0] ?? "it did not start").slice(0, 200);
 }
 
 function firstLine(e: unknown): string {

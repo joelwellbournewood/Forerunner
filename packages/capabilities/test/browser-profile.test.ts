@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "@forerunner/platform";
+import { join, Logger } from "@forerunner/platform";
 import type { BrowserContext } from "playwright";
 import { describe, expect, it } from "vitest";
 import {
@@ -14,6 +14,7 @@ import {
   launchAgentBrowser,
   PLAYWRIGHT_DISABLED_FEATURES,
   resolveChromiumExecutable,
+  sandboxRefusalOf,
 } from "../src/browser/profile.ts";
 import { navigationInterruptedRetry } from "../src/browser/session.ts";
 
@@ -165,6 +166,93 @@ describe("the agent browser starts with Chromium's own sandbox (W6-30)", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  // R-sandbox (W6-30): only a refusal that names the sandbox drops it. A first launch that fails
+  // for another reason (a timeout, a profile another Chromium holds) is not retried without it.
+  const notTheSandbox: [string, string][] = [
+    [
+      "a timeout",
+      // Playwright's call log names the command line; the profile path here holds 'sandbox'.
+      "browserType.launchPersistentContext: Timeout 60000ms exceeded.\nCall log:\n  - <launching> /usr/bin/chromium --disable-features=Translate --user-data-dir=/home/a/forerunner-sandbox/data/browser/a1/profile --remote-debugging-pipe about:blank\n  - <launched> pid=4242",
+    ],
+    [
+      "a profile held by another Chromium",
+      "browserType.launchPersistentContext: Target page, context or browser has been closed\nBrowser logs:\n\n[pid=4242][err] [4242:4242:ERROR:process_singleton_posix.cc(358)] The profile appears to be in use by another Chromium process (4100) on another computer (pc).\n[pid=4242][err] [4242:4242:ERROR:chrome_browser_main.cc(1478)] Failed to create a ProcessSingleton for your profile directory.",
+    ],
+  ];
+  for (const [what, message] of notTheSandbox) {
+    it(`R-sandbox: ${what} is not retried without the sandbox and logs no unsandboxed line`, async () => {
+      const home = mkdtempSync(join(tmpdir(), "fr-browser-sbx-"));
+      const seen: (boolean | undefined)[] = [];
+      const warned: string[] = [];
+      const stop = Logger.addSink((r) => {
+        if (r.level === "warn") warned.push(r.msg);
+      });
+      try {
+        const launching = launchAgentBrowser({
+          agentId: "a1",
+          executablePath: process.execPath,
+          env: { FORERUNNER_HOME: home },
+          launchContext: async (_dir, o) => {
+            seen.push(o?.chromiumSandbox);
+            throw new Error(message);
+          },
+        });
+        await expect(launching).rejects.toThrow(/browser could not be launched/);
+        expect(seen).toEqual([true]);
+        expect(warned.filter((w) => /sandbox/i.test(w))).toEqual([]);
+      } finally {
+        stop();
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("R-sandbox: Playwright's own 'Chromium sandboxing failed!' falls back and says why", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-browser-sbx-"));
+    const seen: (boolean | undefined)[] = [];
+    try {
+      const launched = await launchAgentBrowser({
+        agentId: "a1",
+        executablePath: process.execPath,
+        env: { FORERUNNER_HOME: home },
+        launchContext: async (_dir, o) => {
+          seen.push(o?.chromiumSandbox);
+          if (o?.chromiumSandbox)
+            throw new Error(
+              "browserType.launchPersistentContext: Failed to launch the browser process.\nBrowser logs:\n\nChromium sandboxing failed!\n================================\nTo avoid the sandboxing issue, do either of the following:",
+            );
+          return fakeContext();
+        },
+      });
+      expect(seen[0]).toBe(true);
+      expect(seen.slice(1).every((s) => s === false)).toBe(true);
+      expect(launched.unsandboxed).toBe("Chromium sandboxing failed!");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("R-sandbox: sandboxRefusalOf reads the browser's words, never the command line", () => {
+    expect(sandboxRefusalOf(new Error(notTheSandbox[0]?.[1]))).toBeNull();
+    expect(sandboxRefusalOf(new Error(notTheSandbox[1]?.[1]))).toBeNull();
+    expect(
+      sandboxRefusalOf(
+        new Error(
+          "browserType.launch: Target page closed\n[pid=9][err] [9:9:FATAL:zygote_host_impl_linux.cc(128)] No usable sandbox! Update your kernel",
+        ),
+      ),
+    ).toBe(
+      "[pid=9][err] [9:9:FATAL:zygote_host_impl_linux.cc(128)] No usable sandbox! Update your kernel",
+    );
+    expect(
+      sandboxRefusalOf(
+        new Error(
+          "browserType.launch: Target page closed\n[pid=9][err] Failed to move to new namespace: PID namespaces supported, Network namespace supported, but failed: errno = Operation not permitted",
+        ),
+      ),
+    ).toMatch(/Failed to move to new namespace/);
   });
 });
 
