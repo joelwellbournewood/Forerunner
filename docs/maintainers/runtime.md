@@ -5480,7 +5480,8 @@ the subscription), and the chooser block of `apps/ui/test/real-daemon.test.ts`. 
 plan writer) is told to plan no web work only when the install has no page reader
 (`IntakeDeps.webSpecialists`, composed as `webFetchOn`; `NO_WEB_RULE`), and is told an
 "Only these websites" list (`onlyWebsitesLines` in the planning request: plan no research that
-needs another website). Tests: `specialist-handover.test.ts`,
+needs another website; a list with nothing usable on it, which R-failopen reads as no website,
+says research reads no website instead of naming none, TR-5). Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
 
 **Web research (`src/session/web-sources.ts`, `src/wiring/web-ports.ts`, ADR 0107).** The

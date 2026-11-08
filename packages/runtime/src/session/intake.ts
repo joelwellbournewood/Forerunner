@@ -473,7 +473,11 @@ export interface IntakeDeps {
 export function onlyWebsitesLines(project: Pick<ProjectRow, "settings">): string[] {
   const rule = webAccessOf(project.settings);
   if (rule.mode !== "only") return [];
-  return [
+  // TR-5 (a sibling of R-failopen): an "only" list with nothing usable on it reads no website;
+  // before, the planner read "...only these websites and their subdomains: . Plan no research
+  // ...", naming nothing.
+  if (!rule.only.length)
+    return [
       "Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; where the brief needs one, say in the decision record that this project reads no website.",
     ];
   return [

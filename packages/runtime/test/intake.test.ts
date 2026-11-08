@@ -20,9 +20,11 @@ import {
   intakeDocsBranch,
   intakeKey,
   NO_WEB_RULE,
+  onlyWebsitesLines,
   parseIntakeReply,
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
+import { WEB_ACCESS_SETTING } from "../src/wiring/web-access.ts";
 import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /** A coder task's plan estimate at the top of its calibrated band ('cost', L-22). */
@@ -1499,3 +1501,24 @@ describe("PM intake: Change the plan keeps the person's words until the new plan
   }, 60_000);
 });
 
+/**
+ * leftovers7-tailrun, wave 13 (TR-5): the planner's line for a project whose "only these
+ * websites" list holds nothing usable (R-failopen reads such a list as no website).
+ */
+describe("leftovers7-tailrun, wave 13: the planner's web line for an empty list (TR-5)", () => {
+  it("names no website and says research reads none; a list names its sites", () => {
+    const empty = onlyWebsitesLines({
+      settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: [], never: [] } },
+    });
+    expect(empty).toEqual([
+      "Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; where the brief needs one, say in the decision record that this project reads no website.",
+    ]);
+    // Before: "...only these websites and their subdomains: . Plan no research ...".
+    expect(empty.join(" ")).not.toContain(": .");
+    const listed = onlyWebsitesLines({
+      settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: ["mozilla.org"], never: [] } },
+    });
+    expect(listed[0]).toContain("only these websites and their subdomains: mozilla.org.");
+    expect(onlyWebsitesLines({ settings: {} })).toEqual([]);
+  });
+});
