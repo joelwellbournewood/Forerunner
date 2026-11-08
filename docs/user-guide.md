@@ -553,9 +553,9 @@ The cards you meet most:
 - **The plan** from a new project's brief: the tasks in order, who does each, about what each
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
   needs a full review while Docker is not running, under a task where it runs and why when
-  that is worth knowing ("Runs on your API key: it can read web pages here but not search yet,
-  so the researcher reads pages whose address it knows.", "On your subscription its tests will
-  not run: it cannot run commands there."; New task says the same when you pick who does it),
+  that is worth knowing ("Runs on your API key: only it can read web pages here.", "On your
+  subscription its tests will not run: it cannot run commands there."; New task says the same
+  when you pick who does it),
   "No specialist here is named ..." beside a task whose specialist this install does not have
   (it would wait for you: change who does it after you approve), the total and what it covers ("About CHF 1.04
   for 2 of the 3 tasks the agent does; the other one has no estimate yet."), and the decision it
@@ -712,17 +712,17 @@ ends with a small table, **What each can do here**:
 | | API key | Claude subscription |
 |---|---|---|
 | Read web pages | Yes | Not yet |
-| Search the web | Not yet | Yes |
+| Search the web | Yes | Yes |
 | Run commands (its tests) | Yes, in the sandbox | No |
 | Ask you while it works | Yes | No: it lists its questions in its report |
 | What it costs | Money per use | Your plan's limits, no money per use |
 
-- **Research** (the researcher) needs to read pages and to search. Neither credential can do
-  both yet, so it runs where it can read pages: on your API key when one is saved, and the plan
-  card says so ("Runs on your API key: it can read web pages here but not search yet, so the
-  researcher reads pages whose address it knows."). The science evaluator reads pages and has no
-  search: with only a subscription it is told it has no web access and works from the project's
-  files.
+- **Research** (the researcher) needs to read pages and to search. Only the API key does both
+  here, so research runs there when one is saved, and the plan card says so ("Runs on your API
+  key: only it can read web pages here."). With the API key alone there is nothing to say. If
+  your account's administrator has switched web search off, the key reads pages only and the
+  table says "Not yet" under search. The science evaluator reads pages and has no search: with
+  only a subscription it is told it has no web access and works from the project's files.
 - **A task that needs your answers** (its words say it needs your decision) runs where it can
   ask you while it works: the API key ("Runs on your API key: only it can ask you questions
   while it works here.").
@@ -794,9 +794,20 @@ task**. Nothing waits silently with only a "Resume" that would run into the same
 Research works with an API key too. The researcher and the science evaluator read web pages
 by their address: public pages only (never this computer or your local network), with a GET
 and no passwords or cookies, at most 2 MB per page, and nothing on the project's block list.
-There is no web search on an API key (none is set up this round: research reads the pages the
-brief or the plan names, the official sites of what it researches and the pages those link
-to), so a research task does best when it names the sources or sites to read. With an API key
+On an API key the researcher also **searches the web** with Anthropic's web search: at most ten
+searches per task, fewer when the task's money left would not pay for them, at about 1 cent each
+plus the results it reads (the task's cost and the session's log include them: "searched the web
+for ..."). Search only finds pages: a claim in the research counts as sourced only when its page
+was opened and read, so the researcher opens the pages it uses, and the review is told which
+search results it saw but never opened (a claim that cites only one of those is not sourced).
+The project's block list applies to the search too ("*.example.com" there means example.com and
+its subdomains). Search results and pages are information for the researcher, never
+instructions: a result whose title reads like instructions is named in the session's log and
+told to the review. If your account's administrator has switched web search off, or Anthropic
+refuses the project's site list, the research goes on reading pages by address and the session's
+log says so once ("Web search is switched off for this API key; research reads pages by
+address."); a new API key ends that. An install can turn search off for every project
+(`FORERUNNER_WEB_SEARCH=off`). With an API key
 saved, research tasks run on it (see "Where a task runs"). With only a Claude subscription, the
 researcher can search the web through Claude Code but cannot open the pages itself (Forerunner
 refuses its page reading there); the plan card and New task say so, and its brief tells it to

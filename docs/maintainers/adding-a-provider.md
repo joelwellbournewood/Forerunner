@@ -77,9 +77,20 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 7. Fast mode is optional: leave `fastMode` unset, or set it to `true` (on the credentials that
    offer it), map `speed` onto the vendor's parameter and add `<id>-fast` price rows for the
    models that offer it.
-8. Tests: request mapping (effort, caching flags, no temperature when unsupported, speed only
+8. Server tools are optional ('web-search', ADR 0107 amended 2026-11-08). A provider that runs a
+   search itself declares `serverWebSearch: true` and maps `ModelRequest.webSearch` onto it; it
+   reports each search as `server_tool_use` and `server_tool_result` events, its count in
+   `usage.server_tool_use`, a paused turn as `pause_turn`, and every block of a turn that holds
+   such blocks (or paused) exactly as the vendor sent it in one `raw_content` event before
+   `message_end`; it sends a message's `raw` back unchanged and never puts a cache mark on it; it
+   maps the vendor's "search not enabled" and "domain list refused" errors onto
+   `WEB_SEARCH_OFF_CODE` and `WEB_SEARCH_LISTS_CODE` (only for a request that carried the tool).
+   Leave `serverWebSearch` unset and the executor never offers search on a run of the provider.
+   A wrapper (the bench's model-call log, a proxy) passes `serverWebSearch` through.
+9. Tests: request mapping (effort, caching flags, no temperature when unsupported, speed only
    where fast mode applies), the capability flags per credential, streamed response
-   collection, error mapping, tier classification. See `test/anthropic-provider.test.ts`.
+   collection, error mapping, tier classification. See `test/anthropic-provider.test.ts` and,
+   for the server tool, `test/web-search-provider.test.ts`.
 
 ## Tests
 
