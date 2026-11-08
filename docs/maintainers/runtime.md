@@ -2016,9 +2016,22 @@ budget-stop; the owner's decision of 2026-11-02).**
   with the kill switch again (`(stopping)`), so Stop now or a person's move ends the wait at
   once. Every hook refuses from the abort on, and `EnforcementHooks.endRun` revokes the run's
   token when it returns, so a late PreToolUse is refused (and audited) and a late PostToolUse
-  answers `continue: false`. The kill switch's own stop still returns at once (its 2 s promise).
+  answers `continue: false`. The kill switch's own stop still returns at once (its 2 s promise);
+  what Claude Code still reports is read after the return (`drainKilled`, at most
+  `SDK_STOP_WAIT_MS`, then `close()`), booked, and handed to `SdkRunRequest.onLateUsage`, which
+  the executor adds to the Run row once the row's own figures are written (`lateRunCost`;
+  R-lateusage: before, the iterator was closed unread). Every late booking (`handle(m, false)`,
+  during `awaitExit` too) goes through `EnforcementHooks.afterModelCall(..., { afterStop: true })`,
+  which needs no live token (`TokenIssuer.authentic`: the signature only) and allows nothing; and
+  `afterModelCall` books before it checks the token, so a call that answered after Stop all
+  revoked the token is booked and the run still learns it is stopped (before, both were lost,
+  logged as "a stopped run's late message was not booked").
   Usage is counted once per message id (parallel tool calls share one), and the result's totals
-  (`modelUsage`, else `usage`) book what the messages did not (the real output). Claude Code's
+  (`modelUsage`, else `usage`) book what the messages did not (the real output), one share per
+  model at that model's own price (`resultShares`, `SdkRunRequest.pricingOf`, the executor's
+  `sdk.pricing`; a message is priced by its own `message.model`; a model the price table does not
+  know is priced as the run's model, never at 0; the ledger row names the model it ran on;
+  R-modelusage: before, every model's tokens were booked at the run model's price). Claude Code's
   `maxBudgetUsd` is `claudeCodeBudgetUsd`: the run's cap plus 10% and USD 0.01, so Forerunner's
   own stop comes first. While Claude Code winds down (`handle(m, false)`), a late result only
   books its usage: an aborted query's own error result no longer turns the budget pause into a
@@ -2029,7 +2042,9 @@ budget-stop; the owner's decision of 2026-11-02).**
   first call is refused on both paths), `sdk-driver.test.ts` ("a budget stop really stops Claude
   Code": exit before return, no tool after the stop, Stop now during the wait, `close()` after
   the wait, a late error result during the wait, one count per message id with the result's
-  output, `error_max_budget_usd`, `maxBudgetUsd`), `budget-pause.test.ts` (composed runtime:
+  output, `error_max_budget_usd`, `maxBudgetUsd`; "books every model at its own price, and what
+  comes after a stop": R-modelusage, a killed run's tail, a late message after Stop all),
+  `sdk-late-usage.test.ts` (composed: a killed run's tail in the ledger and its Run row), `budget-pause.test.ts` (composed runtime:
   paused with no review and no try, reviewed after "Left to do: nothing" or with no wrap-up, the
   tiny budget, a budget below its first step, the work budget and its review, across a restart,
   the month's cap named by the run, the card, the task and the session: its badge, result, log,

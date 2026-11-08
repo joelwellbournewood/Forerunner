@@ -757,3 +757,143 @@ describe("SdkAgentDriver: the web tools a subscription run needs ('sites')", () 
     ]);
   });
 });
+
+/**
+ * What Claude Code reports is booked at the right price and also after a stop (leftovers of wave
+ * 7, 'leftovers7-web'): R-modelusage (the result's `modelUsage` sums every model, and was booked
+ * at the run model's price) and R-lateusage (a killed run's late messages were never read, and
+ * after Stop all revoked the run's token a late booking failed and was only logged).
+ */
+describe("the SDK driver books every model at its own price, and what comes after a stop (R-modelusage, R-lateusage)", () => {
+  // The run model at 1 micro-USD a token; Haiku at a tenth of that.
+  const haiku = {
+    estimate: (i: number, o: number) => Math.ceil((i + o) / 10),
+    cost: (u: { input_tokens: number; output_tokens: number }) =>
+      Math.ceil((u.input_tokens + u.output_tokens) / 10),
+  };
+  const pricingOf = (model: string) => (/haiku/.test(model) ? haiku : flatPricing);
+  const msg = (id: string, input: number, output: number, model = "claude-sonnet-5-5") => ({
+    type: "assistant",
+    message: {
+      id,
+      model,
+      content: [{ type: "text", text: id }],
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    },
+  });
+  const request = (h: ReturnType<typeof harness>, q: QueryLike, extra = {}) =>
+    new SdkAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock, queryImpl: q }).run({
+      token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
+      budget: budget("sess-1", 50_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "oauth_token", value: "oat-value" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "sys",
+      prompt: "p",
+      cwd: process.cwd(),
+      tools: registry(),
+      pricing: flatPricing,
+      pricingOf,
+      timeoutMs: 600_000,
+      ...extra,
+    });
+  const ledgerTotal = (h: ReturnType<typeof harness>) =>
+    h.ledger.entries.reduce((s, e) => s + e.usdMicro, 0);
+
+  it("R-modelusage: modelUsage of two models is priced per model, each row naming its model", async () => {
+    const h = harness();
+    const { q } = fakeQuery(() => [
+      msg("m1", 100, 10),
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        total_cost_usd: 0,
+        modelUsage: {
+          "claude-sonnet-5-5": { inputTokens: 100, outputTokens: 50 },
+          "claude-haiku-4-5-20251001": { inputTokens: 1_000, outputTokens: 200 },
+        },
+      },
+    ]);
+    const res = await request(h, q);
+    expect(res.outcome).toBe("completed");
+    // Sonnet: 110 for the message, 40 more output from the totals; Haiku: 1,200 tokens at a
+    // tenth. Before: (1,000 + 240) more at Sonnet's price, 1,350 in all.
+    expect(res.costUsdMicro).toBe(110 + 40 + 120);
+    expect(ledgerTotal(h)).toBe(270);
+    expect(h.ledger.entries.find((e) => e.usdMicro === 120)?.model).toBe(
+      "claude-haiku-4-5-20251001",
+    );
+  });
+
+  it("R-lateusage: a killed run's late messages are read and booked, and reach its Run row", async () => {
+    const h = harness();
+    let abort: AbortController | undefined;
+    const q: QueryLike = ({ options }) => {
+      abort = (options as { abortController?: AbortController }).abortController;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc" };
+        yield msg("m1", 100, 10);
+        await new Promise<void>((resolve) => {
+          if (abort?.signal.aborted) resolve();
+          else abort?.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        // What Claude Code still reports as it winds down.
+        yield msg("m2", 300, 20);
+        yield {
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          result: "aborted",
+          total_cost_usd: 0,
+          modelUsage: { "claude-sonnet-5-5": { inputTokens: 400, outputTokens: 60 } },
+        };
+      })();
+    };
+    const late: number[] = [];
+    const run = request(h, q, { onLateUsage: (_u: unknown, usd: number) => late.push(usd) });
+    await until(() => h.ledger.entries.length === 1, "the first message booked");
+    void h.kill.stop("all", "Stop all", { by: "stop_all" });
+    const res = await run;
+    expect(res.outcome).toBe("killed");
+    expect(res.costUsdMicro).toBe(110);
+    // The tail: m2 (320) and the result's 30 more output, booked with the token revoked.
+    await until(() => late.length === 2, "the late usage booked");
+    expect(late).toEqual([320, 30]);
+    expect(ledgerTotal(h)).toBe(460);
+  });
+
+  it("R-lateusage: after Stop all revokes the token, a stopping run's late message is still booked", async () => {
+    const h = harness();
+    let abort: AbortController | undefined;
+    let stopAll: () => void = () => {};
+    const stopped = new Promise<void>((r) => {
+      stopAll = r;
+    });
+    const q: QueryLike = ({ options }) => {
+      abort = (options as { abortController?: AbortController }).abortController;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc" };
+        // Over the run's cap of USD 1: a budget stop, and the run waits for Claude Code to exit.
+        yield msg("m1", 100, 2_000_000);
+        await stopped;
+        yield msg("m2", 500, 50);
+      })();
+    };
+    const run = request(h, q);
+    await until(() => abort?.signal.aborted === true, "the budget stop");
+    await h.kill.stop("all", "Stop all", { by: "stop_all" });
+    stopAll();
+    const res = await run;
+    expect(res.outcome).toBe("budget_exceeded");
+    // Before: "a stopped run's late message was not booked" and 550 missing from both.
+    expect(res.costUsdMicro).toBe(2_000_100 + 550);
+    expect(ledgerTotal(h)).toBe(2_000_100 + 550);
+  });
+});
