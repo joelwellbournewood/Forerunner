@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Start a test bench: the real daemon on an isolated home plus the real UI dev server.
 //   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
-//        [--provider bench|fake|bench-live|bench-api|none] [--api-key refused|limited|ok] [--home <dir>] [--fresh] [--env KEY=VAL ...]
+//        [--provider bench|fake|bench-live|bench-api|none] [--api-key refused|limited|ok] [--subscription] [--home <dir>] [--fresh] [--env KEY=VAL ...]
 //        [--githost <port> [--githost-in-setup]]
 // Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
 // See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs. The daemon
@@ -50,6 +50,11 @@ if (apiKey !== undefined && !["refused", "limited", "ok"].includes(apiKey))
   fail(`--api-key must be refused, limited or ok (got ${apiKey})`);
 if (apiKey !== undefined && provider === "bench-live")
   fail("--api-key is for --provider bench-api (or none); bench-live stores the environment's key");
+// `--subscription` (credential-chooser): a token-shaped subscription token in the vault too, so
+// the plan card, New task and Settings show where work runs with both credentials saved.
+const subscription = args.subscription === true;
+if (subscription && provider === "bench-live")
+  fail("--subscription is for the stand-in providers; bench-live uses the environment's key");
 // The real Messages API needs a key: refused here, before anything starts (not after a wait).
 if (provider === "bench-live" && !liveKey()) fail(LIVE_KEY_MISSING);
 
@@ -103,6 +108,10 @@ if (provider === "bench-live") {
 if (apiKey !== undefined) {
   console.log(`bench ${name}: writing a ${apiKey} API key into the home's vault ...`);
   storeBenchKey({ dir, home, kind: apiKey });
+}
+if (subscription) {
+  console.log(`bench ${name}: writing a subscription token into the home's vault ...`);
+  storeBenchKey({ dir, home, kind: "subscription" });
 }
 console.log(`bench ${name}: starting the daemon (provider ${provider}) on port ${daemonPort} ...`);
 const daemon = await startDaemon({ dir, home, provider, port: daemonPort, extra });

@@ -44,6 +44,8 @@ export interface BillingOrderRoutesDeps {
   chfPerUsd: () => number;
   /** Stores the order through `settings.set billing_order` (the change log's row). */
   setOrder: (order: BillingOrderKind[]) => Promise<void>;
+  /** The provider the install was started with outside the saved credentials (`RuntimeApp.startedWith`). */
+  startedWith?: string | null;
 }
 
 /** The audit row a change of the order writes. */
@@ -128,7 +130,7 @@ export async function billingOrderView(deps: BillingOrderRoutesDeps): Promise<Bi
       (rows.find((r) => r.id === a.id)?.priority ?? 0) -
         (rows.find((r) => r.id === b.id)?.priority ?? 0),
   );
-  return { chosen: chosen !== null, order, sources };
+  return { chosen: chosen !== null, order, sources, startedWith: deps.startedWith ?? null };
 }
 
 export function createBillingOrderRoutes(deps: BillingOrderRoutesDeps): Hono {

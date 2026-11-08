@@ -320,6 +320,25 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
         ? "a task whose first credential runs out goes on at once on the next one, which may cost money"
         : "a task whose first credential runs out waits for its reset and starts by itself",
   },
+  // U-078 (the owner's decision of 2026-11-02, the credential chooser): a code task that needs
+  // commands stays on the first credential in the person's order (the default; on a Claude
+  // subscription it cannot run commands, so its own tests do not run), or goes to the API key,
+  // which can run them in the sandbox and costs money (a yes first).
+  code_commands: {
+    key: "code_commands",
+    label: "where code tasks that need commands run",
+    scope: "global",
+    risk: "medium",
+    schema: z.enum(["first_choice", "api_key"]),
+    narrows: (to) => to !== "api_key",
+    description:
+      "Code tasks that need commands (their tests): first_choice (your first Claude credential anyway; on a subscription they cannot run commands, so their tests do not run there) or api_key (the API key, which runs them in the sandbox and costs money).",
+    display: (value) => (value === "api_key" ? "the API key" : "my first choice anyway"),
+    effect: (value) =>
+      value === "api_key"
+        ? "code tasks that need commands run on the API key, which costs money"
+        : "code tasks that need commands run on your first Claude credential; on a subscription their tests do not run",
+  },
   quiet_hours: {
     key: "quiet_hours",
     label: "quiet hours",

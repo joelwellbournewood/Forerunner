@@ -11,6 +11,7 @@ import { Button, ErrorBanner } from "../components/ui.tsx";
 import { formatShare } from "../lib/format.ts";
 import { formatChf } from "../lib/money.ts";
 import { formatDateTime } from "../lib/time.ts";
+import { useAsync } from "../lib/use-async.ts";
 import { useClient } from "../store/context.tsx";
 
 /** How a credential's calls are made (ADR 0098, ADR 0100). */
@@ -56,6 +57,60 @@ export function spentThisMonth(s: BillingOrderSourceView): string {
   return s.monthlyCap
     ? `${spent} this month of ${formatChf(s.monthlyCap.chfMicro)}`
     : `${spent} this month`;
+}
+
+/**
+ * "What each can do here" (U-078, the credential chooser): the daemon's table from the capability
+ * function (`GET /settings/models` `credentials`), one row per need and one column per
+ * credential, so a choice that moves work onto the other one is never a surprise. An older daemon
+ * without it shows nothing.
+ */
+export function AbilityTable() {
+  const client = useClient();
+  const models = useAsync((signal) => client.modelSettings(signal), [client]);
+  const table = models.data?.credentials ?? null;
+  if (!table) return null;
+  return (
+    <div data-testid="credential-table">
+      <h3 className="text-sm font-medium">What each can do here</h3>
+      <table className="mt-1 w-full text-left text-sm">
+        <thead>
+          <tr>
+            <th className="py-1 pr-2 font-normal text-neutral-600 dark:text-neutral-400">
+              <span className="sr-only">What</span>
+            </th>
+            {table.columns.map((c) => (
+              <th key={c.kind} className="py-1 pr-2" data-testid={`credential-table-${c.kind}`}>
+                {c.name}
+                {c.saved ? "" : " (not saved)"}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((r) => (
+            <tr
+              key={r.need}
+              className="border-t border-neutral-200 dark:border-neutral-800"
+              data-testid="credential-table-row"
+            >
+              <th scope="row" className="py-1 pr-2 font-normal">
+                {r.label}
+              </th>
+              {r.cells.map((cell, i) => (
+                <td
+                  key={table.columns[i]?.kind ?? i}
+                  className={`py-1 pr-2 ${cell.can ? "" : "text-amber-800 dark:text-amber-200"}`}
+                >
+                  {cell.words}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 const WORDS: Record<BillingOrderKind, string> = {
@@ -122,9 +177,10 @@ export function BillingOrderSection() {
       <h2 className="font-semibold">Claude: which to use first</h2>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Forerunner uses your Claude credentials in this order for tasks, Chat, project setup and
-        reviews; a research task uses the API key first when one is saved, since only there can it
-        read web pages. When one cannot be used, the next one is. A subscription always runs through
-        Claude Code; an API key always goes straight to the API, where promotional credits apply.
+        reviews. A task goes to another one only when the first cannot do it properly (research that
+        must read web pages, a task that must ask you while it works); the plan card and New task
+        say so. When one cannot be used, the next one is. A subscription always runs through Claude
+        Code; an API key always goes straight to the API, where promotional credits apply.
       </p>
       {missing === "billingOrder" ? (
         <RouteMissing route="billingOrder" what="the order of your Claude credentials" />
@@ -132,15 +188,15 @@ export function BillingOrderSection() {
         <div className="mt-2 space-y-2">
           {!view.chosen && view.sources.length > 1 ? (
             <p className="text-sm" data-testid="billing-order-default">
-              You have not chosen an order yet: tasks use the subscription first (research tasks the
-              API key), and Chat, project setup and reviews use the API key first. Moving one sets
-              this order for everything but research tasks.
+              You have not chosen an order yet: tasks use the subscription first, and Chat, project
+              setup and reviews use the API key first. Moving one sets this order for everything.
             </p>
           ) : null}
           {view.sources.length === 0 ? (
             <p className="text-sm" data-testid="billing-order-empty">
-              No Claude credential is saved yet. Add your subscription token or an API key under
-              Accounts and keys.
+              {view.startedWith
+                ? "No Claude credential is saved here. This app was started with a model of its own, which answers for now, so there is no order to choose. To use your own, add your subscription token or an API key under Accounts and keys."
+                : "No Claude credential is saved yet. Add your subscription token or an API key under Accounts and keys."}
             </p>
           ) : (
             <ol className="space-y-2" aria-label="Claude credentials, first used first">
@@ -191,6 +247,7 @@ export function BillingOrderSection() {
               {saved}
             </output>
           ) : null}
+          <AbilityTable />
         </div>
       ) : error ? (
         <ErrorBanner message={error} testId="billing-order-error" />

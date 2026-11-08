@@ -36,10 +36,12 @@ export interface RouteContext {
   order?: readonly BillingSourceKind[];
   /**
    * "When my first choice runs out mid-session: Wait" (U-078, the owner's decision of
-   * 2026-11-02, ADR 0100 amended): a source that rests after a usage limit and ranks ahead of
-   * every source that could serve makes the pick wait for it instead of moving on: the pick
-   * throws `unavailable` with `details.waitFor` (the resting source, its kind and until when).
-   * Off ("Use the other one", and every non-task call): the next source serves, as before.
+   * 2026-11-02, ADR 0100 amended): a source that rests after a usage limit, or whose credential
+   * Anthropic refused (the session lead's default of 2026-11-03), and ranks ahead of every
+   * source that could serve makes the pick wait for it instead of moving on: the pick throws
+   * `unavailable` with `details.waitFor` (the source, its kind, until when or null, and
+   * `reason` `limit` or `refused`). Off ("Use the other one", and every non-task call): the
+   * next source serves, as before.
    */
   waitOnRest?: boolean;
 }
@@ -176,6 +178,8 @@ export class BillingRouter {
     const candidates: { source: BillingSource; status: BillingSourceStatus; rank: number }[] = [];
     /** Sources resting after a usage limit, with their rank (the 'wait' rule reads them). */
     const resting: { source: BillingSource; rank: number; until: string }[] = [];
+    /** Sources whose credential was refused, with their rank (the 'wait' rule reads them too). */
+    const refused: { source: BillingSource; rank: number }[] = [];
     for (const source of all) {
       // Invariant, not policy: never another human's source.
       if (source.humanId !== ctx.humanId) {
@@ -216,6 +220,9 @@ export class BillingRouter {
       }
       if (status.refused) {
         skipped.push(skip(source, "refused", `its credential was refused at ${status.refused}`));
+        // 'Wait' holds to a refused first choice too (U-078, the session lead's default of
+        // 2026-11-03): its work waits for a new credential rather than move onto another one.
+        refused.push({ source, rank: rankOf(source.kind, rank, ctx.order) });
         continue;
       }
       if (status.restingUntil) {
@@ -274,14 +281,19 @@ export class BillingRouter {
         ...(s.until ? { until: s.until } : {}),
       })),
     });
-    // 'Wait' (U-078): the first choice rests, so nothing moves onto a later one.
-    resting.sort(
+    // 'Wait' (U-078): the first choice rests, or Anthropic refused it, so nothing moves onto a
+    // later one: the work waits for its reset, or for a new credential.
+    const held: { source: BillingSource; rank: number; until: string | null }[] = [
+      ...resting,
+      ...refused.map((r) => ({ ...r, until: null })),
+    ];
+    held.sort(
       (a, b) =>
         a.rank - b.rank ||
         a.source.priority - b.source.priority ||
         (a.source.id < b.source.id ? -1 : a.source.id > b.source.id ? 1 : 0),
     );
-    const first = resting[0];
+    const first = held[0];
     if (
       ctx.waitOnRest &&
       first &&
@@ -291,11 +303,18 @@ export class BillingRouter {
     ) {
       throw new ForerunnerError(
         "unavailable",
-        `the first choice for ${ctx.purpose} work rests until ${first.until}; waiting for it`,
+        first.until
+          ? `the first choice for ${ctx.purpose} work rests until ${first.until}; waiting for it`
+          : `the first choice for ${ctx.purpose} work was refused; waiting for a new credential`,
         {
           details: {
             ...details(),
-            waitFor: { sourceId: first.source.id, kind: first.source.kind, until: first.until },
+            waitFor: {
+              sourceId: first.source.id,
+              kind: first.source.kind,
+              until: first.until,
+              reason: first.until ? "limit" : "refused",
+            },
           },
         },
       );

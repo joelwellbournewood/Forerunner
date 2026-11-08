@@ -25,8 +25,11 @@ import { DEFAULT_PROVIDER_CAPABILITIES, type ProviderCapabilities } from "../pro
 import { needsWeb } from "../registry/alternates.ts";
 import type { SpecialistDef } from "../registry/types.ts";
 import {
+  type CredentialRunsOn,
+  type CredentialTableView,
   type ModelSettingsView,
   type ModelSettingValueView,
+  NO_PAGES_LIMITATION,
   type RunSettingsView,
   SEARCH_ONLY_LIMITATION,
 } from "./api-types.ts";
@@ -59,9 +62,17 @@ export interface ModelSettingsViewInput {
   webAccess?: boolean;
   /**
    * Research here only searches (`RuntimeApp.webSearchOnly`, C-64): an entry that reads pages
-   * (`cc:WebFetch`) carries `SEARCH_ONLY_LIMITATION`.
+   * and searches (`cc:WebFetch` and `cc:WebSearch`) carries `SEARCH_ONLY_LIMITATION`; one that
+   * reads pages without search (the science-evaluator) `NO_PAGES_LIMITATION` (U-078).
    */
   webSearchOnly?: boolean;
+  /**
+   * Where a task of each specialist runs here and why (U-078, `RuntimeApp.chooser.forTask`), by
+   * the specialist's name. Absent: no `runsOn`.
+   */
+  runsOn?: ReadonlyMap<string, CredentialRunsOn | null>;
+  /** Settings' "What each can do here" (`RuntimeApp.chooser.table`). */
+  credentials?: CredentialTableView | null;
 }
 
 /** C-64: a specialist that reads pages searches only on a subscription (`api-types.ts`). */
@@ -190,8 +201,12 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
         input.webAccess === false && needsWeb({ registryTools: d.allowed_tools ?? [] })
           ? NO_WEB_LIMITATION
           : input.webSearchOnly && (d.allowed_tools ?? []).includes("cc:WebFetch")
-            ? SEARCH_ONLY_LIMITATION
+            ? // U-078: only an entry with web search searches there.
+              (d.allowed_tools ?? []).includes("cc:WebSearch")
+              ? SEARCH_ONLY_LIMITATION
+              : NO_PAGES_LIMITATION
             : null,
+      ...(input.runsOn ? { runsOn: input.runsOn.get(d.name) ?? null } : {}),
       settings: settingsView(
         resolveRunSettings({
           mode: specialistMode(d.name),
@@ -211,5 +226,6 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
       ),
     })),
     configError: parsed.error,
+    ...(input.credentials !== undefined ? { credentials: input.credentials } : {}),
   };
 }

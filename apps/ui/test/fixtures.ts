@@ -638,6 +638,17 @@ export const SETTINGS: SettingView[] = [
     risk: "medium",
   },
   {
+    // U-078, as settings-view.ts: the credential chooser's setting (default my first choice).
+    key: "human.code_commands",
+    label: "Code tasks that need commands",
+    scope: "human",
+    scopeId: "human_alice",
+    value: "first_choice",
+    description:
+      "Your first choice anyway (on a Claude subscription they cannot run commands, so their own tests do not run), or the API key, which runs them in the sandbox and costs money",
+    risk: "medium",
+  },
+  {
     key: "human.voice_alerts",
     label: "Read urgent notifications aloud",
     scope: "human",

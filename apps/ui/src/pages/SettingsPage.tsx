@@ -96,6 +96,7 @@ export const SETTING_KEYS = [
   "quiet_hours",
   "notify_channel",
   "mid_session_limit",
+  "code_commands",
   "voice_alerts",
   "default_autonomy",
   "language",
@@ -843,14 +844,27 @@ function AccountsSection() {
   const client = useClient();
   const provider = useUiState((s) => s.me?.provider);
   const setup = useAsync((signal) => client.setupStatus(signal), [client]);
-  const creds = setup.data?.credentials;
+  // U-078: a key or sign-in Anthropic refused is no connection (Settings' order says Refused).
+  const order = useAsync((signal) => client.billingOrder(signal).catch(() => null), [client]);
+  const refused = (order.data?.sources ?? []).filter((s) => s.blocked === "refused");
+  const refusedKinds = new Set<string>(refused.map((s) => s.kind));
+  const stored = setup.data?.credentials;
+  // What still connects: the stored credentials less the refused ones.
+  const creds = stored
+    ? {
+        ...stored,
+        anthropicApiKey: stored.anthropicApiKey && !refusedKinds.has("api_key"),
+        subscription: stored.subscription && !refusedKinds.has("subscription"),
+      }
+    : undefined;
   // A daemon that does not name its provider (an older one): the stored credentials say it.
   const claude =
     provider === undefined
       ? creds
         ? creds.anthropicApiKey || creds.subscription
         : null
-      : provider !== null;
+      : provider !== null &&
+        (!creds || creds.anthropicApiKey || creds.subscription || !refused.length);
   return (
     <div
       className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
@@ -861,13 +875,29 @@ function AccountsSection() {
         {claude === null ? null : (
           <li data-testid="account-claude" className="flex flex-wrap items-center gap-2">
             <span>Claude: {claude ? `connected${claudeHow(creds)}` : "not connected"}</span>
-            {claude ? null : (
+            {claude || refused.length ? null : (
               <Link to="/setup" className={buttonClassName("primary")}>
                 Connect Claude
               </Link>
             )}
           </li>
         )}
+        {refused.map((s) => (
+          <li
+            key={s.id}
+            data-testid="account-claude-refused"
+            className="flex flex-wrap items-center gap-2 text-amber-800 dark:text-amber-200"
+          >
+            <span>
+              {s.kind === "subscription"
+                ? "Anthropic refused your Claude sign-in."
+                : "Anthropic refused your API key."}
+            </span>
+            <Link to="/setup" className={buttonClassName("primary")}>
+              {s.kind === "subscription" ? "Save a new sign-in" : "Save a new key"}
+            </Link>
+          </li>
+        ))}
         {creds ? (
           <li data-testid="account-github">
             GitHub: {creds.github ? "connected" : "not connected"}

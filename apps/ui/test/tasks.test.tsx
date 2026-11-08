@@ -818,8 +818,9 @@ describe("Tasks tab (design §3.5)", () => {
     await user.selectOptions(who, "coder");
     expect(within(dialog).queryByTestId("task-who-note")).toBeNull();
     await user.selectOptions(who, "researcher");
+    // The plan card's words (U-078, the credential chooser): where it runs and what follows.
     expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
-      "Cannot read the web on this computer: the researcher works only from the project's files.",
+      "Runs on your API key, where it cannot read web pages: the researcher works from the project's files and the sources the brief gives.",
     );
     // Nothing is refused: the task is created for the researcher as chosen.
     await user.type(within(dialog).getByTestId("task-title"), "Summarise the notes");
@@ -845,8 +846,35 @@ describe("Tasks tab (design §3.5)", () => {
     );
     await user.selectOptions(who, "researcher");
     // Before, the note ended "works only from the project's files", which is not true there.
+    // The plan card's words (U-078, the credential chooser).
     expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
-      "Searches the web but opens no page on a Claude subscription. Save an API key to let it read pages.",
+      "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
+    );
+  });
+
+  it("New task says where the chosen specialist runs for this project and why, as the plan card does (U-078)", async () => {
+    const user = userEvent.setup();
+    // Both credentials, the subscription first; the project has dependencies to install.
+    const harness = createHarness({ projectDependencies: ["proj_atlas"] });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() =>
+      expect([...who.options].map((o) => o.value)).toEqual(
+        expect.arrayContaining(["coder", "researcher"]),
+      ),
+    );
+    await user.selectOptions(who, "researcher");
+    expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
+      "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.",
+    );
+    // Only this project has dependencies to install, so the line shows that the dialog asked for
+    // the project's view (`?project=`).
+    await user.selectOptions(who, "coder");
+    expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
+      "On your subscription its tests will not run: it cannot run commands there.",
     );
   });
 

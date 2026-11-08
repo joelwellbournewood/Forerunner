@@ -98,6 +98,7 @@ import {
   type ConversationView,
   CreateProjectBody,
   CreateTaskBody,
+  type CredentialRunsOn,
   type DecisionView,
   type EventView,
   type HealthView,
@@ -151,6 +152,7 @@ import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
+import { planTaskViews } from "./plan-tasks.ts";
 import { projectRepository } from "./pull-requests.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
@@ -1730,6 +1732,16 @@ export function createDaemonApp(
     const names = new Map<string, string>();
     // U-073: every card names its task beside its project; design §3.8: what waits on it now.
     const reqViews = await requestViews(rt.store, [...requests, ...answered]);
+    // U-078, C-68: an open plan card's tasks as this install would run them now (who does each,
+    // where it runs and why), so the card says it before the person approves.
+    for (const [i, row] of requests.entries()) {
+      const planTasks = await planTaskViews(row, {
+        has: (name) => rt.specialists(name) !== undefined,
+        forTask: (input) => rt.chooser.forTask(input),
+      });
+      const view = reqViews[i];
+      if (planTasks && view) view.planTasks = planTasks;
+    }
     const msgViews = [];
     for (const m of messages) {
       if (!names.has(m.from_agent_id))
@@ -2174,6 +2186,7 @@ export function createDaemonApp(
       clock: rt.clock,
       humanId: rt.human.id,
       chfPerUsd: chf,
+      startedWith: rt.startedWith,
       setOrder: async (order) => {
         const turn = await turnFor({
           source: "ui",
@@ -2391,6 +2404,13 @@ export function createDaemonApp(
   app.get("/settings/models", async (c) => {
     const principal = await rt.store.agent.mustGet(rt.agent.id);
     const config = rt.modelConfig();
+    // U-078 (the credential chooser): where a task of each specialist runs here and why, for the
+    // project `?project=` names (New task asks for its own), and Settings' table.
+    const projectId = c.req.query("project") || null;
+    const specialists = rt.registry.runnableSpecialists();
+    const runsOn = new Map<string, CredentialRunsOn | null>();
+    for (const d of specialists)
+      runsOn.set(d.name, await rt.chooser.forTask({ specialist: d.name, projectId }));
     return c.json(
       buildModelSettingsView({
         provider: rt.provider
@@ -2400,9 +2420,11 @@ export function createDaemonApp(
         modeDefaults: config.modeDefaults,
         principal,
         others: [{ id: rt.criticAgent.id, name: rt.criticAgent.name, kind: "critic" }],
-        specialists: rt.registry.runnableSpecialists(),
+        specialists,
         webAccess: rt.webAccess(),
         webSearchOnly: rt.webSearchOnly(),
+        runsOn,
+        credentials: await rt.chooser.table(),
       }),
     );
   });

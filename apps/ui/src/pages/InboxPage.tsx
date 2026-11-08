@@ -271,7 +271,8 @@ export function markdownAsText(md: string): string[] {
  * daemon's limitation of its specialist ("Cannot read the web on this computer"), read from the
  * specialists list (`GET /settings/models`), so the words are the daemon's and true now. The
  * plan names specialists as the registry does ("data analyst" reads as `data-analyst`); a name
- * the list does not have says nothing here (the daemon maps aliases when it writes the plan).
+ * the list does not have says nothing here: the daemon's `planTasks` (`GET /inbox`, C-68) names
+ * it, and its `runsOn` sentence (U-078) takes this chip's place when there is one.
  */
 export function cannotRunHere(
   specialist: string | null,
@@ -288,8 +289,11 @@ export function cannotRunHere(
 /**
  * The plan from the brief, shown once (design §3.3): the tasks in order with who does each and
  * what it costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a
- * full-review task while Docker is not ready, and beside a task this install cannot run what is
- * missing (`cannotRunHere`), the total and what it covers, and the decision in
+ * full-review task while Docker is not ready, beside a task this install cannot run what is
+ * missing (`cannotRunHere`), beside a task whose specialist this install does not have that it
+ * will wait for the person (C-68), under a task where it runs and why when the credential
+ * chooser has something to say (U-078: "Runs on your API key: only it can read web pages
+ * here.", the daemon's `planTasks`), the total and what it covers, and the decision in
  * one or two sentences with the full record, as text, one click away. The other docs are
  * scaffolded without being listed. Live (2026-11-01) the card ran a title into "Needs Docker",
  * left a task without an estimate out of the total without saying so, and pasted the whole
@@ -299,11 +303,16 @@ function IntakeCard({
   card,
   dockerReady,
   specialists,
+  planTasks,
 }: {
   card: IntakeCardView;
   dockerReady: boolean | null;
   specialists: ReadonlyMap<string, string | null> | null;
+  /** The daemon's view of each plan task here (U-078, C-68): who, where it runs and why. */
+  planTasks: HumanRequestView["planTasks"];
 }) {
+  const hereOf = (t: IntakeCardTask) =>
+    planTasks?.find((p) => (t.key !== null ? p.key === t.key : p.title === t.title)) ?? null;
   const tasks = [...card.milestones.flatMap((m) => m.tasks), ...card.looseTasks];
   const isPerson = (t: IntakeCardTask) => t.specialist === "person";
   const estimate = new Map(card.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
@@ -331,8 +340,19 @@ function IntakeCard({
           const cost = costOf(t);
           const after = t.dependsOn.map(titleOf).filter((x): x is string => x !== null);
           const needsDocker = (t.riskTier ?? 0) >= 2 && dockerReady === false;
-          const missing = cannotRunHere(t.specialist, specialists);
-          const badges = [...(needsDocker ? ["Needs Docker"] : []), ...(missing ? [missing] : [])];
+          const here = hereOf(t);
+          // Where it runs and why (U-078): the daemon's sentence; it says what the limitation
+          // would, so the chip is shown only without one (an older daemon, no credential).
+          const runsOn = here?.runsOn?.line ?? null;
+          const missing = runsOn ? null : cannotRunHere(t.specialist, specialists);
+          const unknown = here?.unknown
+            ? `No specialist here is named "${here.unknown}": this task will wait for you; change who does it after you approve`
+            : null;
+          const badges = [
+            ...(needsDocker ? ["Needs Docker"] : []),
+            ...(unknown ? [unknown] : []),
+            ...(missing ? [missing] : []),
+          ];
           return (
             <li key={t.key ?? t.title} data-testid="intake-task">
               {t.title}
@@ -360,6 +380,14 @@ function IntakeCard({
                   </span>
                 </span>
               ))}
+              {runsOn ? (
+                <span
+                  className="block text-xs text-neutral-600 dark:text-neutral-400"
+                  data-testid="intake-task-runs-on"
+                >
+                  {runsOn}
+                </span>
+              ) : null}
             </li>
           );
         })}
@@ -895,7 +923,12 @@ function RequestCard({
         />
       ) : null}
       {intake ? (
-        <IntakeCard card={intake} dockerReady={dockerReady} specialists={specialists} />
+        <IntakeCard
+          card={intake}
+          dockerReady={dockerReady}
+          specialists={specialists}
+          planTasks={request.planTasks}
+        />
       ) : null}
       {challenge ? (
         <UnlockCard

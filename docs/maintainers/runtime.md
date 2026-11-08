@@ -532,6 +532,13 @@ then."), the log (`billing.fallback`; `task.finished` with `usage_limit` is a de
 the person's zone (`clockTime`). (6) "When my first choice runs out mid-session"
 (`human.notify_prefs.mid_session_limit`, `midSessionLimitOf`, default `wait`): the executor's
 `billingRequest` sets `waitOnRest` for task runs under `wait`; the non-task calls never set it.
+Under `wait` a refused first choice holds the pick too (ADR 0100 point 15, the session lead's
+default: the router's `waitFor` with `reason: "refused"`, which `credentialWaitOf` reads as a
+refused wait), so its task work waits for a new credential instead of moving onto the other
+one; the refused card's body says what happens to the task work, read when it is shown
+(`requestContexts` -> `RequestWordsContext.credentialGoesOn`: under `use_other` "Until then your
+tasks go on with your API key, which costs money.", else "The work that needs it waits and
+starts by itself then.").
 (7) Planning waits too (ADR 0100 point 12, the review of credential-limits): a background
 draft (`IntakeService.enqueue`) whose planning call ended `provider_auth`, `unavailable` or
 `USAGE_LIMIT_CODE` asks `IntakeDeps.credentialWait.now()` (compose: `RoutedProvider.waitNow()`
@@ -815,7 +822,11 @@ share's stop line, `monthly_cap`), the subscription's `planShare` and `planShare
 `monthSpent` / `monthlyCap` in USD and CHF at the day's rate); `POST /settings/billing-order
 { order }` (each kind once, 1 to 3; stored through the registry's `settings.set billing_order`
 with a tap, so Changes lists it with Undo; one `settings.billing_order` audit row with the old
-and new order; 400 for an empty list, an unknown kind or a kind twice). Tests:
+and new order; 400 for an empty list, an unknown kind or a kind twice). The view's
+`startedWith` (U-078) is `RuntimeApp.startedWith`: the provider the runtime was started with when
+its calls do not go through the saved credentials (an injected one: the bench's stand-in,
+`--provider fake`), so Settings says the model answers anyway instead of only "No Claude
+credential is saved yet"; null on a normal install. Tests:
 `billing-order.test.ts` (the order through the route, the view's statuses, a restart),
 `apps/ui/test/real-daemon.test.ts`.
 
@@ -2681,7 +2692,10 @@ waits on you" while 4 tasks waited on it).
   monthly cap from CHF 100 to CHF 900."), a no "You said no; nothing changed.", a yes the
   registry refused "Not changed: <why>.".
 - **GET /inbox** returns the open cards, then the last `INBOX_ANSWERED_KEPT` (20) answered or
-  withdrawn ones for the Inbox's Answered list, and `needsYouCount` (every open card: the
+  withdrawn ones for the Inbox's Answered list (an open plan card with `planTasks`, U-078 and
+  C-68: `planTaskViews` in `daemon/plan-tasks.ts`, each plan task's registry name or the
+  `unknown` name this install has no specialist for, and `runsOn` from
+  `RuntimeApp.chooser.forTask` with the task's own words), and `needsYouCount` (every open card: the
   Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of
   no project); `inbox.changed` on `/events` carries it too. **POST /requests/:id/answer** answers
   the card as it is after the sync, with its `outcome`.
@@ -5039,18 +5053,45 @@ in the report") and the session log a warning. It never returns `needs_human` fo
 tool: the work may need no web at all (a data-only science check, sources the brief gives),
 and before, such a task waited for the person with no card (live, 2026-11-02). A researcher on
 the loop driver whose entry names `cc:WebSearch` gets `NO_WEB_SEARCH_LINE` in its brief (pages
-by address, cite each). **Research goes to the API key first (C-64, ADR 0107 point 7):** when
-the loop form of the specialist both needs and has the web (the page reader is on), the executor's
-billing pick passes `firstKinds: ["api_key"]` with `firstWhy` ("research reads web pages on the
-API key first"); `RouterTaskBilling.pick` puts those kinds ahead of the person's order (or the
-caller's fallback) when such a source is a candidate, and the router's next one is used when it
-is not usable; an order made only of first kinds is not called "your order" in the reason. With
-only a subscription, a web entry runs on the SDK path search-only: its `cc:WebFetch` stays refused
-by the token's domain check, and its brief carries `SEARCH_ONLY_LINE` ("Web pages cannot be
-opened on this run (a Claude subscription): use web search, ..."). Tests: two cases in
-`subscription-path.test.ts` (a researcher's task with both credentials runs on the API key with
-`web_fetch` and the no-search line, a coder's still on the subscription; a subscription alone
-gives the researcher the search-only line). The intake (the plan writer) is told to plan no web work only when the
+by address, cite each). **The credential chooser (U-078, the owner's decision of 2026-11-02;
+ADR 0100 amended, ADR 0107 points 7 to 9 amended; it replaced C-64's "research goes to the API key
+first", `firstKinds`/`firstWhy`):** the executor gives the billing pick the task's needs
+(`taskNeeds` -> `needsOf` in `src/session/credential-choice.ts`): reading pages (`cc:WebFetch`)
+and searching (`cc:WebSearch`) are hard needs of research; asking the person is a hard need of a
+task whose own words need their answers (`needsPersonsAnswers`, until they answered or went ahead
+without); running commands (`cc:Bash`) only makes the work better, unless the person's setting
+"Code tasks that need commands" (`code_commands`: `first_choice`, the default, or `api_key`) makes
+it hard. `RouterTaskBilling.pick` (`src/wiring/billing-pick.ts`) groups the candidates by
+`needsScore(capabilitiesOf(kind, facts), needs)` (`groupByNeeds`: hard needs met, then page
+reading, search, asking, commands) and runs the router on the best group first, so the person's
+order decides among the credentials that meet every hard need; a later group serves only when the
+first cannot now (a 'wait' for a resting first choice holds: its `waitFor` is thrown with every
+group's skipped sources). `capabilitiesOf` is the one place 'web-search' and 'sites' change for
+their kind: the API key reads pages when the page reader is on, searches once `keySearch` is on,
+runs commands (in the sandbox), asks the person; the subscription searches, reads pages once
+`subscriptionPages` is on, runs commands only with host commands, never asks. Its inputs are
+`ChooserFacts` (`RuntimeApp.chooser.facts()`, composed from `webFetchOn`, `sdkHostCommands` and the
+sandbox's readiness; `ComposeOptions.billing.facts` is the test seam). The pick's reason (the
+`billing.pick` audit row) ends with "chooser: only api_key meets webRead (first choice
+subscription); no credential meets every hard need; api_key lacks webSearch" and the like. On a
+subscription an entry that reads pages without web search (the science-evaluator) gets
+`NO_WEB_ACCESS_LINE`, never `SEARCH_ONLY_LINE` (U-078: it has no search there). The person's words
+come from the same functions: `RuntimeApp.chooser.forTask({ specialist, projectId, task })`
+(`credentialChoiceFor` over `RouterTaskBilling.savedKinds()`, the saved credentials in the
+person's order, and `hasDependenciesToInstall` of the project's folder) gives `{ kind, line }`, the
+sentence the plan card (`GET /inbox` `planTasks`, `daemon/plan-tasks.ts`), New task and Settings
+show (`choiceLine`: "Runs on your API key: it can read web pages here but not search yet, so the
+researcher reads pages whose address it knows.", "Runs on your API key: only it can read web
+pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your
+subscription its tests will not run: it cannot run commands there."); `chooser.table()` is
+Settings' "What each can do here" (`abilityTable`). Tests: `credential-chooser.test.ts` (research
+with no search on the key and no pages on the subscription runs on the key with the plan card's
+sentence; with both on, the order decides; a task that needs the person's answers runs on the
+key; a coder on a project with dependencies stays on the subscription by default with "its tests
+will not run there", and on the key with `code_commands: api_key`; the science-evaluator on a
+subscription alone gets `NO_WEB_ACCESS_LINE`; the table equals `capabilitiesOf`), the C-64 cases
+in `subscription-path.test.ts` (their reason now the chooser's), and the chooser block of
+`apps/ui/test/real-daemon.test.ts`. The intake (the plan writer) is told to plan no web work only when the
 install has neither a subscription nor the page reader (`IntakeDeps.webSpecialists`, composed
 as `hasOauth || webFetchOn`; `NO_WEB_RULE`). Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
@@ -5257,9 +5298,15 @@ words, or null. The route passes `RuntimeApp.webAccess()` (a subscription or the
 reader); without either, an entry that names a web tool gets `NO_WEB_LIMITATION` ("Cannot read
 the web on this computer"), which the plan card shows beside its tasks and New task beside the
 choice; with `RuntimeApp.webSearchOnly()` (a subscription and no API key whose page reader could
-take research, C-64) an entry that names `cc:WebFetch` gets `SEARCH_ONLY_LIMITATION` ("Searches
-the web but opens no page on a Claude subscription", defined in `api-types.ts` for the UI, whose
-New task adds "Save an API key to let it read pages."). The command's ports
+take research, C-64) an entry that names `cc:WebFetch` and `cc:WebSearch` gets
+`SEARCH_ONLY_LIMITATION` ("Searches the web but opens no page on a Claude subscription", defined
+in `api-types.ts` for the UI, whose New task adds "Save an API key to let it read pages."), and
+one that names `cc:WebFetch` without search (the science-evaluator) `NO_PAGES_LIMITATION` ("Reads
+no web page on a Claude subscription", U-078; before, it was said to search). Each specialist
+also carries `runsOn` (U-078, `RuntimeApp.chooser.forTask`, for the project `?project=` names):
+where its task runs here and the chooser's sentence, which the plan card and New task show in
+place of the limitation when there is one; the view's `credentials` is Settings' "What each can
+do here" (`chooser.table()`). The command's ports
 (`CommandPorts.modelSettings`) are the runnable specialists' names and the provider's flags.
 
 ### Briefs (`src/brief.ts`)

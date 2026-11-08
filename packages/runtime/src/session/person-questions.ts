@@ -203,6 +203,22 @@ const NEEDS_PERSON =
 const unbold = (s: string) => s.replace(/^\*\*\s*|\s*\*\*$/g, "").trim();
 
 /**
+ * Whether a task's own words say its work needs the person's answers ("needs the owner's
+ * decision on hosting", "uses the person's choice of domain"): the credential chooser's hard
+ * need "ask the person while it works" (U-078), met only where `ask_person` is offered (the
+ * loop driver). A task planned for the person never reaches a specialist (`isPersonTask`).
+ */
+export function needsPersonsAnswers(task: {
+  title: string;
+  outcome: string;
+  acceptance_criteria: readonly string[];
+}): boolean {
+  return [task.title, task.outcome, ...task.acceptance_criteria].some(
+    (t) => NEEDS_PERSON.test(t) || PERSONS_ANSWER.test(t),
+  );
+}
+
+/**
  * One entry of a question list: a bulleted or numbered item as it is, or a plain line that asks
  * (ends with "?") or requests ("Please add …"); null for anything else, which ends the list.
  */

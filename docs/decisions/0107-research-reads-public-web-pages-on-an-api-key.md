@@ -100,6 +100,23 @@ list, so "the token's domains only" would have left research with nothing it may
 9. **No site list or block list control this round** (C-66): the lists stay settable through
    `PUT /projects/:id/settings` only, and the user guide says there is no screen for them.
 
+**Amendment (2026-11-03, the owner's decision of 2026-11-02, credential-chooser; supersedes point
+7's routing).** "The person's order decides; another credential only when the first cannot do the
+task properly (plan card says why)." Research no longer goes to the API key ahead of the order
+(`firstKinds`/`firstWhy` are gone): the credential chooser of ADR 0100 point 13 gives research
+its hard needs, reading pages and searching, and keeps the credentials that meet both, with the
+person's order deciding among them. Until 'web-search' (search on the API key) and 'sites' (pages
+on the subscription) land, no credential meets both: the chooser ranks page reading before
+search, so research with an API key saved still runs on the key, and the plan card says why
+("Runs on your API key: it can read web pages here but not search yet, so the researcher reads
+pages whose address it knows."); once both credentials can do both, the order decides. The
+science-evaluator (page reading, no search) is never told it searches: on a subscription its
+brief carries the no-web line and the screens say "Reads no web page on a Claude subscription"
+(before, `SEARCH_ONLY_LIMITATION` and `SEARCH_ONLY_LINE` were given to every entry that names
+`cc:WebFetch`). Point 8 stands until 'web-search'; point 7's subscription-alone words stay for the
+researcher until 'sites' removes them. Settings' order no longer names research as the exception;
+it says a task goes to another credential only when the first cannot do it properly.
+
 ## Consequences
 
 - A plan from a brief on an API key may include research; the researcher and the

@@ -2746,7 +2746,10 @@ sources, the refused and resting marks and a key saved in the vault all run
 `fr daemon --provider bench-api` (a repository checkout only, `daemonFetch`) composes the
 same way with the role-player behind the stand-in (`benchApiFetch`) and logs each request in
 `<home>/bench/api-requests.jsonl`; `start.mjs --api-key refused|limited|ok` writes a key of
-that kind straight into the home's vault (`vault-key.ts`), and `journeys/credentials.cjs`
+that kind straight into the home's vault (`vault-key.ts`; `--subscription` writes a
+token-shaped subscription token beside it, so the plan card, New task and Settings show where
+work runs with both credentials saved, U-078; the stand-in has no Claude Code, so a task the
+router gives to the subscription does not run on the bench), and `journeys/credentials.cjs`
 walks what a person sees (with `--brief "<text>"` the planning call meets the key first: the
 plan waits, is drafted by itself after `--save-key ok` or at the reset with `--wait-start`, and
 is approved so its tasks run). The stand-in's limit window ("limited for N minutes from its

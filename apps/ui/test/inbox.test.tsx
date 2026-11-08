@@ -401,38 +401,125 @@ describe("Inbox", () => {
       });
       return harness;
     };
+    // Where each task runs and why, in the daemon's words (U-078, the credential chooser): its
+    // sentence takes the place of the limitation chip, which said the same in fewer words.
+    const runsOnLines = (card: HTMLElement) =>
+      within(card)
+        .getAllByTestId("intake-task")
+        .map((t) => within(t).queryByTestId("intake-task-runs-on")?.textContent ?? null);
     // An install without web access (no subscription, the page reader turned off).
     const view = renderApp("/inbox", withPlan(createHarness({ noWebAccess: true })));
     let card = await screen.findByTestId("intake-card");
     await waitFor(() =>
-      expect(
-        within(card)
-          .getAllByTestId("intake-task")
-          .map((t) => t.textContent),
-      ).toEqual([
-        "Compare two static site generators · researcher · about CHF 0.40 · Cannot read the web on this computer",
-        'Build the docs site · coder · about CHF 0.40 · after "Compare two static site generators"',
+      expect(runsOnLines(card)).toEqual([
+        "Runs on your API key, where it cannot read web pages: the researcher works from the project's files and the sources the brief gives.",
+        null,
       ]),
     );
+    expect(within(card).getAllByTestId("intake-task")[1]?.textContent).toBe(
+      'Build the docs site · coder · about CHF 0.40 · after "Compare two static site generators"',
+    );
+    expect(within(card).queryByTestId("intake-task-cannot-run")).toBeNull();
     // C-64: a Claude subscription and no API key: the researcher searches but opens no page.
     view.unmount();
     const searchOnly = renderApp("/inbox", withPlan(createHarness({ webSearchOnly: true })));
     card = await screen.findByTestId("intake-card");
     await waitFor(() =>
-      expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toBe(
-        "Compare two static site generators · researcher · about CHF 0.40 · Searches the web but opens no page on a Claude subscription",
+      expect(runsOnLines(card)[0]).toBe(
+        "Runs on your Claude subscription: it can search the web here but not open pages yet, so the researcher works from search results.",
       ),
     );
-    // The usual install reads the web (ADR 0107): nothing is said.
+    // Both credentials, the subscription first (no order chosen): research goes to the API key,
+    // the only one that reads pages here, and the card says so before the person approves.
     searchOnly.unmount();
     renderApp("/inbox", withPlan(createHarness()));
     card = await screen.findByTestId("intake-card");
     await waitFor(() =>
-      expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toBe(
-        "Compare two static site generators · researcher · about CHF 0.40",
-      ),
+      expect(runsOnLines(card)).toEqual([
+        "Runs on your API key: it can read web pages here but not search yet, so the researcher reads pages whose address it knows.",
+        null,
+      ]),
+    );
+    expect(within(card).getAllByTestId("intake-task")[0]?.textContent).toContain(
+      "Compare two static site generators · researcher · about CHF 0.40",
     );
     expect(within(card).queryByTestId("intake-task-cannot-run")).toBeNull();
+  });
+
+  it("the plan card says where a coder's task runs on a project with dependencies, and that a specialist it does not have makes the task wait (U-078, C-68)", async () => {
+    const harness = createHarness({ projectDependencies: ["proj_atlas"] });
+    harness.daemon.state.requests.unshift({
+      id: "req_intake_code",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Atlas": 2 task(s).',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 0,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [],
+            tasks: [
+              {
+                key: "footer",
+                title: "Add a footer",
+                outcome: "index.html has a footer",
+                acceptanceCriteria: [],
+                priority: "medium",
+                dependsOn: [],
+                specialist: "coder",
+              },
+              {
+                key: "art",
+                title: "Draw the logo",
+                outcome: "logo.svg",
+                acceptanceCriteria: [],
+                priority: "low",
+                dependsOn: [],
+                specialist: "illustrator",
+              },
+            ],
+          },
+          docs: {},
+          firstSession: {
+            summary: "Footer first.",
+            items: [
+              { key: "footer", estimateUsdMicro: 500_000 },
+              { key: "art", estimateUsdMicro: 500_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    // The subscription first (no order chosen): the coder stays on it, and its tests will not run.
+    await waitFor(() =>
+      expect(within(card).getAllByTestId("intake-task-runs-on")[0]).toHaveTextContent(
+        "On your subscription its tests will not run: it cannot run commands there.",
+      ),
+    );
+    // C-68: a specialist this install does not have: the task will wait for the person.
+    const art = within(card).getAllByTestId("intake-task")[1] as HTMLElement;
+    expect(within(art).getByTestId("intake-task-cannot-run")).toHaveTextContent(
+      'No specialist here is named "illustrator": this task will wait for you; change who does it after you approve',
+    );
   });
 
   it("the plan card shows the drafted decision as text, never raw markdown, before you approve (U-073, design §3.3)", async () => {

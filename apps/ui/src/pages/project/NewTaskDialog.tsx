@@ -1,4 +1,4 @@
-import { SEARCH_ONLY_LIMITATION } from "@forerunner/runtime/daemon/api-types";
+import { NO_PAGES_LIMITATION, SEARCH_ONLY_LIMITATION } from "@forerunner/runtime/daemon/api-types";
 import {
   DEFAULT_TASK_PRIORITY,
   PRIORITY_LABELS,
@@ -68,17 +68,20 @@ export function useDockerReady(open: boolean): boolean | null {
  */
 export function useWhoChoices(
   open: boolean,
-): { value: string; label: string; limitation?: string | null }[] {
+  projectId?: string,
+): { value: string; label: string; limitation?: string | null; runsOn?: string | null }[] {
   const client = useClient();
   const models = useAsync(
-    (signal) => (open ? client.modelSettings(signal) : Promise.resolve(null)),
-    [client, open],
+    (signal) => (open ? client.modelSettings(signal, projectId) : Promise.resolve(null)),
+    [client, open, projectId],
   );
   const specialists = (models.data?.specialists ?? []).map((s) => ({
     value: s.name,
     label: s.description ? `${s.name}: ${firstSentence(s.description)}` : s.name,
     // What it cannot do on this install, in the daemon's words (ADR 0107), said when chosen.
     limitation: s.limitation ?? null,
+    // Where it runs for this project and why (U-078, the plan card's words), said when chosen.
+    runsOn: s.runsOn?.line ?? null,
   }));
   return [
     { value: WHO_AGENT, label: "Let the agent choose" },
@@ -125,8 +128,11 @@ export function NewTaskDialog({
   const [who, setWho] = useState(WHO_AGENT);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const docker = useDockerReady(open);
-  const whoChoices = useWhoChoices(open);
-  const whoLimitation = whoChoices.find((w) => w.value === who)?.limitation ?? null;
+  const whoChoices = useWhoChoices(open, projectId);
+  const whoChoice = whoChoices.find((w) => w.value === who);
+  // The chooser's sentence (U-078) says what the limitation would; one note, never both.
+  const whoRunsOn = whoChoice?.runsOn ?? null;
+  const whoLimitation = whoRunsOn ? null : (whoChoice?.limitation ?? null);
   // The tasks it may wait on, by title (U-040): picked, never typed as ids.
   const projectTasks = useAsync(
     (signal) => (open ? client.tasks(projectId, { limit: 500 }, signal) : Promise.resolve(null)),
@@ -320,11 +326,17 @@ export function NewTaskDialog({
             runs. <Link to="/settings">Settings</Link> has the steps.
           </p>
         ) : null}
-        {whoLimitation ? (
+        {whoRunsOn ? (
+          <p className="text-sm" data-testid="task-who-note">
+            {whoRunsOn}
+          </p>
+        ) : whoLimitation ? (
           <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-who-note">
             {whoLimitation === SEARCH_ONLY_LIMITATION
               ? `${whoLimitation}. Save an API key to let it read pages.`
-              : `${whoLimitation}: the ${who} works only from the project's files.`}
+              : whoLimitation === NO_PAGES_LIMITATION
+                ? `${whoLimitation}: the ${who} works from the project's files. Save an API key to let it read pages.`
+                : `${whoLimitation}: the ${who} works only from the project's files.`}
           </p>
         ) : null}
         {who === WHO_PERSON ? (

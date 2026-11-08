@@ -54,13 +54,21 @@ interface SkipLike {
 export function credentialWaitOf(error: unknown): CredentialWait | null {
   if (!(error instanceof ForerunnerError) || error.code !== "unavailable") return null;
   const d = (error.details ?? {}) as { waitFor?: SkipLike; skipped?: SkipLike[] };
-  const w = d.waitFor;
+  const w = d.waitFor as (SkipLike & { reason?: unknown }) | undefined;
   if (w && typeof w.sourceId === "string" && typeof w.until === "string")
     return {
       reason: "limit",
       sourceId: w.sourceId,
       kind: (w.kind as BillingSourceKind) ?? "api_key",
       until: w.until,
+    };
+  // 'Wait' held to a refused first choice (U-078): the work waits for a new credential.
+  if (w && typeof w.sourceId === "string" && w.reason === "refused")
+    return {
+      reason: "refused",
+      sourceId: w.sourceId,
+      kind: (w.kind as BillingSourceKind) ?? "api_key",
+      until: null,
     };
   const skipped = Array.isArray(d.skipped) ? d.skipped : [];
   const resting = skipped

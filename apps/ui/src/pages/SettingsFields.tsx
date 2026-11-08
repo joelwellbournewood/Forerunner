@@ -70,6 +70,7 @@ export const SETTING_LABELS: Record<string, string> = {
   merge_mode: "Who merges accepted work",
   speed_quality_offset: "Speed or quality",
   mid_session_limit: "When my first choice runs out mid-session",
+  code_commands: "Code tasks that need commands",
 };
 
 export function leafOf(key: string): string {
@@ -123,6 +124,18 @@ export const MERGE_MODES = [
   { value: "after_review", label: "Merge automatically after review" },
 ] as const;
 
+/**
+ * "Code tasks that need commands" (U-078, the owner's decision of 2026-11-02): the first choice
+ * anyway (the default; on a subscription their tests do not run) or the API key (money).
+ */
+export const CODE_COMMANDS = [
+  {
+    value: "first_choice",
+    label: "My first choice anyway (on a subscription their tests do not run)",
+  },
+  { value: "api_key", label: "The API key (runs their tests; costs money)" },
+] as const;
+
 export const LANGUAGES = [
   { value: "en", label: "English" },
   { value: "de", label: "Deutsch" },
@@ -174,6 +187,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v === "use_other" ? MID_SESSION_LIMITS[1].label : MID_SESSION_LIMITS[0].label;
     case "merge_mode":
       return v === "after_review" ? MERGE_MODES[1].label : MERGE_MODES[0].label;
+    case "code_commands":
+      return v === "api_key" ? CODE_COMMANDS[1].label : CODE_COMMANDS[0].label;
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":
@@ -314,6 +329,14 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         MID_SESSION_LIMITS,
         (v) => v,
         (c) => (c === "use_other" ? "use_other" : "wait"),
+        {},
+      );
+    case "code_commands":
+      return select(
+        leaf,
+        CODE_COMMANDS,
+        (v) => v,
+        (c) => (c === "api_key" ? "api_key" : "first_choice"),
         {},
       );
     case "small_project_mode":

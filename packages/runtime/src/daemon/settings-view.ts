@@ -126,6 +126,15 @@ export function settingsView(input: SettingsViewInput): Row[] {
       risk: "medium",
     }),
     human({
+      // U-078 (the credential chooser): my first choice anyway (the default) or the API key.
+      key: "human.code_commands",
+      label: "Code tasks that need commands",
+      value: prefOf(h, "code_commands") === "api_key" ? "api_key" : "first_choice",
+      description:
+        "Your first choice anyway (on a Claude subscription they cannot run commands, so their own tests do not run), or the API key, which runs them in the sandbox and costs money",
+      risk: "medium",
+    }),
+    human({
       key: "human.voice_alerts",
       label: "Read urgent notifications aloud",
       value: prefOf(h, "voice_alerts") === true,

@@ -57,6 +57,7 @@ import {
   isStorableSecretName,
   KILL_ACTIVE_START_MESSAGE,
   KillBody,
+  NO_PAGES_LIMITATION,
   RenameAgentBody,
   RunnerUnlockWrapBody,
   SetTaskDependenciesBody,
@@ -87,6 +88,7 @@ import {
   NO_WEB_LIMITATION,
   SEARCH_ONLY_LIMITATION,
 } from "@forerunner/runtime/daemon/model-settings-view";
+import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
 import {
   blockedTaskIds,
   overviewNext,
@@ -111,7 +113,14 @@ import {
   sandboxNextStep,
   sandboxWords,
 } from "@forerunner/runtime/sandbox/readiness-types";
+import { CODE_COMMANDS_SETTING, codeCommandsOf } from "@forerunner/runtime/session/billing";
+import {
+  abilityTable,
+  credentialChoiceFor,
+  needsOf,
+} from "@forerunner/runtime/session/credential-choice";
 import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
+import { type ChooserFacts, DEFAULT_CHOOSER_FACTS } from "@forerunner/runtime/wiring/billing-pick";
 import {
   acceptsAnswer,
   budgetStopAnswer,
@@ -287,6 +296,20 @@ export interface FakeDaemonOptions {
     sources?: Partial<BillingOrderSourceView>[];
     order?: BillingOrderKind[] | null;
   };
+  /**
+   * The credential chooser (U-078): what this install offers each credential, over the defaults
+   * (the page reader on unless `noWebAccess`, no search on the key, no pages on the subscription,
+   * no host commands). `GET /settings/models` and `GET /inbox` compute where each task runs with
+   * the runtime's own `credentialChoiceFor` over the saved credentials in the person's order.
+   */
+  chooserFacts?: Partial<ChooserFacts>;
+  /** Projects whose folder has dependencies to install (the coder's "its tests will not run"). */
+  projectDependencies?: string[];
+  /**
+   * `GET /settings/billing-order`'s `startedWith`: the model the install was started with
+   * outside the saved credentials (the bench's `bench`); null by default (U-078).
+   */
+  startedWith?: string | null;
   /**
    * The time a pairing's ten-minute expiry counts from (epoch ms); the wall clock by default.
    * The Devices tests share one stepped clock between the fake and the section.
@@ -888,10 +911,31 @@ function withWebAccess(
       : !web
         ? NO_WEB_LIMITATION
         : searchOnly
-          ? SEARCH_ONLY_LIMITATION
+          ? // U-078: the science-evaluator has no web search: it reads no page there at all.
+            s.name === "science-evaluator"
+            ? NO_PAGES_LIMITATION
+            : SEARCH_ONLY_LIMITATION
           : null;
   return view;
 }
+
+/**
+ * The registry entries' tools the credential chooser reads (U-078), as `evals/registry` writes
+ * them for the specialists the fixtures name: research reads pages and searches, the
+ * science-evaluator reads pages and runs commands, code work runs commands.
+ */
+const FAKE_REGISTRY_TOOLS: Record<string, string[]> = {
+  coder: ["cc:Read", "cc:Edit", "cc:Write", "cc:Bash"],
+  tester: ["cc:Read", "cc:Write", "cc:Bash"],
+  "migration-specialist": ["cc:Read", "cc:Edit", "cc:Write", "cc:Bash"],
+  "ops-deploy": ["cc:Read", "cc:Write", "cc:Bash"],
+  "data-analyst": ["cc:Read", "cc:Write", "cc:Bash"],
+  researcher: ["cc:Read", "cc:Write", "cc:WebFetch", "cc:WebSearch"],
+  "science-evaluator": ["cc:Read", "cc:Write", "cc:Bash", "cc:WebFetch"],
+  designer: ["cc:Read", "cc:Write", "cc:Edit"],
+  "writer-marketing": ["cc:Read", "cc:Write", "cc:Edit"],
+  reviewer: ["cc:Read", "cc:Bash"],
+};
 
 export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const token = options.token ?? randomBytes(16).toString("hex");
@@ -2440,14 +2484,28 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json({ humanId: me.id, entries: state.desktopAllowlist });
   });
 
-  app.get("/inbox", (c) =>
-    c.json({
-      requests: state.requests.map(worded),
+  app.get("/inbox", async (c) => {
+    const requests = state.requests.map(worded);
+    // U-078, C-68 (as the daemon, with its `planTaskViews`): an open plan card's tasks as this
+    // install would run them now.
+    for (const r of requests) {
+      const planTasks = await planTaskViews(
+        { change_card: r.changeCard as never, project_id: r.projectId, status: r.status as never },
+        {
+          has: (name) => name in FAKE_REGISTRY_TOOLS,
+          forTask: async ({ specialist, projectId, task }) =>
+            runsOnFor(specialist, projectId, task),
+        },
+      );
+      if (planTasks) r.planTasks = planTasks;
+    }
+    return c.json({
+      requests,
       messages: state.messages,
       blockingCount: blockingCount(),
       needsYouCount: needsYouCount(),
-    }),
-  );
+    });
+  });
   // Cloud runner unlock (spec S.12, ADR 0068): the daemon's keyring answers whether it holds
   // the runner's key and wraps it to the challenge; the key never leaves this handler.
   app.get("/runner-unlock/:runnerId/key", (c) => {
@@ -3292,6 +3350,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       for (const a of view.agents) for (const m of a.modes) delete m.temperature;
       for (const sp of view.specialists) delete sp.settings.temperature;
     }
+    // U-078 (the credential chooser), as the daemon: where each specialist's task runs here
+    // (for `?project=`) and why, and Settings' "What each can do here".
+    const projectId = c.req.query("project") || null;
+    for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, null);
+    view.credentials = abilityTable(chooserFactsNow(), savedKinds());
     return c.json(view);
   });
   app.get("/settings", (c) => {
@@ -4449,6 +4512,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     model_watch: "medium",
     // U-078: medium, as SETTING_SPECS.mid_session_limit (use_other moves work onto money).
     mid_session_limit: "medium",
+    // U-078: medium, as SETTING_SPECS.code_commands (the API key moves code work onto money).
+    code_commands: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
@@ -5969,8 +6034,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     api_key: "API key",
     plan_credits: "Plan credits",
   };
+  // The saved credentials: both by default; only the API key on an install without web access
+  // (no subscription, ADR 0107), only the subscription where research only searches (C-64).
+  const defaultSources: Partial<BillingOrderSourceView>[] = options.noWebAccess
+    ? [{ kind: "api_key" }]
+    : options.webSearchOnly
+      ? [{ kind: "subscription" }]
+      : [{ kind: "subscription" }, { kind: "api_key" }];
   const billingSources: BillingOrderSourceView[] = (
-    options.billingOrder?.sources ?? [{ kind: "subscription" }, { kind: "api_key" }]
+    options.billingOrder?.sources ?? defaultSources
   ).map((s, i) => {
     const kind = s.kind ?? "api_key";
     return {
@@ -6000,8 +6072,36 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       chosen: billingOrder !== null,
       order: [...order],
       sources: [...billingSources].sort((a, b) => rank(a.kind) - rank(b.kind)),
+      startedWith: options.startedWith ?? null,
     };
   };
+  // The credential chooser (U-078) with the runtime's own functions: the saved credentials in
+  // the person's order, what this install offers each, and the registry entries' tools.
+  const chooserFactsNow = (): ChooserFacts => ({
+    ...DEFAULT_CHOOSER_FACTS,
+    webFetch: !options.noWebAccess,
+    ...(options.chooserFacts ?? {}),
+  });
+  const savedKinds = () =>
+    billingOrderView()
+      .sources.filter((s) => s.blocked !== "no_credential" && s.blocked !== "disabled")
+      .map((s) => s.kind);
+  const runsOnFor = (
+    name: string,
+    projectId: string | null,
+    task: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null,
+  ) =>
+    credentialChoiceFor({
+      kindsInOrder: savedKinds(),
+      needs: needsOf({
+        registryTools: FAKE_REGISTRY_TOOLS[name] ?? [],
+        task,
+        codeCommands: codeCommandsOf(state.settingValues[CODE_COMMANDS_SETTING]),
+      }),
+      facts: chooserFactsNow(),
+      specialist: name,
+      dependencies: projectId !== null && (options.projectDependencies ?? []).includes(projectId),
+    });
   const ORDER_WORDS: Record<BillingOrderKind, string> = {
     subscription: "the Claude subscription",
     api_key: "the API key",

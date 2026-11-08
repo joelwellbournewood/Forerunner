@@ -664,9 +664,10 @@ export interface DaemonClient {
   /**
    * Model settings per agent mode and per specialist (spec D.4, ADR 0072): model, effort, max
    * tokens, speed mode, timeout with their defaults; temperature only where the provider
-   * accepts one. Changes go through `executeCommands` with `model.settings.set`.
+   * accepts one. Changes go through `executeCommands` with `model.settings.set`. With a
+   * project, each specialist's `runsOn` (U-078) is for that project (its dependencies).
    */
-  modelSettings(signal?: AbortSignal): Promise<ModelSettingsView>;
+  modelSettings(signal?: AbortSignal, projectId?: string): Promise<ModelSettingsView>;
   /** Merge a patch into a project's settings with a version check. */
   updateProjectSettings(
     projectId: string,
@@ -1111,8 +1112,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { scope: filter?.scope, scopeId: filter?.scopeId },
         signal,
       ),
-    modelSettings: (signal) =>
-      get(routePath("modelSettings"), ModelSettingsViewSchema, undefined, signal),
+    modelSettings: (signal, projectId) =>
+      get(
+        routePath("modelSettings"),
+        ModelSettingsViewSchema,
+        projectId ? { project: projectId } : undefined,
+        signal,
+      ),
     updateProjectSettings: (projectId, body) =>
       put(routePath("updateProjectSettings", { id: projectId }), ProjectSettingsViewSchema, body),
     mirrorSync: (projectId, full) =>
