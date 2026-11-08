@@ -251,6 +251,12 @@ export interface HeldDependency {
   number: number | null;
   branch: string | null;
   state: HeldState;
+  /**
+   * R-chain (leftovers7-merge2): open, but its branch carries the work held only as a rebuild of
+   * it (`rebuiltTo`: the same change on a new head). The dependent still builds on the old
+   * head, which may hold work its own rebuild dropped, so it is brought onto the new head.
+   */
+  rebuilt?: boolean;
 }
 
 /** Dropped from the base without being in the default branch: the review read work that is gone. */
@@ -1309,12 +1315,16 @@ export class PrTaskExecutor implements TaskExecutor {
       // The open pull request still carries the work held (it may have moved on since), or the
       // same change rebuilt (the dependency was itself rebuilt onto main: this one follows it).
       const tip = await git.resolveRef(`origin/${dep.branch}`);
-      let carries = !!tip && (await git.isAncestor(e.sha, tip));
-      if (!carries && tip) {
-        const rebuilt = await this.rebuiltTo(dep.id, e.sha);
-        carries = !!rebuilt && (await git.hasRef(rebuilt)) && (await git.isAncestor(rebuilt, tip));
-      }
-      return { ...base, number: open.number, state: carries ? "open" : "redone" };
+      const carries = !!tip && (await git.isAncestor(e.sha, tip));
+      if (carries || !tip)
+        return { ...base, number: open.number, state: carries ? "open" : "redone" };
+      const rebuilt = await this.rebuiltTo(dep.id, e.sha);
+      const follows =
+        !!rebuilt && (await git.hasRef(rebuilt)) && (await git.isAncestor(rebuilt, tip));
+      // R-chain: the same change on a new head: kept, and the dependent is brought onto it.
+      return follows
+        ? { ...base, number: open.number, state: "open", rebuilt: true }
+        : { ...base, number: open.number, state: "redone" };
     }
     const latest = [...prs].sort((a, b) => b.number - a.number);
     const merged = latest.find((p) => p.merged);
@@ -1395,7 +1405,9 @@ export class PrTaskExecutor implements TaskExecutor {
       ownAfter: null,
       voids: dropped.some((d) => VOIDING_STATES.has(d.state)),
     };
-    if (!dropped.length) return out;
+    // R-chain: a dependency kept that was itself rebuilt since is followed onto its new head
+    // (in a chain whose middle could not be rebuilt at first, the third still held the old one).
+    if (!dropped.length && !kept.some((k) => k.rebuilt)) return out;
     out.rebuilt = true;
     out.ownBefore = await ownChangeId(git, base).catch(() => null);
     let newBase: string | null = null;
@@ -1462,20 +1474,26 @@ export class PrTaskExecutor implements TaskExecutor {
       todo.push({ task: t, depth: deps.length });
     }
     todo.sort((a, b) => a.depth - b.depth);
-    for (const { task } of todo)
-      out.push(await this.rebuildTask(task, hooks, changedDependencyTaskId));
+    // R-chain: a task rebuilt here is a change for the tasks after it too (they hold its old
+    // head), so a later one is looked at when it holds any of them.
+    const changed = [changedDependencyTaskId];
+    for (const { task } of todo) {
+      const o = await this.rebuildTask(task, hooks, changed);
+      if (o.result === "rebuilt") changed.push(task.id);
+      out.push(o);
+    }
     return out;
   }
 
   /**
    * One done task's branch against what it builds on (`rebuildDependents`; the runtime also
    * asks it right before an accepted task's merge). `onlyIfHolding`: skip the task (no host
-   * call) when its worktree does not hold that dependency.
+   * call) when its worktree holds none of those dependencies.
    */
   async rebuildTask(
     task: TaskRow,
     hooks: RebuildHooks = {},
-    onlyIfHolding?: string,
+    onlyIfHolding?: string | readonly string[],
   ): Promise<DependentOutcome> {
     const none: DependentOutcome = {
       taskId: task.id,
@@ -1498,7 +1516,7 @@ export class PrTaskExecutor implements TaskExecutor {
     task: TaskRow,
     dir: string,
     hooks: RebuildHooks,
-    onlyIfHolding?: string,
+    onlyIfHolding?: string | readonly string[],
   ): Promise<DependentOutcome> {
     const none: DependentOutcome = {
       taskId: task.id,
@@ -1510,13 +1528,15 @@ export class PrTaskExecutor implements TaskExecutor {
     const branch = task.branch;
     if (!target || !branch) return none;
     const git = await this.gitFor(target, dir);
-    // Cheap first: a worktree without the marker, or one whose held refs do not name the
-    // dependency that changed, has nothing to rebuild (a marker made before the held refs is
+    // Cheap first: a worktree without the marker, or one whose held refs name none of the
+    // dependencies that changed, has nothing to rebuild (a marker made before the held refs is
     // read in full).
     if (!(await git.hasRef(DEPS_BASE_REF))) return none;
     if (onlyIfHolding) {
+      const ids = typeof onlyIfHolding === "string" ? [onlyIfHolding] : onlyIfHolding;
       const held = await git.refsUnder(DEPS_HELD_PREFIX);
-      if (held.length && !(await git.hasRef(depsHeldRef(onlyIfHolding)))) return none;
+      const holds = held.some((h) => ids.some((id) => h.ref === depsHeldRef(id)));
+      if (held.length && !holds) return none;
     }
     const pr = (
       await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
@@ -1531,7 +1551,7 @@ export class PrTaskExecutor implements TaskExecutor {
     const held0 = await git.resolveRef(DEPS_BASE_REF);
     if (held0 && (await git.isAncestor(held0, hostHead))) {
       const held = await this.heldDependencies(git, task, target, held0);
-      if (!held.some((h) => h.state !== "open" && h.state !== "in_main")) {
+      if (!held.some((h) => (h.state !== "open" && h.state !== "in_main") || h.rebuilt)) {
         await this.syncBuildsOn(
           target,
           pr.number,

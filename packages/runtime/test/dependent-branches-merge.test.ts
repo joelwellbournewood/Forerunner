@@ -1,8 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
-import { join, run } from "@forerunner/platform";
+import { join, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
@@ -194,6 +194,7 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     watcher,
     audit,
     writes,
+    worktreeRoot,
     fileOf,
     /** One task through one session: the executor (branch, PR), the critic, the merge step. */
     async runTask(
@@ -410,6 +411,51 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     }
     expect(await m.cards(c.id)).toEqual([]);
     // Merged in order, each one cleanly; main has each task's change once.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    await m.poll();
+    expect((await m.mergeByPerson(c.id)).status).toBe("merged");
+    for (const t of [a, b, c])
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf(t.title))).split("\n"),
+      ).toHaveLength(1);
+  });
+
+  it("(c) a chain of three whose middle task's folder is busy when the first is squash-merged: once the middle is free, the third's pull request holds none of the first's original commits (R-chain)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add notes", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.poll();
+    // B's folder holds a change nobody committed: B cannot be rebuilt while it is there.
+    const scratch = join(m.worktreeRoot, safeSegment(b.id), "scratch.txt");
+    writeFileSync(scratch, "trying something\n");
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect(await m.prCommits(prB)).toContain("Add page");
+    // The folder is free again: the next poll rebuilds B, and C follows the rebuilt B.
+    rmSync(scratch);
+    await m.poll();
+    expect(await m.prCommits(prB)).toEqual(["Add footer"]);
+    expect(await m.prCommits(prC)).not.toContain("Add page");
+    expect(await m.prFiles(prC)).toEqual([m.fileOf("Add footer"), m.fileOf("Add notes")].sort());
+    expect((await m.pr(c.id)).body).toContain(`Builds on #${prB} (not merged yet)`);
+    // Neither review is void, nothing is owed: both wait for the person on their new heads.
+    for (const t of [b, c]) {
+      const r = await m.record(t.id);
+      expect(r).toMatchObject({ state: "left_to_you", rebuild_owed_for: null });
+      expect(r.last_outcome).toBe("not_allowed");
+      expect(r.reviewed_head_sha).toBe((await m.pr(t.id)).head.sha);
+    }
+    expect(await m.cards(c.id)).toEqual([]);
+    // A later poll changes nothing more; the chain merges in order, cleanly, each change once.
+    const heads = [(await m.pr(b.id)).head.sha, (await m.pr(c.id)).head.sha];
+    await m.poll();
+    expect([(await m.pr(b.id)).head.sha, (await m.pr(c.id)).head.sha]).toEqual(heads);
     expect((await m.mergeByPerson(b.id)).status).toBe("merged");
     await m.poll();
     expect((await m.mergeByPerson(c.id)).status).toBe("merged");
