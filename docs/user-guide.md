@@ -99,9 +99,11 @@ again as soon as the service answers.
 ## A project
 
 The project's page starts with its name and its status in one sentence with its button (as on
-Home). **Start session** reads **Open running session** while a session works on it. The tabs
+Home, except a start: **Start session** beside it is the page's one start button).
+**Start session** reads **Open running session** while a session works on it. The tabs
 are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **Docs**,
-**Reviews**, **Costs** and **Data**.
+**Reviews**, **Costs** and **Data**. A tab keeps the Tasks tab's filters, so you find them as you
+left them; an open file or task stays on its own tab.
 
 - **Overview**: where the project stands and what happens next. The cards of this project that
   wait for you, each with **Answer**; **Working now** (the task in flight, for how long, with
