@@ -2062,7 +2062,10 @@ budget-stop; the owner's decision of 2026-11-02).**
   what Claude Code still reports is read after the return (`drainKilled`, at most
   `SDK_STOP_WAIT_MS`, then `close()`), booked, and handed to `SdkRunRequest.onLateUsage`, which
   the executor adds to the Run row once the row's own figures are written (`lateRunCost`;
-  R-lateusage: before, the iterator was closed unread). Every late booking (`handle(m, false)`,
+  R-lateusage: before, the iterator was closed unread), and to the task's spent figure
+  (`task.addCost`, one statement; the runner adds the run's own cost the same way, so neither
+  addition writes over the other; TR-13: before, the runner wrote the task's figure from the row
+  it read and the tail never reached it; test `sdk-late-usage.test.ts`). Every late booking (`handle(m, false)`,
   during `awaitExit` too) goes through `EnforcementHooks.afterModelCall(..., { afterStop: true })`,
   which needs no live token (`TokenIssuer.authentic`: the signature only) and allows nothing; and
   `afterModelCall` books before it checks the token, so a call that answered after Stop all

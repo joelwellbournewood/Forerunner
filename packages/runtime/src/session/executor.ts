@@ -2172,11 +2172,16 @@ export function withSandboxedCommands(base: ToolRegistry, sandbox: Sandbox): Too
 
 /**
  * R-lateusage: what a killed SDK run reported after it returned (already in the ledger and the
- * session's spend), added to its Run row. Held until the row's own figures are written
- * (`written`), then each share is added in turn, so neither write overwrites the other.
+ * session's spend), added to its Run row and to its task's spent figure (TR-13, `task.addCost`:
+ * one statement, so the runner's addition of the run's own cost and this one both count). Held
+ * until the row's own figures are written (`written`), then each share is added in turn, so
+ * neither write overwrites the other.
  */
 function lateRunCost(
-  store: { run: Pick<StateStore["run"], "get" | "patch"> },
+  store: {
+    run: Pick<StateStore["run"], "get" | "patch">;
+    task: Pick<StateStore["task"], "addCost">;
+  },
   runId: string,
   logger: { warn(msg: string, data?: Record<string, unknown>): void },
 ): { add(usage: Usage, usdMicro: number): void; written(): void } {
@@ -2195,6 +2200,7 @@ function lateRunCost(
           cache_write_tokens: row.cache_write_tokens + usage.cache_creation_input_tokens,
           cost_usd_micro: row.cost_usd_micro + usdMicro,
         });
+        if (row.task_id && usdMicro > 0) await store.task.addCost(row.task_id, usdMicro);
       })
       .catch((e: unknown) =>
         logger.warn("a stopped run's late usage was not added to its run", {
