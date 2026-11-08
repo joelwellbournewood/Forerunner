@@ -2964,7 +2964,14 @@ on that commit, not in conflict) the attempt is counted (`attempts + 1`, so a da
 reaches `MAX_MERGE_ATTEMPTS` and the person's card) and nothing else happens: no token, no audit
 row. Anything else, and the day's last attempt, takes the gated call as before. Before, every
 pass made the full call for every waiting record, every minute (a token, an audit row and about
-five GitHub calls each). **A merge the app made by itself is an Update**: one Inbox message
+five GitHub calls each). **The retry pass merges only a done task's pull request** (TM-5,
+leftovers7-tailmerge): a record whose task is no longer `done` (redone, cancelled, failed while
+its merge waited) is skipped before any read and stays as it is; the task's next accept moves it
+to the new head (`MergeRecordRepo.pin`). Before, the pass merged the old head while the task was
+being done again (main unmoved), or, with main moved, its gate's look at the base waited for the
+task folder's lock, which the redo's run holds for the whole run, and so held the watcher's poll
+(no pull request events, copy refreshes or conflict notices) until the run ended. **A merge the
+app made by itself is an Update**: one Inbox message
 (`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
 for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
 says it) and the person's own click (answered where they pressed it) add none; the Update is

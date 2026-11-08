@@ -367,3 +367,9 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    after the drop that pauses (a budget, a question) marks its work in progress as made from
    the base, and the next run continues that work instead of starting from the base again. Its
    push replaces the host's branch, so the pull request never carries the dropped commits.
+4. **The retry pass merges only a done task's pull request.** A task redone (or cancelled, or
+   failed) while its record waited for its checks is skipped by the watcher's retry pass; its
+   record stays as it is until the task's next accept moves it to the new head. Before, the
+   pass merged the old reviewed head while the task was being done again, or, when main had
+   moved, waited for the task folder's lock that the redo's run held, which held the watcher's
+   whole poll (no pull request events, copy refreshes or conflict notices) until the run ended.

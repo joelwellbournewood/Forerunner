@@ -970,6 +970,14 @@ export class ReviewedPrMerge implements MergePort {
       for (const record of waiting) {
         if (this.inFlight.has(record.task_id)) continue;
         try {
+          // TM-5 (leftovers7-tailmerge): only a done task's pull request is merged by the pass.
+          // One redone (or cancelled, failed) while its record waited is being done again: its
+          // old head is not what it will be, and its run holds the task's folder, so the gate's
+          // look at a base that moved would wait for that run and hold the watcher's poll (no
+          // pull request events, copy refreshes or conflict notices) until it ended. The record
+          // stays as it is; the task's next accept moves it to the new head.
+          const task = await this.deps.store.task.get(record.task_id);
+          if (task?.status !== "done") continue;
           const still = await this.stillWaiting(record);
           if (still) {
             out.push(this.outcomeOf(still, "checks_pending"));

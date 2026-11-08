@@ -99,6 +99,8 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
   /** What each task's run writes, by title (default: its own file under src/). */
   const writes = new Map<string, Record<string, string>>();
   const fileOf = (title: string) => `src/${title.toLowerCase().replace(/[^a-z]+/g, "-")}.ts`;
+  /** Runs held open by title (`holdRun`): each resolves once the test releases it. */
+  const runHolds = new Map<string, () => Promise<void>>();
   const executor = new PrTaskExecutor({
     store: w.store,
     clock: w.clock,
@@ -107,6 +109,8 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
       execute: (ctx) => done.execute(ctx),
       withWorktree: (dir) => ({
         async execute(ctx) {
+          // A run a test holds open (TM-5): its folder stays locked until the test releases it.
+          await runHolds.get(ctx.task.title)?.();
           await mkdir(join(dir, "src"), { recursive: true });
           const files = writes.get(ctx.task.title) ?? {
             [fileOf(ctx.task.title)]: `export const v = "${ctx.task.title}";\n`,
@@ -301,6 +305,27 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     async cards(taskId: string) {
       const rows = await w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
       return (await requestViews(w.store, rows)).map((v) => ({ title: v.title, body: v.body }));
+    },
+    /**
+     * Holds the next run of the task titled `title` open inside its folder (TM-5): `reached`
+     * resolves once the run started (the PR executor holds the folder's lock), and the run goes
+     * on only after `release`.
+     */
+    holdRun(title: string) {
+      let reached!: () => void;
+      let release!: () => void;
+      const was = new Promise<void>((r) => {
+        reached = r;
+      });
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      runHolds.set(title, async () => {
+        runHolds.delete(title);
+        reached();
+        await released;
+      });
+      return { reached: was, release: () => release() };
     },
     /**
      * Holds the merge step's next call of `method` on GitHub open (R-lock): `reached` resolves
@@ -1123,6 +1148,70 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     // Its record offers nothing more: the pull request was closed.
     expect(await m.record(b.id)).toMatchObject({ state: "left_to_you", last_outcome: "closed" });
   });
+
+  for (const mainMoves of [true, false]) {
+    it(`a done task redone while its merge waits for its checks${mainMoves ? ", main moved" : ", main where it was"}: the watcher's poll still delivers a comment while the redo runs, and the old head is not merged (TM-5)`, async () => {
+      const m = await chainWorld({ level: 2, mode: "after_review" });
+      const a = await m.runTask("Add page", {
+        afterPr: (pr) => m.check(pr.headSha, "in_progress"),
+      });
+      expect(await m.record(a.id)).toMatchObject({ state: "waiting_checks" });
+      const pr = await m.pr(a.id);
+      // Someone else comments on pull requests: a person the watcher hears.
+      m.host.createUser({ login: "bob", name: "Bob", email: "bob@example.test" });
+      m.host.addCollaborator(FULL, "bob");
+      const bob = m.host.createToken({ owner: "bob", kind: "classic", scopes: ["repo"] }).token;
+      await m.poll();
+      // The person presses Redo on the done task, and its session's run starts (held open: it
+      // keeps the task's folder, as a real run does for minutes).
+      const done = await m.w.store.task.mustGet(a.id);
+      await m.w.store.task.reopen(a.id, done.version, "ready", "Redo asked by you");
+      await m.w.store.task.patch(a.id, { attempt: done.attempt + 1 });
+      const held = m.holdRun("Add page");
+      const session = m.session();
+      try {
+        await held.reached;
+        // Meanwhile the old head's checks pass, main may move on (someone else's merge), and
+        // Bob comments on the pull request.
+        await m.check(pr.head.sha, "completed", "success");
+        if (mainMoves)
+          await m.host.seedCommit(FULL, { "other.txt": "other\n" }, "Someone's change", "main");
+        const res = await fetch(`${m.host.baseUrl}/repos/${FULL}/issues/${pr.number}/comments`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bob}`,
+            Accept: "application/vnd.github+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ body: "Please also add a footer." }),
+        });
+        expect(res.status).toBe(201);
+        // Before: the retry pass, which the poll awaits, took the waiting record. With main
+        // moved, the gate's look at it waited for the folder's lock until the redo's run ended:
+        // no event, no copy refresh, no conflict notice for that long. With main where it was,
+        // the pass merged the old head while the task was being done again.
+        const polled = m.watcher.pollOnce();
+        const outcome = await Promise.race([
+          polled.then((r) => ({ done: true as const, r })),
+          new Promise<{ done: false }>((r) => setTimeout(() => r({ done: false }), 15_000)),
+        ]);
+        expect(
+          outcome.done,
+          "the watcher's poll did not end within 15 s while the redo's run held the task's folder",
+        ).toBe(true);
+        const events = outcome.done ? outcome.r.events : [];
+        expect(events.map((e) => (e.kind === "comment" ? e.comment.body : e.kind))).toContain(
+          "Please also add a footer.",
+        );
+        // The old head is never merged while the task is being done again.
+        expect((await m.pr(a.id)).merged).toBe(false);
+        expect((await m.record(a.id)).state).toBe("waiting_checks");
+      } finally {
+        held.release();
+        await session;
+      }
+    });
+  }
 
   it("'Drop the branch and retry from scratch' whose run changes nothing: the same, one sentence and a closed pull request (TM-1)", async () => {
     const { m, b, prB } = await conflictingPair();
