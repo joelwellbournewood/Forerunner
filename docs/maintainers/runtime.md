@@ -5437,7 +5437,10 @@ and searching (`cc:WebSearch`) are hard needs of research; asking the person is 
 task whose own words need their answers (`needsPersonsAnswers`, until they answered or went ahead
 without; "the owner's decision" a task follows as already recorded, "Follow the owner's decision
 in docs/decisions/0001", "per the person's choice", is no need, `RECORDED_ANSWER`,
-R-personsanswers); running commands (`cc:Bash`) only makes the work better, unless the person's setting
+R-personsanswers; TR-6: each recorded answer is taken out of the text before the need is read,
+`asksPersonsAnswer`, so a separate "get the owner's confirmation" in the same sentence still
+needs them, and `isPersonTask` reads a legacy title the same way; `personAnswered` is the one
+reader of "they answered", for the run's pick and the Start check); running commands (`cc:Bash`) only makes the work better, unless the person's setting
 "Code tasks that need commands" (`code_commands`: `first_choice`, the default, or `api_key`) makes
 it hard (kept across a restart: `code-commands-restart.test.ts`). `RouterTaskBilling.pick` (`src/wiring/billing-pick.ts`) groups the candidates by
 `needsScore(capabilitiesOf(kind, facts), needs)` (`groupByNeeds`: hard needs met, then page
