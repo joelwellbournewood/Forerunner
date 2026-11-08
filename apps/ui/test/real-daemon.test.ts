@@ -10599,4 +10599,62 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect(after.copy?.stopped).toBeUndefined();
     expect(readFileSync(join(folder, "README.md"), "utf8")).toBe("# l7m2, merged\n");
   }, 120_000);
+
+  it("a Merge that waited for its checks and was merged later by the retry pass raises one notification beside its Update (leftovers7-merge2)", async () => {
+    const project = await client.createProject({ name: "Later merge", goal: "x", repos: [FULL] });
+    const c = await doneTask(project.id, "Add the late page", "late.html", "<p>late</p>\n");
+    const checkRun = async (status: "in_progress" | "completed", conclusion?: string) => {
+      const res = await fetch(`${host.baseUrl}/repos/${FULL}/check-runs`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "ci/test",
+          head_sha: c.pr.head.sha,
+          status,
+          ...(conclusion ? { conclusion } : {}),
+        }),
+      });
+      expect(res.status).toBe(201);
+    };
+    await checkRun("in_progress");
+    expect((await client.mergePullRequest(project.id, c.pr.number)).state).toBe("queued");
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(c.task.id))?.state === "waiting_checks",
+      "the record to wait for its checks (at least 10 s)",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(c.task.id)),
+      30_000,
+    );
+    const merged = () =>
+      rt.notifier
+        .recent({ humanId: rt.human.id, limit: 200 })
+        .filter((r) => r.notification.kind === "pr_merged");
+    expect(merged()).toEqual([]);
+    await checkRun("completed", "success");
+    await rt.merge.retryWaiting();
+    expect((await rt.store.mergeRecord.forTask(c.task.id))?.state).toBe("merged");
+    await eventually(
+      async () => merged().length > 0,
+      "the merged-later notification (at least 10 s)",
+      async () => JSON.stringify(merged().map((r) => r.notification.title)),
+      15_000,
+    );
+    expect(merged().map((r) => [r.notification.title, r.notification.body])).toEqual([
+      [
+        `Later merge: merged #${c.pr.number}`,
+        '"Add the late page" is merged. Open the project to see it.',
+      ],
+    ]);
+    expect(merged()[0]?.notification.link).toBe(`/projects/${project.id}`);
+    // The Update in the Inbox, once.
+    const bodies = (await client.inbox(rt.human.id)).messages.map((m) => m.body);
+    expect(bodies.filter((b) => b === `Merged #${c.pr.number}: "Add the late page".`)).toHaveLength(
+      1,
+    );
+    await rt.merge.retryWaiting();
+    expect(merged()).toHaveLength(1);
+  }, 120_000);
 });

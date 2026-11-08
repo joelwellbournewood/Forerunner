@@ -828,9 +828,25 @@ export class ReviewedPrMerge implements MergePort {
   /** Tasks whose merge runs now in this process: a retry never starts a second one. */
   private readonly inFlight = new Set<string>();
   private readonly mergedListeners = new Set<(e: MergedEvent) => void | Promise<void>>();
+  private readonly mergedLaterListeners = new Set<
+    (e: { task: TaskRow; record: MergeRecordRow }) => void | Promise<void>
+  >();
 
   constructor(private readonly deps: ReviewedPrMergeDeps) {
     this.tool = mergePrTool(deps);
+  }
+
+  /**
+   * leftovers7-merge2: called once for each merge the app made by itself (the retry pass, the
+   * resume at the daemon's start), after its Update was filed: the daemon raises one
+   * notification for it (compose), as a session's merge has its session's and the person's own
+   * click is answered where it was pressed.
+   */
+  onMergedLater(
+    listener: (e: { task: TaskRow; record: MergeRecordRow }) => void | Promise<void>,
+  ): () => void {
+    this.mergedLaterListeners.add(listener);
+    return () => this.mergedLaterListeners.delete(listener);
   }
 
   /** Called for every merge of a task's PR (session, retry, resume, and what `merged` is told). */
@@ -1009,6 +1025,16 @@ export class ReviewedPrMerge implements MergePort {
       });
     } catch (e) {
       this.logger.warn("merge update not sent", { taskId: task.id, error: errorMessage(e) });
+    }
+    for (const fn of this.mergedLaterListeners) {
+      try {
+        await fn({ task, record });
+      } catch (e) {
+        this.logger.warn("merged-later listener failed", {
+          taskId: task.id,
+          error: errorMessage(e),
+        });
+      }
     }
   }
 

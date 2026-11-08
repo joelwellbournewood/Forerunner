@@ -467,6 +467,11 @@ describe("the retry pass reads the checks first and says what it merged (R-merge
     const pr = await m.pr(t.id);
     expect(await m.record(t.id)).toMatchObject({ state: "waiting_checks", attempts: 1 });
     const before = await updates(m);
+    // leftovers7-merge2: what the daemon's notifier hears (compose binds it to a notification).
+    const later: string[] = [];
+    m.merge.onMergedLater((e) => {
+      later.push(`${e.task.id}:${e.record.pr_number}`);
+    });
     const issued = vi.spyOn(m.w.tokens, "issue");
     const rows = mergeRows(m.audit).length;
     for (let i = 0; i < 3; i++) await m.merge.retryWaiting();
@@ -489,17 +494,25 @@ describe("the retry pass reads the checks first and says what it merged (R-merge
       (x) => x.body === added[0],
     );
     expect(message).toMatchObject({ project_id: m.w.project, task_id: t.id, type: "info" });
+    // One notification for it too, as a session's merge and the person's own have their own.
+    expect(later).toEqual([`${t.id}:${pr.number}`]);
     // A later pass has nothing to do and says nothing more.
     await m.merge.retryWaiting();
     expect((await updates(m)).filter((b) => !before.includes(b))).toHaveLength(1);
+    expect(later).toHaveLength(1);
     issued.mockRestore();
   });
 
-  it("a merge inside a session adds no Update: the session's result says it", async () => {
+  it("a merge inside a session adds no Update and no notification of its own: the session's result says it", async () => {
     const m = await recordWorld({ level: 2, mode: "after_review" });
+    const later: string[] = [];
+    m.merge.onMergedLater((e) => {
+      later.push(e.task.id);
+    });
     const t = await m.runTask("Add feature");
     expect((await m.record(t.id)).state).toBe("merged");
     expect((await updates(m)).filter((b) => b.startsWith("Merged #"))).toEqual([]);
+    expect(later).toEqual([]);
   });
 
   it("the start-up resume: a record a dead process left merging that GitHub merged meanwhile posts the Update once", async () => {
@@ -511,10 +524,15 @@ describe("the retry pass reads the checks first and says what it merged (R-merge
     const record = await m.record(t.id);
     await m.w.store.mergeRecord.move(record.id, "merging");
     await m.github.mergePullRequest(REPO, pr.number, { method: "merge" });
+    const later: string[] = [];
+    m.merge.onMergedLater((e) => {
+      later.push(e.task.id);
+    });
     await m.merge.resumeAtStart();
     expect((await m.record(t.id)).state).toBe("merged");
     expect((await updates(m)).filter((b) => b.startsWith("Merged #"))).toEqual([
       `Merged #${pr.number}: "Add feature".`,
     ]);
+    expect(later).toEqual([t.id]);
   });
 });

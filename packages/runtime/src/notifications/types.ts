@@ -22,6 +22,7 @@ export const NOTIFICATION_KINDS = [
   "daily_digest",
   "critic_calibration",
   "handover_report",
+  "pr_merged",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -57,6 +58,8 @@ export const KIND_URGENCY: Readonly<Record<NotificationKind, Urgency>> = {
   daily_digest: "normal",
   critic_calibration: "normal",
   handover_report: "normal",
+  // leftovers7-merge2: a merge the app made by itself (the retry pass, the resume at start).
+  pr_merged: "normal",
 };
 
 /** Kinds that always go through, whatever the hour (ADR 0017). */

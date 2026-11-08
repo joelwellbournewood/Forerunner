@@ -2982,6 +2982,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const notifyLater = (p: Promise<unknown>, what: string): void => {
     p.catch((e: unknown) => logger.warn("notification not sent", { what, error: errorMessage(e) }));
   };
+  // leftovers7-merge2: a merge the app made by itself (the watcher's retry pass, the resume at
+  // the start) is a notification too, beside its Inbox Update (design §3.8).
+  merge.onMergedLater(async ({ task, record }) => {
+    const projectId = record.project_id ?? task.project_id ?? null;
+    const projectName = projectId ? ((await store.project.get(projectId))?.name ?? null) : null;
+    notifyLater(
+      notifications.prMerged(human.id, {
+        projectId,
+        projectName,
+        taskTitle: task.title,
+        prNumber: record.pr_number,
+        recordId: record.id,
+      }),
+      `merged #${record.pr_number}`,
+    );
+  });
   // Producers: every human request this human gets (approvals from the hooks, the extension
   // registry, the mirror, the Cloudflare deployer, the critic, the updater, ...) is one insert
   // on the repo, so the hook lives there: blocking requests are urgent, the rest normal.
