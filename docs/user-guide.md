@@ -775,7 +775,8 @@ session says which ("Stopped at this month's cap" on its page, "Stopped at this 
 CHF 150.00." in its result and the Inbox). At the month's cap, the project's budget or the
 subscription's share the card offers no Continue (a bigger task budget would not help): it says
 how the task goes on ("It goes on by itself once you raise the monthly cap in Settings, or on 1
-December."), links Settings, and the task goes on by itself once that limit has room again.
+December."), links Settings, and the task goes on by itself once you raised that limit (or
+removed it) in Settings, or the new month began; until then it stays paused with its card.
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the
 agent did with the wrap-up: in a project linked to a GitHub repository it is one commit on the

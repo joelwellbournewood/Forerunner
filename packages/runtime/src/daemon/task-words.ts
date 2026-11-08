@@ -235,11 +235,12 @@ export function budgetPauseLabel(source: unknown): string {
 /**
  * What a paused task's row says next (budget-resume, design §2 "status · one line"): its card
  * offers Continue or Cancel; at a limit no bigger budget lifts (the month's cap, the project's
- * budget, the subscription's share) it goes on by itself once the limit has room again.
+ * budget, the subscription's share) it goes on by itself once that limit is raised in Settings
+ * or resets (`wakeBudgetWaits`; room alone never wakes it, the review of budget-resume).
  */
 export function budgetPauseDetail(source: unknown): string {
   return source === "month" || source === "project" || source === "plan"
-    ? "It goes on by itself once that limit has room; cancel it in the Inbox."
+    ? "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."
     : "Continue or cancel in the Inbox.";
 }
 

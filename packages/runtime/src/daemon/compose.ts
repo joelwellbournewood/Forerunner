@@ -1273,6 +1273,15 @@ export class DynamicCaps implements CapsPort {
   }
 
   /**
+   * Forget the caps read for this human and project, so the next check reads them again. A
+   * task paused at one of them goes on once the person raised it (`wakeBudgetWaits`): its
+   * session must not meet the old cap from the minute's cache and pause again at once.
+   */
+  forget(scope: Pick<CapScope, "humanId" | "projectId">): void {
+    this.cache.delete(`${scope.humanId}:${scope.projectId ?? ""}`);
+  }
+
+  /**
    * The checker's room over the human's month and the project's budget (CapsPort.roomUsdMicro).
    * The session level here is unbounded (SessionBudget enforces it in-process), so it is never
    * the smallest.
@@ -3208,15 +3217,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           logger.warn("work waiting for a credential not started", { error: errorMessage(e) }),
         );
       // budget-resume: a task paused at this month's cap, the project's budget or the
-      // subscription's share goes on by itself once that limit has room again.
+      // subscription's share goes on by itself once that limit changed (raised in Settings, a
+      // new month) and has room; room alone never wakes it (the review of budget-resume).
       await wakeBudgetWaits({
         store,
         clock,
         humanId: human.id,
         agentId: agent.id,
-        roomFor: async (projectId) =>
-          (await caps.check({ humanId: human.id, projectId }, 1, { phase: "work" })).decision ===
-          "allow",
+        limitNow: async (source, projectId) => {
+          const usdMicro =
+            source === "project"
+              ? (await store.project.get(projectId))?.budget_usd_micro
+              : (await store.human.get(human.id))?.monthly_cap_usd_micro;
+          // An unset or zero cap is no limit (`DynamicCaps`).
+          return usdMicro && usdMicro > 0 ? usdMicro : Number.POSITIVE_INFINITY;
+        },
+        roomFor: async (projectId) => {
+          caps.forget({ humanId: human.id, projectId });
+          return (
+            (await caps.check({ humanId: human.id, projectId }, 1, { phase: "work" })).decision ===
+            "allow"
+          );
+        },
         start: (req) => scheduler.request(req),
       }).catch((e: unknown) =>
         logger.warn("paused work at a limit not started again", { error: errorMessage(e) }),

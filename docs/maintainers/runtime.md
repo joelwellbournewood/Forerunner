@@ -2024,13 +2024,24 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   cancels it and calls the `setAside` port (`PrTaskExecutor.setAsideWork`), the card recording
   `set_aside` or `kept` for its line. An older card (`raise_to_usd_micro`) keeps its meaning.
 - *Limits no Continue lifts (`wakeBudgetWaits`).* Before every scheduler tick (compose's
-  `refresh`, beside `credentialWaits.wake`), each open budget card at `month` or `project` whose
-  project has room again (`caps.check` allows a call) and each at `plan` past its `resets_at` is
-  withdrawn with `outcome: "went_on"` ('"X" goes on: its limit has room again.'), its task goes
-  to ready and a session of the project is asked for. Before, Raise the budget started a session
-  that stopped at once at the same cap and filed the same card again.
+  `refresh`, beside `credentialWaits.wake`), each open budget card whose limit changed since the
+  pause and has room goes on: at `project`, the project's budget now (`limitNow`, compose reads
+  the row; unset is none) above the card's `cap_usd_micro`; at `month`, the monthly cap above it
+  or the card's `resets_at` passed (else the month after the card was filed); at `plan`, its
+  `resets_at` passed. Then, except at `plan`, `roomFor` must allow a call: compose drops the
+  project's caps from `DynamicCaps`' minute cache first (`forget`), so the session that goes on
+  does not meet the old cap and pause again. The card is withdrawn with `outcome: "went_on"`
+  ('"X" goes on: its limit has room again.'), its task goes to ready and a session of the
+  project is asked for. Room alone never wakes it (the review of budget-resume): a pause at an
+  outer limit comes when the next call's worst case would reach it, so the spend can be under
+  the 80% line, and waking on room started a session every tick (30 s) that paused again, with
+  the card withdrawn and filed anew and urgent notifications, until the person cancelled it.
+  Tests: `budget-pause.test.ts` "a task paused at the project's budget goes on only once that
+  budget changes" (through `scheduler.tick()` and the Settings command) and the month's cases.
+  Before budget-resume, Raise the budget started a session that stopped at once at the same cap
+  and filed the same card again.
 - *Words.* The row: `budgetPauseLabel` and `budgetPauseDetail` ("Continue or cancel in the
-  Inbox.", or "It goes on by itself once that limit has room; cancel it in the Inbox."); the
+  Inbox.", or "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."); the
   card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ..." or "It stopped
   before it could say where it stood; its work so far is kept.", then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until

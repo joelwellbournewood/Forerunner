@@ -638,7 +638,8 @@ function resetDay(iso: unknown): string | null {
 
 /**
  * How a task paused at a limit no bigger budget lifts goes on (budget-resume): by itself once
- * the limit has room again (`wakeBudgetWaits`). Null for a limit Continue lifts.
+ * the person raised the limit in Settings or it reset (`wakeBudgetWaits`; room alone never wakes
+ * it). Null for a limit Continue lifts.
  */
 function goesOnWords(card: JsonObject): string | null {
   const day = resetDay(card.resets_at);

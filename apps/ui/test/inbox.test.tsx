@@ -1367,7 +1367,7 @@ describe("Inbox", () => {
       const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
       expect(view?.display).toMatchObject({
         label: "Paused at this month's cap",
-        detail: "It goes on by itself once that limit has room; cancel it in the Inbox.",
+        detail: "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.",
       });
     });
   });

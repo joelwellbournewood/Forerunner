@@ -227,8 +227,12 @@ session stopped at once; a session-budget stop filed nothing the first time (C-3
    pauses with the same card at the first stop and ends the session (C-36's count and its
    three-option card are gone). At this month's cap, the project's budget or the subscription's
    share there is no Continue: the card says where to change it (Settings) and when the month
-   resets, and the task goes on by itself once the limit has room again (`wakeBudgetWaits`,
-   before every scheduler tick). A card filed before this change keeps its options.
+   resets, and the task goes on by itself once that limit changed and has room (`wakeBudgetWaits`,
+   before every scheduler tick): the person raised or removed it in Settings, or a new month
+   began. Room alone is no change: a pause at an outer limit comes when the next call's worst
+   case would reach it, which can leave the spend under its 80% line, and waking on room there
+   started a session every tick that paused again at once (the review of budget-resume). A card
+   filed before this change keeps its options.
 6. **Cancel sets the work aside.** Cancel of a paused task (its row, its card, the chat) sets its
    work in progress aside (in a repository the branch goes back to its start and a pushed branch
    leaves the host; in a project's folder only while no later task built on it, else its files

@@ -27,8 +27,9 @@ import type { BudgetStop } from "./runner.ts";
  * - A stop at this month's cap, the project's budget or the subscription's share offers no
  *   Continue (raising the task's budget does not help there: the next session stopped at once at
  *   the same cap and filed the same card, the review of budget-stop): the card says where to
- *   change it (Settings) or when it resets, and the task goes on by itself once the limit has room
- *   again (`wakeBudgetWaits`, before every scheduler tick).
+ *   change it (Settings) or when it resets, and the task goes on by itself once that limit
+ *   changed and has room (`wakeBudgetWaits`, before every scheduler tick): raised or removed in
+ *   Settings, or a new month. Room alone never wakes it (the review of budget-resume).
  * - **Cancel task** sets its work in progress aside (`setAside`, Undo or Reopen brings it back)
  *   and names the tasks that will be stuck.
  *
@@ -323,20 +324,57 @@ export async function syncBudgetStopAnswers(deps: {
   return out;
 }
 
+/** An outer limit as it is now, in USD micro-units; `Number.POSITIVE_INFINITY` when none is set. */
+export type LimitNowPort = (source: "project" | "month", projectId: string) => Promise<number>;
+
+/**
+ * Whether the limit a card names changed since the pause, as its card says it goes on: the
+ * project's budget or this month's cap was raised (or removed) in Settings, or a new month (the
+ * month's cap, the subscription's share) began. Room alone is not a change: a pause at an outer
+ * limit comes when the next call's worst case would reach the limit, which can leave the spend
+ * under its 80% line, where room was always there (the review of budget-resume: every scheduler
+ * tick woke the task and a session paused again at once, with nothing changed).
+ */
+async function limitChanged(
+  row: Pick<HumanRequestRow, "created_at">,
+  card: JsonObject,
+  projectId: string,
+  now: string,
+  limitNow: LimitNowPort,
+): Promise<boolean> {
+  const source = card.source;
+  if (source !== "project" && source !== "month" && source !== "plan") return false;
+  if (source !== "project") {
+    // A new month: the card's own date, else the month after the card was filed.
+    const resets =
+      typeof card.resets_at === "string" ? card.resets_at : nextMonthStart(row.created_at);
+    if (now >= resets) return true;
+    if (source === "plan") return false;
+  }
+  const cap = card.cap_usd_micro;
+  if (typeof cap !== "number") return false;
+  return (await limitNow(source, projectId)) > cap;
+}
+
 /**
  * The cards of tasks paused at this month's cap, the project's budget or the subscription's
- * share (budget-resume): each goes on by itself once its limit has room again (the person raised
- * it in Settings, or the month changed), as its card says. The card is closed with the outcome
- * `went_on`, the task goes back to ready and a session of its project is asked for. Before, the
- * card offered Raise the budget, and the session that started stopped at once at the same cap.
- * Returns how many went on.
+ * share (budget-resume): each goes on by itself once its limit changed and has room (the person
+ * raised it in Settings, or the month changed), as its card says. The card is closed with the
+ * outcome `went_on`, the task goes back to ready and a session of its project is asked for.
+ * Before, the card offered Raise the budget, and the session that started stopped at once at the
+ * same cap. Returns how many went on.
  */
 export async function wakeBudgetWaits(deps: {
   store: StateStore;
   clock: Clock;
   humanId: string;
   agentId: string;
-  /** Whether work of the project may spend again under the month's cap and its own budget. */
+  /** The project's budget or this month's cap now, to see whether the person changed it. */
+  limitNow: LimitNowPort;
+  /**
+   * Whether work of the project may spend again under the month's cap and its own budget,
+   * asked only once the limit changed (the caps read again, not from a minute's cache).
+   */
   roomFor: (projectId: string) => Promise<boolean>;
   start?: StartPort;
 }): Promise<number> {
@@ -357,12 +395,17 @@ export async function wakeBudgetWaits(deps: {
     const card = (row.change_card ?? {}) as JsonObject;
     const task = row.task_id ? await store.task.get(row.task_id) : undefined;
     if (task?.status !== "needs_human") continue;
-    const resets = typeof card.resets_at === "string" ? card.resets_at : null;
-    const room =
-      card.source === "plan"
-        ? !!resets && clock.nowIso() >= resets
-        : await deps.roomFor(task.project_id).catch(() => false);
-    if (!room) continue;
+    const changed = await limitChanged(
+      row,
+      card,
+      task.project_id,
+      clock.nowIso(),
+      deps.limitNow,
+    ).catch(() => false);
+    if (!changed) continue;
+    // The subscription's share is not money: its new month is its room.
+    if (card.source !== "plan" && !(await deps.roomFor(task.project_id).catch(() => false)))
+      continue;
     try {
       const fresh = await store.humanRequest.withdraw(row.id, row.version);
       await store.humanRequest.patch(fresh.id, {
