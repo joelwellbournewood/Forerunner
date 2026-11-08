@@ -1064,7 +1064,14 @@ a background job's row on no project (the critic's monthly calibration) is ended
 so a crash during it never reads "Your last session was interrupted". `POST /sessions/:id/stop`
 on a row nothing in this process runs ends it the same way (`endDeadSession`, stop reason
 `you`). The runner's refusal of a second session says it in words, never with the other
-session's id.
+session's id. What the ended session did before it died is kept (the leftovers of wave 7):
+its `session.ended` event carries `completed` (the tasks its runs worked on that are done) and
+`spentUsdMicro` (the cost ledger's rows for the session, else the row's count), so its last
+line reads "Interrupted: Forerunner closed: 1 done. CHF 0.03." instead of "nothing done. CHF
+0.00."; and it becomes the project's `summary_cache.last_session` (`recordLastSession`: its
+summary, stop reason and a `LastSessionOutcome` with what it did and left ready) unless a later
+session of the project already ended, so the Overview never reads "No session yet" after a
+crash (`session-recovery.test.ts`, composed twice on one home).
 
 **The inbox before the session-end writes (spec E.4).** Step 4 of `runner.ts` starts with one
 more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is
