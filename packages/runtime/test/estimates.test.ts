@@ -657,6 +657,16 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
       outcomes: ["running"],
       status: "ready",
     });
+    // A run that ended before its first model call (a refused sandbox lease, a provider error on
+    // the first request) spent nothing, and the person cancelled the task: a cost of 0 says
+    // nothing about what the work costs (it read as a tenth of the estimate, the clamp).
+    const spentNothing = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 0,
+      outcomes: ["error"],
+      status: "cancelled",
+      ledger: true,
+    });
     // Reviewed for USD 0.50 and booked: the work's cost is what the task's budget saw.
     const reviewed = await finishedTask(w, {
       estimate: 100_000,
@@ -686,6 +696,7 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
     // A retry a credential stopped before it spent anything: the try before it finished, but
     // this call is no measure of the task's cost (a sample of 0 would read as a tenth).
     expect(await feed(fresh, "usage_limit")).toBe(false);
+    expect(await feed(spentNothing, "failed")).toBe(false);
     expect(await feed(reviewed)).toBe(true);
     expect(live.recentSamples().map((s) => s.taskId)).toEqual([plain.id, reviewed.id]);
     // The sample is the fold's, figure for figure: the work's cost (the ledger less the review)

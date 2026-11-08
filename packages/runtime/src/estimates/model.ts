@@ -620,7 +620,8 @@ export class EstimateModel implements EstimatePort {
    * rows: the work's cost is what the task's budget caps, 'cost') or, without ledger rows, from
    * the work runs; actual wall time from the work runs' durations; the estimate from the task
    * row or the cold start. A task with a run that stopped at a budget (`paused`,
-   * `budget_exceeded`) is no sample ('cost', ADR 0112).
+   * `budget_exceeded`) is no sample ('cost', ADR 0112), nor is one whose work spent nothing (no
+   * model call ran: a refused sandbox lease, an error on the first request).
    */
   static async fromStore(
     store: StateStore,
@@ -671,8 +672,11 @@ export class EstimateModel implements EstimatePort {
       this.remember(t.id, t.updated_at);
       const runs = byTask.get(t.id);
       if (!runs || isNoSample(runs)) continue;
+      const usdMicro = workCostOf(runs, ledger.get(t.id));
+      // Nothing spent: no model call ran, so it says nothing of what the work costs.
+      if (!(usdMicro > 0)) continue;
       const sample = this.sampleForTask(t, {
-        usdMicro: workCostOf(runs, ledger.get(t.id)),
+        usdMicro,
         wallMs: runs.wall,
         at: runs.endedAt || t.updated_at,
       });
@@ -727,7 +731,8 @@ export class EstimateModel implements EstimatePort {
    * Run rows and cost-ledger rows are read, and
    * - a task the fold leaves out gives no sample live either (`isNoSample`): a work run that
    *   stopped at a budget, also one before the budget was raised or the task continued; a
-   *   fast-mode run; or no finished work run (a call that met a resting credential). Before, the
+   *   fast-mode run; no finished work run (a call that met a resting credential); or work that
+   *   spent nothing (no model call ran; it read as a tenth of the estimate). Before, the
    *   live feed skipped only a call that itself paused, so a raised task was learned from until
    *   the next restart, whose fold left it out;
    * - the actual is the fold's: the work's cost so far (`workCostOf`) and its runs' wall time,
@@ -750,11 +755,9 @@ export class EstimateModel implements EstimatePort {
     for (const r of await store.run.forTask(task.id)) tallyRun(tally, r);
     if (isNoSample(tally)) return false;
     const booked = await store.costLedger.sum({ taskId: task.id });
-    return this.observeTask(task, {
-      usdMicro: workCostOf(tally, booked.entries > 0 ? booked.usd_micro : undefined),
-      wallMs: tally.wall,
-      at: tally.endedAt || at,
-    });
+    const usdMicro = workCostOf(tally, booked.entries > 0 ? booked.usd_micro : undefined);
+    if (!(usdMicro > 0)) return false;
+    return this.observeTask(task, { usdMicro, wallMs: tally.wall, at: tally.endedAt || at });
   }
 }
 

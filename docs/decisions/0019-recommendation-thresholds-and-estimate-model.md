@@ -134,8 +134,9 @@ figure (a task for the person keeps 0), a task with a `paused` or `budget_exceed
 sample, and the fold's actual is the work runs' cost (the ledger less the critic's Run rows). The
 wall-time cold start is unchanged. The live feed (`observeTaskRuns`) reads the task's Run rows and
 ledger rows: it leaves out the same tasks as the fold (`tallyRun`, `isNoSample`: a budget stop
-before a raise or a Continue, a fast-mode run, no finished work run) and a call a credential
-stopped, and its actual is the fold's (`workCostOf`, the work runs' wall time; before, the
+before a raise or a Continue, a fast-mode run, no finished work run; and in both feeds work that
+spent nothing, where no model call ran, which read as a tenth of its estimate at the clamp) and a
+call a credential stopped, and its actual is the fold's (`workCostOf`, the work runs' wall time; before, the
 executor call's cost and wall time, which counted the call's setup). In both feeds a sample's time
 is when the task's last work run ended (was the hook's moment live and the task row's last
 update in the fold, a row a review or a merge touches later), so the state learned live
