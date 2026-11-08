@@ -13,7 +13,7 @@ import {
 } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
 import { errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
-import type { BillingSourceRow, StateStore } from "@forerunner/state";
+import type { BillingSourceRow, JsonObject, StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { restUntil } from "../provider/usage-limit.ts";
 import {
@@ -675,12 +675,10 @@ export class RouterTaskBilling implements TaskBillingPort {
    */
   async rest(sourceId: string, resetAt: string | undefined, why: string): Promise<string> {
     const until = restUntil(resetAt, this.opts.clock.now());
-    const row = await this.opts.store.billingSource.get(sourceId);
-    if (row) {
-      await this.opts.store.billingSource.patch(row.id, {
-        limits: { ...row.limits, restingUntil: until },
-      });
-    }
+    const row = await updateSourceLimits(this.opts.store, sourceId, (limits) => ({
+      ...limits,
+      restingUntil: until,
+    }));
     this.logger.warn("billing source rests after a usage limit", { sourceId, until });
     await this.opts.store.auditLog
       .append({
@@ -715,19 +713,25 @@ export class RouterTaskBilling implements TaskBillingPort {
         ? await this.opts.vault.get(row.credential_ref).catch(() => null)
         : null;
     const fingerprint = current ? credentialFingerprint(current) : undefined;
-    const known =
-      typeof row.limits.refusedAt === "string" &&
-      (fingerprint === undefined || row.limits.refusedKey === fingerprint);
-    if (!known) {
-      const words = redact(current ? why.split(current).join("[REDACTED]") : why).slice(0, 300);
-      await this.opts.store.billingSource.patch(row.id, {
-        limits: {
-          ...row.limits,
-          refusedAt: this.opts.clock.nowIso(),
-          ...(fingerprint ? { refusedKey: fingerprint } : {}),
-          refusedWhy: words,
-        },
+    const known = (limits: JsonObject) =>
+      typeof limits.refusedAt === "string" &&
+      (fingerprint === undefined || limits.refusedKey === fingerprint);
+    const words = redact(current ? why.split(current).join("[REDACTED]") : why).slice(0, 300);
+    let marked = false;
+    if (!known(row.limits as JsonObject))
+      await updateSourceLimits(this.opts.store, row.id, (limits) => {
+        // Another refusal of the same credential may have marked it meanwhile.
+        marked = !known(limits);
+        return marked
+          ? {
+              ...limits,
+              refusedAt: this.opts.clock.nowIso(),
+              ...(fingerprint ? { refusedKey: fingerprint } : {}),
+              refusedWhy: words,
+            }
+          : null;
       });
+    if (marked) {
       this.logger.warn("billing source refused: its credential was not accepted", {
         sourceId,
         kind: row.kind,
@@ -763,15 +767,13 @@ export class RouterTaskBilling implements TaskBillingPort {
    * serve again, after a restart too. One entry per project.
    */
   async noteWait(sourceId: string, projectId: string, agentId: string): Promise<void> {
-    const row = await this.opts.store.billingSource.get(sourceId);
-    if (!row) return;
-    const waiting = waitingOf(row.limits);
-    if (waiting.some((w) => w.projectId === projectId)) return;
-    await this.opts.store.billingSource.patch(row.id, {
-      limits: {
-        ...row.limits,
+    await updateSourceLimits(this.opts.store, sourceId, (limits) => {
+      const waiting = waitingOf(limits);
+      if (waiting.some((w) => w.projectId === projectId)) return null;
+      return {
+        ...limits,
         waiting: [...waiting, { projectId, agentId, since: this.opts.clock.nowIso() }],
-      },
+      };
     });
   }
 
@@ -788,33 +790,43 @@ export class RouterTaskBilling implements TaskBillingPort {
     );
     const out: { projectId: string; agentId: string; sourceId: string }[] = [];
     const now = this.opts.clock.now();
-    for (const row of rows) {
-      const source = {
-        limits: row.limits as BillingSource["limits"],
-        credentialRef: row.credential_ref ?? "",
-      };
-      const refused = await refusedSince(source, this.opts.vault);
-      const stale = typeof row.limits.refusedAt === "string" && !refused;
-      const waiting = waitingOf(row.limits);
-      const free = !refused && !restingUntilOf(source, now);
-      if (!stale && !(free && waiting.length)) continue;
-      const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, waiting: _l, ...rest } = row.limits;
-      await this.opts.store.billingSource.patch(row.id, {
-        limits: {
+    for (const listed of rows) {
+      // Read and written with the version check (R-limitsrmw): a wait noted, a rest or a
+      // refusal written meanwhile is read again, so it is either taken here or kept.
+      let taken: { projectId: string; agentId: string; since: string }[] = [];
+      let stale = false;
+      let refused = false;
+      const credentialRef = listed.credential_ref ?? "";
+      // Whether the vault still holds the refused credential (async, so read before the write).
+      const refusedNowOf = async (limits: JsonObject) =>
+        refusedSince({ limits: limits as BillingSource["limits"], credentialRef }, this.opts.vault);
+      if (typeof listed.limits.refusedAt !== "string" && !waitingOf(listed.limits).length) continue;
+      refused = (await refusedNowOf(listed.limits as JsonObject)) !== null;
+      await updateSourceLimits(this.opts.store, listed.id, (limits) => {
+        taken = [];
+        stale = typeof limits.refusedAt === "string" && !refused;
+        const waiting = waitingOf(limits);
+        const free =
+          !refused && !restingUntilOf({ limits: limits as BillingSource["limits"] }, now);
+        if (!stale && !(free && waiting.length)) return null;
+        const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, waiting: _l, ...rest } = limits;
+        if (free) taken = waiting;
+        return {
           ...rest,
-          ...(refused ? { refusedAt: row.limits.refusedAt } : {}),
-          ...(refused && row.limits.refusedKey ? { refusedKey: row.limits.refusedKey } : {}),
-          ...(refused && row.limits.refusedWhy ? { refusedWhy: row.limits.refusedWhy } : {}),
+          ...(refused && limits.refusedAt ? { refusedAt: limits.refusedAt } : {}),
+          ...(refused && limits.refusedKey ? { refusedKey: limits.refusedKey } : {}),
+          ...(refused && limits.refusedWhy ? { refusedWhy: limits.refusedWhy } : {}),
           ...(!free && waiting.length ? { waiting } : {}),
-        },
+        };
       });
+      const row = listed;
       if (stale && this.opts.store.humanRequest)
         await closeRefusedCards(
           this.opts.store as Pick<StateStore, "humanRequest">,
           this.opts.humanId,
           row.id,
         ).catch(() => undefined);
-      if (free) for (const w of waiting) out.push({ ...w, sourceId: row.id });
+      for (const w of taken) out.push({ ...w, sourceId: row.id });
     }
     return out;
   }
@@ -830,8 +842,11 @@ export class RouterTaskBilling implements TaskBillingPort {
     );
     for (const row of rows) {
       if (row.kind !== kind || typeof row.limits.refusedAt !== "string") continue;
-      const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, ...rest } = row.limits;
-      await this.opts.store.billingSource.patch(row.id, { limits: rest });
+      await updateSourceLimits(this.opts.store, row.id, (limits) => {
+        if (typeof limits.refusedAt !== "string") return null;
+        const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, ...rest } = limits;
+        return rest;
+      });
       if (this.opts.store.humanRequest)
         await closeRefusedCards(
           this.opts.store as Pick<StateStore, "humanRequest">,
@@ -876,6 +891,36 @@ function choiceReason(c: CredentialChoice): string | null {
     parts.push(`${c.kind} lacks ${words(c.lost)}, which only makes the work better`);
   return parts.length ? `chooser: ${parts.join("; ")}` : null;
 }
+
+/**
+ * Change one billing source's `limits` with the store's version check (R-limitsrmw): `change`
+ * gets the limits as stored now and returns the new ones (null: nothing to write); a write
+ * another one beat is read again and changed again, so two writes landing together both stand
+ * (before, each wrote back the copy it had read, and one was lost). Returns the row as written,
+ * or undefined when it is gone. `change` may run more than once: it must not act, only compute.
+ */
+export async function updateSourceLimits(
+  store: { billingSource: Pick<StateStore["billingSource"], "get" | "update"> },
+  sourceId: string,
+  change: (limits: JsonObject, row: BillingSourceRow) => JsonObject | null,
+): Promise<BillingSourceRow | undefined> {
+  for (let attempt = 1; ; attempt++) {
+    const row = await store.billingSource.get(sourceId);
+    if (!row) return undefined;
+    const next = change({ ...(row.limits as JsonObject) }, row);
+    if (next === null) return row;
+    try {
+      return await store.billingSource.update(row.id, row.version, { limits: next });
+    } catch (e) {
+      if (e instanceof ForerunnerError && e.code === "version_conflict" && attempt < LIMITS_TRIES)
+        continue;
+      throw e;
+    }
+  }
+}
+
+/** How often a limits write that another write beat is tried again (`updateSourceLimits`). */
+const LIMITS_TRIES = 8;
 
 /** The projects that wait for a source (`limits.waiting`, U-078), well-formed entries only. */
 export function waitingOf(

@@ -534,7 +534,11 @@ names it (W5-20; `session-keeps-going.test.ts`, `specialist-handover.test.ts`,
 source's `until`, a refused source) into `ForerunnerError("unavailable")` with `details.wait`
 and the wait's sentence, which the runner's catch makes the same `usage_limit` result. (4) Each
 wait is kept on the source it waits for (`noteWait`: `limits.waiting`, one entry per project,
-after a restart too); `RuntimeApp.billing.waits.wake()` (before every scheduler tick, and at
+after a restart too; every write of a source's `limits` (`rest`, `refuse`, `noteWait`,
+`takeReady`, `credentialSaved`, the web search marks, the plan allowance) goes through
+`updateSourceLimits`, which writes with the store's version check and reads again on a
+conflict, so two writes landing together both stand: R-limitsrmw, before one was lost, a waiting
+entry or `restingUntil`; test `billing-limits.test.ts`); `RuntimeApp.billing.waits.wake()` (before every scheduler tick, and at
 once from `credentialSaved(kind)`, which the setup assistant's `POST /setup/anthropic` calls
 through `onClaudeCredentialSaved`) takes the projects whose source serves again
 (`RouterTaskBilling.takeReady`: the rest ended, no refusal stands; a refusal a new credential
