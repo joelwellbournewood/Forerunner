@@ -700,10 +700,13 @@ hour when it gives none), and the session log says so in one sentence. For tasks
 **When my first choice runs out mid-session** (Settings → Advanced, Other settings) decides:
 
 - **Wait** (the default): nothing moves onto your other credential. The task goes back to
-  Ready without counting as a failed attempt, the session ends with "Waits until 15:40 (your
-  subscription's limit) and starts by itself.", each task's row reads "Waits until 15:40, your
+  Ready without counting as a failed attempt, and so does every other task whose first choice
+  is that credential; the session goes on with the tasks whose first choice can serve (a
+  research task on your API key, say) and ends with "Waits until 15:40 (your subscription's
+  limit) and starts by itself.". Each waiting task's row reads "Waits until 15:40, your
   subscription's limit", and at that time a session of the project starts by itself, also
-  after Forerunner was closed and opened again.
+  after Forerunner was closed and opened again. The session log names a task as started only
+  once its run really starts, with the specialist that runs it.
 - **Use the other one**: the task goes on at once, in the same session, on your other
   credential ("continues on your API key now"). This moves work from your plan's limits onto
   money, so Forerunner asks you to confirm the change.

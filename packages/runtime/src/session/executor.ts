@@ -1092,6 +1092,9 @@ export class LoopTaskExecutor implements TaskExecutor {
         : base;
     const headroomUsed = choice.driver === "sdk" ? !!sessionContext?.sdkEnv : provider !== base;
     const startedMono = clock.monotonic();
+    // The run starts now, with this specialist, on the credential picked (the log's start line,
+    // the leftovers of wave 7): after the pick, which may have waited, and any hand-over.
+    ctx.onStarted?.({ specialist: spec.name });
     const run = await store.run.insert({
       id: runId,
       task_id: task.id,

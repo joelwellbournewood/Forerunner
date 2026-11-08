@@ -5,6 +5,7 @@ import { type KeyAnswer, messagesApiStandIn, standInFetch } from "@forerunner/te
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import { claudeCodeToolNames } from "../src/agent/cc-tools.ts";
+import type { QueryLike } from "../src/agent/sdk.ts";
 import type { InboxView, TaskView } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
@@ -128,6 +129,146 @@ async function until(what: string, check: () => Promise<string | null>, ms = 20_
   }
   throw new Error(`${what} did not happen within ${ms / 1000} s; last seen: ${seen}`);
 }
+
+// Credential-shaped fixtures for the two-credential world below.
+const OAUTH = ["sk-ant-oat01-", "waitqueue", "7".repeat(40)].join(""); // not-a-secret
+const API_KEY = ["sk-ant-api03-", "waitqueue", "8".repeat(40)].join(""); // not-a-secret
+
+/** Claude Code whose first call meets the plan's usage limit (reset at `resetAt`); then serves. */
+function limitedClaudeCode(resetAt: string, calls: string[]): QueryLike {
+  return ({ prompt }) => {
+    calls.push(prompt);
+    const limited = calls.length === 1;
+    return (async function* () {
+      yield { type: "system", subtype: "init", session_id: "sdk-wait" };
+      if (!limited) {
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it on the subscription. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+        return;
+      }
+      yield {
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "rejected",
+          resetsAt: Date.parse(resetAt) / 1000,
+          rateLimitType: "five_hour",
+        },
+      };
+      yield {
+        type: "assistant",
+        error: "rate_limit",
+        message: { content: [{ type: "text", text: "You've hit your limit · resets 2pm" }] },
+      };
+      yield { type: "result", subtype: "success", is_error: true, result: "You've hit your limit" };
+    })();
+  };
+}
+
+/**
+ * R-waitqueue (the leftovers of wave 7; ADR 0100 point 10): under "When my first choice runs out
+ * mid-session: Wait", only the tasks whose first choice is the resting credential wait. Before,
+ * the session ended at the first task that had to wait and skipped the rest of its queue,
+ * including a task whose first choice (the API key) could serve now, and every ready task of the
+ * project read "Waits until ...", that one too.
+ */
+describe("under 'Wait' only the tasks whose first choice rests wait (U-078)", () => {
+  it("the research task on the API key runs in the same session; only the code task waits, and its row alone says so", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-wait-queue-"));
+    const sdkCalls: string[] = [];
+    const provider = new ScriptedProvider([{ text: "Read three pages. Lesson: none." }], clock);
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({
+        [SECRET_NAMES.anthropicOauth]: OAUTH,
+        [SECRET_NAMES.anthropic]: API_KEY,
+      }),
+      // The critic accepts (ADR 0104); the API key's task runs on `provider`.
+      provider: new AcceptingCriticProvider(provider),
+      sdkQuery: limitedClaudeCode("2026-10-31T14:00:00.000Z", sdkCalls),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      startServices: false,
+      // Claude Code reads no web page here: research's first choice is the API key.
+      billing: { facts: { subscriptionPages: false } },
+    });
+    runtimes.push(rt);
+    const { app, token } = createDaemonApp(rt);
+    const req = async <T>(path: string): Promise<T> =>
+      (await (
+        await app.request(path, { headers: { authorization: `Bearer ${token}` } })
+      ).json()) as T;
+    const project = await rt.store.project.insert({
+      name: "Club",
+      goal: "A club site",
+      autonomy_level: 2,
+    });
+    const make = (title: string, specialist: string, priority: number) =>
+      rt.store.task.insert({
+        project_id: project.id,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: ["it is done"],
+        risk_tier: 0,
+        status: "ready",
+        priority,
+        specialist,
+        est_cost_usd_micro: 100_000,
+        reason: "seed",
+      });
+    // The code task first (higher priority): its first choice, the subscription, meets its limit.
+    const code = await make("Write the changelog", "coder", 9);
+    const notes = await make("Write the release notes", "coder", 7);
+    const research = await make("Compare hosting offers", "researcher", 5);
+
+    const result = await run(rt, project.id);
+    // Only the first code task called Claude Code: the second one's pick waited, no call.
+    expect(sdkCalls).toHaveLength(1);
+    // The code tasks wait for the subscription's reset; the research task ran on the API key in
+    // the same session and the critic accepted it.
+    for (const t of [code, notes]) {
+      const now = await rt.store.task.mustGet(t.id);
+      expect([now.title, now.status, now.attempt]).toEqual([t.title, "ready", 0]);
+    }
+    expect((await rt.store.task.mustGet(research.id)).status).toBe("done");
+    expect(result.completed).toEqual([research.id]);
+    expect(
+      provider.calls.filter((c) => !(c.tools ?? []).some((t) => t.name === SUBMIT_REVIEW)).length,
+    ).toBeGreaterThan(0);
+    // Only the waiting tasks' rows say they wait.
+    const rows = await req<TaskView[]>(`/projects/${project.id}/tasks`);
+    const label = (id: string) => rows.find((t) => t.id === id)?.display?.label;
+    expect(label(code.id)).toBe("Waits until 15:00, your subscription's limit");
+    expect(label(notes.id)).toBe("Waits until 15:00, your subscription's limit");
+    expect(label(research.id)).toBe("Done");
+    // The session says what it did and what waits; the person's log names the wait once and
+    // starts nothing that did not run.
+    expect(result.summary).toContain("Waits until 15:00 (your subscription's limit)");
+    const lines = (
+      await req<{ text: string; audience?: string }[]>(`/sessions/${result.sessionId}/events`)
+    )
+      .filter((e) => e.audience !== "detail")
+      .map((e) => e.text);
+    expect(lines.filter((l) => /waits until 15:00/.test(l))).toEqual([
+      'Your Claude subscription reached its usage limit; "Write the changelog" waits until 15:00 (your subscription\'s limit) and starts by itself.',
+    ]);
+    expect(lines.some((l) => l.includes('started "Write the release notes"'))).toBe(false);
+    expect(lines.some((l) => l.includes('started "Compare hosting offers"'))).toBe(true);
+  }, 120_000);
+});
 
 /**
  * R-criticcred (the leftovers of wave 7): the task's run finished, then the critic's review met

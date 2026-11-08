@@ -33,6 +33,14 @@ export interface CredentialWait {
 /** The session's stop reason when nothing it may run can be billed now. */
 export const CREDENTIAL_WAIT_STOP = "credential_wait";
 
+/**
+ * The reason a task that waits for a Claude credential is given back with (U-078; the leftovers
+ * of wave 7): its row alone reads "Waits until …" (`taskDisplay`), not every ready task of the
+ * project, since under "Wait" only the tasks whose first choice cannot serve wait (ADR 0100
+ * point 10) and the others run.
+ */
+export const CREDENTIAL_WAIT_REASON = "waits for a Claude credential: back to ready";
+
 /** The Inbox card of a refused credential (one per credential, filed once). */
 export const CREDENTIAL_REFUSED_KEY = "credential:refused";
 

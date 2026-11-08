@@ -65,6 +65,7 @@ import {
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import {
+  CREDENTIAL_WAIT_REASON,
   CREDENTIAL_WAIT_STOP,
   type CredentialWait,
   stoppedRunSentence,
@@ -334,6 +335,13 @@ export interface TaskExecutor {
      * counts the step and the spend on the session row and logs a step line while it runs.
      */
     onStep?: (step: TaskStep) => void;
+    /**
+     * Called once when the task's run really starts: after its credential pick and any hand-over
+     * to another specialist, with the specialist that runs (the leftovers of wave 7, W5-20). The
+     * session log's start line is written then; a task whose pick waits for a credential, so no
+     * run starts, gets none.
+     */
+    onStarted?: (info: { specialist: string }) => void;
   }): Promise<TaskExecutionResult>;
   /**
    * A task the person cancelled while it ran or was reviewed (phase C, live walk 2 C1): what
@@ -916,6 +924,8 @@ export class SessionRunner {
     let sandboxAnswer: SandboxGateAnswer | null = null;
     /** The Claude credential the session's work waits for, when it ended on one (U-078). */
     let credentialWait: CredentialWait | null = null;
+    /** A task of this session waits for a Claude credential: the session ends saying so. */
+    let waitedForCredential = false;
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
@@ -1543,15 +1553,27 @@ export class SessionRunner {
           // Who ran it last, in this session or an earlier one: another specialist taking over
           // says so ("The migration specialist takes over … from the coder").
           const previous = before ?? (chosen ? await lastWorkSpecialist(store, task.id) : null);
-          startedWith.set(task.id, runItem.specialist);
-          await emit("task.started", {
-            taskId: task.id,
-            title: task.title,
-            specialist: runItem.specialist,
-            estimateUsdMicro: item.estimateUsdMicro,
-            ...(again ? { again: true } : {}),
-            ...(previous && previous !== runItem.specialist ? { handedFrom: previous } : {}),
-          });
+          // The log's start line is written when the run really starts (the leftovers of wave
+          // 7, W5-20): the executor says so (`onStarted`) after its credential pick and any
+          // hand-over, with the specialist that runs. Before, it was written here, so a run
+          // handed to another specialist for the web named the planned one, and a task whose
+          // credential pick then waited read "The writer started …" although nothing ran. An
+          // executor that does not say it is started at its first step, or when it returns
+          // (unless it waited for a credential before any run).
+          let started = false;
+          const sayStarted = async (specialist: string) => {
+            if (started) return;
+            started = true;
+            startedWith.set(task.id, specialist);
+            await emit("task.started", {
+              taskId: task.id,
+              title: task.title,
+              specialist,
+              estimateUsdMicro: item.estimateUsdMicro,
+              ...(again ? { again: true } : {}),
+              ...(previous && previous !== specialist ? { handedFrom: previous } : {}),
+            });
+          };
           runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
           // one-shot timer would let a long task's claim lapse and a peer take the task.
@@ -1635,8 +1657,16 @@ export class SessionRunner {
               heard: said.map(({ deliveredTo: _to, ...line }) => line),
               ...(notes.length ? { notes } : {}),
               ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
+              onStarted: ({ specialist }) => {
+                steps = steps
+                  .then(() => sayStarted(specialist))
+                  .catch((e: unknown) =>
+                    this.logger.warn("start not recorded", { error: errorMessage(e) }),
+                  );
+              },
               onStep: (step) => {
                 steps = steps
+                  .then(() => sayStarted(runItem.specialist))
                   .then(() => recordStep(task, step))
                   .catch((e: unknown) =>
                     this.logger.warn("step not recorded", { error: errorMessage(e) }),
@@ -1703,6 +1733,11 @@ export class SessionRunner {
             unregisterTask();
             controller.signal.removeEventListener("abort", onSessionAbort);
           }
+          // An executor that never said it started (a person's task, a test's executor) is
+          // started now, before its end; a task whose credential pick waited before any run
+          // never started, and its wait's line says so.
+          if (result.outcome !== "usage_limit")
+            await sayStarted(result.specialist ?? runItem.specialist);
           task = await store.task.mustGet(task.id);
           await store.task.patch(task.id, {
             actual_cost_usd_micro: task.actual_cost_usd_micro + result.costUsdMicro,
@@ -1792,24 +1827,39 @@ export class SessionRunner {
             // through `failed`, so the retry ladder's attempt stays as it was, no critic
             // reviews it and it is never tried again as a passing error. The session log says
             // what happened and what comes next in one plain sentence.
+            // A second task waiting for the same credential is a detail (design §4.5: a blocker
+            // is named once); the session's end says the wait again.
+            const sameWait =
+              !!credentialWait &&
+              !!result.credentialWait &&
+              credentialWait.sourceId === result.credentialWait.sourceId &&
+              credentialWait.reason === result.credentialWait.reason;
             await emit(BILLING_FALLBACK_EVENT, {
               taskId: task.id,
               title: task.title,
               sentence: result.summary,
+              ...(sameWait ? { repeat: true } : {}),
             });
-            await releaseIfHeld(task.id, "a Claude credential could not serve: back to ready");
             const tries = (movedOnCredential.get(task.id) ?? 0) + 1;
             movedOnCredential.set(task.id, tries);
-            if (result.credentialWait || tries > MAX_CREDENTIAL_MOVES) {
-              // Nothing it may run can be billed now: the session ends on the wait (one
-              // sentence, no row of failed tasks); the rest stays ready and starts by itself
-              // at the reset, or once a new credential is saved (the executor noted the wait).
+            const waits = !!result.credentialWait || tries > MAX_CREDENTIAL_MOVES;
+            await releaseIfHeld(
+              task.id,
+              waits ? CREDENTIAL_WAIT_REASON : "a Claude credential could not serve: back to ready",
+            );
+            if (waits) {
+              // Nothing this task may run on can be billed now: it waits (one sentence, no
+              // failed task) and starts by itself at the reset, or once a new credential is
+              // saved (the executor noted the wait). Only this task waits (ADR 0100 point 10):
+              // the session goes on with the rest of its queue, where each task's own pick
+              // decides whether it runs now or waits too. Before, the session ended here and
+              // skipped the queue, a task whose first choice could serve now included (the
+              // leftovers of wave 7).
               credentialWait ??= result.credentialWait ?? null;
-              skipped.push(task.id, ...queue.map((i) => i.taskId));
+              waitedForCredential = true;
+              skipped.push(task.id);
               notAgain.add(task.id);
-              queue.length = 0;
-              stopReason = CREDENTIAL_WAIT_STOP;
-              break;
+              continue;
             }
             // Another credential takes over now ("Use the other one", or after a refusal): the
             // task goes on at once in this session.
@@ -1958,7 +2008,7 @@ export class SessionRunner {
                   now.id,
                   now.version,
                   "in_review",
-                  "its review waits for a Claude credential: back to ready",
+                  CREDENTIAL_WAIT_REASON,
                   { agentId: agent.id },
                 );
                 heldClaims.delete(task.id);
@@ -1978,13 +2028,12 @@ export class SessionRunner {
                     },
                   ),
                 });
-                // As a run a credential stopped (U-078): the session ends on the wait's one
-                // sentence; the rest stays ready and starts by itself once it serves.
+                // As a task a credential stopped (U-078): only this task waits, and the session
+                // goes on with the rest; it starts by itself once the credential serves.
                 credentialWait ??= wait;
-                skipped.push(task.id, ...queue.map((i) => i.taskId));
-                queue.length = 0;
-                stopReason = CREDENTIAL_WAIT_STOP;
-                break;
+                waitedForCredential = true;
+                skipped.push(task.id);
+                continue;
               }
               // ADR 0112 point 6: the review paused at its limit, as a run does: one card that
               // names the limit (Continue where a bigger budget helps; at the project's budget,
@@ -2326,6 +2375,9 @@ export class SessionRunner {
           }
           await releaseIfHeld(task.id, "task finished for this session");
         }
+        // Tasks that wait for a credential (U-078): the session ran what could run and ends on
+        // the wait's sentence.
+        if (stopReason === "completed" && waitedForCredential) stopReason = CREDENTIAL_WAIT_STOP;
         if (stopReason === "completed" && budget.noNewWork && skipped.length)
           stopReason = "budget_finish_current";
       }

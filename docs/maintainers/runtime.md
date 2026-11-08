@@ -512,9 +512,20 @@ reports `refused` while the vault holds the refused credential (`refusedSince`),
 skips it (`refused`). (2) Both a usage limit and a refusal return outcome `usage_limit` with
 `stoppedRunSentence` (what is really scheduled) and, when no credential may take the task now
 (`nextCredential`: the same pick, which only reads the sources), `credentialWait`; the runner
-releases the claim (no try counted, never a passing error), and either ends the session on
-the wait (`CREDENTIAL_WAIT_STOP`, the rest of the queue left ready) or puts the task back at
-the head of the queue for the credential that takes over (at most `MAX_CREDENTIAL_MOVES`).
+releases the claim (no try counted, never a passing error), and either lets the task wait
+(reason `CREDENTIAL_WAIT_REASON`, `notAgain`; the session goes on with the rest of its queue,
+where each task's own pick decides whether it runs now or waits too, and ends
+`CREDENTIAL_WAIT_STOP` once nothing else runs: the leftovers of wave 7, ADR 0100 point 17;
+before, it ended at the first wait and skipped the queue) or puts the task back at the head of
+the queue for the credential that takes over (at most `MAX_CREDENTIAL_MOVES`). Only a ready task
+with that reason reads the project's wait on its row (`taskDisplay`), and a second task waiting
+for the same credential logs its `billing.fallback` line as a detail (`repeat: true`). The
+session log's `task.started` is written when the executor says the run starts
+(`TaskExecutor.execute`'s `onStarted`, after the credential pick and any web hand-over, with the
+specialist that runs; else at the first step, or when `execute` returns unless it returned
+`usage_limit`), so a task whose pick waited has no start line and a run handed to the web-reader
+names it (W5-20; `session-keeps-going.test.ts`, `specialist-handover.test.ts`,
+`credential-wait-session.test.ts` "under 'Wait' only the tasks whose first choice rests wait").
 (3) The router's "no source" no longer fails a task: `executor.pickBilling` turns an
 `unavailable` that `credentialWaitOf` reads as a wait (the 'wait' rule's `waitFor`, a resting
 source's `until`, a refused source) into `ForerunnerError("unavailable")` with `details.wait`

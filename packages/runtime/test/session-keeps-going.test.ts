@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import type { CriticPort, TaskReviewOutcome } from "../src/loop/ports.ts";
+import { CREDENTIAL_WAIT_REASON } from "../src/session/credential-wait.ts";
 import {
   SessionRunner,
   type SessionRunnerDeps,
@@ -454,6 +455,59 @@ describe("a session keeps going until nothing it can run is left (design §4.2, 
     // One Update line in the Inbox, naming the project.
     const updates = await w.store.message.inbox({ humanId: w.human });
     expect(updates.map((m) => m.body)).toEqual(['P: did 1 task: "Create index.html".']);
+  });
+
+  // The leftovers of wave 7 (W5-20): the start line was written before the executor picked the
+  // credential and the specialist, so a run handed to the web-reader read "The researcher
+  // started …", and a task whose credential pick waited read "The coder started …" although
+  // nothing ran, right before its wait line. Under "Wait" the session then ended there.
+  it("the start line names who runs, when the run starts; a task whose credential pick waits gets none and the session goes on", async () => {
+    await add("Write the changelog", { specialist: "coder", priority: 9 });
+    await add("Compare hosting offers", { specialist: "researcher", priority: 5 });
+    const exec: TaskExecutor = {
+      async execute({ task, onStarted }) {
+        ran.push(task.title);
+        if (task.title === "Write the changelog")
+          // Its first choice rests: the pick waits, no run starts.
+          return {
+            outcome: "usage_limit",
+            summary:
+              '"Write the changelog" waits until 15:00 (your subscription\'s limit) and starts by itself.',
+            costUsdMicro: 0,
+            credentialWait: {
+              reason: "limit",
+              sourceId: "sub",
+              kind: "subscription",
+              until: "2026-11-01T14:00:00.000Z",
+            },
+          };
+        // Handed to a specialist that reaches the web: the executor says who runs.
+        onStarted?.({ specialist: "web-reader" });
+        return {
+          outcome: "done",
+          summary: "did it",
+          costUsdMicro: 0,
+          checksPassed: true,
+          specialist: "web-reader",
+        };
+      },
+    };
+    const events: { type: string; payload: Record<string, unknown> }[] = [];
+    const r = await start(runner({ executor: exec }), (type, payload) =>
+      events.push({ type, payload }),
+    );
+    expect(ran).toEqual(["Write the changelog", "Compare hosting offers"]);
+    expect(r.completed).toHaveLength(1);
+    expect(r.stopReason).toBe("credential_wait");
+    const started = events
+      .filter((e) => e.type === "task.started")
+      .map((e) => [e.payload.title, e.payload.specialist]);
+    expect(started).toEqual([["Compare hosting offers", "web-reader"]]);
+    // The waiting task's row reason is the credential wait's (its row alone says it waits).
+    const tasks = await w.store.task.list({ project_id: w.project } as never, { limit: 10 });
+    expect(tasks.find((t) => t.title === "Write the changelog")?.reason).toBe(
+      CREDENTIAL_WAIT_REASON,
+    );
   });
 });
 
