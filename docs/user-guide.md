@@ -58,7 +58,8 @@ still add tasks." with **Connect** (not on the setup page Connect opens).
 Home shows, top to bottom:
 
 - **Needs you**: every card waiting for you in any project, one line each with **Answer**
-  (it opens that card in the Inbox).
+  (it opens that card in the Inbox), or the card's own button when there is nothing to answer
+  (a refused key's **Save a new key**).
 - **Working now**: who works on what in which project, for how long, with **Open**.
 - **Projects**: one row each, with the project's status in one sentence, "3 of 7 done", and
   the one button that fits: **Answer**, **Open running session**, **Continue** (starts a

@@ -10917,3 +10917,61 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(true);
   }, 120_000);
 });
+
+/**
+ * polish-screens (wave 13): what the screens it changes read and send, against the real daemon.
+ */
+describe("polish-screens, wave 13", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-polish-screens-"));
+    const clock = new SimulatedClock("2026-11-08T08:00:00Z");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "Done for today." }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("opening a project (the reads its page makes) writes nothing to GET /changes (later #61)", async () => {
+    const a = await client.createProject({ name: "Look A", goal: "One" });
+    const b = await client.createProject({ name: "Look B", goal: "Two" });
+    const before = await client.changes({ limit: 200 });
+    // What Home's link opens: the project page's reads. No project.switch any more.
+    await client.project(b.id);
+    await client.projectSummary(b.id);
+    await client.tasks(b.id);
+    await client.startCheck(b.id);
+    await client.project(a.id);
+    const after = await client.changes({ limit: 200 });
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.some((c) => /Switch project/.test(c.wordsUsed))).toBe(false);
+  });
+});

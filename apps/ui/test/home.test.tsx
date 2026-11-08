@@ -32,7 +32,8 @@ describe("Home", () => {
     const lines = within(list).getAllByTestId("home-card");
     expect(lines).toHaveLength(2);
     expect(lines[0]).toHaveTextContent("Atlas:");
-    const answer = within(lines[0] as HTMLElement).getByTestId("home-card-answer");
+    const answer = within(lines[0] as HTMLElement).getByTestId("home-card-action");
+    expect(answer).toHaveTextContent("Answer");
     expect(answer.getAttribute("href")).toMatch(/^\/inbox#card-req_/);
     await user.click(answer);
     expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();

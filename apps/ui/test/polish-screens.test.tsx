@@ -53,6 +53,77 @@ describe("the project header and its tabs (later #56, #57)", () => {
   });
 });
 
+describe("Home (later #61, P7-8)", () => {
+  it("opening a project from Home writes nothing to Changes and switches nothing", async () => {
+    // Before: the row's link ran project.switch ("Switch project: Beacon"), a row in Changes
+    // for every look at a project.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/", harness);
+    const cards = await screen.findAllByTestId("project-card");
+    const changesBefore = harness.daemon.state.changes.length;
+    await user.click(within(cards[1] as HTMLElement).getByTestId("open-project"));
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
+    // The header names the project on screen all the same (design §3.1).
+    expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(postedCalls(harness, "/commands/execute")).toEqual([]);
+    expect(harness.daemon.state.changes).toHaveLength(changesBefore);
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await screen.findAllByTestId("project-card");
+    // Back on Home the active project is still the one the person chose.
+    expect(screen.getByTestId("active-project")).toHaveTextContent("Atlas");
+  });
+
+  it("a card with nothing to answer offers its own button, not Answer: the refused key's Save a new key", async () => {
+    // Before: every Needs you row said "Answer", the refused-key card too, whose one action is
+    // to save a new key in the setup assistant.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift({
+      id: "req_refused",
+      projectId: null,
+      projectName: null,
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "info",
+      why: "Anthropic refused your API key. Save a new one in Settings.",
+      steps: [],
+      options: [],
+      blocking: true,
+      risk: "low",
+      changeCard: {
+        key: "credential:refused",
+        source_id: "bs_api_key_1",
+        credential_kind: "api_key",
+        title: "Anthropic refused your API key",
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-03T14:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/", harness);
+    const rows = await screen.findAllByTestId("home-card");
+    const refused = rows.find((r) =>
+      r.textContent?.includes("Anthropic refused your API key"),
+    ) as HTMLElement;
+    expect(within(refused).queryByText("Answer")).toBeNull();
+    const own = within(refused).getByTestId("home-card-action");
+    expect(own).toHaveTextContent("Save a new key");
+    expect(own).toHaveAttribute("href", "/setup");
+    // A card with something to answer keeps Answer, to its card in the Inbox.
+    const other = rows.find((r) => r !== refused) as HTMLElement;
+    expect(within(other).getByTestId("home-card-action")).toHaveTextContent("Answer");
+    expect(within(other).getByTestId("home-card-action").getAttribute("href")).toMatch(
+      /^\/inbox#card-/,
+    );
+    await user.click(own);
+    expect(await screen.findByTestId("setup-page")).toBeInTheDocument();
+  });
+});
+
 describe("the shell's palette and bars (later #59, #63)", () => {
   const palette = async () => {
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
