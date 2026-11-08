@@ -387,7 +387,12 @@ store and persists a `Review` with `session_id` set and `task_id` null:
   were sent back by the critic (the session handoff's `sent_back`, `sentBackOf`), even at no
   cost: one medium finding naming both counts ("No planned task was done: 1 of 2 failed, 1 sent
   back by the critic"; U-017: an all-failed session was graded 100; U-072: so was one whose only
-  task was sent back). The service's own event is
+  task was sent back). A task paused at a budget (the handoff's `paused`, `pausedOf`, ADR 0112)
+  is none of these: it never counts as waiting for the person, and a session whose every
+  planned task that is not done paused gets neither that finding nor "spent ... and no task
+  reached done" (the leftovers of wave 7: a session whose only task paused read "sent back for
+  changes (grade 70, 2 findings)"); its cost against the estimate is still checked. The
+  service's own event is
   `critic.session_review_metrics` (the measurements); the runner reports the review as
   `critic.session_review`, so the session log shows it once;
 - honesty: `parseSummaryClaims` reads "Done: N" (also "N tasks done", "completed N tasks"),

@@ -2730,6 +2730,9 @@ export class SessionRunner {
       blocked_by_findings: blockedByFindings,
       review_failed: reviewFailed,
       sent_back: retried,
+      // The tasks paused at a budget with their card open (ADR 0112): the session review grades
+      // a pause as a pause, not as work that waits for the person (the leftovers of wave 7).
+      paused: (outcome.paused ?? []).map((t) => t.id),
       reviews: reviews.map((r) => ({
         task_id: r.taskId,
         review_id: r.reviewId,

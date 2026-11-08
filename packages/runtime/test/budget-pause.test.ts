@@ -228,6 +228,15 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
 
   const coderCalls = (title: string) => calls.filter(coderOn(title));
   const reviewOf = async (taskId: string) => rt.store.review.latestForTask(taskId);
+  /** The session's own review (no task) and its findings' descriptions. */
+  const sessionReviewOf = async (sessionId: string) =>
+    (await rt.store.review.list({ session_id: sessionId } as never, { limit: 10 })).filter(
+      (x) => x.task_id === null,
+    );
+  const sessionFindings = async (sessionId: string) => {
+    const [review] = await sessionReviewOf(sessionId);
+    return review ? (await rt.store.finding.forReview(review.id)).map((f) => f.description) : [];
+  };
 
   it("a run at its line hears the wrap-up once; with work left it is paused: no review, no try, report and handoff kept", async () => {
     const r = await runOne(req, rt, "Guide pages", { budgetUsdMicro: 300_000 });
@@ -289,6 +298,12 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
         ),
       ),
     ).toBe(true);
+    // The session review counts a pause as a pause (the leftovers of wave 7, R-sessreview): never
+    // "No planned task was done: 1 of 1 waits for the person" (its cost against the estimate is
+    // still checked: this run's fake price overran it).
+    expect((await sessionFindings(r.sessionId)).join(" | ")).not.toMatch(
+      /No planned task was done|no task reached done/,
+    );
   }, 60_000);
 
   it("a run that hears the wrap-up and ends with nothing left is reviewed", async () => {
@@ -331,6 +346,16 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(artifacts).not.toContain("would be exceeded");
     expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
     expect(lines(r.events).some((l) => /too little to wrap up .*: save only/.test(l))).toBe(true);
+    // A session whose only task paused at its budget is not sent back for changes (the leftovers
+    // of wave 7, R-sessreview): before, "Session review: sent back for changes (grade 70, 2
+    // findings)" with "No planned task was done: 1 of 1 waits for the person" and "spent ... and
+    // no task reached done".
+    const [review] = await sessionReviewOf(r.sessionId);
+    expect(review?.verdict, JSON.stringify(await sessionFindings(r.sessionId))).not.toBe("revise");
+    expect((await sessionFindings(r.sessionId)).join(" | ")).not.toMatch(
+      /No planned task was done|no task reached done/,
+    );
+    expect(lines(r.events).join(" | ")).not.toMatch(/Session review: sent back/);
   }, 60_000);
 
   // Review of budget-stop: a budget below its first call's worst case (live check 3's CHF 0.02
