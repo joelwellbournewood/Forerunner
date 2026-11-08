@@ -11,8 +11,11 @@ import { errorMessage, redact } from "@forerunner/platform";
 export type PushFailure =
   /** The host could not be reached (no network, DNS, a timeout). */
   | { kind: "unreachable" }
-  /** The host refused it: a token that may not write, a protected branch, a permission. */
-  | { kind: "refused" }
+  /**
+   * The host refused it: a token that may not write, a protected branch, an archived repository.
+   * `said` is the host's own line ("Permission to o/r.git denied to some-bot"), when it gave one.
+   */
+  | { kind: "refused"; said?: string }
   /** Anything else, with the one line of the host's (or git's) that says why, if any. */
   | { kind: "other"; said: string };
 
@@ -20,12 +23,23 @@ const UNREACHABLE =
   /could not resolve host|unable to access|timed out|connection (refused|reset)|network/i;
 const REFUSED =
   /\b(401|403)\b|denied|permission|not allowed|protected branch|authentication|no token/i;
+/**
+ * The host answered and refused (R-2, polish-words): over HTTPS git ends a refused push with
+ * "fatal: unable to access '<url>': The requested URL returned error: 403" after the host's own
+ * line ("remote: Permission to o/r.git denied ...", "remote: This repository was archived ..."),
+ * so this is read before UNREACHABLE, which "unable to access" also matches.
+ */
+const HOST_REFUSED = /returned error: 40[13]\b|^\s*remote:.*\b(denied|permission)\b/im;
 /** git's framing around the reason: never the reason itself. */
 const BOILERPLATE =
   /^(to |error: failed to push|hint:|warning:|fatal: expected 'acknowledgments'|everything up-to-date)/i;
-/** The host's progress lines (`remote: Resolving deltas: 100% ...`): never the reason. */
+/**
+ * The host's progress lines (`remote: Resolving deltas: 100% ...`, `Total 3 (delta 0)`): never
+ * the reason. Only the progress shapes: a host's reason may start with the same word ("Writing
+ * to this repository is disabled", R-3).
+ */
 const REMOTE_PROGRESS =
-  /^(enumerating|counting|compressing|writing|receiving|resolving|processing|total \d)/i;
+  /^(?:(?:enumerating|counting|compressing|writing|receiving|resolving|processing) (?:objects|deltas|references)\b|total \d)/i;
 /**
  * The header `GitOps` puts before git's output (`git push main failed: `). It shares a line with
  * git's first line, which with git's default configuration is the host's own `remote:` line.
@@ -34,8 +48,13 @@ const GITOPS_HEADER = /^git [^:\r\n]*? failed:\s*/i;
 
 export function pushFailure(e: unknown): PushFailure {
   const raw = errorMessage(e);
+  const refused = (): PushFailure => {
+    const said = pushSaid(raw, true);
+    return said ? { kind: "refused", said } : { kind: "refused" };
+  };
+  if (HOST_REFUSED.test(raw)) return refused();
   if (UNREACHABLE.test(raw)) return { kind: "unreachable" };
-  if (REFUSED.test(raw)) return { kind: "refused" };
+  if (REFUSED.test(raw)) return refused();
   return { kind: "other", said: pushSaid(raw) };
 }
 
@@ -49,7 +68,7 @@ export function pushFailure(e: unknown): PushFailure {
  * (CI on 193e579, git 2.56); it was found only where `push.negotiate` made git print two lines
  * before it, as on the development container.
  */
-function pushSaid(raw: string): string {
+function pushSaid(raw: string, hostOnly = false): string {
   const lines = raw
     .split(/\r?\n/)
     .map((l, i) => (i === 0 ? l.replace(GITOPS_HEADER, "") : l).trim())
@@ -67,9 +86,18 @@ function pushSaid(raw: string): string {
     .map((l) => /\[(?:remote )?rejected\][^(]*\(([^)]+)\)/i.exec(l)?.[1]?.trim())
     .find(Boolean);
   const other = lines.find((l) => !BOILERPLATE.test(l));
-  return redact(remote || rejected || other || "")
+  // A refusal quotes the host's own words only: git's "fatal: unable to access ..." is no reason.
+  return redact(hostOnly ? remote || rejected || "" : remote || rejected || other || "")
     .slice(0, 160)
     .replace(/[.\s]+$/, "");
+}
+
+/** The host's line inside a refusal's sentence: whole when short, else cut at a word. */
+function hostLine(said: string, max = 80): string {
+  if (said.length <= max) return said;
+  const cut = said.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 /**
@@ -83,7 +111,9 @@ export function pushFailedWords(repoName: string, branch: string, e: unknown): s
   if (failure.kind === "unreachable")
     return `${head}: GitHub could not be reached. Try again later.`;
   if (failure.kind === "refused")
-    return `${head}: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`;
+    return failure.said
+      ? `${head}: GitHub refused it: "${hostLine(failure.said)}". Check the GitHub token in Settings and the repository on GitHub, then press Try again.`
+      : `${head}: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`;
   return `${head}${failure.said ? `: git said "${failure.said}"` : ""}. Press Try again; if it fails again, look at the repository on GitHub.`;
 }
 
@@ -98,6 +128,8 @@ export function firstPushFailedWords(repoName: string, e: unknown): string {
   if (failure.kind === "unreachable")
     return `${repoName} is empty, and Forerunner could not reach GitHub to make its first commit. Try again later.`;
   if (failure.kind === "refused")
-    return `${repoName} is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.`;
+    return failure.said
+      ? `${repoName} is empty and GitHub refused Forerunner's first commit: "${hostLine(failure.said, 60)}". Check the token in Settings, then press Try again.`
+      : `${repoName} is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.`;
   return `${repoName} is empty and Forerunner could not make its first commit${failure.said ? `: git said "${failure.said}"` : ""}. Add a README on GitHub, then press Try again.`;
 }

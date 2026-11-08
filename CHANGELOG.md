@@ -88,9 +88,12 @@ Problems and their status, released or not, are tracked in
   folder (U-069); an installer was accepted as an update (U-070).
 - In the desktop app, a link clicked with Ctrl or Shift held (the PR link, "Get Docker
   Desktop", any link that leaves the app) and a link that opens a new window did nothing; they
-  now open in your browser. A Ctrl-click on one of the app's own links keeps you where you are.
-- When GitHub refuses a push for its own reason (an archived repository, a rule), the failed
-  task quotes GitHub's sentence instead of git's generic "pre-receive hook declined".
+  now open in your browser. A Ctrl- or Shift-click on one of the app's own links works like a
+  plain click and shows that page in the same window.
+- When GitHub refuses a push for its own reason (an archived repository, a token that may not
+  write, a rule), also over HTTPS where git then says it could not access the URL, the failed
+  task quotes GitHub's sentence instead of git's generic "pre-receive hook declined" or "GitHub
+  could not be reached".
 - The voice install could not open the speech model it downloaded (U-024).
 - Status and counts: "connected" while the service was gone, Chat lost on a tab switch (U-071);
   counts that disagreed between the summary, the log and the notification (U-072); Update and

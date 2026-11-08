@@ -324,7 +324,7 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     });
     expect(res.outcome).toBe("failed");
     expect(res.summary).toBe(
-      `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`,
+      `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it: "Permission to o/sample denied to the token". Check the GitHub token in Settings and the repository on GitHub, then press Try again.`,
     );
     expect(res.summary).not.toContain("git push");
     await w.store.close();
@@ -386,7 +386,7 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
       signal: new AbortController().signal,
     };
     const words =
-      "o/empty is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.";
+      'o/empty is empty and GitHub refused Forerunner\'s first commit: "Permission to o/empty denied to the token". Check the token in Settings, then press Try again.';
     // The runner makes the message the task's reason (cut at 200) and the failed-task card's
     // text; the code is not a transient one, so the runner does not try again at once.
     await expect(exec.execute(ctx)).rejects.toMatchObject({

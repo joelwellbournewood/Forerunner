@@ -174,6 +174,14 @@ with their milestone.
   ("fatal: expected 'acknowledgments'...", "warning: push negotiation failed..."), as in the
   development container's global config; `push-words.test.ts` feeds both shapes, and Windows'
   CRLF, through `GitOps.push` with a stub runner, so it does not depend on the machine's git.
+  Over HTTPS a refused push (a token that may not write, an archived repository) ends with git's
+  "fatal: unable to access '<url>': The requested URL returned error: 403" after the host's line:
+  `HOST_REFUSED` (a 401 or 403, or a `remote:` line saying denied or permission) is read before
+  "unable to access" counts as unreachable, and a refusal carries the host's line (`said`), which
+  the words quote with what to do (R-2, polish-words: before, the person read "GitHub could not
+  be reached"). A progress line is only a progress shape ("Writing objects", "Resolving deltas",
+  "Total 3"): a host's reason that starts with such a word ("Writing to this repository is
+  disabled") is the reason shown (R-3).
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD; `filesBetween(from, to)` compares two trees;
   `hasMergesSince(base, head)`, `setRef(ref, rev | null)`, `mergeFrom(ref, message?, {

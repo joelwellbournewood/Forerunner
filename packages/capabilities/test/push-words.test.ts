@@ -105,3 +105,67 @@ describe("a push the host refused, in the person's words", () => {
     });
   });
 });
+
+/**
+ * polish-words (R-2, R-3): on github.com over HTTPS a push refused for lack of write access, or
+ * because the repository is archived, prints the host's line and then git's
+ * "fatal: unable to access '<url>': The requested URL returned error: 403". Before, "unable to
+ * access" was read first and the person was told GitHub could not be reached; and a host line
+ * that starts with a progress word ("Writing to this repository is disabled") was skipped.
+ */
+describe("polish-words: git's HTTPS refusals (R-2, R-3)", () => {
+  const https403 = (hostLine: string) =>
+    [
+      `remote: ${hostLine}`,
+      "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403",
+      "",
+    ].join("\n");
+
+  it("a token that may not write: a refusal quoting the host's line, with what to do", async () => {
+    const e = await pushError(https403("Permission to o/r.git denied to some-bot."));
+    expect(pushFailure(e)).toEqual({
+      kind: "refused",
+      said: "Permission to o/r.git denied to some-bot",
+    });
+    expect(pushFailedWords("o/r", "fr/write-the-page", e)).toBe(
+      'Forerunner could not push the branch fr/write-the-page to o/r: GitHub refused it: "Permission to o/r.git denied to some-bot". Check the GitHub token in Settings and the repository on GitHub, then press Try again.',
+    );
+    expect(firstPushFailedWords("o/r", e)).toBe(
+      'o/r is empty and GitHub refused Forerunner\'s first commit: "Permission to o/r.git denied to some-bot". Check the token in Settings, then press Try again.',
+    );
+  });
+
+  it("an archived repository: a refusal quoting the host's line, never 'could not be reached'", async () => {
+    const e = await pushError(https403("This repository was archived so it is read-only."));
+    expect(pushFailure(e)).toEqual({
+      kind: "refused",
+      said: "This repository was archived so it is read-only",
+    });
+    expect(pushFailedWords("o/r", "fr/write-the-page", e)).not.toMatch(/could not be reached/);
+  });
+
+  it("a host line that starts with a progress word is the reason shown (R-3)", async () => {
+    const e = await pushError(https403("Writing to this repository is disabled."));
+    expect(pushFailure(e)).toEqual({
+      kind: "refused",
+      said: "Writing to this repository is disabled",
+    });
+    const local = await pushError(
+      ["remote: Writing to this repository is disabled.", ...TAIL].join("\n"),
+    );
+    expect(pushFailure(local)).toEqual({
+      kind: "other",
+      said: "Writing to this repository is disabled",
+    });
+  });
+
+  it("only a real network failure says GitHub could not be reached", async () => {
+    const e = await pushError(
+      "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\n",
+    );
+    expect(pushFailure(e)).toEqual({ kind: "unreachable" });
+    expect(pushFailedWords("o/r", "fr/write-the-page", e)).toBe(
+      "Forerunner could not push the branch fr/write-the-page to o/r: GitHub could not be reached. Try again later.",
+    );
+  });
+});
