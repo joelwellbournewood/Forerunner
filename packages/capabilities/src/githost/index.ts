@@ -9,3 +9,4 @@ export * from "./pr-executor.ts";
 export * from "./projects-mirror.ts";
 export * from "./push-words.ts";
 export * from "./types.ts";
+export * from "./worktree-lock.ts";

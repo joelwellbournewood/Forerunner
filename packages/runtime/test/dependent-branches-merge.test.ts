@@ -119,13 +119,31 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     token,
     identity,
   });
+  // The merge step's view of GitHub, on which a test holds one call open (R-lock): the call
+  // waits until the test releases it, then goes to the fake GitHub as it is.
+  const holds = new Map<string, { reached: () => void; released: Promise<void> }>();
+  const mergeHost = new Proxy(github, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        const held = holds.get(String(prop));
+        if (held) {
+          holds.delete(String(prop));
+          held.reached();
+          await held.released;
+        }
+        return value.apply(target, args);
+      };
+    },
+  });
   const merge = new ReviewedPrMerge({
     store: w.store,
     clock: w.clock,
     tokens: w.tokens,
     hooks,
     audit,
-    host: github,
+    host: mergeHost,
     worktreeRoot,
     token,
     identity,
@@ -280,6 +298,24 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     async cards(taskId: string) {
       const rows = await w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
       return (await requestViews(w.store, rows)).map((v) => ({ title: v.title, body: v.body }));
+    },
+    /**
+     * Holds the merge step's next call of `method` on GitHub open (R-lock): `reached` resolves
+     * once the call is made, and nothing reaches GitHub until `release`.
+     */
+    hold(method: string) {
+      let reached!: () => void;
+      let release!: () => void;
+      const was = new Promise<void>((r) => {
+        reached = r;
+      });
+      holds.set(method, {
+        reached,
+        released: new Promise<void>((r) => {
+          release = r;
+        }),
+      });
+      return { reached: was, release: () => release() };
     },
   };
   return m;
@@ -640,6 +676,89 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect((await m.record(a.id)).state).toBe("left_to_you");
     await m.poll();
     expect(await m.record(a.id)).toMatchObject({ state: "merged", method: "merge" });
+  });
+
+  /** `p`, or a failure that says what never happened (a real-time wait: never on CI's speed). */
+  const within = <T>(p: Promise<T>, what: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`${what} within 20 s`)), 20_000),
+      ),
+    ]);
+  const withoutA = (prB: number, prA: number) =>
+    `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+
+  it("a dependency closed while the person's Merge brings main into the dependent: the rebuild waits for the merge step's git, and the head that still holds the closed work is never merged (R-lock)", async () => {
+    const m = await chainWorld({ level: 2 });
+    // The branch must be up to date with main: Merge brings main in first, in B's folder.
+    m.host.setBranchRules(FULL, "main", [
+      {
+        type: "required_status_checks",
+        parameters: { strict_required_status_checks_policy: true, required_status_checks: [] },
+      },
+    ]);
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.poll();
+    await m.host.seedCommit(FULL, { "docs/notes.md": "notes\n" }, "main moved", "main");
+    const headB = (await m.pr(b.id)).head.sha;
+    // The person presses Merge on B; the merge step is bringing main into B's folder (it reads
+    // the checks on the head before it merges main in) when the person closes A on GitHub.
+    const held = m.hold("listCheckRuns");
+    const merging = m.mergeByPerson(b.id);
+    await within(held.reached, "the merge step did not start bringing main in");
+    await m.close(a.id);
+    await m.poll();
+    // The watcher's rebuild did not touch B's folder or branch while the merge step works there:
+    // it is owed, and B's merge cannot go ahead before it ran.
+    expect((await m.pr(b.id)).head.sha).toBe(headB);
+    expect((await m.record(b.id)).rebuild_owed_for).toBe(a.id);
+    held.release();
+    const out = await within(merging, "the merge did not end");
+    expect(out.status).not.toBe("merged");
+    expect((await m.pr(b.id)).merged).toBe(false);
+    // The next poll runs the owed rebuild: B holds only its own work, its review is void, one card.
+    await m.poll();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      sentence: withoutA(prB, prA),
+      rebuild_owed_for: null,
+    });
+    expect(await m.cards(b.id)).toEqual([
+      { title: `"Add footer" was rebuilt without pull request #${prA}`, body: withoutA(prB, prA) },
+    ]);
+    // Nothing merges it later by itself.
+    await m.merge.retryWaiting();
+    await m.poll();
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("a dependency closed while the merge call is held open on GitHub: the rebuild pushes first, GitHub refuses the old head, and the record keeps the rebuild's word (R-lock)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.poll();
+    const held = m.hold("mergePullRequest");
+    const merging = m.mergeByPerson(b.id);
+    await within(held.reached, "the merge step did not call GitHub's merge");
+    await m.close(a.id);
+    await m.poll();
+    held.release();
+    const out = await within(merging, "the merge did not end");
+    expect(out.status).not.toBe("merged");
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    // GitHub's refusal of the old head does not replace what the rebuild said.
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      sentence: withoutA(prB, prA),
+    });
+    expect(await m.cards(b.id)).toHaveLength(1);
   });
 
   it("two unmerged dependencies that conflict: the dependent waits with one Inbox card naming both pull requests (W6-22)", async () => {

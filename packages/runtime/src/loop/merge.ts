@@ -8,6 +8,7 @@ import {
   GitOps,
   type GitTokenSource,
   gitAuthFor,
+  inWorktree,
   type MergeMethod,
   NEVER_PUSHED,
   ownChangeId,
@@ -197,6 +198,11 @@ export interface MergePrArtifacts {
   failedChecks?: string[];
   pendingChecks?: string[];
   conflicts?: string[];
+  /**
+   * R-lock (leftovers7-merge2): not merged because the record moved meanwhile or its branch owes
+   * a rebuild (`stillMayMerge`, `onNewHead`): the caller keeps what the record says now.
+   */
+  superseded?: boolean;
 }
 
 /** One call's answer: the tool's, or the hooks' refusal of the call. */
@@ -212,8 +218,30 @@ export interface MergePrToolDeps {
   identity?: GitIdentity;
   checksWaitMs?: number;
   checksPollMs?: number;
-  /** The branch got a new head (the base merged in, pushed): the record moves to it. */
-  onNewHead?: (sha: string) => Promise<void>;
+  /**
+   * The branch got a new head (the base merged in, pushed): the record moves to it. False: the
+   * record moved meanwhile (a rebuild voided it) or its branch owes a rebuild, so nothing is
+   * merged (R-lock).
+   */
+  onNewHead?: (sha: string) => Promise<boolean>;
+  /**
+   * Asked right before GitHub is asked to merge `head` (R-lock): false when the record moved
+   * meanwhile or its branch owes a rebuild. GitHub merges only `head` (the call names it), so a
+   * rebuild pushed after this answer makes GitHub refuse the merge.
+   */
+  stillMayMerge?: (head: string) => Promise<boolean>;
+}
+
+/** The tool's answer when the merge stopped for the record's sake (R-lock). */
+function superseded(head: string, updated: boolean): MergePrArtifacts {
+  return {
+    status: "checks_pending",
+    message:
+      "not merged now: the record moved meanwhile, or the branch is rebuilt first (what it builds on changed)",
+    headSha: head,
+    updated,
+    superseded: true,
+  };
 }
 
 /** The `merge_pr` tool: class `merge_pr`, the rules above in code. */
@@ -349,37 +377,44 @@ async function mergeChecked(
   if (rules.upToDate || input.update === true) {
     // The branch must be up to date: the base is merged in (a merge commit and a normal push),
     // never rebased onto, so work the branch merged in stays as it is.
-    if (!input.worktree)
+    const worktree = input.worktree;
+    if (!worktree)
       return {
         status: "failed",
         message: "the branch must be brought up to date and the task folder is gone",
         sentence: `${name} must be brought up to date with ${pr.base.ref} first, and its task folder is gone: update it on GitHub, then merge it.`,
         updated: false,
       };
-    const token = await resolveGitToken(deps.token);
-    const auth = token ? gitAuthFor(token, (await host.getRepo(ref.repo)).cloneUrl) : undefined;
-    const git = new GitOps({
-      cwd: input.worktree,
-      ...(auth ? { auth } : {}),
-      ...(deps.identity ? { identity: deps.identity } : {}),
-      // merged-copy (ADR 0113): bringing the base in never uploads Local only or a try folder.
-      neverPush: NEVER_PUSHED,
-    });
-    await git.fetch();
-    const base = `origin/${pr.base.ref}`;
-    const local = await git.headSha();
-    if (local !== head) {
-      // An earlier try merged the base in here and stopped before its push (a crash, the app
-      // closing): that merge is set aside and made again below. Anything else in the task
-      // folder is not the reviewed version.
-      if (!(await unpushedBaseMerge(git, local, head, base)))
-        return {
-          ...headMoved(name, head, input.head_sha),
-          message: `the task folder is at ${short(local)}, the PR head at ${short(head)}`,
-        };
-      await git.createBranch(pr.head.ref, head);
-    }
-    if (!(await git.isAncestor(base, "HEAD"))) {
+    // R-lock (leftovers7-merge2): the task folder's git is this step's alone from the fetch to
+    // the record's move to the pushed head; a rebuild of the same folder waits or is owed.
+    const brought = await inWorktree(worktree, async () => {
+      // What GitHub has now: a rebuild that held the folder before may have moved the branch.
+      const now = await host.getPullRequest(ref.repo, ref.number);
+      if (now.head.sha !== input.head_sha) return headMoved(name, now.head.sha, input.head_sha);
+      const token = await resolveGitToken(deps.token);
+      const auth = token ? gitAuthFor(token, (await host.getRepo(ref.repo)).cloneUrl) : undefined;
+      const git = new GitOps({
+        cwd: worktree,
+        ...(auth ? { auth } : {}),
+        ...(deps.identity ? { identity: deps.identity } : {}),
+        // merged-copy (ADR 0113): bringing the base in never uploads Local only or a try folder.
+        neverPush: NEVER_PUSHED,
+      });
+      await git.fetch();
+      const base = `origin/${pr.base.ref}`;
+      const local = await git.headSha();
+      if (local !== head) {
+        // An earlier try merged the base in here and stopped before its push (a crash, the app
+        // closing): that merge is set aside and made again below. Anything else in the task
+        // folder is not the reviewed version.
+        if (!(await unpushedBaseMerge(git, local, head, base)))
+          return {
+            ...headMoved(name, head, input.head_sha),
+            message: `the task folder is at ${short(local)}, the PR head at ${short(head)}`,
+          };
+        await git.createBranch(pr.head.ref, head);
+      }
+      if (await git.isAncestor(base, "HEAD")) return null;
       const beforeCi = await ciOf(host, ref.repo, head);
       const before = judgeChecks(beforeCi.runs, [], beforeCi.statuses);
       if (before.state === "failed") return checksFailed(before, head, false, name);
@@ -392,7 +427,7 @@ async function mergeChecked(
           conflicts: merged.conflicts,
           headSha: head,
           updated: false,
-        };
+        } satisfies MergePrArtifacts;
       if (input.own_change_id && (await ownChangeId(git, base)) !== input.own_change_id) {
         // Bringing the base in changed the reviewed change itself: back to the reviewed head.
         await git.createBranch(pr.head.ref, head);
@@ -402,17 +437,23 @@ async function mergeChecked(
           sentence: `${name} changed when ${pr.base.ref} was merged into it, so it waits for you: look at it, then merge it.`,
           headSha: head,
           updated: false,
-        };
+        } satisfies MergePrArtifacts;
       }
       await git.push(pr.head.ref, { defaultBranch: pr.base.ref });
-      head = await git.headSha();
+      const pushed = await git.headSha();
+      // A record a rebuild moved or marked owed meanwhile is never moved to the pushed head.
+      if ((await deps.onNewHead?.(pushed)) === false) return superseded(pushed, true);
+      return { pushed, beforeCi };
+    });
+    if (brought && "status" in brought) return brought;
+    if (brought) {
+      head = brought.pushed;
       updated = true;
-      await deps.onNewHead?.(head);
       required = [
         ...new Set([
           ...required,
-          ...beforeCi.runs.map((r) => r.name),
-          ...beforeCi.statuses.map((st) => st.context),
+          ...brought.beforeCi.runs.map((r) => r.name),
+          ...brought.beforeCi.statuses.map((st) => st.context),
         ]),
       ];
     }
@@ -481,6 +522,10 @@ async function mergeChecked(
       };
     await clock.sleep(pollMs, ctx.signal);
   }
+  // R-lock: the last look before GitHub merges `head`. A rebuild that voided or moved the record
+  // (or still owes it) stops the merge here; one that pushes after this look makes GitHub refuse
+  // `head`, which the call names.
+  if (deps.stillMayMerge && !(await deps.stillMayMerge(head))) return superseded(head, updated);
   const merged = await host.mergePullRequest(ref.repo, ref.number, { sha: head, method: "merge" });
   if (merged.merged)
     return {
@@ -528,8 +573,11 @@ async function conflictsIn(
     const token = await resolveGitToken(deps.token);
     const auth = token ? gitAuthFor(token, (await deps.host.getRepo(repo)).cloneUrl) : undefined;
     const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
-    await git.fetch();
-    return await git.conflictFiles("HEAD", `origin/${base}`);
+    // R-lock: never in the middle of a rebuild of the same folder.
+    return await inWorktree(worktree, async () => {
+      await git.fetch();
+      return git.conflictFiles("HEAD", `origin/${base}`);
+    });
   } catch {
     return [];
   }
@@ -825,12 +873,15 @@ export class ReviewedPrMerge implements MergePort {
       if (worktree) {
         const git = new GitOps({ cwd: worktree });
         try {
-          reviewed = await git.headSha();
-          const base = await this.baseRefOf(git, prUrl);
-          if (base) {
-            reviewedBase = await git.resolveRef(base);
-            ownChange = await ownChangeId(git, base).catch(() => null);
-          }
+          // R-lock: read between steps in the folder, never in the middle of a rebuild there.
+          await inWorktree(worktree, async () => {
+            reviewed = await git.headSha();
+            const base = await this.baseRefOf(git, prUrl);
+            if (base) {
+              reviewedBase = await git.resolveRef(base);
+              ownChange = await ownChangeId(git, base).catch(() => null);
+            }
+          });
         } catch (e) {
           this.logger.warn("worktree head unreadable", { taskId: task.id, error: errorMessage(e) });
         }
@@ -1251,6 +1302,10 @@ export class ReviewedPrMerge implements MergePort {
           sentence: gate.sentence,
         });
       }
+      // R-lock (leftovers7-merge2): its branch still owes a rebuild (what it builds on was merged,
+      // closed or redone, and the rebuild has not run yet): not now. The record stays as it is
+      // (no claim, no call); the watcher's sweep rebuilds it and the retry merges what it may.
+      if (record.rebuild_owed_for) return this.outcomeOf(record, "checks_pending");
       const claimed = await store.mergeRecord.claim(record);
       // Another process took it between the read and now: that one merges it.
       if (!claimed)
@@ -1258,6 +1313,20 @@ export class ReviewedPrMerge implements MergePort {
       record = claimed;
       const level = project?.autonomy_level ?? 0;
       let a = await this.call(record, token, session, worktree, gate, level);
+      if (!(a.status === "merged" || a.alreadyMerged)) {
+        // R-lock: a record moved by someone else while the call ran (a rebuild voided it, or
+        // moved it to a rebuilt head) keeps that word, whatever GitHub answered the call (it
+        // refuses a head the rebuild pushed over). One whose branch now owes a rebuild waits for
+        // it, queued as it was approved.
+        const now = await store.mergeRecord.get(record.id);
+        if (now && now.state !== "merging") return this.outcomeOf(now, a.status);
+        if (now && a.superseded) {
+          const back = await store.mergeRecord.move(now.id, "queued", {
+            last_outcome: "rebuild_owed",
+          });
+          return this.outcomeOf(back, "checks_pending");
+        }
+      }
       if (
         a.status === "head_moved" &&
         a.headSha &&
@@ -1320,12 +1389,29 @@ export class ReviewedPrMerge implements MergePort {
           Math.max(0, session.budget.limits.deadlineMs - clock.now() - pollMs),
         )
       : 0;
+    // R-lock: the record as this call claimed it, at the head it merges. Moved by someone else
+    // since (a rebuild voided it, or moved it to the rebuilt head) or marked owed: no merge.
+    let expected = record.reviewed_head_sha;
+    const ours = async (head: string): Promise<boolean> => {
+      const now = await store.mergeRecord.get(record.id);
+      return (
+        !!now &&
+        now.state === "merging" &&
+        !now.rebuild_owed_for &&
+        now.reviewed_head_sha === expected &&
+        head === expected
+      );
+    };
     const tool = mergePrTool({
       ...this.deps,
       checksWaitMs: waitMs,
       onNewHead: async (sha) => {
+        if (!(await ours(expected))) return false;
         await store.mergeRecord.move(record.id, "merging", { reviewed_head_sha: sha });
+        expected = sha;
+        return true;
       },
+      stillMayMerge: (head) => ours(head),
     });
     const input: MergePrInput = {
       // First, so the audit row's summary (cut at a few hundred characters) keeps it.
@@ -1450,13 +1536,17 @@ export class ReviewedPrMerge implements MergePort {
           const repo = await host.getRepo(ref.repo);
           const auth = token ? gitAuthFor(token, repo.cloneUrl) : undefined;
           const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
-          await git.fetch();
-          if (!(await git.hasRef(record.reviewed_head_sha))) return "adds";
-          const base = `origin/${pr.base.ref}`;
-          if ((await git.conflictFiles(record.reviewed_head_sha, base)).length) return "conflicts";
-          const combined = await git.mergeTree(record.reviewed_head_sha, base);
-          const own = await git.mergeTree(record.reviewed_head_sha, record.reviewed_head_sha);
-          return combined && own && combined === own ? "none" : "adds";
+          const reviewed = record.reviewed_head_sha;
+          // R-lock: never in the middle of a rebuild of the same folder.
+          return await inWorktree(worktree, async () => {
+            await git.fetch();
+            if (!(await git.hasRef(reviewed))) return "adds";
+            const base = `origin/${pr.base.ref}`;
+            if ((await git.conflictFiles(reviewed, base)).length) return "conflicts";
+            const combined = await git.mergeTree(reviewed, base);
+            const own = await git.mergeTree(reviewed, reviewed);
+            return combined && own && combined === own ? "none" : "adds";
+          });
         } catch (e) {
           this.logger.warn("base not compared", { taskId: task.id, error: errorMessage(e) });
           return "adds";
@@ -1516,10 +1606,13 @@ export class ReviewedPrMerge implements MergePort {
       const repo = ref ? await this.deps.host.getRepo(ref.repo) : null;
       const auth = token && repo ? gitAuthFor(token, repo.cloneUrl) : undefined;
       const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
-      await git.fetch();
-      const pr = ref ? await this.deps.host.getPullRequest(ref.repo, ref.number) : null;
-      if (!pr || !(await git.hasRef(head))) return false;
-      return (await ownChangeId(git, `origin/${pr.base.ref}`, head)) === record.own_change_id;
+      // R-lock: never in the middle of a rebuild of the same folder.
+      return await inWorktree(worktree, async () => {
+        await git.fetch();
+        const pr = ref ? await this.deps.host.getPullRequest(ref.repo, ref.number) : null;
+        if (!pr || !(await git.hasRef(head))) return false;
+        return (await ownChangeId(git, `origin/${pr.base.ref}`, head)) === record.own_change_id;
+      });
     } catch (e) {
       this.logger.warn("own change not read", { taskId: record.task_id, error: errorMessage(e) });
       return false;

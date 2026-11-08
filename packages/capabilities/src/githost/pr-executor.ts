@@ -34,6 +34,9 @@ import {
 } from "./local-only.ts";
 import { pushFailedWords } from "./push-words.ts";
 import type { GitHost, MergeMethod, PullRequestInfo, RepoRef } from "./types.ts";
+// A worktree a step works in now: a rebuild never touches one that a run, a resolved conflict,
+// another rebuild or the merge step is using (`inWorktree` waits for it, `tryWorktree` skips).
+import { inWorktree, tryWorktree } from "./worktree-lock.ts";
 
 /**
  * Branch-and-PR flow around a task executor (spec F: code changes only via branches and PRs,
@@ -296,29 +299,6 @@ export interface RebuildHooks {
    * rebuild is tried again later.
    */
   beforePush?: (r: DependentRebuild, pr: { number: number; url: string }) => Promise<boolean>;
-}
-
-/**
- * Worktrees a step works in now, in this process: a rebuild never touches one that a run, a
- * resolved conflict or another rebuild is using (`inWorktree` waits for it, `tryWorktree` skips).
- */
-const worktreesInUse = new Map<string, Promise<unknown>>();
-
-async function inWorktree<T>(dir: string, fn: () => Promise<T>): Promise<T> {
-  for (let held = worktreesInUse.get(dir); held; held = worktreesInUse.get(dir))
-    await held.catch(() => undefined);
-  const p = fn();
-  worktreesInUse.set(dir, p);
-  try {
-    return await p;
-  } finally {
-    if (worktreesInUse.get(dir) === p) worktreesInUse.delete(dir);
-  }
-}
-
-async function tryWorktree<T>(dir: string, fn: () => Promise<T>): Promise<T | null> {
-  if (worktreesInUse.has(dir)) return null;
-  return inWorktree(dir, fn);
 }
 
 /** "#4, which was closed" for the words of a rebuild (ADR 0111). */
