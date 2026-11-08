@@ -70,3 +70,36 @@ export function mergesAfterSentence(
 export function mergesAfterLabel(after: readonly number[]): string {
   return `Accepted · merges after ${prsWords(after)}`;
 }
+
+/**
+ * TM-4 (leftovers7-tailmerge): a merge record's `last_outcome` while the merge (the person's
+ * Merge, or the automatic mode's) waits for a rebuild its branch owes (`rebuild_owed_for`) and
+ * the rebuild cannot run because the task's folder holds changes nobody committed. Written by
+ * the merge step when it finds the folder so (`ReviewedPrMerge.sayOwedWait`), taken back once
+ * the folder is clean or the rebuild ran.
+ */
+export const OWED_FOLDER_CHANGES = "owed_folder_changes";
+
+/** TM-4: the one sentence of that wait, with the way out. Polish owns the words. */
+export function owedFolderSentence(pr: number): string {
+  return `#${pr} waits for the changes left in its task's folder: commit or remove them, or redo the task.`;
+}
+
+/** TM-4: the Tasks row's label for that wait (with `owedFolderSentence` as the line under it). */
+export const OWED_FOLDER_LABEL = "Accepted · merge waits for you";
+
+/**
+ * TM-4: what a merge that waits for its task folder's changes says (the Overview's row and the
+ * Tasks row read it), or null when the record does not wait so. Before, such a merge read
+ * "Merging…" and "Accepted · merging" with no reason until the folder was cleaned.
+ */
+export function owedMergeWait(record: {
+  state: string;
+  rebuild_owed_for: string | null;
+  last_outcome: string | null;
+  sentence: string;
+}): string | null {
+  if (record.state !== "queued" && record.state !== "waiting_checks") return null;
+  if (!record.rebuild_owed_for || record.last_outcome !== OWED_FOLDER_CHANGES) return null;
+  return record.sentence.trim() || null;
+}

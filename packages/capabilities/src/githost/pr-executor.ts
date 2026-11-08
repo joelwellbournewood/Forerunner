@@ -595,6 +595,11 @@ export class PrTaskExecutor implements TaskExecutor {
   private readonly logger = log("pr-executor");
   /** The sentence a task's run left about Local only (the person's changes kept), by task. */
   private readonly localOnlyWords = new Map<string, string>();
+  /**
+   * TM-4: the tasks whose rebuild was last held by changes nobody committed in their folder:
+   * the warning is logged once per such state, not at every poll.
+   */
+  private readonly heldByChanges = new Set<string>();
 
   constructor(private readonly deps: PrTaskExecutorDeps) {}
 
@@ -1716,12 +1721,18 @@ export class PrTaskExecutor implements TaskExecutor {
       }
     }
     // Work nobody committed (a person's change after the run) is never swept into a rebuild.
+    // TM-4: said once while the folder stays so (before, a WARN at every poll); the merge step
+    // says it on the pull request's row (`ReviewedPrMerge`, `owedFolderSentence`).
     if ((await git.status()).dirty) {
-      this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
-        taskId: task.id,
-      });
+      if (!this.heldByChanges.has(task.id)) {
+        this.heldByChanges.add(task.id);
+        this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
+          taskId: task.id,
+        });
+      }
       return { ...found, result: "busy" };
     }
+    this.heldByChanges.delete(task.id);
     // The branch as the host has it (a person may have pushed to it).
     await git.createBranch(branch, `origin/${branch}`);
     await this.dropStaleMarker(git);

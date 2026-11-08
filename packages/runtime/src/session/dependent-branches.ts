@@ -17,6 +17,7 @@ import {
   REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
+import { OWED_FOLDER_CHANGES } from "../loop/merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest } from "../loop/ports.ts";
 import type { WatchedPullRequest } from "./githost-watcher.ts";
 
@@ -499,8 +500,17 @@ export class DependentBranches {
       }
       this.owed.delete(o.taskId);
       if (!record?.rebuild_owed_for) return;
-      if (o.result !== "unchanged" || record.rebuild_owed_for === dependencyId)
+      if (o.result !== "unchanged" || record.rebuild_owed_for === dependencyId) {
         await store.mergeRecord.oweRebuild(o.taskId, null);
+        // TM-4: the wait for the folder's changes is over with the owed rebuild; a merge that
+        // waited goes on at the next retry and says what came of it.
+        const now = await store.mergeRecord.forTask(o.taskId);
+        if (now?.last_outcome === OWED_FOLDER_CHANGES)
+          await store.mergeRecord.move(now.id, now.state, {
+            last_outcome: "rebuild_owed",
+            sentence: "",
+          });
+      }
     } catch (e) {
       this.logger.warn("owed rebuild not recorded", { taskId: o.taskId, error: errorMessage(e) });
     }

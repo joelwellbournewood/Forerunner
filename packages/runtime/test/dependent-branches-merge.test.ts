@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
-import { join, run, safeSegment } from "@forerunner/platform";
+import { join, Logger, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
@@ -1212,6 +1212,59 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
       }
     });
   }
+
+  it("Merge pressed while a rebuild is owed because the task's folder holds changes nobody committed: the Overview row and the Tasks row say why it waits and what to do, never 'Merging…'; the warning is logged once (TM-4)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    // Someone left a change in B's folder (a conflict card's steps, a look by hand).
+    const left = join(m.worktreeRoot, safeSegment(b.id), "notes.txt");
+    writeFileSync(left, "my notes\n");
+    const warned: string[] = [];
+    const off = Logger.addSink((r) => {
+      if (r.msg.includes("its worktree has uncommitted changes")) warned.push(r.msg);
+    });
+    try {
+      await m.close(a.id);
+      await m.poll();
+      expect((await m.record(b.id)).rebuild_owed_for).toBe(a.id);
+      // The person presses Merge on B's row: the merge waits for the rebuild (R-lock).
+      const project = await m.w.store.project.mustGet(m.w.project);
+      const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+      await prs.merge(project, prB, m.w.human);
+      await prs.idle();
+      expect((await m.pr(b.id)).merged).toBe(false);
+      const sentence = `#${prB} waits for the changes left in its task's folder: commit or remove them, or redo the task.`;
+      // Before: the row read "Merging…" (state queued) and the Tasks row "Accepted · merging",
+      // with no reason, until the folder was cleaned.
+      const { waiting, row } = await screens(m, b.id);
+      expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+        state: "waiting_checks",
+        canMerge: false,
+        sentence,
+      });
+      expect(row).toMatchObject({ label: "Accepted · merge waits for you", detail: sentence });
+      // More polls and retries: the merge still waits, and the warning was logged once.
+      await m.poll();
+      await m.poll();
+      expect((await m.pr(b.id)).merged).toBe(false);
+      expect(warned).toHaveLength(1);
+      // The change put away: the next poll rebuilds B, and the wait's words are gone.
+      rmSync(left);
+      await m.poll();
+      const after = await m.record(b.id);
+      expect(after.rebuild_owed_for).toBeNull();
+      expect(after.last_outcome).not.toBe("owed_folder_changes");
+      const again = await screens(m, b.id);
+      expect(again.row.detail ?? "").not.toContain("waits for the changes left");
+      expect(again.waiting.find((w) => w.number === prB)?.merge?.sentence ?? "").not.toContain(
+        "waits for the changes left",
+      );
+    } finally {
+      off();
+    }
+  });
 
   it("'Drop the branch and retry from scratch' whose run changes nothing: the same, one sentence and a closed pull request (TM-1)", async () => {
     const { m, b, prB } = await conflictingPair();

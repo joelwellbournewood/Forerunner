@@ -3267,7 +3267,20 @@ that owes one keeps it when a second dependency changes). `sweep` reads the owed
 poll, also the first after a restart (A merged and known by then, so nothing else would catch B),
 and clears those whose task is no longer done; an accept (`pin`) clears the mark (a new review reads the branch as it is). A task without a
 record (accepted before ADR 0111) keeps the old in-memory fallback. While a record owes a rebuild,
-nothing merges its pull request (`ReviewedPrMerge`, below). **The conflict notice** (R-conflict):
+nothing merges its pull request (`ReviewedPrMerge`, below). **A merge that waits for the task
+folder's changes says so** (TM-4, leftovers7-tailmerge): a rebuild never sweeps in changes nobody
+committed, so a folder holding some keeps the rebuild owed; the PR executor logs that once per
+such state (`heldByChanges`), not at every poll. When a merge reaches the owed record (the
+person's Merge, the automatic mode's), `ReviewedPrMerge.sayOwedWait` looks at the folder (no
+wait for its lock: a busy one changes nothing) and writes `last_outcome` `owed_folder_changes`
+(`OWED_FOLDER_CHANGES`, `owedFolderSentence` in `loop/merge-mode.ts`: "#8 waits for the changes
+left in its task's folder: commit or remove them, or redo the task.") on the record, keeping its
+state; a clean folder takes the words back, and so does `settleOwed` once the rebuild ran.
+`owedMergeWait(record)` reads it for the Overview's row (`pull-requests.ts` `owedWaitOf`:
+`waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
+and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the
+sentence). Before, the row read "Merging…" and the Tasks row "Accepted · merging" with no
+reason. The merge still waits (R-lock holds). **The conflict notice** (R-conflict):
 `pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
 poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
 the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no

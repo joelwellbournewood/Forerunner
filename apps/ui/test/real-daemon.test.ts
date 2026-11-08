@@ -10917,3 +10917,139 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(true);
   }, 120_000);
 });
+
+describe("leftovers7-tailmerge, wave 13", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let host: FakeGitHost;
+  let github: GitHubHost;
+  let token = "";
+  let work = "";
+  const FULL = "alice/l7tm";
+  const REPO = { owner: "alice", name: "l7tm" };
+  const identity = { name: "Alice (Forerunner)", email: "alice@example.test" };
+
+  beforeAll(async () => {
+    work = mkdtempSync(join(tmpdir(), "fr-ui-real-l7tm-"));
+    const clock = new SystemClock();
+    host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: identity.email });
+    await host.createRepo({
+      owner: "alice",
+      name: "l7tm",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# l7tm\n" },
+    });
+    token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const vault = new MemoryVault();
+    await vault.set(SECRET_NAMES.github, token);
+    ({ rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: github,
+        vault,
+        config: {
+          version: 1,
+          profile: "default",
+          timezone: "UTC",
+          githubApiBase: host.baseUrl,
+          anthropicApiBase: "http://an.test",
+          repos: [],
+          credentials: { github: true, anthropic: false, anthropicSubscription: false },
+          stateUrl: "sqlite::memory:",
+        },
+      },
+    ));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    await host?.stop();
+  });
+
+  /**
+   * A done task with its pull request on the host and its folder where the daemon keeps task
+   * folders, as a session leaves it (level 2: it waits for the person's Merge).
+   */
+  async function doneTask(projectId: string, title: string, file: string, content: string) {
+    const task = await rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "done",
+      priority: 1,
+      depends_on: [],
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "critic accepted",
+      author_agent: rt.agent.id,
+    });
+    const dir = join(rt.dirs.worktrees, task.id);
+    const ops = new GitOps({ cwd: dir, identity, auth: { token } });
+    await ops.clone(host.cloneUrl(FULL));
+    const branch = `fr/${title.toLowerCase().replace(/\W+/g, "-")}-${task.id.slice(-6).toLowerCase()}`;
+    await ops.createBranch(branch, "origin/main");
+    writeFileSync(join(dir, file), content);
+    await ops.commitAll(title);
+    await ops.push(branch);
+    const pr = await github.createPullRequest(REPO, {
+      title,
+      body: "",
+      head: branch,
+      base: "main",
+    });
+    await rt.store.task.patch(task.id, { pr_url: pr.htmlUrl, branch });
+    const pinned = await rt.store.mergeRecord.pin({
+      task_id: task.id,
+      project_id: projectId,
+      agent_id: rt.agent.id,
+      pr_number: pr.number,
+      pr_url: pr.htmlUrl,
+      reviewed_head_sha: pr.head.sha,
+      author_agent: rt.agent.id,
+    });
+    await rt.store.mergeRecord.move(pinned.id, "left_to_you", {
+      sentence: `#${pr.number} waits for you to merge it: press Merge on the Overview.`,
+      last_outcome: "not_allowed",
+    });
+    return { task, pr, branch, dir };
+  }
+
+  it("Merge pressed while a rebuild is owed for a task folder holding changes nobody committed: the Overview row and the Tasks row say why it waits and what to do, never 'Merging…', and nothing merges (TM-4)", async () => {
+    const project = await client.createProject({ name: "Owed rebuild", goal: "x", repos: [FULL] });
+    const a = await doneTask(project.id, "Write the page", "page.html", "<h1>page</h1>\n");
+    const b = await doneTask(project.id, "Write the footer", "footer.html", "<p>footer</p>\n");
+    // B's branch owes a rebuild for A (A's pull request was closed, say), and B's folder holds a
+    // change nobody committed, so the rebuild cannot run (R-owed, as the watcher's sweep marks it).
+    expect(await rt.store.mergeRecord.oweRebuild(b.task.id, a.task.id)).toBe(true);
+    writeFileSync(join(b.dir, "notes.txt"), "my notes\n");
+    // The person presses Merge on B's row: the answer comes at once, the merge waits (R-lock).
+    const answer = await client.mergePullRequest(project.id, b.pr.number);
+    expect(answer.state).not.toBe("refused");
+    await eventually(
+      async () =>
+        (await rt.store.mergeRecord.forTask(b.task.id))?.last_outcome === "owed_folder_changes",
+      "the merge step to say the folder's changes hold the merge (at least 10 s)",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(b.task.id)),
+      30_000,
+    );
+    const sentence = `#${b.pr.number} waits for the changes left in its task's folder: commit or remove them, or redo the task.`;
+    // Before: the row read "Merging…" (state queued) with no reason, and the Tasks row
+    // "Accepted · merging", for as long as the folder held the change.
+    const row = (await client.projectPullRequests(project.id)).waiting.find(
+      (w) => w.number === b.pr.number,
+    );
+    expect(row?.merge).toMatchObject({ state: "waiting_checks", canMerge: false, sentence });
+    const taskRow = (await client.tasks(project.id)).find((t) => t.id === b.task.id);
+    expect(taskRow?.display).toMatchObject({
+      label: "Accepted · merge waits for you",
+      detail: sentence,
+    });
+    expect((await github.getPullRequest(REPO, b.pr.number)).merged).toBe(false);
+  }, 120_000);
+});

@@ -373,3 +373,9 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    pass merged the old reviewed head while the task was being done again, or, when main had
    moved, waited for the task folder's lock that the redo's run held, which held the watcher's
    whole poll (no pull request events, copy refreshes or conflict notices) until the run ended.
+5. **A merge that waits for the task folder's changes says why.** A rebuild never sweeps in
+   changes nobody committed, so a task folder holding some keeps its rebuild owed and the merge
+   waits (R-lock is unchanged). The merge step now writes that wait on the record when it meets
+   it, and the Overview's row and the Tasks row say it in one sentence with the way out (commit
+   or remove the changes, or redo the task), instead of "Merging…" with no reason; the folder's
+   warning is logged once per such state instead of at every poll.

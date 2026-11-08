@@ -344,7 +344,11 @@ never repeats work that is already in the default branch:
   changes too.").
 - While #8's task folder is busy (a run, a merge under way, a change nobody committed), its
   rebuild waits and is tried again at every check (about a minute), also after Forerunner
-  restarts; until it ran, nothing merges #8, not even your Merge (the row waits). In a chain
+  restarts; until it ran, nothing merges #8, not even your Merge (the row waits). When what
+  holds it is a change nobody committed in the task's folder, the row says so: "#8 waits for the
+  changes left in its task's folder: commit or remove them, or redo the task." (its task row:
+  "Accepted · merge waits for you"); once they are put away, the rebuild runs at the next check
+  and your Merge goes on. In a chain
   (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt.
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a
