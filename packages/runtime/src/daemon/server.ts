@@ -130,6 +130,7 @@ import {
   type SyncHealth,
   TaskActionBody,
   type TaskEvidenceFileView,
+  type TaskTakeOutAnswer,
   type TaskTransitionView,
   type TaskView,
   TransitionTaskBody,
@@ -1170,6 +1171,21 @@ export function createDaemonApp(
     // A withdrawn card leaves the Inbox: its count and the header follow.
     rt.events.emit("inbox", {});
     return c.json(await changeView(task.id, r));
+  });
+
+  // "Take this work out" on a merged task (merged-actions, the owner's decision of 2026-11-02):
+  // a branch from main that reverts its merge by the way its pull request was merged, pushed
+  // with a pull request that names the tasks built on it; never a push to main. The answer
+  // says what happened in one or two sentences.
+  app.post("/tasks/:id/take-out", async (c) => {
+    const task = await rt.store.task.mustGet(c.req.param("id"));
+    const project = await rt.store.project.mustGet(task.project_id);
+    if (!ownsProject(project, { humanId: rt.human.id, agentId: rt.agent.id }))
+      return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const answer: TaskTakeOutAnswer = await rt.takeOut.takeOut(task.id);
+    rt.events.emit("project", { id: task.project_id });
+    if (answer.state === "conflict") rt.events.emit("inbox", {});
+    return c.json(answer);
   });
 
   // The plan writer (spec B.6): a plan becomes milestone and task rows shaped by the project's

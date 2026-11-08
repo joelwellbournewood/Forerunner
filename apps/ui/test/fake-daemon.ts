@@ -98,6 +98,10 @@ import {
   sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
+import {
+  takeOutConflictSentence,
+  takeOutOpenedSentence,
+} from "@forerunner/runtime/daemon/take-out-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import {
@@ -511,6 +515,8 @@ export interface FakeDaemonState {
     | null;
   /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
   pullRequestReads: Record<string, number>;
+  /** merged-actions: set by a test, the next Take this work out conflicts in these files. */
+  takeOutConflict: string[] | null;
   /** `GET /projects/:id/docs` by project: Atlas has the fixture set, the others none. */
   docs: Record<string, DocView[]>;
   messages: MessageView[];
@@ -980,6 +986,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
     pullRequestReads: {},
+    takeOutConflict: null,
     docs: { proj_atlas: clone(DOCS) },
     messages: clone(MESSAGES),
     killActive: false,
@@ -2011,6 +2018,59 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       reversible: true,
     });
     return c.json(changeOf(task, entry));
+  });
+  // "Take this work out" (merged-actions), as the daemon's `TaskTakeOut` answers it: a merged
+  // task's take-out pull request is opened (the next number on the project's list), the record
+  // keeps it (the row reads "Taken out in #N (waiting for you to merge)") and the Overview lists
+  // it under Waiting for you to merge; the done tasks that built on it are named. A task whose
+  // work is not merged, or is being taken out already, is refused with the daemon's sentence.
+  // `state.takeOutConflict` set by a test: the revert conflicts (the daemon also files one Inbox
+  // notice, which the screens read from GET /inbox).
+  app.post("/tasks/:id/take-out", (c) => {
+    const task = state.tasks.find((t) => t.id === c.req.param("id"));
+    if (!task) return errorBody(c, 404, "not_found", "no such task");
+    const record = state.taskMeta.merges?.get(task.id);
+    const refused = (sentence: string) =>
+      c.json({ state: "refused", sentence, number: null, url: null, builtOn: [] });
+    if (task.status !== "done" || record?.state !== "merged")
+      return refused(`"${task.title}" is not merged, so there is nothing to take out of main.`);
+    if (record.take_out_state === "open" && record.take_out_pr_number)
+      return refused(
+        `"${task.title}" is being taken out in #${record.take_out_pr_number}: merge #${record.take_out_pr_number} to finish it.`,
+      );
+    const builtOn = state.tasks
+      .filter((t) => t.status === "done" && t.dependsOn.includes(task.id))
+      .map((t) => t.title);
+    if (state.takeOutConflict) {
+      const sentence = takeOutConflictSentence(task.title, state.takeOutConflict);
+      return c.json({ state: "conflict", sentence, number: null, url: null, builtOn });
+    }
+    const prs = state.pullRequests[task.projectId] ?? { waiting: [], error: null };
+    state.pullRequests[task.projectId] = prs;
+    const number = Math.max(40, ...prs.waiting.map((w) => w.number)) + 1;
+    const url = `https://example.test/org/atlas/pull/${number}`;
+    record.take_out_pr_number = number;
+    record.take_out_pr_url = url;
+    record.take_out_state = "open";
+    prs.waiting.push({
+      kind: "take_out",
+      taskId: task.id,
+      title: `Take out: ${task.title}`,
+      number,
+      url,
+      branch: `${task.branch ?? "fr/task"}-take-out`,
+      review: null,
+      merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+    });
+    touch(task);
+    emit("project.changed", { id: task.projectId });
+    return c.json({
+      state: "opened",
+      sentence: takeOutOpenedSentence(task.title, number, builtOn),
+      number,
+      url,
+      builtOn,
+    });
   });
   app.post("/tasks/:id/action", async (c) => {
     const task = state.tasks.find((t) => t.id === c.req.param("id"));
@@ -6657,7 +6717,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       });
     const folder = `/home/you/.forerunner/worktrees/docs/previews/${id}/pr-${number}`;
     const sentence = `#${number} as it would be merged. Changes here are not kept.`;
-    for (const r of prs.waiting) r.preview = null;
+    for (const r of prs.waiting) delete r.preview;
     row.preview = { folder, sentence };
     return c.json({ state: "ready", sentence, folder, number });
   });

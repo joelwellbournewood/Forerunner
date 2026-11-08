@@ -2937,6 +2937,39 @@ request merged on GitHub, a close the watcher has not read yet). Tests: `apps/ui
 real-daemon.test.ts` "Open this version on a waiting PR ..." (the lock, main merged in, the row's
 preview, a refused number, removed after a merge and after a close).
 
+**Take this work out (merged-actions, the owner's decision of 2026-11-02, ADR 0113's
+amendment).** `POST /tasks/:id/take-out` (`server.ts`, `RuntimeApp.takeOut`, `TaskTakeOut` in
+`src/loop/take-out.ts`) on a done task whose pull request is merged: refused in one sentence when
+the task is not done, has no pull request, its pull request is not merged ("close #4 on GitHub if
+you do not want it"), or a take-out is open or merged already. The merge commit is the record's
+(`merge_sha` when `merged`) or the host's `mergeCommitSha`; `builtOn(task)` lists the done tasks
+that depend on it, directly or through another. `PrTaskExecutor.takeOut` (capabilities) makes the
+branch `<task branch>-take-out` from the default branch in a clone of its own and reverts by the
+shape it reads from git (`takeOutPlan`: a merge commit with `-m 1`, a rebase merge's copies
+matched by patch id, a squash), pushes it forced with a lease (never the default branch, through
+`neverPush`) and returns `pushed`, `conflict` (the files; nothing pushed, the clone reset),
+`unknown_shape` (refused with `unknownShapeSentence`: "#4 was merged in a way Forerunner cannot
+undo safely; undo it on GitHub."), `not_in_main` or `no_repository`. On `pushed` the pull request
+"Take out: <title>" is opened with a body that names how #4 was merged and the tasks that built on
+it, and the task's merge record keeps it (`take_out_pr_number`, `take_out_pr_url`,
+`take_out_state: "open"`; a merge with no record gets one, `merged`, `reviewed_head_sha` empty).
+The answer (`TaskTakeOutAnswer`) is `opened` with `takeOutOpenedSentence` ("Opened #9 to take "X"
+out. It waits for you to merge it. "Y" built on it: check it still works once #9 is merged."),
+`conflict` with `takeOutConflictSentence` and one Inbox notice per task (`kind: "info"`, key
+`take_out:conflict:<task>`, no task id: `holdsTask` leaves it out with `isTakeOutNotice`, so the
+project's line does not wait on it), or `refused`. The words are in `daemon/take-out-words.ts`,
+which the UI's fake daemon imports. `taskDisplay()`'s merged case (`mergedDisplay`) reads the
+record: "Merged" with `takeOut: { state: "offered" }`, "Taken out in #9 (waiting for you to
+merge)" (`open`), "Taken out in #9" (`merged`); a take-out closed without merging offers it again.
+`ProjectPullRequests.view` lists each open take-out (`TaskTakeOut.openOf`) as a `take_out` row
+(title "Take out: <title>", `taskId` the task, no review) whose Merge merges it as it is through
+`mergeAsIs`, then marks it merged (`TaskTakeOut.merged`); before listing, `TaskTakeOut.settle`
+reads each open take-out the host no longer lists as open and marks it merged or closed. Tests:
+`packages/capabilities/test/take-out.test.ts` (merge, squash and rebase merges on the fake
+GitHub: main's tree after merging the take-out equals main's before the merge; a conflict pushes
+nothing; an unknown shape and a commit not in main), `apps/ui/test/real-daemon.test.ts` "Take this
+work out on a merged task of a chain ..." and "a pull request squash-merged on GitHub ...".
+
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull
 request): "Merged", "Accepted · merges when its checks pass", "Accepted · merging", "Accepted ·

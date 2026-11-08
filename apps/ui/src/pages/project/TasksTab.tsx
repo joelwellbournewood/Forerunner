@@ -217,6 +217,7 @@ export function TasksTab({
   const [newOpen, setNewOpen] = useState(false);
   const [pending, setPending] = useState<{ task: TaskView; action: TaskAction } | null>(null);
   const [editingDeps, setEditingDeps] = useState<TaskView | null>(null);
+  const [takingOut, setTakingOut] = useState<TaskView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moved, setMoved] = useState<Moved | null>(null);
   const [undoBusy, setUndoBusy] = useState(false);
@@ -290,6 +291,7 @@ export function TasksTab({
     if (key === "edit") return setOpen(task.id);
     if (key === "dependencies") return setEditingDeps(task);
     if (key === "answer") return navigate("/inbox");
+    if (key === "take_out") return setTakingOut(task);
     setPending({ task, action: key });
   };
 
@@ -537,6 +539,22 @@ export function TasksTab({
           setEditingDeps(null);
         }}
       />
+      <TakeOutDialog
+        task={takingOut}
+        tasks={all}
+        onClose={() => setTakingOut(null)}
+        onConfirm={async (task) => {
+          const answer = await client.takeOutTask(task.id);
+          if (answer.state === "refused") throw new Error(answer.sentence);
+          // The answer is the outcome (the pull request that waits, or the conflict): it stands
+          // above the list like a moved task's sentence, with no Undo (close the pull request
+          // on GitHub instead).
+          setMoved({ sentence: answer.sentence, undoToken: null });
+          setTakingOut(null);
+          tasks.reload();
+          if (answer.state === "conflict") refreshInboxCount();
+        }}
+      />
       <ActionDialog
         pending={pending}
         tasks={all}
@@ -659,6 +677,94 @@ export function ActionDialog({
       </form>
     </Dialog>
   );
+}
+
+/**
+ * "Take this work out" (merged-actions, the owner's decision of 2026-11-02): what it does in
+ * one line, the done tasks that built on it named (they may need the work), and the person's
+ * yes. The daemon opens a pull request that reverts the task's merge; nothing reaches main
+ * until the person merges it. A refusal stays in the dialog in the daemon's words.
+ */
+export function TakeOutDialog({
+  task,
+  tasks,
+  onClose,
+  onConfirm,
+}: {
+  task: TaskView | null;
+  tasks: readonly TaskView[];
+  onClose: () => void;
+  onConfirm: (task: TaskView) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [shown, setShown] = useState<string | null>(null);
+  if ((task?.id ?? null) !== shown) {
+    setShown(task?.id ?? null);
+    setError(null);
+  }
+  if (!task) return null;
+  const builtOn = builtOnTitles(task, tasks);
+  const named = builtOn.slice(0, 3).map((t) => `"${t}"`);
+  const list =
+    named.length <= 1 ? (named[0] ?? "") : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+  const more = builtOn.length > 3 ? ` and ${builtOn.length - 3} more` : "";
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm(task);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onClose={onClose} title={`Take "${task.title}" out?`} testId="take-out-dialog">
+      <form onSubmit={submit} className="space-y-3">
+        <p className="text-sm" data-testid="take-out-explain">
+          {ACTIONS.take_out.explain}
+        </p>
+        {builtOn.length ? (
+          <p className="text-sm" data-testid="take-out-built-on">
+            {list}
+            {more} built on it: {builtOn.length === 1 ? "it" : "they"} may need this work. The pull
+            request names {builtOn.length === 1 ? "it" : "them"}.
+          </p>
+        ) : null}
+        {error ? <ErrorBanner message={error} /> : null}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} data-testid="dismiss-take-out">
+            Not now
+          </Button>
+          <Button variant="primary" type="submit" disabled={busy} data-testid="confirm-take-out">
+            {busy ? "Taking it out…" : "Take it out"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** The done tasks that built on `task`, directly or through another (as the daemon names them). */
+function builtOnTitles(task: TaskView, tasks: readonly TaskView[]): string[] {
+  const out: string[] = [];
+  const seen = new Set([task.id]);
+  let frontier = [task.id];
+  while (frontier.length) {
+    const next: string[] = [];
+    for (const t of tasks)
+      if (!seen.has(t.id) && t.dependsOn.some((d) => frontier.includes(d))) {
+        seen.add(t.id);
+        next.push(t.id);
+        if (t.status === "done") out.push(t.title);
+      }
+    frontier = next;
+  }
+  return out;
 }
 
 /**

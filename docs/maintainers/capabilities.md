@@ -339,7 +339,19 @@ with their milestone.
   { mainline })` takes commits back on the current branch (`git revert --no-edit`, `-m 1` for a
   merge commit's change against its first parent), aborting on a conflict with the files named;
   `commitsNotIn(from, to)` lists a branch's own commits that `from` lacks, oldest first, without
-  merge commits.
+  merge commits. `PrTaskExecutor.takeOut({ task, number, mergeSha, headSha, branch })` (a new
+  method; the runtime's `TaskTakeOut` calls it) works in a clone of its own
+  (`<worktreeRoot>/<task>-take-out`, under the same per-folder lock as a worktree, never the
+  task's worktree), fetches (and `refs/pull/<n>/head` when the head is on no branch), checks the
+  merge commit is in the default branch, asks `takeOutPlan(git, mergeSha, headSha)` how to take it
+  back (two parents: `revert -m 1`; one parent and the pull request's own commits copied onto the
+  default branch ending at the merge commit, each matched by patch id: a rebase, the copies
+  reverted newest first; one parent whose change is the pull request's whole change: a squash,
+  reverted without `-m`; anything else null), makes `branch` from the default branch, reverts and
+  pushes it (forced with a lease, never the default branch, through `neverPush`). It returns
+  `TakeOutGitResult`: `pushed` (branch, base, repo, `how`, the commits), `conflict` (the files;
+  the clone reset, nothing pushed), `unknown_shape`, `not_in_main` or `no_repository`. Test:
+  `test/take-out.test.ts` on the fake GitHub's own merge, squash and rebase.
 - **Local only** (`local-only.ts`, merged-copy, [ADR 0113](../decisions/0113-the-copy-follows-every-merge-and-local-only.md),
   the owner's decision of 2026-11-02): a repository project's folder that never leaves this
   computer and that agents can use. `LOCAL_ONLY_DIR` ("Local only"), `TRY_DIR`

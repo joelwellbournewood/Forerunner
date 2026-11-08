@@ -129,6 +129,7 @@ import {
 } from "../loop/memory.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
+import { TaskTakeOut } from "../loop/take-out.ts";
 import { evidenceRootOf, keepOnlyThisTry, type TryItPort } from "../loop/try-it.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
@@ -858,6 +859,8 @@ export interface RuntimeApp {
    * (merge-in-app): `view` for GET /projects/:id/pull-requests, `merge` for the click.
    */
   pullRequests: ProjectPullRequests;
+  /** "Take this work out" on a merged task (merged-actions): POST /tasks/:id/take-out. */
+  takeOut: TaskTakeOut;
   /**
    * The grant a session of this agent on `projectId` starts with (ADR 0044), as `startSession`
    * computes it: the tools (`merge_pr` among them, J.9), the worktrees root, the git host's and
@@ -2501,6 +2504,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // merged-actions: "Open this version" of a waiting pull request, beside the copy and under
     // its lock (`ProjectDocs.previewPullRequest`).
     previews: docs,
+    // merged-actions: the take-out pull requests that wait are listed with Merge.
+    takeOuts: {
+      openOf: (p) => takeOut.openOf(p),
+      settle: (p, o) => takeOut.settle(p, o),
+      merged: (p, n) => takeOut.merged(p, n),
+    },
+  });
+  // merged-actions: "Take this work out" on a merged task (POST /tasks/:id/take-out): a branch
+  // from main that reverts its merge by the way it was merged, with a pull request that names
+  // the tasks that built on it; the PR executor does the git, in a clone of its own.
+  const takeOut = new TaskTakeOut({
+    store,
+    host: gitHost,
+    git: executor,
+    humanId: human.id,
+    agentId: agent.id,
+    changed: (projectId) => events.emit("project", { id: projectId }),
   });
   // merged-copy: the copy follows every merge (a session's, a retry's, Merge in the app, one
   // the watcher saw on GitHub).
@@ -4373,6 +4393,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     merge,
     dependentBranches,
     pullRequests,
+    takeOut,
     sessionGrant: async (projectId) =>
       sessionGrant(
         projectId ? await store.project.mustGet(projectId) : null,

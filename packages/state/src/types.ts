@@ -603,6 +603,13 @@ export interface MergeRecordRow extends BaseRow {
   sentence: string;
   /** The last attempt's outcome (`MergeStatus`), for the words. */
   last_outcome: string | null;
+  /**
+   * "Take this work out" (merged-actions): the pull request that reverts this merge, its URL,
+   * and where it is (`open`, `merged`, `closed`); null until the person asks for one.
+   */
+  take_out_pr_number: number | null;
+  take_out_pr_url: string | null;
+  take_out_state: string | null;
 }
 export type NewMergeRecord = New<
   MergeRecordRow,

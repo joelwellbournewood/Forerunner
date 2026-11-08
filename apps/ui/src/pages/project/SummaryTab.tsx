@@ -235,15 +235,18 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
  * over its PRs, and no PR is listed under a check it did not get. Review (2026-11-02): every PR
  * read "Reviewed by the critic.", Forerunner's status and plan-docs PRs too.
  */
-type PrGroup = "critic" | "you" | "not-reviewed" | "docs";
+type PrGroup = "critic" | "you" | "not-reviewed" | "docs" | "take-out";
 const PR_GROUPS: { key: PrGroup; label: string }[] = [
   { key: "critic", label: "Reviewed by the critic" },
   { key: "you", label: "Accepted by you at sign-off" },
   { key: "not-reviewed", label: "Marked done without the critic's review" },
   { key: "docs", label: "Forerunner's docs, merge them when you like" },
+  // merged-actions: "Take this work out" opened these; Merge takes the work out of main.
+  { key: "take-out", label: "Taking work out: merging one removes that work from main" },
 ];
 
 function groupOf(pr: ProjectPullRequestView): PrGroup {
+  if (pr.kind === "take_out") return "take-out";
   if (pr.kind === "docs") return "docs";
   if (pr.review === "critic") return "critic";
   if (pr.review === "you") return "you";

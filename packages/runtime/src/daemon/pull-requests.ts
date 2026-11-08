@@ -16,6 +16,7 @@ import {
   mergeModeOf,
   mergesAfterSentence,
 } from "../loop/merge-mode.ts";
+import type { TaskTakeOut } from "../loop/take-out.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
 import type {
   ProjectPullRequestsView,
@@ -112,6 +113,12 @@ export interface ProjectPullRequestsDeps {
    * `previewPullRequest`, `previewOf`, `dropPreview`). Absent: no "Open this version".
    */
   previews?: PullRequestPreviewPort;
+  /**
+   * "Take this work out" (merged-actions, `TaskTakeOut`): the open take-out pull requests are
+   * listed as `take_out` rows with Merge (as they are, on the click), and one no longer open is
+   * settled as merged or closed. Absent: none is listed.
+   */
+  takeOuts?: Pick<TaskTakeOut, "openOf" | "settle" | "merged">;
 }
 
 /** "Open this version" of a waiting pull request (merged-actions), as `ProjectDocs` has it. */
@@ -285,9 +292,48 @@ export class ProjectPullRequests {
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const rows: ProjectPullRequestView[] = [];
     const taskOfRow = new Map<number, TaskRow>();
+    // merged-actions: the take-outs that wait, by their pull request's number; one no longer
+    // open on the host is settled (merged or closed) first.
+    const takeOuts = this.deps.takeOuts;
+    if (takeOuts)
+      await takeOuts.settle(project.id, prs).catch((e: unknown) => {
+        this.logger.warn("take-outs not settled", {
+          projectId: project.id,
+          error: errorMessage(e),
+        });
+      });
+    const takingOut = takeOuts
+      ? await takeOuts.openOf(project.id).catch(() => new Map<number, MergeRecordRow>())
+      : new Map<number, MergeRecordRow>();
     for (const pr of [...prs].sort((a, b) => a.number - b.number)) {
       const rule = blockedBy.get(pr.base.ref) ?? null;
       const ruleSentence = rule ? rule(pr.number) : null;
+      const takeOut = takingOut.get(pr.number);
+      if (takeOut) {
+        // It has no record of its own: Merge merges it as it is, on the click.
+        const of = byId.get(takeOut.task_id);
+        const clicked = this.docs.get(pr.htmlUrl);
+        rows.push({
+          kind: "take_out",
+          taskId: takeOut.task_id,
+          title: of ? `Take out: ${of.title}` : pr.title,
+          number: pr.number,
+          url: pr.htmlUrl,
+          branch: pr.head.ref,
+          review: null,
+          merge: ruleSentence
+            ? { state: "blocked", canMerge: false, sentence: ruleSentence, first: [] }
+            : clicked?.state === "merging"
+              ? { state: "merging", canMerge: false, sentence: null, first: [] }
+              : {
+                  state: clicked ? "left_to_you" : "ready",
+                  canMerge: true,
+                  sentence: clicked?.sentence ?? null,
+                  first: [],
+                },
+        });
+        continue;
+      }
       const task = tasks.find((t) => t.branch === pr.head.ref || t.pr_url === pr.htmlUrl);
       if (task) {
         if (task.status !== "done") continue;
@@ -337,11 +383,11 @@ export class ProjectPullRequests {
     }
     // Dependency order: what each task's pull request builds on merges first.
     const rowOfTask = new Map<string, ProjectPullRequestView>();
-    for (const row of rows) if (row.taskId) rowOfTask.set(row.taskId, row);
+    for (const row of rows) if (row.taskId && row.kind === "task") rowOfTask.set(row.taskId, row);
     // Each row's own state, before a row that waits behind another is said as waiting (below).
     const ownState = new Map(rows.map((r) => [r.number, r.merge?.state]));
     for (const row of rows) {
-      const task = row.taskId ? byId.get(row.taskId) : undefined;
+      const task = row.taskId && row.kind === "task" ? byId.get(row.taskId) : undefined;
       if (!task || !row.merge) continue;
       const chain = this.chainOf(task, byId, rowOfTask);
       row.merge.first = chain.first;
@@ -399,7 +445,6 @@ export class ProjectPullRequests {
     const previews = this.deps.previews;
     if (!previews) return;
     const now = previews.previewOf(projectId);
-    for (const row of rows) row.preview = null;
     if (!now) return;
     if (!open.some((p) => p.number === now.number)) {
       await previews.dropPreview(projectId, now.number).catch((e: unknown) => {
@@ -506,7 +551,7 @@ export class ProjectPullRequests {
             ? `${prName(number)} is being merged.`
             : `${prName(number)} cannot be merged here: merge it on GitHub.`),
       );
-    if (row.kind === "docs") {
+    if (row.kind === "docs" || row.kind === "take_out") {
       this.docs.set(row.url, { state: "merging", sentence: null });
       this.background(project.id, async () => {
         const out = await merge.mergeAsIs({
@@ -515,8 +560,11 @@ export class ProjectPullRequests {
           agentId: this.deps.agentId ?? "",
           humanId,
         });
-        if (out.status === "merged") this.docs.delete(row.url);
-        else this.docs.set(row.url, { state: "left_to_you", sentence: out.sentence });
+        if (out.status === "merged") {
+          this.docs.delete(row.url);
+          // merged-actions: the task's row reads "Taken out in #9".
+          if (row.kind === "take_out") await this.deps.takeOuts?.merged(project.id, row.number);
+        } else this.docs.set(row.url, { state: "left_to_you", sentence: out.sentence });
       });
       return {
         state: "queued",

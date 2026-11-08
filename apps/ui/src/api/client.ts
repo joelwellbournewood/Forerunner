@@ -173,6 +173,8 @@ import {
   type TaskEvidenceFileView,
   TaskEvidenceFileView as TaskEvidenceFileViewSchema,
   type TaskReviewEvidence,
+  type TaskTakeOutAnswer,
+  TaskTakeOutAnswer as TaskTakeOutAnswerSchema,
   type TaskTransitionView,
   TaskTransitionView as TaskTransitionViewSchema,
   type TaskView,
@@ -357,6 +359,7 @@ export type {
   TaskDisplay,
   TaskEvidenceFileView,
   TaskReviewEvidence,
+  TaskTakeOutAnswer,
   TaskTransitionView,
   TaskView,
   UpdateLessonBody,
@@ -582,6 +585,11 @@ export interface DaemonClient {
    * again, go ahead without answers, cancel, reopen, redo; the task and its Undo.
    */
   taskAction(taskId: string, body: TaskActionBody): Promise<TaskTransitionView>;
+  /**
+   * "Take this work out" on a merged task (merged-actions): a pull request that reverts its merge,
+   * waiting for the person to merge it; or why not, or the conflict with later work.
+   */
+  takeOutTask(taskId: string): Promise<TaskTakeOutAnswer>;
   /** Edit: the fields that change, the version the drawer showed; the task and its Undo. */
   updateTask(taskId: string, body: UpdateTaskInput): Promise<TaskTransitionView>;
   /** The task drawer: what it asks, waits for, its runs, review and open cards. */
@@ -1032,6 +1040,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("createTask", { id: projectId }), TaskTransitionViewSchema, body),
     transitionTask: (taskId, body) =>
       post(routePath("transitionTask", { id: taskId }), TaskTransitionViewSchema, body),
+    takeOutTask: (taskId) =>
+      post(routePath("takeOutTask", { id: taskId }), TaskTakeOutAnswerSchema, {}),
     taskAction: (taskId, body) =>
       post(routePath("taskAction", { id: taskId }), TaskTransitionViewSchema, body),
     updateTask: (taskId, body) =>

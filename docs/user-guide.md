@@ -192,6 +192,7 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
   assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
+  **Take this work out** (a task whose pull request is merged; see below),
   **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
   stuck; on a task that is running or being reviewed its run or review stops at once, and what
   it changed is taken out of the project's folder before the next task starts, so nothing builds
@@ -374,6 +375,20 @@ cleanly it holds the pull request's own version and says so. Nothing runs there 
 Local only folder is not in it, and nothing you change there is uploaded or kept: one project has
 one such folder at a time (the next Open this version replaces it), and it is removed when the
 pull request is merged or closed.
+
+**Take this work out** on a merged task (its row says **Merged**; the button is on the row and
+in the task's drawer) opens a pull request "Take out: <task>" that takes that task's changes out
+of main: on a branch of its own, so nothing changes in main until you merge it. It undoes the
+merge the way it was made: a merge commit, a squash or a rebase you did on GitHub. The dialog,
+the answer and the pull request name the finished tasks that built on it ("Add the receipt"
+built on it: check it still works once #9 is merged). The task's row then says "Taken out in #9
+(waiting for you to merge)", and the pull request waits on the Overview under **Taking work
+out**, where **Merge** merges it; the row then says "Taken out in #9". If later work changed the
+same lines, nothing is opened: the answer and one Inbox notice say which files, and you undo it
+on GitHub by hand or ask in Chat for a task that does it. A merge made in a way Forerunner cannot
+undo safely is refused with one sentence ("#4 was merged in a way Forerunner cannot undo safely;
+undo it on GitHub."). Closing the take-out pull request on GitHub without merging it offers the
+button again.
 
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and

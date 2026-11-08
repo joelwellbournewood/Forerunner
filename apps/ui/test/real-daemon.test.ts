@@ -9519,4 +9519,141 @@ describe("the UI client against the real daemon: Open this version and Take this
     expect(closed.waiting.some((w) => w.number === b.pr.number)).toBe(false);
     expect(existsSync(second.folder ?? "")).toBe(false);
   }, 120_000);
+  it("Take this work out on a merged task of a chain: a pull request that reverts its merge, naming the task that built on it; main untouched; the row and the Overview say so; Merge in the app takes it out", async () => {
+    const project = await client.createProject({ name: "Till", goal: "A till", repos: [FULL] });
+    const a = await doneTask(project.id, "Add the basket", "basket.ts");
+    const b = await doneTask(project.id, "Add the receipt", "receipt.ts", {
+      from: a.branch,
+      dependsOn: [a.task.id],
+    });
+    await client.mergePullRequest(project.id, b.pr.number);
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(b.task.id))?.state === "merged",
+      "both pull requests to be merged",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(b.task.id)),
+      30_000,
+    );
+    const row = async (id: string) => (await client.tasks(project.id)).find((t) => t.id === id);
+    // Before: a merged task offered Redo only, and nothing could take its work out of main.
+    expect((await row(a.task.id))?.display).toMatchObject({
+      label: "Merged",
+      takeOut: { state: "offered" },
+    });
+    const mainBefore = await hostGit("rev-parse", "main");
+    const answer = await client.takeOutTask(a.task.id);
+    expect(answer).toEqual({
+      state: "opened",
+      sentence: `Opened #${answer.number} to take "Add the basket" out. It waits for you to merge it. "Add the receipt" built on it: check it still works once #${answer.number} is merged.`,
+      number: expect.any(Number),
+      url: expect.stringContaining(`/pull/${answer.number}`),
+      builtOn: ["Add the receipt"],
+    });
+    const n = answer.number ?? 0;
+    // On the host: its own branch and pull request into main, naming the task built on it;
+    // main itself is untouched.
+    expect(await hostGit("rev-parse", "main")).toBe(mainBefore);
+    const pr = await github.getPullRequest(REPO, n);
+    expect(pr).toMatchObject({ title: "Take out: Add the basket", state: "open" });
+    expect(pr.base.ref).toBe("main");
+    expect(pr.body).toContain('Later tasks built on it: "Add the receipt".');
+    expect(pr.body).toContain(`(#${a.pr.number}, merged)`);
+    // The task's row says it, after a restart of the view too (the record keeps it).
+    expect((await row(a.task.id))?.display).toMatchObject({
+      label: `Taken out in #${n} (waiting for you to merge)`,
+      takeOut: { state: "open", number: n },
+    });
+    expect((await rt.store.mergeRecord.forTask(a.task.id))?.take_out_state).toBe("open");
+    // A second press is refused with what is going on.
+    expect((await client.takeOutTask(a.task.id)).sentence).toBe(
+      `"Add the basket" is being taken out in #${n}: merge #${n} to finish it.`,
+    );
+    // The Overview lists it under Waiting for you to merge, with Merge.
+    const listed = (await client.projectPullRequests(project.id)).waiting.find(
+      (w) => w.number === n,
+    );
+    expect(listed).toMatchObject({
+      kind: "take_out",
+      taskId: a.task.id,
+      title: "Take out: Add the basket",
+      merge: { state: "ready", canMerge: true },
+    });
+    // Merge in the app: as it is (it has no record of its own); the work leaves main.
+    expect((await client.mergePullRequest(project.id, n)).state).toBe("queued");
+    await eventually(
+      async () => (await rt.store.mergeRecord.forTask(a.task.id))?.take_out_state === "merged",
+      "the take-out to be merged",
+      async () => JSON.stringify(await rt.store.mergeRecord.forTask(a.task.id)),
+      30_000,
+    );
+    expect((await row(a.task.id))?.display?.label).toBe(`Taken out in #${n}`);
+    expect(await hostGit("ls-tree", "--name-only", "main")).not.toContain("basket.ts");
+    expect(await hostGit("ls-tree", "--name-only", "main")).toContain("receipt.ts");
+  }, 120_000);
+
+  it("a pull request squash-merged on GitHub: Take this work out reverts the squash (main's tree after its merge equals main's before the squash); an unknown shape and a conflict are said in words", async () => {
+    const project = await client.createProject({ name: "Kiosk", goal: "A kiosk", repos: [FULL] });
+    const c = await doneTask(project.id, "Add the menu", "menu.ts");
+    const treeBefore = await hostGit("rev-parse", "main^{tree}");
+    // Merged on GitHub's website by squash, as the watcher then records it.
+    const squashed = await github.mergePullRequest(REPO, c.pr.number, {
+      method: "squash",
+      sha: c.pr.head.sha,
+    });
+    const record = await rt.store.mergeRecord.forTask(c.task.id);
+    if (!record) throw new Error("no record");
+    await rt.store.mergeRecord.move(record.id, "merged", {
+      merge_sha: squashed.sha,
+      method: "squash",
+    });
+    const answer = await client.takeOutTask(c.task.id);
+    expect(answer.state).toBe("opened");
+    const n = answer.number ?? 0;
+    expect((await github.getPullRequest(REPO, n)).body).toContain(
+      `(#${c.pr.number}, squash-merged)`,
+    );
+    const merged = await github.mergePullRequest(REPO, n, {});
+    expect(merged.merged).toBe(true);
+    expect(await hostGit("rev-parse", "main^{tree}")).toBe(treeBefore);
+
+    // A record whose merge commit is not the pull request's work in any shape: refused.
+    const d = await doneTask(project.id, "Add the hours", "hours.ts");
+    await github.mergePullRequest(REPO, d.pr.number, { method: "squash", sha: d.pr.head.sha });
+    const other = await host.seedCommit(REPO, { "other.md": "other\n" }, "other work", "main");
+    const recordD = await rt.store.mergeRecord.forTask(d.task.id);
+    if (!recordD) throw new Error("no record");
+    await rt.store.mergeRecord.move(recordD.id, "merged", { merge_sha: other.sha });
+    expect(await client.takeOutTask(d.task.id)).toEqual({
+      state: "refused",
+      sentence: `#${d.pr.number} was merged in a way Forerunner cannot undo safely; undo it on GitHub.`,
+      number: null,
+      url: null,
+      builtOn: [],
+    });
+
+    // Later work changed the same lines: nothing is pushed, one Inbox notice says so.
+    const e = await doneTask(project.id, "Set the price", "price.ts", {
+      content: "export const price = 1;\n",
+    });
+    const mergedE = await github.mergePullRequest(REPO, e.pr.number, { sha: e.pr.head.sha });
+    const recordE = await rt.store.mergeRecord.forTask(e.task.id);
+    if (!recordE) throw new Error("no record");
+    await rt.store.mergeRecord.move(recordE.id, "merged", {
+      merge_sha: mergedE.sha,
+      method: "merge",
+    });
+    await host.seedCommit(REPO, { "price.ts": "export const price = 2;\n" }, "new price", "main");
+    const branches = (await github.listBranches(REPO)).map((x) => x.name).sort();
+    const conflict = await client.takeOutTask(e.task.id);
+    const sentence =
+      '"Set the price" could not be taken out by itself: later work changed the same lines in price.ts. Undo it on GitHub by hand, or ask in Chat for a task that does it.';
+    expect(conflict).toEqual({ state: "conflict", sentence, number: null, url: null, builtOn: [] });
+    expect((await github.listBranches(REPO)).map((x) => x.name).sort()).toEqual(branches);
+    await client.takeOutTask(e.task.id);
+    const inbox = await client.inbox(rt.human.id);
+    expect(inbox.requests.filter((r) => r.why === sentence && r.status === "open")).toHaveLength(1);
+    // The notice asks nothing of a task: the project's line does not wait on it.
+    expect((await client.project(project.id)).statusLine?.text ?? "").not.toMatch(
+      /^Waiting for you/,
+    );
+  }, 120_000);
 });
