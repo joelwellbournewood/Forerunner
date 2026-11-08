@@ -337,13 +337,13 @@ never repeats work that is already in the default branch:
   one card says so ("#8 could not be rebuilt without #4, which was closed: both change
   src/page.ts. It waits for you: redo the task, or merge it on GitHub only if you want #4's
   changes too.").
-- **Redo** on either card does the task again from the default branch: its next run starts the
-  branch afresh from there (as "Drop the branch and retry from scratch" does), and #8 gets the
-  new work, with only the task's own commit on top of the default branch.
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
-the way; the old pull request stays as it was.
+the way; the old pull request stays as it was. **Redo** on a rebuild's card (either card above)
+does the task again from the default branch: its next run starts the branch afresh from there
+(as "Drop the branch and retry from scratch" does), and #8 gets the new work, with only the
+task's own commit on top of the default branch.
 
 **Merging: you press Merge, or Forerunner merges after review.** Each repository project has a
 setting **Who merges accepted work** (Settings, Other settings; the Overview's line "Merging: you
