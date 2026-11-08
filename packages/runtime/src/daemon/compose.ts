@@ -771,6 +771,16 @@ export interface RuntimeApp {
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
     }): Promise<{ kind: string; line: string | null } | null>;
+    /**
+     * R-inboxperf: `forTask` for one request that asks it many times (GET /inbox, a plan card's
+     * tasks): the web search marks, the saved credentials (the vault), the person's settings and
+     * each project's dependencies are read once for the batch.
+     */
+    batch(): (input: {
+      specialist: string;
+      projectId?: string | null;
+      task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+    }) => Promise<{ kind: string; line: string | null } | null>;
     table(): Promise<AbilityTable>;
   };
   tools: ToolRegistry;
@@ -3416,6 +3426,71 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    * review of credential-limits: before, planning that met a refusal stayed "Planning failed").
    */
   /**
+   * The chooser's `forTask` over one batch of questions (R-inboxperf): what does not change
+   * between the tasks of one request (the web search marks, the saved credentials, the person's
+   * settings, a project's dependencies) is read once, on first use. Before, GET /inbox read them
+   * for every task of every open plan card on every poll (each a vault lookup per source).
+   */
+  const chooserBatch = () => {
+    let shared: Promise<{
+      kinds: Awaited<ReturnType<typeof taskBilling.savedKinds>>;
+      blocked: Awaited<ReturnType<typeof taskBilling.blockedKinds>>;
+      prefs: Record<string, unknown> | undefined;
+    }> | null = null;
+    const deps = new Map<string, Promise<boolean>>();
+    return async ({
+      specialist,
+      projectId,
+      task,
+    }: {
+      specialist: string;
+      projectId?: string | null;
+      task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+    }) => {
+      const name = canonicalSpecialistName(specialist);
+      const spec = specialists(name);
+      if (!spec) return null;
+      shared ??= (async () => {
+        // 'web-search': a key saved since search was switched off for the old one ends the mark.
+        await webSearchMarks.refresh();
+        return {
+          kinds: await taskBilling.savedKinds(),
+          blocked: await taskBilling.blockedKinds(),
+          prefs: (await store.human.get(human.id).catch(() => undefined))?.notify_prefs,
+        };
+      })();
+      const { kinds, blocked, prefs } = await shared;
+      let dependencies: Promise<boolean> = Promise.resolve(false);
+      if (projectId) {
+        const known = deps.get(projectId);
+        dependencies =
+          known ??
+          (async () => {
+            const project = await store.project.get(projectId).catch(() => null);
+            return project ? hasDependenciesToInstall(docs.docsDirsFor(project)[0]) : false;
+          })();
+        if (!known) deps.set(projectId, dependencies);
+      }
+      const choice = credentialChoiceFor({
+        kindsInOrder: kinds,
+        needs: needsOf({
+          registryTools: spec.registryTools ?? spec.allowedTools,
+          task: task ?? null,
+          codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+        }),
+        facts: chooserFacts(),
+        specialist: name,
+        dependencies: await dependencies,
+      });
+      // R-runsonrefused: the credential it would run on is refused or rests now: the line says
+      // the wait (the words a waiting task's session result uses), never "Runs on your API key".
+      const wait = choice ? blocked.get(choice.kind as BillingSource["kind"]) : undefined;
+      return choice && wait
+        ? { ...choice, line: waitSentence(wait, { timezone: human.timezone, nowMs: clock.now() }) }
+        : choice;
+    };
+  };
+  /**
    * Whether a task of the project would run now, as its own pick would decide (R-refusedstays,
    * R-startcred): the billing pick of each ready task (its specialist's needs and its words, the
    * person's 'When my first choice runs out mid-session'), read-only. The wait the first of them
@@ -3547,6 +3622,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: async (projectId) => {
       const wait = await credentialWaitNow(projectId);
       if (!wait) return null;
+      // The words say the work starts by itself (at the reset, or once a new credential is
+      // saved): the wait is kept on its source, as a session that met it would keep it.
+      await taskBilling
+        .noteWait(wait.sourceId, projectId, agent.id)
+        .catch((e: unknown) =>
+          logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
+        );
       return {
         text: waitSentence(wait, { timezone: human.timezone, nowMs: clock.now() }),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
@@ -4487,26 +4569,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     webAccess: () => webFetchOn,
     chooser: {
       facts: chooserFacts,
-      forTask: async ({ specialist, projectId, task }) => {
-        const name = canonicalSpecialistName(specialist);
-        const spec = specialists(name);
-        if (!spec) return null;
-        const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
-        const project = projectId ? await store.project.get(projectId).catch(() => null) : null;
-        // 'web-search': a key saved since search was switched off for the old one ends the mark.
-        await webSearchMarks.refresh();
-        return credentialChoiceFor({
-          kindsInOrder: await taskBilling.savedKinds(),
-          needs: needsOf({
-            registryTools: spec.registryTools ?? spec.allowedTools,
-            task: task ?? null,
-            codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-          }),
-          facts: chooserFacts(),
-          specialist: name,
-          dependencies: project ? hasDependenciesToInstall(docs.docsDirsFor(project)[0]) : false,
-        });
-      },
+      forTask: (input) => chooserBatch()(input),
+      batch: () => chooserBatch(),
       table: async () => {
         await webSearchMarks.refresh();
         return abilityTable(chooserFacts(), await taskBilling.savedKinds());

@@ -1312,6 +1312,12 @@ export function createDaemonApp(
     r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
     projectId: string,
     agentId: string,
+    /**
+     * R-startcred: the Start dialog's check names a credential wait; `POST /sessions` does not
+     * refuse on it (the session meets the wait, keeps it on the source and ends on its sentence,
+     * as before), so a start from the API or the phone still records the wait.
+     */
+    opts: { credentialWait?: boolean } = {},
   ): Promise<StartCheckView["blocked"]> => {
     // No task yet because the plan from the brief waits for approval (or is being drafted):
     // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
@@ -1329,7 +1335,9 @@ export function createDaemonApp(
       planWait: intake?.wait ?? null,
       // R-startcred: only asked while tasks would run (the pick is read-only).
       credentialWait:
-        r.runnable.length > 0 ? await rt.billing.waits.now(projectId).catch(() => null) : null,
+        opts.credentialWait && r.runnable.length > 0
+          ? await rt.billing.waits.now(projectId).catch(() => null)
+          : null,
     });
   };
 
@@ -1347,7 +1355,7 @@ export function createDaemonApp(
     // Busy: a Start waits for the running session ("Starts after the current session"), on
     // whichever project it runs; whether that is a reason to wait or to refuse is the blocker's.
     const busy = rt.scheduler.isActive(rt.agent.id);
-    const blocked = await startBlocked(r, projectId, rt.agent.id);
+    const blocked = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
@@ -1758,7 +1766,9 @@ export function createDaemonApp(
     // U-073: every card names its task beside its project; design §3.8: what waits on it now.
     const reqViews = await requestViews(rt.store, [...requests, ...answered]);
     // U-078, C-68: an open plan card's tasks as this install would run them now (who does each,
-    // where it runs and why), so the card says it before the person approves.
+    // where it runs and why), so the card says it before the person approves. One chooser batch
+    // per request: the credentials and settings are read once, not per task (R-inboxperf).
+    const chooseFor = rt.chooser.batch();
     for (const [i, row] of requests.entries()) {
       // The figure each plan task shows is the one the Start dialog shows once it is written
       // (the learned estimate over the plan's guess; the leftovers of wave 7).
@@ -1767,7 +1777,7 @@ export function createDaemonApp(
         : undefined;
       const planTasks = await planTaskViews(row, {
         has: (name) => rt.specialists(name) !== undefined,
-        forTask: (input) => rt.chooser.forTask(input),
+        forTask: (input) => chooseFor(input),
         ...(planProject
           ? {
               estimate: {

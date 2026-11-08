@@ -323,3 +323,8 @@ the retry ladder counted it as a failed try, and nothing reviewed the task at th
    would run.
 5. **Every write of a source's limits is version-checked (R-limitsrmw)**: two writes landing
    together both stand.
+6. **The runs-on line never promises a credential that waits (R-runsonrefused).** Where the
+   chooser would put a task (New task, the plan card, Settings' specialists) on a credential that
+   is refused or rests now, the line is that wait's sentence ("Waits for a new API key: save one in
+   Settings."), not "Runs on your API key: ...". The Start dialog's check keeps the wait on its
+   source when it names it, so "starts by itself" is true; `POST /sessions` does not refuse on it.

@@ -26,6 +26,7 @@ import {
   type TaskNeed,
   type TaskNeeds,
 } from "../session/billing.ts";
+import type { CredentialWait } from "../session/credential-wait.ts";
 import {
   BILLING_REFUSED_AUDIT_TOOL,
   closeRefusedCards,
@@ -666,6 +667,27 @@ export class RouterTaskBilling implements TaskBillingPort {
       (a, b) =>
         kindRank(a, order, this.policy, "session") - kindRank(b, order, this.policy, "session"),
     );
+  }
+
+  /**
+   * R-runsonrefused: the saved credentials that cannot serve now, by kind (the first source of a
+   * kind decides): refused (its refusal stands for the credential the vault holds) or resting
+   * (until its reset). `savedKinds` keeps them on purpose (what each can do is the chooser's
+   * question); the runs-on words ask this, so they never promise a credential that waits.
+   */
+  async blockedKinds(): Promise<Map<BillingSourceKind, CredentialWait>> {
+    const out = new Map<BillingSourceKind, CredentialWait>();
+    const now = this.opts.clock.now();
+    for (const s of await this.sources(this.opts.humanId)) {
+      if (s.kind === "fake" || out.has(s.kind) || !s.credentialRef) continue;
+      if (await refusedSince(s, this.opts.vault)) {
+        out.set(s.kind, { reason: "refused", sourceId: s.id, kind: s.kind, until: null });
+        continue;
+      }
+      const until = restingUntilOf(s, now);
+      if (until) out.set(s.kind, { reason: "limit", sourceId: s.id, kind: s.kind, until });
+    }
+    return out;
   }
 
   /**

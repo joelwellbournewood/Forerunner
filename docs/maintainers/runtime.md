@@ -558,7 +558,7 @@ is queued ("queued", not the runner's "already working in another session") and 
 planning ends. R-startcred: `RuntimeApp.billing.waits.now(projectId)` is the wait every ready
 task's pick meets now (`waitSentence` and `saveLink`), and `startBlocked`'s `credentialWait` fact
 turns it into "Nothing can run yet. Waits for a new API key: save one in Settings." with the save
-link (`nothing_runnable`, so `POST /sessions` refuses with it too); tests
+link (`nothing_runnable`, asked by the Start check only: it keeps the wait on its source with `noteWait`, so "starts by itself" is true; `POST /sessions` does not refuse on it, so a start from the API still meets and records the wait, R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds`, R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
 `credential-limits.test.ts` "credential waits: the Start check, another credential, a failed
 start, a planning call". (5) The words: the session result's first builder
 (`RESULT_LINE_BUILDERS` in `session/result.ts`, `LastSessionOutcome.credentialWait`: "Waits

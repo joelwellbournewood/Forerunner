@@ -10512,12 +10512,90 @@ describe("leftovers7-web: the Start check names a credential wait (R-startcred)"
         sentence: "Nothing can run yet. Waits for a new API key: save one in Settings.",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
       });
-      // POST /sessions refuses with the same sentence, as for any check that blocks.
-      const again = await client
-        .startSession({ agentId, projectId: notes.id })
-        .catch((e: unknown) => e);
-      expect(again).toBeInstanceOf(ApiError);
-      expect((again as ApiError).message).toContain("Waits for a new API key");
+      // R-runsonrefused: New task's line (and the plan card's) says the wait, never "Runs on
+      // your API key" for a key Anthropic refused.
+      const settings = await client.modelSettings(undefined, notes.id);
+      for (const name of ["coder", "researcher"]) {
+        const runsOn = settings.specialists.find((s) => s.name === name)?.runsOn;
+        expect(runsOn, name).toEqual({
+          kind: "api_key",
+          line: "Waits for a new API key: save one in Settings.",
+        });
+      }
+      // The rows say the same, and the wait is kept, so a new key starts the work by itself.
+      expect((await client.tasks(notes.id)).map((t) => t.display?.label)).toEqual([
+        "Waits for a new API key",
+        "Waits for a new API key",
+      ]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+/**
+ * leftovers7-web (wave 14): GET /inbox asks the credential chooser once per request for what does
+ * not change between a plan card's tasks (R-inboxperf): before, every task of every open plan card
+ * asked the vault for every source on every poll (slow on an OS keyring).
+ */
+describe("leftovers7-web: the Inbox reads the credentials once per request (R-inboxperf)", () => {
+  it("a plan card with five tasks: GET /inbox asks the vault at most once per source", async () => {
+    const key = ["sk-ant-api03-", "inboxperf", "1".repeat(40)].join(""); // not-a-secret
+    const oauth = ["sk-ant-oat01-", "inboxperf", "2".repeat(40)].join(""); // not-a-secret
+    let asked = 0;
+    class CountingVault extends MemoryVault {
+      override async has(name: string): Promise<boolean> {
+        asked++;
+        return super.has(name);
+      }
+    }
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      { vault: new CountingVault({ anthropic_api_key: key, anthropic_oauth_token: oauth }) },
+    );
+    try {
+      const project = await client.createProject({ name: "Five", goal: "Five pages" });
+      const me = await client.me();
+      const tasks = [1, 2, 3, 4, 5].map((n) => ({
+        key: `p${n}`,
+        title: `Build page ${n}`,
+        outcome: `page${n}.html`,
+        acceptanceCriteria: [],
+        specialist: "coder",
+      }));
+      await rt.store.humanRequest.insert({
+        human_id: me.id,
+        project_id: project.id,
+        task_id: null,
+        session_id: null,
+        kind: "approval",
+        why: 'Intake for "Five": 5 tasks.',
+        steps: [],
+        options: ["approve", "reject"],
+        blocking: true,
+        risk: "medium",
+        change_card: {
+          key: `intake:${project.id}`,
+          project_id: project.id,
+          proposal: {
+            plan: { reason: "planned", milestones: [], tasks },
+            docs: {},
+            firstSession: { summary: "", items: [] },
+          },
+        },
+        status: "open",
+        answer: null,
+      } as never);
+      const sources = (await rt.store.billingSource.list({} as never, { limit: 10 })).filter(
+        (s) => s.credential_ref,
+      ).length;
+      asked = 0;
+      const card = (await client.inbox(me.id)).requests.find((r) => r.projectId === project.id);
+      // The person still sees where each task runs.
+      expect(card?.planTasks).toHaveLength(5);
+      expect(card?.planTasks?.every((t) => t.runsOn !== undefined)).toBe(true);
+      // Before: 5 tasks x every source.
+      expect(asked).toBeLessThanOrEqual(sources);
     } finally {
       await rt.close();
     }
