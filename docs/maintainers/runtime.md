@@ -2897,11 +2897,12 @@ view adds to each waiting pull request its `merge` (`ready`, `queued`, `merging`
 `left_to_you`, `blocked`, with `canMerge`, one sentence and `first`, the open pull requests it builds
 on in the order they merge), read from its merge record (`mergeOfRecord`; a record queued without
 the person's approval offers Merge in "You press Merge" and reads as merging in the automatic mode),
-from the repository's `allowMergeCommit` and each base's rules (`rulesBlock`, so no row offers a
-Merge that cannot happen; both kept `RULES_KEPT_MS`, a minute, by `readKept`, R-overviewcalls,
-leftovers7-merge: before, every look asked GitHub four times, and a settling row looks on every
-change of its project for up to a day; the list itself is read at every look, and the merge step
-reads the rules again before it merges), and from what it builds on (a dependency not accepted yet
+from the repository's `allowMergeCommit` and each base's rules (`rulesBlock`, read at every look,
+so no row offers a Merge that cannot happen and a rule changed on GitHub shows at once; a cache of
+them was tried for R-overviewcalls and dropped: it showed a rule removed on GitHub for up to a
+minute, and the contract cases read the rules of the moment. What R-overviewcalls kept is the UI's
+side: the Overview reads the list only on its own project's changes, `apps.md`), and from what it
+builds on (a dependency not accepted yet
 blocks it with one sentence). A row the person's Merge queued behind pull requests whose checks
 still run (a `waiting_checks` row among its `first`) is `waiting_checks` too, not in flight, with
 "#6 merges after #5, once #5's checks pass." (`mergesAfterSentence` in `loop/merge-mode.ts`; review
