@@ -10,7 +10,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { BILLING_PICK_AUDIT_TOOL, CODE_COMMANDS_SETTING } from "../src/session/billing.ts";
-import { abilityTable, credentialChoiceFor } from "../src/session/credential-choice.ts";
+import { abilityTable, credentialChoiceFor, needsOf } from "../src/session/credential-choice.ts";
 import { NO_WEB_ACCESS_LINE, NO_WEB_SEARCH_LINE, planItemFor } from "../src/session/executor.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import {
@@ -271,6 +271,43 @@ describe("the credential chooser with both credentials, the subscription first (
       kind: "api_key",
       line: "Runs on your API key: only it can ask you questions while it works here.",
     });
+  });
+
+  // R-personsanswers: a decision the person already made and recorded is no question for them.
+  it("a task that follows a decision the owner recorded stays on the first choice, with no question for the person", async () => {
+    const task = {
+      title: "Use the chosen host",
+      outcome: "Follow the owner's decision in docs/decisions/0001 and deploy to that host.",
+      criteria: ["The deploy script targets the host the owner's choice in docs/hosting.md names"],
+    };
+    expect(
+      needsOf({
+        registryTools: [],
+        task: { ...task, acceptance_criteria: task.criteria },
+      }).hard,
+    ).toEqual([]);
+    const r = await run("coder", task);
+    // Before: the phrase made "ask the person" a hard need, and the task moved to the API key.
+    expect(r.kind).toBe("subscription");
+    expect(r.reason).not.toContain("askPerson");
+    expect(
+      await rt.chooser.forTask({
+        specialist: "coder",
+        projectId,
+        task: { ...task, acceptance_criteria: task.criteria },
+      }),
+    ).toEqual({ kind: "subscription", line: null });
+    // A decision still to be made stays a need.
+    expect(
+      needsOf({
+        registryTools: [],
+        task: {
+          title: "Hosting",
+          outcome: "Uses the owner's choice of host",
+          acceptance_criteria: [],
+        },
+      }).hard,
+    ).toEqual(["askPerson"]);
   });
 
   it("a coder on a project with dependencies stays on the subscription by default, and the plan card says its tests will not run there; 'the API key' moves it", async () => {

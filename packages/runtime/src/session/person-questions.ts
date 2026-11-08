@@ -104,6 +104,13 @@ const LEGACY_TITLE = new RegExp(
 const ASK_TITLE = new RegExp(String.raw`\bask\s+${PERSON}\b`, "i");
 const PERSONS_ANSWER =
   /\b(?:human|person|owner)'s\s+(?:answers?|decisions?|choices?|confirmation)\b/i;
+/**
+ * R-personsanswers: the person's answer as something already made and written down ("Follow the
+ * owner's decision in docs/decisions/0001", "per the person's choice", "the owner's choice in
+ * docs/hosting.md"), which a task follows; no question for the person.
+ */
+const RECORDED_ANSWER =
+  /\b(?:follow(?:s|ed|ing)?|appl(?:y|ies|ied|ying)|implement(?:s|ed|ing)?|per|according\s+to|respect(?:s|ed|ing)?|keep(?:s|ing)?\s+to)\s+(?:the\s+)?(?:human|person|owner)'s\s+(?:answers?|decisions?|choices?|confirmation)\b|\b(?:human|person|owner)'s\s+(?:answers?|decisions?|choices?|confirmation)\s+(?:(?:recorded|written|documented|kept)\s+)?(?:in|from|at)\s+\S*[/.]\S*/i;
 
 /**
  * Whether a task is the person's to do: planned for "person" (the explicit field on the row,
@@ -213,8 +220,11 @@ export function needsPersonsAnswers(task: {
   outcome: string;
   acceptance_criteria: readonly string[];
 }): boolean {
+  // R-personsanswers: "the owner's decision" anywhere was a hard need, so "Follow the owner's
+  // decision in docs/decisions/0001" moved the task onto the API key (money); a decision already
+  // recorded, which the task follows, is not one.
   return [task.title, task.outcome, ...task.acceptance_criteria].some(
-    (t) => NEEDS_PERSON.test(t) || PERSONS_ANSWER.test(t),
+    (t) => NEEDS_PERSON.test(t) || (PERSONS_ANSWER.test(t) && !RECORDED_ANSWER.test(t)),
   );
 }
 

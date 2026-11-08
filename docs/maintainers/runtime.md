@@ -5329,9 +5329,11 @@ first", `firstKinds`/`firstWhy`):** the executor gives the billing pick the task
 (`taskNeeds` -> `needsOf` in `src/session/credential-choice.ts`): reading pages (`cc:WebFetch`)
 and searching (`cc:WebSearch`) are hard needs of research; asking the person is a hard need of a
 task whose own words need their answers (`needsPersonsAnswers`, until they answered or went ahead
-without); running commands (`cc:Bash`) only makes the work better, unless the person's setting
+without; "the owner's decision" a task follows as already recorded, "Follow the owner's decision
+in docs/decisions/0001", "per the person's choice", is no need, `RECORDED_ANSWER`,
+R-personsanswers); running commands (`cc:Bash`) only makes the work better, unless the person's setting
 "Code tasks that need commands" (`code_commands`: `first_choice`, the default, or `api_key`) makes
-it hard. `RouterTaskBilling.pick` (`src/wiring/billing-pick.ts`) groups the candidates by
+it hard (kept across a restart: `code-commands-restart.test.ts`). `RouterTaskBilling.pick` (`src/wiring/billing-pick.ts`) groups the candidates by
 `needsScore(capabilitiesOf(kind, facts), needs)` (`groupByNeeds`: hard needs met, then page
 reading, search, asking, commands) and runs the router on the best group first, so the person's
 order decides among the credentials that meet every hard need; a later group serves only when the
