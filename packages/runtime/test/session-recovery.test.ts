@@ -387,7 +387,13 @@ describe("a session a dead daemon left running is ended at the next start (desig
       "started work",
       by,
     );
-    readme = await first.store.task.transition(readme.id, readme.version, "in_review", "did it", by);
+    readme = await first.store.task.transition(
+      readme.id,
+      readme.version,
+      "in_review",
+      "did it",
+      by,
+    );
     readme = await first.store.task.releaseClaim(readme.id, first.agent.id, "reviewed");
     await first.store.task.transition(readme.id, readme.version, "done", "critic accepted", by);
     await first.store.session.recordSpend(ghost.session.id, 40_000, 3);

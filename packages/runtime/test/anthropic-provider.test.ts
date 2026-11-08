@@ -306,21 +306,18 @@ describe("AnthropicMessagesProvider", () => {
         max_tokens: 100,
         cache: { system: true, tools: true, messages: true },
       });
-      const [first, second] = bodies as Record<string, unknown>[];
-      expect((first?.messages as Msg[])[0]?.content).toEqual([
+      const first = bodies[0] as Record<string, unknown>;
+      const second = bodies[1] as Record<string, unknown>;
+      expect((first.messages as Msg[])[0]?.content).toEqual([
         { type: "text", text: line, cache_control: { type: "ephemeral" } },
         { type: "text", text: "\n\nfacts of now" },
       ]);
-      expect(breakpoints(first as Record<string, unknown>)).toEqual([
-        "system[0]",
-        "tools[1]",
-        "messages[0][0]",
-      ]);
+      expect(breakpoints(first)).toEqual(["system[0]", "tools[1]", "messages[0][0]"]);
       // The replayed line is the same block, marked: the prefix the first call cached.
-      expect((second?.messages as Msg[])[0]?.content).toEqual([
+      expect((second.messages as Msg[])[0]?.content).toEqual([
         { type: "text", text: line, cache_control: { type: "ephemeral" } },
       ]);
-      expect(breakpoints(second as Record<string, unknown>)).toEqual([
+      expect(breakpoints(second)).toEqual([
         "system[0]",
         "tools[1]",
         "messages[0][0]",
