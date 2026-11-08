@@ -1095,6 +1095,9 @@ export class LoopTaskExecutor implements TaskExecutor {
     // The run starts now, with this specialist, on the credential picked (the log's start line,
     // the leftovers of wave 7): after the pick, which may have waited, and any hand-over.
     ctx.onStarted?.({ specialist: spec.name });
+    // R-lateusage: usage a killed SDK run reports after it returned, added to its Run row once
+    // the row's own figures are written (held until then, so they never overwrite it).
+    const lateCost = lateRunCost(store, runId, this.logger);
     const run = await store.run.insert({
       id: runId,
       task_id: task.id,
@@ -1292,6 +1295,10 @@ export class LoopTaskExecutor implements TaskExecutor {
           ),
           webAccess: webAccessOf(project?.settings),
           pricing: sdk.pricing(model),
+          // A subagent's or an auxiliary call's own price (R-modelusage).
+          pricingOf: sdk.pricing,
+          // What a killed run still reports after it returned joins its Run row (R-lateusage).
+          onLateUsage: (u, usd) => lateCost.add(u, usd),
           timeoutMs,
           maxTurns: spec.maxTurns,
           ...(sessionContext?.sdkEnv ? { env: sessionContext.sdkEnv } : {}),
@@ -1515,6 +1522,8 @@ export class LoopTaskExecutor implements TaskExecutor {
     } catch (e) {
       // The result is never lost because bookkeeping failed, and the failure is on record.
       await this.runPersistFailed(runIds, "end", e);
+    } finally {
+      lateCost.written();
     }
     // The credential stopped the run (U-078, ADR 0100 amended): its usage limit (the source
     // rests until its reset, else an hour) or Anthropic refused it (a 401 or 403 key, an expired
@@ -2097,6 +2106,52 @@ export function withSandboxedCommands(base: ToolRegistry, sandbox: Sandbox): Too
   };
   out.register(runCommand);
   return out;
+}
+
+/**
+ * R-lateusage: what a killed SDK run reported after it returned (already in the ledger and the
+ * session's spend), added to its Run row. Held until the row's own figures are written
+ * (`written`), then each share is added in turn, so neither write overwrites the other.
+ */
+function lateRunCost(
+  store: { run: Pick<StateStore["run"], "get" | "patch"> },
+  runId: string,
+  logger: { warn(msg: string, data?: Record<string, unknown>): void },
+): { add(usage: Usage, usdMicro: number): void; written(): void } {
+  let ready = false;
+  let held: { usage: Usage; usdMicro: number }[] = [];
+  let chain = Promise.resolve();
+  const apply = (usage: Usage, usdMicro: number) => {
+    chain = chain
+      .then(async () => {
+        const row = await store.run.get(runId);
+        if (!row) return;
+        await store.run.patch(runId, {
+          tokens_in: row.tokens_in + usage.input_tokens,
+          tokens_out: row.tokens_out + usage.output_tokens,
+          cache_read_tokens: row.cache_read_tokens + usage.cache_read_input_tokens,
+          cache_write_tokens: row.cache_write_tokens + usage.cache_creation_input_tokens,
+          cost_usd_micro: row.cost_usd_micro + usdMicro,
+        });
+      })
+      .catch((e: unknown) =>
+        logger.warn("a stopped run's late usage was not added to its run", {
+          runId,
+          error: errorMessage(e),
+        }),
+      );
+  };
+  return {
+    add(usage, usdMicro) {
+      if (ready) apply(usage, usdMicro);
+      else held.push({ usage, usdMicro });
+    },
+    written() {
+      ready = true;
+      for (const h of held) apply(h.usage, h.usdMicro);
+      held = [];
+    },
+  };
 }
 
 export function planItemFor(task: TaskRow, specialist = "coder"): PlanItem {

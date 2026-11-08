@@ -218,7 +218,8 @@ export class WebReadPolicy {
   constructor(rules: WebReadRules = ANY_PUBLIC_WEBSITE, opts: WebReadPolicyOptions = {}) {
     const clean = (l: readonly string[]) => [...new Set(l.map(normaliseSite).filter(Boolean))];
     this.only = clean(rules.only);
-    this.mode = rules.mode === "only" && this.only.length > 0 ? "only" : "any";
+    // R-failopen: "only" with nothing usable on its list reads no website, never any public one.
+    this.mode = rules.mode === "only" ? "only" : "any";
     this.never = clean(rules.never);
     this.loopback = opts.loopback === true;
   }
@@ -282,7 +283,9 @@ export class WebReadPolicy {
         ok: false,
         reason: "not_only",
         host,
-        message: `${host} is not on this project's "only these websites" list (${names(this.only)})`,
+        message: this.only.length
+          ? `${host} is not on this project's "only these websites" list (${names(this.only)})`
+          : `${host} is not on this project's "only these websites" list, which names no website`,
       };
     return { ok: true, url, host };
   }

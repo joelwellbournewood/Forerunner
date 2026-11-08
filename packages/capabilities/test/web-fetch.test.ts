@@ -543,7 +543,12 @@ describe("which addresses are public (ADR 0107)", () => {
     });
     expect(p.checkUrl("https://intranet/x")).toMatchObject({ ok: false, reason: "local" });
     expect(p.checkUrl("https://printer.local/x")).toMatchObject({ ok: false, reason: "local" });
-    // "only" with nothing on it reads as the default: any public website.
-    expect(new WebReadPolicy({ mode: "only", only: [], never: [] }).mode).toBe("any");
+    // R-failopen: "only" with nothing on it reads no website, never the default (any public one).
+    const none = new WebReadPolicy({ mode: "only", only: [], never: [] });
+    expect(none.mode).toBe("only");
+    expect(none.checkUrl("https://example.org/x")).toMatchObject({
+      ok: false,
+      reason: "not_only",
+    });
   });
 });

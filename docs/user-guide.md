@@ -731,7 +731,13 @@ closes, the mark goes, and the waiting work starts by itself: the tasks run, and
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
-new API key: 2 tasks"). A review waits the same way: when the critic's review of a finished
+new API key: 2 tasks"), and so does the Start dialog ("Nothing can run yet. Waits for a new API
+key: save one in Settings.", with **Save a new key**) instead of what a session would run. If
+you add a Claude subscription instead of a new key, the work that waited starts by itself on the
+subscription when your order lets it go there (with no order chosen, tasks use the
+subscription first); under **Wait** a first choice that rests or was refused still holds its
+work. A session you start while a new project's plan is being drafted waits for the planning to
+finish ("queued") and then runs. A review waits the same way: when the critic's review of a finished
 task meets a limit or a refusal and no other credential can do it, the task goes back to Ready
 without counting as a failed try, its row reads "Waits until 15:40, ...", no card is filed
 beside the credential's own, and at that time its session runs it again and the critic reviews

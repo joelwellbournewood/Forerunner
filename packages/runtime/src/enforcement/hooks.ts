@@ -244,9 +244,22 @@ export class EnforcementHooks {
     this.deps.tokens.revoke(ctx.token.claims.id);
   }
 
-  /** After a model call: account the real cost. */
-  async afterModelCall(ctx: RunContext, usage: Usage, usdMicro: number): Promise<void> {
-    const claims = this.deps.tokens.verify(ctx.token, this.deps.clock.now());
+  /**
+   * After a model call: account the real cost. What was spent is booked whatever the token's
+   * state (R-lateusage: a call that answered after Stop all revoked the run's token, or after
+   * the token expired, was lost from the ledger); the token's signature is still checked. Then,
+   * unless `afterStop` says the run is already stopping (its late messages, which only book and
+   * never start a call), a stopped or expired token throws as before, so the run learns it is
+   * stopped. `model`: the model the call ran on, when it is not the run's (a subagent's,
+   * R-modelusage).
+   */
+  async afterModelCall(
+    ctx: RunContext,
+    usage: Usage,
+    usdMicro: number,
+    opts: { afterStop?: boolean; model?: string } = {},
+  ): Promise<void> {
+    const claims = this.deps.tokens.authentic(ctx.token);
     ctx.budget.record(claims.runId, usdMicro);
     await this.deps.ledger.record({
       humanId: claims.ownerHumanId,
@@ -255,7 +268,7 @@ export class EnforcementHooks {
       sessionId: claims.sessionId,
       taskId: claims.taskId,
       runId: claims.runId,
-      model: ctx.model,
+      model: opts.model ?? ctx.model,
       provider: ctx.provider,
       billingSourceId: ctx.billingSourceId,
       kind: ctx.billing?.kind ?? "api",
@@ -267,6 +280,7 @@ export class EnforcementHooks {
       cacheWriteTokens: usage.cache_creation_input_tokens,
       occurredAt: this.deps.clock.nowIso(),
     });
+    if (!opts.afterStop) this.deps.tokens.verify(ctx.token, this.deps.clock.now());
   }
 
   /**

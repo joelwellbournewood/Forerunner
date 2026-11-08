@@ -159,14 +159,7 @@ export class TokenIssuer {
   }
 
   verify(token: SignedToken, now: number = this.now()): CapabilityClaims {
-    const expected = this.sign(token.claims);
-    const a = Buffer.from(expected, "hex");
-    const b = Buffer.from(token.signature, "hex");
-    if (a.length !== b.length || !timingSafeEqual(a, b)) {
-      throw new ForerunnerError("tool_not_allowed", "capability token signature invalid", {
-        details: { tokenId: token.claims.id },
-      });
-    }
+    this.authentic(token);
     if (this.revoked.has(token.claims.id)) {
       throw new ForerunnerError("killed", "capability token revoked", {
         details: { tokenId: token.claims.id },
@@ -175,6 +168,23 @@ export class TokenIssuer {
     // Negated so an expiry that does not parse (NaN) counts as expired, never as open-ended.
     if (!(new Date(token.claims.expiresAt).getTime() > now)) {
       throw new ForerunnerError("timeout", "capability token expired", {
+        details: { tokenId: token.claims.id },
+      });
+    }
+    return token.claims;
+  }
+
+  /**
+   * The claims of a token this issuer signed, whether or not it is still live (revoked or
+   * expired). Only for booking what a run already spent after its stop (R-lateusage): it never
+   * allows anything, so it skips the checks that end a run.
+   */
+  authentic(token: SignedToken): CapabilityClaims {
+    const expected = this.sign(token.claims);
+    const a = Buffer.from(expected, "hex");
+    const b = Buffer.from(token.signature, "hex");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      throw new ForerunnerError("tool_not_allowed", "capability token signature invalid", {
         details: { tokenId: token.claims.id },
       });
     }

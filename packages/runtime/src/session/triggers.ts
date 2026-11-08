@@ -224,6 +224,8 @@ export class Scheduler {
   private readonly fired: FiredKeys;
   private readonly lastEvery = new Map<string, number>();
   private readonly active = new Set<string>();
+  /** Agents whose one session a planning call holds (`hold`, R-planningstart), with a count. */
+  private readonly holds = new Map<string, number>();
   /** The log entry of the start each active agent is running, until it ends. */
   private readonly activeStarts = new Map<string, SchedulerLogEntry>();
   /**
@@ -361,7 +363,7 @@ export class Scheduler {
     agentId: string,
     now: number = this.deps.clock.now(),
   ): Promise<StartEntry | undefined> {
-    if (this.active.has(agentId)) return undefined;
+    if (this.active.has(agentId) || this.holds.has(agentId)) return undefined;
     const next = this.pending.get(agentId)?.find((e) => !this.deferredNow(e.req, now));
     if (!next) return undefined;
     this.removePending(agentId, next.id);
@@ -426,9 +428,10 @@ export class Scheduler {
     if (this.deferredNow(req, now)) {
       return this.enqueue({ id, at, req, result: "deferred", detail: "quiet hours" });
     }
-    if (this.active.has(req.agentId)) {
+    if (this.active.has(req.agentId) || this.holds.has(req.agentId)) {
       // One active session per agent; the request waits its turn behind the ones already
-      // waiting (U-043), and runs when the session before it ends.
+      // waiting (U-043), and runs when the session before it ends (or the planning call that
+      // holds the agent, R-planningstart).
       return this.enqueue({ id, at, req, result: "queued" });
     }
     this.active.add(req.agentId);
@@ -488,6 +491,30 @@ export class Scheduler {
 
   isActive(agentId: string): boolean {
     return this.active.has(agentId);
+  }
+
+  /**
+   * Work of the agent that holds its one session outside a start (R-planningstart: a planning
+   * call runs on a session row of its own, which the runner's one-session rule counts): a start
+   * asked for meanwhile waits in the queue, as behind a session, and runs when the hold ends.
+   * Before, it started at once and the runner refused it ("already working in another
+   * session"); a start the scheduler asked for was lost. Returns the release (idempotent).
+   */
+  hold(agentId: string): () => void {
+    this.holds.set(agentId, (this.holds.get(agentId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.holds.get(agentId) ?? 1) - 1;
+      if (left > 0) this.holds.set(agentId, left);
+      else this.holds.delete(agentId);
+      // As after a session: the start waiting behind it runs now, while the scheduler runs.
+      if (!this.holds.has(agentId) && this.cancel)
+        void this.drain(agentId).catch((e: unknown) =>
+          this.logger.error("drain after a planning call failed", { error: errorMessage(e) }),
+        );
+    };
   }
 
   /**

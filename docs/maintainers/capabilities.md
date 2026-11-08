@@ -671,7 +671,8 @@ unless `FORERUNNER_WEB_FETCH=off`.
   without a dot or a local name (`localhost`, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`,
   ... `isLocalName`) refused whatever any list says; then the project's rule
   (`WebReadRules {mode, only, never}`): a host covered by a never entry refused, and in `only`
-  mode a host no only entry covers refused, each refusal naming the list. `siteCovers` is the
+  mode a host no only entry covers refused, each refusal naming the list; `only` with nothing on
+  its list stays `only` and reads no website (R-failopen), never any public one. `siteCovers` is the
   reader's own matcher: an entry covers the site and its subdomains, case, `*.`, a leading `www.`
   and a trailing dot normalised (`hostOfUrl` strips one trailing dot too, C-70); the capability
   token's `domainCovered` is not used here and is unchanged. `addressAllowed`: only a public

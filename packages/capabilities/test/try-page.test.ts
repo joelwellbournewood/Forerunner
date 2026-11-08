@@ -122,6 +122,34 @@ describe("the page try's browser (C-17, R-1)", () => {
     });
   });
 
+  // R-sandbox's sibling: a launch that fails for another reason (a timeout) never drops the
+  // sandbox for a light review, and a full review does not blame the sandbox for it.
+  for (const requireBrowserSandbox of [false, true]) {
+    it(`R-sandbox: a timeout is not retried without the sandbox (${requireBrowserSandbox ? "full" : "light"} review)`, async () => {
+      const { root, out } = folder();
+      const calls: LaunchOptions[] = [];
+      const r = await tryPages({
+        root,
+        pages: ["index.html"],
+        outDir: out,
+        widths: [1280],
+        requireBrowserSandbox,
+        launch: async (o: LaunchOptions) => {
+          calls.push(o);
+          throw new Error(
+            "browserType.launch: Timeout 60000ms exceeded.\nCall log:\n  - <launching> /usr/bin/chromium --user-data-dir=/tmp/sandbox-x --remote-debugging-pipe",
+          );
+        },
+        serve: async () => ({ server: { close: (cb) => cb?.() }, origin: "http://127.0.0.1:1" }),
+        env: { FORERUNNER_BROWSER_EXECUTABLE: process.execPath },
+      });
+      expect(calls.map((c) => c.chromiumSandbox)).toEqual([true]);
+      expect(r).toEqual({
+        unavailable: "the browser did not start (browserType.launch: Timeout 60000ms exceeded.)",
+      });
+    });
+  }
+
   it("R-1: a folder that cannot be served leaves no browser running", async () => {
     const { root, out } = folder();
     const l = launcher({ sandboxWorks: true });

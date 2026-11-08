@@ -5,15 +5,19 @@ import { keyRule, messagesApiStandIn, standInFetch } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import { claudeCodeToolNames } from "../src/agent/cc-tools.ts";
+import type { QueryLike } from "../src/agent/sdk.ts";
 import type {
   BillingOrderView,
   HumanRequestView,
   InboxView,
+  StartCheckView,
+  StartSessionView,
   TaskView,
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
+import { waitingOf } from "../src/wiring/billing-pick.ts";
 import { AcceptingCriticProvider, ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /**
@@ -29,6 +33,7 @@ const REGISTRY = join(process.cwd(), "evals", "registry");
 const REFUSED = ["sk-ant-api03-", "cred-refused-", "1".repeat(40)].join(""); // not-a-secret
 const LIMITED = ["sk-ant-api03-", "cred-limited-", "2".repeat(40)].join(""); // not-a-secret
 const GOOD = ["sk-ant-api03-", "cred-good-", "3".repeat(40)].join(""); // not-a-secret
+const OAUTH = ["sk-ant-oat01-", "cred-sub-", "4".repeat(40)].join(""); // not-a-secret
 
 const runtimes: RuntimeApp[] = [];
 afterEach(async () => {
@@ -96,7 +101,10 @@ interface IntakeView {
   wait?: { reason: string; text: string; short: string } | null;
 }
 
-function world(clock: SimulatedClock, opts: { limitMs?: number; replies?: ScriptReply[] } = {}) {
+function world(
+  clock: SimulatedClock,
+  opts: { limitMs?: number; replies?: ScriptReply[]; sdkQuery?: QueryLike } = {},
+) {
   const home = mkdtempSync(join(tmpdir(), "fr-cred-limits-"));
   const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
   const vault = new MemoryVault();
@@ -125,6 +133,7 @@ function world(clock: SimulatedClock, opts: { limitMs?: number; replies?: Script
       appVersion: "0.1.0-test",
       sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
       startServices: false,
+      ...(opts.sdkQuery ? { sdkQuery: opts.sdkQuery } : {}),
     });
     runtimes.push(rt);
     const { app, token } = createDaemonApp(rt);
@@ -460,5 +469,156 @@ describe("a key at its usage limit (U-078)", () => {
       limit: 10,
     });
     expect(sessions.map((s) => s.trigger).sort()).toEqual(["budget_reset", "manual"]);
+  }, 120_000);
+});
+
+/**
+ * The leftovers of wave 7 ('leftovers7-web'): what a credential wait does when another credential
+ * could serve, when its start fails, and while a planning call runs; and what the Start dialog
+ * says meanwhile.
+ */
+describe("credential waits: the Start check, another credential, a failed start, a planning call (leftovers7-web)", () => {
+  it("R-startcred, R-refusedstays: with the only key refused Start says so; saving a subscription ends the wait and starts the work by itself", async () => {
+    const clock = new SimulatedClock("2026-11-08T14:00:00Z");
+    let sdkCalls = 0;
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    // Claude Code on the subscription: it starts the task's run and holds it until released.
+    const sdkQuery: QueryLike = () => {
+      sdkCalls++;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc", tools: [] };
+        await held;
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "Wrote it. Lesson: none.",
+          total_cost_usd: 0,
+        };
+      })();
+    };
+    const w = world(clock, { sdkQuery });
+    await w.vault.set(SECRET_NAMES.anthropic, REFUSED);
+    const { rt, req } = await w.start();
+    try {
+      const { project } = await twoTasks(rt);
+      await run(rt, project.id);
+      const labels = async () =>
+        (await json<TaskView[]>(req(`/projects/${project.id}/tasks`))).map((t) => t.display?.label);
+      expect(await labels()).toEqual(["Waits for a new API key", "Waits for a new API key"]);
+      // R-startcred: the Start dialog says what Start would meet (before: "This session runs
+      // "Write note A" (about CHF ...)" and Start ended at once with the wait).
+      const check = await json<StartCheckView>(req(`/projects/${project.id}/start-check`));
+      expect(check.blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet. Waits for a new API key: save one in Settings.",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // R-refusedstays: the person adds a Claude subscription instead of a new key. With no
+      // order chosen, task runs use the subscription first: the work starts by itself on it.
+      const saved = await json<{ ok: boolean }>(req("/setup/anthropic", { value: OAUTH }));
+      expect(saved.ok).toBe(true);
+      await until("the waiting work to start on the subscription", async () => {
+        const sessions = await rt.store.session.list({ project_id: project.id } as never);
+        const woke = sessions.some((s) => s.trigger === "budget_reset");
+        return woke && sdkCalls > 0 ? null : `sessions ${sessions.length}, sdk calls ${sdkCalls}`;
+      });
+      // Before: both rows still read "Waits for a new API key" and nothing started.
+      expect(await labels()).not.toContain("Waits for a new API key");
+      expect(
+        (await json<StartCheckView>(req(`/projects/${project.id}/start-check`))).blocked
+          ?.sentence ?? "",
+      ).not.toContain("Waits for a new API key");
+    } finally {
+      release();
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false });
+    }
+  }, 120_000);
+
+  it("R-wakeorder: a start that fails keeps the wait on the source, and after a restart the work starts by itself", async () => {
+    const clock = new SimulatedClock("2026-11-08T14:00:00Z");
+    const w = world(clock, { limitMs: 30 * 60_000 });
+    await w.vault.set(SECRET_NAMES.anthropic, LIMITED);
+    const { rt } = await w.start();
+    const { project, a, b } = await twoTasks(rt);
+    await run(rt, project.id);
+    const waiting = async (r: RuntimeApp) =>
+      (await r.store.billingSource.list({} as never, { limit: 10 }))
+        .flatMap((s) => waitingOf(s.limits))
+        .map((x) => x.projectId);
+    expect(await waiting(rt)).toEqual([project.id]);
+    // Another session holds the agent (one the scheduler does not know of): the runner refuses
+    // the start the wake asks for, after the reset.
+    const blocking = await rt.store.session.insert({
+      agent_id: rt.agent.id,
+      project_id: null,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1,
+      step_cap: 1,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "planned",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      reason: "test: holds the agent",
+    });
+    const running = await rt.store.session.start(blocking.id, blocking.version);
+    await clock.advance(31 * 60_000);
+    await rt.billing.waits.wake();
+    // Before: the wait was taken off the source before the start, which then failed; nothing
+    // kept it, so after a restart nothing started the work.
+    await until("the failed start to give the wait back", async () => {
+      const now = await waiting(rt);
+      return now.includes(project.id) ? null : JSON.stringify(now);
+    });
+    await rt.store.session.setStatus(running.id, running.version, "completed", {});
+    await rt.close();
+    const later = await w.start();
+    await later.rt.scheduler.tick();
+    await until("the waiting tasks to finish after the restart", async () => {
+      const now = await Promise.all([a, b].map((t) => later.rt.store.task.mustGet(t.id)));
+      return now.every((t) => t.status === "done") ? null : now.map((t) => t.status).join(", ");
+    });
+  }, 120_000);
+
+  it("R-planningstart: a session start asked for while a planning call runs waits for it and then runs", async () => {
+    const clock = new SimulatedClock("2026-11-08T14:00:00Z");
+    // The planning call answers only once the clock moves a minute.
+    const w = world(clock, {
+      replies: [{ text: SMALL_PLAN, ttftMs: 60_000 }, { text: "Wrote the note. Lesson: none." }],
+    });
+    await w.vault.set(SECRET_NAMES.anthropic, GOOD);
+    const { rt, req, messages } = await w.start();
+    rt.scheduler.start();
+    try {
+      const { project } = await twoTasks(rt);
+      const created = await json<{ id: string }>(req("/projects", QUOTES));
+      // The planning call runs on a session row of its own: the agent's one session.
+      await until("the planning call to be under way", async () =>
+        (await rt.store.session.active(rt.agent.id)).length > 0 ? null : `calls ${messages()}`,
+      );
+      const started = await req("/sessions", {
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+      });
+      // Before: 409 "Alice is already working in another session, so this one did not start."
+      expect(started.status, await started.clone().text()).toBe(202);
+      expect(((await started.json()) as StartSessionView).result).toBe("queued");
+      await clock.advance(60_000);
+      await until("the queued session to start once planning ended", async () => {
+        const sessions = await rt.store.session.list({ project_id: project.id } as never);
+        return sessions.length > 0 ? null : "no session of the project yet";
+      });
+      expect(created.id).toBeTruthy();
+    } finally {
+      rt.scheduler.stop();
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false });
+    }
   }, 120_000);
 });

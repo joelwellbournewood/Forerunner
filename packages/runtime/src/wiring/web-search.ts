@@ -18,7 +18,7 @@
 import { errorMessage, log, redact } from "@forerunner/platform";
 import type { JsonObject, StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
-import { credentialFingerprint } from "./billing-pick.ts";
+import { credentialFingerprint, updateSourceLimits } from "./billing-pick.ts";
 import type { WebSearchLists } from "./web-ports.ts";
 
 /** The audit row a web search refusal writes ('web-search'). */
@@ -99,24 +99,29 @@ export class WebSearchMarks {
     if (!row) return;
     const fp = await this.fingerprint(row);
     const words = redact(input.message).slice(0, 300);
-    const limits: JsonObject = { ...row.limits };
-    if (input.reason === "off") {
-      limits.webSearchOffAt = this.deps.clock.nowIso();
-      if (fp) limits.webSearchOffKey = fp;
-      limits.webSearchOffWhy = words;
-    } else {
-      const prev = row.limits.webSearchRefusedLists;
-      const all: JsonObject =
-        prev && typeof prev === "object" && !Array.isArray(prev) ? { ...(prev as JsonObject) } : {};
-      all[input.projectId] = {
-        at: this.deps.clock.nowIso(),
-        lists: input.lists?.key ?? "",
-        ...(fp ? { key: fp } : {}),
-        why: words,
-      };
-      limits.webSearchRefusedLists = all;
-    }
-    await this.deps.store.billingSource.patch(row.id, { limits });
+    // Written with the version check (R-limitsrmw), so a rest or a wait written meanwhile stays.
+    await updateSourceLimits(this.deps.store, row.id, (stored) => {
+      const limits: JsonObject = { ...stored };
+      if (input.reason === "off") {
+        limits.webSearchOffAt = this.deps.clock.nowIso();
+        if (fp) limits.webSearchOffKey = fp;
+        limits.webSearchOffWhy = words;
+      } else {
+        const prev = stored.webSearchRefusedLists;
+        const all: JsonObject =
+          prev && typeof prev === "object" && !Array.isArray(prev)
+            ? { ...(prev as JsonObject) }
+            : {};
+        all[input.projectId] = {
+          at: this.deps.clock.nowIso(),
+          lists: input.lists?.key ?? "",
+          ...(fp ? { key: fp } : {}),
+          why: words,
+        };
+        limits.webSearchRefusedLists = all;
+      }
+      return limits;
+    });
     this.logger.warn("web search refused", { sourceId: row.id, reason: input.reason });
     await this.deps.store.auditLog
       .append({

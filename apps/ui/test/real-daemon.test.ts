@@ -10430,3 +10430,174 @@ describe("the UI client against the real daemon: the plan card's figure is the S
     }
   }, 120_000);
 });
+
+/**
+ * leftovers7-web (wave 14): the Start check while every ready task's credential waits
+ * (R-startcred). The client's `startCheck` against the real daemon, as the Start dialog reads it.
+ */
+describe("leftovers7-web: the Start check names a credential wait (R-startcred)", () => {
+  it("with the only key refused and two ready tasks, start-check says they wait for a new key, with where to save one", async () => {
+    const refused = ["sk-ant-api03-", "refused", "8".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-11-08T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-startcred-"));
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_api_key: refused }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    try {
+      const notes = await client.createProject({ name: "Notes", goal: "Two notes" });
+      for (const title of ["Write note A", "Write note B"])
+        await client.createTask(notes.id, {
+          title,
+          outcome: `${title} is written`,
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+      // Before any session: the key is not marked yet, so the check cannot know (it says what
+      // the session runs). One session meets the refusal; from then on the check says so.
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: notes.id });
+      const sessionId = first.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const check = await client.startCheck(notes.id);
+      // Before: blocked null, the dialog said 'This session runs "Write note A" ...'.
+      expect(check.blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: "Nothing can run yet. Waits for a new API key: save one in Settings.",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
+      // R-runsonrefused: New task's line (and the plan card's) says the wait, never "Runs on
+      // your API key" for a key Anthropic refused.
+      const settings = await client.modelSettings(undefined, notes.id);
+      for (const name of ["coder", "researcher"]) {
+        const runsOn = settings.specialists.find((s) => s.name === name)?.runsOn;
+        expect(runsOn, name).toEqual({
+          kind: "api_key",
+          line: "Waits for a new API key: save one in Settings.",
+        });
+      }
+      // The rows say the same, and the wait is kept, so a new key starts the work by itself.
+      expect((await client.tasks(notes.id)).map((t) => t.display?.label)).toEqual([
+        "Waits for a new API key",
+        "Waits for a new API key",
+      ]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+/**
+ * leftovers7-web (wave 14): GET /inbox asks the credential chooser once per request for what does
+ * not change between a plan card's tasks (R-inboxperf): before, every task of every open plan card
+ * asked the vault for every source on every poll (slow on an OS keyring).
+ */
+describe("leftovers7-web: the Inbox reads the credentials once per request (R-inboxperf)", () => {
+  it("a plan card with five tasks: GET /inbox asks the vault at most once per source", async () => {
+    const key = ["sk-ant-api03-", "inboxperf", "1".repeat(40)].join(""); // not-a-secret
+    const oauth = ["sk-ant-oat01-", "inboxperf", "2".repeat(40)].join(""); // not-a-secret
+    let asked = 0;
+    class CountingVault extends MemoryVault {
+      override async has(name: string): Promise<boolean> {
+        asked++;
+        return super.has(name);
+      }
+    }
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      { vault: new CountingVault({ anthropic_api_key: key, anthropic_oauth_token: oauth }) },
+    );
+    try {
+      const project = await client.createProject({ name: "Five", goal: "Five pages" });
+      const me = await client.me();
+      const tasks = [1, 2, 3, 4, 5].map((n) => ({
+        key: `p${n}`,
+        title: `Build page ${n}`,
+        outcome: `page${n}.html`,
+        acceptanceCriteria: [],
+        specialist: "coder",
+      }));
+      await rt.store.humanRequest.insert({
+        human_id: me.id,
+        project_id: project.id,
+        task_id: null,
+        session_id: null,
+        kind: "approval",
+        why: 'Intake for "Five": 5 tasks.',
+        steps: [],
+        options: ["approve", "reject"],
+        blocking: true,
+        risk: "medium",
+        change_card: {
+          key: `intake:${project.id}`,
+          project_id: project.id,
+          proposal: {
+            plan: { reason: "planned", milestones: [], tasks },
+            docs: {},
+            firstSession: { summary: "", items: [] },
+          },
+        },
+        status: "open",
+        answer: null,
+      } as never);
+      const sources = (await rt.store.billingSource.list({} as never, { limit: 10 })).filter(
+        (s) => s.credential_ref,
+      ).length;
+      asked = 0;
+      const card = (await client.inbox(me.id)).requests.find((r) => r.projectId === project.id);
+      // The person still sees where each task runs.
+      expect(card?.planTasks).toHaveLength(5);
+      expect(card?.planTasks?.every((t) => t.runsOn !== undefined)).toBe(true);
+      // Before: 5 tasks x every source.
+      expect(asked).toBeLessThanOrEqual(sources);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});

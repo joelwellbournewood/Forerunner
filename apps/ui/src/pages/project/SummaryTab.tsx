@@ -242,14 +242,18 @@ const WEB_ACCESS_ROW = "project.web_access";
  * may read on the web, "Research reads: any public website · Change". Change opens the same
  * dialog as the Settings row (Per project, "Web pages research may read"), with the same change
  * card; the line is the daemon's (`ProjectCard.researchReads`) and, after a change, the same
- * words from the row's new value.
+ * words from the row's new value until the daemon's card says something new (R-researchreads: a
+ * later change made in chat, say, shows at once).
  */
 function ResearchReads({ projectId, project }: { projectId: string; project?: ProjectCard }) {
   const client = useClient();
-  const [changed, setChanged] = useState<string | null>(null);
+  // The line a change from here set, and the card's line it replaced: kept only while the card
+  // still says that, so a newer card (any later change, wherever it was made) wins.
+  const [changed, setChanged] = useState<{ line: string; over: string | null } | null>(null);
   const [row, setRow] = useState<SettingView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const line = changed ?? project?.researchReads ?? null;
+  const cardLine = project?.researchReads ?? null;
+  const line = (changed && changed.over === cardLine ? changed.line : null) ?? cardLine;
   if (!line) return null;
   const rowOf = async () =>
     (await client.settings({ scope: "project", scopeId: projectId })).find(
@@ -281,7 +285,11 @@ function ResearchReads({ projectId, project }: { projectId: string; project?: Pr
           onClose={() => setRow(null)}
           onChanged={() => {
             void rowOf().then((r) => {
-              if (r) setChanged(researchReadsLine(webAccessOf({ web_access: r.value as never })));
+              if (r)
+                setChanged({
+                  line: researchReadsLine(webAccessOf({ web_access: r.value as never })),
+                  over: cardLine,
+                });
             });
           }}
         />

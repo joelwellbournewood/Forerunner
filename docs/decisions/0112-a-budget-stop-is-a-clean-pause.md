@@ -271,3 +271,18 @@ reviews).
 
 Not built: a session that reviews a paused task without running it again (its run's result is
 not kept for a later review); the run costs one more specialist call.
+
+## Amendment 2026-11-08 (the leftovers of wave 7, 'leftovers7-web'): late usage and each model's price
+
+What "Not built here" left above is built. (1) **Late usage is booked** (R-lateusage): booking
+what a run already spent needs no live token (`EnforcementHooks.afterModelCall` books first,
+checking only the token's signature, and checks the live token after, unless the run is already
+stopping), so a message that arrives after Stop all revoked the run's token, or while Claude
+Code winds down, reaches the ledger and the session's spend, and never allows a new call. A
+killed run (the kill switch, a person's move of the task) still returns at once; what Claude
+Code reports after that is read in the background for at most `SDK_STOP_WAIT_MS`, booked, and
+added to the run's Run row. The task's own spent figure is not raised by it (the runner adds the
+run's returned cost before the tail arrives). (2) **Each model at its own price**
+(R-modelusage): a message is priced at its own model, and the result's `modelUsage` is booked
+per model at that model's price, less what the messages already booked for it; the ledger row
+names the model. A model the price table does not know is priced as the run's model.

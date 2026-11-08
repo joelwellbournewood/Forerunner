@@ -3,6 +3,7 @@ import type { AppDirs, Clock } from "@forerunner/platform";
 import type { StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { Hono } from "hono";
+import { updateSourceLimits } from "../wiring/billing-pick.ts";
 import {
   PLAN_USD_MONTHLY_ENV,
   type PlanAllowance,
@@ -128,11 +129,13 @@ export function createPlanAllowanceRoutes(deps: PlanAllowanceRoutesDeps): Hono {
       );
     }
     // The billing row: what the next pick and the plan share read, so it applies at once.
+    // Written with the version check (R-limitsrmw), so a rest or a wait written meanwhile stays.
     const row = await subscriptionRow();
     if (row)
-      await deps.store.billingSource.patch(row.id, {
-        limits: { ...row.limits, planUsdMicro: next.usdMicro },
-      });
+      await updateSourceLimits(deps.store, row.id, (limits) => ({
+        ...limits,
+        planUsdMicro: next.usdMicro,
+      }));
     deps.onChanged?.(next);
     await deps.store.auditLog
       .append({
