@@ -846,7 +846,11 @@ wires it, with the root config's projects naming none of their own. `apps/ui/tes
   (`PromptCacheSim`, `testenv/src/provider/prompt-cache.ts`): the marks the request's `cache`
   flags place (tools, system, the last message and where the previous call ended) are read when a
   request of the same model wrote or read them less than five minutes ago on the fake's clock,
-  the rest past them is written, a prefix under the minimum is plain input. Without it
+  the rest past them is written, a prefix under the minimum is plain input. A prefix is keyed by
+  the blocks the Anthropic adapter sends: a string message is one text block, and a message
+  with a stable start (`ChatMessage.stableChars`, the chat's line before its facts of now) is
+  two, marked on the start, so a later turn that replays the line alone reads its entry (the
+  leftovers of wave 7). Without it
   `cache_read_input_tokens` and `cache_creation_input_tokens` are 0 unless a reply overrides
   them. The bench's role-player always plays the cache ('cost'), and its model-call log line
   carries the request's `cache` flags.
