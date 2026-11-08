@@ -1,0 +1,921 @@
+{
+  "wave": 11,
+  "areas": [
+    {
+      "key": "merged-actions",
+      "fix": {
+        "area": "merged-actions",
+        "branch": "fix/merged-actions",
+        "head_sha": "d0a0c8ae3562440930f82e1c7803fc690f8d8cd6",
+        "commits": [
+          {
+            "sha": "e464b19",
+            "subject": "merged-actions: Autopilot asks before creating a repository, and the offer is no question on Home (U-037, C-60)"
+          },
+          {
+            "sha": "20c4d5b",
+            "subject": "merged-actions: Open this version puts a waiting pull request's files on this computer (U-037)"
+          },
+          {
+            "sha": "6841047",
+            "subject": "merged-actions: Take this work out reverts a merged task by the way it was merged (U-037)"
+          },
+          {
+            "sha": "9bff262",
+            "subject": "merged-actions: the offer and the take-out notice read as a title and a sentence; \"and N more\" once (U-037)"
+          },
+          {
+            "sha": "9ed3319",
+            "subject": "merged-actions: a second press of Take this work out while the first runs opens no second pull request (U-037)"
+          },
+          {
+            "sha": "d0a0c8a",
+            "subject": "merged-actions: a take-out merged on GitHub is read at the watcher's next poll (U-037)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "[major] Autopilot created a repository without asking, on two paths: RepoProposals.consider ran repo.create itself when external_send was free at level 4, and repo.create rated a private repository 'low' for an agent at Autopilot, so the chat agent (command tools run as the agent) created one with no card. The offer card said '... with no branch, pull request or review on GitHub' and its Inbox title was split at a colon.",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "packages/runtime/test/repo-create.test.ts \"at Autopilot (level 4) the agent asks too: one card, nothing created until Create the repository (the owner's decision of 2026-11-02)\" and \"the chat agent's repo.create at Autopilot files a card and creates nothing until the person's yes\"; packages/commands/test/repo-command.test.ts \"the project's agent at Autopilot asks too: a private repository is medium for it (before: low, created with no card)\"",
+            "how": "packages/runtime/src/loop/repo-create.ts: the autopilot branch of RepoProposals.consider is removed (one card per project at every level, header says so); the card's words are now 'Create a repository for \"<project>\"? Code work is planned for it, and it has none: its tasks run in the project's folder on this computer.' (title = the question). packages/commands/src/commands/repo.ts riskOf: private is medium for every actor at every level, public high (no decideAutonomy). ADR 0097 amended (the owner's decision of 2026-11-02).",
+            "check_in_the_app": "Bench (--provider bench): New project without a repository, raise its autonomy to Autopilot (Settings > the project's level, one step at a time), approve the plan: the Inbox shows 'Create a repository for \"<project>\"?' with Create the repository / Not now and GitHub has no new repository until Create the repository. Before: bench/kiosk-before was created with no card (/tmp/frbench/fix-merged-actions/before-steps/03-before-inbox-autopilot-repository.png); after: the card (/tmp/frbench/fix-merged-actions/after-steps/19-after2-inbox-autopilot-repository.png). Live check (bench-live, your own account, private): a project without a repository at Autopilot with a coder task: after planning the Inbox card appears and nothing is created on GitHub; in that project's Chat type 'create a repository for <project>' and let the agent call it: a confirmation card is shown, nothing created until Yes; press Not now on the Inbox card and delete nothing."
+          },
+          {
+            "problem": "[minor] C-60: a finished folder project read 'Waiting for you: 1 question' on Home because of the 'Create a repository?' offer (holdsTask counted every open card but Docker's).",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "packages/runtime/test/repo-create.test.ts \"Home's line does not count the repository offer as a question: a finished project reads Done (C-60)\"",
+            "how": "packages/runtime/src/daemon/task-words.ts: isDockerCard, isRepositoryOffer (key repo:create:) and isTakeOutNotice; holdsTask leaves all three out. packages/runtime/src/session/runner.ts (one line): the session's 'Docker card open' news flag now reads isDockerCard instead of !holdsTask, so the offer does not hide a Docker line. The offer stays in the Inbox.",
+            "check_in_the_app": "Bench: a project without a repository whose tasks are all done and whose offer card is open: Home's line reads 'Done: all N tasks. Your files: ...' (after: /tmp/frbench/fix-merged-actions/after-steps/20-after2-home-autopilot-project-line.png), and the Inbox still lists the offer under Needs you."
+          },
+          {
+            "problem": "[major] A waiting PR could be looked at only on GitHub: nothing put its files on the PC before merging (SummaryTab offered Open on GitHub and Merge only).",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts \"Open this version on a waiting PR: its version in a folder on this computer, as merging would give it, under the copy's lock; the row says so; the folder goes once the PR is merged\" (no route); apps/ui/test/project-overview.test.tsx \"Open this version on a waiting pull request\" (two cases: the button, the folder with Open folder that opens that folder, replacement by a second PR; a PR no longer waiting refused in words)",
+            "how": "POST /projects/:id/pull-requests/:number/preview (docs-routes.ts -> ProjectPullRequests.preview; fake daemon in the same commit). ProjectDocs.previewPullRequest (loop/docs.ts), under withCopy: clones the copy if missing, fetches (refs/pull/<n>/head when the branch is gone), removes the project's earlier preview, GitOps.worktreeAdd(<worktrees>/docs/previews/<project>/pr-<n>, head) and, when main moved past the PR, merges main in there (never pushed): '#7 as it would be merged. Changes here are not kept.' or '#7 as its branch has it: it does not merge cleanly with main yet. ...'. preview.json records it; previewOf reads it; the view puts `preview` on the row (absent otherwise). Removed on onMerged, the watcher's onPullRequestState close, and the view's next read when the PR is no longer open. New GitOps methods: fetchRef, worktreeAdd, worktreeRemove. UI: SummaryTab PreviewOfRow (Open this version, its line, the folder's FolderPath with Open folder 'Opens #7's version on this computer.').",
+            "check_in_the_app": "Overview of a repository project with waiting PRs: each row has Open this version (title 'Puts its files in a folder on this computer, to try before you merge it.'); a click shows '#2 as it would be merged. Changes here are not kept.' with the folder, Copy path and (desktop) Open folder; the folder holds the PR's files and main's newer ones; Merge removes the folder. Before: /tmp/frbench/fix-merged-actions/before-steps/01-before-overview-waiting-pull-requests.png; after: /tmp/frbench/fix-merged-actions/after-steps/02-after-open-this-version.png. Live check 1 step 2 (phaseE7-live.md): on forerunner-sandbox press Open this version on the footer's PR, then Open folder in the desktop app: the file manager opens a folder holding the footer's files (and the page's), and the row says '#N as it would be merged. Changes here are not kept.'; after the merge the folder is gone."
+          },
+          {
+            "problem": "[major] Nothing took merged work out: Done was final, Undo could not reach a merge, and no code reverted a merged PR; a PR merged on GitHub by squash (one parent) or rebase (copied commits) cannot be undone by `git revert -m 1` on the recorded sha.",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "packages/capabilities/test/take-out.test.ts (merge, squash and rebase merges on the testenv fake GitHub: main's tree after merging the take-out equals main's before the merge; a later change to the same lines conflicts and nothing is pushed; an unknown shape and a commit not in main are refused); apps/ui/test/real-daemon.test.ts \"Take this work out on a merged task of a chain: a pull request that reverts its merge, naming the task that built on it; main untouched; the row and the Overview say so; Merge in the app takes it out\" and \"a pull request squash-merged on GitHub: Take this work out reverts the squash ...; an unknown shape and a conflict are said in words\"; apps/ui/test/tasks.test.tsx \"Take this work out\" (two cases); packages/runtime/test/take-out.test.ts (second press refused, record made for a merge with none, settle); packages/runtime/test/take-out-words.test.ts",
+            "how": "POST /tasks/:id/take-out (server.ts; RuntimeApp.takeOut = TaskTakeOut, loop/take-out.ts; fake daemon in the same commit). Merge commit from the record (merged) or the host; builtOn = done tasks depending on it, transitively. PrTaskExecutor.takeOut (new method) in <worktreeRoot>/<task>-take-out: takeOutPlan reads the shape from git (two parents: revert -m 1; one parent whose first-parent chain ends with copies of the PR's own commits matched by patch id: rebase, copies reverted newest first; one parent whose change equals the PR's whole change: squash, revert without -m; else refused '#4 was merged in a way Forerunner cannot undo safely; undo it on GitHub.'), pushes <branch>-take-out with force-with-lease (never the default branch, neverPush guard). The daemon opens 'Take out: <title>' whose body names how it was merged and the tasks built on it. Conflict: nothing pushed, one Inbox notice per task (info, key take_out:conflict:<task>, holds no task). Migration 0007 adds merge_record.take_out_pr_number/take_out_pr_url/take_out_state; pin clears them on a redo. taskDisplay merged case: 'Merged' + takeOut offered, 'Taken out in #9 (waiting for you to merge)', 'Taken out in #9'. The Overview lists open take-outs as kind take_out in group 'Taking work out: merging one removes that work from main' with Merge (as it is via mergeAsIs, then marked merged); settle reads ones no longer open (view) and at the watcher's onDefaultBranchHead. One take-out per task at a time. UI: actionsFor('done') offers take_out when display.takeOut.state is offered; TakeOutDialog names the tasks built on it; the answer stands in the task-moved line; the drawer links the take-out PR. Words in daemon/take-out-words.ts (namesList: up to three, then 'and N more'). ADR 0113 amended.",
+            "check_in_the_app": "Bench (--provider bench --githost): plan a page project on bench/seeded, Merge the first PR in the app; squash-merge another through the fake host's API; on the Tasks tab each merged row offers Redo and Take this work out; the dialog names the tasks built on it; the answer reads 'Opened #N to take \"...\" out. It waits for you to merge it. \"...\" built on it: check it still works once #N is merged.'; the row reads 'Taken out in #N (waiting for you to merge)'; the Overview lists it under 'Taking work out' with Merge; after Merge the row reads 'Taken out in #N' and main lost that task's file only. Before: /tmp/frbench/fix-merged-actions/before-steps/02-before-tasks-merged-rows.png (Redo only); after: /tmp/frbench/fix-merged-actions/after-steps/03-after-tasks-merged-rows.png, 04-after-take-out-dialog-merge-commit.png, 07-after-overview-taking-work-out.png, 08-after-tasks-after-take-out-merged.png (fake host PRs in /tmp/frbench/fix-merged-actions/after-steps/after-merged-actions.json hostPulls). Live check 1 step 5 and second chain (phaseE7-live.md): on forerunner-sandbox press Take this work out on the footer (row or drawer): a PR 'Take out: <footer title>' opens whose body names the test task and says '(#N, merged)'; main's sha is unchanged; leave it open and close it at the end (the row then offers the action again after the Overview is read). Second chain: after Squash and merge on GitHub and the next watcher poll, the row reads Merged; Take this work out opens a PR whose body says 'squash-merged' and whose diff is exactly the inverse of the squash commit (do not merge it)."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "CHANGELOG.md entries for U-037 (preview, take out, Autopilot asks, C-60)",
+            "why": "The task says the session lead writes CHANGELOG.md, UPDATE-LOG and requirements from the report. Suggested lines: 'Open this version on a waiting pull request puts its files in a folder on this computer, as merging would give them.' / 'Take this work out on a merged task opens a pull request that reverts it the way it was merged (merge commit, squash or rebase) and names the tasks built on it.' / 'Autopilot asks before creating a repository, from a session and from the chat.' / 'A repository offer no longer makes a finished project read Waiting for you.'"
+          },
+          {
+            "problem": "A take-out pull request closed on GitHub without merging is read only at the Overview's next read of the pull requests (main does not move, so the watcher's settle does not run); until then the row keeps '(waiting for you to merge)'.",
+            "why": "The watcher reads PR states only for task PRs (githost-watcher.ts is dependent-branches' and merge-record's, no other wave 7 area edits it). Recorded in ADR 0113's known gaps."
+          },
+          {
+            "problem": "A Redo of a task whose take-out is still open starts its record again (pin clears take_out_*) and forgets that take-out; its PR stays open on GitHub, no longer listed as a take-out.",
+            "why": "Edge case; keeping both on one record would need a second record per task. In ADR 0113's known gaps."
+          },
+          {
+            "problem": "A dependent PR that GitHub merged with a merge commit carrying its dependency's commits (dependency marked merged through it) is reverted whole by -m 1, the dependency's work included.",
+            "why": "Forerunner's own Merge merges the dependency first, so this needs a merge made on GitHub in that order; detecting it needs the dependency's record. In ADR 0113's known gaps."
+          },
+          {
+            "problem": "The take-out conflict notice offers only 'Got it' (an info card); no 'Make a task of it' option that would plan a hand-made revert.",
+            "why": "The spec asks for one card in words; creating a revert task is a design addition for the owner or polish."
+          },
+          {
+            "problem": "Open folder on the preview in the real desktop window",
+            "why": "Tested in jsdom with a stub of the Tauri bridge (the same pattern as merged-copy's Local only test); the desktop shell was not touched, so cargo and the CI window check were not run here. Live check 1 step 2 covers it."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+            "result": "exit 0: 469 test files, 4804 passed, 6 skipped; docs:check could not diff against origin/main in the worktree (nothing to check), link-check ok (206 files), secret-scan clean"
+          },
+          {
+            "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (45 files), after the last commit"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "exit 0: 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 passed, 73 skipped (as baseline)"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "exit 0: 13 files, 25 passed, 1 skipped (same as baseline)"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "84 files, 925 passed"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+            "result": "34 passed (59.6 s)"
+          },
+          {
+            "command": "after the last commit (d0a0c8a): pnpm lint; pnpm typecheck; vitest --project unit packages/runtime/test; apps/ui real-daemon.test.ts",
+            "result": "lint 0, typecheck 0, runtime 2413 passed 1 skipped, real-daemon 161 passed"
+          },
+          {
+            "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+            "result": "not run: the desktop shell was not touched"
+          },
+          {
+            "command": "git grep -n \"^<<<<<<< \"; git status --short",
+            "result": "nothing; worktree clean, fix/merged-actions = HEAD d0a0c8a"
+          },
+          {
+            "command": "bench walk BEFORE (base a9d4b76 from git archive) and AFTER (worktree) with /tmp/frbench/fix-merged-actions/walk.cjs, --provider bench --githost 48342",
+            "result": "BEFORE: openThisVersionOffered false, takeOutOffered false, Autopilot created bench/kiosk-before with no card. AFTER: preview folder held the PR's files and was removed after Merge, take-out on a merge commit (#7) and a squash (#8) opened with names, Taking work out group with Merge, 'Taken out in #7' after merging it (main lost index.html only), Autopilot filed the card and created nothing, Home line 'Done'. 0 page problems. Bench stopped, home deleted."
+          }
+        ],
+        "tests_changed_for_design": [
+          {
+            "test": "packages/runtime/test/repo-create.test.ts \"at Autopilot (level 4) the agent creates the private repository itself, no card, and says so\" (now \"at Autopilot (level 4) the agent asks too ...\"); its proposalCard helper finds the card by the new words",
+            "why": "The owner's decision of 2026-11-02: Autopilot asks before creating a repository; the card's words follow design §5."
+          },
+          {
+            "test": "packages/commands/test/repo-command.test.ts \"the project's agent at Autopilot creates a private repository without asking\" (now medium)",
+            "why": "Same owner decision: no level makes repo.create low."
+          },
+          {
+            "test": "apps/ui/test/project-overview.test.tsx \"Your files names the repository ...\" and \"says who checked each waiting PR ...\" row textContent",
+            "why": "Each waiting row now ends with 'Open this version' (owner decision pr_preview)."
+          },
+          {
+            "test": "packages/state/test/schema.test.ts and migrations.integration.test.ts migration version lists",
+            "why": "Migration 0007 (take_out columns) is added; the lists gain 7 and v7 columns are asserted."
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/fix-merged-actions/before-steps/01-before-overview-waiting-pull-requests.png",
+            "/tmp/frbench/fix-merged-actions/before-steps/02-before-tasks-merged-rows.png",
+            "/tmp/frbench/fix-merged-actions/before-steps/03-before-inbox-autopilot-repository.png",
+            "/tmp/frbench/fix-merged-actions/before-steps/04-before-home-autopilot-project-line.png"
+          ],
+          "after": [
+            "/tmp/frbench/fix-merged-actions/after-steps/02-after-open-this-version.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/03-after-tasks-merged-rows.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/04-after-take-out-dialog-merge-commit.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/05-after-taken-out-merge-commit.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/06-after-taken-out-squash.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/07-after-overview-taking-work-out.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/08-after-tasks-after-take-out-merged.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/12-after2-open-this-version.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/19-after2-inbox-autopilot-repository.png",
+            "/tmp/frbench/fix-merged-actions/after-steps/20-after2-home-autopilot-project-line.png"
+          ]
+        },
+        "new_problems": [
+          "A failed task's Inbox card shows the run's raw report as its body ('What failed: **Summary** [stand-in model] coder wrote script.js ... **Files changed** ...') when the task fails after a run that reported success: seen on the second AFTER walk (/tmp/frbench/fix-merged-actions/after-steps/19-after2-inbox-autopilot-repository.png, project 'Shop after2', task 'Add the page behaviour in script.js', task.reason = the report). Likely cause: a second project on the same repository wrote a script.js identical to main's, so the run changed nothing and the PR step failed with the report as the reason. Markdown asterisks in a card break design §5 rule 6 (polish / request-words failed card, and the PR executor's reason for an empty change).",
+          "shared_files exception: packages/runtime/src/session/runner.ts changed by one line (the session news flag `docker: openCards.some(isDockerCard)` instead of `!holdsTask`), needed so holdsTask's new exclusions (repository offer, take-out notice) do not hide a Docker line from the session's Update.",
+          "ADR 0111's Consequences say Take this work out reads 'the record's method and merge commit'; it reads the merge commit from the record (or host) and the shape from git (takeOutPlan), because a record's method for a GitHub merge can be wrong (resumeAtStart records 'merge' whatever GitHub used). ADR 0113's amendment says so; 0111's line is left as it was."
+        ],
+        "notes_for_other_areas": [
+          "Group 6 polish depends on: packages/runtime/src/daemon/take-out-words.ts (namesList, quoted, andList, takeOutOpenedSentence, takeOutConflictSentence, unknownShapeSentence; the UI's TasksTab and the fake daemon import it); task-words.ts isDockerCard, isRepositoryOffer, isTakeOutNotice, holdsTask and mergedDisplay ('Merged', 'Taken out in #9 (waiting for you to merge)', 'Taken out in #9'; TaskDisplay.takeOut {state offered|open|merged, number, url}); repo-create.ts's card words ('Create a repository for \"<project>\"? Code work is planned for it, and it has none: ...'); apps/ui/src/lib/task-actions.ts ACTIONS.take_out ('Take this work out' / 'Opens a pull request that takes its changes out of main; you merge it.', 4 words: the owner's exact phrase, over design §5's 3-word button rule) and actionsFor('done') returning ['redo','take_out'] while display.takeOut.state is 'offered'; FORM_ACTIONS includes take_out.",
+          "sites (group 5, after merged-actions) in SummaryTab.tsx: RepositoryFiles now renders a PreviewOfRow component per waiting row (button testid pr-preview, block pr-preview-block, folder pr-preview-folder) and a PR group 'take-out' (kind take_out); add the project-page line as its own component outside RepositoryFiles. In server.ts the new route is POST /tasks/:id/take-out; the preview route is in docs-routes.ts beside Merge (POST /projects/:id/pull-requests/:number/preview).",
+          "API: ProjectPullRequestView.kind gains 'take_out' (taskId = the merged task) and an optional `preview` {folder, sentence} (absent when none); new PullRequestPreviewAnswer and TaskTakeOutAnswer; DAEMON_ROUTES previewPullRequest and takeOutTask; client.previewPullRequest / client.takeOutTask; fake daemon state.takeOutConflict and taskMeta.merges (a test sets a merge record per task to get 'Merged' and the take-out offer).",
+          "State: migration 0007 adds merge_record.take_out_pr_number, take_out_pr_url, take_out_state (open|merged|closed); MergeRecordRepo.pin clears them when a redo restarts the record. Collaboration (wave 8): these columns travel with the shared Postgres.",
+          "Capabilities: GitOps.fetchRef, worktreeAdd, worktreeRemove, revert(commits, {mainline}), commitsNotIn; PrTaskExecutor.takeOut (clone at <worktreeRoot>/<task>-take-out, inWorktree lock) and takeOutPlan; TakeOutGitResult. ProjectDocs.previewRoot/previewOf/previewPullRequest/dropPreview (previews at <worktrees>/docs/previews/<project>/pr-<n>, record preview.json), all under withCopy.",
+          "compose.ts merged-actions region: ProjectPullRequests gets previews: docs and takeOuts; dropPreviewOf on merge.onMerged and in the watcher's onPullRequestState (closed/merged); TaskTakeOut.settle(project, null) in onDefaultBranchHead; RuntimeApp.takeOut."
+        ]
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "acceptance_walk": "Bench \"review-merged-actions\" (daemon 48350, UI 1950, --provider bench, fake GitHub --githost 48351), started from my worktree at fix/merged-actions d0a0c8a. I used the UI as a person would. Setup that is not under test was done through the API. Screenshots and texts are in /tmp/frbench/review-merged-actions/steps/, the collected results in /tmp/frbench/review-merged-actions/review-state.json, and the walk scripts are walk1.cjs to walk8.cjs in the same folder. The bench is stopped and its home deleted.\n\n1. Project \"Corner Shop\" on bench/seeded. I approved the plan in the Inbox with \"Approve and start\" (01). The session ran 5 tasks, leaving PRs #2 to #6 plus the docs PR #1.\n\n2. Overview (02): every waiting row has \"Open this version\", with the tooltip \"Puts its files in a folder on this computer, to try before you merge it.\"\n   - Clicking it on #2 (03) shows \"#2 as it would be merged. Changes here are not kept.\" with the folder (README.md, index.html) and Copy path. There is no Open folder button in a browser, as expected. The line is still there after a reload.\n   - I pushed news.md to main on the host, then pressed Open this version on #3 (04). The folder now holds README.md, index.html, news.md and script.js, as merging would give them. #2's folder and its block are gone.\n\n3. Merged in different ways:\n   - I pressed Merge on #2 in the app. #3's preview stayed.\n   - I squash-merged #3 through the fake host's API. The watcher read it as \"Merged\" after 42 s and removed #3's preview folder.\n   - I rebase-merged #4 through the host API, and it was read as Merged too.\n\n4. Tasks tab (05): the merged rows offer \"Redo\" and \"Take this work out\" with their explanation line.\n   - From the drawer (06, 07) on the squash-merged task: the dialog \"Take \"Add the page behaviour in script.js\" out?\" names the two done tasks that built on it.\n   - The answer (08): \"Opened #7 to take ... out. It waits for you to merge it. ... built on it: check they still work once #7 is merged.\" The drawer then reads \"Taken out in #7 (waiting for you to merge)\" and \"Its work is being taken out in #7: merge it on the Overview. Open #7\".\n   - From the row on the rebase-merged task (09): it opened #8.\n   - Two POSTs at the same moment on the merge-commit task: the first opened #9, which names 3 tasks \"and 1 more\". The second was refused with \"Its work is being taken out now: the answer comes in a moment.\"\n   - main's sha was unchanged.\n   - The take-out diffs on the host are exactly the inverse of each merge: #7 deletes script.js, #8 deletes styles.css, #9 deletes index.html.\n   - The rows read \"Taken out in #N (waiting for you to merge)\" (10). The Overview lists them under \"Taking work out: merging one removes that work from main\", each with Merge (11).\n\n5. Restart (restart-daemon.mjs) with a preview open on #5:\n   - The rows' \"Taken out in #N (waiting ...)\" labels, the take_out rows and the #5 preview row and folder were all still there (12).\n   - Merge on #7 in the app gives the row \"Taken out in #7\", and main lost script.js only.\n   - I closed #8 on the host. The next Overview read put the row back to \"Merged\" with the action offered again.\n   - I merged #9 on the host. The watcher's poll settled it to \"Taken out in #9\" after 57 s.\n\n6. Open this version when the PR does not merge cleanly: I pushed a file with the same path as #5's check file to main. Open this version on #5 says \"#5 as its branch has it: it does not merge cleanly with main yet. Changes here are not kept.\" The folder holds #5's own version, with no conflict markers. After I closed #5 on the host, the next Overview read removed its folder.\n\n7. Conflict: I merged README PR #6 in the app, then edited README.md's lines on main. Take this work out answered with the conflict sentence in words, and nothing was pushed. A second press filed no second notice: there is one Inbox notice with \"Got it\". The project line stays \"Done: all 5 tasks.\" BUT the notice's title on screen is cut at the colon inside the task title: the Inbox title reads \"\"Write the README\" and the body starts \"what the page does and how to open it\" could not be taken out by itself...\" (15, 17). Home's Needs you line reads 'Corner Shop: \"Write the README [Answer]' (16, 18).\n\n8. Autopilot: project \"Kiosk Board\" with no repository, set to level 4 one step at a time. After Approve and start the Inbox shows 'Create a repository for \"Kiosk Board\"?' with \"Create the repository\" and \"Not now\" (17). The host's repositories were unchanged (bench/empty and bench/seeded). Home's line reads \"Done: all 2 tasks. Your files: ...\" (18), so C-60 is fixed.\n   - Chat at Autopilot, \"tool: repo_create {project, private:true}\" (stand-in-scripted tool call): it gives a read-back with Yes/No, nothing is created, and the project's repos stay [] (20).\n\n9. Got it closes the notice (23).\n\nEvery step of the acceptance journey works, apart from the notice title (blocking 1). Tests:\n- Fail-before checks:\n  - repo-create.test.ts on base source: \"at Autopilot ... asks too\" fails because the repository was created, and \"the chat agent's repo.create ...\" fails with ['done'] instead of ['pending'].\n  - The C-60 test fails with base holdsTask (\"Waiting for you: 1 question\").\n  - The real-daemon merged-actions block fails 3/3 with the base routes (404).\n- Full suite on the branch:\n  - pnpm check exit 0 (469 files, 4804 passed, 6 skipped).\n  - docs-check --base claude/nifty-knuth-f9udt0 ok (45 files).\n  - test:integration 30 passed, 73 skipped.\n  - test:e2e 25 passed, 1 skipped.\n  - UI vitest 925 passed.\n  - Playwright (local config) 34 passed.",
+        "blocking": [
+          {
+            "issue": "The take-out conflict notice (this area's new Inbox card) shows a broken title whenever the task title contains ': ', both in the Inbox and in Home's Needs you line. Planner titles often have one: the stand-in's 'Write the README: what the page does and how to open it', and the live fixtures' 'Human decisions: quotes, repository, hosting'.",
+            "where": "packages/runtime/src/loop/take-out.ts:356 (notice(): kind 'info', why = takeOutConflictSentence, no title) rendered by packages/runtime/src/daemon/request-words.ts:986 (genericCard title: firstSentence(said); firstSentence's regex /^(.+?[.!?:])(\\s|$)/ at :140 cuts at the first ': ')",
+            "evidence": "On the bench: Inbox card title '\"Write the README', body 'what the page does and how to open it\" could not be taken out by itself. Later work changed the same lines in README.md: ...' (/tmp/frbench/review-merged-actions/steps/15-inbox-conflict-notice.png, 17-...png). Home: 'Corner Shop: \"Write the README  [Answer]' (16-home-after-conflict.png). Commit 9bff262 says the take-out notice 'reads as a title and a sentence', but the tests only check r.why (real-daemon) and the Tasks tab's moved line (tasks.test.tsx), never the Inbox title.",
+            "expected": "Design §3.8: a card's title names the project and the task, and the body is 1-2 sentences, never a fragment cut inside a quoted title (§5). Give the notice a title that survives any task title, for example its own words branch or change_card.title used for the title, with the sentence as body. Add a test at the person's boundary (requestView / the Inbox and Home render) with a task title that contains ': '."
+          },
+          {
+            "issue": "Validation rule 4 is broken: the new persisted state is never tested across a restart. That state is the merge_record take_out_pr_number / take_out_pr_url / take_out_state columns (migration 0007), the preview record preview.json, and the preview's git worktree beside the copy. The real-daemon test's comment claims 'The task's row says it, after a restart of the view too (the record keeps it)', but that describe block composes once on stateUrl 'sqlite::memory:', and no test anywhere composes twice or restarts the daemon (grep of every test touching take_out/takeOut/previewPullRequest/pr-preview: capabilities take-out.test.ts, runtime take-out*.test.ts, state schema.test.ts, apps/ui fake-daemon/project-overview/real-daemon/tasks).",
+            "where": "apps/ui/test/real-daemon.test.ts (the 'Open this version and Take this work out (merged-actions, U-037)' describe; comment at the 'after a restart of the view too' line); packages/runtime/test/take-out.test.ts header ('so the row says it after a restart')",
+            "evidence": "No compose-twice or daemon-restart case exists for either feature. The behaviour is right on the bench after restart-daemon.mjs (review-state.json afterRestart: rows still 'Taken out in #N (waiting for you to merge)', take_out rows #7-#9 listed, the #5 preview row and folder still there; then Merge on #7 and the watcher's settle of #9 both worked). So the gap is the missing test, not the code.",
+            "expected": "docs/maintainers/validation.md rule 4 (binding; also named in the task): compose the runtime twice on the same home, or start the daemon twice. After the restart, assert the task row's 'Taken out in #N (waiting for you to merge)', the Overview's take_out row with Merge, and the preview row with its folder. Then assert that Merge (or the watcher's settle) after the restart turns the row into 'Taken out in #N', and that a merge or close removes the preview folder."
+          }
+        ],
+        "claims_checked": [
+          {
+            "claim": "Autopilot no longer creates a repository without a yes: RepoProposals files the card at every level, and repo.create is medium for every actor",
+            "holds": true,
+            "note": "The tests fail on base source: the Autopilot test because the repository was created, and the chat test with ['done'] instead of ['pending']. Bench: the Autopilot project gets the 'Create a repository for \"Kiosk Board\"?' card and the host's repositories are unchanged; chat repo_create gives Yes/No and creates nothing."
+          },
+          {
+            "claim": "C-60: the repository offer is not counted as a question in the project's line",
+            "holds": true,
+            "note": "The test fails with base holdsTask ('Waiting for you: 1 question'). Bench Home line: 'Done: all 2 tasks. Your files: ...'. runner.ts's one-line change to isDockerCard keeps the Docker news flag the same as before."
+          },
+          {
+            "claim": "Open this version puts a waiting PR's files in a folder beside the copy, under the copy's lock, merged with main when main moved, replaced by the next one, and removed on merge or close",
+            "holds": true,
+            "note": "Bench steps 03, 04 and 12, plus the 'does not merge cleanly' sentence (stage 7). The folder survives a reload and a daemon restart. It went after the watcher read the squash, after the app's Merge, and at the Overview's read after a close on GitHub."
+          },
+          {
+            "claim": "Take this work out reverts by the way the PR was merged (merge commit, squash, rebase), names the tasks built on it, never touches main, and lists the PR under Taking work out with Merge",
+            "holds": true,
+            "note": "Bench: merge commit #2 -> #9, squash #3 -> #7, rebase #4 -> #8. Each diff is exactly the inverse, main's sha is unchanged, and the Merge in the app and on GitHub both settle the row. One exception: a one-commit rebase merge is named 'squash-merged' in the PR body (see non_blocking)."
+          },
+          {
+            "claim": "A second press while the first runs opens no second PR",
+            "holds": true,
+            "note": "Two POSTs at the same moment: one 'opened' #9, one refused 'Its work is being taken out now: the answer comes in a moment.'"
+          },
+          {
+            "claim": "A conflict pushes nothing and files one Inbox notice in words that holds no task",
+            "holds": true,
+            "note": "Branches on the host are unchanged, a second press files no second notice, and the project line stays 'Done'. But the notice's title is broken on screen for titles with ': ' (blocking 1)."
+          },
+          {
+            "claim": "Commit 9bff262: 'the offer and the take-out notice read as a title and a sentence'",
+            "holds": false,
+            "note": "True for the offer, but not for the take-out notice when the task title contains ': ' (steps 15-17)."
+          },
+          {
+            "claim": "not_done / ADR 0113 known gap: a take-out closed on GitHub without merging is read only at the Overview's next read, because main does not move",
+            "holds": false,
+            "note": "githost-watcher.ts:462 calls reportDefaultHeads every poll, and it reports every project unconditionally. compose's onDefaultBranchHead calls takeOut.settle(project, null), which reads every open take-out from the host and marks a closed one closed. So it is settled within one poll. The gap described does not exist; the docs are wrong, the code is fine."
+          },
+          {
+            "claim": "Every new route has a real-daemon.test.ts case, and the fake daemon changed in the same commit",
+            "holds": true,
+            "note": "The preview route is in 20c4d5b and the take-out route in 6841047, each together with fake-daemon.ts and real-daemon.test.ts."
+          },
+          {
+            "claim": "Persisted state tested across a restart (test comment: 'after a restart of the view too')",
+            "holds": false,
+            "note": "No such test exists. It only works on the bench (blocking 2)."
+          },
+          {
+            "claim": "Tests changed for design are legitimate, not weakened",
+            "holds": true,
+            "note": "The repo-create Autopilot test and the repo-command 'low' -> 'medium' change follow the owner's decision of 2026-11-02 and add stronger assertions (nothing created, then created on the yes). project-overview row textContent gains 'Open this version'. Migration version lists gain 7, with v7 column assertions."
+          },
+          {
+            "claim": "Validation: pnpm check, integration, e2e, UI vitest and Playwright all green",
+            "holds": true,
+            "note": "Re-run here: check exit 0 (4804 passed, 6 skipped), integration 30 passed / 73 skipped, e2e 25 passed / 1 skipped, UI vitest 925, Playwright 34, docs-check --base ok (45 files)."
+          }
+        ],
+        "non_blocking": [
+          "A single-commit PR that the person rebase-merged on GitHub is named 'squash-merged' in the take-out PR body. On the bench, #4 was rebase-merged and #8's body says '(#4, squash-merged)'. The cause is takeOutPlan returning how: own.length > 1 ? 'rebase' : 'squash' (pr-executor.ts). The revert itself is correct. Say 'merged' or 'rebase-merged' when the record or host says rebase.",
+          "ADR 0113's known gaps and the report's not_done say a take-out closed on GitHub is read only at the next Overview read. In fact it is read at every watcher poll (settle(null) in onDefaultBranchHead, which fires every poll for every repository project). Fix the docs. Note that this costs one GET per open take-out per project per minute.",
+          "The Tasks tab's line after the take-out answer still shows the 'In Changes' link (TasksTab.tsx moved line). The take-out is not logged in Changes (GET /changes?projectId= returned []), so the link leads nowhere related.",
+          "At Autopilot the chat's repo_create now files a second Inbox card for the same repository. It is titled 'a GitHub repository for Kiosk Board', has lowercase 'yes'/'no' buttons and no consequence lines, and sits beside the offer card (steps/23-inbox-after-got-it.png). This is the pre-existing look of a pending chat command (the same as below Autopilot), but it is now reached at level 4 too. Polish: request-words' ask branch, and folding it into the offer.",
+          "The take-out clone at <worktreeRoot>/<task>-take-out is never removed: a full clone per taken-out task stays on disk.",
+          "Windows: if the person keeps a file open in the preview folder (an editor), 'git worktree remove' and rmSync fail. The next Open this version is then refused with '...could not be put on this computer. Try again...', which does not say a file is open. This is untested (rule 5).",
+          "Fake daemon drift: builtOn names only direct dependents (the daemon's is transitive), the refusal sentences differ from TaskTakeOut's, and no conflict notice appears in GET /inbox although its comment says the screens read one there.",
+          "api-types.ts: the doc comment that describes PullRequestPreviewAnswer sits above TaskTakeOutAnswer.",
+          "'main' is hardcoded in person-facing text ('takes its changes out of main', 'Taking work out: merging one removes that work from main'), while the preview sentence uses the real default-branch name. This matches merge-in-app's existing 'into main'.",
+          "After three tasks' work was taken out of main, the project line still reads 'Done: all 5 tasks.' That is a 'true now' question for the owner or polish.",
+          "Take this work out has no Undo (design §3.5 says 'every action has one Undo right after it'). Closing the PR on GitHub is the undo. This is owner-decided but not said on screen.",
+          "After Got it the Inbox shows 'Done: You answered \"Got it\".' This is the pre-existing generic echo.",
+          "Live check 1, second chain: taking out the squash-merged page after its dependent (a change to the same page) has merged will likely conflict by design. Either take it out before merging the dependent, or use a dependent that touches other lines, so that 'the revert PR undoes exactly that squash' can be seen.",
+          "Preview folder paths contain the project id (…/docs/previews/<uuid>/pr-N). This is consistent with other folder paths the app shows."
+        ]
+      },
+      "fixup": {
+        "area": "merged-actions",
+        "branch": "fix/merged-actions",
+        "head_sha": "db5ee6d07b516d05b5b579e5d06ef028632b75ac",
+        "commits": [
+          {
+            "sha": "db5ee6d",
+            "subject": "merged-actions: the take-out notice and the repository offer read whole; take-out and preview tested across a restart (U-037)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "[blocking 1] The take-out conflict notice's title was cut whenever the task's title held ': '. The Inbox read '\"Write the README' with the rest of the title in the body, Home read 'Corner Shop: \"Write the README', and the notification had the same cut. Root cause: the notice had no words of its own. genericCard (request-words.ts) titles a card by firstSentence(why), and that regex stops at the first [.!?:] followed by a space, even inside quotes. The repository offer, which is this area's card too, had the same cause: a project named 'Birds: a counter' read 'Create a repository for \"Birds'.",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "packages/runtime/test/take-out.test.ts \"a conflict files one notice whose title survives a colon in the task's title: the Inbox, Home and the notification read the whole title, then one sentence (review of merged-actions)\" (received '\"Write the README'); packages/runtime/test/repo-create.test.ts \"the offer reads as its question and one sentence, whatever the project's name holds (review of merged-actions: a colon cut the title)\" (received 'Create a repository for \"Birds'); apps/ui/test/tasks.test.tsx \"the conflict's Inbox card and Home's line name the whole task when its title holds a colon (review of merged-actions)\" (fails with the new request-words branch turned off). apps/ui/test/real-daemon.test.ts squash/conflict case now uses the title 'Set the price: one franc' and asserts the inbox title, body and Got it.",
+            "how": "Each card now has its own words branch in request-words.ts, which is how every area adds its card's words.\n- takeOutNoticeCard (key TAKE_OUT_NOTICE_PREFIX, now in daemon/take-out-words.ts):\n  - title '\"<title>\" could not be taken out' (q() cuts a long title at a word);\n  - body takeOutConflictBody(files);\n  - Got it, with the line 'Closes this card; its work stays in main.';\n  - once closed: 'Nothing changed: \"<title>\" stays in main.'\n  - TaskTakeOut.notice stores change_card {key, task_id, task_title, files}.\n  - takeOutConflictSentence is still the POST answer and the card's why. It is now built from takeOutConflictBody.\n- repoOfferCard (key repo:create:):\n  - title repoOfferQuestion(project name read now), body REPO_OFFER_BODY;\n  - a line under 'Create the repository' and under 'Not now';\n  - repo-create.ts builds its why from the same two exports.\n- task-words' isTakeOutNotice now uses the shared prefix.\n- The fake daemon files the same notice on a conflict: one per task while it is open, worded by requestWords.\n- Docs: ADR 0097 and ADR 0113 amended; runtime.md and apps.md updated; user guide updated.",
+            "check_in_the_app": "Bench (--provider bench --githost): a project on bench/seeded is planned and run. The README PR is merged in the app, then README.md's lines are edited on main. Take this work out on 'Write the README: what the page does and how to open it' then shows:\n- the Tasks line gives the conflict sentence, with no 'In Changes' link;\n- the Inbox card title is '\"Write the README: what the page does and how to…\" could not be taken out';\n- the card body is 'Later work changed the same lines in README.md: undo it on GitHub by hand, or ask in Chat for a task that does it.', with Got it and its line;\n- Home reads 'Corner Shop: \"Write the README: what the page does and how to…\" could not be taken out';\n- after Got it: 'Done: Nothing changed: \"Write the README: …\" stays in main.'\nA project without a repository named 'Kiosk: board' gets the card 'Create a repository for \"Kiosk: board\"?', the sentence below it and a line under each button. GitHub's repositories stay unchanged.\n\nBefore: /tmp/frbench/review-merged-actions/steps/15-inbox-conflict-notice.png, 16-home-after-conflict.png.\nAfter: /tmp/frbench/fixup-merged-actions-walk/after-steps/03-tasks-take-out-conflict-answer.png, 04-inbox-take-out-conflict-notice.png, 05-home-needs-you-line.png, 11-inbox-after-got-it.png, 12-inbox-repository-offer.png, 13-home-after-the-offer.png.\n\nLIVE CHECK (live check 1, second chain, phaseE7-live.md): if the squash-merged page is taken out after its dependent (a change to the same page) has merged, the take-out conflicts by design. Expected:\n- the Inbox notice title reads '\"<page task title>\" could not be taken out' whole, even when the title holds ': ';\n- the body names the files, and Got it closes the card;\n- Home's line reads '<project>: \"<title>\" could not be taken out';\n- nothing is pushed to GitHub.\nTo see the revert PR itself, take the page out BEFORE merging the dependent, or give the dependent other lines to change. Extra live check: a project without a repository named with a colon (e.g. 'Kiosk: board') and a coder task. After planning, the Inbox card reads 'Create a repository for \"Kiosk: board\"?' with the sentence and the two button lines, and nothing is created on GitHub. Press Not now."
+          },
+          {
+            "problem": "[blocking 2] Validation rule 4: the new persisted state was never read back by a daemon started again on the same home. That state is: the merge record's take_out_pr_number, take_out_pr_url and take_out_state (migration 0007); the preview's preview.json; and the preview's git worktree beside the copy. The real-daemon test's comment claimed 'after a restart of the view too'.",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts \"the UI client against the real daemon: a take-out and a preview survive a restart (merged-actions, validation rule 4)\" is new and passed the first time it ran. The reviewer showed the code was already right on the bench, so this closes a test gap, not a bug.",
+            "how": "A new describe composes the runtime twice on one home with file state (sqlite:<home>/state.sqlite), using the testenv fake GitHub.\n\nBefore the restart:\n- two tasks are merged in the app and taken out (both PRs left open);\n- a third PR waits, with Open this version.\n\nAfter the restart it checks:\n- both rows still read 'Taken out in #N (waiting for you to merge)';\n- the Overview lists the take-out (kind take_out, Merge ready);\n- the preview row is there with the same folder and sentence, and the folder holds its files;\n- a second press is refused with 'is being taken out in #N';\n- main is untouched;\n- #m merged on GitHub is settled by the Overview's next read to 'Taken out in #m';\n- Merge of #n in the app gives 'Taken out in #n', and the work leaves main;\n- merging the previewed PR in the app removes its folder, and no row offers a preview.\nThe misleading comment in the existing test now points here. The test waits for events or for state (eventually, up to 30 s), never for how long real work takes. Its runtimes and fake host are closed in a finally block.",
+            "check_in_the_app": "Bench, after restart-daemon.mjs:\n- Tasks: 'Taken out in #7 (waiting for you to merge)' (/tmp/frbench/fixup-merged-actions-walk/after-steps/08-tasks-after-restart.png).\n- Overview: '#4 as it would be merged. Changes here are not kept.' with its folder, and the take-out #7 under 'Taking work out' with Merge (09-overview-after-restart.png).\n- Merge #7: the row reads 'Taken out in #7', and main lost index.html only.\n- Merge #4: the preview folder is gone (10-tasks-after-merging-the-take-out.png).\n\nLIVE CHECK (live check 1 step 5):\n1. After Take this work out on the footer opens its PR (and after Open this version on any still-waiting PR), quit the desktop app and start it again.\n2. The footer row still reads 'Taken out in #N (waiting for you to merge)'.\n3. The Overview still lists 'Take out: <footer>' under 'Taking work out' with Merge, and the preview line and folder are still there.\n4. Close the take-out PR on GitHub. Within about a minute (the watcher's next poll; no Overview read needed) the row reads 'Merged' and offers Take this work out again."
+          },
+          {
+            "problem": "[non-blocking, fixed] Four smaller items.\n1. A one-commit PR rebase-merged on GitHub was named 'squash-merged' in the take-out PR's body. Git cannot tell a one-commit squash from a one-commit rebase.\n2. The take-out's clone (<worktreeRoot>/<task>-take-out) was never removed: a full clone per task stayed on disk.\n3. The Tasks line after a take-out answer linked 'In Changes', although the take-out is not logged there.\n4. The fake daemon drifted from the real one: builtOn named direct dependents only, the refusal sentences differed, and the conflict filed no Inbox notice. The api-types doc comments of TaskTakeOutAnswer and PullRequestPreviewAnswer were swapped.",
+            "u_ids": [
+              "U-037"
+            ],
+            "failing_test_before": "packages/capabilities/test/take-out.test.ts \"a pull request of one commit %s-merged: its one commit is taken back, and git cannot tell the way apart, so it is not named\" (rebase and squash; no `sure`) and the clone-gone assertions added to the merge/squash/rebase cases and the conflict case (4 failed before); packages/runtime/test/take-out.test.ts \"a pull request of one commit, whose squash and rebase git cannot tell apart, is said to be merged, not squash-merged\"; apps/ui/test/tasks.test.tsx \"a conflict with later work is said above the list in words ...\" (new In Changes assertion).",
+            "how": "1. takeOutPlan returns sure: false when one commit was copied (squash and rebase leave the same shape). TakeOutGitResult 'pushed' carries `sure`, and TaskTakeOut's mergedHow says 'merged' when it is false. Multi-commit squash and rebase still say 'squash-merged' and 'rebase-merged'.\n2. PrTaskExecutor.takeOut runs its git in takeOutIn and removes the clone in a finally block (rmSync with maxRetries; a failure is logged).\n3. TasksTab's Moved gains inChanges, set to false for take-out answers.\n4. fake-daemon.ts: refusals as TaskTakeOut says them, a transitive builtOn, and the notice filed. api-types comments moved.\n\nDocs:\n- capabilities.md, runtime.md and the user guide say this.\n- ADR 0113 and runtime.md now say that a take-out merged or closed on GitHub is read at the watcher's next poll. The reviewer's claim was right: githost-watcher.ts reportDefaultHeads runs every poll for every repository project, and compose's onDefaultBranchHead calls takeOut.settle(project, null). The fixer's 'known gap' was wrong.",
+            "check_in_the_app": "Bench: the take-out answer's line has no 'In Changes' link (03-tasks-take-out-conflict-answer.png, 06-drawer-take-out-opened.png). After each take-out, /tmp/frbench/fixup-merged-actions/home/worktrees had no '*-take-out' folder (walk-state.json takeOutClones: [], takeOutClones2: []).\n\nLIVE CHECK (live check 1, second chain): open the squash take-out's PR on GitHub.\n- The body says '(#N, squash-merged)' when the squashed PR had two or more commits.\n- It says '(#N, merged)' when the PR had one commit (git cannot tell a one-commit squash from a rebase).\n- The diff is exactly the inverse of the squash commit. Do not merge it."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "Windows: if a person keeps a file open in the preview folder (an editor), 'git worktree remove' and rmSync fail. The next Open this version is then refused with '...could not be put on this computer. Try again...', which does not say a file is open.",
+            "why": "It needs a Windows-specific error mapping and a test on Windows CI (rule 5). This was not reached in this fixup. Polish, or a Windows CI case."
+          },
+          {
+            "problem": "At Autopilot, the chat's repo_create files a second Inbox card for the same repository, beside the offer. It is titled 'a GitHub repository for <name>', with lowercase yes/no buttons and no consequence lines.",
+            "why": "It is the existing look of a pending chat command card (request-words' genericCard ask branch, which belongs to chat and polish). Folding it into the offer is a design change for polish."
+          },
+          {
+            "problem": "Person-facing text hardcodes 'main' ('takes its changes out of main', 'Taking work out: merging one removes that work from main', the notice's 'its work stays in main').",
+            "why": "This matches merge-in-app's existing 'into main'. Using the default branch's name needs the project's branch in task-actions and request-words. Polish."
+          },
+          {
+            "problem": "After work is taken out of main, the project line still reads 'Done: all N tasks.'",
+            "why": "A 'true now' question for the owner or polish (project-status.ts belongs to polish)."
+          },
+          {
+            "problem": "Take this work out has no Undo on screen. Closing the PR on GitHub is the undo, and the screen does not say so.",
+            "why": "Owner-decided flow (ADR 0113). Saying it on screen is polish."
+          },
+          {
+            "problem": "Still as ADR 0113's known gaps, unchanged:\n- A Redo of a task whose take-out is still open forgets that take-out.\n- A dependent PR that GitHub merged with a merge commit carrying its dependency's commits is reverted whole by -m 1.\n- The conflict notice offers only Got it, with no 'Make a task of it'.",
+            "why": "Unchanged by this fixup. See the fixer's report."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+            "result": "exit 0: 469 test files, 4809 passed, 6 skipped. link-check ok (206 files), secret-scan clean (2058 files). docs:check cannot diff against origin/main inside the worktree."
+          },
+          {
+            "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (45 files)"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 73 skipped (Postgres without FORERUNNER_TEST_PG, as baseline)"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "exit 0: 13 files, 25 passed, 1 skipped (as baseline)"
+          },
+          {
+            "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+            "result": "84 files, 927 passed"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+            "result": "34 passed (51.4 s)"
+          },
+          {
+            "command": "vitest real-daemon.test.ts -t merged-actions (with the new restart describe)",
+            "result": "4 passed"
+          },
+          {
+            "command": "fail-before checks",
+            "result": "Failed before the fix:\n- take-out.test.ts conflict-notice case: title '\"Write the README';\n- repo-create.test.ts offer case: 'Create a repository for \"Birds';\n- tasks.test.tsx Inbox/Home case: failed with the request-words branch turned off;\n- capabilities take-out.test.ts: 4 cases failed on the clone still being there;\n- runtime take-out.test.ts: the one-commit case said squash-merged.\nAll pass after the fix."
+          },
+          {
+            "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+            "result": "not run: the desktop shell was not touched"
+          },
+          {
+            "command": "bench walk (--provider bench --githost 48361, daemon 48360, UI 1960) with /tmp/frbench/fixup-merged-actions-walk/walk1.cjs, walk1b.cjs, restart-daemon.mjs, walk2.cjs",
+            "result": "All checks passed, 0 page problems:\n- The conflict notice title and Home line read whole for 'Write the README: what the page does and how to open it'.\n- A second press filed no second notice; main was untouched; Got it gave 'Nothing changed: ... stays in main.'\n- A take-out from the drawer opened #7 and named 4 tasks with 'and 1 more'.\n- After the daemon restart: the row and the Overview's take-out with Merge were back, and the #4 preview folder was still there.\n- Merge #7 gave 'Taken out in #7', and main lost index.html.\n- Merging #4 removed its folder.\n- 'Kiosk: board' got the offer titled whole, with the button lines, and no repository was created.\n- No take-out clone was left on disk.\nThe bench was stopped and its home and githost deleted; screenshots and state are in /tmp/frbench/fixup-merged-actions-walk/."
+          },
+          {
+            "command": "git status; git grep '^<<<<<<< '; git rev-parse fix/merged-actions",
+            "result": "Worktree clean (apps/ui/playwright.local.config.ts is git-ignored), no conflict markers. fix/merged-actions = HEAD db5ee6d."
+          }
+        ],
+        "tests_changed_for_design": [
+          {
+            "test": "apps/ui/test/real-daemon.test.ts \"a pull request squash-merged on GitHub: Take this work out reverts the squash ...\"",
+            "why": "The squash case's PR now has two commits (doneTask's new `second` option). A one-commit squash is now said to be 'merged', because git cannot tell it from a rebase (the reviewer's non-blocking finding), so the test keeps checking '(#N, squash-merged)' on a squash git can name. Its conflict part now uses the title 'Set the price: one franc' and also asserts the Inbox card's title, body and Got it. These are stronger assertions, none removed."
+          },
+          {
+            "test": "packages/capabilities/test/take-out.test.ts \"a pull request %s: main's tree after merging the take-out equals main's before the merge\" and the conflict case",
+            "why": "They now also assert sure: true, and that the clone is gone after the take-out (the removal added in this fixup). These are stronger assertions."
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/review-merged-actions/steps/15-inbox-conflict-notice.png",
+            "/tmp/frbench/review-merged-actions/steps/16-home-after-conflict.png"
+          ],
+          "after": [
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/03-tasks-take-out-conflict-answer.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/04-inbox-take-out-conflict-notice.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/05-home-needs-you-line.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/06-drawer-take-out-opened.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/07-overview-open-this-version-before-restart.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/08-tasks-after-restart.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/09-overview-after-restart.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/10-tasks-after-merging-the-take-out.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/11-inbox-after-got-it.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/12-inbox-repository-offer.png",
+            "/tmp/frbench/fixup-merged-actions-walk/after-steps/13-home-after-the-offer.png"
+          ]
+        },
+        "new_problems": [
+          "request-words.ts firstSentence (used by genericCard for every card without its own words) cuts at the first ': ', '. ' or '? ' even inside a quoted task title. Any other area's generic card that quotes a title holding a colon breaks the same way: in the Inbox, on Home and in the notification. Example: a chat change card's ask 'Pause \"Write the README: what the page does…\"? No session runs it until you press Resume.' would be titled 'Pause \"Write the README'. This fixup gave only this area's two cards their own words, as shared_files allows. A general fix for group 6 polish: make firstSentence skip quoted spans, e.g. /^((?:\"[^\"]*\"|[^\"])+?[.!?:])(\\s|$)/, falling back to the whole text cut at 90 characters, and test it with a colon title on a chat-asked card.",
+          "Judged the fixer's not_done item wrong, with evidence: 'a take-out closed on GitHub without merging is read only at the Overview's next read'. githost-watcher.ts:462 calls reportDefaultHeads at every poll; it reports every repository project unconditionally (:483-515). compose's onDefaultBranchHead calls takeOut.settle(project, null), which asks the host about each open take-out. A close is therefore read within one poll, at the cost of one GET per open take-out per project per minute. The docs were corrected in ADR 0113 and runtime.md; the code was already right."
+        ],
+        "notes_for_other_areas": [
+          "Group 6 polish can use these:\n- packages/runtime/src/daemon/take-out-words.ts now also exports TAKE_OUT_NOTICE_PREFIX and takeOutConflictBody(files). takeOutConflictSentence = quoted(title) + ' could not be taken out by itself. ' + takeOutConflictBody(files).\n- loop/take-out.ts re-exports TAKE_OUT_NOTICE_PREFIX.\n- request-words.ts exports repoOfferQuestion(projectName) and REPO_OFFER_BODY; repo-create.ts builds its why from them.\n- request-words.ts has two private card branches, takeOutNoticeCard and repoOfferCard, with takeOutNoticeOutcome 'Nothing changed: \"<title>\" stays in main.'. Polish may reword them; the tests are packages/runtime/test/take-out.test.ts, repo-create.test.ts and apps/ui/test/tasks.test.tsx.",
+          "The take-out notice's change_card is now {key, task_id, task_title, files}; the fixer's version had {key, task_id, title}. A reader of the old field: request-words falls back to card.title.",
+          "packages/capabilities: TakeOutGitResult 'pushed' has an optional `sure` (absent means true), and takeOutPlan returns `sure`. PrTaskExecutor.takeOut now does its git in a private takeOutIn and removes <worktreeRoot>/<task>-take-out afterwards. Nothing should expect that clone to persist.",
+          "apps/ui TasksTab.tsx: Moved has inChanges?: boolean. When false, the moved line drops the 'In Changes' link. Use it for any answer the change log has no row of.",
+          "apps/ui/test/fake-daemon.ts: on state.takeOutConflict, POST /tasks/:id/take-out files the notice (kind info, no taskId, worded by requestWords). Its refusals and builtOn (transitive) match TaskTakeOut.",
+          "apps/ui/test/real-daemon.test.ts: the merged-actions describe's doneTask takes `second` (a second commit). A new describe, 'a take-out and a preview survive a restart', composes twice on one home: a pattern for other restart tests that need the fake GitHub."
+        ]
+      }
+    },
+    {
+      "key": "sites",
+      "fix": {
+        "area": "sites",
+        "branch": "fix/sites",
+        "head_sha": "efcda92820bab98b48d767f28a963f01365e9827",
+        "commits": [
+          {
+            "sha": "85923e6f05f0fc46403f58526859a3b8e74c2db0",
+            "subject": "sites: the page reader never reads this PC or the home network; only/never rules with subdomains; a loopback seam for the bench only"
+          },
+          {
+            "sha": "37c96e14a19188eb4affde6a6c60ca2778b2cbce",
+            "subject": "sites: \"Web pages research may read\" in Settings and on the Overview, one stored block list"
+          },
+          {
+            "sha": "d297f97197025358146381b0a8164b803c597604",
+            "subject": "sites: Forerunner's page reader on the subscription, WebSearch kept to the project's rule, the wrapper on both outputs; the rule in the brief and the plan"
+          },
+          {
+            "sha": "34150819820a48ecc25f6372e54d9df7a2cce3eb",
+            "subject": "sites: the ADR 0107 amendment, the user guide without internal names, the maintainer docs; the planner's no-web rule follows the reader"
+          },
+          {
+            "sha": "c53c416b6d7d1bdb7d805e407a08d4bf1c1a74b9",
+            "subject": "sites: the agent browser starts with Chromium's own sandbox; a navigation interrupted by the same page is asked for again (W6-30, R-9)"
+          },
+          {
+            "sha": "c576412",
+            "subject": "Merge branch 'claude/nifty-knuth-f9udt0' into fix/sites (b7f95df, the session lead's NEXT-SESSION.md update only)"
+          },
+          {
+            "sha": "efcda92820bab98b48d767f28a963f01365e9827",
+            "subject": "sites: the Settings screen's row count in the Playwright palette walk counts \"Web pages research may read\""
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "[major] The site list meant the opposite of its name: browser.allowedDomains let a listed host be read on a private address, and 'localhost' or '127.0.0.1' on it opened this PC (Forerunner's daemon included) to research. Also: no 'only these sites' mode; blocking facebook.com did not block www.facebook.com; a trailing dot slipped past a block (C-70); 6to4 addresses were not judged as the IPv4 they carry.",
+            "u_ids": [
+              "Q6 (owner decision 2026-11-02)",
+              "C-70"
+            ],
+            "failing_test_before": "packages/capabilities/test/web-fetch.test.ts \"never reads this computer or the local network, whatever the project's lists say\", \"a never-list entry covers the site and its subdomains, with or without a trailing dot\", \"'only these websites' reads its sites and their subdomains and refuses every other one, naming the rule\", the 6to4 rows of \"this computer, private, shared...\"; packages/runtime/test/web-access.test.ts \"without the seam, 127.0.0.1 is refused whatever the environment or the lists say\"",
+            "how": "capabilities/src/web/policy.ts rewritten: WebReadRules {mode any|only, only, never}; the reader's own matcher siteCovers (site + subdomains, case, '*.', leading www., trailing dot normalised; hostOfUrl strips one trailing dot); local names (no dot, *.local, *.internal, *.lan, *.home.arpa, localhost...) refused before any lookup; addressAllowed is public-only (no list opens a private address); embeddedIpv4 handles 6to4 2002::/16. Refusals name the rule ('<host> is on this project's \"never these websites\" list', '<host> is not on this project's \"only these websites\" list (<sites>)'). enforcement/token.ts domainCovered is unchanged (web-access.test.ts checks it). The rule comes per call from wiring/web-access.ts webAccessOf through web-ports.ts webReadRulesResolver.",
+            "check_in_the_app": "Bench (done, --provider bench): BEFORE on a9d4b76 a project with browser.allowedDomains ['localhost'] had a researcher read http://localhost:<daemon port>/health (drawer 'Read: http://localhost:48341/health') and with blockedDomains ['example.com'] read https://www.example.com/. AFTER: Overview → 'Research reads: any public website · Change' → Change → Only these websites → 'https://www.example.com/page' → Preview and apply → research task naming https://www.example.com/ and https://www.wikipedia.org/ → drawer 'Read: Example Domain (https://www.example.com/)' and 'Not read: https://www.wikipedia.org/ (Refused: www.wikipedia.org is not on this project's \"only these websites\" list (example.com))'. LIVE (session lead, bench-live has no loopback seam): new project, researcher task 'research/health.md says what http://localhost:<daemon port>/health answers' → drawer says 'Not read: ... (Refused: localhost is a name on this computer or the local network; research reads public web pages only)'; a task naming https://www.<blocked site>/ under a never entry '<blocked site>' is refused naming the never list."
+          },
+          {
+            "problem": "[major] No screen set either list (C-66), an entry pasted as 'https://example.com/page' was dropped without a word, and blocks could be written in two places (PUT /projects/:id/settings browser.blockedDomains and the new setting).",
+            "u_ids": [
+              "Q6",
+              "C-66"
+            ],
+            "failing_test_before": "apps/ui/test/web-access.test.tsx (all three cases); apps/ui/test/real-daemon.test.ts \"'Web pages research may read' ('sites'): PUT's old block list becomes the one never list, settings.set changes the next page read, and the Overview carries the line\"; packages/runtime/test/web-access.test.ts \"settings.set stores the cleaned rule, the next daemon enforces it, and Undo puts the old rule back\"",
+            "how": "settings.set web_access {mode, only, never} (packages/commands SETTING_SPECS): every entry through the one clean-up cleanSiteList (lowercase; scheme/path/port/trailing dot/leading www. off; punycode; IP, local name and in 'only' a public suffix such as co.uk/github.io refused with the reason), stored cleaned; 'only' may not be empty. New SettingSpec fields: narrowingActsAtOnce (settings.set's risk is low when webAccessNarrows(value, rule in force) holds, else medium = a yes), currentOf (the rule in force incl. legacy browser.blockedDomains), writeAlso (the write moves those blocks), plainRefusals. PUT /projects/:id/settings takes browser.blockedDomains into web_access.never in the same write with a 'project.settings' audit row and refuses web_access itself (403 approval_required). GET /settings has the row 'Web pages research may read' per project (says the agent browser's list is separate; adds the proxy condition when HTTPS_PROXY/HTTP_PROXY is set). ProjectCard.researchReads ('Research reads: any public website'); SummaryTab.tsx ResearchReads component (own component, not RepositoryFiles) with Change opening the same SettingChangeDialog; apps/ui/src/pages/WebAccessInput.tsx shows 'Saved as: ...', each 'X becomes Y' and each 'Not taken: X is ...' before Save and disables Save while anything is refused. browserSettingsOf().blockedDomains is the same list (site and *.site) for the agent browser; a pasted URL on either browser list is read as its host. Fake daemon mirrors row, command, card line and PUT.",
+            "check_in_the_app": "Bench (done): Settings → Advanced → Per project shows 'Web pages research may read · Any public website' with the sentence about the agent browser's own list; Overview shows 'Research reads: any public website · Change'; the dialog showed 'https://www.example.com/page becomes example.com' and 'Not taken: 192.168.1.1 is an IP address: name the website instead.' with Preview and apply disabled; after removing the IP, Apply was done at once (no yes) and the line became 'Research reads: only example.com'; PUT {browser:{blockedDomains:['*.iana.org']}} answered settings.web_access.never ['iana.org'] and no browser key. LIVE (phaseE7-live.md check 4 part 5): set 'Only these websites: developer.mozilla.org' from the Overview's Change (type 'https://developer.mozilla.org/en-US/'; it shows 'becomes developer.mozilla.org'; applied at once); Settings row and project line show it; switching back to Any public website asks a yes."
+          },
+          {
+            "problem": "[major] On the subscription no page was opened (Claude Code's WebFetch checked against the run's empty domain list; no tool server for Forerunner's reader), web text reached the model without the 'information, not instructions' wrapper (updatedMCPToolOutput is MCP-only), and the critic got no pages from a subscription run.",
+            "u_ids": [
+              "Q5 (subscription half)",
+              "Q6"
+            ],
+            "failing_test_before": "packages/runtime/test/sites-subscription.test.ts \"offers mcp__forerunner__web_fetch (WebFetch off), gives WebSearch the project's lists, wraps both outputs, and the critic gets the page\" and \"never: joins blocked_domains ... only: the overlap, or a refusal in words\"; packages/runtime/test/sdk-driver.test.ts \"says plainly when Claude Code's init message lacks Forerunner's page reader or web search\"",
+            "how": "specialistSpecFrom's pageReader maps an SDK entry's cc:WebFetch to web_fetch (without the reader the entry gets neither cc:WebFetch nor cc:WebSearch). SdkAgentDriver offers SDK_SERVER_TOOLS (web_fetch) through the SDK's in-process tool server (createSdkMcpServer with alwaysLoad; SdkDriverDeps.toolServer / ComposeOptions.sdkToolServer seam), its handler running the tool in the daemon with the run's ToolExecutionContext; disallowedTools ['WebFetch'] and CLAUDE_CODE_DISABLE_WEB_FETCH=1. PreToolUse gives WebSearch the rule via updatedInput (webSearchInputFor) or denies it in words; PostToolUse uses updatedToolOutput (WebSearch's results become the wrapped text; MCP reader text with updatedMCPToolOutput beside it). The init message's tools are checked (run warning when the reader or search is missing). The executor's SDK branch wraps tools with withWebSourceLog and keeps webSourceArtifact; brief gets SDK_WEB_SEARCH_LINE + SEARCH_INFO_LINE.",
+            "check_in_the_app": "Not walkable here (no Claude Code binary or subscription token in the cloud); composed test with a fake SDK. Owner's checklist step 6 (subscription first in Settings → Claude: which to use first): run a research task; the session log has 'read the web page <host>/<path>' lines (Forerunner's reader) and no 'Claude Code did not load Forerunner's page reader on this run' warning; the drawer lists 'Read: ...' pages; with 'Only these websites: developer.mozilla.org' a page elsewhere is 'Not read: ... (Refused: ... \"only these websites\" ...)' and searches return only that site; the review mentions the pages it was shown."
+          },
+          {
+            "problem": "[major] Research went to the API key whenever one was saved (the subscription could not read pages, C-64), with search-only words (SEARCH_ONLY_LINE, SEARCH_ONLY_LIMITATION, NO_PAGES_LIMITATION, RuntimeApp.webSearchOnly) on the plan card, New task and Settings.",
+            "u_ids": [
+              "Q6 ('your credential order applies again')",
+              "C-64"
+            ],
+            "failing_test_before": "packages/runtime/test/subscription-path.test.ts \"a researcher's task follows the person's order to the subscription, where it reads pages through Forerunner's reader ('sites', was C-64)\" (before: it went to the key); apps/ui/test/real-daemon.test.ts chooser/C-64 blocks",
+            "how": "capabilitiesOf's subscription entry: webRead and webSearch = ChooserFacts.subscriptionPages, composed as webFetchOn (DEFAULT_CHOOSER_FACTS true); SEARCH_ONLY_LINE, SEARCH_ONLY_LIMITATION, NO_PAGES_LIMITATION and RuntimeApp.webSearchOnly removed with their words in NewTaskDialog.tsx and BillingOrderSection.tsx; RuntimeApp.webAccess and the intake's webSpecialists are webFetchOn.",
+            "check_in_the_app": "Bench-api or the fake: Settings → Advanced → Claude: which to use first → What each can do here reads 'Read web pages: Yes | Yes'. With both credentials and the subscription first, a researcher task on New task and the plan card has no runs-on line. LIVE: owner's checklist step 6 confirms research runs on the subscription."
+          },
+          {
+            "problem": "[major] The server search and the brief/plan did not know an 'only these websites' rule.",
+            "u_ids": [
+              "Q6"
+            ],
+            "failing_test_before": "packages/runtime/test/web-access.test.ts \"web search gets 'only' as allowed_domains, otherwise the never list as blocked_domains, never both\"; apps/ui/test/real-daemon.test.ts \"'Only these websites' reaches the planner\"",
+            "how": "web-ports.ts webSearchListsOf: only → allowedDomains (serverDomainOf), else never → blockedDomains, never both; key names the rule; 'withheld' (a never entry inside an only entry) leaves search out of the run with a log line. executor adds webAccessBriefLine (the rule + 'say in the report which pages you could not read because of this rule'); intake.ts onlyWebsitesLines in the planning request.",
+            "check_in_the_app": "Bench-api (done): 'Only these websites: example.com' via settings.set → api-requests.jsonl webSearch {max_uses 10/9, allowed_domains ['example.com']}, the stand-in's pages on 127.0.0.1 were 'Not read: ... (Refused: 127.0.0.1 is not on this project's \"only these websites\" list (example.com))'; with the PUT block '*.example.org' the request had blocked_domains ['example.org']. LIVE check 4: model-call log researcher lines have webSearch {maxUses<=10, allowedDomains:['developer.mozilla.org']} and no blockedDomains; the intake request contains 'Web access: this project's research reads only these websites and their subdomains: developer.mozilla.org'; the report names the rule for any page it could not read."
+          },
+          {
+            "problem": "[minor] A PC that reaches the internet only through a proxy read no page and said '<host> was not found (no such host, or no network).'",
+            "u_ids": [
+              "Q5 proxy sentence"
+            ],
+            "failing_test_before": "packages/capabilities/test/web-fetch.test.ts \"on a computer with a proxy set, a failed connection says the reader does not use it\"; packages/runtime/test/web-access.test.ts \"on a computer with a proxy set, the Settings row says the reader does not use it\"",
+            "how": "fetch.ts proxySetIn(env) (HTTPS_PROXY/HTTP_PROXY/ALL_PROXY, any case); a connection that never reached the site adds PROXY_SENTENCE ('This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works.'). The Settings row adds a conditional form (PROXY_ROW_WORDS) because a machine can name a proxy and still reach sites directly (this bench did). Windows system proxy not read (cut line).",
+            "check_in_the_app": "Settings → Advanced → Per project → 'Web pages research may read' on a PC with HTTPS_PROXY set mentions the proxy; a refused page on such a PC ends with the proxy sentence."
+          },
+          {
+            "problem": "[minor] Tests and the bench reached a local page by putting 127.0.0.1 on the site list; closing the hole needed a seam no person can reach.",
+            "u_ids": [
+              "Q6 seam"
+            ],
+            "failing_test_before": "packages/runtime/test/web-access.test.ts \"--provider bench and bench-api compose with it; bench-live, fake, anthropic and an installed app never do\" (webReadLoopbackFor did not exist)",
+            "how": "ComposeOptions.webReadLoopback (reader option loopback: 127.0.0.0/8, ::1, the name localhost; never the local network) set only by cli/main.ts webReadLoopbackFor for --provider bench and bench-api; research-web.test.ts, web-fetch.test.ts, real-daemon.test.ts (composeWithRolePlayer and the bench-api search case) and scripts/bench/README.md moved onto it; a bench-live dry run against a local stand-in is replaced by bench-api in the README.",
+            "check_in_the_app": "Bench (done): --provider bench and --provider bench-api read their 127.0.0.1 stand-in pages with no site list (the bench-api web-search walk read alpha and beta). LIVE: bench-live refuses http://127.0.0.1:<any>/ in the drawer."
+          },
+          {
+            "problem": "[minor] C-71/W6-29: the user guide said the subscription uses Claude Code's own web tools, that no screen sets the lists, and told the person to set FORERUNNER_WEB_FETCH=off.",
+            "u_ids": [
+              "C-71",
+              "W6-29"
+            ],
+            "failing_test_before": "none (docs); docs-check passes",
+            "how": "docs/user-guide.md research section rewritten: the setting in words, both credentials, the table 'Yes | Yes', the proxy limit, no environment variable; ADR 0107 amendment (2026-11-08, the owner's decision of 2026-11-02) and maintainer docs.",
+            "check_in_the_app": "Read docs/user-guide.md 'Research reads the web on both credentials' and 'Where a task runs'."
+          },
+          {
+            "problem": "[major] W6-30: the agent browser launched Chromium without its own sandbox (Playwright's default) while browsing the open web.",
+            "u_ids": [
+              "W6-30"
+            ],
+            "failing_test_before": "packages/capabilities/test/browser-profile.test.ts \"asks for chromiumSandbox: true and keeps it when Chromium starts with it\" and \"falls back without it only where it cannot start, and says why\"",
+            "how": "profile.ts launchAgentBrowser launches with chromiumSandbox: true, falls back only where that cannot start (for that and later launches), logs why and returns LaunchedProfile.unsandboxed; LaunchProfileOptions.launchContext seam.",
+            "check_in_the_app": "No person-visible change; on Linux as root the daemon log has 'the agent browser runs without Chromium's own sandbox on this computer' with the browser's line."
+          },
+          {
+            "problem": "[minor] R-9: BrowserSession.goto failed intermittently with 'interrupted by another navigation to /chain' after a blocked redirect.",
+            "u_ids": [
+              "R-9"
+            ],
+            "failing_test_before": "packages/capabilities/test/browser-profile.test.ts \"retries after Chromium's error page and after a navigation to the same address, never another\" (helper did not exist); browser.integration.test.ts 'aborts subresources and redirects...' failed 2 of 10 on 2622e74",
+            "how": "navigationInterruptedRetry also takes an interruption by a navigation to the same address; goto tries at most GOTO_INTERRUPTED_TRIES (3) times, the page settling between tries. The integration test is unchanged.",
+            "check_in_the_app": "Here: 1 failure in 10 runs with the one-retry version (message not captured), then 20 of 20 with three tries."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "Reading the Windows system proxy setting, and reading pages through a proxy",
+            "why": "The spec's cut line: environment variables only, and only the plain sentence is built (reading through a proxy is left out by the owner's decision)."
+          },
+          {
+            "problem": "The task drawer listing the search results a run saw but never opened (TaskExecutionResult.searchSeen)",
+            "why": "Optional in web-search's hand-over ('can add'); the critic already gets them, JSON-quoted. Needs an api-types field, the fake daemon and TaskDrawer; left for polish."
+          },
+          {
+            "problem": "Live checks: the 'only these websites' part of live check 4, the subscription reader (alwaysLoad tool server, updatedToolOutput on WebSearch and the MCP reader, WebSearch honouring hook-set lists) and the localhost refusal on bench-live",
+            "why": "This task forbids bench-live, real keys and subscription tokens; every case ran on the stand-in or in composed tests with a fake SDK. Steps are in check_in_the_app."
+          },
+          {
+            "problem": "The MCP reader's handler re-checking the token itself",
+            "why": "PreToolUse (beforeToolCall) checks the allowlist before Claude Code calls the handler, and the reader enforces its own URL rules and audits refusals; a second check in the handler would double-count steps. Noted as defence in depth for review."
+          },
+          {
+            "problem": "R-9 root cause fully proven",
+            "why": "The one failure seen after the first change was not captured; 20 of 20 passed after the three-try change. The integration test was not changed or retried."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+            "result": "exit 0; unit 468 files / 4817 passed, 6 skipped; docs:check inside check cannot diff against origin/main here (baseline behaviour), run separately below; links ok (206 files); secret scan clean (2057 files)"
+          },
+          {
+            "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (54 files)"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "11 files: 5 passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 passed, 73 skipped"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "13 files passed; 25 passed, 1 skipped (as baseline)"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "85 files, 923 passed"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+            "result": "33 passed, 1 failed (palette row count 18 vs 20: changed for the design), then e2e/palette.spec.ts re-run after the update: 2 passed; 34 of 34"
+          },
+          {
+            "command": "vitest run --project integration packages/capabilities/test/browser.integration.test.ts -t 'aborts subresources and redirects' (x30)",
+            "result": "one-retry version: 23 of 24 (1 fail, uncaptured); three-try version: 20 of 20"
+          },
+          {
+            "command": "git grep -n '^<<<<<<< '",
+            "result": "nothing"
+          },
+          {
+            "command": "cargo fmt/clippy/test",
+            "result": "not run: the desktop shell was not touched"
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/fix-sites/evidence/shots/01-before-project-overview.png",
+            "/tmp/frbench/fix-sites/evidence/shots/02-before-settings-per-project.png",
+            "/tmp/frbench/fix-sites/evidence/shots/03-before-drawer-check-the-local-service.png",
+            "/tmp/frbench/fix-sites/evidence/shots/04-before-drawer-read-the-blocked-site.png"
+          ],
+          "after": [
+            "/tmp/frbench/fix-sites/evidence/shots/01-after-overview-research-line.png",
+            "/tmp/frbench/fix-sites/evidence/shots/02-after-settings-row.png",
+            "/tmp/frbench/fix-sites/evidence/shots/03-after-dialog-cleaned-and-refused.png",
+            "/tmp/frbench/fix-sites/evidence/shots/04-after-dialog-done-narrowing-at-once.png",
+            "/tmp/frbench/fix-sites/evidence/shots/05-after-overview-only-example.png",
+            "/tmp/frbench/fix-sites/evidence/shots/06-after-drawer-only-rule.png",
+            "/tmp/frbench/fix-sites/evidence/shots/07-after-report-names-the-rule.png",
+            "/tmp/frbench/fix-sites/evidence/shots/07-api-task-drawer.png",
+            "/tmp/frbench/fix-sites/evidence/shots/09-api-only-drawer.png"
+          ]
+        },
+        "new_problems": [
+          "credential-choice.ts choiceLine's 'it can search the web here but not open pages yet' sentence is now unreachable (the subscription searches only beside the reader); dead words for polish to remove.",
+          "The bench-api stand-in search ignores allowed_domains/blocked_domains and returns its configured results, so the bench cannot show server-side filtering (the request carries the lists; api-requests.jsonl shows them).",
+          "This cloud machine names HTTPS_PROXY yet reaches sites directly: the reader's failure words add the proxy sentence to any connect failure here; the Settings row's wording is conditional for that reason.",
+          "The 'Web pages research may read' row description is long (one paragraph in Settings); polish may shorten it.",
+          "A built-in file tool's (Read) output on the subscription is still flagged, not rewritten (updatedToolOutput could now rewrite it in its shape); outside this area.",
+          "Pre-existing biome warnings (useOptionalChain etc.) in compose.ts and fake-daemon.ts at lines this area did not write."
+        ],
+        "notes_for_other_areas": [
+          "polish (group 6) depends on: packages/runtime/src/wiring/web-access.ts (WEB_ACCESS_SETTING, webAccessOf, cleanSite, cleanSiteList, siteCovers, webAccessWords, researchReadsLine, webAccessBriefLine, webAccessNarrows, moveLegacyBlocks, legacyBlocks, PUBLIC_SUFFIXES); apps/ui/src/pages/WebAccessInput.tsx (WebAccessInput, webAccessInitial, webAccessParams, webAccessDisplay, cleanDraft); SummaryTab.tsx ResearchReads; settings-view.ts row 'project.web_access' and PROXY_ROW_WORDS; ProjectCard.researchReads (api-types, views.ts projectCard).",
+          "Settings: SettingSpec gained narrowingActsAtOnce, currentOf, writeAlso and plainRefusals (packages/commands/src/commands/settings.ts); settings.set's risk is async and reads the value in force for keys with narrowingActsAtOnce. Other keys behave as before.",
+          "PUT /projects/:id/settings now refuses a web_access key (403 approval_required) and moves browser.blockedDomains into web_access.never with a 'project.settings' audit row; the fake daemon does the same.",
+          "Reader: WebFetchOptions.sites is now rules (WebReadRules {mode, only, never}); opts.loopback and opts.env (proxy); web.ANY_PUBLIC_WEBSITE, PROXY_SENTENCE, proxySetIn, isLoopbackAddress, isLocalName, siteCovers exported from @forerunner/capabilities web. WebReadPolicy no longer has 'named'/'allowed'.",
+          "Seam: ComposeOptions.webReadLoopback (tests and cli/main.ts webReadLoopbackFor for bench and bench-api only); ComposeOptions.sdkToolServer and SdkDriverDeps.toolServer for the SDK tool server. Any test that reads a page on 127.0.0.1 must compose with webReadLoopback: true.",
+          "SDK path: SDK_TOOL_SERVER 'forerunner', SDK_SERVER_TOOLS {web_fetch}, SdkServerTool, SdkToolServerFactory, webSearchInputFor (agent/sdk.ts); SdkRunRequest.webAccess; options carry disallowedTools ['WebFetch'], env CLAUDE_CODE_DISABLE_WEB_FETCH=1, mcpServers.forerunner; PostToolUse returns updatedToolOutput (and updatedMCPToolOutput for MCP tools). specialistSpecFrom's pageReader option maps cc:WebFetch on the SDK form.",
+          "Chooser: ChooserFacts.subscriptionPages is composed as webFetchOn and DEFAULT_CHOOSER_FACTS.subscriptionPages is true; the subscription searches only beside the reader. keySearchOff is kept. RuntimeApp.webSearchOnly, SEARCH_ONLY_LINE, SEARCH_ONLY_LIMITATION, NO_PAGES_LIMITATION are gone; RuntimeApp.webAccess and IntakeDeps.webSpecialists are webFetchOn; the fake daemon's createHarness option webSearchOnly became subscriptionOnly.",
+          "Executor: SDK_WEB_SEARCH_LINE (session/executor.ts); the rule line (webAccessBriefLine) is added for any run whose allowedTools include web_fetch; the SDK branch logs web sources. intake.ts exports onlyWebsitesLines.",
+          "Search lists: web-ports.ts webSearchListsOf(rule) / webSearchListsResolver; WebSearchLists.withheld; compose's listsFor returns null with a log line when withheld.",
+          "Browser: LaunchedProfile.unsandboxed and LaunchProfileOptions.launchContext (profile.ts); navigationInterruptedRetry and GOTO_INTERRUPTED_TRIES (session.ts).",
+          "Session lead write-ups (not edited here): CHANGELOG line ('Research may read any public website or only the sites you list, per project, on both credentials; never this PC or the home network'), UPDATE-LOG entry for Q6/C-66/C-70/C-71/W6-29/W6-30/R-9, requirements rows if any."
+        ],
+        "tests_changed_for_design": [
+          {
+            "test": "packages/capabilities/test/web-fetch.test.ts (world() takes rules; 'reads a private host the project names on its site list' became 'never reads this computer or the local network, whatever the project's lists say'; refusal words without '(a host on the project's site list is the exception)'; block-list words now name the never list)",
+            "why": "The owner's decision: no list opens a private address; the rule is 'only'/'never' with the setting's words."
+          },
+          {
+            "test": "packages/runtime/test/research-web.test.ts (reader on the loopback seam; the refused case runs without the seam with 127.0.0.1 on the old site list)",
+            "why": "The site list no longer opens the loopback; tests reach their fixture through the seam."
+          },
+          {
+            "test": "apps/ui/test/real-daemon.test.ts (composeWithRolePlayer and the bench-api search case compose with webReadLoopback; site list PUTs removed; chooser block: research runs on the subscription with no line and the table reads 'Yes | Yes'; the C-64 block: no limitation on a subscription alone)",
+            "why": "Seam replaces the site list; the subscription reads pages now, so research follows the order."
+          },
+          {
+            "test": "packages/runtime/test/credential-chooser.test.ts (key-only research case uses the facts seam subscriptionPages=false and its line names both abilities; table 'Read web pages: Yes | Yes'; key-only search-off words with kindsInOrder ['api_key']; science-evaluator on a subscription alone reads pages)",
+            "why": "capabilitiesOf's subscription entry reads and searches where the reader is registered."
+          },
+          {
+            "test": "packages/runtime/test/subscription-path.test.ts (research follows the order to the subscription; the C-64 brief case expects SDK_WEB_SEARCH_LINE)",
+            "why": "C-64's 'research on the API key first' is superseded by the owner's 'your credential order applies again'."
+          },
+          {
+            "test": "packages/runtime/test/security-sdk.test.ts 'WebFetch output is wrapped as data...' (asserts updatedToolOutput.result, not updatedMCPToolOutput)",
+            "why": "updatedMCPToolOutput is honoured for MCP tools only; the design uses updatedToolOutput in the tool's shape."
+          },
+          {
+            "test": "apps/ui/test/inbox.test.tsx, apps/ui/test/tasks.test.tsx (subscriptionOnly harness: no runs-on line or limitation for research; both credentials: no line)",
+            "why": "Search-only words removed; research reads pages on both credentials."
+          },
+          {
+            "test": "apps/ui/test/settings-billing-order.test.tsx (intro sentence without 'research that must read web pages'; table 'Yes | Yes')",
+            "why": "Research is no longer an exception to the person's order."
+          },
+          {
+            "test": "apps/ui/test/settings.test.tsx, apps/ui/test/settings-models.test.tsx, apps/ui/e2e/palette.spec.ts (Settings row count +2)",
+            "why": "Every project has a 'Web pages research may read' row (Atlas and Beacon in the fixture)."
+          }
+        ]
+      },
+      "review": {
+        "verdict": "pass",
+        "acceptance_walk": "Setup: worktree detached at fix/sites (efcda92), pnpm install --frozen-lockfile, the local Playwright config copied in. Bench \"review-sites\" ran from this worktree on --provider bench. Port 48351 was taken by review-merged-actions' githost, so the daemon ran on 48357 and the UI on 1951. Scripts: /tmp/frbench/review-sites/walk.cjs, walk3.cjs, put.cjs, walk-api.cjs, pages.cjs. Screenshots: /tmp/frbench/review-sites/steps-bench/ and steps-api/.\n\n1. Default state (steps-bench/01, 02): the Overview shows \"Research reads: any public website · Change\" between Your files and Decisions. Settings → Advanced → Per project shows \"Web pages research may read · Any public website\", with the sentence that the agent browser's own list is separate. On this machine (HTTPS_PROXY set) the row also carries the conditional proxy sentence.\n\n2. Change from the Overview (03, 04, 05):\n   - Picked Only these websites and typed \"https://www.example.com/page\", 192.168.1.1, localhost, github.io and printer.local.\n   - The dialog showed \"https://www.example.com/page becomes example.com\" and a \"Not taken: ...\" line with the reason for each of the other four.\n   - \"Preview and apply\" was disabled. An empty list showed \"Name at least one website, or research would be stuck.\" and was also disabled.\n\n3. Narrowing (06, 07, 08): with only the URL left, Apply finished at once (\"low risk\", Undo, logged in Changes). The Overview line became \"Research reads: only example.com\" and the Settings row \"Only these websites: example.com\".\n\n4. Research under the only rule (09-12):\n   - Tasks → New task, researcher, outcome naming https://www.example.com/ and https://www.wikipedia.org/. Started from the project's Start session → Start.\n   - The session ran by itself and ended Done.\n   - Drawer: \"Read: Example Domain (https://www.example.com/)\" and \"Not read: https://www.wikipedia.org/ (Refused: www.wikipedia.org is not on this project's \"only these websites\" list (example.com))\".\n   - research/pages.md names the rule under Uncertainty. The researcher's brief in the model-call log has \"reads only these websites and their subdomains: example.com\".\n\n5. Widening (14-16): Change → Any public website with never \"facebook.com\" and \"https://www.Example.org./x\".\n   - The dialog showed \"... becomes example.org\".\n   - Apply asked a yes (\"medium risk\", Yes/No; the Overview showed \"Waiting for you: 1 question\" while it waited). After Yes the line was \"Research reads: any public website, never facebook.com, example.org\".\n\n6. The old route (put.cjs):\n   - PUT /projects/:id/settings {browser:{blockedDomains:[\"*.iana.org\",\"https://news.ycombinator.com/item?id=1\"], allowedDomains:[\"localhost\"]}} answered web_access.never [facebook.com, example.org, iana.org, news.ycombinator.com], with browser holding only allowedDomains.\n   - A PUT with web_access answered 403 approval_required in words.\n   - The Overview line became \"..., iana.org and 1 more\" and the row value matched.\n\n7. Never list on a real run (walk3, steps-bench/18-20): a researcher task naming https://www.iana.org/, https://www.example.com/ and http://example.org./ gave:\n   - \"Not read: https://www.iana.org/ (Refused: www.iana.org is on this project's \"never these websites\" list)\": the subdomain is covered, from the moved \"*.iana.org\".\n   - \"Read: Example Domain\".\n   - \"Not read: http://example.org./ (Refused: example.org is on ...)\": the trailing dot is handled (C-70).\n   - The session log under Details says \"read the web page www.iana.org (failed)\".\n\n8. Restart (restart-daemon.mjs): after the restart the Overview line was unchanged (persisted).\n\n9. bench-api (fresh, --api-key ok, a local page server on 127.0.0.1:48359, FORERUNNER_BENCH_SEARCH_RESULTS pointing at it; steps-api/):\n   - With the default rule and no site list, the researcher read alpha and beta through the loopback seam.\n   - Search requests carried max_uses 10/9 and no lists.\n   - After Only these websites: example.com (set from the Overview, applied at once), every web_search request carried allowed_domains [\"example.com\"]. The drawer showed both 127.0.0.1 pages \"Not read ... (Refused: 127.0.0.1 is not on this project's \"only these websites\" list (example.com))\", and the task was still Done and reviewed.\n\nEvery screen follows core-experience: one line with one action on the Overview, a row under Advanced, refusals in words, the work going on by itself. The bench was stopped with stop.mjs, the page server killed by its PID, and the bench home deleted.\n\nFailing-before: base sources restored over the fix's tests, then the fix restored; git status clean afterwards.\n- web-access.test.ts \"without the seam, 127.0.0.1 is refused...\" read the daemon's own page on base.\n- sites-subscription.test.ts: the brief had no SDK_WEB_SEARCH_LINE, and webSearchInputFor was missing.\n- real-daemon \"'Web pages research may read'\": no row on base.\n- subscription-path (2 cases) and browser-profile W6-30/R-9 (3 cases) also fail.\n- web-fetch.test.ts fails on base too, but only because the option was renamed (sites to rules), so its failure proves the API change rather than the behaviour. The seam test covers the localhost hole.\n\nValidation on efcda92:\n- pnpm check: exit 0. Unit 468 files, 4817 passed, 6 skipped. docs:check cannot diff against origin/main here, as on the baseline.\n- node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0: ok (54 files).\n- UI vitest: 85 files, 923 passed.\n- pnpm test:integration: 5 passed, 6 skipped; 30 passed, 73 skipped (Postgres).\n- pnpm test:e2e: 13 files; 25 passed, 1 skipped.\n- Playwright (local config): 34 of 34.\n- The R-9 browser.integration case 'aborts subresources and redirects...': 6 of 6 runs.\n- biome on the area's main files: clean.",
+        "blocking": [],
+        "claims_checked": [
+          {
+            "claim": "The page reader never reads this PC or the home network whatever the lists say; the localhost / 127.0.0.1 hole is closed (Q6)",
+            "holds": true,
+            "note": "On base sources with the fix's test, web-access.test.ts 'without the seam, 127.0.0.1 is refused...' read 'the daemon's own page' (HTTP 200); it passes on fix. policy.ts: local names refused before lookup; addressAllowed is public-only, plus loopback under the seam only."
+          },
+          {
+            "claim": "only/never rules cover subdomains; trailing dot normalised (C-70); refusals name the rule",
+            "holds": true,
+            "note": "Bench: www.example.com read under 'only example.com'; www.wikipedia.org and 127.0.0.1 refused naming 'only these websites'; www.iana.org (moved from '*.iana.org') and 'example.org.' refused naming 'never these websites'."
+          },
+          {
+            "claim": "Settings row and Overview line 'Research reads: ... · Change'; the dialog shows each cleaned entry and each refused one before Save, and disables Save while anything is refused or the only list is empty",
+            "holds": true,
+            "note": "steps-bench/01-08. UI tests in apps/ui/test/web-access.test.tsx click the controls and assert the posted body."
+          },
+          {
+            "claim": "Narrowing acts at once; widening asks a yes, judged against the rule in force",
+            "holds": true,
+            "note": "Bench: any→only done at once (low risk); only→any with never asked Yes (medium risk). After a restart, Undo of a narrowing asks a yes (web-access.test.ts)."
+          },
+          {
+            "claim": "PUT /projects/:id/settings takes browser.blockedDomains into web_access.never with an audit row and refuses web_access (403); real-daemon case and fake daemon in the same commit",
+            "holds": true,
+            "note": "Bench PUT confirmed the move (a pasted URL cleaned to its host) and the 403. Commit 37c96e1 changes server.ts, fake-daemon.ts and real-daemon.test.ts together; the real-daemon case asserts the audit row."
+          },
+          {
+            "claim": "On the subscription Forerunner's reader is offered through the SDK tool server with alwaysLoad, WebFetch is off, WebSearch gets the lists via updatedInput, both outputs are wrapped via updatedToolOutput, and the critic gets the pages",
+            "holds": true,
+            "note": "Composed test with a fake SDK (sites-subscription.test.ts) fails on base and passes on fix. The SDK 0.3.304 typings have createSdkMcpServer({alwaysLoad}) and updatedToolOutput; the bundled Claude Code binary validates updatedToolOutput against each tool's output shape and WebSearchOutput.results accepts strings. Not verified live (no subscription token)."
+          },
+          {
+            "claim": "Research follows the credential order; SEARCH_ONLY_LINE / SEARCH_ONLY_LIMITATION / NO_PAGES_LIMITATION / RuntimeApp.webSearchOnly and their UI words removed (C-64 superseded)",
+            "holds": true,
+            "note": "Diff and grep confirm. subscription-path tests fail on base. capabilitiesOf's subscription entry is webRead = webSearch = subscriptionPages = webFetchOn; keySearchOff is kept."
+          },
+          {
+            "claim": "Server search sends 'only' as allowed_domains, else never as blocked_domains, never both",
+            "holds": true,
+            "note": "bench-api api-requests.jsonl: allowed_domains ['example.com'] on all four search requests after the rule; no lists with the default."
+          },
+          {
+            "claim": "Brief names the rule; the intake sees an only list",
+            "holds": true,
+            "note": "The model-call log's researcher brief contains the rule line. The real-daemon intake case asserts the planning request line."
+          },
+          {
+            "claim": "Loopback seam set only for --provider bench and bench-api; never bench-live or any variable",
+            "holds": true,
+            "note": "cli/main.ts webReadLoopbackFor is read after daemonProvider/daemonFetch, which refuse without testenv. Bench and bench-api read 127.0.0.1 with no list. The test with FORERUNNER_BENCH_LIVE_API set refuses 127.0.0.1."
+          },
+          {
+            "claim": "Proxy sentence on failed connections and on the Settings row",
+            "holds": true,
+            "note": "Tests pass. The row's conditional sentence shows on this machine (HTTPS_PROXY set). See non_blocking for the refusal's unconditional wording."
+          },
+          {
+            "claim": "Persisted state across a restart",
+            "holds": true,
+            "note": "After restart-daemon.mjs on the bench the Overview line was unchanged. web-access.test.ts composes twice on one home."
+          },
+          {
+            "claim": "W6-30: the agent browser launches with chromiumSandbox: true, falling back with a log line",
+            "holds": true,
+            "note": "browser-profile tests fail on base and pass on fix."
+          },
+          {
+            "claim": "R-9: goto retries an interruption by a navigation to the same address; the integration test is stable",
+            "holds": true,
+            "note": "6 of 6 runs of 'aborts subresources and redirects...' here (the fixer reported 20 of 20)."
+          },
+          {
+            "claim": "W6-29/C-71: the user guide describes the setting in words, with no environment variable and no 'no screen' line; ADR 0107 amended as the owner's decision of 2026-11-02",
+            "holds": true,
+            "note": "grep finds no FORERUNNER_WEB_FETCH, FORERUNNER_WEB_SEARCH or 'no screen' in the user guide. One sentence over-promises on the subscription (see non_blocking)."
+          },
+          {
+            "claim": "No test weakened without a design reason",
+            "holds": true,
+            "note": "Every removed or changed assertion follows the owner's 2026-11-02 decision (the site list no longer opens private hosts; the subscription reads pages). Two are relaxed to `.not.toContain(\"web pages\")` for the science-evaluator's runsOn line instead of the exact words (non_blocking)."
+          },
+          {
+            "claim": "Full validation green (check, UI vitest, integration, e2e, Playwright 34)",
+            "holds": true,
+            "note": "All green here on efcda92; numbers in acceptance_walk."
+          }
+        ],
+        "non_blocking": [
+          "packages/runtime/src/agent/sdk.ts PostToolUse: Read, NotebookRead and Grep (the repo_file untrusted tools) now get `updatedToolOutput: builtInOutput(...)`, which for them is the plain wrapped string. The bundled Claude Code binary checks the output shape, rejects it ('PostToolUse hook returned updatedToolOutput that does not match Read's output shape; using original output.'), logs it at error level and adds a hook_error_during_execution attachment on every file read on the subscription. Before, the ignored updatedMCPToolOutput was suppressed silently. The output is unchanged, so this is noise, not a behaviour change, but it contradicts the comment 'A built-in file tool's read is scanned and flagged, not changed'. Fix: set updatedToolOutput only for WebSearch, WebFetch and MCP tools. No test covers Read's PostToolUse return.",
+          "wiring/web-access.ts webAccessOf (and policy.ts WebReadPolicy) fail open: a stored {mode:'only'} whose entries the clean-up no longer takes reads as 'any public website'. Shown: webAccessOf({web_access:{mode:'only',only:['github.io']}}) gives mode any and 'Research reads: any public website'. It is unreachable through settings.set today (the value is cleaned at write; the PUT refuses web_access), but a later change to PUBLIC_SUFFIXES or LOCAL_SUFFIX, or a value written another way, would silently widen. Safer: keep the entries as written, as blockEntry does for never, or refuse every page.",
+          "SummaryTab.tsx ResearchReads: once a change is made from the Overview, its `changed` state overrides project.researchReads for as long as the component stays mounted. A later change made in chat (Talk open on the Overview) leaves a stale line (design §1 'What the app says is true now').",
+          "docs/user-guide.md: the paragraph that now covers the subscription says 'the review is told which search results it saw but never opened'. On the SDK path TaskExecutionResult.searchSeen stays empty (only the loop's searchResults feed it), so on the subscription the critic gets the opened pages but not the unopened results. Either say so, as ADR 0107's known gaps do for the drawer, or capture WebSearch hits in PostToolUse.",
+          "The proxy sentence is added to every connection failure, including ENOTFOUND for a mistyped host, whenever any proxy variable is set. It states 'pages cannot be read here' on machines that name a proxy but reach sites directly (this cloud machine read www.example.com). The Settings row was made conditional; the refusal follows the spec's exact words but is not true there.",
+          "profile.ts launchAgentBrowser falls back to no sandbox after any first launch failure, not only a sandbox one, and logs 'runs without Chromium's own sandbox' even when the retry then fails for an unrelated reason (for example a missing executable).",
+          "session.ts: navigationInterruptedRetry's doc comment sits above GOTO_INTERRUPTED_TRIES (two JSDoc blocks stacked), so the constant carries the function's doc.",
+          "Writing polish for group 6:\n- The Settings row and dialog description is a long paragraph (plus the proxy sentence).\n- 'Static hosts's research' (possessive).\n- 'on both credentials' is jargon-ish.\n- The change sentence 'Set web pages research may read for X from ... to Only these websites: example.com: research reads ...' has a double colon.\n- 'Saved as:' caps the preview at 5 sites plus 'and N more', so the full list is not shown before saving.",
+          "Two relaxed assertions:\n- apps/ui/test/real-daemon.test.ts (C-64 block, chooser block) and credential-chooser.test.ts assert the science-evaluator's runsOn line with `.not.toContain(\"web pages\")` instead of its exact words.\n- The design reason holds, but the exact expected line (or null) would be stronger.",
+          "The fake daemon's PUT takes only browser.blockedDomains into never, not the snake-case blocked_domains that moveLegacyBlocks also reads (trivial drift).",
+          "Leftovers the fixer already lists, confirmed:\n- credential-choice.ts choiceLine's 'can search the web here but not open pages yet' is now unreachable.\n- The drawer does not list unopened search results (searchSeen; optional hand-over).\n- The Windows system proxy is not read.\n- bench-api's search stand-in ignores the lists it is sent.",
+          "Group 6 depends on the files and functions the fixer names: wiring/web-access.ts, WebAccessInput.tsx, SummaryTab.tsx ResearchReads, settings-view.ts project.web_access and PROXY_ROW_WORDS, ProjectCard.researchReads, and SettingSpec.narrowingActsAtOnce/currentOf/writeAlso/plainRefusals.",
+          "Live checks for the session lead (not runnable here):\n- phaseE7-live.md check 4 part 5: set 'Only these websites: developer.mozilla.org' from the Overview's Change. Expect 'becomes developer.mozilla.org', applied at once, then a refused page naming the rule, and the model-call log's webSearch carrying allowedDomains and no blockedDomains.\n- bench-live: a researcher task on http://localhost:<daemon port>/health must be 'Not read' with the local-name words.\n- Owner's checklist step 6 on the subscription: init without the 'did not load Forerunner's page reader' warning, 'read the web page' lines, WebSearch lists honoured, wrapped output."
+        ]
+      },
+      "fixup": null
+    }
+  ],
+  "missing": [],
+  "merge": {
+    "merged": [
+      "fix/merged-actions (db5ee6d) -> merge commit 0243f28, no conflicts",
+      "fix/sites (efcda92) -> merge commit fa1a86f, one doc conflict resolved"
+    ],
+    "head_sha": "fa1a86f5a0caf835d321dbb945ae84b6ed138032",
+    "pushed": true,
+    "conflicts_resolved": [
+      "docs/maintainers/apps.md: one conflict, in the Overview row of the route table. merged-actions added 'Open this version' on each waiting PR row and the 'Taking work out' group (kind take_out); sites added \"; 'sites': a \\\"Research reads: ... · Change\\\" line under Your files, see `/settings`\" to the tabs clause. I kept the merged-actions line whole and put in sites' clause where it had been inserted. Both areas' text is kept.",
+      "These files merged automatically with no conflict: SummaryTab.tsx, server.ts, compose.ts, api-types.ts, fake-daemon.ts, real-daemon.test.ts, tasks.test.tsx, capabilities.md, commands.md, runtime.md, user-guide.md. I checked that SummaryTab.tsx keeps sites' ResearchReads as its own component at the top (line 37) and merged-actions' PreviewOfRow inside RepositoryFiles' rows. I also checked that nothing still uses the names sites removed (webSearchOnly, SEARCH_ONLY_LINE, SEARCH_ONLY_LIMITATION, NO_PAGES_LIMITATION). No ADR number collides: the merge amends 0097, 0107 and 0113 only."
+    ],
+    "integration_fixes": [],
+    "validation": [
+      {
+        "command": "git grep -n '^<<<<<<< ' (and '^>>>>>>> ') after resolving",
+        "result": "nothing"
+      },
+      {
+        "command": "pnpm install --frozen-lockfile",
+        "result": "ok"
+      },
+      {
+        "command": "pnpm lint && pnpm lint:paths && pnpm typecheck",
+        "result": "exit 0"
+      },
+      {
+        "command": "pnpm test (unit)",
+        "result": "exit 0: 471 files passed, 4832 tests passed, 6 skipped"
+      },
+      {
+        "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+        "result": "docs-check: ok (88 files)"
+      },
+      {
+        "command": "pnpm docs:links; pnpm secrets:scan",
+        "result": "link-check ok (206 files); secret-scan clean (2063 files)"
+      },
+      {
+        "command": "pnpm docs:check (no base, as inside pnpm check)",
+        "result": "nothing to check: it cannot diff against origin/main here, same as the baseline"
+      },
+      {
+        "command": "pnpm test:integration",
+        "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 73 skipped (Postgres without FORERUNNER_TEST_PG, same as the baseline)"
+      },
+      {
+        "command": "pnpm test:e2e",
+        "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+      },
+      {
+        "command": "pnpm --filter @forerunner/live test",
+        "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+      },
+      {
+        "command": "pnpm test:injection",
+        "result": "exit 0: Failures: None (report in /tmp/forerunner-injection-report/injection-report.md)"
+      },
+      {
+        "command": "FORCE_COLOR=1 HOME=<empty folder> pnpm test (unit suite as CI runs it)",
+        "result": "exit 0: 471 files passed, 4832 tests passed, 6 skipped"
+      },
+      {
+        "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty folder> pnpm vitest run --config vitest.config.ts",
+        "result": "exit 0: 85 files, 932 passed"
+      },
+      {
+        "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+        "result": "exit 0: 85 files, 932 passed"
+      },
+      {
+        "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+        "result": "exit 0: 34 passed (54.7 s)"
+      },
+      {
+        "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+        "result": "not run: neither area touched the desktop shell (git diff a9d4b76..HEAD -- apps/desktop is empty)"
+      },
+      {
+        "command": "signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD) ... grep '^gpgsig'",
+        "result": "all 16 commits signed; nothing printed"
+      },
+      {
+        "command": "git push -u origin claude/nifty-knuth-f9udt0",
+        "result": "b7f95df..fa1a86f pushed on the first try; origin now equals HEAD"
+      }
+    ],
+    "smoke": "node scripts/bench/start.mjs --name merge-w11 --daemon-port 48370 --ui-port 1970 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w11: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The journey script needed no change. The result is in /tmp/frbench/merge-w11/steps/smoke-result.json. The bench was stopped with stop.mjs (the daemon quit by itself and the UI ended), and /tmp/frbench/merge-w11/home was deleted. Logs are in /tmp/frbench/merge-w11/. The bench's own UI log overwrote my earlier UI vitest log at /tmp/frbench/merge-w11/ui.log; the vitest result (932 passed) is recorded above.",
+    "problems_left": [
+      "Nothing broken by the merge. All suites are green, the smoke passed 25/25, and the push is done. CI on fa1a86f has not been watched here.",
+      "These leftovers come from the area reports, for group 6 polish or the session lead:\n- merged-actions not_done:\n  - Windows: a file open in the preview folder makes the next Open this version fail with words that do not say why.\n  - At Autopilot, the chat's repo_create files a second, generic Inbox card beside the repository offer.\n  - 'main' is hardcoded in the take-out words.\n  - The project line still reads 'Done' after work is taken out.\n  - Take this work out has no Undo on screen.\n  - Known gaps in ADR 0113: a Redo forgets an open take-out; a GitHub merge commit that carries its dependency's commits is reverted whole; the conflict notice offers only Got it.\n  - New problem: request-words' firstSentence still cuts any generic card's title at a ': ' inside a quoted title.\n  - New problem: a failed task's Inbox card can show the run's raw markdown report.",
+      "sites not_done and non-blocking:\n- The Windows system proxy is not read.\n- The drawer does not list search results a run saw but never opened (searchSeen).\n- On the SDK path, updatedToolOutput is set for Read, NotebookRead and Grep too, so Claude Code logs a hook error on every file read on the subscription. Fix: set it only for WebSearch, WebFetch and MCP tools.\n- webAccessOf fails open: a stored 'only' rule whose entries no longer clean reads as any public website.\n- ResearchReads' local `changed` state can go stale after a change made in chat.\n- The user guide says the critic is told about unopened search results on the subscription; on the SDK path it is not.\n- The proxy sentence is added to every connection failure whenever a proxy variable is set.\n- launchAgentBrowser falls back to no sandbox after any first launch failure, not only a sandbox one.\n- credential-choice.ts choiceLine's 'can search the web here but not open pages yet' is now dead words.\n- bench-api's search stand-in ignores the lists it is sent.",
+      "Live checks for the session lead (bench-live is not used here):\n- phaseE7-live.md check 1 steps 2 and 5, and the second chain: Open this version, then Open folder in the desktop app; Take this work out on the footer; a squash take-out PR whose body says squash-merged for a PR of two or more commits and merged for a PR of one; the state after a desktop restart.\n- Check 4 part 5: 'Only these websites: developer.mozilla.org'.\n- bench-live refuses http://localhost:<daemon port>/health.\n- Owner's checklist step 6: research on the subscription through Forerunner's page reader."
+    ]
+  }
+}

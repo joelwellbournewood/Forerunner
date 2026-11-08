@@ -15,8 +15,12 @@ GitHub refuses deletions from it, so the owner deletes it).
   - the collaboration audit and wave 8 spec (`collab/`);
   - group 3's resume recipe (`wave7g3-resume.json`), its fixers' reports
     (`wave7g3-fix-reports.json`) and its result (`wave7g3-result.json`);
-  - group 4's args, resume recipe and result (`wave7g4-*.json`), and group 5's args and
-    resume recipe (`wave7g5-args.json`, `wave7g5-resume.json`).
+  - group 4's and group 5's args, resume recipes and results (`wave7g4-*.json`,
+    `wave7g5-*.json`);
+  - group 6's triage of every leftover of groups 1 to 5 (`wave7g6-triage.json`), and wave 12's
+    args and resume recipe (`wave7g6a-args.json`, `wave7g6a-resume.json`). Wave 12's three
+    areas are in `phaseE.json` (keys `leftovers7-merge`, `leftovers7-session`,
+    `leftovers7-web`); `phaseE.before-wave7g6.json` is the spec before they were added.
 
   Logs, screenshots and bench folders are left out.
 - `workflow-scripts/`: the workflow scripts that run the waves (`forerunner-phase-e6.js` runs
@@ -24,13 +28,14 @@ GitHub refuses deletions from it, so the owner deletes it).
 
 ## Where the round stands
 
-Wave 7 groups 1 to 4 are merged into `claude/nifty-knuth-f9udt0`. Group 4 (budget-resume,
-web-search) ends at a9d4b76. The four `claude/nifty-knuth-f9udt0-backup/fix-*` branches from
-group 3 are no longer needed: all their commits are in that branch. Delete them on GitHub.
+Wave 7 groups 1 to 5 are merged into `claude/nifty-knuth-f9udt0`. Group 5 (merged-actions,
+sites) ends at fa1a86f; CI and the Desktop app workflow are green on it. The four
+`claude/nifty-knuth-f9udt0-backup/fix-*` branches from group 3 are no longer needed: all their
+commits are in that branch. Delete them on GitHub.
 
-Group 5 (wave 11: merged-actions, sites) is running from a9d4b76. Next: group 6 (wave 12:
-polish), live check 2, and wave 8 (`frbench/collab/`). The plan is in
-docs/status/handoff/NEXT-SESSION.md.
+Group 6 is two waves. Wave 12 (the real problems: leftovers7-merge, leftovers7-session,
+leftovers7-web) is running from fa1a86f. Next: wave 13 (polish, split into two areas), live
+check 2, and wave 8 (`frbench/collab/`). The plan is in docs/status/handoff/NEXT-SESSION.md.
 
 ## Restore on a fresh machine
 
