@@ -184,4 +184,45 @@ describe("taking merged work out by the way it was merged (merged-actions)", {
       kind: "not_in_main",
     });
   });
+  it("a dependent merged on GitHub with a merge commit that carried its dependency's work: Take this work out never takes the dependency's files out of main (R-takeoutdep)", async () => {
+    // The dependency's branch, then the dependent's built on it (as `PrTaskExecutor` builds a
+    // task that waits for unmerged work); the dependent's pull request is merged first on
+    // GitHub, with a merge commit, so the dependency's work reaches main inside it.
+    const dep = await pullRequest("dep-menu", [{ "menu.ts": "export const menu = [];\n" }]);
+    const dir = join(root, "clone-dep-footer");
+    const git = new GitOps({ cwd: dir, identity, auth: { token } });
+    await git.clone(host.cloneUrl(FULL));
+    await git.createBranch("fr/dep-footer", "origin/fr/dep-menu");
+    writeFileSync(join(dir, "footer.ts"), "export const footer = 1;\n");
+    await git.commitAll("dep-footer part 1");
+    await git.push("fr/dep-footer");
+    const pr = await gh.createPullRequest(REPO, {
+      title: "dep-footer",
+      body: "",
+      head: "fr/dep-footer",
+      base: "main",
+    });
+    const task = await store.task.insert({
+      project_id: projectId,
+      title: "dep-footer",
+      status: "done",
+      pr_url: pr.htmlUrl,
+      branch: "fr/dep-footer",
+      depends_on: [dep.task.id],
+    });
+    const merged = await gh.mergePullRequest(REPO, pr.number, {
+      method: "merge",
+      sha: pr.head.sha,
+    });
+    expect(merged.merged).toBe(true);
+    const out = await takeOut(task, pr.number, merged.sha ?? "", pr.head.sha);
+    // Refused (undo it on GitHub), or a branch that leaves the dependency's file in main.
+    if (out.kind === "pushed") {
+      await mergeTakeOut(out.branch, `Take out: ${task.title}`);
+      const files = await hostGit("ls-tree", "--name-only", "main");
+      expect(files).toContain("menu.ts");
+      expect(files).not.toContain("footer.ts");
+    } else expect(out).toEqual({ kind: "unknown_shape" });
+    expect(await hostGit("ls-tree", "--name-only", "main")).toContain("menu.ts");
+  });
 });

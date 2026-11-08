@@ -1698,6 +1698,11 @@ export class PrTaskExecutor implements TaskExecutor {
     if (head && !(await git.hasRef(head))) head = null;
     const plan = await takeOutPlan(git, req.mergeSha, head);
     if (!plan) return { kind: "unknown_shape" };
+    // R-takeoutdep (leftovers7-merge): a merge commit whose merged side carries work of a task
+    // this one built on (a dependency merged by GitHub through it, out of dependency order) is
+    // not reverted whole with -m 1, which took the dependency's work out of main too.
+    if (plan.mainline && (await this.carriesDependencyWork(git, req.task, req.mergeSha)))
+      return { kind: "unknown_shape" };
     await git.createBranch(req.branch, base);
     const reverted = await git.revert(plan.commits, plan.mainline ? { mainline: 1 } : {});
     if (!reverted.ok) {
@@ -1719,6 +1724,43 @@ export class PrTaskExecutor implements TaskExecutor {
       sure: plan.sure,
       commits: plan.commits,
     };
+  }
+
+  /**
+   * Whether the merge commit `mergeSha` brought in, on its merged side, a commit of a task
+   * `task` waits for (directly or through others) that main did not have before it: the
+   * dependency's branch on the host, or the commit its merge record reviewed.
+   */
+  private async carriesDependencyWork(
+    git: GitOps,
+    task: TaskRow,
+    mergeSha: string,
+  ): Promise<boolean> {
+    const [before, merged] = await git.parentsOf(mergeSha);
+    if (!before || !merged) return false;
+    const seen = new Set<string>([task.id]);
+    const queue = [...(task.depends_on ?? [])];
+    while (queue.length) {
+      const id = queue.shift() as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const dep = await this.deps.store.task.get(id);
+      if (!dep) continue;
+      queue.push(...(dep.depends_on ?? []));
+      const heads = new Set<string>();
+      const record = await this.deps.store.mergeRecord.forTask(dep.id).catch(() => undefined);
+      if (record?.reviewed_head_sha) heads.add(record.reviewed_head_sha);
+      if (dep.branch) {
+        const onHost = await git.resolveRef(`origin/${dep.branch}`);
+        if (onHost) heads.add(onHost);
+      }
+      for (const sha of heads) {
+        if (!(await git.hasRef(sha))) continue;
+        if ((await git.isAncestor(sha, merged)) && !(await git.isAncestor(sha, before)))
+          return true;
+      }
+    }
+    return false;
   }
 
   /** The pull request's "Builds on" line as it is now (`withBuildsOn`); a failure is logged. */

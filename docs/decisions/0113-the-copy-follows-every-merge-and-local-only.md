@@ -214,6 +214,13 @@ dependency first, so this needs a merge made on GitHub.
    request, made by `pin` and only there), and a record redone before this rule keeps its open
    take-out. Alternative considered: keep Redo and move the take-out to a record of its own (a
    schema change for a case the person can end with one Merge or Close).
+2. **A merge commit that carried a dependency's work is not reverted whole.** A dependent pull
+   request merged on GitHub with a merge commit whose merged side holds a commit of a task it
+   built on (that task's branch on the host, or the commit its merge record reviewed) is refused
+   with the unknown-shape sentence ("undo it on GitHub"); before, `git revert -m 1` took the
+   dependency's work out of main too. Reverting only the dependent's own commits was left out:
+   its branch can hold merge commits of its own (main brought in), which a plain revert cannot
+   take back one by one.
 
 ## Alternatives considered
 

@@ -355,8 +355,12 @@ with their milestone.
   { mainline })` takes commits back on the current branch (`git revert --no-edit`, `-m 1` for a
   merge commit's change against its first parent), aborting on a conflict with the files named;
   `commitsNotIn(from, to)` lists a branch's own commits that `from` lacks, oldest first, without
-  merge commits. `PrTaskExecutor.takeOut({ task, number, mergeSha, headSha, branch })` (a new
-  method; the runtime's `TaskTakeOut` calls it) works in a clone of its own
+  merge commits. A merge commit whose merged side carries a commit of a task this one waits for
+  (`carriesDependencyWork`: the dependency's branch on the host or its record's reviewed commit,
+  in the merged parent and not in the first) is `unknown_shape` (R-takeoutdep, leftovers7-merge:
+  `-m 1` took the dependency's work out of main too). `PrTaskExecutor.takeOut({ task, number,
+  mergeSha, headSha, branch })` (a new method; the runtime's `TaskTakeOut` calls it) works in a
+  clone of its own
   (`<worktreeRoot>/<task>-take-out`, under the same per-folder lock as a worktree, never the
   task's worktree), fetches (and `refs/pull/<n>/head` when the head is on no branch), checks the
   merge commit is in the default branch, asks `takeOutPlan(git, mergeSha, headSha)` how to take it
