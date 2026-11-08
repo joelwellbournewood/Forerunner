@@ -2,6 +2,7 @@ import { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
+import { openRefusedCards } from "../src/session/credential-wait.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { RouterTaskBilling, seedBillingSources, waitingOf } from "../src/wiring/billing-pick.ts";
 
@@ -90,6 +91,82 @@ describe("a billing source's limits are written with a version check (R-limitsrm
     const all = [...started.map((s) => s.projectId), ...kept].sort();
     // Before: proj-b's entry was written over by takeReady's copy, and nothing started it.
     expect(all).toEqual(["proj-a", "proj-b"]);
+    await store.close();
+  });
+});
+
+/**
+ * leftovers7-tailrun, wave 13 (TR-4): takeReady judged "refused" once, from the copy of the row
+ * it listed, before its version-checked write; a refusal written between that read and the
+ * write was then read as stale (a new credential saved since) and cleared with its card, and
+ * the work that waited was started on the refused key.
+ */
+describe("leftovers7-tailrun, wave 13: a refusal written while the waits are taken survives (TR-4)", () => {
+  it("takeReady reads the refusal in the copy it writes, so it is kept and the work keeps waiting", async () => {
+    const clock = new SimulatedClock("2026-11-08T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = await store.human.insert({
+      name: "J",
+      email: "",
+      timezone: "UTC",
+      notify_prefs: {},
+      default_autonomy: 2,
+      monthly_cap_usd_micro: 1,
+      locale: "en",
+    });
+    const vault = new MemoryVault({ [SECRET_NAMES.anthropic]: API_KEY });
+    const rows = await seedBillingSources({ store, vault, humanId: human.id });
+    const key = rows.find((r) => r.kind === "api_key");
+    if (!key) throw new Error("no api_key row");
+    // proj-a waits on the key, which serves again: takeReady would start it.
+    await store.billingSource.patch(key.id, {
+      limits: {
+        ...(await store.billingSource.mustGet(key.id)).limits,
+        waiting: [{ projectId: "proj-a", agentId: "alice", since: "2026-11-08T08:00:00Z" }],
+      },
+    });
+    // takeReady's list returns only after the refusal is written: the refusal lands between
+    // its read and its write.
+    let listed: () => void = () => {};
+    const wasListed = new Promise<void>((r) => {
+      listed = r;
+    });
+    let written: () => void = () => {};
+    const refusalWritten = new Promise<void>((r) => {
+      written = r;
+    });
+    const billingSource = new Proxy(store.billingSource, {
+      get(target, prop, receiver) {
+        if (prop === "list")
+          return async (...args: Parameters<typeof target.list>) => {
+            const v = await target.list(...args);
+            listed();
+            await refusalWritten;
+            return v;
+          };
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const taker = new RouterTaskBilling({
+      store: { ...store, billingSource } as StateStore,
+      vault,
+      clock,
+      humanId: human.id,
+    });
+    const refuser = new RouterTaskBilling({ store, vault, clock, humanId: human.id });
+    const taking = taker.takeReady();
+    await wasListed;
+    await refuser.refuse(key.id, "invalid x-api-key");
+    written();
+    const started = await taking;
+    const row = await store.billingSource.mustGet(key.id);
+    // Before: the refusal was cleared as stale and proj-a was started on the refused key.
+    expect(typeof row.limits.refusedAt).toBe("string");
+    expect(started).toEqual([]);
+    expect(waitingOf(row.limits).map((w) => w.projectId)).toEqual(["proj-a"]);
+    // The card that asks for a new key stays open.
+    expect(await openRefusedCards(store, human.id)).toHaveLength(1);
     await store.close();
   });
 });

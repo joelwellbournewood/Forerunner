@@ -544,7 +544,9 @@ entry or `restingUntil`; test `billing-limits.test.ts`); `RuntimeApp.billing.wai
 once from `credentialSaved(kind)`, which the setup assistant's `POST /setup/anthropic` calls
 through `onClaudeCredentialSaved`) takes the projects whose source serves again
 (`RouterTaskBilling.takeReady`: the rest ended, no refusal stands; a refusal a new credential
-ended is cleared with its card; and, R-refusedstays, a project kept on a source that cannot serve
+ended is cleared with its card, judged in the copy each version-checked write works on against
+the credential the vault holds, so a refusal written between its list and its write is kept,
+TR-4; and, R-refusedstays, a project kept on a source that cannot serve
 whose work another credential serves now, asked through `credentialWaitNow`: the billing pick of
 each ready task, read-only, so 'Wait' still holds work to a first choice that rests or was
 refused) and requests one session start each (`budget_reset`) while the project has ready work.
