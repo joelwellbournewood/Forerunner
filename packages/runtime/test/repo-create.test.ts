@@ -142,7 +142,7 @@ describe("a repository for a project without one (U-037)", () => {
       status: string;
     }>;
     return requests.find(
-      (r) => r.projectId === projectId && r.why.includes("Create a repository for it?"),
+      (r) => r.projectId === projectId && r.why.startsWith("Create a repository for "),
     );
   }
 
@@ -318,22 +318,146 @@ describe("a repository for a project without one (U-037)", () => {
   );
 
   it(
-    "at Autopilot (level 4) the agent creates the private repository itself, no card, and says so",
+    "at Autopilot (level 4) the agent asks too: one card, nothing created until Create the repository (the owner's decision of 2026-11-02)",
     async () => {
       const { id } = await projectWithCodeWork("Bird Counter");
       await rt.store.project.patch(id, { autonomy_level: 4 });
       await session(id);
+      // Before: at level 4 the agent ran repo.create itself and the repository existed now.
+      expect(await hostHas("alice/bird-counter")).toBe(false);
+      expect((await rt.store.project.mustGet(id)).repos).toEqual([]);
+      const card = await proposalCard(id);
+      if (!card) throw new Error("no proposal card at Autopilot");
+      expect(card.options).toEqual([...REPO_PROPOSAL_OPTIONS]);
+      // Design \u00a75: the card says what and why in two sentences, without the old list of what
+      // GitHub would not have.
+      expect(card.why).toBe(
+        'Create a repository for "Bird Counter"? Code work is planned for it, and it has none: its tasks run in the project\'s folder on this computer.',
+      );
+      expect(card.why).not.toContain("no branch, pull request or review on GitHub");
+      // The person's yes creates it, as below Autopilot.
+      await answer(card, card.options[0] as string);
       expect(await hostHas("alice/bird-counter")).toBe(true);
       expect((await rt.store.project.mustGet(id)).repos).toEqual(["alice/bird-counter"]);
-      expect(await proposalCard(id)).toBeUndefined();
-      // The change is the agent's, on record, with the sentence the person reads.
-      const rows = await rt.store.changeLog.list({ project_id: id } as never);
-      const row = rows.find((r) => r.sentence.includes("alice/bird-counter"));
-      expect(row?.agent_id).toBe(rt.agent.id);
-      expect(row?.sentence).toContain("Created the private GitHub repository alice/bird-counter");
     },
     REPO_WORK_MS,
   );
+
+  it("the offer reads as its question and one sentence, whatever the project's name holds (review of merged-actions: a colon cut the title)", async () => {
+    // Before: the card was titled by the first sentence of its text, cut at the first ": ",
+    // ". " or "? ", so "Birds: a counter" read 'Create a repository for "Birds'.
+    const { id } = await projectWithCodeWork("Birds: a counter");
+    await session(id);
+    const inbox = await json(await req("/inbox"));
+    const card = (
+      inbox.requests as Array<{
+        projectId: string | null;
+        projectName: string | null;
+        why: string;
+        title: string;
+        body: string | null;
+        choices: Array<{ label: string; explain: string | null; tone: string }>;
+        reply: string;
+      }>
+    ).find((r) => r.projectId === id && r.why.startsWith("Create a repository for "));
+    if (!card) throw new Error("no proposal card");
+    expect(card.title).toBe('Create a repository for "Birds: a counter"?');
+    expect(card.body).toBe(
+      "Code work is planned for it, and it has none: its tasks run in the project's folder on this computer.",
+    );
+    expect(card.choices.map((c) => [c.label, c.explain, c.tone])).toEqual([
+      [
+        "Create the repository",
+        "Makes it on GitHub, private, with the project's folder as its first commit.",
+        "primary",
+      ],
+      [
+        "Not now",
+        "Tasks keep running in the project's folder; the agent does not ask again.",
+        "secondary",
+      ],
+    ]);
+    expect(card.reply).toBe("none");
+    // Home's Needs you line: the project's name, then this title.
+    expect(`${card.projectName}: ${card.title}`).toBe(
+      'Birds: a counter: Create a repository for "Birds: a counter"?',
+    );
+  });
+
+  it(
+    "the chat agent's repo.create at Autopilot files a card and creates nothing until the person's yes",
+    async () => {
+      const { id } = await projectWithCodeWork("Kite Log");
+      await rt.store.project.patch(id, { autonomy_level: 4 });
+      const chat = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: id,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 0,
+        step_cap: 1,
+        spent_usd_micro: 0,
+        steps: 0,
+        started_at: clock.nowIso(),
+        status: "completed",
+        summary: "conversation",
+        handoff: {},
+        runner: "pc",
+      });
+      // The conversation agent's command tools run as the agent (commands.ts `tools`).
+      const results: Array<{ status: string }> = [];
+      const tools = rt.commands.tools(
+        {
+          humanId: rt.human.id,
+          agentId: rt.agent.id,
+          activeProjectId: id,
+          sessionId: chat.id,
+          source: "text",
+          wordsUsed: "make a repository for this",
+        },
+        (r) => results.push(r as { status: string }),
+      );
+      const create = tools.find((t) => t.name === "repo_create");
+      if (!create) throw new Error("repo_create tool missing");
+      const out = await create.execute(
+        { project: id, private: true },
+        {
+          runId: "turn-1",
+          sessionId: chat.id,
+          agentId: rt.agent.id,
+          humanId: rt.human.id,
+          projectId: id,
+          allowedPaths: [],
+          signal: new AbortController().signal,
+        },
+      );
+      // Before: 'low' risk for the agent at Autopilot, so it was created at once with no card.
+      expect(results.map((r) => r.status)).toEqual(["pending"]);
+      expect(String(out.content)).toMatch(/Needs confirmation/);
+      expect(await hostHas("alice/kite-log")).toBe(false);
+      expect((await rt.store.project.mustGet(id)).repos).toEqual([]);
+    },
+    REPO_WORK_MS,
+  );
+
+  it("Home's line does not count the repository offer as a question: a finished project reads Done (C-60)", async () => {
+    const { id, task } = await projectWithCodeWork("Pond Notes");
+    await session(id);
+    const offer = await proposalCard(id);
+    if (!offer) throw new Error("no proposal card");
+    // The work is finished: the task is done and the session's plan is no longer asked about;
+    // only the offer is open.
+    await rt.store.task.patch(task.id, { status: "done", reason: "accepted" });
+    for (const r of await rt.store.humanRequest.list({ status: "open", project_id: id } as never))
+      if (r.id !== offer.id) await rt.store.humanRequest.patch(r.id, { status: "answered" });
+    const card = await json(await req(`/projects/${id}`));
+    const line = card.statusLine as { text: string };
+    // Before: "Waiting for you: 1 question" for a project with nothing left to do.
+    expect(line.text).not.toMatch(/^Waiting for you/);
+    expect(line.text).toMatch(/^Done/);
+    // The offer is still in the Inbox for the person to answer when they like.
+    expect((await proposalCard(id))?.status).toBe("open");
+  });
 
   it("a typed answer that is neither option is refused with the options; the card stays (U-034)", async () => {
     const { id } = await projectWithCodeWork("Seed Bank");

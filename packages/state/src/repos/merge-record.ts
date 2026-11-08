@@ -51,7 +51,16 @@ export class MergeRecordRepo extends Repository<MergeRecordRow> {
       approved_by: null,
       sentence: "",
       last_outcome: null,
-      ...(current.state === "merged" ? { merge_sha: null, method: null, attempts: 0 } : {}),
+      ...(current.state === "merged"
+        ? {
+            merge_sha: null,
+            method: null,
+            attempts: 0,
+            take_out_pr_number: null,
+            take_out_pr_url: null,
+            take_out_state: null,
+          }
+        : {}),
       author_agent: input.author_agent ?? input.agent_id,
     });
   }

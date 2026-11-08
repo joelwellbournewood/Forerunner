@@ -192,6 +192,7 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
   assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
+  **Take this work out** (a task whose pull request is merged; see below),
   **Reopen** (a cancelled task) and **Cancel** (it names the tasks that wait on it and will be
   stuck; on a task that is running or being reviewed its run or review stops at once, and what
   it changed is taken out of the project's folder before the next task starts, so nothing builds
@@ -366,6 +367,31 @@ merge by itself). Forerunner's own docs pull requests merge only when you press 
 are on GitHub now. If the pull requests cannot be listed, the Overview says why: no GitHub token
 (with **Connect GitHub**), a token GitHub refused, or GitHub not answering.
 
+**Open this version** on a row puts that pull request's files in a folder on this computer, so
+you can try it before you merge it: the row then says "#7 as it would be merged. Changes here are
+not kept." with the folder, **Open folder** and **Copy path**. When main changed since the pull
+request was made, the folder holds both, as merging would give them; when the two do not merge
+cleanly it holds the pull request's own version and says so. Nothing runs there by itself, your
+Local only folder is not in it, and nothing you change there is uploaded or kept: one project has
+one such folder at a time (the next Open this version replaces it), and it is removed when the
+pull request is merged or closed.
+
+**Take this work out** on a merged task (its row says **Merged**; the button is on the row and
+in the task's drawer) opens a pull request "Take out: <task>" that takes that task's changes out
+of main: on a branch of its own, so nothing changes in main until you merge it. It undoes the
+merge the way it was made: a merge commit, a squash or a rebase you did on GitHub. The dialog,
+the answer and the pull request name the finished tasks that built on it ("Add the receipt"
+built on it: check it still works once #9 is merged). The task's row then says "Taken out in #9
+(waiting for you to merge)", and the pull request waits on the Overview under **Taking work
+out**, where **Merge** merges it; the row then says "Taken out in #9". If later work changed the
+same lines, nothing is opened: the answer and one Inbox notice ("<task>" could not be taken out,
+with the files and what to do; **Got it** closes it) say which files, and you undo it on GitHub by
+hand or ask in Chat for a task that does it. A merge made in a way Forerunner cannot undo safely is
+refused with one sentence ("#4 was merged in a way Forerunner cannot undo safely; undo it on
+GitHub."). A pull request of one commit looks the same squash-merged or rebase-merged, so the
+take-out says only that it was merged. Merging or closing the take-out pull request on GitHub is
+seen within about a minute; closing it without merging offers the button again.
+
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
@@ -395,9 +421,11 @@ it a GitHub repository, click **Create a repository** on the project page: it sh
 creates it with your GitHub token, puts the project's folder in it as the first commit and links
 it; from then on tasks work on branches with pull requests. "create a repository" in Chat does
 the same. When a session plans code work for such a project, your agent asks in the Inbox
-(**Create the repository** or **Not now**); "Not now" is not asked again. At autonomy 4
-(Autopilot) the agent creates a private repository itself and tells you. A public repository
-always needs your confirmation on this device.
+(**Create the repository** or **Not now**); "Not now" is not asked again. It asks at every
+autonomy level, Autopilot too, and so does a "create a repository" the agent decides on in
+Chat: nothing is created under your GitHub account without your yes. The offer does not hold
+any work, so the project's line does not count it as a question. A public repository always
+needs your confirmation on this device.
 
 **Note for the next session** on the Overview is one box: type what the agent should know
 and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note

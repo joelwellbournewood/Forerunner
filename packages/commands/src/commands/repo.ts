@@ -1,5 +1,4 @@
 import { ForerunnerError } from "@forerunner/platform";
-import { type AutonomyLevel, decideAutonomy } from "@forerunner/runtime/enforcement/autonomy";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
 import type { CommandContext, CommandDef, RepoPreview, Risk } from "../types.ts";
@@ -13,11 +12,12 @@ import { resolveProject } from "./shared.ts";
  *
  * Creating a repository is outward-facing (an `external_send`: something new on a third party,
  * under the person's account), so it goes through the change card. A private repository is
- * medium risk: the person confirms the card in the app or the Inbox. A public one is high risk:
- * confirmation in the app on a paired device. The one exception is the project's own agent on
- * a project whose autonomy level frees outward-facing actions (level 4, Autopilot), for a
- * private repository: then the risk is low and the agent acts, and the person reads the
- * sentence. Nothing here can delete a repository; that always needs a person.
+ * medium risk for every actor at every autonomy level: the person confirms the card in the app
+ * or the Inbox. A public one is high risk: confirmation in the app on a paired device. No level
+ * lets an agent create one alone (the owner's decision of 2026-11-02, "Autopilot asks before
+ * creating a repository"): before, the project's agent at Autopilot (level 4) rated a private
+ * repository low and created it with no card, from a session's plan or from the chat. Nothing
+ * here can delete a repository; that always needs a person.
  */
 const params = z.object({
   /** Project id or name; the active project when left out. */
@@ -60,14 +60,9 @@ function sentenceOf(p: RepoPreview, files?: number): string {
     : `Created ${what} for ${p.projectName}, pushed its workspace (${files} file${files === 1 ? "" : "s"}) as the first commit and linked it to the project.`;
 }
 
-async function riskOf(p: RepoCreateParams, ctx: CommandContext): Promise<Risk> {
-  if (!p.private) return "high";
-  if (ctx.actor.kind === "agent") {
-    const { project } = await resolveProject(ctx, p.project);
-    const level = project.autonomy_level as AutonomyLevel;
-    if (decideAutonomy("external_send", { level }) === "allow") return "low";
-  }
-  return "medium";
+/** Who confirms: the person, always (medium); on a paired device for a public one (high). */
+function riskOf(p: RepoCreateParams): Risk {
+  return p.private ? "medium" : "high";
 }
 
 export const repoCreate: CommandDef<RepoCreateParams> = {
@@ -75,7 +70,7 @@ export const repoCreate: CommandDef<RepoCreateParams> = {
   description:
     "Create a GitHub repository for a project that has none (private by default), push its workspace as the first commit and link it to the project.",
   params,
-  risk: riskOf,
+  risk: (p) => riskOf(p),
   maxRisk: "high",
   scope: "project",
   reversible: false,
@@ -90,7 +85,7 @@ export const repoCreate: CommandDef<RepoCreateParams> = {
       ...(p.name ? { name: p.name } : {}),
       ...(p.owner ? { owner: p.owner } : {}),
     });
-    const risk = await riskOf(p, ctx);
+    const risk = riskOf(p);
     return buildCard({
       command: "repo.create",
       what: `a GitHub repository for ${project.name}`,

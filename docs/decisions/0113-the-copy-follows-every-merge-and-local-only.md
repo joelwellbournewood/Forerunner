@@ -2,8 +2,8 @@
 
 Date: 2026-11-03
 Status: accepted (the owner's decisions of 2026-11-02 on merging: "local_copy", "local_only_folder"
-and "own_folder: No"; 'merged-actions' amends it with the preview of a pull request, which takes
-the copy's lock)
+and "own_folder: No"); amended by 'merged-actions' (2026-11-08): the preview of a pull request,
+which takes the copy's lock, Take this work out, and Autopilot asks
 
 ## Context
 
@@ -130,6 +130,78 @@ search read) and each task's worktree `<worktrees>/<task>`. Read in the code at 
   review of merged-copy this said a repository that starts tracking a folder named Local only
   "keeps the person's folder until its checkout conflicts": it did not, git replaced the
   person's ignored files without a conflict. Decision 4 now keeps them.)
+
+## Amendment: a pull request's preview, taking merged work out, and Autopilot asks ('merged-actions', 2026-11-08)
+
+The owner's decisions of 2026-11-02, recorded here as decided: "pr_preview: 'Open this version'
+on a waiting PR: its files on the PC to try before merging", "merging: ... 'Take this work out'
+(revert PR naming later tasks that built on it)" and "autopilot_repo: Autopilot asks before
+creating a repository (no silent creation)". Before, a waiting pull request could be looked at
+only on GitHub; Done was final, Undo could not reach a merge, and nothing reverted a merged pull
+request (a pull request the person merged on GitHub by squash or rebase has a merge commit with
+one parent, or several copied commits, so `git revert -m 1` on the recorded commit would fail or
+undo only part of it); and at Autopilot the agent created a repository with no card, from a
+session's plan and from the chat.
+
+1. **Open this version.** `POST /projects/:id/pull-requests/:number/preview` takes a pull request
+   the Overview lists as waiting (a task's or a docs one) and, under this copy's lock
+   (`withCopy`, decision 2), checks its head out into a second working folder of the copy's clone
+   beside it (`<worktrees>/docs/previews/<project>/pr-<n>`, `git worktree add --detach`), never
+   in the copy itself, so the copy stays on the default branch and the person's Local only files
+   are never in the way of a checkout. When the default branch moved past the pull request, it is
+   merged in there (never pushed): the folder holds what merging would give, and the row says
+   "#7 as it would be merged. Changes here are not kept."; when the two do not merge cleanly the
+   folder keeps the branch's own version and the sentence says so. Nothing runs there and Local
+   only is not copied in. One preview per project: the next replaces it; it is removed when its
+   pull request is merged (`onMerged`), closed (the watcher's `onPullRequestState`), or no longer
+   open at the Overview's next read. The row carries it (`preview`), so it survives a reload, with
+   Open folder.
+2. **Take this work out.** On a merged task (its record `merged`; the Tasks row and the drawer,
+   "Opens a pull request that takes its changes out of main; you merge it."),
+   `POST /tasks/:id/take-out` reads the merge commit (the record's, else the host's) and how the
+   pull request was merged, from git, not from the record's `method` alone
+   (`PrTaskExecutor.takeOut`, `takeOutPlan`, in a clone of its own beside the task's worktree):
+   a merge commit (two parents) is reverted with `-m 1`; one parent whose first-parent chain ends
+   with copies of the pull request's own commits, each matched by patch id, is a rebase merge and
+   those copies are reverted newest first; one parent whose change is the pull request's whole
+   change is a squash and is reverted without `-m`; anything else (no head to compare with, a
+   fast-forward, a commit that is no such shape) is refused with "#4 was merged in a way
+   Forerunner cannot undo safely; undo it on GitHub." The branch (`<task branch>-take-out`, from
+   the default branch) is pushed through the `neverPush` guard, never to the default branch, and
+   a pull request "Take out: <title>" is opened whose body, like the answer, names the done tasks
+   that built on it ("Later tasks built on it: ... Their work may need it: check them before you
+   merge this."). A revert that conflicts with later work pushes nothing and files one Inbox
+   notice per task (`take_out:conflict:<task>`, "... could not be taken out by itself. Later work
+   changed the same lines in price.ts: undo it on GitHub by hand, or ask in Chat for a task that
+   does it."), which asks nothing of a task. The merge record keeps the take-out
+   (`take_out_pr_number`, `take_out_pr_url`, `take_out_state`; migration 0007), so the row reads
+   "Taken out in #9 (waiting for you to merge)", then "Taken out in #9"; the Overview lists it
+   under Waiting for you to merge in its own group with merge-in-app's Merge, which merges it as
+   it is on the click (it has no record of its own); a take-out closed without merging offers the
+   action again.
+3. **Autopilot asks** (ADR 0097's amendment): the repository offer is filed at every level and
+   `repo.create` is medium for every actor, so no level creates a repository without a yes; the
+   offer holds no work and is not counted as a question in the project's line (C-60).
+
+A take-out's merge is marked at once by the app's Merge; one merged or closed on GitHub is read at
+the git host watcher's next poll (its `onDefaultBranchHead` runs for every repository project at
+every poll, whether main moved or not, and `TaskTakeOut.settle` asks the host about each open
+take-out: one request per open take-out per poll, none when none is open) and at the Overview's
+next read of the pull requests. A one-commit pull request squash-merged and one rebase-merged leave
+the same shape in git; its one commit is taken back either way and the take-out's words say
+"merged", not which (`takeOutPlan`'s `sure`). The conflict notice is worded from its card (the
+task's title and the files: `takeOutNoticeCard` in `request-words.ts`), so a title holding ": "
+reads whole; the repository offer likewise (`repoOfferCard`). The take-out's clone beside the
+task's worktree is removed once its push or conflict is done. The take-out record and the
+preview (its `preview.json` and git worktree) are read back by a daemon started again on the same
+home (`apps/ui/test/real-daemon.test.ts`, "a take-out and a preview survive a restart").
+
+Known gaps: a Redo of a task
+whose take-out is still open starts its record again and forgets that take-out (its pull request
+stays open on GitHub, no longer listed as a take-out). A dependent pull request merged with a merge
+commit that carried its dependency's commits (a dependency merged by GitHub through it) is
+reverted whole by `-m 1`, the dependency's work included; Forerunner's own Merge merges the
+dependency first, so this needs a merge made on GitHub.
 
 ## Alternatives considered
 

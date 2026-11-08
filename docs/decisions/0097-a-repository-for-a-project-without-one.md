@@ -1,7 +1,7 @@
 # 0097 — A project without a repository works in its folder, and its agent can create one
 
 Date: 2026-10-31
-Status: accepted (U-037; the owner's addition of 2026-10-31)
+Status: accepted (U-037; the owner's addition of 2026-10-31); amended by merged-actions (2026-11-08): Autopilot asks too
 
 ## Context
 
@@ -70,3 +70,23 @@ a yes below Autopilot, and nothing here deletes a repository: that always needs 
 - The cloud runner builds its own executor without the workspace: a cloud run of a project
   without a repository still has no folder (its workspace is on the PC). Creating a repository
   is the way to give such a project cloud runs.
+
+## Amendment: Autopilot asks too ('merged-actions', 2026-11-08)
+
+The owner's decision of 2026-11-02, "Autopilot asks before creating a repository (no silent
+creation)", recorded here as decided. The exception above is gone: a private repository is
+medium risk for every actor at every autonomy level (`repo.ts` `riskOf`), so the project's agent,
+in a session's plan (`RepoProposals.consider`) or in the chat (whose command tools run as the
+agent), files the card and creates nothing until the person's yes; a public one stays high. The
+proposal card is one per project at every level, and says what and why in two sentences
+(design §5), its title the question: 'Create a repository for "<project>"? Code work is planned
+for it, and it has none: its tasks run in the project's folder on this computer.'. The Inbox
+words it from its key (`repoOfferCard` in `request-words.ts`): the question with the project's
+name read now as its title, the second sentence as its body, and a line under each answer; before
+(review of merged-actions), the title was the text's first sentence, cut at the first ": ", ". "
+or "? ", so a project named "Birds: a counter" read 'Create a repository for "Birds'. The offer
+holds no work, so
+the project's status line does not count it as a question (`holdsTask`, C-60). Before, at level 4
+the agent created a private repository with no card from either path (the composed tests
+`repo-create.test.ts` "at Autopilot (level 4) the agent asks too" and "the chat agent's
+repo.create at Autopilot files a card" failed then).

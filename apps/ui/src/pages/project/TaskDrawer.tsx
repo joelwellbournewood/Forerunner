@@ -287,6 +287,16 @@ function DrawerBody({
           </ExternalLink>
         </p>
       ) : null}
+      {d.takeOut?.url && d.takeOut.number ? (
+        <p data-testid="drawer-take-out">
+          {d.takeOut.state === "open"
+            ? `Its work is being taken out in #${d.takeOut.number}: merge it on the Overview. `
+            : `Its work was taken out in #${d.takeOut.number}. `}
+          <ExternalLink href={d.takeOut.url} variant="inline" testId="drawer-take-out-link">
+            Open #{d.takeOut.number}
+          </ExternalLink>
+        </p>
+      ) : null}
     </div>
   );
 }

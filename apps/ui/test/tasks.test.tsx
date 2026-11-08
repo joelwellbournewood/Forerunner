@@ -1468,3 +1468,130 @@ describe("the task drawer's runs lead somewhere (phase E screens, later #46, C-4
     );
   });
 });
+
+describe("Take this work out (merged-actions, the owner's decision of 2026-11-02)", () => {
+  /** task_1 merged; task_2, which waits on it, done too. */
+  const merged = () => {
+    const harness = createHarness();
+    harness.daemon.state.taskMeta.merges?.set("task_1", {
+      state: "merged",
+      approval: "none",
+      sentence: "",
+    });
+    const t2 = harness.daemon.state.tasks.find((t) => t.id === "task_2");
+    if (t2) t2.status = "done";
+    return harness;
+  };
+
+  it("a merged task's row and drawer offer Take this work out with its line; the dialog names the task built on it; the click sends the task, and the row then says Taken out in #N (waiting for you to merge)", async () => {
+    const user = userEvent.setup();
+    const harness = merged();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("task_1");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent("Merged");
+    // Before: Redo only; nothing took merged work out.
+    expect(actionsOf(row)).toEqual(["Redo", "Take this work out"]);
+    expect(within(row).getByTestId("action-take_out")).toHaveAttribute(
+      "title",
+      "Opens a pull request that takes its changes out of main; you merge it.",
+    );
+    // The drawer offers it with the same line.
+    await user.click(within(row).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    const actions = await within(drawer).findByTestId("drawer-actions");
+    expect(within(actions).getByTestId("drawer-action-take_out").closest("li")).toHaveTextContent(
+      "Take this work outOpens a pull request that takes its changes out of main; you merge it.",
+    );
+    await user.click(within(actions).getByTestId("drawer-action-take_out"));
+    const dialog = await screen.findByTestId("take-out-dialog");
+    expect(dialog).toHaveTextContent('Take "Index the documentation pages" out?');
+    expect(within(dialog).getByTestId("take-out-built-on")).toHaveTextContent(
+      '"Add the search box to the header" built on it: it may need this work. The pull request names it.',
+    );
+    await user.click(within(dialog).getByTestId("confirm-take-out"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_1/take-out")).toHaveLength(1));
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      'Opened #41 to take "Index the documentation pages" out. It waits for you to merge it. "Add the search box to the header" built on it: check it still works once #41 is merged.',
+    );
+    expect(screen.queryByTestId("take-out-dialog")).toBeNull();
+    await waitFor(async () =>
+      expect(within(await rowOf("task_1")).getByTestId("task-status")).toHaveTextContent(
+        "Taken out in #41 (waiting for you to merge)",
+      ),
+    );
+    expect(actionsOf(await rowOf("task_1"))).toEqual(["Redo"]);
+    // The drawer links the pull request that takes it out.
+    const link = await within(await screen.findByTestId("task-drawer")).findByTestId(
+      "drawer-take-out",
+    );
+    expect(link).toHaveTextContent(
+      "Its work is being taken out in #41: merge it on the Overview. Open #41",
+    );
+  });
+
+  it("a conflict with later work is said above the list in words; a task whose work is not merged offers Redo only", async () => {
+    const user = userEvent.setup();
+    const harness = merged();
+    harness.daemon.state.takeOutConflict = ["site/index.html"];
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("task_1")).getByTestId("action-take_out"));
+    await user.click(
+      within(await screen.findByTestId("take-out-dialog")).getByTestId("confirm-take-out"),
+    );
+    expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
+      '"Index the documentation pages" could not be taken out by itself. Later work changed the same lines in site/index.html: undo it on GitHub by hand, or ask in Chat for a task that does it.',
+    );
+    // Nothing of it is in Changes (it opened nothing): the line does not point there.
+    expect(within(screen.getByTestId("task-moved")).queryByText("In Changes")).toBeNull();
+    // task_2 is done, but nothing says its work is merged: no Take this work out.
+    expect(actionsOf(await rowOf("task_2"))).toEqual(["Redo"]);
+  });
+
+  it("the conflict's Inbox card and Home's line name the whole task when its title holds a colon (review of merged-actions)", async () => {
+    // The review's bench walk: the card read '"Write the README' with the rest of the title in
+    // its body, and Home's line 'Corner Shop: "Write the README'.
+    const user = userEvent.setup();
+    const harness = merged();
+    const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+    if (t1) t1.title = "Write the README: what the page does and how to open it";
+    harness.daemon.state.takeOutConflict = ["README.md"];
+    const app = renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("task_1")).getByTestId("action-take_out"));
+    await user.click(
+      within(await screen.findByTestId("take-out-dialog")).getByTestId("confirm-take-out"),
+    );
+    await screen.findByTestId("task-moved-sentence");
+    // A second press files no second card.
+    await user.click(within(await rowOf("task_1")).getByTestId("action-take_out"));
+    await user.click(
+      within(await screen.findByTestId("take-out-dialog")).getByTestId("confirm-take-out"),
+    );
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_1/take-out")).toHaveLength(2));
+    app.unmount();
+
+    const inbox = renderApp("/inbox", harness);
+    const titles = await screen.findAllByTestId("request-title");
+    const card = titles
+      .find((t) => t.textContent?.includes("could not be taken out"))
+      ?.closest("[data-testid='request']");
+    if (!(card instanceof HTMLElement)) throw new Error("no take-out notice in the Inbox");
+    expect(titles.filter((t) => t.textContent?.includes("could not be taken out"))).toHaveLength(1);
+    expect(within(card).getByTestId("request-title")).toHaveTextContent(
+      '"Write the README: what the page does and how to…" could not be taken out',
+    );
+    expect(within(card).getByTestId("request-body")).toHaveTextContent(
+      "Later work changed the same lines in README.md: undo it on GitHub by hand, or ask in Chat for a task that does it.",
+    );
+    expect(within(card).getByRole("button", { name: "Got it" })).toBeInTheDocument();
+    inbox.unmount();
+
+    renderApp("/", harness);
+    const home = await screen.findByTestId("home-needs-you");
+    const line = within(home)
+      .getAllByTestId("home-card")
+      .find((l) => l.textContent?.includes("could not be taken out"));
+    expect(line).toHaveTextContent(
+      'Atlas:"Write the README: what the page does and how to…" could not be taken outAnswer',
+    );
+  });
+});

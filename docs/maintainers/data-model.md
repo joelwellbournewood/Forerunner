@@ -603,6 +603,9 @@ Carries the common columns (see Invariants).
 | `attempts` | int | no | `0` |  | Merge attempts so far. |
 | `sentence` | text | no | `""` |  | One sentence for the person: why it waits, or what happened. |
 | `last_outcome` | text | yes |  |  | The last attempt's outcome (merged, checks_pending, conflict, ...). |
+| `take_out_pr_number` | int | yes |  |  | The pull request that takes this merge's work out (merged-actions). |
+| `take_out_pr_url` | text | yes |  |  | That pull request's web URL. |
+| `take_out_state` | text | yes |  |  | Where that pull request is: open, merged or closed. |
 
 Indexes:
 

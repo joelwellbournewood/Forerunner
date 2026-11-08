@@ -1016,6 +1016,82 @@ export class GitOps {
     }
   }
 
+  // ---- merged-actions: a pull request's preview and taking merged work out -------------------
+
+  /**
+   * Fetch one ref of the remote (`git fetch <remote> <ref>`), such as GitHub's
+   * `refs/pull/<n>/head` for a pull request whose branch is gone: the commit it names is then in
+   * this clone (and in FETCH_HEAD). False when the remote has no such ref.
+   */
+  async fetchRef(ref: string, remote = "origin"): Promise<boolean> {
+    const url = this.opts.auth?.token ? await this.remoteUrl(remote) : null;
+    const r = await this.git(["fetch", "--no-tags", remote, ref], {}, url);
+    return r.code === 0;
+  }
+
+  /**
+   * A second working folder of this clone at commit `rev`, with no branch
+   * (`git worktree add --detach`): a pull request's version to look at beside the copy. The
+   * folder must not exist yet.
+   */
+  async worktreeAdd(dir: string, rev: string): Promise<void> {
+    this.must(await this.git(["worktree", "add", "--detach", "--force", dir, rev]), "worktree add");
+  }
+
+  /**
+   * Removes a working folder `worktreeAdd` made (`git worktree remove --force`, whatever was
+   * changed in it), and forgets one whose folder is gone (`git worktree prune`). A folder git
+   * does not know is deleted as a plain folder.
+   */
+  async worktreeRemove(dir: string): Promise<void> {
+    const r = await this.git(["worktree", "remove", "--force", "--force", dir]);
+    if (r.code !== 0) rmSync(dir, { recursive: true, force: true });
+    await this.git(["worktree", "prune"]);
+  }
+
+  /**
+   * Takes back commits on the current branch (`git revert --no-edit`), each as a commit of its
+   * own, in the order given (newest first for a range): with `mainline` a merge commit's change
+   * against that parent (`-m 1`: everything the merge brought into the branch). On a conflict
+   * the revert is aborted, the branch is as it was, and the files are reported.
+   */
+  async revert(
+    commits: readonly string[],
+    opts: { mainline?: number } = {},
+  ): Promise<RebaseResult> {
+    if (!commits.length) return { ok: true, conflicts: [], detail: "" };
+    const r = await this.git([
+      "revert",
+      "--no-edit",
+      ...(opts.mainline ? ["-m", String(opts.mainline)] : []),
+      ...commits,
+    ]);
+    if (r.code === 0) return { ok: true, conflicts: [], detail: r.stdout.trim() };
+    const conflicts = (await this.git(["diff", "--name-only", "--diff-filter=U"])).stdout
+      .split(/\r?\n/)
+      .filter(Boolean);
+    await this.git(["revert", "--abort"]);
+    return {
+      ok: false,
+      conflicts,
+      detail: redactToken(r.stderr.trim(), this.opts.auth?.token).slice(-800),
+    };
+  }
+
+  /**
+   * The commits `from` lacks that `to` has, oldest first, without merge commits
+   * (`git rev-list --reverse --no-merges <to> ^<from>`): a pull request's own commits that are
+   * not on the default branch.
+   */
+  async commitsNotIn(from: string, to: string): Promise<string[]> {
+    return this.must(
+      await this.git(["rev-list", "--reverse", "--no-merges", to, `^${from}`]),
+      "rev-list",
+    )
+      .stdout.split(/\r?\n/)
+      .filter(Boolean);
+  }
+
   /** Where a worktree for a task should live under a root. */
   static worktreePath(root: string, taskId: string): string {
     return join(root, taskId.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 60));

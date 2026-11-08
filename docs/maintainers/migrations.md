@@ -57,6 +57,13 @@ schema and the snapshot disagree.
   for the same pull request; for another one (a redo's new pull request after the old one was
   merged, 'dependent-branches') it starts the record again: queued, no merge commit or method,
   no attempts. No schema change.
+- `src/migrations/0007-take-out.ts` (merged-actions, the owner's decision of 2026-11-02 "Take
+  this work out"; ADR 0113's amendment): hand written and frozen, three nullable columns on
+  `merge_record`: `take_out_pr_number` (`INTEGER`, `BIGINT` on Postgres), `take_out_pr_url`
+  and `take_out_state` (`TEXT`: `open`, `merged` or `closed`), the pull request that takes the
+  merged task's work out and where it is (`IF NOT EXISTS` on Postgres). Rows written before it
+  read back with nulls: nothing taken out. `pin` clears them when a redo's new pull request
+  starts the record again.
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and

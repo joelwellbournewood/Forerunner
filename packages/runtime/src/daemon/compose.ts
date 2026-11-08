@@ -129,6 +129,7 @@ import {
 } from "../loop/memory.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
+import { TaskTakeOut } from "../loop/take-out.ts";
 import { evidenceRootOf, keepOnlyThisTry, type TryItPort } from "../loop/try-it.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
@@ -858,6 +859,8 @@ export interface RuntimeApp {
    * (merge-in-app): `view` for GET /projects/:id/pull-requests, `merge` for the click.
    */
   pullRequests: ProjectPullRequests;
+  /** "Take this work out" on a merged task (merged-actions): POST /tasks/:id/take-out. */
+  takeOut: TaskTakeOut;
   /**
    * The grant a session of this agent on `projectId` starts with (ADR 0044), as `startSession`
    * computes it: the tools (`merge_pr` among them, J.9), the worktrees root, the git host's and
@@ -2498,10 +2501,45 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       );
       copyRefreshes.add(refresh);
     },
+    // merged-actions: "Open this version" of a waiting pull request, beside the copy and under
+    // its lock (`ProjectDocs.previewPullRequest`).
+    previews: docs,
+    // merged-actions: the take-out pull requests that wait are listed with Merge.
+    takeOuts: {
+      openOf: (p) => takeOut.openOf(p),
+      settle: (p, o) => takeOut.settle(p, o),
+      merged: (p, n) => takeOut.merged(p, n),
+    },
+  });
+  // merged-actions: "Take this work out" on a merged task (POST /tasks/:id/take-out): a branch
+  // from main that reverts its merge by the way it was merged, with a pull request that names
+  // the tasks that built on it; the PR executor does the git, in a clone of its own.
+  const takeOut = new TaskTakeOut({
+    store,
+    host: gitHost,
+    git: executor,
+    humanId: human.id,
+    agentId: agent.id,
+    changed: (projectId) => events.emit("project", { id: projectId }),
   });
   // merged-copy: the copy follows every merge (a session's, a retry's, Merge in the app, one
   // the watcher saw on GitHub).
   merge.onMerged(({ task }) => refreshProjectCopy(task.project_id));
+  // merged-actions: a pull request's preview goes once it is merged (here) or closed (the
+  // watcher's onPullRequestState, below); the Overview's read drops one GitHub merged or closed
+  // before either said so (a docs pull request has no task).
+  const dropPreviewOf = (projectId: string | null, number: number): Promise<void> =>
+    projectId
+      ? docs.dropPreview(projectId, number).then(
+          () => undefined,
+          (e: unknown) =>
+            logger.warn("pull request preview not removed", {
+              projectId,
+              error: errorMessage(e),
+            }),
+        )
+      : Promise.resolve();
+  merge.onMerged(({ task, record }) => dropPreviewOf(task.project_id, record.pr_number));
   // The repository projects the watcher reads the default branch of (onDefaultBranchHead).
   const repositoryProjects = async (): Promise<{ projectId: string; repo: RepoRef }[]> => {
     const out: { projectId: string; repo: RepoRef }[] = [];
@@ -4030,6 +4068,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         // method, a close), and the default branch's head once per poll and project.
         onPullRequestState: async (pr, info) => {
           await dependentBranches.pullRequestState(pr, info);
+          if (info.state !== "open") await dropPreviewOf(pr.projectId, pr.number);
           if (info.state !== "open" && pr.projectId) events.emit("project", { id: pr.projectId });
         },
         repositoryProjects,
@@ -4039,6 +4078,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           await Promise.all([
             dependentBranches.sweep(project.projectId),
             refreshProjectCopy(project.projectId, { head: sha, base: project.branch }),
+            // merged-actions: a take-out merged or closed on GitHub is read here (the host is
+            // asked only while one is open), so its task's row says "Taken out in #9".
+            takeOut.settle(project.projectId, null).catch((e: unknown) =>
+              logger.warn("take-outs not settled", {
+                projectId: project.projectId,
+                error: errorMessage(e),
+              }),
+            ),
           ]);
         },
         onInjection: async (report, origin, projectId) => {
@@ -4354,6 +4401,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     merge,
     dependentBranches,
     pullRequests,
+    takeOut,
     sessionGrant: async (projectId) =>
       sessionGrant(
         projectId ? await store.project.mustGet(projectId) : null,

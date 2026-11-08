@@ -19,6 +19,7 @@ import { MIGRATION_0003 } from "../src/migrations/0003-sources.ts";
 import { MIGRATION_0004 } from "../src/migrations/0004-shared-secrets.ts";
 import { MIGRATION_0005 } from "../src/migrations/0005-change-reasons.ts";
 import { MIGRATION_0006 } from "../src/migrations/0006-merge-records.ts";
+import { MIGRATION_0007 } from "../src/migrations/0007-take-out.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -209,12 +210,14 @@ describe("migrations", () => {
     expect(MIGRATIONS[3]).toBe(MIGRATION_0004);
     expect(MIGRATIONS[4]).toBe(MIGRATION_0005);
     expect(MIGRATIONS[5]).toBe(MIGRATION_0006);
+    expect(MIGRATIONS[6]).toBe(MIGRATION_0007);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
     // v1 is the generator's output for the v1 subset: the v2 columns, the v3 table
     // (source_candidate with its indexes) and the v3 enum value, the v4 column
     // (device.wrap_public_key), the v4 table (secret_grant with its indexes), the v5
     // columns (milestone.reason, session.reason; task.reason, which v1 had, stays) and the
-    // v6 table (merge_record with its indexes) are the only differences.
+    // v6 table (merge_record with its indexes, whose v7 take-out columns go with it) are the only
+    // differences.
     const addedInV5: Record<string, RegExp> = { milestone: /"reason"/, session: /"reason"/ };
     const generated = generateInitialMigration();
     const strip = (stmts: string[]) =>
@@ -284,8 +287,8 @@ describe("migrations", () => {
       );
       expect(v1Columns).not.toContain("context_transforms");
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3, 4, 5, 6], version: 6 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3, 4, 5, 6, 7], version: 7 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
       const repos = createRepos(db, clock);
       const run = await repos.run.mustGet("r1");
@@ -334,7 +337,7 @@ describe("migrations", () => {
           ["src2", at, at, "github_repo", "acme/alpha", "acme/alpha"],
         ),
       ).rejects.toThrow();
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6], version: 6 });
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7], version: 7 });
 
       const repos = createRepos(db, clock);
       const kept = await repos.source.mustGet("src1");
@@ -411,8 +414,8 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'secret_grant'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6], version: 6 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7], version: 7 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
       const repos = createRepos(db, clock);
       const device = await repos.device.mustGet("d1");
@@ -475,8 +478,8 @@ describe("migrations", () => {
         expect(v2Columns).not.toContain("reason");
       }
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6], version: 6 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7], version: 7 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
       const repos = createRepos(db, clock);
       const milestone = await repos.milestone.mustGet("m1");
@@ -552,8 +555,8 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'merge_record'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [6], version: 6 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [6, 7], version: 7 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
       const repos = createRepos(db, clock);
       expect((await repos.task.mustGet("t1")).pr_url).toBe("https://github.com/o/r/pull/4");
@@ -575,6 +578,10 @@ describe("migrations", () => {
         sentence: "",
         merge_sha: null,
         method: null,
+        // v7 (merged-actions): nothing taken out yet.
+        take_out_pr_number: null,
+        take_out_pr_url: null,
+        take_out_state: null,
       });
       // One record per task.
       await expect(
@@ -623,6 +630,18 @@ describe("migrations", () => {
       await expect(
         db.query(`UPDATE "merge_record" SET "state" = 'lost' WHERE "id" = ?`, [pinned.id]),
       ).rejects.toThrow();
+      // v7 (merged-actions): a merged record keeps the pull request that takes its work out.
+      const takenOut = await repos.mergeRecord.patch(pinned.id, {
+        take_out_pr_number: 9,
+        take_out_pr_url: "https://github.com/o/r/pull/9",
+        take_out_state: "open",
+      });
+      expect(takenOut).toMatchObject({
+        state: "merged",
+        take_out_pr_number: 9,
+        take_out_pr_url: "https://github.com/o/r/pull/9",
+        take_out_state: "open",
+      });
     } finally {
       await db.close();
     }

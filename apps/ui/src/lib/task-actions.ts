@@ -17,7 +17,7 @@ import type { TaskAction, TaskView } from "../api/client.ts";
  */
 
 /** What a button does: an action the daemon applies, or a form or a link the tab opens. */
-export type TaskActionKey = TaskAction | "edit" | "dependencies" | "answer";
+export type TaskActionKey = TaskAction | "edit" | "dependencies" | "answer" | "take_out";
 
 export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: string }>> = {
   make_ready: { label: "Make ready", explain: "A session will pick it up." },
@@ -50,6 +50,11 @@ export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: s
   },
   reopen: { label: "Reopen", explain: "Brings it back as ready." },
   cancel: { label: "Cancel", explain: "Drops it." },
+  // merged-actions, in the owner's words of 2026-11-02: offered on a task whose work is merged.
+  take_out: {
+    label: "Take this work out",
+    explain: "Opens a pull request that takes its changes out of main; you merge it.",
+  },
 };
 
 /**
@@ -98,7 +103,8 @@ export function actionsFor(
     case "failed":
       return ["try_again", "edit", "cancel"];
     case "done":
-      return ["redo"];
+      // merged-actions: a task whose work is in main can be taken out (`display.takeOut`).
+      return task?.display?.takeOut?.state === "offered" ? ["redo", "take_out"] : ["redo"];
     case "cancelled":
       return ["reopen"];
   }
@@ -133,7 +139,12 @@ export function cancelWorkLine(
 }
 
 /** The actions that open a form or a page instead of the confirm dialog. */
-export const FORM_ACTIONS: readonly TaskActionKey[] = ["edit", "dependencies", "answer"];
+export const FORM_ACTIONS: readonly TaskActionKey[] = [
+  "edit",
+  "dependencies",
+  "answer",
+  "take_out",
+];
 
 /**
  * The status in words. The daemon sends it; a view without it (an older daemon, the state

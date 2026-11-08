@@ -114,6 +114,8 @@ import {
   ProjectSummary as ProjectSummarySchema,
   type PullRequestMergeAnswer,
   PullRequestMergeAnswer as PullRequestMergeAnswerSchema,
+  type PullRequestPreviewAnswer,
+  PullRequestPreviewAnswer as PullRequestPreviewAnswerSchema,
   type RemoveSourceView,
   RemoveSourceView as RemoveSourceViewSchema,
   type RenameAgentBody,
@@ -171,6 +173,8 @@ import {
   type TaskEvidenceFileView,
   TaskEvidenceFileView as TaskEvidenceFileViewSchema,
   type TaskReviewEvidence,
+  type TaskTakeOutAnswer,
+  TaskTakeOutAnswer as TaskTakeOutAnswerSchema,
   type TaskTransitionView,
   TaskTransitionView as TaskTransitionViewSchema,
   type TaskView,
@@ -325,6 +329,7 @@ export type {
   ProjectSettingsView,
   ProjectSummary,
   PullRequestMergeAnswer,
+  PullRequestPreviewAnswer,
   QueueItemView,
   RemoveSourceView,
   ReviewsView,
@@ -354,6 +359,7 @@ export type {
   TaskDisplay,
   TaskEvidenceFileView,
   TaskReviewEvidence,
+  TaskTakeOutAnswer,
   TaskTransitionView,
   TaskView,
   UpdateLessonBody,
@@ -579,6 +585,11 @@ export interface DaemonClient {
    * again, go ahead without answers, cancel, reopen, redo; the task and its Undo.
    */
   taskAction(taskId: string, body: TaskActionBody): Promise<TaskTransitionView>;
+  /**
+   * "Take this work out" on a merged task (merged-actions): a pull request that reverts its merge,
+   * waiting for the person to merge it; or why not, or the conflict with later work.
+   */
+  takeOutTask(taskId: string): Promise<TaskTakeOutAnswer>;
   /** Edit: the fields that change, the version the drawer showed; the task and its Undo. */
   updateTask(taskId: string, body: UpdateTaskInput): Promise<TaskTransitionView>;
   /** The task drawer: what it asks, waits for, its runs, review and open cards. */
@@ -815,6 +826,11 @@ export interface DaemonClient {
    * dependency order in the daemon; read `projectPullRequests` again to follow them.
    */
   mergePullRequest(projectId: string, number: number): Promise<PullRequestMergeAnswer>;
+  /**
+   * "Open this version" on a waiting pull request (merged-actions): its files in a folder on
+   * this computer, replacing the project's earlier preview; the answer names the folder.
+   */
+  previewPullRequest(projectId: string, number: number): Promise<PullRequestPreviewAnswer>;
   /** One file of the project's folder, its text inline (null when it is not text). */
   projectFile(
     projectId: string,
@@ -1024,6 +1040,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("createTask", { id: projectId }), TaskTransitionViewSchema, body),
     transitionTask: (taskId, body) =>
       post(routePath("transitionTask", { id: taskId }), TaskTransitionViewSchema, body),
+    takeOutTask: (taskId) =>
+      post(routePath("takeOutTask", { id: taskId }), TaskTakeOutAnswerSchema, {}),
     taskAction: (taskId, body) =>
       post(routePath("taskAction", { id: taskId }), TaskTransitionViewSchema, body),
     updateTask: (taskId, body) =>
@@ -1293,6 +1311,12 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(
         routePath("mergePullRequest", { id: projectId, number: String(number) }),
         PullRequestMergeAnswerSchema,
+        {},
+      ),
+    previewPullRequest: (projectId, number) =>
+      post(
+        routePath("previewPullRequest", { id: projectId, number: String(number) }),
+        PullRequestPreviewAnswerSchema,
         {},
       ),
     projectFile: (projectId, path, signal) =>

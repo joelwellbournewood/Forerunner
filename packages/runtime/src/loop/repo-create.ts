@@ -12,7 +12,7 @@ import {
   safeSegment,
 } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, ProjectRow, StateStore } from "@forerunner/state";
-import { type AutonomyLevel, decideAutonomy } from "../enforcement/autonomy.ts";
+import { REPO_OFFER_BODY, repoOfferQuestion } from "../daemon/request-words.ts";
 import { ANSWER_CARD_KEYS, repoProposalAnswer } from "../wiring/request-answers.ts";
 import { projectWorkspaceDir } from "./docs.ts";
 import type { CommandResultView } from "./ports.ts";
@@ -27,12 +27,14 @@ import type { CommandResultView } from "./ports.ts";
  *   link" in New project sets). From then on the project's tasks run on branches of clones
  *   with pull requests (`PrTaskExecutor`).
  * - `RepoProposals`: when a session plans code work on a project without a repository, the
- *   project's agent proposes one. Below Autopilot (autonomy 4) that is one Inbox card per
- *   project (options "Create the repository" / "Not now"; the card says the name, the account
- *   or organization and that it is private); at Autopilot the agent runs `repo.create` itself.
- *   The person's yes runs the same command, through the change log; "Not now" is remembered
- *   on the project, so the agent does not ask again (the project page's button still works).
- *   Nothing is created without a yes below Autopilot.
+ *   project's agent proposes one: one Inbox card per project, at every autonomy level (options
+ *   "Create the repository" / "Not now"; the card says the name, the account or organization
+ *   and that it is private). The person's yes runs the same command, through the change log;
+ *   "Not now" is remembered on the project, so the agent does not ask again (the project page's
+ *   button still works). Nothing is created without a yes, at Autopilot too (the owner's
+ *   decision of 2026-11-02, "Autopilot asks before creating a repository"; before, at level 4
+ *   the agent ran `repo.create` itself with no card). The offer asks nothing of a task, so the
+ *   project's status line does not count it as a question (`holdsTask`, C-60).
  */
 
 /** Audit row kind of a repository creation (and of a first push that failed). */
@@ -271,7 +273,6 @@ export interface RepoProposalsDeps {
 
 export type RepoProposalOutcome =
   | "filed"
-  | "created"
   | "has_repository"
   | "no_code_work"
   | "declined_before"
@@ -312,35 +313,17 @@ export class RepoProposals {
       });
       return "unavailable";
     }
-    const level = project.autonomy_level as AutonomyLevel;
-    if (decideAutonomy("external_send", { level }) === "allow") {
-      // Autopilot: the agent creates it; the change log and the sentence tell the person.
-      const r = await this.deps.commands.execute(
-        { name: "repo.create", params: { project: project.id } },
-        {
-          humanId: this.deps.humanId,
-          agentId: this.deps.agentId,
-          activeProjectId: project.id,
-          sessionId: req.sessionId,
-          source: "ui",
-          wordsUsed: "agent: the plan holds code work and the project has no repository",
-        },
-        { actor: { kind: "agent", id: this.deps.agentId } },
-      );
-      if (r.status === "done") return "created";
-      this.logger.warn("repository not created at autopilot", {
-        projectId: project.id,
-        status: r.status,
-        reason: r.reason ?? null,
-      });
-      return "unavailable";
-    }
+    // Every level asks, Autopilot too (the owner's decision of 2026-11-02): no autonomy level
+    // frees the creation of a repository under the person's account.
     await store.humanRequest.insert({
       human_id: this.deps.humanId,
       project_id: project.id,
       session_id: req.sessionId,
       kind: "approval",
-      why: `Code work is planned for ${project.name}, which has no repository: its tasks run in the project's folder on this computer, with no branch, pull request or review on GitHub. Create a repository for it?`,
+      // The Inbox titles it by its question with the project's name read then and says the
+      // sentence below it (`repoOfferCard`, request-words.ts); this is the one line for readers
+      // that show one.
+      why: `${repoOfferQuestion(project.name)} ${REPO_OFFER_BODY}`,
       steps: [
         `Repository: ${preview.fullName}`,
         `Under: ${preview.accountKind === "organization" ? `the organization ${preview.owner}` : `your GitHub account ${preview.owner}`}`,

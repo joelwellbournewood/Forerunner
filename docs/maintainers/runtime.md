@@ -1848,8 +1848,11 @@ first push leaves the repository unlinked, says so and audits `allowed: false`).
 `cc:Bash` and `cc:Edit` or `cc:MultiEdit`) on a project without a repository, not declined
 before (`settings.repo_proposal`) and not already asked, becomes one non-blocking `approval`
 card keyed `repo:create:<project>` (options `REPO_PROPOSAL_OPTIONS`: "Create the repository",
-"Not now"; the steps name the repository, the account or organization and "private"), or, where
-`decideAutonomy("external_send")` allows (level 4), `repo.create` run as the agent. `sync`
+"Not now"; the steps name the repository, the account or organization and "private"), at every
+autonomy level: Autopilot asks too (the owner's decision of 2026-11-02; before 'merged-actions'
+the agent ran `repo.create` itself at level 4). The card asks nothing of a task, so
+`holdsTask` (`daemon/task-words.ts`, `isRepositoryOffer`) leaves it out of the project's
+status line (C-60: a finished folder project read "Waiting for you: 1 question"). `sync`
 (in `syncApprovals`, `repos`) runs `repo.create` for an approval with the answer as a tap, records
 a decline on the project, marks each card `applied_at` with its outcome and tells the person a
 failure. `repoProposalAnswer` (`wiring/request-answers.ts`, `ANSWER_CARD_KEYS.repoCreatePrefix`)
@@ -1857,7 +1860,9 @@ is the card's reader, so `acceptsAnswer` refuses any other word. The project car
 `repos` for the project page's button. Tests: `workspace-runs.test.ts` (both drivers, the change
 set, a second task's baseline), `repo-create.test.ts` (the fake git host: the grant, a card and
 nothing created without a yes, "Not now" not asked again, the first commit, the link, the next
-run's clone, the page's command with a tap, Autopilot, a refused typed answer, the Chat phrase).
+run's clone, the page's command with a tap, Autopilot asking with a card, the chat agent's
+`repo.create` at Autopilot filing a card, the status line not counting the offer, a refused
+typed answer, the Chat phrase).
 
 **What a run is capped at (U-042).** `runCapOf` (`session/executor.ts`) decides the brief's
 budget, which becomes the run token's `budgetUsdMicro` and the hooks' run cap: a task with a
@@ -2906,6 +2911,88 @@ rest to the person with "#5 builds on #4, which was not merged: merge #4 first."
 own narrow token with the person's approval, the branch's rules read first; never unattended, in
 either mode. Every merge ends with `changed(projectId)`, a `project` event, so the Overview reads
 again.
+
+**Open this version (merged-actions, the owner's decision of 2026-11-02, "pr_preview").**
+`POST /projects/:id/pull-requests/:number/preview` (`ProjectPullRequests.preview`, in
+`docs-routes.ts` beside Merge) puts a waiting pull request's files on this computer to try before
+merging: only a pull request the view lists as waiting (task or docs), else `refused` with "#7 does
+not wait to be merged: it may be merged or closed already."; the PR's head is read from the host
+and `ProjectDocs.previewPullRequest` (`loop/docs.ts`), under the copy's lock (`withCopy`, so a
+refresh or a docs write at the same moment waits, and the preview waits for them), clones the copy
+when it is missing, fetches (and `refs/pull/<n>/head` when the head is on no branch), removes the
+project's earlier preview and checks the head out into `<worktrees>/docs/previews/<project>/pr-<n>`
+(`GitOps.worktreeAdd`: a second working folder of the copy's clone with no branch). When the
+default branch moved past what the pull request started from, it is merged in there with a merge
+commit that is never pushed, so the folder holds what merging would give; a merge that does not go
+cleanly is aborted and the folder keeps the branch's own version. `preview.json` beside it records
+the number and whether it merged cleanly; `previewOf` reads it (no git), and the view puts it on
+the row (`ProjectPullRequestView.preview`: the folder and `previewSentence`: "#7 as it would be
+merged. Changes here are not kept." or "#7 as its branch has it: it does not merge cleanly with
+main yet. Changes here are not kept."). Nothing runs there and Local only is not copied in (the
+folder is a plain checkout; nothing reads it as evidence). One preview per project: the next one
+replaces it, and it is removed (`dropPreview`, under the lock, `GitOps.worktreeRemove` and the
+record) when its pull request is merged (`merge.onMerged`), closed (the watcher's
+`onPullRequestState`), or found neither open nor listed by the view's next read (a docs pull
+request merged on GitHub, a close the watcher has not read yet). Tests: `apps/ui/test/
+real-daemon.test.ts` "Open this version on a waiting PR ..." (the lock, main merged in, the row's
+preview, a refused number, removed after a merge and after a close).
+
+**Take this work out (merged-actions, the owner's decision of 2026-11-02, ADR 0113's
+amendment).** `POST /tasks/:id/take-out` (`server.ts`, `RuntimeApp.takeOut`, `TaskTakeOut` in
+`src/loop/take-out.ts`) on a done task whose pull request is merged: refused in one sentence when
+the task is not done, has no pull request, its pull request is not merged ("close #4 on GitHub if
+you do not want it"), or a take-out is open or merged already. The merge commit is the record's
+(`merge_sha` when `merged`) or the host's `mergeCommitSha`; `builtOn(task)` lists the done tasks
+that depend on it, directly or through another. `PrTaskExecutor.takeOut` (capabilities) makes the
+branch `<task branch>-take-out` from the default branch in a clone of its own and reverts by the
+shape it reads from git (`takeOutPlan`: a merge commit with `-m 1`, a rebase merge's copies
+matched by patch id, a squash), pushes it forced with a lease (never the default branch, through
+`neverPush`) and returns `pushed`, `conflict` (the files; nothing pushed, the clone reset),
+`unknown_shape` (refused with `unknownShapeSentence`: "#4 was merged in a way Forerunner cannot
+undo safely; undo it on GitHub."), `not_in_main` or `no_repository`. On `pushed` the pull request
+"Take out: <title>" is opened with a body that names how #4 was merged and the tasks that built on
+it, and the task's merge record keeps it (`take_out_pr_number`, `take_out_pr_url`,
+`take_out_state: "open"`; a merge with no record gets one, `merged`, `reviewed_head_sha` empty).
+The answer (`TaskTakeOutAnswer`) is `opened` with `takeOutOpenedSentence` ("Opened #9 to take "X"
+out. It waits for you to merge it. "Y" built on it: check it still works once #9 is merged."),
+`conflict` with `takeOutConflictSentence` and one Inbox notice per task (`kind: "info"`, key
+`TAKE_OUT_NOTICE_PREFIX` + task, no task id: `holdsTask` leaves it out with `isTakeOutNotice`, so
+the project's line does not wait on it), or `refused`. The notice's card keeps `task_title` and
+`files`; `request-words.ts`'s `takeOutNoticeCard` titles it `"<title>" could not be taken out`
+and says `takeOutConflictBody(files)` below it, with Got it ("Closes this card; its work stays in
+main.") and, once closed, "Nothing changed: "<title>" stays in main." (review of merged-actions:
+the generic card's first-sentence title was cut at the ": " inside a quoted task title, in the
+Inbox, on Home and in the notification). The words are in `daemon/take-out-words.ts`, which the
+UI's fake daemon imports. A pull request of one commit squash-merged or rebase-merged leaves the
+same shape: `takeOutPlan` returns `sure: false` and the body says "(#4, merged)". `taskDisplay()`'s merged case (`mergedDisplay`) reads the
+record: "Merged" with `takeOut: { state: "offered" }`, "Taken out in #9 (waiting for you to
+merge)" (`open`), "Taken out in #9" (`merged`); a take-out closed without merging offers it again.
+`ProjectPullRequests.view` lists each open take-out (`TaskTakeOut.openOf`) as a `take_out` row
+(title "Take out: <title>", `taskId` the task, no review) whose Merge merges it as it is through
+`mergeAsIs`, then marks it merged (`TaskTakeOut.merged`); before listing, `TaskTakeOut.settle`
+reads each open take-out the host no longer lists as open and marks it merged or closed, and the
+git host watcher's `onDefaultBranchHead` (every repository project at every poll, whether main
+moved or not) calls `settle(project, null)` (each open take-out read from the host, only while
+one is open), so a take-out merged or closed on GitHub is read within a poll.
+One take-out runs per task at a time (a second press: "Its work is being taken out now: the
+answer comes in a moment."; `packages/runtime/test/take-out.test.ts`). Tests:
+`packages/capabilities/test/take-out.test.ts` (merge, squash and rebase merges on the fake
+GitHub: main's tree after merging the take-out equals main's before the merge; a one-commit squash
+and rebase with `sure: false`; a conflict pushes nothing; an unknown shape and a commit not in
+main; the clone removed after), `packages/runtime/test/take-out.test.ts` (the notice's words with a
+": " in the title, through `requestView` and `requestOpened`), `apps/ui/test/real-daemon.test.ts`
+"Take this work out on a merged task of a chain ...", "a pull request squash-merged on GitHub ..."
+and "a take-out and a preview survive a restart" (validation rule 4: the daemon composed twice on
+one home; the rows, the take-out rows with Merge and the preview's folder read back; Merge and a
+merge on GitHub then finish the take-outs and a merge removes the preview).
+
+**The repository offer's words (merged-actions).** `RepoProposals` files
+`${repoOfferQuestion(name)} ${REPO_OFFER_BODY}` as the card's text; `request-words.ts`'s
+`repoOfferCard` titles it by `repoOfferQuestion` with the project's name read now, says
+`REPO_OFFER_BODY` below it and gives each answer its line ("Makes it on GitHub, private, with the
+project's folder as its first commit." / "Tasks keep running in the project's folder; the agent
+does not ask again."). Before, a project named "Birds: a counter" read 'Create a repository for
+"Birds' (`packages/runtime/test/repo-create.test.ts`).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
 (`TaskDisplayContext.merges`, filled by `loadTaskDisplayContext` for done tasks with a pull

@@ -13,8 +13,8 @@ import { START, TZ } from "./helpers.ts";
 /**
  * repo.create (U-037, ADR 0097): Chat's phrases, the change card and the risk that decides who
  * confirms. A private repository asks the person (medium: a yes or a tap); a public one asks
- * for a paired device (high); the project's own agent acts alone only at Autopilot, where the
- * autonomy table frees outward-facing actions, and only for a private repository.
+ * for a paired device (high). No autonomy level lets the agent create one alone, Autopilot
+ * included (the owner's decision of 2026-11-02, "Autopilot asks before creating a repository").
  */
 const parser = new IntentParser(defaultRegistry());
 const notes = { id: "p-notes", name: "Notes App" };
@@ -98,8 +98,11 @@ describe("repo.create: the card and who confirms", () => {
     expect(await risk({ private: false }, await ctxFor(4, "agent"))).toBe("high");
   });
 
-  it("the project's agent at Autopilot creates a private repository without asking", async () => {
-    expect(await risk({ private: true }, await ctxFor(4, "agent"))).toBe("low");
+  it("the project's agent at Autopilot asks too: a private repository is medium for it (before: low, created with no card)", async () => {
+    expect(await risk({ private: true }, await ctxFor(4, "agent"))).toBe("medium");
+    // The card it files says so: the person's yes is needed.
+    const card = await repoCreate.plan?.({ private: true }, await ctxFor(4, "agent"));
+    expect(card?.impact.risk).toBe("medium");
   });
 
   it("the card says the name, where and private or public, and that it cannot be undone", async () => {

@@ -340,6 +340,20 @@ export const TaskDisplay = z.object({
    * service (the dialog then words it from the status).
    */
   cancelWork: z.string().optional(),
+  /**
+   * "Take this work out" on a merged task (merged-actions, the owner's decision of 2026-11-02):
+   * `offered`, its work is in main and the row offers the action; `open`, the pull request that
+   * takes it out waits for the person to merge it (`number`, `url`); `merged`, that pull
+   * request is merged and the work is out of main. Absent for any other task and from an older
+   * service.
+   */
+  takeOut: z
+    .object({
+      state: z.enum(["offered", "open", "merged"]),
+      number: z.number().int().nullable(),
+      url: z.string().nullable(),
+    })
+    .optional(),
 });
 export type TaskDisplay = z.infer<typeof TaskDisplay>;
 
@@ -1034,8 +1048,11 @@ export type ProjectRepositoryView = z.infer<typeof ProjectRepositoryView>;
 
 /** One pull request that waits for the person to merge it. */
 export const ProjectPullRequestView = z.object({
-  /** A done task's work, or one of Forerunner's docs PRs (scaffold, plan's docs, status). */
-  kind: z.enum(["task", "docs"]),
+  /**
+   * A done task's work, one of Forerunner's docs PRs (scaffold, plan's docs, status), or the pull
+   * request that takes a merged task's work out (`take_out`, merged-actions; `taskId` is that task).
+   */
+  kind: z.enum(["task", "docs", "take_out"]),
   taskId: z.string().nullable(),
   /** The task's title, or what the docs PR holds in words. */
   title: z.string(),
@@ -1070,8 +1087,51 @@ export const ProjectPullRequestView = z.object({
       first: z.array(z.number().int()),
     })
     .optional(),
+  /**
+   * Its version on this computer, made by "Open this version" (merged-actions, the owner's
+   * decision of 2026-11-02, "pr_preview"): the folder and the one sentence the row says with it.
+   * Absent (or null) when it has none; one pull request per project has
+   * one at a time, and it goes when the pull request is merged or closed.
+   */
+  preview: z.object({ folder: z.string(), sentence: z.string() }).nullable().optional(),
 });
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
+
+/**
+ * `POST /tasks/:id/take-out` (merged-actions): "Take this work out" on a merged task, a pull
+ * request that reverts its merge by the way it was merged and names the done tasks that built on
+ * it (`TaskTakeOut`, `loop/take-out.ts`).
+ */
+export const TaskTakeOutAnswer = z.object({
+  /**
+   * `opened`: the pull request that takes the task's work out is open on the host and waits
+   * for the person to merge it (`number`, `url`); main is untouched. `conflict`: later work
+   * changed the same lines, nothing was pushed, and one Inbox card says so. `refused`: nothing
+   * was done, and `sentence` says why.
+   */
+  state: z.enum(["opened", "conflict", "refused"]),
+  sentence: z.string(),
+  number: z.number().int().nullable(),
+  url: z.string().nullable(),
+  /** The titles of the done tasks that built on it (named in the pull request too). */
+  builtOn: z.array(z.string()),
+});
+export type TaskTakeOutAnswer = z.infer<typeof TaskTakeOutAnswer>;
+
+/**
+ * `POST /projects/:id/pull-requests/:number/preview` (merged-actions): "Open this version" of a
+ * pull request that waits to be merged. `ready`: its files are in `folder` on this computer, as
+ * merging would give them (or as its branch has them, when it does not merge cleanly yet; the
+ * sentence says which), replacing the project's earlier preview; nothing runs there and nothing
+ * done there is kept. `refused`: no folder, and `sentence` says why.
+ */
+export const PullRequestPreviewAnswer = z.object({
+  state: z.enum(["ready", "refused"]),
+  sentence: z.string(),
+  folder: z.string().nullable(),
+  number: z.number().int(),
+});
+export type PullRequestPreviewAnswer = z.infer<typeof PullRequestPreviewAnswer>;
 
 /**
  * `POST /projects/:id/pull-requests/:number/merge` (merge-in-app): the person's Merge, answered
@@ -2884,6 +2944,8 @@ export const DAEMON_ROUTES = {
     "PUT /tasks/:id (UpdateTaskBody -> TaskChangeView: Edit through the `task.update` command, logged with its Undo; refused 409 conflict with cause validation while the task runs, is being reviewed, is done or cancelled; a stale version is 409 conflict with the task's status now)",
   taskAction:
     "POST /tasks/:id/action (TaskActionBody { version, action, note? } -> TaskChangeView: a person's action on the Tasks tab, design §3.5: make_ready, pause, resume, stop (stops the run, pauses the task), try_again, go_ahead (back to ready without the answers its cards ask for), cancel, reopen (a cancelled task), redo (a done task); every one logged with its Undo; a move out of waiting for answers withdraws the task's open Inbox cards; the note goes into the task's next brief; an action the task's status does not offer, or a stale version, is 409 conflict naming the status now)",
+  takeOutTask:
+    "POST /tasks/:id/take-out (TaskTakeOutAnswer: 'Take this work out' on a merged task, merged-actions: a branch from main that reverts the task's merge by the way its pull request was merged (a merge commit, a squash or a rebase, read from the merge record and the host), pushed with a pull request 'Take out: <title>' that names the done tasks that built on it; never pushes to main; opened with its number, conflict with one Inbox card, or refused with the sentence why)",
   setTaskDependencies:
     "POST /tasks/:id/dependencies (SetTaskDependenciesBody { version, dependsOn, reason?, note? } -> TaskChangeView: the tasks it waits on, all of them, through the `task.dependencies` command (logged, with its Undo); an id that is no task of the project, the task itself, a cancelled task or a cycle is 409 conflict with cause validation and a message naming it, a stale version 409 conflict, nothing written; 404 for an unknown task; U-040)",
   startCheck:
@@ -2905,6 +2967,8 @@ export const DAEMON_ROUTES = {
     "GET /projects/:id/pull-requests (ProjectPullRequestsView: the linked repository with its page and the open pull requests that wait for the person: each done task's, with who checked it (review: critic, you or none), and Forerunner's docs PRs (review null), read from the git host when asked; error in words when the host does not answer; repository null without one; ADR 0106)",
   mergePullRequest:
     "POST /projects/:id/pull-requests/:number/merge (PullRequestMergeAnswer, at once: queued with the order the merges run in, the pull requests it builds on first, each a merge commit through the merge step with the person's click as its approval; refused with the sentence why; merge-in-app)",
+  previewPullRequest:
+    "POST /projects/:id/pull-requests/:number/preview (PullRequestPreviewAnswer: ready with the folder on this computer that holds the waiting pull request's version, as merging would give it, beside the project's copy and under its lock, replacing the project's earlier preview; refused with the sentence why; merged-actions)",
   projectFile:
     "GET /projects/:id/files/:path (ProjectFileContentView: one file's text under the folder, the path URL-encoded; content null for a file that is not text; 404 for a path that leaves the folder or does not exist)",
   milestones:

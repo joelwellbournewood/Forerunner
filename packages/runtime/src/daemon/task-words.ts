@@ -11,6 +11,7 @@ import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 import { cancelWorkKind, cancelWorkLine } from "./cancel-words.ts";
+import { TAKE_OUT_NOTICE_PREFIX } from "./take-out-words.ts";
 
 /*
  * The words of a task's status and the person's actions on it (design §2 and §3.5,
@@ -105,7 +106,12 @@ export interface TaskDisplayContext {
   merges?: ReadonlyMap<
     string,
     Pick<MergeRecordRow, "state" | "approval" | "sentence"> &
-      Partial<Pick<MergeRecordRow, "pr_number">>
+      Partial<
+        Pick<
+          MergeRecordRow,
+          "pr_number" | "take_out_pr_number" | "take_out_pr_url" | "take_out_state"
+        >
+      >
   >;
   /**
    * Whether a review of the task goes on in this app now (the kill switch holds it): a task
@@ -244,18 +250,70 @@ export function budgetPauseDetail(source: unknown): string {
     : "Continue or cancel in the Inbox.";
 }
 
+function cardKey(card: { change_card?: unknown }): unknown {
+  const c = card.change_card;
+  return c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
+}
+
+/** The project's Docker card (`sandbox.not_ready`, one per project). */
+export function isDockerCard(card: { change_card?: unknown }): boolean {
+  return cardKey(card) === "sandbox.not_ready";
+}
+
+/**
+ * The offer of a repository for a project without one (`RepoProposals`, key `repo:create:<id>`):
+ * a yes or no the person gives when they like, which holds no work (tasks run in the project's
+ * folder meanwhile).
+ */
+export function isRepositoryOffer(card: { change_card?: unknown }): boolean {
+  const key = cardKey(card);
+  return typeof key === "string" && key.startsWith("repo:create:");
+}
+
+/**
+ * The notice that a "Take this work out" conflicted with later work (`take-out.ts`,
+ * `TAKE_OUT_NOTICE_PREFIX`): it tells, and asks nothing of a task (the task stays done).
+ */
+export function isTakeOutNotice(card: { change_card?: unknown }): boolean {
+  const key = cardKey(card);
+  return typeof key === "string" && key.startsWith(TAKE_OUT_NOTICE_PREFIX);
+}
+
 /**
  * Whether an open card holds its task on the Tasks tab ("Needs your answer", "Needs your
- * decision"). The Docker card (`sandbox.not_ready`, one per project, naming its task for Cancel
- * task) asks nothing of the task: the row reads "Waiting for Docker", or "Paused by you" with
- * Resume when the person paused it. Before, a paused task with that card read "Needs your
- * answer" and lost its Resume.
+ * decision") and counts as a question in the project's status line. The Docker card
+ * (`sandbox.not_ready`, one per project, naming its task for Cancel task) asks nothing of the
+ * task: the row reads "Waiting for Docker", or "Paused by you" with Resume when the person
+ * paused it. Before, a paused task with that card read "Needs your answer" and lost its Resume.
+ * The repository offer holds nothing either (C-60, merged-actions): before, a finished folder
+ * project read "Waiting for you: 1 question" on Home because of it.
  */
 export function holdsTask(card: { change_card?: unknown }): boolean {
-  const c = card.change_card;
-  const key =
-    c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
-  return key !== "sandbox.not_ready";
+  return !isDockerCard(card) && !isRepositoryOffer(card) && !isTakeOutNotice(card);
+}
+
+/**
+ * A merged task's row (merge-in-app's "Merged"), with "Take this work out" (merged-actions, the
+ * owner's decision of 2026-11-02): offered while its work is in main; "Taken out in #9 (waiting
+ * for you to merge)" while the pull request that takes it out waits; "Taken out in #9" once that
+ * one is merged. A take-out pull request closed without merging offers it again.
+ */
+function mergedDisplay(
+  merge: Partial<Pick<MergeRecordRow, "take_out_pr_number" | "take_out_pr_url" | "take_out_state">>,
+): TaskDisplay {
+  const number = merge.take_out_pr_number ?? null;
+  const url = merge.take_out_pr_url ?? null;
+  if (number && merge.take_out_state === "open")
+    return display("done", `Taken out in #${number} (waiting for you to merge)`, "good", {
+      takeOut: { state: "open", number, url },
+    });
+  if (number && merge.take_out_state === "merged")
+    return display("done", `Taken out in #${number}`, "neutral", {
+      takeOut: { state: "merged", number, url },
+    });
+  return display("done", "Merged", "good", {
+    takeOut: { state: "offered", number: null, url: null },
+  });
 }
 
 /** True when a person paused the task (Pause or Stop) and no card asks anything about it. */
@@ -282,6 +340,7 @@ function display(
     blocker: extra.blocker ?? null,
     ...(extra.live !== undefined ? { live: extra.live } : {}),
     ...(extra.cancelWork ? { cancelWork: extra.cancelWork } : {}),
+    ...(extra.takeOut ? { takeOut: extra.takeOut } : {}),
   };
 }
 
@@ -350,7 +409,7 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         sentence && !/press Merge on the Overview\.?$/.test(sentence) ? sentence : null;
       switch (merge.state) {
         case "merged":
-          return display("done", "Merged", "good");
+          return mergedDisplay(merge);
         case "waiting_checks":
           return display("done", "Accepted · merges when its checks pass", "good");
         case "merging":

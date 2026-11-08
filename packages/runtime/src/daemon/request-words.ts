@@ -9,6 +9,7 @@ import {
   optionLabel,
   signoffAnswer,
 } from "../wiring/request-answers.ts";
+import { TAKE_OUT_NOTICE_PREFIX, takeOutConflictBody } from "./take-out-words.ts";
 
 /*
  * What an Inbox card says and offers (design §3.8, core-experience.md), with no store and
@@ -912,6 +913,93 @@ function refusedCredentialCard(card: JsonObject, ctx: RequestWordsContext = {}):
   };
 }
 
+/**
+ * The repository offer's question (`RepoProposals`, merged-actions): its title, the project
+ * named in quotes. `repo-create.ts` files `${repoOfferQuestion(name)} ${REPO_OFFER_BODY}` as the
+ * card's text for readers that show one line.
+ */
+export function repoOfferQuestion(projectName: string | null): string {
+  return projectName
+    ? `Create a repository for "${projectName.replace(/\s+/g, " ").trim()}"?`
+    : "Create a repository for this project?";
+}
+
+/** The repository offer's one sentence of why (design §5: what and why, no list of what is not). */
+export const REPO_OFFER_BODY =
+  "Code work is planned for it, and it has none: its tasks run in the project's folder on this computer.";
+
+/**
+ * The repository offer (U-037, `RepoProposals`, key `repo:create:<project>`): titled by its
+ * question with the project's name read now, its why as the body, each answer with what it
+ * does. Before (review of merged-actions), the title was the text's first sentence, cut at the
+ * first ": ", ". " or "? ", so "Birds: a counter" read 'Create a repository for "Birds'.
+ */
+function repoOfferCard(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options">,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const choices: RequestChoiceWords[] = r.options.map(optionLabel).map((label, i) => ({
+    label,
+    explain: /^create/i.test(label)
+      ? "Makes it on GitHub, private, with the project's folder as its first commit."
+      : /^not now/i.test(label)
+        ? "Tasks keep running in the project's folder; the agent does not ask again."
+        : null,
+    tone: i === 0 ? "primary" : "secondary",
+    confirm: null,
+    input: null,
+  }));
+  return {
+    title: repoOfferQuestion(ctx.projectName ?? null),
+    body: REPO_OFFER_BODY,
+    choices,
+    links: [],
+    reply: "none",
+    details: r.steps,
+    outcome: null,
+  };
+}
+
+/**
+ * A "Take this work out" that conflicted with later work (merged-actions, `TaskTakeOut.notice`,
+ * key `take_out:conflict:<task>`): a notice titled by its task, the files and what to do as
+ * the body, closed with Got it. Before (review of merged-actions), the title was the text's
+ * first sentence, cut at the first ": " inside the quoted title: '"Write the README' with the
+ * rest of the title in the body.
+ */
+function takeOutNoticeCard(
+  r: Pick<HumanRequestRow, "why" | "steps">,
+  card: JsonObject,
+): RequestWords {
+  const task = str(card.task_title) ?? str(card.title);
+  const files = Array.isArray(card.files)
+    ? card.files.filter((f): f is string => typeof f === "string")
+    : [];
+  return {
+    title: task ? `${q(task)} could not be taken out` : firstSentence(r.why),
+    body: files.length ? takeOutConflictBody(files) : task ? null : afterFirstSentence(r.why),
+    choices: [
+      {
+        label: "Got it",
+        explain: "Closes this card; its work stays in main.",
+        tone: "secondary",
+        confirm: null,
+        input: null,
+      },
+    ],
+    links: [],
+    reply: "none",
+    details: r.steps,
+    outcome: null,
+  };
+}
+
+/** What a closed take-out notice says: nothing changed, the work stays. */
+function takeOutNoticeOutcome(card: JsonObject): string {
+  const task = str(card.task_title) ?? str(card.title);
+  return `Nothing changed: ${task ? q(task) : "its work"} stays in main.`;
+}
+
 /** Any other card: its own words, its options with the reject-like ones secondary. */
 function genericCard(
   r: Pick<HumanRequestRow, "kind" | "why" | "steps" | "options" | "change_card">,
@@ -1042,6 +1130,11 @@ export function requestWords(
     words = dockerCard(r, card, ctx);
     if (card.outcome === "cancel")
       outcome = `${ctx.taskTitle ? q(ctx.taskTitle) : "The task"} was cancelled.`;
+  } else if (key?.startsWith(ANSWER_CARD_KEYS.repoCreatePrefix)) {
+    words = repoOfferCard(r, ctx);
+  } else if (key?.startsWith(TAKE_OUT_NOTICE_PREFIX)) {
+    words = takeOutNoticeCard(r, card);
+    outcome = takeOutNoticeOutcome(card);
   } else if (key === CREDENTIAL_REFUSED_KEY) {
     words = refusedCredentialCard(card, ctx);
     // Closed when a new credential was saved (`closeRefusedCards`).

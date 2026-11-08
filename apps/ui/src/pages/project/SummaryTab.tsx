@@ -235,15 +235,18 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
  * over its PRs, and no PR is listed under a check it did not get. Review (2026-11-02): every PR
  * read "Reviewed by the critic.", Forerunner's status and plan-docs PRs too.
  */
-type PrGroup = "critic" | "you" | "not-reviewed" | "docs";
+type PrGroup = "critic" | "you" | "not-reviewed" | "docs" | "take-out";
 const PR_GROUPS: { key: PrGroup; label: string }[] = [
   { key: "critic", label: "Reviewed by the critic" },
   { key: "you", label: "Accepted by you at sign-off" },
   { key: "not-reviewed", label: "Marked done without the critic's review" },
   { key: "docs", label: "Forerunner's docs, merge them when you like" },
+  // merged-actions: "Take this work out" opened these; Merge takes the work out of main.
+  { key: "take-out", label: "Taking work out: merging one removes that work from main" },
 ];
 
 function groupOf(pr: ProjectPullRequestView): PrGroup {
+  if (pr.kind === "take_out") return "take-out";
   if (pr.kind === "docs") return "docs";
   if (pr.review === "critic") return "critic";
   if (pr.review === "you") return "you";
@@ -347,6 +350,36 @@ function RepositoryFiles({
       setBusy(false);
     }
   };
+  // merged-actions: "Open this version" puts a waiting pull request's files in a folder on this
+  // computer (one per project at a time); the row then shows the folder with Open folder.
+  const [previewing, setPreviewing] = useState<number | null>(null);
+  const [previewed, setPreviewed] = useState<
+    | (NonNullable<ProjectPullRequestView["preview"]> & {
+        number: number;
+      })
+    | null
+  >(null);
+  const [previewError, setPreviewError] = useState<{ number: number; sentence: string } | null>(
+    null,
+  );
+  const openVersion = async (pr: ProjectPullRequestView) => {
+    setPreviewing(pr.number);
+    setPreviewError(null);
+    try {
+      const answer = await client.previewPullRequest(projectId, pr.number);
+      if (answer.state === "ready" && answer.folder) {
+        setPreviewed({ number: pr.number, folder: answer.folder, sentence: answer.sentence });
+        reload();
+      } else setPreviewError({ number: pr.number, sentence: answer.sentence });
+    } catch (e) {
+      setPreviewError({ number: pr.number, sentence: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPreviewing(null);
+    }
+  };
+  // The row's preview as the daemon lists it; the answer's until the list is read again.
+  const previewOf = (pr: ProjectPullRequestView) =>
+    pr.preview ?? (previewed?.number === pr.number ? previewed : null);
   const mode = prs.data?.mode;
   const kind = prs.data?.errorKind;
   return (
@@ -462,6 +495,14 @@ function RepositoryFiles({
                             {pr.merge.sentence}
                           </span>
                         ) : null}
+                        <PreviewOfRow
+                          pr={pr}
+                          preview={previewOf(pr)}
+                          busy={previewing !== null}
+                          pressing={previewing === pr.number}
+                          error={previewError?.number === pr.number ? previewError.sentence : null}
+                          onOpen={() => void openVersion(pr)}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -482,6 +523,71 @@ function RepositoryFiles({
         ) : null}
       </div>
     </section>
+  );
+}
+
+/** What "Open this version" says on its button (design §3.4: one line per action). */
+export const OPEN_VERSION_EXPLAIN =
+  "Puts its files in a folder on this computer, to try before you merge it.";
+
+/**
+ * A waiting pull request's "Open this version" (merged-actions, the owner's decision of
+ * 2026-11-02, "pr_preview"): the button, and once there is one, the folder with Open folder and
+ * the one sentence ("#7 as it would be merged. Changes here are not kept.").
+ */
+function PreviewOfRow({
+  pr,
+  preview,
+  busy,
+  pressing,
+  error,
+  onOpen,
+}: {
+  pr: ProjectPullRequestView;
+  preview: { folder: string; sentence: string } | null;
+  busy: boolean;
+  pressing: boolean;
+  error: string | null;
+  onOpen: () => void;
+}) {
+  return (
+    <>
+      <Button
+        variant="ghost"
+        className="px-2 py-0.5 text-xs"
+        disabled={busy}
+        title={OPEN_VERSION_EXPLAIN}
+        onClick={onOpen}
+        data-testid="pr-preview"
+      >
+        {pressing ? "Opening…" : "Open this version"}
+      </Button>
+      {error ? (
+        <span
+          className="basis-full text-xs text-red-700 dark:text-red-300"
+          data-testid="pr-preview-error"
+          role="alert"
+        >
+          {error}
+        </span>
+      ) : null}
+      {preview ? (
+        <span
+          className="basis-full space-y-1 text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="pr-preview-block"
+          data-number={pr.number}
+        >
+          <span className="block" data-testid="pr-preview-sentence">
+            {preview.sentence}
+          </span>
+          <FolderPath
+            path={preview.folder}
+            testId="pr-preview-folder"
+            explain={`Opens #${pr.number}'s version on this computer.`}
+          />
+        </span>
+      ) : null}
+    </>
   );
 }
 

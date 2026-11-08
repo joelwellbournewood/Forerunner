@@ -844,6 +844,17 @@ export const ENTITIES: Record<string, EntityDef> = {
       text("last_outcome", "The last attempt's outcome (merged, checks_pending, conflict, ...).", {
         nullable: true,
       }),
+      int(
+        "take_out_pr_number",
+        "The pull request that takes this merge's work out (merged-actions).",
+        {
+          nullable: true,
+        },
+      ),
+      text("take_out_pr_url", "That pull request's web URL.", { nullable: true }),
+      text("take_out_state", "Where that pull request is: open, merged or closed.", {
+        nullable: true,
+      }),
     ],
     indexes: [{ columns: ["task_id"], unique: true }, { columns: ["agent_id", "state"] }],
   },

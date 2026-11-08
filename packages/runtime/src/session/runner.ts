@@ -18,7 +18,7 @@ import {
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
-import { holdsTask, isPausedByPerson } from "../daemon/task-words.ts";
+import { holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -2445,7 +2445,7 @@ export class SessionRunner {
     // session end's '"X" needs your decision' and by an Update under the card (phase E, #87).
     const news = sessionResultLines(resultFacts, {
       tasks: carded,
-      docker: openCards.some((r) => !holdsTask(r)),
+      docker: openCards.some(isDockerCard),
       plan: true,
     }).filter((l) => l.trim().length > 0);
     // Project docs (spec G.5): the PM's status update into docs/status.md, on Forerunner's own

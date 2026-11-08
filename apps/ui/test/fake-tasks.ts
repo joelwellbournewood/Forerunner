@@ -60,6 +60,23 @@ export interface FakeTaskMeta {
    * as the daemon's `display.cancelWork` says. A test adds them.
    */
   ownFolder?: Set<string>;
+  /**
+   * The merge record of a done task's pull request, by task (merge-in-app's words and
+   * merged-actions' "Take this work out", as the daemon's `TaskDisplayContext.merges`). A test
+   * sets one; a task without one reads "Done".
+   */
+  merges?: Map<
+    string,
+    {
+      state: "queued" | "merging" | "waiting_checks" | "merged" | "left_to_you";
+      approval: "none" | "mode" | "person";
+      sentence: string;
+      pr_number?: number;
+      take_out_pr_number?: number | null;
+      take_out_pr_url?: string | null;
+      take_out_state?: string | null;
+    }
+  >;
 }
 
 export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
@@ -69,6 +86,7 @@ export function createTaskMeta(tasks: readonly TaskView[]): FakeTaskMeta {
     notLive: new Set(),
     credentialWaits: new Map(),
     ownFolder: new Set(),
+    merges: new Map(),
   };
 }
 
@@ -130,6 +148,7 @@ export function projectTaskViews(
     live: (taskId: string) => !meta.notLive.has(taskId),
     credentialWait: meta.credentialWaits.get(projectId) ?? null,
     ...(meta.ownFolder?.has(projectId) ? { ownFolder: true } : {}),
+    ...(meta.merges?.size ? { merges: meta.merges } : {}),
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
   return runOrder(rows).map((row, i) => ({
