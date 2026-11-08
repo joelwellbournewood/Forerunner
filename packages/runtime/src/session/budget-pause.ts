@@ -1,4 +1,5 @@
 import type { RunWrapUpLine } from "../enforcement/budget.ts";
+import { moneyWords } from "./money-words.ts";
 
 /**
  * A budget stop is a clean pause (ADR 0112, the owner's decision of 2026-11-02). A task's run is
@@ -200,8 +201,10 @@ export function pauseSentence(
   what: string,
   spentUsdMicro: number,
   capUsdMicro: number,
-  chf: (usdMicro: number) => string,
+  chfOf: (usdMicro: number) => string,
 ): string {
+  // W14-6: a spend under a centime reads "less than CHF 0.01".
+  const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   if (handoff.stoppedBy === "wrap_up") {
     const n = handoff.leftToDo.length;
     return `The run paused before ${what} ran out: it spent ${chf(spentUsdMicro)} and listed ${
@@ -221,11 +224,16 @@ export function pauseSentence(
  * it said no line at all); "a reserve of CHF 0.01 is two calls" read oddly, so the save-only
  * line names what two steps may cost.
  */
-export function budgetLineWords(line: RunWrapUpLine, chf: (usdMicro: number) => string): string {
+export function budgetLineWords(line: RunWrapUpLine, chfOf: (usdMicro: number) => string): string {
+  // P7-1, W14-6 (polish-words): no "save only" (a word of the code, not the person's), and an
+  // amount under a centime reads "less than CHF 0.01", never "CHF 0.00".
+  const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   if (line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro)
-    return `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): save only, it pauses at its budget before that step.`;
+    return chf(line.firstCallUsdMicro) === "less than CHF 0.01"
+      ? "This run may spend less than its first step may cost (both are under CHF 0.01): it pauses at its budget before that step."
+      : `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses at its budget before that step.`;
   return line.saveOnly
-    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): save only, it pauses at its budget with its work kept.`
+    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses at its budget and keeps its work.`
     : `This run may spend ${chf(line.capUsdMicro)}: at ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
 }
 

@@ -7,8 +7,10 @@
  * JSON. Money is CHF at the day's rate.
  */
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
+import { branchWords } from "@forerunner/capabilities";
 import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
+import { moneyWords, moneyWordsFirst } from "../session/money-words.ts";
 import { sessionStatusText } from "../session/stop-words.ts";
 
 type Payload = Record<string, unknown>;
@@ -97,7 +99,11 @@ function reportWords(summary: string, max = 120): string | null {
 export function couldNotWords(summary: string): string | null {
   const words = reportWords(summary, 200);
   if (!words) return null;
-  const sentences = words.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? [words];
+  // C-50: a dot inside a file name ("index.html", "data/members.csv") ends no sentence, as in
+  // `quotedWords`; before, the reason was cut at it ("html cannot be created from it").
+  const sentences = words.match(
+    /(?:[^.!?]|[.!?](?=\S))+[.!?]+(?=\s|$)|(?:[^.!?]|[.!?](?=\S))+$/g,
+  ) ?? [words];
   const first = sentences[0]?.trim() ?? "";
   if (!COULD_NOT.test(first)) return null;
   // "I could not complete this task. The work needs X." -> "The work needs X."
@@ -159,6 +165,8 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
   const s = (k: string) => str(p, k);
   const n = (k: string) => num(p, k);
   const chf = (k: string) => chfOf(n(k), chfPerUsd);
+  // W14-6: a spend under a centime reads "less than CHF 0.01", never "CHF 0.00".
+  const spent = (k: string) => moneyWords(chf(k), n(k));
   switch (type) {
     case "session.started":
       return s("trigger") === "manual"
@@ -185,7 +193,7 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       const outcome = s("outcome");
       const summary = s("summary");
       const who = specialistWho(p);
-      const cost = n("costUsdMicro") >= 5_000 ? ` (${chf("costUsdMicro")})` : "";
+      const cost = n("costUsdMicro") >= 5_000 ? ` (${spent("costUsdMicro")})` : "";
       if (outcome === "failed") {
         const why = reportWords(summary, 100);
         return `${taskName(p)} failed${why ? `: ${why.replace(/[.\s]+$/, "")}` : ""}.`;
@@ -273,15 +281,15 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       // during …" was followed by "Stopped by you: nothing done. CHF 0.00.").
       if (p.stopSaid === true)
         return counts
-          ? `Session over: ${counts}. ${chf("spentUsdMicro")}.`
-          : `Session over. ${chf("spentUsdMicro")}.`;
+          ? `Session over: ${counts}. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`
+          : `Session over. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`;
       const status = sessionStatusText(s("status"), s("stopReason"));
       const head = status === "Done" ? "Session over" : status;
       // U-078: the tasks that wait for a credential are said by the wait's line, not again as
       // "not started".
       const said =
         s("stopReason") === "credential_wait" ? endedCounts({ ...p, skipped: 0 }) : counts;
-      return `${head}: ${said || "nothing done"}. ${chf("spentUsdMicro")}.`;
+      return `${head}: ${said || "nothing done"}. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`;
     }
     case "session.plan_filed":
       return `The plan waits for your approval in the Inbox${p.changed ? "; it changed since you approved it, so nothing ran" : ""}.`;
@@ -550,7 +558,10 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
       const files = list(p, "files").map(String);
       const pr = prNumberWords(s("prUrl"));
       const branch = s("branch");
-      return `Changed ${plural(files.length, "file")}${files.length ? `: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}` : ""}${pr ? `; ${pr}${branch ? ` on the branch ${branch}` : ""}` : ""}.`;
+      // C-59: the pull request names it; the branch (with its task-id part) is no word of the
+      // person's. Without one, the branch is named without that part.
+      const where = pr ? `; ${pr}` : branch ? `; on the branch ${branchWords(branch)}` : "";
+      return `Changed ${plural(files.length, "file")}${files.length ? `: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}` : ""}${where}.`;
     }
     // The PR by its number, never its URL; the level's refusal in the setting's name (design
     // §5: no raw autonomy levels). Before (bench, 2026-11-02): "Left the pull request

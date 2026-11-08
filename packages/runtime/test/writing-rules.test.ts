@@ -654,3 +654,86 @@ describe("polish-words, wave 13: the plan card's runs-on lines", () => {
     expect(violations(said ?? "", 100)).toEqual([]);
   });
 });
+
+describe("polish-words, wave 13: money, budget lines, the log's lines", () => {
+  it("a reason with a file name is quoted whole in the 'could not' line (C-50)", async () => {
+    const { couldNotWords } = await import("../src/daemon/event-lines.ts");
+    expect(
+      couldNotWords(
+        "I could not complete this task. The file index.html cannot be created from data/members.csv here.",
+      ),
+    ).toBe("The file index.html cannot be created from data/members.csv here");
+  });
+
+  it("an amount above zero never reads CHF 0.00 (W14-6, P7-1)", async () => {
+    const { moneyWords } = await import("../src/session/money-words.ts");
+    const { budgetLineWords } = await import("../src/session/budget-pause.ts");
+    expect(moneyWords("CHF 0.00", 3_000)).toBe("less than CHF 0.01");
+    expect(moneyWords("CHF 0.00", 0)).toBe("CHF 0.00");
+    expect(moneyWords("CHF 0.40", 400_000)).toBe("CHF 0.40");
+    const chf = (usd: number) => `CHF ${(Math.round(usd * 0.8) / 1_000_000).toFixed(2)}`;
+    const tiny = budgetLineWords(
+      {
+        capUsdMicro: 4_000,
+        lineUsdMicro: 0,
+        reserveUsdMicro: 20_000,
+        firstCallUsdMicro: 2_000,
+        saveOnly: true,
+      } as never,
+      chf,
+    );
+    expect(tiny).toBe(
+      "This run may spend less than CHF 0.01, too little to wrap up (two steps may cost CHF 0.02): it pauses at its budget and keeps its work.",
+    );
+    expect(tiny).not.toMatch(/save only|CHF 0\.00/);
+    const result = sessionResultLines({
+      outcome: {
+        done: [],
+        failed: [],
+        needsYou: [],
+        leftOver: [],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "budget_project",
+        stopCapChfMicro: 10_000,
+        paused: [
+          {
+            id: "t",
+            title: "Write the guide",
+            limit: "the project's budget of CHF 0.01",
+            waits: true,
+          },
+        ],
+        spentChfMicro: 4_000,
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      sessionCapChfMicro: 1_000_000,
+      openTasks: 1,
+    });
+    const all = result.join(" ");
+    expect(all).not.toContain("CHF 0.00");
+    expect(all).toMatch(/Less than CHF 0\.01\.$/);
+    // A project's budget never resets.
+    expect(all).toContain(
+      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once you raise that budget.',
+    );
+    expect(all).not.toMatch(/resets/);
+  });
+
+  it("the log names a pull request, not a branch with the task's id (C-59)", async () => {
+    const { neverPushedWords } = await import("../../capabilities/src/githost/local-only.ts");
+    const line = describeEvent("task.files", {
+      taskId: ID,
+      title: "Write the guide",
+      files: ["guide.md"],
+      prUrl: "https://github.com/o/r/pull/7",
+      branch: "fr/01a19c00-write-the-guide",
+    } as never);
+    expect(line).not.toMatch(/01a19c00|fr\//);
+    expect(line).toContain("#7");
+    expect(neverPushedWords("fr/01a19c00-write-the-guide", ["Local only/notes.txt"])).toMatch(
+      /^Forerunner did not upload the branch write-the-guide: /,
+    );
+  });
+});

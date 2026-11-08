@@ -1989,10 +1989,14 @@ budget-stop; the owner's decision of 2026-11-02).**
   and `wrap_up_sent`, and report `wrapUpSent`. The executor turns both into session-log lines
   (`TaskStep` `note` → `task.step`, Details; `budgetLineWords`, `wrapUpSentWords`): "This run may
   spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
-  "... too little to wrap up (two steps may cost CHF 0.02): save only, ...", "This run may spend
-  CHF 0.02, less than its first step may cost (CHF 0.05): save only, it pauses at its budget
+  "... too little to wrap up (two steps may cost CHF 0.02): it pauses at its budget and keeps its
+  work.", "This run may spend
+  CHF 0.02, less than its first step may cost (CHF 0.05): it pauses at its budget
   before that step.", and "Told the coder to wrap up: it spent CHF 0.30 of CHF 0.40, and the
-  last CHF 0.08 is kept to finish." (it said "about a fifth is left" while about 40% was). The brief says what the two headings are for
+  last CHF 0.08 is kept to finish." (it said "about a fifth is left" while about 40% was). No
+  "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
+  "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
+  line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for
   (`WRAP_UP_BRIEF_LINE`).
 - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
@@ -2120,7 +2124,9 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Before budget-resume, Raise the budget started a session that stopped at once at the same cap
   and filed the same card again.
 - *Words.* The row: `budgetPauseLabel` and `budgetPauseDetail` ("Continue or cancel in the
-  Inbox.", or "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."); the
+  Inbox.", "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.", or at
+  the project's budget, which never resets, "It goes on by itself once you raise the project's budget;
+  cancel it in the Inbox.", W14-6); the
   card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ..." or "It stopped
   before it could say where it stood; its work so far is kept.", then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
@@ -5609,7 +5615,7 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   keeps `NO_WEB_SEARCH_LINE`. The session log gets "searched the web for <query>" (`stepLine`,
   also for Claude Code's `WebSearch` on a subscription), the refusal's line once
   (`WEB_SEARCH_OFF_LINE`, `WEB_SEARCH_LISTS_LINE`), the overshoot ("Web search results were
-  larger than planned: this step cost CHF X, more than the CHF Y planned. ...") and a flagged
+  larger than planned: this call cost CHF X, more than the CHF Y planned, and the next one must fit what is left.", P7-23) and a flagged
   result ("A web search result reads like instructions; the researcher and the critic were told
   it is information only.", without the scan's rule names) as notes.
   The Run row's artifacts count `{ webSearches }`; `TaskExecutionResult.searchSeen` (url, title,
@@ -5932,7 +5938,10 @@ on the payload so the live stream and a reload split the log the same way: `task
 `again` when the task already started in this session (a detail) and `handedFrom` when another
 specialist takes over ('The writer takes over "Style the page" from the designer.', a person
 line); `task.finished` has `review` when the critic reviews the run next, `couldNot` (the
-specialist's words, `couldNotWords`) when its report says it could not do the work, and `again`.
+specialist's words, `couldNotWords`, which ends a sentence only at a dot before a space, so
+"index.html" or "data/members.csv" stays whole, C-50) when its report says it could not do the
+work, and `again`. A task's changed files name its pull request, never its branch with the task's
+id (C-59; without a pull request, `branchWords` drops the id part).
 A reviewed run's own line is a detail when it could not do the work or is a retry; the critic's
 line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `specialist`, and
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,

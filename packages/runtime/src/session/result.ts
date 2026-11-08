@@ -1,6 +1,7 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
+import { moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
 import {
   MONTH_CAP_STOP,
@@ -359,7 +360,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   {
     name: "cost",
     line: 3,
-    build: (_f, o) => [`${formatChf(o.spentChfMicro)}.`],
+    // W14-6: a spend under a centime reads "Less than CHF 0.01.", never "CHF 0.00."
+    build: (_f, o) => [`${moneyWordsFirst(formatChf(o.spentChfMicro), o.spentChfMicro)}.`],
   },
   {
     // budget-resume: a task paused at a budget, by the limit its card names; its card is the
@@ -369,6 +371,17 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     build: (_f, o, told) => pausedSentences(o.paused ?? [], told),
   },
 ];
+
+/**
+ * How a task paused at a limit no Continue lifts goes on (W14-6, polish-words): a project's
+ * budget never resets, so only raising it lets the task go on; a month's cap or the
+ * subscription's share also reset.
+ */
+function goesOnByItself(limit: string): string {
+  return /^the project's budget\b/.test(limit)
+    ? "it goes on by itself once you raise that budget."
+    : "it goes on by itself once that limit is raised or resets.";
+}
 
 /** A task paused at a budget, as the result names it (`LastSessionOutcome.paused`). */
 export type PausedTask = NamedTask & { limit: string; waits?: boolean };
@@ -389,7 +402,7 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   if (shown.length === 1)
     return [
       one.waits
-        ? `"${one.title}" paused at ${one.limit}: it goes on by itself once that limit is raised or resets.`
+        ? `"${one.title}" paused at ${one.limit}: ${goesOnByItself(one.limit)}`
         : `"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`,
     ];
   const names = namesOf(titlesOf(shown));

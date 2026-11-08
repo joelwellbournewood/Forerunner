@@ -168,7 +168,7 @@ describe("the session result's line of a paused task (budget-resume)", () => {
         },
       ]),
     ).toEqual([
-      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once that limit is raised or resets.',
+      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once you raise that budget.', // W14-6: a project's budget never resets
     ]);
     expect(
       pausedSentences([

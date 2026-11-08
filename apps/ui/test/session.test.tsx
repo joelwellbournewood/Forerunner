@@ -107,8 +107,11 @@ describe("Live session view", () => {
     const prs = await screen.findByTestId("session-prs");
     const row = within(prs).getByTestId("session-pr");
     expect(row).toHaveTextContent(
-      '"Create the page skeleton in index.html" · pull request #2 · branch fr/task_9-create-the-page',
+      // C-59 (polish-words): the pull request's number names it; no branch with the task's id.
+      '"Create the page skeleton in index.html" · pull request #2',
     );
+    expect(row).not.toHaveTextContent("branch");
+    expect(row).not.toHaveTextContent("task_9");
     expect(within(row).getByTestId("session-pr-link")).toHaveAttribute(
       "href",
       "https://github.com/org/atlas/pull/2",

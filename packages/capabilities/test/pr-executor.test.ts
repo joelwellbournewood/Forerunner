@@ -1010,7 +1010,7 @@ describe("Local only: the person's folder the run can use and that never leaves 
     ).execute(await ctx());
     expect(res.outcome).toBe("failed");
     expect(res.summary).toMatch(
-      /^Forerunner did not upload the branch fr\/[0-9a-f]{8}-write-the-page: it holds "Local only\/notes\.txt", files of Local only, which never leave this computer\. Press Try again to redo the work without them\.$/,
+      /^Forerunner did not upload the branch write-the-page: it holds "Local only\/notes\.txt", files of Local only, which never leave this computer\. Press Try again to redo the work without them\.$/,
     );
     expect(await onHost(res.branch)).toEqual([]);
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toEqual([]);

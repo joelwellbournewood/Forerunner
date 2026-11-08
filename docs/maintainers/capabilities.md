@@ -422,6 +422,9 @@ with their milestone.
   repository's own; any is a `path_not_allowed` refusal with `neverPushedWords` ("Forerunner did
   not upload the branch ...: it holds "Local only/notes.txt", files of Local only, which never
   leave this computer. Press Try again to redo the work without them."), `isNeverPushed` tells it.
+  The branch is named without its task-id part (`branchWords`: "fr/1a2b3c4d-write-the-guide" reads
+  "write-the-guide", C-59, polish-words); the stored name keeps it, so same-titled tasks keep two
+  branches.
   `trackedUnder(rev, folders)` reads the files a commit tracks under them (`-z`, raw names).
   `PrTaskExecutorDeps.localOnlyFor(task)` names the project's folder (in its copy, runtime.md);
   `execute` wraps the inner run (`withLocalOnly`): a copy an earlier run left is copied back

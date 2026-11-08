@@ -279,7 +279,10 @@ export function budgetPauseLabel(source: unknown): string {
  * or resets (`wakeBudgetWaits`; room alone never wakes it, the review of budget-resume).
  */
 export function budgetPauseDetail(source: unknown): string {
-  return source === "month" || source === "project" || source === "plan"
+  // W14-6 (polish-words): a project's budget never resets; only raising it lets the task on.
+  if (source === "project")
+    return "It goes on by itself once you raise the project's budget; cancel it in the Inbox.";
+  return source === "month" || source === "plan"
     ? "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."
     : "Continue or cancel in the Inbox.";
 }

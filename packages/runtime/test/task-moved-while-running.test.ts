@@ -171,7 +171,8 @@ describe("a person's move on a running task stops that task's run; the session g
     // The counts and the summary the person reads include the move.
     expect(r.cancelled).toEqual([first.id]);
     // The result names the work; the person's own Cancel is not echoed back (design §5.11).
-    expect(r.summary).toBe('Did 1 task: "Second task".\nNothing left. CHF 0.00.');
+    // W14-6 (polish-words): a spend under a centime reads "Less than CHF 0.01.".
+    expect(r.summary).toBe('Did 1 task: "Second task".\nNothing left. Less than CHF 0.01.');
     expect(events.find((e) => e.type === "task.moved_while_running")?.payload).toMatchObject({
       taskId: first.id,
       status: "cancelled",

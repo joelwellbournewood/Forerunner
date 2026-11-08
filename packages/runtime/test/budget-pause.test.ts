@@ -345,7 +345,11 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(artifacts).toContain("The run stopped at a budget before its next step.");
     expect(artifacts).not.toContain("would be exceeded");
     expect(r.view.display).toMatchObject({ label: "Paused at its budget" });
-    expect(lines(r.events).some((l) => /too little to wrap up .*: save only/.test(l))).toBe(true);
+    expect(
+      lines(r.events).some((l) =>
+        /too little to wrap up .*: it pauses at its budget and keeps its work\./.test(l),
+      ),
+    ).toBe(true);
     // A session whose only task paused at its budget is not sent back for changes (the leftovers
     // of wave 7, R-sessreview): before, "Session review: sent back for changes (grade 70, 2
     // findings)" with "No planned task was done: 1 of 1 waits for the person" and "spent ... and
@@ -365,12 +369,14 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(coderCalls("Stub page")).toHaveLength(0);
     expect(
       lines(r.events).some((l) =>
-        /^This run may spend CHF [\d.]+, less than its first step may cost \(CHF [\d.]+\): save only, it pauses at its budget before that step\.$/.test(
+        /^This run may spend .*less than its first step may cost .*: it pauses at its budget before that step\.$/.test(
           l,
         ),
       ),
       lines(r.events).join(" | "),
     ).toBe(true);
+    // W14-6 (polish-words): an amount above zero never reads "CHF 0.00" in the budget line.
+    expect(lines(r.events).find((l) => /first step may cost/.test(l))).not.toMatch(/CHF 0\.00/);
     const task = await rt.store.task.mustGet(r.taskId);
     expect(task.status).toBe("needs_human");
     expect(task.attempt).toBe(0);
