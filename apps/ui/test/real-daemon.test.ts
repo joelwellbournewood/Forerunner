@@ -2733,6 +2733,10 @@ async function composeWithRolePlayer(
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.0.0-ui-contract",
     sandboxDetection: NO_ENGINE,
+    // The role-player is the bench's stand-in: composed as `fr daemon --provider bench` is, with
+    // the page reader's loopback seam, so a research task reads the test's pages on 127.0.0.1
+    // ('sites': no list opens this computer any more).
+    webReadLoopback: true,
     ...over,
   });
   const { app, token } = createDaemonApp(rt);
@@ -5146,13 +5150,8 @@ describe("the UI client against the real daemon: research on an API key reads th
   it("a researcher task fetches the page, writes docs/research.md citing it, and the critic is shown the page", async () => {
     const agentId = (await client.agents())[0]?.id ?? "";
     const project = await client.createProject({ name: "Docs site", goal: "Pick a generator" });
-    // The fixture runs on this computer: the project names its host on its site list, as a
-    // person names an intranet page (a public site needs no entry).
-    const before = await rt.store.project.mustGet(project.id);
-    await client.updateProjectSettings(project.id, {
-      version: before.version,
-      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
-    });
+    // The fixture runs on this computer: the daemon reads it through the bench's loopback seam
+    // (`webReadLoopback`, as `--provider bench` composes it); no list opens this computer.
     const task = await client.createTask(project.id, {
       title: "Compare two static site generators",
       outcome: `docs/research.md says how fast Hugo builds and which Node.js Eleventy needs, citing ${pageUrl}`,
@@ -5808,11 +5807,6 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
 
   it("GET /tasks/:id: each run names its session, its files open on the Files tab, its step lines are in that session's log, a research run names the pages it read (later #46, C-72)", async () => {
     const project = await client.createProject({ name: "Drawer links", goal: "Open what ran" });
-    const before = await rt.store.project.mustGet(project.id);
-    await client.updateProjectSettings(project.id, {
-      version: before.version,
-      settings: { browser: { allowedDomains: ["127.0.0.1"] } },
-    });
     const page = await client.createTask(project.id, {
       title: "Build the quote page in index.html",
       outcome: "index.html shows a quote",
@@ -9205,6 +9199,8 @@ describe("the UI client against the real daemon: research searches the web on th
     const standIn = messagesApiStandIn({ model, clock: new SystemClock(), search: {} });
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
+      // As `fr daemon --provider bench-api` composes it: the pages are on 127.0.0.1.
+      webReadLoopback: true,
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
       config: null,
       clock: new ShiftedClock("2026-03-05T08:00:00Z"),
@@ -9238,14 +9234,12 @@ describe("the UI client against the real daemon: research searches the web on th
         "Yes",
       );
       const project = await client.createProject({ name: "Hosts", goal: "Pick a host" });
-      // The pages are on this computer: the site list names it, as for an intranet page; the
-      // block list holds a "*." entry, which web search takes as the bare domain.
+      // The pages are on this computer (the bench's loopback seam reads them); the block list
+      // holds a "*." entry, which web search takes as the bare domain.
       const row = await rt.store.project.mustGet(project.id);
       await client.updateProjectSettings(project.id, {
         version: row.version,
-        settings: {
-          browser: { allowedDomains: ["127.0.0.1"], blockedDomains: ["*.example.org"] },
-        },
+        settings: { browser: { blockedDomains: ["*.example.org"] } },
       });
       const task = await client.createTask(project.id, {
         title: "Compare the free tiers of static site hosts",

@@ -15,6 +15,7 @@ import type { ToolExecutionContext } from "../agent/tools.ts";
 import { type AutonomyLevel, isValidAutonomyLevel } from "../enforcement/autonomy.ts";
 import type { CapabilityClaims } from "../enforcement/token.ts";
 import { extensionRowEnabled } from "./desktop-ports.ts";
+import { webAccessOf } from "./web-access.ts";
 
 /** The catalog id and row name of the browser capability (`src/extensions/catalog.json`). */
 export const BROWSER_CAPABILITY_NAME = "browser";
@@ -47,31 +48,57 @@ export function browserModeFor(
 export interface BrowserProjectSettings {
   /** Host patterns (`example.com`, `*.example.com`) the project's sessions may browse. */
   allowedDomains: string[];
-  /** Host patterns no session of the project may reach, whatever the token says. */
+  /**
+   * Host patterns no session of the project may reach, whatever the token says: the project's one
+   * block list, "Web pages research may read"'s "never" list (`web_access.never`, each site with
+   * its subdomains), with the blocks still under `browser.blockedDomains` ('sites').
+   */
   blockedDomains: string[];
 }
+
+/**
+ * One entry as a host pattern: a pasted address (`https://example.com/page`) is read as its host
+ * ('sites': it was dropped without a word before); anything else that names no host is left out.
+ */
+function hostPattern(x: string): string | null {
+  let host = x.trim().toLowerCase();
+  const wildcard = host.startsWith("*.");
+  if (wildcard) host = host.slice(2);
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(host)) {
+    try {
+      host = new URL(host).hostname.replace(/^\[|\]$/g, "");
+    } catch {
+      return null;
+    }
+  }
+  host = host.replace(/\.$/, "");
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(host)) return null;
+  return wildcard ? `*.${host}` : host;
+}
+
+const listOf = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
 function hostPatterns(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   const out = new Set<string>();
   for (const x of v) {
     if (typeof x !== "string") continue;
-    const host = x.trim().toLowerCase();
-    if (/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(host)) out.add(host);
+    const p = hostPattern(x);
+    if (p) out.add(p);
   }
   return [...out].sort();
 }
 
-/** The browser settings of a project, every entry a host pattern; anything else is dropped. */
+/** The browser settings of a project, every entry a host pattern. */
 export function browserSettingsOf(settings: JsonObject | null | undefined): BrowserProjectSettings {
   const raw = settings?.[BROWSER_SETTINGS_KEY];
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { allowedDomains: [], blockedDomains: [] };
-  }
-  const s = raw as Record<string, unknown>;
+  const s =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  // One block list ('sites'): each "never" site and its subdomains, in the token's pattern form.
+  const never = webAccessOf(settings).never.flatMap((site) => [site, `*.${site}`]);
   return {
     allowedDomains: hostPatterns(s.allowedDomains ?? s.allowed_domains),
-    blockedDomains: hostPatterns(s.blockedDomains ?? s.blocked_domains),
+    blockedDomains: hostPatterns([...never, ...listOf(s.blockedDomains ?? s.blocked_domains)]),
   };
 }
 

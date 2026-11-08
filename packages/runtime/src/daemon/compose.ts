@@ -339,7 +339,7 @@ import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
 import {
   webFetchEnabled,
-  webReadSitesResolver,
+  webReadRulesResolver,
   webSearchEnabled,
   webSearchListsResolver,
 } from "../wiring/web-ports.ts";
@@ -416,6 +416,14 @@ export interface ComposeOptions {
   catalog?: ExtensionCatalog;
   /** fetch for the release feed, the price list and the remote catalog (tests use 127.0.0.1). */
   fetchImpl?: typeof fetch;
+  /**
+   * The page reader's development seam ('sites'): research may read this computer's loopback, so
+   * a stand-in page on 127.0.0.1 can be read. Set only by the scripted development modes
+   * (`fr daemon --provider bench` and `bench-api`, `cli/main.ts` `webReadLoopbackFor`) and by
+   * tests; never by `--provider bench-live`, an environment variable, `config.json` or a setting.
+   * It opens the loopback only, never the local network.
+   */
+  webReadLoopback?: boolean;
   /** Eval runner for the model watch; default: the registry's eval sets through the loop driver. */
   evalRunner?: EvalRunnerPort;
   /** Price list URL; default FORERUNNER_PRICE_LIST_URL, else no price list (nothing is guessed). */
@@ -1848,19 +1856,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // to the Inbox and the run ends (the executor adds the name to each run's allowlist).
   tools.register(askPersonTool({ store }));
   // Web research (ADR 0107, the owner's decision of 2026-11-01): the loop driver's `cc:WebFetch`,
-  // so the researcher and the science-evaluator run on an API key too. Public pages only, GET
-  // without credentials, size and time limits, the project's block list and site list read at
-  // every call; each refusal is an audit row with its reason. `FORERUNNER_WEB_FETCH=off` leaves
-  // it out, and then the intake plans no web work and the plan card says so.
+  // so the researcher and the science-evaluator run on an API key too, and on a subscription
+  // the same reader through the Agent SDK's tool server ('sites'). Public pages only, never this
+  // computer or the local network, GET without credentials, size and time limits, the project's
+  // "Web pages research may read" read at every call; each refusal is an audit row with its
+  // reason. `FORERUNNER_WEB_FETCH=off` leaves it out, and then the intake plans no web work and
+  // the plan card says so.
   const webFetchOn = webFetchEnabled(env);
   // 'web-search': the lists a run's search is sent with, read per run.
   const webSearchLists = webSearchListsResolver(store.project);
   if (webFetchOn)
     tools.register(
       web.webFetchTool({
-        sites: webReadSitesResolver(store.project),
+        rules: webReadRulesResolver(store.project),
         audit: ports.audit,
         clock,
+        env,
+        // The development seam: only the scripted bench modes and tests (see the option).
+        ...(opts.webReadLoopback === true ? { loopback: true } : {}),
       }),
     );
   // Cloudflare deploys (spec J.9, J.10, S.5, S.6, ADR 0035): the four tools go through the
@@ -2262,6 +2275,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                 await webSearchMarks.refresh();
                 if (await webSearchMarks.offFor(sourceId)) return null;
                 const lists = await webSearchLists(projectId);
+                // 'sites': a rule web search cannot be told in one request: no search this run.
+                if (lists.withheld) {
+                  logger.info("web search left out of the run", {
+                    projectId,
+                    why: lists.withheld,
+                  });
+                  return null;
+                }
                 return (await webSearchMarks.listsRefused(sourceId, projectId, lists))
                   ? null
                   : lists;

@@ -14,7 +14,7 @@ import {
   privateAddressWords,
   WEB_MAX_URL_CHARS,
   WebReadPolicy,
-  type WebReadSites,
+  type WebReadRules,
 } from "./policy.ts";
 
 /**
@@ -24,12 +24,15 @@ import {
  * does, in this order:
  *
  * 1. `WebReadPolicy.checkUrl`: http(s) only, no user name or password, at most 2,000
- *    characters, the project's block list; an IP literal is judged as an address at once.
+ *    characters, never a local name, the project's rule ("Web pages research may read": any
+ *    public website except its "never" list, or "only" its list); an IP literal is judged as an
+ *    address at once.
  * 2. A GET over `node:http(s)` whose `lookup` is the policy: every address the host resolves
- *    to must be public (a host on the project's site list is the exception), checked on the
- *    addresses the connection then uses, so a name that resolves to this computer or the local
- *    network is refused before any byte is sent. No cookie, no authorisation header, no body;
- *    the user agent says an AI agent is reading.
+ *    to must be public, whatever any list says, checked on the addresses the connection then
+ *    uses, so a name that resolves to this computer or the local network is refused before any
+ *    byte is sent. No cookie, no authorisation header, no body; the user agent says an AI agent
+ *    is reading. The connection is direct: on a computer that reaches the internet only through
+ *    a proxy (`HTTPS_PROXY` / `HTTP_PROXY`), a failed connection says so (`PROXY_SENTENCE`).
  * 3. Redirects are followed here, hop by hop, each target through the same checks, at most
  *    `WEB_MAX_REDIRECTS`; never by the HTTP client itself.
  * 4. The body is read up to `maxBytes` (default 2 MiB, decompressed) within `timeoutMs`
@@ -58,9 +61,30 @@ export const DEFAULT_WEB_MAX_CHARS = 30_000;
 /** How the tool resolves a host name: all addresses, as `dns.lookup(host, { all: true })`. */
 export type WebResolve = (host: string) => Promise<LookupAddress[]>;
 
+/**
+ * What a failed direct connection adds on a computer with a proxy set ('sites'): the reader does
+ * not go through it yet, and search (which runs on Anthropic's side) still works.
+ */
+export const PROXY_SENTENCE =
+  "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works.";
+
+/** Whether this computer names a proxy for its web traffic (`HTTPS_PROXY`, `HTTP_PROXY`, any case). */
+export function proxySetIn(env: NodeJS.ProcessEnv): boolean {
+  return ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"].some(
+    (k) => (env[k] ?? "").trim() !== "",
+  );
+}
+
 export interface WebFetchOptions {
-  /** The project's site list and block list for the run (`settings.browser`), read per call. */
-  sites: (ctx: ToolExecutionContext) => WebReadSites | Promise<WebReadSites>;
+  /** The project's rule for the run ("Web pages research may read", `webAccessOf`), read per call. */
+  rules: (ctx: ToolExecutionContext) => WebReadRules | Promise<WebReadRules>;
+  /**
+   * The development seam: this computer's loopback may be read. Only the composition of the
+   * scripted development modes (`--provider bench` and `bench-api`) and tests set it.
+   */
+  loopback?: boolean;
+  /** Where the proxy variables are read (default: `process.env`, per call). */
+  env?: NodeJS.ProcessEnv;
   audit: AuditPort;
   clock: Clock;
   maxBytes?: number;
@@ -251,21 +275,48 @@ function decode(body: Buffer, contentType: string): string {
   }
 }
 
-/** Why a request ended without an answer, in words: the timeout, the network error, the refusal. */
-function failureWords(e: unknown, host: string, timeoutMs: number, timedOut: boolean): string {
+/** Errors of a connection that never reached the site (a proxy-only network fails this way). */
+const CONNECT_ERRORS = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EACCES",
+  "EPERM",
+]);
+
+/**
+ * Why a request ended without an answer, in words: the timeout, the network error, the refusal.
+ * With a proxy set, a connection that never reached the site also says that the reader does not
+ * use the proxy ('sites'), so the cause is not hidden behind "no such host".
+ */
+function failureWords(
+  e: unknown,
+  host: string,
+  timeoutMs: number,
+  timedOut: boolean,
+  proxied: boolean,
+): string {
   if (e instanceof ForerunnerError) return e.message;
-  if (timedOut) {
-    const secs = Math.max(1, Math.round(timeoutMs / 1000));
-    return `${host} did not answer within ${secs} second${secs === 1 ? "" : "s"}.`;
-  }
   const code = (e as NodeJS.ErrnoException)?.code;
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN")
-    return `${host} was not found (no such host, or no network).`;
-  if (code === "ECONNREFUSED") return `${host} refused the connection.`;
-  if (code === "ECONNRESET") return `${host} closed the connection.`;
-  if (code?.startsWith("ERR_TLS") || code?.includes("CERT"))
-    return `${host} did not present a valid certificate (${code}).`;
-  return `Could not read ${host}: ${errorMessage(e)}.`;
+  const viaProxy = proxied && (timedOut || (code !== undefined && CONNECT_ERRORS.has(code)));
+  const words = (() => {
+    if (timedOut) {
+      const secs = Math.max(1, Math.round(timeoutMs / 1000));
+      return `${host} did not answer within ${secs} second${secs === 1 ? "" : "s"}.`;
+    }
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN")
+      return `${host} was not found (no such host, or no network).`;
+    if (code === "ECONNREFUSED") return `${host} refused the connection.`;
+    if (code === "ECONNRESET") return `${host} closed the connection.`;
+    if (code?.startsWith("ERR_TLS") || code?.includes("CERT"))
+      return `${host} did not present a valid certificate (${code}).`;
+    return `Could not read ${host}: ${errorMessage(e)}.`;
+  })();
+  return viaProxy ? `${words} ${PROXY_SENTENCE}` : words;
 }
 
 /**
@@ -283,6 +334,8 @@ export async function readWebPage(
     maxChars?: number;
     resolve?: WebResolve;
     isPublic?: (address: string) => boolean;
+    /** This computer names a proxy (`proxySetIn`): a failed connection says so. */
+    proxied?: boolean;
   },
 ): Promise<WebPageRead> {
   const maxBytes = opts.maxBytes ?? DEFAULT_WEB_MAX_BYTES;
@@ -315,9 +368,11 @@ export async function readWebPage(
       // net wraps an error from `lookup` in its own; the refusal is the cause.
       const cause = (e as { cause?: unknown }).cause;
       if (cause instanceof ForerunnerError) throw cause;
-      throw new ForerunnerError("unavailable", failureWords(e, host, timeoutMs, timeout.aborted), {
-        details: { host },
-      });
+      throw new ForerunnerError(
+        "unavailable",
+        failureWords(e, host, timeoutMs, timeout.aborted, opts.proxied === true),
+        { details: { host, ...(opts.proxied ? { proxied: true } : {}) } },
+      );
     }
     if (res.status >= 300 && res.status < 400) {
       if (!res.location)
@@ -389,7 +444,7 @@ export function webFetchTool(opts: WebFetchOptions): ToolSpec<{ url: string; max
   return {
     name: WEB_FETCH_TOOL_NAME,
     description:
-      "Read one public web page by its full address (http or https) and get its text. A GET without credentials; pages on this computer or the local network are refused unless the project lists them. Cite every page you use by its address.",
+      "Read one public web page by its full address (http or https) and get its text. A GET without credentials; pages on this computer or the local network are never read, and the project may limit which websites research reads. Cite every page you use by its address.",
     schema: z.object({
       url: z
         .string()
@@ -401,7 +456,9 @@ export function webFetchTool(opts: WebFetchOptions): ToolSpec<{ url: string; max
     risk: "low",
     timeoutMs: (opts.timeoutMs ?? DEFAULT_WEB_TIMEOUT_MS) * (WEB_MAX_REDIRECTS + 1) + 5_000,
     async execute(input, ctx) {
-      const policy = new WebReadPolicy(await opts.sites(ctx));
+      const policy = new WebReadPolicy(await opts.rules(ctx), {
+        ...(opts.loopback ? { loopback: true } : {}),
+      });
       try {
         const page = await readWebPage(input.url, {
           policy,
@@ -411,6 +468,7 @@ export function webFetchTool(opts: WebFetchOptions): ToolSpec<{ url: string; max
           ...(input.maxChars !== undefined ? { maxChars: input.maxChars } : {}),
           ...(opts.resolve ? { resolve: opts.resolve } : {}),
           ...(opts.isPublic ? { isPublic: opts.isPublic } : {}),
+          proxied: proxySetIn(opts.env ?? process.env),
         });
         return {
           content: renderWebPage(page, maxBytes),
