@@ -18,6 +18,7 @@ import { parseRepoRef } from "../loop/docs.ts";
 import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
+import { PUSH_UNFINISHED_SETTING, pushUnfinishedOf } from "../session/push-unfinished.ts";
 import type { Money, SettingView } from "./api-types.ts";
 import { money } from "./views.ts";
 
@@ -272,6 +273,19 @@ export function settingsView(input: SettingsViewInput): Row[] {
                 label: "Status pull request",
                 value: p.settings.status_pull_request === true,
                 description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+                risk: "low",
+              }),
+            ]
+          : []),
+        // budget-resume: a paused task's work in progress on GitHub too, off unless turned on;
+        // only where a task has a branch on the host.
+        ...(onHostRepository(p)
+          ? [
+              project({
+                key: `project.${PUSH_UNFINISHED_SETTING}`,
+                label: "Push unfinished work to GitHub",
+                value: pushUnfinishedOf(p.settings),
+                description: `A paused task's work in progress in ${p.name}, pushed to its branch on GitHub too (off: it stays on this computer until the task is done; a push starts the repository's checks and others see it)`,
                 risk: "low",
               }),
             ]

@@ -795,14 +795,14 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         })) as { readback?: string }
       ).readback;
     expect(await ask(reviewed.id)).toBe(
-      'Cancel "About page"? It is dropped; its review stops now; its pull request stays open.',
+      'Cancel "About page"? Drops it. Its review stops now; its pull request stays open.',
     );
     expect(await ask(running.id)).toBe(
-      'Cancel "Credits page"? It is dropped; its run stops now; its pull request stays open.',
+      'Cancel "Credits page"? Drops it. Its run stops now; its pull request stays open.',
     );
     // Without a pull request, what it changed is removed (ADR 0105).
     expect(await ask(plain.id)).toBe(
-      'Cancel "Contact page"? It is dropped; its review stops now and what it changed is removed.',
+      'Cancel "Contact page"? Drops it. Its review stops and its changes are removed; Undo restores them unless the files changed.',
     );
     // Yes does what the read-back said.
     const asked = await w.executor.execute({
@@ -822,7 +822,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     // No review going on here: dropped only, pull request or not.
     w.ports.liveWork = () => false;
     const idle = await insert("FAQ page", "in_review", "https://github.test/o/r/pull/9");
-    expect(await ask(idle.id)).toBe('Cancel "FAQ page"? It is dropped.');
+    expect(await ask(idle.id)).toBe('Cancel "FAQ page"? Drops it.');
     await w.store.close();
   });
 
@@ -923,7 +923,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     });
     expect(asked.status).toBe("pending");
     expect((asked as { readback: string }).readback).toBe(
-      'Cancel "Write the FAQ"? It is dropped; its run stops now and what it changed is removed.',
+      'Cancel "Write the FAQ"? Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.',
     );
     // The task finishes before the yes.
     const running = await w.store.task.mustGet(task.id);

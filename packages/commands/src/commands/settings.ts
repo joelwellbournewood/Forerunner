@@ -10,6 +10,7 @@ import {
 } from "@forerunner/runtime/loop/merge-mode";
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
+import { PUSH_UNFINISHED_SETTING } from "@forerunner/runtime/session/push-unfinished";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -274,6 +275,25 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
       "Who merges a repository project's accepted work: you (each pull request waits for your Merge on the Overview; the default) or after_review (Forerunner merges it once the critic accepted it).",
     display: (value) => MERGE_MODE_WORDS[value === "after_review" ? "after_review" : "you"],
     effect: (value) => mergeModeEffect(value === "after_review" ? "after_review" : "you"),
+  },
+  // budget-resume (the owner's decision of 2026-11-02, ADR 0112 amended): off (the default), a
+  // paused task's work in progress stays on this computer, on its branch; on, it is pushed to
+  // that branch on GitHub too (where it starts the repository's automatic checks and co-workers
+  // see it). Never a Local only file: the push guard refuses one, as for every push.
+  [PUSH_UNFINISHED_SETTING]: {
+    key: PUSH_UNFINISHED_SETTING,
+    label: "pushing unfinished work to GitHub",
+    scope: "project",
+    risk: "low",
+    schema: z.boolean(),
+    narrows: (to) => to !== true,
+    description:
+      "A paused task's work in progress, pushed to its branch on GitHub too (off: it stays on this computer until the task is done).",
+    effect: (value) =>
+      value === true
+        ? "a paused task's work in progress is pushed to its branch on GitHub too, where it starts the repository's checks and others see it"
+        : "a paused task's work in progress stays on this computer until the task is done",
+    display: (value) => (value === true ? "on" : "off"),
   },
   shared_with: {
     key: "shared_with",

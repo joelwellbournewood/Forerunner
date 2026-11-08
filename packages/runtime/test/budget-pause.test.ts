@@ -8,6 +8,7 @@ import { WRAP_UP_TEXT } from "../src/agent/loop.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
+import { wakeBudgetWaits } from "../src/session/budget-card.ts";
 import { handoffOf } from "../src/session/budget-pause.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
@@ -405,8 +406,25 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (q) => q.taskId === r.taskId && q.status === "open",
     );
-    expect(card?.title).toBe('"Members list" stopped at this month\'s cap of CHF 0.10');
-    expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+    expect(card?.title).toBe('"Members list" paused at this month\'s cap of CHF 0.10');
+    // budget-resume: a bigger task budget does not help at the month's cap (the review of
+    // budget-stop: Raise the budget started a session that stopped at once at the same cap):
+    // the card offers no Continue, says where to change it and that the task goes on by itself.
+    expect(((card?.choices ?? []) as Json[]).map((c) => c.label)).toEqual(["Cancel task"]);
+    expect(card?.links).toEqual([
+      {
+        label: "Open Settings",
+        to: "/settings",
+        explain: "Raise it there; the task goes on by itself.",
+      },
+    ]);
+    expect(String(card?.body)).toMatch(
+      /It goes on by itself once you raise the monthly cap in Settings, or on 1 December\.$/,
+    );
+    expect(r.view.display).toMatchObject({
+      label: "Paused at this month's cap",
+      detail: "It goes on by itself once that limit has room; cancel it in the Inbox.",
+    });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
     expect(r.runs[0]?.outcome).toBe("budget_exceeded");
   }, 60_000);
@@ -450,5 +468,37 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
       /^This month's cap is CHF 0\.10\. The session spent CHF [\d.]+\. .*Raise the monthly spending cap in Settings to go on\.$/,
     );
     expect(String(stop.body)).not.toMatch(/larger budget|session's budget/);
+  }, 60_000);
+
+  it("once the month's cap has room again the paused task goes on by itself: its card closes and it is ready (budget-resume)", async () => {
+    const r = await runOne(req, rt, "Members map", { budgetUsdMicro: 2_000_000 });
+    expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+    const roomFor = async (projectId: string) =>
+      (await rt.caps.check({ humanId: rt.human.id, projectId }, 1, { phase: "work" })).decision ===
+      "allow";
+    // Still at the cap: nothing moves.
+    const wake = () =>
+      wakeBudgetWaits({
+        store: rt.store,
+        clock,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        roomFor,
+      });
+    expect(await wake()).toBe(0);
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    // The person raises the monthly cap in Settings (the caps are read again after a minute).
+    await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 150_000_000 });
+    await clock.advance(61_000);
+    // It (and the other tasks paused at the month's cap) goes on.
+    expect(await wake()).toBeGreaterThanOrEqual(1);
+    const task = await rt.store.task.mustGet(r.taskId);
+    expect(task.status).toBe("ready");
+    expect(task.reason).toBe("its limit has room again: it continues from where it stopped");
+    const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.taskId === r.taskId,
+    );
+    expect(card?.status).toBe("withdrawn");
+    expect(card?.outcome).toBe('"Members map" goes on: its limit has room again.');
   }, 60_000);
 });

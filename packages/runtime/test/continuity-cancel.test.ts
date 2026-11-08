@@ -167,7 +167,7 @@ describe("cancelling a task while it runs (live walk 2, C1)", () => {
     const change = ((await res.json()) as { change: Json }).change;
     // The line after the action says what happens to the work.
     expect(change.sentence).toBe(
-      'Cancelled "About page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+      'Cancelled "About page": its run stopped and its changes are removed; Undo restores them unless the files changed.',
     );
     cancelChangeId = String(change.changeLogId);
     const ended = await waitFor(
@@ -287,7 +287,7 @@ describe("cancelling a task while the critic reviews it (live walk 2, C1)", () =
     });
     expect(res.status).toBe(200);
     expect(JSON.stringify(await res.json())).toContain(
-      'Cancelled \\"Contact page\\": its review stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+      'Cancelled \\"Contact page\\": its review stopped and its changes are removed; Undo restores them unless the files changed.',
     );
     const ended = await waitFor(
       async () => {
@@ -639,7 +639,7 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
     });
     const change = ((await res.json()) as { change: Json }).change;
     expect(change.sentence).toBe(
-      'Cancelled "Build the page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+      'Cancelled "Build the page": its run stopped and its changes are removed; Undo restores them unless the files changed.',
     );
     await waitFor(
       async () => {
@@ -744,7 +744,7 @@ describe("Undo of a cancel after the session's next task changed the same file (
     expect(res.status).toBe(200);
     const change = ((await res.json()) as { change: Json }).change;
     expect(change.sentence).toBe(
-      'Cancelled "Print stylesheet": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+      'Cancelled "Print stylesheet": its run stopped and its changes are removed; Undo restores them unless the files changed.',
     );
     // The session goes on: the next task rewrites index.html.
     const ended = await waitFor(

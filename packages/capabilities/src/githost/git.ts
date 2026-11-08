@@ -873,6 +873,98 @@ export class GitOps {
     return { result: "restored", files };
   }
 
+  /**
+   * `commitAll`, except that `keepOut.files` go into the commit as `keepOut.rev` has them (the
+   * worktree keeps its own versions, uncommitted): a project folder's snapshot before a task's
+   * next run keeps the task's own work in progress out of it, so that run's change set (what the
+   * critic reads, `git diff HEAD`) is the task's whole work (budget-resume). A file `rev` lacks
+   * is left out of the commit. Empty when nothing else changed.
+   */
+  async commitAllExcept(
+    message: string,
+    keepOut: { rev: string; files: readonly string[] },
+  ): Promise<{ sha: string; committed: boolean }> {
+    this.must(await this.git(["add", "-A"]), "add");
+    if (keepOut.files.length)
+      this.must(
+        await this.git(["reset", "-q", keepOut.rev, "--", ...keepOut.files]),
+        "reset (keep out)",
+      );
+    this.must(await this.git(["commit", "-q", "--allow-empty", "-m", message]), "commit");
+    return { sha: await this.headSha(), committed: true };
+  }
+
+  /**
+   * The change of commit `rev` (against its first parent) applied to the folder, or taken back
+   * (`reverse`), and committed as `message` with only those files (other changes in the folder
+   * stay as they are): a cancelled task's work in progress set aside and brought back
+   * (budget-resume). `ok` false, with nothing changed, when the same files changed since.
+   */
+  async applyCommitted(
+    rev: string,
+    message: string,
+    opts: { reverse?: boolean } = {},
+  ): Promise<{ ok: boolean; files: string[] }> {
+    const files = await this.filesBetween(`${rev}~1`, rev);
+    if (!files.length) return { ok: true, files };
+    const patch = this.must(
+      await this.git(["diff", "--binary", "--no-color", "--no-ext-diff", `${rev}~1`, rev]),
+      "diff --binary",
+    ).stdout;
+    const file = join(this.opts.cwd, ".git", "forerunner-apply.patch");
+    writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    try {
+      const applied = await this.git([
+        "apply",
+        "--index",
+        "--binary",
+        "--whitespace=nowarn",
+        ...(opts.reverse ? ["-R"] : []),
+        file,
+      ]);
+      if (applied.code !== 0) return { ok: false, files };
+    } finally {
+      rmSync(file, { force: true });
+    }
+    this.must(await this.git(["commit", "-q", "-m", message, "--", ...files]), "commit");
+    return { ok: true, files };
+  }
+
+  /** `reset --hard <rev>`: the checked-out branch and the folder as `rev` has them. */
+  async resetHard(rev: string): Promise<void> {
+    this.must(await this.git(["reset", "--hard", "-q", rev]), `reset --hard ${rev}`);
+  }
+
+  /** The subjects of the commits in `from..to`, newest first. */
+  async subjectsBetween(from: string, to = "HEAD"): Promise<string[]> {
+    return this.must(await this.git(["log", "--format=%s", `${from}..${to}`]), "log")
+      .stdout.split(/\r?\n/)
+      .filter(Boolean);
+  }
+
+  /**
+   * Removes `branch` from the remote (a cancelled task's pushed work in progress,
+   * budget-resume). Never the default branch: refused like a force-push of it. False when the
+   * remote has no such branch or refused.
+   */
+  async deleteRemoteBranch(
+    branch: string,
+    opts: { remote?: string; defaultBranch: string },
+  ): Promise<boolean> {
+    if (!opts.defaultBranch || branch === opts.defaultBranch)
+      throw new ForerunnerError("autonomy_insufficient", `deleting ${branch} needs a human`);
+    const remote = opts.remote ?? "origin";
+    let url: string | null = null;
+    if (this.opts.auth?.token) {
+      const r = await this.git(["remote", "get-url", "--push", remote]);
+      url = r.code === 0 ? r.stdout.trim() : null;
+    }
+    const r = await this.git(["push", remote, "--delete", branch], {}, url);
+    if (r.code !== 0) return false;
+    await this.git(["update-ref", "-d", `refs/remotes/${remote}/${branch}`]);
+    return true;
+  }
+
   /** The file `path` (relative, `/`-separated) as the commit `rev` holds it; null when absent. */
   async fileAt(rev: string, path: string): Promise<string | null> {
     const r = await this.git(["cat-file", "blob", `${rev}:${path}`]);

@@ -68,6 +68,7 @@ export const SETTING_LABELS: Record<string, string> = {
   fast_mode: "Opus fast mode",
   status_pull_request: "Status pull request",
   merge_mode: "Who merges accepted work",
+  push_unfinished_work: "Push unfinished work to GitHub",
   speed_quality_offset: "Speed or quality",
   mid_session_limit: "When my first choice runs out mid-session",
   code_commands: "Code tasks that need commands",
@@ -180,6 +181,7 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
     case "small_project_mode":
     case "fast_mode":
     case "status_pull_request":
+    case "push_unfinished_work":
       return v === true ? "on" : "off";
     case "notify_channel":
       return option(NOTIFY_CHANNELS);
@@ -342,6 +344,7 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
     case "small_project_mode":
     case "fast_mode":
     case "status_pull_request":
+    case "push_unfinished_work":
       return select(leaf, ON_OFF, asBool, boolInitial, projectParam);
     case "merge_mode":
       return select(

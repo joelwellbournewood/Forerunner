@@ -10,6 +10,7 @@ import { mergesAfterLabel, mergesAfterSentence } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
+import { cancelWorkKind, cancelWorkLine } from "./cancel-words.ts";
 
 /*
  * The words of a task's status and the person's actions on it (design §2 and §3.5,
@@ -114,6 +115,11 @@ export interface TaskDisplayContext {
    */
   live?: (taskId: string) => boolean;
   /**
+   * The project is linked to the person's own folder (C-37): a Cancel sets nothing aside there,
+   * so what a run wrote stays (`cancelWork`). Absent: a project's folder or a repository.
+   */
+  ownFolder?: boolean;
+  /**
    * The project's work waits for a Claude credential (U-078): its reset ("Waits until 15:40,
    * your subscription's limit") or a new key ("Waits for a new API key"), as the row says it,
    * with the line under it. Absent or null: no wait.
@@ -208,12 +214,11 @@ export function cardKindOf(
 
 /**
  * A task's status while its budget card is open (ADR 0112): paused at the limit the card names
- * (`change_card.source`). A session's budget that stopped it twice (C-36) asks a decision.
+ * (`change_card.source`; a card a session's budget filed before budget-resume says "session_budget").
  */
 export function budgetPauseLabel(source: unknown): string {
   switch (source) {
     case "session_budget":
-      return "Needs your decision: a session's budget is too small";
     case "session":
       return "Paused at the session's budget";
     case "project":
@@ -225,6 +230,17 @@ export function budgetPauseLabel(source: unknown): string {
     default:
       return "Paused at its budget";
   }
+}
+
+/**
+ * What a paused task's row says next (budget-resume, design §2 "status · one line"): its card
+ * offers Continue or Cancel; at a limit no bigger budget lifts (the month's cap, the project's
+ * budget, the subscription's share) it goes on by itself once the limit has room again.
+ */
+export function budgetPauseDetail(source: unknown): string {
+  return source === "month" || source === "project" || source === "plan"
+    ? "It goes on by itself once that limit has room; cancel it in the Inbox."
+    : "Continue or cancel in the Inbox.";
 }
 
 /**
@@ -264,7 +280,24 @@ function display(
     since: extra.since ?? null,
     blocker: extra.blocker ?? null,
     ...(extra.live !== undefined ? { live: extra.live } : {}),
+    ...(extra.cancelWork ? { cancelWork: extra.cancelWork } : {}),
   };
+}
+
+/** What Cancel does to the task's work now, as the dialog says it (budget-resume, C-37). */
+function cancelWorkOf(
+  task: Pick<TaskRow, "pr_url">,
+  ctx: Pick<TaskDisplayContext, "ownFolder">,
+  state: { running?: boolean; liveReview?: boolean; paused?: boolean },
+): string | undefined {
+  const kind = cancelWorkKind({
+    running: !!state.running,
+    liveReview: !!state.liveReview,
+    paused: !!state.paused,
+    pullRequest: !!task.pr_url,
+    ownFolder: !!ctx.ownFolder,
+  });
+  return kind ? cancelWorkLine(kind) : undefined;
 }
 
 /**
@@ -373,6 +406,9 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       return display("review", "Being reviewed", "info", {
         detail: "The critic is checking the work.",
         ...(ctx.live ? { live: ctx.live(task.id) } : {}),
+        ...(ctx.live?.(task.id)
+          ? { cancelWork: cancelWorkOf(task, ctx, { liveReview: true }) }
+          : {}),
       });
     case "claimed":
     case "in_progress": {
@@ -382,6 +418,7 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         agentName,
         since: run?.created_at ?? task.updated_at,
         ...(run?.specialist ? { detail: `The ${run.specialist} is working on it.` } : {}),
+        cancelWork: cancelWorkOf(task, ctx, { running: true }),
       });
     }
     case "needs_human": {
@@ -394,7 +431,8 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
           budgetPauseLabel((card.change_card as { source?: unknown } | null)?.source),
           "warn",
           {
-            detail: "Its card is in the Inbox: raise its budget, or cancel it.",
+            detail: budgetPauseDetail((card.change_card as { source?: unknown } | null)?.source),
+            cancelWork: cancelWorkOf(task, ctx, { paused: true }),
             blocker: {
               kind: "card",
               taskId: null,

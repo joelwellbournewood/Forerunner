@@ -332,6 +332,14 @@ export const TaskDisplay = z.object({
    * statuses (a running task's run stops wherever it runs) and from an older service.
    */
   live: z.boolean().optional(),
+  /**
+   * What Cancel does to its work, in the line the Cancel dialog shows after "Drops it."
+   * (budget-resume, `cancel-words.ts`): its run or review stops and its changes are removed, its
+   * pull request stays open, what it wrote stays in the person's own folder (C-37), or a paused
+   * task's work so far is set aside. Absent when Cancel changes no work, and from an older
+   * service (the dialog then words it from the status).
+   */
+  cancelWork: z.string().optional(),
 });
 export type TaskDisplay = z.infer<typeof TaskDisplay>;
 

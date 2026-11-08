@@ -356,11 +356,11 @@ describe("Tasks tab (design §3.5)", () => {
     await user.click(within(await rowOf("t_run")).getByTestId("action-cancel"));
     const dialog = await screen.findByTestId("action-dialog");
     expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(
-      "Drops it. Its run stops now and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.",
+      "Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.",
     );
     await user.click(within(dialog).getByTestId("confirm-action"));
     expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
-      'Cancelled "Write the About page": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+      'Cancelled "Write the About page": its run stopped and its changes are removed; Undo restores them unless the files changed.',
     );
     expect(screen.getByTestId("task-moved-undo")).toBeInTheDocument();
     expect(postedCalls(harness, "/tasks/t_run/action").map((c) => c.body)).toEqual([

@@ -48,15 +48,17 @@ import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
 import { BILLING_FALLBACK_EVENT } from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import {
-  budgetPerSessionOf,
+  BUDGET_STOP_KEY,
+  budgetCardSource,
   budgetStopTitle,
   fileBudgetStopCard,
-  fileSessionBudgetCard,
-  SESSION_BUDGET_STOPS_BEFORE_CARD,
-  sessionBudgetStops,
-  sessionBudgetTitle,
 } from "./budget-card.ts";
-import { type BudgetStopSource, type RunHandoff, stopEndsSession } from "./budget-pause.ts";
+import {
+  type BudgetStopSource,
+  limitWords,
+  type RunHandoff,
+  stopEndsSession,
+} from "./budget-pause.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import { CREDENTIAL_WAIT_STOP, type CredentialWait, waitSentence } from "./credential-wait.ts";
@@ -2020,13 +2022,15 @@ export class SessionRunner {
             }
           } else if (
             result.outcome === "needs_human" ||
-            (result.outcome === "paused" && result.budgetStop?.source !== "session")
+            (result.outcome === "paused" && !!result.budgetStop)
           ) {
-            // ADR 0112: a paused run (a budget of any level, or a wrap-up with work left) is no
-            // work for the critic and no failed try: it waits on today's budget card, which
-            // names the limit ('budget-resume' replaces the card). A stop at the project's
-            // budget, the month's cap or the subscription's share ends the session after it:
-            // nothing else of it can run there.
+            // ADR 0112 (amended by budget-resume): a paused run (a budget of any level, or a
+            // wrap-up with work left) is no work for the critic and no failed try: it waits on
+            // one card, filed at the first stop of any kind, which names the limit and offers
+            // Continue (CHF N more) where a bigger budget helps. A stop at the session's budget,
+            // the project's budget, the month's cap or the subscription's share ends the
+            // session after it: nothing else of it can run there. Before, a stop at the
+            // session's budget filed nothing the first time (C-36: a card at the second).
             const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
             const waiting = await store.task.transition(
               task.id,
@@ -2056,6 +2060,8 @@ export class SessionRunner {
                   agentId: agent.id,
                   runId: result.runId ?? null,
                   stop: result.budgetStop,
+                  handoff: result.handoff ?? null,
+                  now: clock.nowIso(),
                   chfPerUsd: rate,
                 });
               else
@@ -2131,68 +2137,16 @@ export class SessionRunner {
               });
             }
           } else if (result.outcome === "budget_exceeded" || result.outcome === "paused") {
-            // A pause at the session's own budget (ADR 0112) goes this way until 'budget-resume'
-            // pauses it with the same card at the first stop.
-            // The session's own budget is used (design §4.2: the session stops there). The task
-            // is no matter for the person: it goes back to ready by its claim's release, its
-            // attempt count unchanged, and the next session continues it. Before, it waited
-            // in needs_human with no card while the result said '"X" needs your decision
-            // (Inbox).' over an empty Inbox (phase C, the sibling of live walk 2 B2).
+            // A stop with no pause's details (an executor from before ADR 0112): the session's
+            // own budget is used (design §4.2), the task goes back to ready by its claim's
+            // release, its attempt count unchanged, and the next session continues it. The
+            // executor of today pauses with the limit named (the branch above: one card).
             stopReason = "budget_exceeded";
-            // C-36 (the session lead's default, ADR 0105): the second such stop of the same
-            // task since its last card asks the person once (raise the budget per session,
-            // give it one bigger session, or cancel it) instead of every session running it
-            // again until they notice.
-            const stops = await sessionBudgetStops(store, task.id, result.runId ?? null).catch(
-              (e: unknown) => {
-                this.logger.warn("session-budget stops not counted", {
-                  taskId: task.id,
-                  error: errorMessage(e),
-                });
-                return { count: 0, runIds: [] as string[] };
-              },
+            await releaseIfHeld(
+              task.id,
+              "the session's budget was used during its run; the next session continues it",
             );
-            if (stops.count >= SESSION_BUDGET_STOPS_BEFORE_CARD) {
-              const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
-              const waiting = await store.task.transition(
-                task.id,
-                task.version,
-                "needs_human",
-                `${sessionBudgetTitle(task)}.`,
-                { agentId: agent.id },
-              );
-              needsHuman.push(task.id);
-              try {
-                const project = task.project_id
-                  ? await store.project.get(task.project_id)
-                  : undefined;
-                await fileSessionBudgetCard({
-                  store,
-                  task: waiting,
-                  session,
-                  humanId: agent.owner_human_id,
-                  agentId: agent.id,
-                  runIds: stops.runIds,
-                  projectCapUsdMicro: budgetPerSessionOf(
-                    project?.settings,
-                    session.budget_cap_usd_micro,
-                  ),
-                  chfPerUsd: rate,
-                });
-              } catch (e) {
-                this.logger.warn("card of the task a session's budget stopped not filed", {
-                  taskId: task.id,
-                  error: errorMessage(e),
-                });
-              }
-            } else {
-              await releaseIfHeld(
-                task.id,
-                "the session's budget was used during its run; the next session continues it",
-              );
-              skipped.push(task.id);
-            }
-            skipped.push(...queue.map((i) => i.taskId));
+            skipped.push(task.id, ...queue.map((i) => i.taskId));
             queue.length = 0;
             break;
           } else if (result.outcome === "killed") {
@@ -2373,6 +2327,16 @@ export class SessionRunner {
     const inReviewNow = uniq(inReview).filter(
       (id) => endState.rows.get(id)?.status === "in_review" && !needsYouNow.includes(id),
     );
+    // budget-resume: a task paused at a budget is said as a pause, with the limit its card
+    // names ("Continue or cancel it in the Inbox"), never as "needs your decision".
+    const pausedCards = new Map(
+      openCards
+        .filter(
+          (r) => r.task_id && (r.change_card as { key?: unknown } | null)?.key === BUDGET_STOP_KEY,
+        )
+        .map((r) => [r.task_id as string, r]),
+    );
+    const pausedNow = needsYouNow.filter((id) => pausedCards.has(id));
     const leftOutIds = new Set((plan?.leftOutForBudget ?? []).map((i) => i.taskId));
     // U-078: the wait's one sentence, its reset in the person's time zone, true when written.
     const waitOwner = credentialWait
@@ -2384,7 +2348,24 @@ export class SessionRunner {
         ...named(id),
         reason: endState.rows.get(id)?.reason ?? "",
       })),
-      needsYou: needsYouNow.map(named),
+      needsYou: needsYouNow.filter((id) => !pausedCards.has(id)).map(named),
+      ...(pausedNow.length
+        ? {
+            paused: pausedNow.map((id) => {
+              const card = (pausedCards.get(id)?.change_card ?? {}) as Record<string, unknown>;
+              const source = budgetCardSource({ change_card: card }) ?? "task_budget";
+              return {
+                ...named(id),
+                limit: limitWords(
+                  source,
+                  typeof card.cap_usd_micro === "number" ? card.cap_usd_micro : 0,
+                  (n) => formatChf(usdToChfMicro(Math.max(0, Math.round(n)), rate)),
+                  typeof card.specialist === "string" ? card.specialist : "specialist",
+                ),
+              };
+            }),
+          }
+        : {}),
       leftOver: endState.readyNow
         .filter((t) => !leftOutIds.has(t.id))
         .map((t) => ({ id: t.id, title: t.title })),

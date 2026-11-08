@@ -1,4 +1,5 @@
 import type { BillingSourceKind } from "@forerunner/billing";
+import { isAbsolute } from "@forerunner/platform";
 import type {
   EventRow,
   HumanRequestRow,
@@ -76,6 +77,9 @@ export async function loadTaskDisplayContext(
     if (record && record.pr_url === t.pr_url) merges.set(t.id, record);
   }
   const credentialWait = projectId ? await credentialWaitRow(store, projectId) : null;
+  // C-37: a project linked to the person's own folder (its first repo is a path on this
+  // computer) keeps what a cancelled run wrote: the Cancel dialog says so.
+  const linked = projectId ? (await store.project.get(projectId))?.repos[0]?.trim() : undefined;
   return {
     tasks,
     cards,
@@ -85,6 +89,7 @@ export async function loadTaskDisplayContext(
     reviews,
     merges,
     ...(credentialWait ? { credentialWait } : {}),
+    ...(linked && isAbsolute(linked) ? { ownFolder: true } : {}),
   };
 }
 

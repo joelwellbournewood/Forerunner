@@ -130,6 +130,12 @@ export interface PrTaskExecutorDeps {
    * the worktree) can use it. Null (or absent): the project has none.
    */
   localOnlyFor?: (task: TaskRow) => Promise<string | null>;
+  /**
+   * The project's setting "Push unfinished work to GitHub" (budget-resume, default off): a
+   * paused task's work in progress is pushed to its branch on the host too. Off, it stays on
+   * this computer (a push starts the repository's automatic checks and co-workers see it).
+   */
+  pushUnfinishedFor?: (task: TaskRow) => Promise<boolean>;
 }
 
 type ExecuteCtx = Parameters<TaskExecutor["execute"]>[0];
@@ -412,6 +418,110 @@ export function setAsideRef(taskId: string): string {
 }
 
 /**
+ * budget-resume (ADR 0112 amended): the commit of a task's work in progress, in the folder it
+ * runs in (its own worktree of a repository, or the project's folder). Its next run starts from
+ * it: in a repository from the task's own local branch, never `checkout -B` from the host (which
+ * carried the files over, or git refused when main had changed them). Removed once the work goes
+ * to review, when the branch starts again from the base, and when a cancel sets the work aside.
+ */
+export function wipRef(taskId: string): string {
+  return `refs/forerunner/wip/${safeSegment(taskId)}`;
+}
+/** A cancelled task's work in progress (its commits), kept until Undo brings it back. */
+export function setAsideWipRef(taskId: string): string {
+  return `refs/forerunner/set-aside-wip/${safeSegment(taskId)}`;
+}
+/** What a failed run left uncommitted in the task's worktree (W6-24), kept but out of the way. */
+export function failedRef(taskId: string): string {
+  return `refs/forerunner/failed/${safeSegment(taskId)}`;
+}
+
+/** The first words of a work-in-progress commit's subject. */
+export const WIP_SUBJECT = "Work in progress: ";
+
+/** The limit a pause names in its commit ("its budget", "this month's cap"). */
+export function pausedAtWords(stop: TaskExecutionResult["budgetStop"]): string {
+  switch (stop?.source) {
+    case "specialist_limit":
+      return `the ${stop.specialist}'s limit per run`;
+    case "session":
+      return "the session's budget";
+    case "project":
+      return "the project's budget";
+    case "month":
+      return "this month's cap";
+    case "plan":
+      return "the subscription's share";
+    default:
+      return "its budget";
+  }
+}
+
+/**
+ * The outcomes whose run stopped before its work was done and whose work is kept as work in
+ * progress in a repository's worktree: a pause (ADR 0112), a question for the person, a Claude
+ * credential's limit, a stop. Before, each left its files uncommitted for the next run's
+ * `checkout -B` to carry over or refuse.
+ */
+const WIP_OUTCOMES: ReadonlySet<TaskExecutionResult["outcome"]> = new Set([
+  "paused",
+  "needs_human",
+  "usage_limit",
+  "killed",
+]);
+
+/**
+ * A work-in-progress commit's message: why it stopped in the subject, then the run's own
+ * "Where I stopped:" and "Left to do:" (data, kept plain), then the task.
+ */
+export function workInProgressMessage(
+  task: Pick<TaskRow, "id" | "title">,
+  result: Pick<TaskExecutionResult, "outcome" | "budgetStop" | "handoff">,
+): string {
+  const title = task.title.replace(/\s+/g, " ").trim();
+  const why =
+    result.outcome === "paused"
+      ? `paused at ${pausedAtWords(result.budgetStop)}`
+      : result.outcome === "needs_human"
+        ? "waiting for your answer"
+        : result.outcome === "usage_limit"
+          ? "stopped at a Claude credential's limit"
+          : "stopped";
+  const h = result.handoff;
+  const plain = (s: string) => s.replace(/\s+/g, " ").trim();
+  return [
+    `${WIP_SUBJECT}${title} (${why})`,
+    ...(h
+      ? [
+          `Where I stopped: ${plain(h.stopped) || "it wrote no note (it stopped at its budget)."}`,
+          h.leftToDo.length
+            ? `Left to do:\n${h.leftToDo.map((t) => `- ${plain(t)}`).join("\n")}`
+            : "Left to do: not listed.",
+        ]
+      : []),
+    `Task ${task.id}.`,
+  ].join("\n\n");
+}
+
+/** The task whose run built on a work-in-progress commit, from the subjects after it. */
+function builtOnBy(subjects: readonly string[]): string | null {
+  for (const s of [...subjects].reverse()) {
+    const before = /^Workspace before "(.*)" \(task [^)]*\)$/.exec(s);
+    if (before) return before[1] ?? "another task";
+    if (s.startsWith(WIP_SUBJECT))
+      return s.slice(WIP_SUBJECT.length).replace(/ \([^)]*\)$/, "") || "another task";
+  }
+  return null;
+}
+
+/** What `setAsideWork` did: the files taken out, or why the work stays (`kept`). */
+export interface SetAsideResult {
+  files: string[];
+  /** Why a paused task's work stays in the folder ('"Y" built on it'); null when set aside. */
+  kept: string | null;
+}
+
+/**
  * What a project's folder never takes into its history: caches and installs a specialist's
  * command leaves behind (live, 2026-11-02: `__pycache__/*.pyc` was staged into the project).
  */
@@ -603,13 +713,36 @@ export class PrTaskExecutor implements TaskExecutor {
     // off) never makes its push fail, and the old pull request stays as it was.
     if (task.branch && !existingPr) branch = await this.freshBranch(git, target, task.branch);
     if (branch !== task.branch) await this.deps.store.task.patch(task.id, { branch });
-    const resume = !!existingPr && !dropped;
+    // budget-resume: the task's own work in progress (a pause, a question, a stop) on its local
+    // branch: this run continues from it. "Drop the branch and retry from scratch" drops it.
+    const wip = dropped ? null : await this.workInProgress(git, task, branch);
+    if (!wip) await git.setRef(wipRef(task.id), null);
+    const resume = (!!existingPr && !dropped) || !!wip;
     // C-49 (ADR 0106): the done tasks this one waits for whose pull requests are not merged
     // yet. Their branches are merged into this task's before it runs, so it sees their work;
     // its own pull request still targets the default branch.
     let unmerged = await this.unmergedDependencies(task, target);
     if (resume) {
-      await git.createBranch(branch, `origin/${branch}`);
+      if (wip) {
+        // The local branch as the last run left it (never `checkout -B` from the host); what a
+        // person pushed to the host's copy meanwhile is brought in by a merge.
+        await git.checkout(wip);
+        if ((await git.hasRef(`origin/${branch}`)) && !(await git.isAncestor(`origin/${branch}`))) {
+          const merged = await git.mergeFrom(`origin/${branch}`, `Bring in ${branch}`);
+          if (!merged.ok)
+            return this.conflict(ctx, {
+              git,
+              dir,
+              branch,
+              target,
+              conflicts: merged.conflicts,
+              costUsdMicro: 0,
+              force: false,
+              superseded: answered?.row ?? null,
+              merging: true,
+            });
+        }
+      } else await git.createBranch(branch, `origin/${branch}`);
       await this.dropStaleMarker(git);
       // What it builds on went away since (merged by squash or rebase, closed, redone,
       // cancelled): the branch is rebuilt first, so the run works on a true branch (ADR 0111).
@@ -653,6 +786,23 @@ export class PrTaskExecutor implements TaskExecutor {
             });
           await this.setDepsBase(git, built.sha, built.held);
         }
+      } else if (wip && !(await git.isAncestor(`origin/${target.base}`))) {
+        // budget-resume: work in progress is brought up to date by merging the base in, never
+        // rebased (ADR 0111's no-replay rule: it may be on the host already). A conflict goes
+        // to the person's conflict card, never a git error.
+        const merged = await git.mergeFrom(`origin/${target.base}`, mergeMessage([], target.base));
+        if (!merged.ok)
+          return this.conflict(ctx, {
+            git,
+            dir,
+            branch,
+            target,
+            conflicts: merged.conflicts,
+            costUsdMicro: 0,
+            force: false,
+            superseded: answered?.row ?? null,
+            merging: true,
+          });
       }
     } else {
       let depsBase: string | null = null;
@@ -678,6 +828,15 @@ export class PrTaskExecutor implements TaskExecutor {
       git,
     );
     const result = await inner.execute({ ...ctx, task: { ...task, branch } });
+    // budget-resume: a run that stopped before its work was done keeps it as a commit on the
+    // task's own branch (its next run continues from it); a failed run's leftovers are set
+    // aside, so the next attempt starts clean (W6-24).
+    if (WIP_OUTCOMES.has(result.outcome))
+      return this.saveWorkInProgress(ctx, { git, dir, branch, target, result });
+    if (result.outcome === "failed" || result.outcome === "timeout") {
+      await this.setLeftoversAside(git, task);
+      return result;
+    }
     if (result.outcome !== "done" && result.outcome !== "in_review") return result;
 
     // A commit message is plain text: no markdown marks, no lesson lines (L-19).
@@ -741,8 +900,14 @@ export class PrTaskExecutor implements TaskExecutor {
     } catch {
       // the diff is informational (peer overlap detection); never fail the PR for it
     }
+    // budget-resume: work in progress pushed earlier ("Push unfinished work to GitHub") is
+    // Forerunner's own branch with no pull request yet: a rebase onto the base replaces it.
+    const pushedWip = !!wip && !existingPr && (await git.hasRef(`origin/${branch}`));
     try {
-      await git.push(branch, { force: !!existingPr || replace, defaultBranch: target.base });
+      await git.push(branch, {
+        force: !!existingPr || replace || pushedWip,
+        defaultBranch: target.base,
+      });
     } catch (e) {
       return {
         outcome: "failed",
@@ -763,6 +928,8 @@ export class PrTaskExecutor implements TaskExecutor {
       unmerged,
     );
     if (answered) await this.consume(answered.row);
+    // The work went to review: nothing of it is in progress any more.
+    await git.setRef(wipRef(task.id), null);
     this.logger.info("pull request ready", {
       taskId: task.id,
       branch,
@@ -770,6 +937,116 @@ export class PrTaskExecutor implements TaskExecutor {
       buildsOn: unmerged.map((d) => d.number),
     });
     return { ...result, outcome: "in_review", prUrl, branch, changedFiles };
+  }
+
+  /**
+   * The task's local branch when it holds the task's work in progress (`wipRef` is in it), else
+   * null; a marker the branch no longer holds is stale and removed.
+   */
+  private async workInProgress(git: GitOps, task: TaskRow, branch: string): Promise<string | null> {
+    const marker = await git.resolveRef(wipRef(task.id));
+    if (!marker) return null;
+    const local = await git.resolveRef(`refs/heads/${branch}`);
+    if (local && (await git.isAncestor(marker, local))) return branch;
+    await git.setRef(wipRef(task.id), null);
+    return null;
+  }
+
+  /** The task's own files on its branch: from the base its work started on, never Local only. */
+  private async ownFiles(git: GitOps, target: Target): Promise<string[]> {
+    try {
+      const files = (await git.hasRef(DEPS_BASE_REF))
+        ? await git.filesBetween(DEPS_BASE_REF)
+        : await git.changedFiles(`origin/${target.base}`);
+      return files.filter((f) => underNeverPushed([f]).length === 0);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * budget-resume (ADR 0112 amended): a run that stopped before its work was done (a pause, a
+   * question for the person, a credential's limit, a stop) leaves it as one commit on the task's
+   * own branch, "Work in progress: <title> (paused at its budget)" with its "Where I stopped" and
+   * "Left to do", and `wipRef` marks it: the next run continues from it. Pushed to the host only
+   * with the project's "Push unfinished work to GitHub" on (through the same guard as every
+   * push: no Local only file leaves this computer). A git failure here is logged; the run's
+   * result stands, and the files stay where they are.
+   */
+  private async saveWorkInProgress(
+    ctx: ExecuteCtx,
+    s: { git: GitOps; dir: string; branch: string; target: Target; result: TaskExecutionResult },
+  ): Promise<TaskExecutionResult> {
+    const { task } = ctx;
+    const { git, dir, branch, target, result } = s;
+    let committed = false;
+    try {
+      committed = (await git.commitAll(workInProgressMessage(task, result))).committed;
+      if (committed || (await git.hasRef(wipRef(task.id))))
+        await git.setRef(wipRef(task.id), await git.headSha());
+    } catch (e) {
+      this.logger.warn("work in progress not committed", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+      return result;
+    }
+    const changedFiles = (await git.hasRef(wipRef(task.id)))
+      ? await this.ownFiles(git, target)
+      : [];
+    let summary = result.summary;
+    if (committed && (await this.deps.pushUnfinishedFor?.(task))) {
+      try {
+        await git.push(branch, { force: true, defaultBranch: target.base });
+      } catch (e) {
+        this.logger.warn("work in progress not pushed", {
+          taskId: task.id,
+          error: errorMessage(e),
+        });
+        summary = `${summary} ${
+          isNeverPushed(e)
+            ? errorMessage(e)
+            : `Its work in progress stays on this computer: ${pushFailedWords(`${target.repo.owner}/${target.repo.name}`, branch, e)}`
+        }`;
+      }
+    }
+    this.logger.info("work in progress kept", {
+      taskId: task.id,
+      outcome: result.outcome,
+      committed,
+      files: changedFiles.length,
+    });
+    return {
+      ...result,
+      summary,
+      branch,
+      worktree: dir,
+      ...(changedFiles.length ? { changedFiles } : {}),
+    };
+  }
+
+  /**
+   * W6-24: what a failed run left uncommitted in the task's worktree goes out of the way (kept
+   * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
+   * next run's checkout carried the files over, or git refused when main had changed them.
+   */
+  private async setLeftoversAside(git: GitOps, task: TaskRow): Promise<void> {
+    try {
+      const files = await git.setAside(
+        failedRef(task.id),
+        `Left by a failed run of "${task.title.replace(/\s+/g, " ").trim()}" (task ${task.id})`,
+      );
+      if (files.length)
+        this.logger.info("a failed run's leftovers were set aside", {
+          taskId: task.id,
+          files: files.slice(0, 20),
+        });
+    } catch (e) {
+      this.logger.warn("a failed run's leftovers were not set aside", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
   }
 
   /**
@@ -1323,19 +1600,6 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
-   * The folder a task's run changes: the project's workspace (a project without a repository),
-   * else the task's own worktree of the repository. Null when neither is a git checkout yet (a
-   * project linked to the person's own folder has neither: a run never writes there unasked).
-   */
-  private async changedFolderOf(task: TaskRow): Promise<GitOps | null> {
-    const dir =
-      (await this.deps.workspaceFor?.(task)) ?? join(this.deps.worktreeRoot, safeSegment(task.id));
-    if (!existsSync(join(dir, ".git"))) return null;
-    const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
-    return (await git.hasCommits()) ? git : null;
-  }
-
-  /**
    * The specialist the next attempt runs with (U-044): the inner executor decides it (the
    * retry ladder's stand-in), so the runner's log names who runs before the run begins.
    */
@@ -1352,21 +1616,149 @@ export class PrTaskExecutor implements TaskExecutor {
    * Undo of the cancel brings it back (`bringBack`). Returns the files taken out.
    */
   async setAside(task: TaskRow): Promise<string[]> {
-    const git = await this.changedFolderOf(task);
-    if (!git) return [];
-    return git.setAside(
-      setAsideRef(task.id),
-      `Set aside: "${task.title}" was cancelled (task ${task.id})`,
-    );
+    return (await this.setAsideWork(task, { running: true })).files;
   }
 
-  /** Undo of a cancel: what `setAside` took out goes back into the folder, uncommitted. */
+  /**
+   * budget-resume: a cancelled task's work set aside, Undo bringing it back (`bringBack`). Its
+   * work in progress (`wipRef`: a pause's commit) and, for a run the cancel stopped
+   * (`running`), what the run changed since. In its own worktree of a repository: the branch
+   * goes back to where its work started, and a branch pushed with "Push unfinished work to
+   * GitHub" leaves the host (no pull request is open on it). In the project's folder, which
+   * every task shares: only while no later task built on it; else its files stay and `kept`
+   * says why ('"Y" built on it'). A paused task's cancel never touches what is uncommitted in
+   * the shared folder: that is no work of its.
+   */
+  async setAsideWork(task: TaskRow, opts: { running?: boolean } = {}): Promise<SetAsideResult> {
+    const workspace = (await this.deps.workspaceFor?.(task)) ?? null;
+    if (workspace) {
+      if (!existsSync(join(workspace, ".git"))) return { files: [], kept: null };
+      return this.setAsideInFolder(task, workspace, !!opts.running);
+    }
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    if (!existsSync(join(dir, ".git"))) return { files: [], kept: null };
+    return inWorktree(dir, () => this.setAsideInWorktree(task, dir));
+  }
+
+  private async setAsideInWorktree(task: TaskRow, dir: string): Promise<SetAsideResult> {
+    const target = await this.deps.repoFor(task);
+    const git = target
+      ? await this.gitFor(target, dir)
+      : new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
+    if (!(await git.hasCommits())) return { files: [], kept: null };
+    const message = `Set aside: "${task.title}" was cancelled (task ${task.id})`;
+    const files = new Set(await git.setAside(setAsideRef(task.id), message));
+    const marker = await git.resolveRef(wipRef(task.id));
+    if (marker && target) {
+      const start = (await git.hasRef(DEPS_BASE_REF)) ? DEPS_BASE_REF : `origin/${target.base}`;
+      for (const f of await this.ownFiles(git, target)) files.add(f);
+      await git.setRef(setAsideWipRef(task.id), await git.headSha());
+      await git.setRef(wipRef(task.id), null);
+      await git.resetHard(start);
+      const branch = task.branch;
+      if (branch && branch !== target.base && (await git.hasRef(`origin/${branch}`))) {
+        const open = await this.deps.host
+          .listPullRequests(target.repo, { state: "open", head: branch })
+          .catch(() => [{ number: 0 }]);
+        if (!open.length) {
+          const gone = await git
+            .deleteRemoteBranch(branch, { defaultBranch: target.base })
+            .catch(() => false);
+          if (!gone)
+            this.logger.warn("a cancelled task's pushed work stays on the host", {
+              taskId: task.id,
+              branch,
+            });
+        }
+      }
+    }
+    return { files: [...files].sort(), kept: null };
+  }
+
+  private async setAsideInFolder(
+    task: TaskRow,
+    dir: string,
+    running: boolean,
+  ): Promise<SetAsideResult> {
+    const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
+    if (!(await git.hasCommits())) return { files: [], kept: null };
+    const title = task.title.replace(/\s+/g, " ").trim();
+    const files = new Set(
+      running
+        ? await git.setAside(
+            setAsideRef(task.id),
+            `Set aside: "${task.title}" was cancelled (task ${task.id})`,
+          )
+        : [],
+    );
+    const marker = await git.resolveRef(wipRef(task.id));
+    if (!marker) return { files: [...files].sort(), kept: null };
+    const later = (await git.isAncestor(marker)) ? await git.subjectsBetween(marker) : null;
+    const builtOn = later === null ? "another task" : builtOnBy(later);
+    if (builtOn) return { files: [...files].sort(), kept: `"${builtOn}" built on it` };
+    const taken = await git.applyCommitted(
+      marker,
+      `Set aside: "${title}" was cancelled (task ${task.id})`,
+      { reverse: true },
+    );
+    if (!taken.ok) return { files: [...files].sort(), kept: "its files changed since" };
+    await git.setRef(setAsideWipRef(task.id), marker);
+    await git.setRef(wipRef(task.id), null);
+    for (const f of taken.files) files.add(f);
+    return { files: [...files].sort(), kept: null };
+  }
+
+  /**
+   * Undo of a cancel: what `setAsideWork` took out goes back. Its work in progress comes back as
+   * work in progress (in a repository, the branch as it was; in the project's folder, one commit
+   * "Work in progress: <title> (brought back)"), so its next run continues from it; what a
+   * stopped run changed comes back uncommitted on top. `conflict`: the folder changed since in
+   * the same places, and nothing is put back.
+   */
   async bringBack(
     task: TaskRow,
   ): Promise<{ result: "restored"; files: string[] } | { result: "missing" | "conflict" }> {
-    const git = await this.changedFolderOf(task);
-    if (!git) return { result: "missing" };
-    return git.bringBack(setAsideRef(task.id));
+    const workspace = (await this.deps.workspaceFor?.(task)) ?? null;
+    const dir = workspace ?? join(this.deps.worktreeRoot, safeSegment(task.id));
+    if (!existsSync(join(dir, ".git"))) return { result: "missing" };
+    const target = workspace ? null : await this.deps.repoFor(task);
+    const git = target
+      ? await this.gitFor(target, dir)
+      : new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
+    if (!(await git.hasCommits())) return { result: "missing" };
+    const back = new Set<string>();
+    const aside = await git.resolveRef(setAsideWipRef(task.id));
+    if (aside) {
+      if (workspace) {
+        const title = task.title.replace(/\s+/g, " ").trim();
+        const r = await git.applyCommitted(
+          `${aside}`,
+          `${WIP_SUBJECT}${title} (brought back)\n\nTask ${task.id}.`,
+        );
+        if (!r.ok) return { result: "conflict" };
+        for (const f of r.files) back.add(f);
+      } else {
+        if ((await git.status()).dirty) return { result: "conflict" };
+        await git.resetHard(aside);
+        for (const f of target ? await this.ownFiles(git, target) : []) back.add(f);
+        if (target && task.branch && (await this.deps.pushUnfinishedFor?.(task)))
+          await git
+            .push(task.branch, { force: true, defaultBranch: target.base })
+            .catch((e: unknown) =>
+              this.logger.warn("brought-back work in progress not pushed", {
+                taskId: task.id,
+                error: errorMessage(e),
+              }),
+            );
+      }
+      await git.setRef(wipRef(task.id), await git.headSha());
+      await git.setRef(setAsideWipRef(task.id), null);
+    }
+    const loose = await git.bringBack(setAsideRef(task.id));
+    if (loose.result === "conflict")
+      return back.size ? { result: "restored", files: [...back] } : loose;
+    if (loose.result === "restored") for (const f of loose.files) back.add(f);
+    return back.size ? { result: "restored", files: [...back].sort() } : { result: "missing" };
   }
 
   /**
@@ -1391,7 +1783,22 @@ export class PrTaskExecutor implements TaskExecutor {
     // W6-26: a review's try folder a daemon that died mid-review left is never committed.
     excludeNeverPushed(dir, [TRY_DIR]);
     const before = `Workspace before "${task.title}" (task ${task.id})`;
-    await git.commitAll(before, { allowEmpty: !(await git.hasCommits()) });
+    // budget-resume: the task's own work in progress (its pause's commit), while no later task
+    // built on it, stays out of this snapshot: its files go back into this run's change set, so
+    // the critic reviews the whole work. Otherwise the snapshot takes everything, as before.
+    const keepOut = await this.ownWorkInProgress(git, task);
+    await git.setRef(wipRef(task.id), null);
+    // Another task's work in progress in the folder: this run's snapshot is made even when
+    // nothing changed, so a cancel of that task knows this one built on it.
+    const othersPaused = (await git.hasCommits())
+      ? (await git.refsUnder("refs/forerunner/wip/")).length > 0
+      : false;
+    if (keepOut)
+      await git.commitAllExcept(
+        `${before}\n\nIts work in progress (${keepOut.files.slice(0, 5).join(", ")}${keepOut.files.length > 5 ? ", ..." : ""}) is kept out of this snapshot: its review reads the whole work.`,
+        keepOut,
+      );
+    else await git.commitAll(before, { allowEmpty: othersPaused || !(await git.hasCommits()) });
     const inner = this.deps.inner.withWorktree
       ? this.deps.inner.withWorktree(dir)
       : this.deps.inner;
@@ -1407,7 +1814,37 @@ export class PrTaskExecutor implements TaskExecutor {
         error: errorMessage(e),
       });
     }
+    // budget-resume: a pause leaves the run's work as its own commit in the folder, so the next
+    // task's snapshot (or the session's commit at its end) does not take it in as everyone's
+    // starting point, and a cancel can set it aside while nothing built on it.
+    if (result.outcome === "paused" && changedFiles.length) {
+      try {
+        await git.commitAll(workInProgressMessage(task, result));
+        await git.setRef(wipRef(task.id), await git.headSha());
+      } catch (e) {
+        this.logger.warn("work in progress not committed in the folder", {
+          taskId: task.id,
+          error: errorMessage(e),
+        });
+      }
+    }
     return { ...result, worktree: dir, ...(changedFiles.length ? { changedFiles } : {}) };
+  }
+
+  /**
+   * A folder's work in progress of `task` (`wipRef`) that no later task built on: the commit's
+   * parent and its files, for `commitAllExcept`. Null when it has none, or something built on it.
+   */
+  private async ownWorkInProgress(
+    git: GitOps,
+    task: TaskRow,
+  ): Promise<{ rev: string; files: string[] } | null> {
+    if (!(await git.hasCommits())) return null;
+    const marker = await git.resolveRef(wipRef(task.id));
+    if (!marker || !(await git.isAncestor(marker))) return null;
+    if (builtOnBy(await git.subjectsBetween(marker))) return null;
+    const files = await git.filesBetween(`${marker}~1`, marker);
+    return files.length ? { rev: `${marker}~1`, files } : null;
   }
 
   /**

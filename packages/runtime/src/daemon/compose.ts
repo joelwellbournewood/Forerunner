@@ -203,7 +203,11 @@ import {
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
 import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
-import { type BudgetStopSyncResult, syncBudgetStopAnswers } from "../session/budget-card.ts";
+import {
+  type BudgetStopSyncResult,
+  syncBudgetStopAnswers,
+  wakeBudgetWaits,
+} from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
 import {
   type AbilityTable,
@@ -240,6 +244,7 @@ import {
   syncPlanApprovals,
 } from "../session/plan-approval.ts";
 import { syncPrAnswers } from "../session/pr-answers.ts";
+import { pushUnfinishedOf } from "../session/push-unfinished.ts";
 import { recoverInterruptedSessions } from "../session/recovery.ts";
 import {
   SessionRunner,
@@ -2286,6 +2291,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const project = await store.project.get(task.project_id);
         return project ? docs.localOnlyFolder(project) : null;
       },
+      // budget-resume: the project's "Push unfinished work to GitHub" (off by default).
+      pushUnfinishedFor: async (task) =>
+        pushUnfinishedOf((await store.project.get(task.project_id))?.settings),
     });
   const executor = prExecutor(true);
   // merged-copy: a run's Local only copy the app left when it closed or crashed during the run
@@ -3199,6 +3207,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         .catch((e: unknown) =>
           logger.warn("work waiting for a credential not started", { error: errorMessage(e) }),
         );
+      // budget-resume: a task paused at this month's cap, the project's budget or the
+      // subscription's share goes on by itself once that limit has room again.
+      await wakeBudgetWaits({
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        roomFor: async (projectId) =>
+          (await caps.check({ humanId: human.id, projectId }, 1, { phase: "work" })).decision ===
+          "allow",
+        start: (req) => scheduler.request(req),
+      }).catch((e: unknown) =>
+        logger.warn("paused work at a limit not started again", { error: errorMessage(e) }),
+      );
     },
   });
   /**
@@ -3334,6 +3356,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const task = await store.task.mustGet(taskId);
         return (await executor.bringBack(task)).result;
       },
+      // budget-resume: the cancel of a paused task sets its work in progress aside (Undo and
+      // Reopen bring it back); in the project's folder only while no later task built on it.
+      setAsideWork: async (taskId) => executor.setAsideWork(await store.task.mustGet(taskId)),
       // session.resume ("resume", "allow sessions again", design §3.1): Stop all lifted, as
       // POST /kill/resume does (kill.json removed by `onResume`), the header told.
       allowSessions: () => {
@@ -3566,6 +3591,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         humanId: human.id,
         agentId: agent.id,
         ...resumeStart,
+        // budget-resume: Cancel task sets the work in progress aside (Reopen brings it back).
+        setAside: (task) => executor.setAsideWork(task),
       }),
       // A task a run left waiting without asking anything (live walk 4): Try again starts a
       // session that tries again; Cancel task cancels it.

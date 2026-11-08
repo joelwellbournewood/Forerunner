@@ -1143,3 +1143,415 @@ describe("Local only: the person's folder the run can use and that never leaves 
     await w.store.close();
   });
 });
+
+/**
+ * budget-resume (ADR 0112 amended, the owner's decision of 2026-11-02): a paused task keeps its
+ * work and continues from it. Before, the executor returned before any commit for every outcome
+ * but done, so a paused run's files stayed uncommitted in the task's worktree; the next run's
+ * `checkout -B <branch> origin/main` carried them over or, when main had changed the same file,
+ * git refused ("Please commit your changes or stash them"), a provider_error retried once and
+ * then Failed, and Try again failed the same way. In a project's folder, the next task's
+ * "Workspace before ..." snapshot (or the session's own commit) took them in as everyone's start.
+ */
+describe("a paused task keeps its work and continues from it (budget-resume)", {
+  timeout: 120_000,
+}, () => {
+  type Inner = TaskExecutor & { withWorktree: (dir: string) => TaskExecutor };
+  /** A run that does `work` in its folder and ends as `result` says. */
+  function agent(
+    work: (dir: string) => Promise<void> | void,
+    result: Partial<Awaited<ReturnType<TaskExecutor["execute"]>>> = {},
+  ): Inner {
+    return {
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree(dir) {
+        return {
+          async execute() {
+            await work(dir);
+            return {
+              outcome: "done",
+              summary: "Wrote the guide.",
+              costUsdMicro: 1000,
+              checksPassed: true,
+              ...result,
+            };
+          },
+        };
+      },
+    };
+  }
+  /** What a run that heard the wrap-up returns (`executor.ts`, ADR 0112). */
+  const pausedResult = (leftToDo: string[]) => ({
+    outcome: "paused" as const,
+    summary:
+      "The run paused before its budget of CHF 0.08 ran out: it spent CHF 0.06 and listed 2 things left to do.",
+    costUsdMicro: 60_000,
+    budgetStop: {
+      capUsdMicro: 100_000,
+      spentUsdMicro: 60_000,
+      source: "task_budget" as const,
+      specialist: "coder",
+      stoppedBy: "wrap_up" as const,
+    },
+    handoff: { stopped: "guide.md has part 1.", leftToDo, stoppedBy: "wrap_up" as const },
+  });
+
+  async function setup(opts: { folder?: boolean; push?: boolean; localOnly?: boolean } = {}) {
+    const w = await world();
+    const source = join(w.root, "copy", "Local only");
+    if (opts.localOnly) {
+      mkdirSync(source, { recursive: true });
+      writeFileSync(join(source, "notes.txt"), "the person's notes\n");
+    }
+    const newTask = (title: string) =>
+      w.store.task.insert({
+        project_id: w.project,
+        title,
+        outcome: "guide.md explains the club",
+        acceptance_criteria: ["guide.md exists"],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 100_000,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+    const task = await newTask("Write the guide");
+    const workspace = join(w.root, "workspace");
+    const exec = (inner: Inner) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () =>
+          opts.folder
+            ? null
+            : { clone: w.bare, repo: { owner: "o", name: "sample" }, base: "main" },
+        ...(opts.folder ? { workspaceFor: async () => workspace } : {}),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+        ...(opts.localOnly ? { localOnlyFor: async () => source } : {}),
+        pushUnfinishedFor: async () => !!opts.push,
+      });
+    const ctx = async (id = task.id) => {
+      const t = await w.store.task.mustGet(id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const hostBranches = async () =>
+      (
+        await run(["git", "--git-dir", w.bare, "for-each-ref", "--format=%(refname:short)"], {
+          allowFailure: true,
+        })
+      ).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+    const onHost = async (branch: string) =>
+      (
+        await run(["git", "--git-dir", w.bare, "ls-tree", "-r", "--name-only", branch], {
+          allowFailure: true,
+        })
+      ).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+    /** main changes `file` meanwhile (someone else's merge). */
+    const mainChanges = async (file: string, content: string) => {
+      const seed = new GitOps({ cwd: join(w.root, "seed"), identity });
+      await seed.fetch();
+      await run(["git", "-C", join(w.root, "seed"), "reset", "-q", "--hard", "origin/main"]);
+      writeFileSync(join(w.root, "seed", file), content);
+      await seed.commitAll(`main changes ${file}`);
+      await seed.push("main");
+    };
+    const wt = join(w.root, "wt", task.id);
+    const gitIn = (dir: string, args: string[]) =>
+      run(["git", "-C", dir, ...args], { allowFailure: true }).then((r) => r.stdout.trim());
+    return { w, task, newTask, exec, ctx, hostBranches, onHost, mainChanges, wt, workspace, gitIn };
+  }
+
+  it("a pause is a work-in-progress commit on the task's own branch with its to-do list; nothing is pushed by default", async () => {
+    const s = await setup();
+    const res = await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2", "check the guide against the criteria"]),
+        ),
+      )
+      .execute(await s.ctx());
+    expect(res.outcome).toBe("paused");
+    // The files it changed, for the next brief and the drawer.
+    expect(res.changedFiles).toEqual(["guide.md"]);
+    // One commit on the task's branch, clean worktree, its message says why and what is left.
+    expect(await s.gitIn(s.wt, ["status", "--porcelain"])).toBe("");
+    expect(await s.gitIn(s.wt, ["log", "-1", "--format=%s"])).toBe(
+      "Work in progress: Write the guide (paused at its budget)",
+    );
+    const body = await s.gitIn(s.wt, ["log", "-1", "--format=%b"]);
+    expect(body).toContain("Where I stopped: guide.md has part 1.");
+    expect(body).toContain("Left to do:\n- write part 2\n- check the guide against the criteria");
+    expect(await s.gitIn(s.wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(res.branch);
+    // Nothing pushed (the setting is off), and no pull request while it is paused.
+    expect(await s.hostBranches()).toEqual(["main"]);
+    expect(await s.w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(0);
+    await s.w.store.close();
+  });
+
+  it("the next run continues from the work in progress, with main merged in after main changed: no git refusal, then its pull request", async () => {
+    const s = await setup();
+    await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    // Someone changes main meanwhile.
+    await s.mainChanges("README.md", "# sample\nchanged on main\n");
+    let sawPart1 = "";
+    const res = await s
+      .exec(
+        agent((dir) => {
+          sawPart1 = readFileSync(join(dir, "guide.md"), "utf8");
+          writeFileSync(join(dir, "guide.md"), `${sawPart1}\n## Part 2\n`);
+        }),
+      )
+      .execute(await s.ctx());
+    expect(sawPart1).toBe("# Guide\n\n## Part 1\n");
+    expect(res.outcome, res.summary).toBe("in_review");
+    expect(res.changedFiles).toEqual(["guide.md"]);
+    const files = await s.onHost(res.branch ?? "");
+    expect(files).toEqual(expect.arrayContaining(["README.md", "guide.md"]));
+    const readme = await run(["git", "--git-dir", s.w.bare, "show", `${res.branch}:README.md`]);
+    expect(readme.stdout).toContain("changed on main");
+    // It continued on the commit of its work in progress (main merged in, never rebased).
+    const history = await run([
+      "git",
+      "--git-dir",
+      s.w.bare,
+      "log",
+      "--format=%s",
+      res.branch ?? "",
+    ]);
+    expect(history.stdout).toContain("Work in progress: Write the guide (paused at its budget)");
+    expect(history.stdout).toContain("Bring in main");
+    // The pull request carries the whole work; nothing marks it as in progress any more.
+    expect(await s.w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(1);
+    expect(await s.gitIn(s.wt, ["for-each-ref", "refs/forerunner/wip/"])).toBe("");
+    await s.w.store.close();
+  });
+
+  it("main changed the same lines meanwhile: the next run asks the person through the conflict card, never a generic failure", async () => {
+    const s = await setup();
+    await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide by the agent\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    await s.mainChanges("guide.md", "# Guide by someone else\n");
+    let ran = false;
+    const res = await s
+      .exec(
+        agent(() => {
+          ran = true;
+        }),
+      )
+      .execute(await s.ctx());
+    expect(res.outcome, res.summary).toBe("needs_human");
+    expect(res.summary).toContain("guide.md");
+    expect(ran).toBe(false);
+    const cards = await s.w.store.humanRequest.open({ humanId: s.w.human });
+    expect(cards).toHaveLength(1);
+    expect((cards[0]?.change_card as { key?: string } | null)?.key).toBe("githost:rebase_conflict");
+    await s.w.store.close();
+  });
+
+  it("with 'Push unfinished work to GitHub' on, the work in progress is pushed without the Local only folder; Cancel sets it aside and deletes the branch there; Undo brings it back", async () => {
+    const s = await setup({ push: true, localOnly: true });
+    const res = await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    expect(res.outcome).toBe("paused");
+    const branch = res.branch ?? "";
+    expect(await s.hostBranches()).toEqual(expect.arrayContaining(["main", branch]));
+    expect(await s.onHost(branch)).toEqual(["README.md", "guide.md"]);
+    expect(await s.w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(0);
+    // Cancel: the work is set aside (Undo brings it back) and the branch leaves the host.
+    const exec = s.exec(agent(() => undefined));
+    const aside = await exec.setAsideWork(await s.w.store.task.mustGet(s.task.id));
+    expect(aside).toEqual({ files: ["guide.md"], kept: null });
+    expect(existsSync(join(s.wt, "guide.md"))).toBe(false);
+    expect(await s.hostBranches()).toEqual(["main"]);
+    const back = await exec.bringBack(await s.w.store.task.mustGet(s.task.id));
+    expect(back).toEqual({ result: "restored", files: ["guide.md"] });
+    expect(readFileSync(join(s.wt, "guide.md"), "utf8")).toBe("# Guide\n\n## Part 1\n");
+    // ... as work in progress again: the next run continues from it.
+    let saw = "";
+    const next = await s
+      .exec(
+        agent((dir) => {
+          saw = readFileSync(join(dir, "guide.md"), "utf8");
+          writeFileSync(join(dir, "guide.md"), `${saw}\n## Part 2\n`);
+        }),
+      )
+      .execute(await s.ctx());
+    expect(saw).toBe("# Guide\n\n## Part 1\n");
+    expect(next.outcome, next.summary).toBe("in_review");
+    await s.w.store.close();
+  });
+
+  it("a failed run's leftovers are set aside before the next attempt, which starts clean (W6-24)", async () => {
+    const s = await setup();
+    const failed = await s
+      .exec(
+        agent((dir) => writeFileSync(join(dir, "half.md"), "half\n"), {
+          outcome: "failed",
+          summary: "The run failed: Claude did not answer (model call failed).",
+        }),
+      )
+      .execute(await s.ctx());
+    expect(failed.outcome).toBe("failed");
+    expect(existsSync(join(s.wt, "half.md"))).toBe(false);
+    expect(await s.gitIn(s.wt, ["status", "--porcelain"])).toBe("");
+    expect(
+      await s.gitIn(s.wt, ["for-each-ref", "--format=%(refname)", "refs/forerunner/failed/"]),
+    ).toBe(`refs/forerunner/failed/${s.task.id}`);
+    // main changes the same file meanwhile: the next attempt is not refused by git.
+    await s.mainChanges("half.md", "from main\n");
+    let saw = "";
+    const next = await s
+      .exec(
+        agent((dir) => {
+          saw = readFileSync(join(dir, "half.md"), "utf8");
+          writeFileSync(join(dir, "guide.md"), "# Guide\n");
+        }),
+      )
+      .execute(await s.ctx());
+    expect(saw).toBe("from main\n");
+    expect(next.outcome, next.summary).toBe("in_review");
+    await s.w.store.close();
+  });
+
+  it("in a project's folder a pause is its own commit, and the task's next run reviews its whole work", async () => {
+    const s = await setup({ folder: true });
+    const paused = await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    expect(paused.outcome).toBe("paused");
+    expect(paused.changedFiles).toEqual(["guide.md"]);
+    expect(await s.gitIn(s.workspace, ["log", "-1", "--format=%s"])).toBe(
+      "Work in progress: Write the guide (paused at its budget)",
+    );
+    expect(await s.gitIn(s.workspace, ["status", "--porcelain"])).toBe("");
+    // The session's own commit at its end changes the status only (statusInFolder).
+    writeFileSync(join(s.workspace, "status.md"), "# Status\n");
+    await run(["git", "-C", s.workspace, "add", "-A"]);
+    await run([
+      "git",
+      "-C",
+      s.workspace,
+      "-c",
+      "user.name=Forerunner",
+      "-c",
+      "user.email=forerunner@localhost",
+      "commit",
+      "-q",
+      "-m",
+      "Work of the session",
+    ]);
+    // The task's next run: its change set (what the critic reads) is the whole work.
+    const resumed = await s
+      .exec(
+        agent((dir) => {
+          writeFileSync(
+            join(dir, "guide.md"),
+            `${readFileSync(join(dir, "guide.md"), "utf8")}\n## Part 2\n`,
+          );
+        }),
+      )
+      .execute(await s.ctx());
+    expect(resumed.outcome).toBe("done");
+    expect(resumed.changedFiles).toEqual(["guide.md"]);
+    const diff = await s.gitIn(s.workspace, ["diff", "--cached", "HEAD", "--", "guide.md"]);
+    expect(diff).toContain("+## Part 1");
+    expect(diff).toContain("+## Part 2");
+    await s.w.store.close();
+  });
+
+  it("in a project's folder, another task's run after a pause starts from a snapshot without the paused work; Cancel of the paused task then keeps its files and says why", async () => {
+    const s = await setup({ folder: true });
+    await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    const other = await s.newTask("Write the notes");
+    const notes = await s
+      .exec(agent((dir) => writeFileSync(join(dir, "notes.md"), "# Notes\n")))
+      .execute(await s.ctx(other.id));
+    expect(notes.changedFiles).toEqual(["notes.md"]);
+    // Its snapshot ("Workspace before ...") took nothing of the paused task's work.
+    const snapshot = await s.gitIn(s.workspace, ["show", "--name-only", "--format=%s", "HEAD"]);
+    expect(snapshot.split("\n")[0]).toBe(`Workspace before "Write the notes" (task ${other.id})`);
+    expect(snapshot).not.toContain("guide.md");
+    const exec = s.exec(agent(() => undefined));
+    const aside = await exec.setAsideWork(await s.w.store.task.mustGet(s.task.id));
+    expect(aside.files).toEqual([]);
+    expect(aside.kept).toBe('"Write the notes" built on it');
+    expect(existsSync(join(s.workspace, "guide.md"))).toBe(true);
+    await s.w.store.close();
+  });
+
+  it("in a project's folder, Cancel of a paused task nothing built on sets its work aside, and Undo brings it back as work in progress", async () => {
+    const s = await setup({ folder: true });
+    await s
+      .exec(
+        agent(
+          (dir) => writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Part 1\n"),
+          pausedResult(["write part 2"]),
+        ),
+      )
+      .execute(await s.ctx());
+    const exec = s.exec(agent(() => undefined));
+    const aside = await exec.setAsideWork(await s.w.store.task.mustGet(s.task.id));
+    expect(aside).toEqual({ files: ["guide.md"], kept: null });
+    expect(existsSync(join(s.workspace, "guide.md"))).toBe(false);
+    expect(await s.gitIn(s.workspace, ["status", "--porcelain"])).toBe("");
+    const back = await exec.bringBack(await s.w.store.task.mustGet(s.task.id));
+    expect(back).toEqual({ result: "restored", files: ["guide.md"] });
+    expect(readFileSync(join(s.workspace, "guide.md"), "utf8")).toBe("# Guide\n\n## Part 1\n");
+    expect(await s.gitIn(s.workspace, ["log", "-1", "--format=%s"])).toBe(
+      "Work in progress: Write the guide (brought back)",
+    );
+    await s.w.store.close();
+  });
+});

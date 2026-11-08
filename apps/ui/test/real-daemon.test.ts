@@ -4696,7 +4696,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         action: "cancel",
       });
       expect(cancelled.change?.sentence).toBe(
-        'Cancelled "Write the About page in about.html": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+        'Cancelled "Write the About page in about.html": its run stopped and its changes are removed; Undo restores them unless the files changed.',
       );
       await allEnded();
     } finally {
@@ -4713,7 +4713,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     )?.id;
     const undone = await client.undoChange(changeId ?? "");
     expect(undone.sentence).toBe(
-      'Undone: reopened the task "Write the About page in about.html"; it is ready again and a session picks it up. What it changed is back in the folder.',
+      'Undone: reopened the task "Write the About page in about.html"; it is ready again. What it changed is back in the folder.',
     );
     expect(await files()).toContain("about.html");
   });
@@ -6873,7 +6873,7 @@ describe("the UI client against the real daemon: Cancel in the first moment of '
         action: "cancel",
       });
       expect(cancelled.change?.sentence).toMatch(
-        /^Cancelled "Credits page in credits\.html": its review stopped and what it changed is removed/,
+        /^Cancelled "Credits page in credits\.html": its review stopped and its changes are removed/,
       );
       // The browser step ends; the review must not go on to the critic's model.
       release();
@@ -6930,13 +6930,13 @@ describe("the UI client against the real daemon: 'Skip the … task' in Chat can
         });
       const asked = await say("Skip the Credits page task");
       expect(asked.pendingConfirmation?.readback).toBe(
-        'Cancel "Credits page in credits.html"? It is dropped; its run stops now and what it changed is removed.',
+        'Cancel "Credits page in credits.html"? Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.',
       );
       const yes = await say("yes");
       expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
       // The same line as the row's Cancel (`POST /tasks/:id/action` with "cancel").
       expect(yes.reply).toBe(
-        'Cancelled "Credits page in credits.html": its run stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.',
+        'Cancelled "Credits page in credits.html": its run stopped and its changes are removed; Undo restores them unless the files changed.',
       );
       expect((await row())?.display?.label).toBe("Cancelled");
       await eventually(
@@ -7011,11 +7011,11 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
           source: "text",
         });
       expect((await say("cancel the Contact page task")).pendingConfirmation?.readback).toBe(
-        'Cancel "Contact page in contact.html"? It is dropped.',
+        'Cancel "Contact page in contact.html"? Drops it.',
       );
       expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
       expect((await say("cancel the About page task")).pendingConfirmation?.readback).toBe(
-        'Cancel "About page in about.html"? It is dropped; its review stops now and what it changed is removed.',
+        'Cancel "About page in about.html"? Drops it. Its review stops and its changes are removed; Undo restores them unless the files changed.',
       );
       expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
       // The row's Cancel on the one with nothing going on: the line says only that.
@@ -7081,7 +7081,7 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
           source: "text",
         });
       expect((await say("skip the About page task")).pendingConfirmation?.readback).toBe(
-        'Cancel "About page in about.html"? It is dropped; its review stops now; its pull request stays open.',
+        'Cancel "About page in about.html"? Drops it. Its review stops now; its pull request stays open.',
       );
       const yes = await say("yes");
       expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);

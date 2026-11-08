@@ -6,6 +6,11 @@ import type {
   TaskView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
+  cancelledWorkWords,
+  cancelWorkKind,
+  cancelWorkLine,
+} from "@forerunner/runtime/daemon/cancel-words";
+import {
   ACTION_FROM,
   ACTION_WORDS,
   runOrder,
@@ -173,11 +178,19 @@ export function actionSentence(
   // A task cancelled while it ran or was reviewed (phase C): what happens to its work. As the
   // daemon, said only when a live run or review was stopped (`liveWork`).
   const ran = extra.live ?? ["claimed", "in_progress", "in_review"].includes(from);
-  const what = from === "in_review" ? "its review" : "its run";
-  if (to === "cancelled" && ran)
-    s = task.prUrl
-      ? `Cancelled ${t}: ${what} stopped; its pull request stays open.`
-      : `Cancelled ${t}: ${what} stopped and what it changed is removed. Undo reopens it, and its changes come back unless the same files changed since.`;
+  // budget-resume: a paused task's work in progress is set aside; a project linked to the
+  // person's own folder keeps what it wrote (C-37), as the daemon's display says.
+  const work =
+    to === "cancelled"
+      ? cancelWorkKind({
+          running: ran && ["claimed", "in_progress"].includes(from),
+          liveReview: ran && from === "in_review",
+          paused: task.display?.blocker?.cardKind === "budget",
+          pullRequest: !!task.prUrl,
+          ownFolder: task.display?.cancelWork === cancelWorkLine("own_folder"),
+        })
+      : null;
+  if (to === "cancelled" && work) s = `Cancelled ${t}: ${cancelledWorkWords(work)}`;
   else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = ["claimed", "in_progress"].includes(from)

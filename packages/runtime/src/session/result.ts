@@ -51,6 +51,11 @@ export interface LastSessionOutcome {
    * API key: save one in Settings.").
    */
   credentialWait?: string;
+  /**
+   * Tasks paused at a budget (budget-resume, ADR 0112 amended), each with the limit in words
+   * ("its budget of CHF 0.40"): their card offers Continue or Cancel. Not in `needsYou`.
+   */
+  paused?: (NamedTask & { limit: string })[];
   spentChfMicro: number;
 }
 
@@ -332,7 +337,30 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     line: 3,
     build: (_f, o) => [`${formatChf(o.spentChfMicro)}.`],
   },
+  {
+    // budget-resume: a task paused at a budget, by the limit its card names; its card is the
+    // one place for the decision (an Update leaves it out, `told`).
+    name: "paused",
+    line: 1,
+    build: (_f, o, told) => pausedSentences(o.paused ?? [], told),
+  },
 ];
+
+/**
+ * '"Write the guide" paused at its budget of CHF 0.40: continue or cancel it in the Inbox.'; two
+ * or more: '"A" and "B" paused at a budget: continue or cancel them in the Inbox.'
+ */
+export function pausedSentences(
+  paused: readonly (NamedTask & { limit: string })[],
+  told?: ToldByCards,
+): string[] {
+  const shown = paused.filter((t) => !told?.tasks?.has(t.id));
+  const one = shown[0];
+  if (!one) return [];
+  if (shown.length === 1)
+    return [`"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`];
+  return [`${namesOf(titlesOf(shown))} paused at a budget: continue or cancel them in the Inbox.`];
+}
 
 /**
  * The result's lines (at most three). With `told`, what an open card already says is left out:
