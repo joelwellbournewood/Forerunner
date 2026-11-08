@@ -146,8 +146,16 @@ export async function endDeadSession(
     stop_reason: opts.stopReason,
     released: tasks.map((t) => t.id),
   };
+  // The row's spend is the ledger's too, as the runner's own end writes it: the live counter
+  // misses what only the ledger books (the critic's review), and the session page's "Spent of
+  // this session's budget" and the session lists read the row (the fix-up of R-recovery: the
+  // page read CHF 0.00 above an end line of CHF 0.01).
+  const settled =
+    booked && booked.entries > 0 && booked.usd_micro !== fresh.spent_usd_micro
+      ? await store.session.update(fresh.id, fresh.version, { spent_usd_micro: booked.usd_micro })
+      : fresh;
   // `paused` and `planned` may move to `stopped` directly; so may `running`.
-  const ended = await store.session.setStatus(fresh.id, fresh.version, "stopped", {
+  const ended = await store.session.setStatus(settled.id, settled.version, "stopped", {
     summary,
     handoff: handoff as never,
     now: clock.nowIso(),

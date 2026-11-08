@@ -1071,7 +1071,11 @@ session's id. What the ended session did before it died is kept (the leftovers o
 its `session.ended` event carries `completed` (the tasks its runs worked on that are done) and
 `spentUsdMicro` (the cost ledger's rows for the session, else the row's count), so its last
 line reads "Interrupted: Forerunner closed: 1 done. CHF 0.03." instead of "nothing done. CHF
-0.00."; and it becomes the project's `summary_cache.last_session` (`recordLastSession`: its
+0.00."; the row's `spent_usd_micro` is set to the same ledger sum when the ledger has rows, as
+the runner's own end writes it (the fix-up of R-recovery: the live counter misses what only
+the ledger books, such as the critic's review, so the session page's "Spent of this session's
+budget" and `GET /sessions` read CHF 0.00 above an end line of CHF 0.01; tested across two
+restarts in `session-recovery.test.ts`); and it becomes the project's `summary_cache.last_session` (`recordLastSession`: its
 summary, stop reason and a `LastSessionOutcome` with what it did and left ready) unless a later
 session of the project already ended, so the Overview never reads "No session yet" after a
 crash (`session-recovery.test.ts`, composed twice on one home).

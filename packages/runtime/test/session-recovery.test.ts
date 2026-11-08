@@ -1,5 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { formatChf } from "@forerunner/billing";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
@@ -420,5 +421,74 @@ describe("a session a dead daemon left running is ended at the next start (desig
     );
     expect(summary.lastSession?.id).toBe(ghost.session.id);
     expect(summary.lastSession?.stopReason).toBe("interrupted");
+  }, 120_000);
+
+  // The fix-up of R-recovery (its review): the end line took the cost ledger's sum, but the
+  // session row kept the live counter, which the critic's review never adds to. After the
+  // restart one session page read "Spent of this session's budget CHF 0.00 of CHF 5.00" above
+  // "Interrupted: Forerunner closed: 1 done. CHF 0.01.", and the session lists the stale amount.
+  it("after the crash the session's spend is the ledger's: one amount on its page, in its list and on its end line", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-recovery-spend-"));
+    const clock = new SimulatedClock("2026-11-01T12:00:00Z");
+    const first = await compose(home, clock, false);
+    const ghost = await leaveAGhost(first);
+    const human = (await first.store.human.list({}, { limit: 1 }))[0];
+    // The coder's run and the critic's review of it are both booked; the session row's live
+    // counter holds only the coder's run (the review is booked to the ledger alone).
+    const book = (specialist: string, usdMicro: number) =>
+      first.store.costLedger.record({
+        human_id: human?.id ?? "",
+        agent_id: first.agent.id,
+        project_id: ghost.project.id,
+        session_id: ghost.session.id,
+        task_id: ghost.other.id,
+        run_id: null,
+        billing_source_id: null,
+        kind: "api",
+        usd_micro: usdMicro,
+        chf_micro: Math.round(usdMicro * 0.8),
+        rate_chf_per_usd: 0.8,
+        model: "fake",
+        specialist,
+        tokens_in: 100,
+        tokens_out: 50,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        occurred_at: clock.nowIso(),
+      });
+    await book("coder", 40_000);
+    await book("critic", 30_000);
+    await first.store.session.recordSpend(ghost.session.id, 40_000, 3);
+    // The first process dies here.
+    opened.splice(0);
+
+    const rt = await compose(home, clock, true);
+    const { app, token } = createDaemonApp(rt);
+    const get = async <T>(path: string) =>
+      (await (
+        await app.request(path, { headers: { authorization: `Bearer ${token}` } })
+      ).json()) as T;
+    // The session page: "Spent of this session's budget" and the last line say one amount.
+    const page = await get<{ spent: { usdMicro: number; chfMicro: number } }>(
+      `/sessions/${ghost.session.id}`,
+    );
+    expect(page.spent.usdMicro).toBe(70_000);
+    const lines = (
+      await get<{ type: string; text: string; audience?: string }[]>(
+        `/sessions/${ghost.session.id}/events`,
+      )
+    ).filter((e) => e.audience !== "detail");
+    expect(lines.at(-1)?.text).toMatch(/^Interrupted: Forerunner closed: nothing done\. CHF /);
+    expect(lines.at(-1)?.text?.endsWith(` ${formatChf(page.spent.chfMicro)}.`)).toBe(true);
+    // The project's session list reads the same amount.
+    const listed = await get<{ id: string; spent: { usdMicro: number } }[]>(
+      `/sessions?projectId=${ghost.project.id}`,
+    );
+    expect(listed.find((s) => s.id === ghost.session.id)?.spent.usdMicro).toBe(70_000);
+    opened.splice(0);
+
+    // Persisted: the start after that reads the same amount from the row.
+    const again = await compose(home, clock, true);
+    expect((await again.store.session.mustGet(ghost.session.id)).spent_usd_micro).toBe(70_000);
   }, 120_000);
 });
