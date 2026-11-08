@@ -666,6 +666,13 @@ describe("a task paused at the project's budget goes on only once that budget ch
       // Later this month, with room and the cap unchanged: it stays paused.
       expect(await wake("2026-11-30T23:59:00.000Z")).toBe(0);
       expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+      // A card whose reset date is not after it was filed (one filed without the time says
+      // 1 February 1970) still waits for the month after it was filed, never wakes at once.
+      const row = await rt.store.humanRequest.mustGet(String(card?.id));
+      await rt.store.humanRequest.patch(row.id, {
+        change_card: { ...(row.change_card ?? {}), resets_at: "1970-02-01T00:00:00.000Z" },
+      });
+      expect(await wake("2026-11-30T23:59:00.000Z")).toBe(0);
       // On 1 December, as its card says, it goes on.
       expect(await wake("2026-12-01T00:00:00.000Z")).toBe(1);
       expect((await rt.store.task.mustGet(r.taskId)).status).toBe("ready");

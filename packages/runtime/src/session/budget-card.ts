@@ -345,9 +345,12 @@ async function limitChanged(
   const source = card.source;
   if (source !== "project" && source !== "month" && source !== "plan") return false;
   if (source !== "project") {
-    // A new month: the card's own date, else the month after the card was filed.
+    // A new month: the card's own date, else (none, or one not after the card was filed, as a
+    // card filed without `now` would have) the month after the card was filed.
     const resets =
-      typeof card.resets_at === "string" ? card.resets_at : nextMonthStart(row.created_at);
+      typeof card.resets_at === "string" && card.resets_at > row.created_at
+        ? card.resets_at
+        : nextMonthStart(row.created_at);
     if (now >= resets) return true;
     if (source === "plan") return false;
   }
