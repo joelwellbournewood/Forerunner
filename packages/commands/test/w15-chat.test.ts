@@ -259,7 +259,7 @@ describe("w15-chat, wave 15", () => {
       }),
     );
     expect(again.reason).toBe(
-      'Two tasks are called "Write the notes": the done one and the cancelled one. Say which, for example "Write the notes, the done one".',
+      'Two tasks are called "Write the notes": the done one and the cancelled one. Say which, for example "Write the notes (the done one)".',
     );
     const pickedDone = await w2.executor.execute({
       name: "task.reopen",
@@ -290,7 +290,7 @@ describe("w15-chat, wave 15", () => {
       }),
     );
     expect(third.reason).toBe(
-      'Two tasks are called "Write the intro": the older one and the newer one. Say which, for example "Write the intro, the older one".',
+      'Two tasks are called "Write the intro": the older one and the newer one. Say which, for example "Write the intro (the older one)".',
     );
     await w3.executor.execute({
       name: "task.reopen",

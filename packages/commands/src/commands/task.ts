@@ -170,7 +170,9 @@ function sameTitleRefusal(title: string, tags: readonly { tag: string }[]): Fore
       ? `${named[0]} and ${named[1]}`
       : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
   const first = named[0] ?? "";
-  const example = first.startsWith("#") ? `${title} ${first}` : `${title}, ${first}`;
+  // In brackets, not after a comma: chat splits a line at its commas into separate requests,
+  // so "X, the older one" never reached this command (review of W15-37, bench).
+  const example = first.startsWith("#") ? `${title} ${first}` : `${title} (${first})`;
   const COUNTS = ["Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
   const count = COUNTS[tags.length - 2] ?? String(tags.length);
   return new ForerunnerError(

@@ -769,4 +769,26 @@ describe("w15-chat, wave 15", () => {
     expect((await w.store.task.mustGet(first.id)).status).toBe("done");
     await w.store.close();
   });
+
+  // W15-37, review of the fix (bench): the refusal's own example, 'Write the guide, the older
+  // one', was split at its comma by the intent parser and went to the model; on the stand-in
+  // nothing happened. The example is words that work when typed.
+  it("the words the same-title refusal gives, typed in chat, pick that task (W15-37)", async () => {
+    const w = await setup();
+    const older = await task(w, "Write the guide", { status: "ready" } as never);
+    w.clock.advance(60_000);
+    const newer = await task(w, "Write the guide", { status: "ready" } as never);
+    const asked = await w.chat("pause Write the guide");
+    const example = /for example "([^"]+)"\.$/.exec(asked.reply)?.[1];
+    expect(asked.reply).toBe(
+      'Two tasks are called "Write the guide": the older one and the newer one. Say which, for example "Write the guide (the older one)".',
+    );
+    const picked = await w.chat(`pause ${example}`);
+    expect(w.provider.calls).toHaveLength(0);
+    expect(picked.pendingConfirmation?.readback ?? picked.reply).toMatch(/Write the guide/);
+    if (picked.pendingConfirmation) await w.chat("yes");
+    expect((await w.store.task.mustGet(older.id)).status).toBe("needs_human");
+    expect((await w.store.task.mustGet(newer.id)).status).toBe("ready");
+    await w.store.close();
+  });
 });

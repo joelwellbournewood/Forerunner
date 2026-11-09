@@ -550,8 +550,11 @@ among them.
   #18") when each has its own, else their states ("the done one and the cancelled one"), else
   their age ("the older one and the newer one", then "the first one", "the second one" …):
   'Two tasks are called "Write the guide": #17 and #18. Say which, for example "Write the guide
-  #17".' That word after the title picks one ("Write the guide #17", "Write the notes, the done
-  one", "… older"), in the UI's commands and in chat ("redo Write the guide #18").
+  #17".' That word after the title picks one ("Write the guide #17", "Write the notes (the done
+  one)", "… older"), in the UI's commands and in chat ("redo Write the guide #18"). The example
+  puts a state or an age in brackets, never after a comma: chat splits a line at its commas
+  into separate requests, so "Write the guide, the older one" never reached the command (review
+  of W15-37; chat case in `conversation-memory.test.ts`).
 - **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
   "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
   (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
