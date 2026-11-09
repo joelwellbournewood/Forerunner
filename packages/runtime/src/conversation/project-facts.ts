@@ -271,9 +271,12 @@ export function cardLine(
   opts: { otherProject?: boolean } = {},
 ): string {
   const where = [projectName, taskTitle ? quote(taskTitle) : null].filter(Boolean).join(", ");
-  const said = plainReason(r.why.replace(/\s*\n\s*/g, " "), 600);
+  const card = (r.change_card ?? {}) as { key?: unknown; context?: unknown; ask?: unknown };
+  // A change waiting for a yes says its question, as the Inbox titles it (W15-34: an undo's
+  // `why` is the setting's name alone, "web pages research may read for Reading rules").
+  const asked = typeof card.ask === "string" && card.ask.trim() ? card.ask : r.why;
+  const said = plainReason(asked.replace(/\s*\n\s*/g, " "), 600);
   const why = /[.!?…"]$/.test(said) ? said : `${said}.`;
-  const card = (r.change_card ?? {}) as { key?: unknown; context?: unknown };
   const key = card.key;
   const steps =
     typeof key === "string" && key.startsWith("person_questions:") && r.steps.length

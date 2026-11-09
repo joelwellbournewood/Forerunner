@@ -12289,4 +12289,67 @@ describe("w15-chat, wave 15", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // W15-34 (live check 2, research F13): Undo pressed on Changes for a site rule change and left
+  // unanswered showed on Home as "Reading rules: undo" and in the Inbox as a card titled "undo"
+  // with raw "yes"/"no", and the project read "Waiting for you: 1 question".
+  it("an undo confirmation left on Changes reads in words on Home and the Inbox (W15-34, W15-77, W15-76)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const project = await client.createProject({ name: "Reading rules", goal: "Research" });
+      const set = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: {
+              key: "web_access",
+              value: { mode: "any", only: [], never: ["facebook.com"] },
+              project: project.id,
+            },
+          },
+        ],
+        wordsUsed:
+          "Settings: Web pages research may read to any public website, never facebook.com",
+        source: "ui",
+        projectId: project.id,
+        confirm: "tap",
+      });
+      expect(set.status).toBe("done");
+      // Changes' Undo: putting "any public website" back widens the rule, so it asks.
+      const asked = await client.undoChange(set.changeLogId ?? "");
+      const QUESTION =
+        "Put web pages research may read for Reading rules back to any public website?";
+      expect(asked.status).toBe("pending");
+      expect(asked.readback).toBe(
+        `${QUESTION} Research reads any public website except the ones listed, on the API key and on the subscription.`,
+      );
+      // The person leaves Changes. Home and the Inbox read the card the Inbox route serves.
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      expect(card?.title).toBe(QUESTION);
+      expect(card?.body).toBe(
+        "Research reads any public website except the ones listed, on the API key and on the subscription.",
+      );
+      expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
+        ["Yes", "Makes the change now."],
+        ["No", "Nothing changes."],
+      ]);
+      // The project line: a change to confirm, not a question.
+      expect((await client.project(project.id)).statusLine?.text).toBe(
+        "Waiting for you: 1 change to confirm",
+      );
+      // Yes in the Inbox (the label the Inbox shows) undoes it.
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: card?.choices?.[0]?.label ?? "",
+      });
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

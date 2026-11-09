@@ -186,11 +186,10 @@ export function ChangesPage() {
           className="rounded border border-amber-300 p-3 dark:border-amber-700"
           data-testid="changes-undo-pending"
         >
-          <p className="mb-2 text-sm">
-            Undoing this puts a value back that needs your confirmation, as setting it would.
-          </p>
+          {/* W15-34: the undo's one-line question (its read-back), the same words the Inbox
+              and Home show for it; not the change card's risk, scope and "no undo" rows. */}
           <CommandResult
-            result={asking}
+            result={{ ...asking, card: null }}
             busy={busy !== null}
             onConfirm={(a) => void answer(a === "yes")}
             onDismiss={() => setAsking(null)}

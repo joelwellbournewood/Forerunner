@@ -5895,21 +5895,26 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const at = new Date();
       const expiresAt = new Date(at.getTime() + 10 * 60_000).toISOString();
       const what = entry.sentence.replace(/ Undo\.$/, "");
-      const undoCard = card(
-        {
-          command: "undo",
-          what: `undo: ${what}`,
-          oldValue: "as it is now",
-          newValue: "as it was before this change",
-          scope: entry.scope,
-          sentence: `Undo ${what}.`,
-          projectId: entry.projectId,
-        },
-        risk,
-      );
-      const readback = `${undoCard.what}. ${
-        decision === "needs_yes" ? "Say yes to confirm." : "Confirm in the app on a paired device."
-      }`;
+      // As the daemon (W15-34): one plain question, 'Take back "<the change>"?' for a change
+      // the fake has no words of its own for; the card's `what` is the change, never "undo: …".
+      const ask = `Take back "${(what.split(/:\s/)[0] ?? what).replace(/[.\s]+$/, "")}"?`;
+      const undoCard = {
+        ...card(
+          {
+            command: "undo",
+            what,
+            oldValue: "as it is now",
+            newValue: "as it was before this change",
+            scope: entry.scope,
+            sentence: `Undo ${what}.`,
+            projectId: entry.projectId,
+          },
+          risk,
+        ),
+        ask,
+      };
+      const readback =
+        decision === "needs_yes" ? ask : `${ask} Confirm in the app on a paired device.`;
       state.pendingCommands.set(id, {
         card: undoCard,
         decision,

@@ -1027,7 +1027,10 @@ set to fable runs fable only in a project whose highest model is fable.
 words used, what changed, and **Undo** while it can still be taken back. An undo needs the same
 confirmation as the change it makes: undoing a lowered monthly cap raises it, so it waits for
 your confirmation on this PC (or the phone with biometric), and so does putting back a wider
-email mode; undoing a raise acts at once. When an undo cannot work any more (the task was
+email mode; undoing a raise acts at once. An undo that waits for your yes asks one question,
+on Changes, on Home and in the Inbox alike ("Put web pages research may read for Reading rules
+back to any public website?" with **Yes** and **No**), and the project counts it as a change to
+confirm. When an undo cannot work any more (the task was
 finished since, a session already read the note, the session a start began has ended), the
 change reads **Cannot be undone** and says why instead of offering Undo, and nothing ever says
 "Undone" when nothing changed. Each change says **Can be undone**, **Undone**, **Reverted** (a

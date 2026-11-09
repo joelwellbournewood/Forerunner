@@ -148,15 +148,19 @@ function afterDone(waiting: readonly string[]): string {
 /**
  * Where a text's first sentence ends: after the first ".", "!", "?" or ":" followed by a space
  * or the end, outside double quotes (P7-26: a quoted task title with ": " in it, 'Change "Write
- * the README: how to open it"', was cut inside the quotes). -1 when there is none.
+ * the README: how to open it"', was cut inside the quotes). -1 when there is none. A colon after
+ * a single word ends no sentence (W15-77: "undo: web pages research may read …" was titled
+ * "undo"): the word is a label of what follows.
  */
 function firstSentenceEnd(t: string): number {
   let quoted = false;
   for (let i = 0; i < t.length; i++) {
     const c = t[i] as string;
     if (c === '"') quoted = !quoted;
-    else if (!quoted && ".!?:".includes(c) && i > 0 && (i + 1 === t.length || t[i + 1] === " "))
+    else if (!quoted && ".!?:".includes(c) && i > 0 && (i + 1 === t.length || t[i + 1] === " ")) {
+      if (c === ":" && !/\s/.test(t.slice(0, i).trim())) continue;
       return i;
+    }
   }
   return -1;
 }
@@ -1142,20 +1146,21 @@ function genericCard(
   const said = ask ?? r.why;
   // Its Yes and No as buttons say them, each with what it does (wave 2: the stored "yes" and
   // "no" showed in lower case with no line). A click sends "Yes" or "No"; every reader of a
-  // yes/no answer reads either case (`isYes`, `acceptsAnswer`).
+  // yes/no answer reads either case (`isYes`, `acceptsAnswer`). Yes says what Yes does: the
+  // card's body, the question's second sentence, already says what the change means (W15-76:
+  // before, Yes repeated that body cut with "…").
   if (
     ask &&
     labels.length === 2 &&
     /^yes$/i.test(labels[0] ?? "") &&
     /^no$/i.test(labels[1] ?? "")
   ) {
-    const consequence = afterFirstSentence(ask);
     choices.splice(
       0,
       2,
       {
         label: "Yes",
-        explain: consequence ? cutWords(consequence, 100) : "Makes the change now.",
+        explain: "Makes the change now.",
         tone: "primary",
         confirm: null,
         input: null,

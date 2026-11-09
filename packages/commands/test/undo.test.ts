@@ -109,7 +109,11 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
     const fresh = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
     const p = pending(await fresh.undo(lowered.changeLogId, w.ctx()));
     expect(p.decision).toBe("needs_device");
-    expect(p.card.what).toBe("undo: Lowered the monthly cap from CHF 150 to CHF 100.");
+    // W15-34: the change's own name and one plain question, never "undo: …".
+    expect(p.card.what).toBe("Lowered the monthly cap from CHF 150 to CHF 100.");
+    expect(p.readback).toBe(
+      'Take back "Lowered the monthly cap from CHF 150 to CHF 100"? Confirm in the app on a paired device.',
+    );
     done(await fresh.confirmFromDevice(p.pendingId, { deviceId: w.phone.id, biometric: true }));
     expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(0);
     fresh.stop();

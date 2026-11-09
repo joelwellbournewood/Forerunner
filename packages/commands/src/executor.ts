@@ -945,6 +945,19 @@ export class CommandExecutor {
   }
 
   /**
+   * The undo's own question from its one command (`undoAsk`, W15-34): the same words with or
+   * without the card in memory, so after a restart too. Null for a row of several commands or a
+   * command without one.
+   */
+  private async undoAskOf(row: ChangeLogRow, ctx: CommandContext): Promise<string | null> {
+    const steps = stepsOf(row);
+    const step = steps.length === 1 ? steps[0] : undefined;
+    const def = step ? this.registry.get(step.name) : undefined;
+    if (!step || !def?.undoAsk) return null;
+    return def.undoAsk(step.params, step.before, step.after, ctx);
+  }
+
+  /**
    * One-click undo while the row is undoable. Only the human the change was made for may undo.
    * The undo goes through the same confirmation as a forward change (U-057): the risk of the
    * value it restores decides, so undoing a lowered monthly cap (a raise) waits for this PC or
@@ -1004,9 +1017,15 @@ export class CommandExecutor {
     }
     const decide = (r: Risk) =>
       this.policy.decide(r, ctx.actor, ctx.source, { limitChange: false });
+    const decision = decide(risk);
     return this.gate({
-      decision: decide(risk),
-      card: undoCardOf(row, card, risk),
+      decision,
+      card: undoCardOf(
+        row,
+        card,
+        risk,
+        decision === "act" ? null : await this.undoAskOf(row, ctx).catch(() => null),
+      ),
       ctx,
       perform: () => this.performUndo(changeLogId, ctx),
       redecide: async () =>
@@ -1244,13 +1263,30 @@ function stepsOf(row: ChangeLogRow): UndoStep[] {
 /**
  * The card an undo shows while it waits for a confirmation (U-057): the change it takes back,
  * from the value it has now to the value it restores, with the restored value's risk.
+ *
+ * W15-34 (live check 2, research F13): it asks one plain question (`ask`), the command's own
+ * (`undoAsk`: "Put web pages research may read for Reading rules back to any public website?
+ * Research reads any public website …"), else "Put <what> back to <old value>?" from the card,
+ * else 'Take back "<the change>"?' from its sentence; and its `what` is the change's own name.
+ * Before, `what` was "undo: <what>" with no question, so the Inbox and Home titled the card
+ * "undo" (the first sentence ended at the colon) with raw "yes"/"no".
  */
-function undoCardOf(row: ChangeLogRow, card: ChangeCard | null, risk: Risk): ChangeCard {
-  const what = card?.what ?? row.sentence.replace(/\s*Undo\.$/, "");
+function undoCardOf(
+  row: ChangeLogRow,
+  card: ChangeCard | null,
+  risk: Risk,
+  own: string | null = null,
+): ChangeCard {
+  const said = row.sentence.replace(/\s*Undo\.$/, "").trim();
+  const what = card?.what ?? said;
   const restores = card ? `${card.what} back to ${card.oldValue}` : what;
+  // The change without what it meant: "Set X from a to b: <effect>." reads "Set X from a to b".
+  const change = (said.split(/:\s/)[0] ?? said).replace(/[.\s]+$/, "");
+  const ask =
+    own?.trim() || (card ? `Put ${card.what} back to ${card.oldValue}?` : `Take back "${change}"?`);
   return buildCard({
     command: "undo",
-    what: `undo: ${what}`,
+    what,
     oldValue: card?.newValue ?? "as it is now",
     newValue: card?.oldValue ?? "as it was before this change",
     scope: row.scope,
@@ -1259,6 +1295,7 @@ function undoCardOf(row: ChangeLogRow, card: ChangeCard | null, risk: Risk): Cha
     reversible: false,
     projectId: row.project_id,
     projectName: card?.projectName ?? null,
+    ask,
   });
 }
 

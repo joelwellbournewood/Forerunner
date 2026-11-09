@@ -527,6 +527,16 @@ among them.
   wrong shape is "That is not a value for web pages research may read (<field>: <issue>). It
   takes {"mode": "any" | "only", "only"?: [string], "never"?: [string]}, for example …".
   `packages/commands/test/w15-chat.test.ts` asserts the definition's lines and these refusals.
+- **An undo waiting for a yes asks one question (W15-34).** `undoCardOf` gives the undo's card
+  an `ask` and the change's own `what` (before: `what: "undo: <what>"` and no question, so the
+  Inbox and Home titled the card "undo", with raw "yes"/"no"). The question is the command's
+  own, `CommandDef.undoAsk(params, before, after, ctx)`, read from the change log row so it is
+  the same after a restart: `settings.set`'s is "Put <label> for <project> back to <old value
+  in words>? <What that value means>." ("Put web pages research may read for Reading rules back
+  to any public website? Research reads any public website …"). Without one: "Put <what> back
+  to <old value>?" from the card kept in memory, else 'Take back "<the change, without its
+  effect>"?' from the row's sentence. The read-back is that question, and Changes shows it
+  alone with Yes and No (no card rows).
 
 ## How to change it
 

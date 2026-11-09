@@ -2865,8 +2865,11 @@ waits on you" while 4 tasks waited on it).
   project, task, task status and the open tasks waiting on it (`requestContexts`). A change
   asked for in Chat or Talk (the executor's yes/no card) is titled by the question the chat read
   back (`change_card.ask`: 'Pause "X"?', the rest as its body), not by the change card's object.
-  Its buttons read **Yes** (with the question's consequence as its line) and **No** ("Nothing
-  changes."); a click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
+  Its buttons read **Yes** ("Makes the change now.": W15-76, the body already says what the
+  change means; before, Yes repeated that body cut with "…") and **No** ("Nothing
+  changes."); an undo waiting for a yes is such a card, with its own question (commands.md,
+  "Wave 15"). A colon after a single word ends no first sentence (W15-77: "undo: web pages …"
+  was titled "undo"). A click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
   case (before: the stored "yes" and "no" with no line). Once answered, such a card (a Settings
   confirmation too) says what came of it (`changeCardOutcome`, from the stored `verdict`; phase
   C leftover C-29, before every one read "Answered."): a yes its done sentence ("Raised the
@@ -6196,7 +6199,7 @@ card for the phone and the state service). `projectCard` adds, computed when rea
 - `statusLine {kind, text, action}` from the pure `projectStatusLine`, first match wins: the
   plan waiting for approval or an open card ("Waiting for you: approve the plan", 'Waiting for
   you: "X"', "Waiting for you: 2 questions", or the kinds of the cards, "Waiting for you: 1
-  sign-off and 1 paused task" (L-13a; up to three kinds named, then "and N more"), with Answer opening the oldest card,
+  sign-off and 1 paused task" (L-13a; up to three kinds named, then "and N more"; W15-77: a change waiting for a yes, the registry's card with a `command` and no card key, is "1 change to confirm", "2 changes to confirm", never a question), with Answer opening the oldest card,
   `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks

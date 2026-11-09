@@ -951,4 +951,24 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
     const spec = settingSpec(b.key);
     await write(ctx, spec, typeof b.project_id === "string" ? b.project_id : null, b.value ?? null);
   },
+  // W15-34: an undo that waits for a yes asks as the change would ("Put web pages research may
+  // read for Reading rules back to any public website? Research reads …"), from the row alone.
+  async undoAsk(_p, before, _after, ctx) {
+    const b = asObject(before);
+    if (typeof b.key !== "string" || !Object.hasOwn(SETTING_SPECS, b.key)) return null;
+    const spec = settingSpec(b.key);
+    const restored = (b.value ?? null) as JsonValue;
+    const project =
+      spec.scope === "project" && typeof b.project_id === "string"
+        ? await ctx.store.project.get(b.project_id)
+        : undefined;
+    const what = project ? `${spec.label} for ${project.name}` : spec.label;
+    const pricing = ctx.ports.pricingTable?.();
+    const effect = spec
+      .effect?.(restored, pricing ? { pricing } : {})
+      ?.trim()
+      .replace(/\.$/, "");
+    const q = `Put ${what} back to ${showFor(spec, restored)}?`;
+    return effect ? `${q} ${effect.charAt(0).toUpperCase()}${effect.slice(1)}.` : q;
+  },
 };

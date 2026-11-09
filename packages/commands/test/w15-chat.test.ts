@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { settingsSet } from "../src/commands/settings.ts";
-import type { ExecuteResult } from "../src/index.ts";
+import { CommandExecutor, type ExecuteResult } from "../src/index.ts";
 import { world } from "./helpers.ts";
 
 /**
@@ -106,5 +106,54 @@ describe("w15-chat, wave 15", () => {
     expect(def.description).toContain(
       "A lesson changes no setting: a rule the app enforces (what research may read on the web, who merges, fast mode, quiet hours, a budget) is changed with settings_set or budget_set, never recorded here instead.",
     );
+  });
+
+  // W15-34 (live check 2, research F13): Undo on Changes for a site rule change waited for a yes
+  // as a card titled "undo" ("undo: web pages research may read for Reading rules", no
+  // question), raw "yes"/"no", read on Home and in the Inbox.
+  it("an undo waiting for a yes asks one plain question, also when its card was made before a restart (W15-34)", async () => {
+    const w = await world();
+    const set = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: {
+          key: "web_access",
+          value: { mode: "any", only: [], never: ["facebook.com"] },
+          project: "Game",
+        },
+        ctx: w.ctx({ source: "ui" }),
+      }),
+    );
+    const QUESTION =
+      "Put web pages research may read for Game back to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.";
+    const asked = await w.executor.undo(set.changeLogId, w.ctx({ source: "ui" }));
+    if (asked.status !== "pending") throw new Error(`expected pending, got ${asked.status}`);
+    expect(asked.card.ask).toBe(QUESTION);
+    expect(asked.readback).toBe(QUESTION);
+    // The change's own name, never the command's: "undo: …" was the card's title.
+    expect(asked.card.what).toBe("web pages research may read for Game");
+    const row = await w.store.humanRequest.get(asked.pendingId);
+    expect(row?.why).not.toMatch(/^undo:/);
+    expect((row?.change_card as { ask?: string } | null)?.ask).toBe(QUESTION);
+    // A daemon started again has no card in memory: the row's command says it the same way.
+    const fresh = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+    const again = await fresh.undo(set.changeLogId, w.ctx({ source: "ui" }));
+    if (again.status !== "pending") throw new Error(`expected pending, got ${again.status}`);
+    expect(again.readback).toBe(QUESTION);
+    // A command without words of its own for its undo: the change it takes back, in quotes.
+    const note = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: w.ctx({ source: "ui" }),
+        confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+      }),
+    );
+    const back = await fresh.undo(note.changeLogId, w.ctx({ source: "ui" }));
+    if (back.status !== "pending") throw new Error(`expected pending, got ${back.status}`);
+    expect(back.card.ask).toMatch(
+      /^Take back "Lowered the monthly cap from CHF 150(\.00)? to CHF 100(\.00)?"\?$/,
+    );
+    expect(back.card.what).not.toMatch(/^undo:/);
   });
 });

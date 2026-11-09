@@ -472,6 +472,17 @@ export interface CommandDef<P = unknown> {
   ): Promise<string | null>;
   /** The sentence of a done undo, when "<what> is back to <old value>" would not be true. */
   undoSentence?(params: P, before: JsonValue, after: JsonValue): string;
+  /**
+   * The one-line question an undo that waits for a yes asks (W15-34): "Put <what> back to
+   * <old value>? <What that means>." from the change log row alone, so it reads the same after a
+   * restart. Absent: the executor asks from the change's card, else from its sentence.
+   */
+  undoAsk?(
+    params: P,
+    before: JsonValue,
+    after: JsonValue,
+    ctx: CommandContext,
+  ): Promise<string | null>;
 }
 
 export interface CommandCall {
