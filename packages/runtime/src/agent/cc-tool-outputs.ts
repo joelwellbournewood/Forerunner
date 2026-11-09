@@ -26,7 +26,7 @@ import { z } from "zod";
  * validators), so they are written out here as strict schemas: every key the type names and no
  * other, every fixed word (`type`, `mode`, `status`, ...) as the literal it must be. The ties at
  * the end make `pnpm typecheck` fail when an SDK upgrade changes a shape; the typed fixtures in
- * `test/cc-tool-outputs.test.ts` (one per tool, `satisfies` the SDK type) check the same from
+ * `test/security-sdk.test.ts` (one per tool, `satisfies` the SDK type) check the same from
  * the other side. A key the SDK adds later reads as "none of its shapes": refused when it holds
  * a secret, never passed.
  */

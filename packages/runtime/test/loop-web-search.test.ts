@@ -673,9 +673,10 @@ describe("w15-run, wave 15: the web search offer is fixed for the run, so the ca
     // Search was offered at the start, and every request that offered it sent the same bytes.
     expect(offered[0]).not.toBeNull();
     expect(new Set(offered.filter((d) => d !== null)).size).toBe(1);
-    // Dropped at most once: once gone, never back.
+    // Dropped once, partway through: once gone, never back.
     const firstGone = offered.indexOf(null);
-    if (firstGone >= 0) expect(offered.slice(firstGone).every((d) => d === null)).toBe(true);
+    expect(firstGone, offered.map((d) => (d === null ? "-" : "S")).join("")).toBeGreaterThan(0);
+    expect(offered.slice(firstGone).every((d) => d === null)).toBe(true);
     // Each call reads at least what the previous call read and wrote, except at the one drop.
     const ends = events.filter(
       (e): e is Extract<RunEvent, { type: "model_call_end" }> => e.type === "model_call_end",
@@ -707,11 +708,10 @@ describe("w15-run, wave 15: the web search offer is fixed for the run, so the ca
     // and the tool is gone from that call on.
     const line = events.find((e) => e.type === "budget_line");
     const wrap = events.find((e) => e.type === "wrap_up_sent");
-    if (wrap?.type === "wrap_up_sent" && line?.type === "budget_line") {
-      expect(wrap.spentUsdMicro).toBeLessThanOrEqual(line.lineUsdMicro);
-      const at = calls.length - 1;
-      expect(calls[at]?.webSearch).toBeUndefined();
-    }
+    if (wrap?.type !== "wrap_up_sent" || line?.type !== "budget_line")
+      throw new Error(`no wrap-up or no line: ${events.map((e) => e.type).join(", ")}`);
+    expect(wrap.spentUsdMicro).toBeLessThanOrEqual(line.lineUsdMicro);
+    expect(calls.at(-1)?.webSearch).toBeUndefined();
   });
 
   it("the searches left at the start bound the run: with three left it never makes more than three", async () => {
