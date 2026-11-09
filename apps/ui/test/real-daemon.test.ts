@@ -1279,9 +1279,14 @@ describe("the UI client against the real daemon", () => {
       }
     const done = await client.project(own.id);
     expect(done.statusLine?.kind).toBe("done");
-    expect(done.statusLine?.text).toMatch(/^Done: all 2 tasks\. Your files: /);
+    // later #53/#54 (polish-words): no path in the line (it held the project's id, about 130
+    // characters); "Open your files" opens Files, and the Overview shows the folder.
+    expect(done.statusLine?.text).toBe("Done: all 2 tasks.");
+    expect(done.statusLine?.action).toMatchObject({
+      label: "Open your files",
+      to: `/projects/${own.id}/files`,
+    });
     expect(done.folder).toBeTruthy();
-    expect(done.statusLine?.text).toContain(done.folder ?? "-");
     expect(done.progress).toEqual({ done: 2, total: 2 });
   });
 
@@ -2037,8 +2042,9 @@ describe("the UI client against the real daemon: a task a session is running", (
     expect(await statusOf(first.id)).toBe("cancelled");
     expect(await statusOf(second.id)).toBe("done");
     // The result names the work done; the person's own Cancel is not echoed (design §5.11).
+    // W14-6 (polish-words): an amount above zero never reads "CHF 0.00".
     expect((await client.session(sessionId)).summary).toBe(
-      'Did 1 task: "Second task".\nNothing left. CHF 0.00.',
+      'Did 1 task: "Second task".\nNothing left. Less than CHF 0.01.',
     );
   });
 
@@ -2242,7 +2248,8 @@ describe("the UI client against the real daemon: the Tasks tab's Stop while a se
     // The session went on with the second task; the person's own Stop is not news, and the
     // paused task has no card, so nothing says it needs a decision in the Inbox.
     const session = await client.session(sessionId);
-    expect(session.summary).toBe('Did 1 task: "Second task".\nCHF 0.00.');
+    // W14-6 (polish-words): an amount above zero never reads "CHF 0.00".
+    expect(session.summary).toBe('Did 1 task: "Second task".\nLess than CHF 0.01.');
     const inbox = await client.inbox(me.id);
     expect(inbox.requests.filter((r) => r.projectId === project.id)).toEqual([]);
     const lines = inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body);
@@ -7384,9 +7391,12 @@ describe("the UI client against the real daemon: the credential chooser says whe
         line: "On your subscription its tests will not run: it cannot run commands there.",
       });
       const plan = (await client.inbox(me.id)).requests.find((r) => r.id === card.id);
-      expect(plan?.planTasks?.find((t) => t.specialist === "coder")?.runsOn?.line).toBe(
-        "On your subscription its tests will not run: it cannot run commands there.",
-      );
+      // P7-14 (polish-words): the plan card says a shared runs-on line once, for the plan, under
+      // the first task it holds for ("the tests of 2 tasks"), not under every code task.
+      const said = (plan?.planTasks ?? []).map((t) => t.runsOn?.line).filter(Boolean);
+      expect(said.filter((l) => /tests .*will not run/.test(l ?? ""))).toEqual([
+        "On your subscription the tests of 2 tasks will not run: it cannot run commands there.",
+      ]);
       // "Code tasks that need commands: the API key", as the Settings dialog sends it (a yes).
       const asked = await client.executeCommands({
         commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
