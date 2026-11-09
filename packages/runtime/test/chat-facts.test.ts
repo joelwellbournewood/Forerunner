@@ -168,6 +168,28 @@ describe("d1109-chat-guard, run C: # Your files from the app's merge records (CG
     expect(block).not.toContain("merges it on GitHub");
   });
 
+  // Review of d1109-chat-guard: the merges going on by themselves were cut at ten with no word
+  // that more exist, while the waiting ones said "And N more".
+  it("past ten, the waiting and the going-on merges each say how many more there are", () => {
+    const many = (n: number, sentence: string) =>
+      Array.from({ length: n }, (_, i) => ({
+        title: `Task ${i + 1}`,
+        url: `https://github.com/alice/app/pull/${i + 1}`,
+        sentence,
+      }));
+    const block = filesBlock(null, {
+      fullName: "alice/app",
+      waiting: many(12, "waits for your Merge."),
+      merging: many(13, "merges when its checks pass."),
+      merged: [],
+      closed: [],
+      unknown: [],
+    });
+    expect(block).toContain("And 2 more waiting for your Merge.");
+    expect(block).toContain("And 3 more merging by themselves.");
+    expect(block.match(/^Merging by itself:/gm)).toHaveLength(10);
+  });
+
   it("a folder project names its folder only", () => {
     expect(filesBlock("/home/robin/notes", null)).toBe(
       "# Your files\nThe project's folder: /home/robin/notes",

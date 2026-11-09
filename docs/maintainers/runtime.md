@@ -4099,7 +4099,9 @@ in one project cancelled a task in another. Now:
   computer's copy, then where each done task's merge stands from the app's merge records,
   `repositoryFacts`, d1109-chat-guard: 'Waiting for your Merge: "X": <the record's sentence>',
   "Merging by itself", "Merged", "Closed without merging", and the pull requests no record
-  speaks for listed without a state; no GitHub call: before, every turn waited for GitHub's
+  speaks for listed without a state; past ten, the waiting and the going-on merges each end in
+  "And N more ..." (before the review of d1109-chat-guard the going-on ones were cut at ten
+  without a word); no GitHub call: before, every turn waited for GitHub's
   open pull requests (L-17) and the block said "the person merges it on GitHub"), the person's
   own day and time in `# Now` ("today: Monday 9 November 2026, 23:30 (Europe/Zurich)",
   `todayLine` from `human.timezone`, beside the UTC `now`; a zone the platform does not know

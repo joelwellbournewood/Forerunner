@@ -572,6 +572,8 @@ export function filesBlock(folder: string | null, repository?: RepositoryFacts |
     lines.push(`And ${repository.waiting.length - 10} more waiting for your Merge.`);
   for (const p of repository.merging.slice(0, 10))
     lines.push(`Merging by itself: "${p.title}": ${p.sentence}`);
+  if (repository.merging.length > 10)
+    lines.push(`And ${repository.merging.length - 10} more merging by themselves.`);
   if (repository.merged.length) lines.push(`Merged: ${prList(repository.merged)}`);
   if (repository.closed.length) lines.push(`Closed without merging: ${prList(repository.closed)}`);
   if (repository.unknown.length)
