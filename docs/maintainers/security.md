@@ -297,8 +297,9 @@ What the app keeps and the chat reads (a specialist's run report, which can quot
 the critic's words; a card's questions; the last session's result; the lessons; the project's
 docs) was written by agents or the pages they read, so it is data in the chat too, in a model
 that holds command tools. Every answer of the chat's read tools carries the untrusted mark
-(origin `record:<kind>`): the hooks wrap it in the data envelope and scan it. The per-turn
-lessons travel in the envelope like the doc excerpts. A turn that read a record (a marked tool
+(origin `record:<kind>`): the hooks wrap it in the data envelope and scan it; so does the
+summary's answer (`summary.speak`, `record:summary`: its last-session line quotes a run's
+report). The per-turn lessons travel in the envelope like the doc excerpts. A turn that read a record (a marked tool
 result, a card listed in full in words Forerunner did not write, a flagged excerpt, lesson, task
 line or session result) reads back every change the model asks for after it, whatever its risk
 (`CommandContext.recordsRead`, the executor's `decideSteps`); stopping the running session still

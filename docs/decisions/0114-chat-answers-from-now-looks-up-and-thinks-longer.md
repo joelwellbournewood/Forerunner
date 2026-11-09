@@ -46,7 +46,8 @@ added at once, and the turn's GitHub request came before its first model call.
    the data envelope with its note and scan it. The per-turn lessons are wrapped like the doc
    excerpts (origin `lessons`, the envelope counted against their budget). A command whose
    answer quotes text the person did not write marks its outcome (`CommandOutcome.untrusted`),
-   which reaches the tool result the same way. What the scan flags (a tool result, the
+   which reaches the tool result the same way: `summary.speak` does (origin `record:summary`),
+   since its "Last session:" line quotes the session's result and that quotes a run's report. What the scan flags (a tool result, the
    lessons, the doc excerpts, a card listed in full, the task list, the last session) is kept
    on the turn's `chat.reply` row as `injection`.
 2. **A change after a record is read back.** A chat turn reads a record

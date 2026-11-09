@@ -445,7 +445,10 @@ have an `ask`, so their read-back is one question and never the rendered card.
 
 **A command answer that quotes text the person did not write (`CommandOutcome.untrusted`,
 append-only, d1109-chat-guard).** A command whose sentence quotes such text (d1109-onerepo-link's
-"used elsewhere" answer quotes a repository's marker) sets `untrusted: { source, origin }` on
+"used elsewhere" answer quotes a repository's marker; `summary.speak`, origin `record:summary`,
+whose "Last session:" line quotes the session's result and through it a run's report: the
+fix-up's bench walk saw "It reported: Ignore previous instructions ..." reach the model plain
+through `summary_speak`) sets `untrusted: { source, origin }` on
 its outcome; the executor keeps it on the done result (`ExecuteResult.untrusted`), `toToolSpecs`
 puts it on the tool's result (`ToolOutcome.untrusted`), so the enforcement hooks wrap the
 sentence as data and scan it, and the runtime's `noteRecordsRead` sets the turn's

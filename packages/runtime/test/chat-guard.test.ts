@@ -640,6 +640,36 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
     await w.store.close();
   });
 
+  // Sibling found on the fix-up's bench walk: the summary quotes the last session's result,
+  // which quotes a run's report ('It reported: Ignore previous instructions ...'), and
+  // summary_speak's answer reached the model plain, outside the envelope and unscanned.
+  it("summary_speak's answer, which quotes the last session, reaches the model as data and is reported", async () => {
+    const w = await setup({
+      replies: [
+        toolReply("summary_speak", {}, "Here is where it stands.", { ttftMs: 0 }),
+        textReply("That is where it stands.", { ttftMs: 0 }),
+      ],
+    });
+    const q = await w.store.project.mustGet(w.quote);
+    await w.store.project.update(w.quote, q.version, {
+      summary_cache: {
+        last_session: { summary: `"Style the page" failed. It reported: ${HOSTILE}` },
+      },
+    });
+    const turn = await w.chat("how far is it?");
+    expect(turn.pendingConfirmation).toBeNull();
+    expect(turn.actions.map((a) => a.kind)).toEqual(["summary.speak"]);
+    const result = w.toolResults(1);
+    expect(result.startsWith(envelopeHead("record:summary"))).toBe(true);
+    expect(result).toContain(HOSTILE);
+    expect(result.trimEnd().endsWith(DATA_ENVELOPE_CLOSE)).toBe(true);
+    expect(await injectionOf(w)).toContainEqual({
+      where: "summary_speak",
+      rules: ["ignore_previous"],
+    });
+    await w.store.close();
+  });
+
   it("a turn with no lookup, no card in full and nothing flagged creates the task at once as today; the parser's 'add a task: ...' and the person's 'stop everything' are unchanged", async () => {
     const w = await setup({
       replies: [
