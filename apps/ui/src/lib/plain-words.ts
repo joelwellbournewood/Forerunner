@@ -15,6 +15,9 @@ const IN_APP: Array<[RegExp, string]> = [
     /Confirm in the app on a paired device; on the phone with biometric\.?/g,
     "Confirm on this device.",
   ],
+  // W15B-24: the short form a read-back with one question ends in (the daemon's executor.ts);
+  // the person is in the app already. Voice and the phone keep the daemon's words.
+  [/Confirm in the app on a paired device\.?/g, "Confirm on this device."],
 ];
 
 /** A daemon text as the app shows it: no "say yes", "reply to the email" or "say undo". */

@@ -411,7 +411,11 @@ cost still use it). Test: `test/w15-words.test.tsx`.
 **Plain words (U-074).** `lib/plain-words.ts` turns the daemon's every-channel texts into what
 the app says: `inAppText` drops "Say yes to confirm, or reply yes to the email." and turns "Say
 undo or tap Undo in the change log." into "Undo it from Changes." (the change card's undo line,
-a command's read-back, a pending chat confirmation, an Inbox card's steps); `withoutUndoWord`
+a command's read-back, a pending chat confirmation, an Inbox card's steps), and both of the
+daemon's device lines, "Confirm in the app on a paired device." and its long form "...; on the
+phone with biometric.", into "Confirm on this device." (W15B-24: the short form a one-question
+read-back ends in stayed; voice and the phone keep the daemon's words); `withoutMarks` drops a
+specialist's markdown from what is shown (W15B-17); `withoutUndoWord`
 strips a change sentence's spoken "Undo.": the settings dialog shows its Undo button, a Chat
 reply an **Undo** button for each action with an `undoToken` (`POST /changes/:id/undo`, the
 outcome said under the reply), an Inbox message a link to Changes. `reviewLevel`,

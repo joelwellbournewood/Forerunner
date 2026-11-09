@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
 import { aboutChf, chfWords, formatMoney } from "../src/lib/money.ts";
+import { inAppText } from "../src/lib/plain-words.ts";
 import { money, TASKS } from "./fixtures.ts";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -600,6 +601,37 @@ describe("w15-words, wave 15 run B", () => {
       expect(within(tab).getByTestId("docs-present")).toHaveTextContent("7 of 8 present");
       expect(tab).not.toHaveTextContent("0 drifted");
       expect(within(tab).queryByTestId("docs-drift")).toBeNull();
+    });
+  });
+  describe("W15B-24: a needs-device read-back says 'Confirm on this device.' in the app", () => {
+    it("both of the daemon's forms read 'Confirm on this device.'", () => {
+      expect(
+        inAppText('Take back "Lowered the monthly cap"? Confirm in the app on a paired device.'),
+      ).toBe('Take back "Lowered the monthly cap"? Confirm on this device.');
+      expect(
+        inAppText(
+          "Change: the monthly cap. Confirm in the app on a paired device; on the phone with biometric.",
+        ),
+      ).toBe("Change: the monthly cap. Confirm on this device.");
+    });
+
+    it("Changes: an undo that needs this device reads 'Confirm on this device.'", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      const lowered = await harness.client.executeCommands({
+        commands: [{ name: "budget.set", params: { scope: "month", amountChf: 100 } }],
+        source: "ui",
+        confirm: "tap",
+      });
+      renderApp("/changes", harness);
+      const row = (await screen.findAllByTestId("change")).find(
+        (r) => r.dataset.changeId === lowered.changeLogId,
+      ) as HTMLElement;
+      await user.click(within(row).getByTestId("change-undo"));
+      const asking = await screen.findByTestId("changes-undo-pending");
+      const readback = within(asking).getByTestId("command-readback");
+      expect(readback).toHaveTextContent(/\? Confirm on this device\.$/);
+      expect(readback).not.toHaveTextContent("paired device");
     });
   });
 });
