@@ -140,6 +140,14 @@ export const projectSwitch: CommandDef<ProjectSwitchParams> = {
       activeProjectId: target.id,
     };
   },
+  /** Never back to a removed project (W15-36: its creation was undone since). */
+  async undoBlocked(_params, before, _after, ctx) {
+    const b = asObject(before);
+    if (typeof b.active_project !== "string") return null;
+    const previous = await ctx.store.project.get(b.active_project);
+    const removed = previous ? removedProjectName(previous) : null;
+    return removed === null ? null : `the project ${removed} was removed`;
+  },
   async undo(_params, before, _after, ctx) {
     const b = asObject(before);
     await patchHumanPrefs(ctx.store, ctx.humanId, {

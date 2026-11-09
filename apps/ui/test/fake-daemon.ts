@@ -5828,6 +5828,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon (W15-36): a removed project's other changes say so instead of an Undo.
     const removed = ch.projectId ? state.removedProjects[ch.projectId] : undefined;
     if (removed && name !== "project.create") return `the project ${removed.was} was removed`;
+    // …and a switch is never undone back to a removed project.
+    const left = (ch.before as { active_project?: unknown } | null)?.active_project;
+    const leftRemoved = typeof left === "string" ? state.removedProjects[left] : undefined;
+    if (name === "project.switch" && leftRemoved)
+      return `the project ${leftRemoved.was} was removed`;
     const after = (ch.after ?? {}) as {
       task_id?: string;
       status?: string;

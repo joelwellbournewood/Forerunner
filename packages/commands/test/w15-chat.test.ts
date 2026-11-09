@@ -552,4 +552,37 @@ describe("w15-chat, wave 15", () => {
     expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
     await w.store.close();
   });
+
+  // W15-36, the fix-up's bench walk: after "go back" from the new project and the creation's
+  // Undo, the "Switched back to Old garden." row still offered Undo, which would make the
+  // removed project the active one again.
+  it("a switch away from a project whose creation was undone cannot be undone back to it (W15-36)", async () => {
+    const w = await world();
+    const created = done(
+      await w.executor.execute({
+        name: "project.create",
+        params: { name: "Garden club", goal: "A page for the club" },
+        ctx: w.ctx({ source: "ui" }),
+      }),
+    );
+    const id = (await w.store.project.byName("Garden club"))?.id as string;
+    const back = done(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { back: true },
+        ctx: w.ctx({ activeProjectId: id }),
+      }),
+    );
+    expect(back.sentence).toBe("Switched back to PharmaWatch. Undo.");
+    done(await w.executor.undo(created.changeLogId, w.ctx({ activeProjectId: w.pharma.id })));
+    // PharmaWatch was made active since: it stays active.
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs[ACTIVE_PROJECT_KEY]).toBe(
+      w.pharma.id,
+    );
+    const row = await w.store.changeLog.mustGet(back.changeLogId);
+    expect(await w.executor.undoBlockedReason(row, w.ctx())).toBe(
+      "the project Garden club was removed",
+    );
+    await w.store.close();
+  });
 });
