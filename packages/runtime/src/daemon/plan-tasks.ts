@@ -40,9 +40,10 @@ export interface PlanTasksDeps {
    * D4 (d1109-oversize-start): what a session of the project may spend on its tasks (its session
    * cap less the fifth kept for reviews, as the Start dialog's default) and the day's rate: a task
    * whose figure alone is more gets the note that it pauses with its work kept and asks to
-   * continue. Absent: no task gets it.
+   * continue. `usdMicro` is read only for an open plan card (the Inbox's other cards ask
+   * nothing). Absent: no task gets it.
    */
-  workBudget?: { usdMicro: number; chfPerUsd: number };
+  workBudget?: { usdMicro(): Promise<number>; chfPerUsd: number };
   estimate?: {
     /** W15B-07: its `settings` (when given) hold the site rule the notes read. */
     project: Pick<ProjectRow, "name" | "small_project_mode"> &
@@ -154,10 +155,13 @@ export async function planTaskViews(
     });
   };
   // D4: the note under a task larger than the project's session work budget (once per card).
-  const work = deps.workBudget;
-  const workChf = work ? usdToChfMicro(Math.max(0, Math.round(work.usdMicro)), work.chfPerUsd) : 0;
+  const workUsd = deps.workBudget ? await deps.workBudget.usdMicro().catch(() => null) : null;
+  const workChf =
+    workUsd !== null && deps.workBudget
+      ? usdToChfMicro(Math.max(0, Math.round(workUsd)), deps.workBudget.chfPerUsd)
+      : 0;
   const oversizedNote = (figure: number | null): string | null =>
-    work && figure !== null && figure > work.usdMicro
+    workUsd !== null && figure !== null && figure > workUsd
       ? oversizedPlanNote({ chfMicro: workChf, text: formatChf(workChf) })
       : null;
   const out: PlanTaskView[] = [];
