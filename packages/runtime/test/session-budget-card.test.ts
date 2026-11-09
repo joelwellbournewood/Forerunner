@@ -178,10 +178,9 @@ describe("a task the session's budget stops pauses at the first stop with one ca
     expect(cards).toHaveLength(1);
     const card = cards[0] as Json;
     expect(card.title).toBe('"Long report" paused at this session\'s budget of CHF 2.00');
-    // A hard stop wrote no note: the card says the work so far is kept.
-    expect(card.body).toBe(
-      "It stopped before it could say where it stood; its work so far is kept.",
-    );
+    // A hard stop wrote no note, and its run only listed the folder: the card says it wrote
+    // nothing (W15-56; before: "... its work so far is kept.").
+    expect(card.body).toBe("It stopped before it wrote anything.");
     expect(card.choices).toEqual([
       expect.objectContaining({
         label: "Continue (CHF 2.00 more)",
@@ -190,7 +189,9 @@ describe("a task the session's budget stops pauses at the first stop with one ca
       }),
       expect.objectContaining({
         label: "Cancel task",
-        explain: "Drops it; its work is set aside unless a later task built on it.",
+        // W15-56: nothing to set aside (before: "Drops it; its work is set aside unless a later
+        // task built on it.").
+        explain: "Drops it.",
         tone: "danger",
       }),
     ]);
@@ -347,9 +348,9 @@ describe("Cancel task on a paused task's card (budget-resume)", () => {
       'Done: appendix.md has its first two parts; left: write part 3, check the appendix. "Index of the appendix" waits on it.',
     );
     const cancel = (card.choices as Json[]).find((c) => c.label === "Cancel task") as Json;
-    expect(cancel.explain).toBe(
-      'Drops it; its work is set aside; "Index of the appendix" will be stuck.',
-    );
+    // W15-56: no run wrote anything, so nothing is set aside (before: 'Drops it; its work is set
+    // aside; "Index of the appendix" will be stuck.'), as the line after the answer says.
+    expect(cancel.explain).toBe('Drops it; "Index of the appendix" will be stuck.');
     expect(cancel.confirm).toBe(
       'Cancel "Long appendix"? "Index of the appendix" waits on it and will be stuck.',
     );

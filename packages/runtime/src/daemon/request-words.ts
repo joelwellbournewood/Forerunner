@@ -94,6 +94,12 @@ export interface RequestWordsContext {
    * request): the plan card's line while Approve and start works says so (L-20).
    */
   projectRepository?: boolean;
+  /**
+   * A budget card's task holds work its Cancel sets aside (W15-56, `taskHeldWork`, read when the
+   * card is shown): false when its run wrote nothing, so the card promises no set-aside and keeps
+   * nothing; absent when not read (worded as before).
+   */
+  heldWork?: boolean;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -589,8 +595,9 @@ function budgetCard(
   const session = card.source === "session" || card.source === "session_budget";
   const goesOn = goesOnWords(card);
   const body =
-    [pausedWorkSentence(card), goesOn ?? waitingSentence(waiting)].filter(Boolean).join(" ") ||
-    null;
+    [pausedWorkSentence(card, ctx.heldWork), goesOn ?? waitingSentence(waiting)]
+      .filter(Boolean)
+      .join(" ") || null;
   const choices: RequestChoiceWords[] = [];
   for (const option of r.options.map(optionLabel)) {
     const what = budgetStopAnswer(option);
@@ -609,7 +616,7 @@ function budgetCard(
     else if (what === "cancel")
       choices.push({
         label: option,
-        explain: cancelPausedExplain(waiting),
+        explain: cancelPausedExplain(waiting, ctx.heldWork),
         tone: goesOn ? "secondary" : "danger",
         confirm: cancelConfirm(ctx.taskTitle ?? str(card.task_title) ?? "the task", waiting),
         input: null,
@@ -639,9 +646,10 @@ function budgetCard(
 /**
  * What the paused run did and left, in one sentence from its own note (data): "Done: guide.md
  * has 3 parts; left: write the rest, check it." A run that wrote no note (a tiny budget, a hard
- * stop): its work so far is kept.
+ * stop): its work so far is kept, or, when it wrote nothing (`heldWork` false, W15-56), that it
+ * stopped before it wrote anything.
  */
-function pausedWorkSentence(card: JsonObject): string | null {
+function pausedWorkSentence(card: JsonObject, heldWork?: boolean): string | null {
   // TR-14: the specialist finished and only its review waits (a review a limit refused): the
   // run-pause words ("It stopped before it could say where it stood") were not true of it.
   if (card.review_waits === true)
@@ -659,6 +667,7 @@ function pausedWorkSentence(card: JsonObject): string | null {
   if (leftWords) return `Left: ${leftWords}.`;
   // A card of before budget-resume has neither: its title says it all.
   if (!("done" in card)) return null;
+  if (heldWork === false) return "It stopped before it wrote anything.";
   return "It stopped before it could say where it stood; its work so far is kept.";
 }
 
@@ -709,9 +718,16 @@ function goesOnWords(card: JsonObject): string | null {
 /**
  * What Cancel does to a paused task: its work goes aside unless a later task built on it (in a
  * project's folder it then stays; P7-18: "until you reopen it" was promised there too), what
- * waits is stuck (design §3.5).
+ * waits is stuck (design §3.5). A task whose run wrote nothing (`heldWork` false, W15-56) is
+ * only dropped: nothing is set aside.
  */
-function cancelPausedExplain(waiting: readonly string[]): string {
+function cancelPausedExplain(waiting: readonly string[], heldWork?: boolean): string {
+  if (heldWork === false) {
+    if (waiting.length === 0) return "Drops it.";
+    if (waiting.length === 1)
+      return `Drops it; "${cutWords(waiting[0] as string, 50)}" will be stuck.`;
+    return `Drops it; the ${waiting.length} tasks after it will be stuck.`;
+  }
   if (waiting.length === 0)
     return "Drops it; its work is set aside unless a later task built on it.";
   // Tasks that wait on it have not built on it: within 100 characters (design §5.1).

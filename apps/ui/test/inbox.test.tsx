@@ -1289,6 +1289,8 @@ describe("Inbox", () => {
         t3.actual = money(420_000);
         t3.reason = '"Decide the versioning scheme" paused at its budget of CHF 0.40.';
       }
+      // W15-56: its run wrote versioning.md before the pause (the daemon reads the run).
+      harness.daemon.state.taskMeta.heldWork?.add("task_3");
       return harness;
     };
     const cardOf = async () =>
@@ -1457,6 +1459,8 @@ describe("Inbox", () => {
       harness.daemon.state.requests.unshift(monthCard());
       const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
       if (t3) t3.status = "needs_human";
+      // W15-56: its run wrote something before the cap stopped it (the daemon reads the run).
+      harness.daemon.state.taskMeta.heldWork?.add("task_3");
       renderApp("/inbox", harness);
       const card = (await screen.findAllByTestId("request")).find(
         (r) => r.getAttribute("data-request-id") === "req_month",

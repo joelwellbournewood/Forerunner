@@ -81,8 +81,9 @@ export interface FakeTaskMeta {
     }
   >;
   /**
-   * Ready tasks holding work in progress from a run that paused at a budget (polish-words,
-   * P7-20; the daemon reads the task's last run): a Cancel sets it aside. A test adds them.
+   * Tasks holding work in progress a Cancel sets aside (the daemon's `taskHeldWork` reads the
+   * task's last run): a ready one whose run paused at a budget (polish-words, P7-20) and one
+   * paused at its budget whose run wrote something (W15-56). A test adds them.
    */
   heldWork?: Set<string>;
 }

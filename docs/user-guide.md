@@ -970,7 +970,9 @@ stopped": the run's note, the files it changed and its to-do list (a run that st
 could write a note says so and lists the files). **Cancel** on a paused task sets its work aside
 and names the tasks that will be stuck ("Drops it. Its work so far is set aside unless a later
 task built on it; Undo brings it back."); in a project's folder that another task has built on
-since, its files stay and the line says why. Undo, or Reopen later, brings the work back, and its
+since, its files stay and the line says why. A task paused before its run wrote anything has no
+work to set aside: its card says "It stopped before it wrote anything." and its Cancel says only
+"Drops it." (with the tasks that will be stuck). Undo, or Reopen later, brings the work back, and its
 next run continues from it. Cancel of a running task in a project linked to your own folder says
 that what it wrote stays in your folder. A task's run never spends more than what
 is left of the session's work budget (the fifth kept for reviews stays for them), so a task that

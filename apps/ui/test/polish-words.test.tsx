@@ -129,6 +129,8 @@ describe("polish-words, wave 13: the Tasks screen", () => {
     const user = userEvent.setup();
     const harness = createHarness();
     addTask(harness, "t_paused", "Write the long guide", { status: "needs_human" });
+    // W15-56: its run wrote part of the guide before the pause (the daemon reads the run).
+    harness.daemon.state.taskMeta.heldWork?.add("t_paused");
     addCard(harness, "req_budget", "t_paused", {
       key: "task:budget_stop",
       task_id: "t_paused",

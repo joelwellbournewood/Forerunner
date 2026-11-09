@@ -45,7 +45,7 @@ import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
-import { isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
+import { ANSWER_CARD_KEYS, isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
 import type {
   AgentView,
@@ -99,7 +99,7 @@ import {
   workingOn,
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
-import { loadTaskDisplayContext, runOrder, taskDisplay } from "./task-display.ts";
+import { loadTaskDisplayContext, runOrder, taskDisplay, taskHeldWork } from "./task-display.ts";
 import { plainPlurals, withoutIds } from "./task-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
@@ -761,12 +761,17 @@ export async function requestContexts(
             )
             .map((t) => t.title)
         : [];
+      // W15-56: an open budget card names a set-aside only when its task's run wrote something.
+      const budgetOpen =
+        r.status === "open" &&
+        (r.change_card as { key?: unknown } | null)?.key === ANSWER_CARD_KEYS.budgetStop;
       out.set(r.id, {
         projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
         taskTitle: task?.title ?? null,
         taskStatus: task?.status ?? null,
         waiting,
         movedByYou: !!task?.author_human && !task.author_agent,
+        ...(budgetOpen && task ? { heldWork: await taskHeldWork(store, task) } : {}),
       });
       continue;
     }

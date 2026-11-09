@@ -57,21 +57,13 @@ export async function loadTaskDisplayContext(
   // when that run left work (the session's `task.files` for it): a run paused before it wrote
   // anything holds none, and the line would promise a set-aside that never comes (the review of
   // polish-words: the bench's CHF 0.004 guide wrote no file, and its cancel set nothing aside).
+  // W15-56: a task paused at its budget (needs_human with its card) holds work only when its run
+  // wrote some: one paused before any step wrote a file has nothing a Cancel sets aside, and its
+  // row, drawer and card say "Drops it." (before: "Its work so far is set aside ...").
   const heldWork = new Set<string>();
   for (const t of projectTasks) {
-    if (t.status !== "ready") continue;
-    const latest = (
-      await store.run.list({ task_id: t.id } as never, {
-        orderBy: [{ column: "created_at", direction: "desc" }],
-        limit: 5,
-      })
-    ).find((r) => r.specialist !== "critic");
-    if (
-      latest &&
-      (latest.outcome === "paused" || latest.outcome === "budget_exceeded") &&
-      (await runLeftFiles(store, latest, t.id))
-    )
-      heldWork.add(t.id);
+    if (t.status !== "ready" && t.status !== "needs_human") continue;
+    if (await taskHeldWork(store, t)) heldWork.add(t.id);
   }
   for (const t of projectTasks) {
     if (t.status !== "claimed" && t.status !== "in_progress") continue;
@@ -117,6 +109,34 @@ export async function loadTaskDisplayContext(
     ...(credentialWait ? { credentialWait } : {}),
     ...(linked && isAbsolute(linked) ? { ownFolder: true } : {}),
   };
+}
+
+/**
+ * Whether the task holds work in progress that a Cancel sets aside (P7-20, W15-56): its last work
+ * run (not the critic's) left changed files, and for a ready task that run paused at a budget (a
+ * Continue, or a Reopen after a cancel). A task paused at its budget (`needs_human`) holds what
+ * its last run wrote, the run that paused or one whose review waits for room. A run that wrote
+ * nothing holds none. False for any other status.
+ */
+export async function taskHeldWork(
+  store: StateStore,
+  task: Pick<TaskRow, "id" | "status">,
+): Promise<boolean> {
+  if (task.status !== "ready" && task.status !== "needs_human") return false;
+  const latest = (
+    await store.run.list({ task_id: task.id } as never, {
+      orderBy: [{ column: "created_at", direction: "desc" }],
+      limit: 5,
+    })
+  ).find((r) => r.specialist !== "critic");
+  if (!latest) return false;
+  if (
+    task.status === "ready" &&
+    latest.outcome !== "paused" &&
+    latest.outcome !== "budget_exceeded"
+  )
+    return false;
+  return runLeftFiles(store, latest, task.id);
 }
 
 /**

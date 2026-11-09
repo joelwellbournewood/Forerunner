@@ -2237,7 +2237,17 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   task there only when its last work run paused and that run's session has a `task.files` event
   for it with files (`runLeftFiles`): a run paused before it wrote anything holds nothing, and
   the line would have promised a set-aside that never comes (the review of polish-words; test:
-  `real-daemon.test.ts` "Cancel on a ready task holding its work so far").
+  `real-daemon.test.ts` "Cancel on a ready task holding its work so far"). W15-56 (wave 15 run
+  B): the same check (`taskHeldWork`, exported from `task-display.ts`) covers a task paused at its
+  budget (`needs_human` with its card), on its last work run whatever its outcome (a review that
+  waits for room keeps a finished run's files): only with `heldWork` does its row send
+  `cancelWork`, and `requestContexts` (`views.ts`) passes `RequestWordsContext.heldWork` for an
+  open budget card, so a task paused before it wrote anything reads "It stopped before it wrote
+  anything." and "Drops it." ("Drops it; \"X\" will be stuck.") on its card, and "Drops it." on
+  its row, drawer and dialog. The UI's `cancelWorkLine` guesses the paused line from the card only
+  for a row without the daemon's `display`. The chat's read-back (`moveAsk` through
+  `commands/task.ts` `cancelWorkFor`) still reads the open card only (run B left `task.ts` to run
+  C). Tests: `real-daemon.test.ts` and `test/w15-words.test.ts`, "w15-words, wave 15 run B".
 - *Settings.* `push_unfinished_work` (`session/push-unfinished.ts`, `pushUnfinishedOf`): the
   project row "Push unfinished work to GitHub" in `settingsView` for a project on a host
   repository; compose passes it to `PrTaskExecutor` as `pushUnfinishedFor`.

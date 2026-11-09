@@ -1143,6 +1143,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(repositoryOf(state.projects.find((p) => p.id === r.projectId)?.repos ?? [])
           ? { projectRepository: true }
           : {}),
+        // W15-56: as the daemon's `taskHeldWork`, an open budget card's task holds work only
+        // when its run wrote some (a test adds it to `taskMeta.heldWork`).
+        ...(r.status === "open" &&
+        task &&
+        (r.changeCard as { key?: unknown } | null)?.key === "task:budget_stop"
+          ? { heldWork: !!state.taskMeta.heldWork?.has(task.id) }
+          : {}),
       },
     );
     return { ...r, ...words };

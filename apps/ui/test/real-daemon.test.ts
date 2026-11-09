@@ -4636,16 +4636,17 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     // budget-resume (ADR 0112 amended): it paused, and Continue adds the same budget again, at
     // least its estimate (before: "stopped at", "So far it spent", "Raise the budget" to CHF 0.44).
     expect(card?.title).toBe('"Contact page" paused at its budget of CHF 0.01');
-    expect(card?.body).toBe(
-      "It stopped before it could say where it stood; its work so far is kept.",
-    );
+    // W15-56: its run stopped before it called the model, so it wrote nothing: no work is kept
+    // and Cancel sets nothing aside (before: "... its work so far is kept." and "Drops it; its
+    // work is set aside unless a later task built on it.").
+    expect(card?.body).toBe("It stopped before it wrote anything.");
     expect(card?.choices?.map((c) => [c.label, c.explain, c.tone])).toEqual([
       [
         "Continue (CHF 0.08 more)",
         "Adds CHF 0.08 to its budget and starts a session that goes on from where it stopped.",
         "primary",
       ],
-      ["Cancel task", "Drops it; its work is set aside unless a later task built on it.", "danger"],
+      ["Cancel task", "Drops it.", "danger"],
     ]);
     // The session's result points at the card that is there; the Tasks tab says the same.
     expect(session.summary).toContain(
@@ -11844,9 +11845,9 @@ describe("polish-words, wave 13: the Inbox cards through the real daemon", () =>
       label: "Open Settings",
       to: "/settings#other-settings",
     });
-    expect(card?.choices?.[0]?.explain).toBe(
-      "Drops it; its work is set aside unless a later task built on it.",
-    );
+    // W15-56: the task never ran, so nothing is set aside (before: "Drops it; its work is set
+    // aside unless a later task built on it.").
+    expect(card?.choices?.[0]?.explain).toBe("Drops it.");
   });
 });
 
@@ -13647,4 +13648,103 @@ describe("w15-chat, wave 15", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+/**
+ * w15-words (wave 15 run B): the sentences a person reads, against the real daemon, each at the
+ * route the screen reads it from.
+ */
+describe("w15-words, wave 15 run B", () => {
+  describe("W15-56: a task paused before it wrote anything promises no set-aside", () => {
+    let rt: RuntimeApp;
+    let client: DaemonClient;
+
+    beforeAll(async () => {
+      // The stand-in writes the guide one part per call until the budget stops it.
+      ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_LONG: "Write the guide" }));
+    }, 60_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    it("its row, drawer and Inbox card say Drops it., never 'its work so far is kept' or 'set aside'; a paused task that wrote files keeps the set-aside line", async () => {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Club notes", goal: "Guides" });
+      const make = (
+        title: string,
+        file: string,
+        budgetUsdMicro: number,
+        priority: "high" | "low",
+      ) =>
+        client.createTask(project.id, {
+          title,
+          outcome: `${file} explains the club`,
+          acceptanceCriteria: [`${file} exists`],
+          priority,
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro,
+          specialist: "coder",
+          riskTier: 1,
+        });
+      // As the bench's CHF 0.004 guide: its budget stops it before it writes anything. It runs
+      // first, so no task builds on the other guide's work in the folder.
+      const empty = await make(
+        "Write the guide for members in members.md",
+        "members.md",
+        5_000,
+        "high",
+      );
+      const wrote = await make("Write the guide in guide.md", "guide.md", 45_000, "low");
+      const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () =>
+          (await client.tasks(project.id)).map((t) => `${t.title}=${t.display?.label}`).join(", "),
+        60_000,
+      );
+      const folder = projectWorkspaceDir(rt.data.assets.projectsRoot, project.id);
+      expect(existsSync(join(folder, "guide.md")), "the second run wrote guide.md").toBe(true);
+      expect(existsSync(join(folder, "members.md")), "the first run wrote nothing").toBe(false);
+      const rows = await client.tasks(project.id);
+      const row = (id: string) => rows.find((r) => r.id === id);
+      for (const t of [wrote, empty])
+        expect(row(t.id)?.display?.label, `${t.title}: ${row(t.id)?.reason}`).toBe(
+          "Paused at its budget",
+        );
+      // The row's button title, the dialog and the drawer read actionExplain.
+      const nothing = row(empty.id);
+      expect(nothing?.display?.cancelWork).toBeUndefined();
+      expect(nothing ? actionExplain("cancel", nothing) : "").toBe("Drops it.");
+      const held = row(wrote.id);
+      expect(held?.display?.cancelWork).toBe(
+        "Its work so far is set aside unless a later task built on it; Undo brings it back.",
+      );
+      expect(held ? actionExplain("cancel", held) : "").toBe(
+        "Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.",
+      );
+      // The Inbox cards say the same.
+      const cards = (await client.inbox(me.id)).requests.filter((r) => r.status === "open");
+      const cardOf = (taskId: string) => cards.find((c) => c.taskId === taskId);
+      const emptyCard = cardOf(empty.id);
+      expect(emptyCard?.title).toContain("paused at its budget");
+      expect(emptyCard?.body ?? "").not.toContain("its work so far is kept");
+      expect(emptyCard?.body ?? "").not.toContain("set aside");
+      expect(emptyCard?.choices?.find((c) => c.label === "Cancel task")?.explain).toBe("Drops it.");
+      expect(cardOf(wrote.id)?.choices?.find((c) => c.label === "Cancel task")?.explain).toBe(
+        "Drops it; its work is set aside unless a later task built on it.",
+      );
+      // And the Cancel does what it said: nothing is set aside for the empty one.
+      const paused = await rt.store.task.mustGet(empty.id);
+      const cancelled = await client.taskAction(empty.id, {
+        version: paused.version,
+        action: "cancel",
+      });
+      expect(cancelled.change?.sentence ?? "").not.toContain("set aside");
+    }, 120_000);
+  });
 });

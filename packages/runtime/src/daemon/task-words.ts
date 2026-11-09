@@ -140,8 +140,9 @@ export interface TaskDisplayContext {
    */
   live?: (taskId: string) => boolean;
   /**
-   * Ready tasks that hold work in progress from a run that paused at a budget and left changed
-   * files (P7-20): a Cancel sets it aside, as a paused task's does. Absent: none.
+   * Tasks that hold work in progress a Cancel sets aside (`taskHeldWork`): a ready one whose run
+   * paused at a budget and left changed files (P7-20), and one paused at its budget whose run
+   * wrote something (W15-56). Absent: none.
    */
   heldWork?: ReadonlySet<string>;
   /**
@@ -602,7 +603,11 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
           "warn",
           {
             detail: budgetPauseDetail((card.change_card as { source?: unknown } | null)?.source),
-            cancelWork: cancelWorkOf(task, ctx, { paused: true }),
+            // W15-56: only when its run wrote something (`taskHeldWork`); a task paused before
+            // any step wrote a file is only dropped ("Drops it.").
+            ...(ctx.heldWork?.has(task.id)
+              ? { cancelWork: cancelWorkOf(task, ctx, { paused: true }) }
+              : {}),
             blocker: {
               kind: "card",
               taskId: null,

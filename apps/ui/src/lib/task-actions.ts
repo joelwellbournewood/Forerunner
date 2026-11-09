@@ -121,8 +121,9 @@ export function actionsFor(
  * What Cancel does to the work of a task (`cancel-words.ts`): a run or review that goes on
  * stops and what it changed is taken out of the folder, Undo restores it unless the files
  * changed since (phase C, L-6); a pull request already opened stays open; a paused task's work
- * so far is set aside (budget-resume); a project linked to the person's own folder keeps what
- * it wrote (C-37, said by the daemon). Null for a task whose Cancel changes no work, and for one
+ * so far is set aside (budget-resume) when its run wrote some (W15-56, said by the daemon: one
+ * paused before it wrote anything is only dropped); a project linked to the person's own folder
+ * keeps what it wrote (C-37, said by the daemon). Null for a task whose Cancel changes no work, and for one
  * whose run or review does not go on in the app (`display.live`, L-7).
  */
 export function cancelWorkLine(
@@ -138,7 +139,9 @@ export function cancelWorkLine(
   const kind = cancelWorkKind({
     running: key === "running",
     liveReview: key === "review",
-    paused: key === "answer" && display.blocker?.cardKind === "budget",
+    // W15-56: a paused task's set-aside is the daemon's to say (`display.cancelWork`, only when
+    // its run wrote something); guessed from the card only for a row without the daemon's words.
+    paused: !task.display && key === "answer" && display.blocker?.cardKind === "budget",
     pullRequest: !!task.prUrl,
     ownFolder: false,
   });
