@@ -23,6 +23,7 @@ import {
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { planEstimateUsdMicro } from "@forerunner/runtime/estimates/model";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
+import { fileLeftOpenRequest, headMovedSentence } from "@forerunner/runtime/loop/merge";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
@@ -10905,7 +10906,8 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     await rt.githostWatcher?.pollOnce();
     // Before (the review of leftovers7-merge2): the row offered Merge again, and pressing it was
     // refused ("changed after the review") with a second card.
-    const moved = `#${b.pr.number} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
+    // W15B-11 (w15-words): where each way out is.
+    const moved = `#${b.pr.number} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
     expect((await rowOf(b.pr.number))?.merge).toMatchObject({
       state: "blocked",
       canMerge: false,
@@ -10914,14 +10916,15 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     const open = await cards();
     expect(open.map((r) => ({ title: r.title, body: r.body }))).toEqual([
       {
-        title: `The critic accepted "Write another about page", but pull request #${b.pr.number} was not merged`,
+        // W15B-11 (w15-words): titled by what happened.
+        title: '"Write another about page" changed after the review',
         body: moved,
       },
     ]);
     expect(open[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
     expect(open[0]?.details).toEqual([
       "Look at the commits pushed after the review",
-      "Merge it yourself or ask for a new review",
+      "Merge it yourself on GitHub, or redo the task from its row in Tasks",
     ]);
     await rt.githostWatcher?.pollOnce();
     expect(await cards()).toHaveLength(1);
@@ -11742,7 +11745,12 @@ describe("polish-words, wave 13", () => {
     // Home's done line counts the pull request Merge can merge; the two that conflict say so on
     // their rows and the Overview, where its button leads.
     const line = (await client.project(project.id)).statusLine;
-    expect(line?.text).toBe("Done: all 3 tasks. 1 pull request waits for you to merge.");
+    // W15B-12 (w15-words): the two that conflict need the person too, and the line says so,
+    // never as waiting to be merged (before: "Done: all 3 tasks. 1 pull request waits for you to
+    // merge.").
+    expect(line?.text).toBe(
+      "Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.",
+    );
     expect(line?.action?.to).toBe(`/projects/${project.id}`);
   });
 });
@@ -13832,6 +13840,57 @@ describe("w15-words, wave 15 run B", () => {
         text: "Done: all 3 tasks. 2 tasks need you on the Overview.",
         action: overview,
       });
+    });
+
+    it("W15B-11: the head-moved card's title says what happened and its words name where each way out is; the row's Redo takes it away", async () => {
+      const me = await client.me();
+      const project = await client.createProject({
+        name: "Moved page",
+        goal: "A page",
+        repos: ["alice/moved"],
+      });
+      const task = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Write the page",
+        outcome: "page.html is written",
+        status: "done",
+        reason: "critic accepted",
+        pr_url: "https://github.example/alice/moved/pull/3",
+      } as never);
+      const sentence = headMovedSentence(3);
+      const filed = await fileLeftOpenRequest(rt.store, {
+        task: await rt.store.task.mustGet(task.id),
+        sessionId: null,
+        humanId: me.id,
+        agentId: rt.agent.id,
+        outcome: {
+          status: "head_moved",
+          reason: "the PR head moved",
+          prUrl: task.pr_url ?? "",
+          sentence,
+        } as never,
+      });
+      const card = (await client.inbox(me.id)).requests.find((r) => r.id === filed.id);
+      expect(card?.title).toBe('"Write the page" changed after the review');
+      expect(card?.body).toBe(
+        "#3 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.",
+      );
+      expect(card?.choices?.map((c) => c.label)).toEqual(["I merged it", "Leave it open"]);
+      // Nothing on it offers what no button and no named place does.
+      expect(`${card?.title} ${card?.body} ${(card?.details ?? []).join(" ")}`).not.toMatch(
+        /new review|send it back/,
+      );
+      // The task's row offers the Redo the card names.
+      const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
+      expect(row?.status).toBe("done");
+      const redone = await client.taskAction(task.id, {
+        version: (await rt.store.task.mustGet(task.id)).version,
+        action: "redo",
+      });
+      expect(redone.status).toBe("ready");
+      expect(
+        (await client.inbox(me.id)).requests.find((r) => r.id === filed.id && r.status === "open"),
+      ).toBeUndefined();
     });
   });
 

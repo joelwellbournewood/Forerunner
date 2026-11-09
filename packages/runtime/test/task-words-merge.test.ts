@@ -42,7 +42,7 @@ describe("w15-merge, wave 15", () => {
       ],
       [
         "head_moved",
-        "#8 changed after the review: look at the new commits, then merge it yourself or redo the task.",
+        "#8 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.",
         "Accepted · changed after the review",
       ],
       [

@@ -465,3 +465,13 @@ after the review is never merged by Forerunner.
    withdrawn."), and its Undo puts the task back to done and the same card back in the Inbox,
    without the Redo's mark. Before, the Undo left the conflict notice withdrawn for good (it is
    said once, so no later poll brought it back) and the Redo's line did not mention the card.
+
+## Amendment (2026-11-09, wave 15 run B): the head-moved card says where each way out is (W15B-11)
+
+Words only, no new button. The head-moved sentence names where each way out is: "#8 changed
+after the review: look at the new commits, then merge it yourself on GitHub, or redo the task
+from its row in Tasks." Its card is titled by what happened, '"X" changed after the review'
+(before: 'The critic accepted "X", but pull request #8 was not merged', the old reason), and its
+Details no longer say "ask for a new review", which nothing offers. The card is open only while
+its task is done, whose row offers Redo, and a Redo withdraws it in the same transaction (point
+5 and amendment 2 above), so the sentence never stands beside a task that offers no Redo.

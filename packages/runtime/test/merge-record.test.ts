@@ -266,13 +266,14 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
       last_outcome: "head_moved",
     });
     expect(record.sentence).toBe(
-      `#${pr.number} changed after the review: look at the new commits, then merge it yourself or redo the task.`,
+      `#${pr.number} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`,
     );
     // The person reads the record's sentence on the one card, with no commit ids.
     const cards = await inboxCards(m, t.id);
     expect(cards).toEqual([
       {
-        title: `The critic accepted "Add feature", but pull request #${pr.number} was not merged`,
+        // W15B-11 (w15-words): titled by what happened.
+        title: '"Add feature" changed after the review',
         body: record.sentence,
         choices: LEFT_OPEN_CHOICES,
       },

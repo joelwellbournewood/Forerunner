@@ -961,7 +961,8 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     const resolved = await m.pr(b.id);
     expect([resolved.mergeable, resolved.head.sha === reviewed]).toEqual([true, false]);
     await m.poll();
-    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
+    // W15B-11 (w15-words): where each way out is.
+    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
     // The head-moved word the merge step itself gives (no Merge on the Overview: `NO_CLICK`).
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
@@ -974,15 +975,17 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     const later = await requestViews(m.w.store, open);
     expect(later.map((v) => ({ title: v.title, body: v.body }))).toEqual([
       {
-        title: `The critic accepted "Write the other page", but pull request #${prB} was not merged`,
+        // W15B-11 (w15-words): titled by what happened.
+        title: '"Write the other page" changed after the review',
         body: moved,
       },
     ]);
     expect(later[0]?.choices?.map((c) => c.label)).toEqual(["Redo", "Leave it open"]);
     // Its Details say what to do now, not how to resolve a conflict that is gone.
+    // W15B-11 (w15-words): no "ask for a new review", which nothing offers.
     expect(later[0]?.details).toEqual([
       "Look at the commits pushed after the review",
-      "Merge it yourself or ask for a new review",
+      "Merge it yourself on GitHub, or redo the task from its row in Tasks",
     ]);
     // Nothing more at the next poll, and nothing merged.
     await m.poll();
@@ -1632,7 +1635,7 @@ describe("w15-merge, wave 15", { timeout: 240_000 }, () => {
    * critic" and let a kept Merge merge the commit nobody reviewed (bench J3, J4).
    */
   const changedAfterReview = (pr: number) =>
-    `#${pr} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
+    `#${pr} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
 
   it("the person's commit pushed to GitHub, as the sentence offers, with A squash-merged: the rebuild keeps it, but B is not taken as reviewed; it waits for the person's look with no Merge and nothing merges it (W15-02 fix-up)", async () => {
     const m = await chainWorld({ level: 2 });

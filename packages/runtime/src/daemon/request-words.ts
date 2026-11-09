@@ -955,10 +955,12 @@ const NOT_APPLIED_MAX = 140;
 export function leftOpenCardTitle(card: JsonObject, taskTitle: string): string {
   if (card.notice === "conflict")
     return `${q(taskTitle)} conflicts with ${str(card.base) ?? "main"}`;
-  return (
-    rebuildTitle(card, taskTitle) ??
-    `The critic accepted ${q(taskTitle)}, but ${prOfCard(card)} was not merged`
-  );
+  const rebuilt = rebuildTitle(card, taskTitle);
+  if (rebuilt) return rebuilt;
+  // W15B-11: what happened (before: 'The critic accepted "X", but pull request #3 was not
+  // merged', the old reason, over a sentence about new commits).
+  if (card.status === "head_moved") return `${q(taskTitle)} changed after the review`;
+  return `The critic accepted ${q(taskTitle)}, but ${prOfCard(card)} was not merged`;
 }
 
 /**

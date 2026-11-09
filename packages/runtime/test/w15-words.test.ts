@@ -2,7 +2,7 @@ import { formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, TaskRow } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
-import { requestWords } from "../src/daemon/request-words.ts";
+import { leftOpenCardTitle, requestWords } from "../src/daemon/request-words.ts";
 import { startBlocked } from "../src/daemon/start-blocked.ts";
 import { runOutcomeWords } from "../src/daemon/task-display.ts";
 import {
@@ -12,6 +12,7 @@ import {
   WAITING_FOR_YOUR_MERGE,
 } from "../src/daemon/task-words.ts";
 import { describeEvent } from "../src/daemon/views.ts";
+import { headMovedSentence, leftOpenSteps } from "../src/loop/merge.ts";
 import { OWED_FOLDER_LABEL } from "../src/loop/merge-mode.ts";
 import { budgetStopTitle, continueLabel } from "../src/session/budget-card.ts";
 import { wrapUpSentWords } from "../src/session/budget-pause.ts";
@@ -419,6 +420,34 @@ describe("w15-words, wave 15 run B", () => {
         text: "Ready: 1 task; nothing runs until you save a new API key",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
       });
+    });
+  });
+
+  describe("W15B-11: the head-moved card", () => {
+    it("is titled by what happened and its sentence names where each way out is", () => {
+      const card = {
+        key: "merge:left_open",
+        status: "head_moved",
+        pr_url: "https://github.example/o/r/pull/3",
+        sentence: headMovedSentence(3),
+      };
+      expect(leftOpenCardTitle(card, "Write the page")).toBe(
+        '"Write the page" changed after the review',
+      );
+      expect(headMovedSentence(3)).toBe(
+        "#3 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.",
+      );
+      expect(leftOpenSteps("head_moved")).toEqual([
+        "Look at the commits pushed after the review",
+        "Merge it yourself on GitHub, or redo the task from its row in Tasks",
+      ]);
+      // Other left-open cards keep their titles.
+      expect(leftOpenCardTitle({ ...card, status: "checks_failed" }, "Write the page")).toBe(
+        'The critic accepted "Write the page", but pull request #3 was not merged',
+      );
+      expect(
+        leftOpenCardTitle({ ...card, notice: "conflict", base: "main" }, "Write the page"),
+      ).toBe('"Write the page" conflicts with main');
     });
   });
 });
