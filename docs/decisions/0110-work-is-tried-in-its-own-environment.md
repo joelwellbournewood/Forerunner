@@ -185,3 +185,24 @@ and dropped the sandbox (TR-8). `sandboxRefusalOf` now reads every line without 
 escape codes (`stripAnsi`, 7-bit and 8-bit), so the filter, Playwright's first line and the
 markers are judged on the plain text, and the reason it says carries no escape codes. The
 `unavailable` reasons' first lines (the agent browser's and the tried page's) are plain text too.
+
+## Amendment 2026-11-09 (wave 15, 'w15-review'): a command described in words is not run bare
+
+Point 1 says only what is said exactly is run, but a sentence's command ended at any of a list of
+words, connectors among them, so "node wc.js on a file containing 'hello world foo' prints 3" ran
+a bare `node wc.js`. The tool did what criterion 4 asked ("Running with no argument prints a
+usage message to stderr and exits with code 1"), the try called its exit 1 a problem, and the
+measured-problem rule (ADR 0104) sent correct work back three times and on to the person (live
+check 2, research F1: CHF 0.24 for a CHF 0.03 task). The rule stays; what is tried changes:
+
+1. **Verbs and connectors are two lists.** A sentence's command still ends at a word that goes on
+   with what it does ("prints", "exits", "and"). A connector ("on", "in", "for", "with", "from",
+   "at", "by", "to", "against", "using", …) after a command with no argument written means its
+   arguments are described in words: a command line tool is not run from that sentence
+   (`commandsIn` leaves it out), and a script that listens is still started, since a server needs
+   no argument. "with no arguments" and "without a file" are a bare run, as said.
+2. **A bare run another sentence expects to fail expects the error.** A command with no argument
+   and no standard input `expectsError` when any sentence of the brief, the criteria or the
+   README says a run with no argument fails ("Running with no argument … exits with code 1"). A
+   command with arguments is never excused by such a sentence.
+

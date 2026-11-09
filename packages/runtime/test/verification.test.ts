@@ -1391,3 +1391,73 @@ describe("verification: a command line tool, an API and a Python project are tri
     await w.close();
   });
 });
+
+describe("w15-review, wave 15", () => {
+  /** The tool the real model wrote in live check 2 (research F1). */
+  const LIVE_WC = [
+    "#!/usr/bin/env node",
+    "'use strict';",
+    "const fs = require('fs');",
+    "function main(argv) {",
+    "  const file = argv[2];",
+    "  if (!file) { console.error('Usage: node wc.js <file>'); return 1; }",
+    "  let text;",
+    "  try { text = fs.readFileSync(file, 'utf8'); } catch { console.error(\"wc.js: cannot read '\" + file + \"'\"); return 1; }",
+    "  console.log(String((text.match(/\\S+/g) || []).length));",
+    "  return 0;",
+    "}",
+    "if (require.main === module) process.exitCode = main(process.argv);",
+    "",
+  ].join("\n");
+
+  /** The real process sandbox on the task's folder, as the daemon opens it for a light review. */
+  const processSandbox = {
+    open: async (req: { worktree: string }) => ({
+      sandbox: await ProcessSandbox.create({
+        worktree: req.worktree,
+        limits: { timeoutMs: 120_000 },
+        network: { mode: "none" },
+      }),
+      engine: "process",
+      warnings: [],
+    }),
+  };
+
+  it("W15-24: live check 2's word counter is Done after one run: the try runs `node wc.js <file>` only, never a bare `node wc.js` whose usage exit a criterion asks for", async () => {
+    const root = taskFolder({
+      "wc.js": LIVE_WC,
+      "README.md":
+        "# Word count\n\nUsage: `node wc.js <file>`\n\nIt prints the number of words in the file.\n",
+    });
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: { sandbox: processSandbox, hasCommand: async () => true },
+    });
+    const task = await w.addTask("Build wc.js command line word counter", {
+      outcome:
+        "A wc.js file in the project root that, run as node wc.js <file>, prints the word count of the file. Words are runs of non-whitespace characters separated by whitespace. It uses only Node built-ins.",
+      acceptance_criteria: [
+        "node wc.js on a file containing 'hello world foo' prints 3",
+        "An empty file, or one with only whitespace, prints 0",
+        "Words separated by multiple spaces, tabs or newlines are counted correctly",
+        "Running with no argument prints a usage message to stderr and exits with code 1",
+        "A nonexistent file prints a clear error message to stderr and exits with code 1",
+        "No third-party dependencies are used",
+      ],
+    });
+    const r = await w.start(
+      w.runner(doneExecutor(w, { worktree: root, changedFiles: ["wc.js", "README.md"] })),
+    );
+    expect(r.reviews.map((x) => x.verdict)).toEqual(["accept"]);
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const v = await verificationOfTask(w, task.id);
+    expect(v?.tried.map((t) => [t.kind, t.target, t.ok])).toEqual([
+      ["command", "node wc.js <file>", true],
+    ]);
+    expect(v?.tried[0]?.output).toMatch(/exit 0 in \d+ ms\noutput:\n9/);
+    expect(await w.store.finding.list({ task_id: task.id } as never)).toEqual([]);
+    expect(JSON.stringify(reviewCalls(w)[0]?.request.messages)).not.toContain("ran node wc.js (");
+    await w.close();
+  });
+});
