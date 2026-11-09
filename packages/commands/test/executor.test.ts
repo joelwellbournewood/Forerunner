@@ -98,7 +98,7 @@ describe("CommandExecutor", () => {
     );
     expect(p.decision).toBe("needs_yes");
     // One question (design §3.9, §5), not the rendered card with "Risk:" and "Say yes".
-    expect(p.readback).toBe("Raise the session budget for PharmaWatch to CHF 20?");
+    expect(p.readback).toBe("Raise the session budget for PharmaWatch to CHF 20.00?");
     expect(p.emailToken).toMatch(/^FR-/);
     const req = await w.store.humanRequest.mustGet(p.pendingId);
     expect(req).toMatchObject({
@@ -109,7 +109,7 @@ describe("CommandExecutor", () => {
     });
     expect(req.change_card).toMatchObject({
       command: "budget.set",
-      newValue: "CHF 20",
+      newValue: "CHF 20.00",
       email_token: p.emailToken,
     });
     expect(w.executor.pending(w.human.id).map((x) => x.id)).toEqual([p.pendingId]);
@@ -119,7 +119,7 @@ describe("CommandExecutor", () => {
       await w.executor.confirmByText(p.pendingId, "yes", { kind: "human", id: w.human.id }),
     );
     expect(r.sentence).toBe(
-      "Raised the session budget for PharmaWatch from CHF 5 to CHF 20. Undo.",
+      "Raised the session budget for PharmaWatch from CHF 5.00 to CHF 20.00. Undo.",
     );
     expect((await w.store.humanRequest.mustGet(p.pendingId)).status).toBe("answered");
     expect(w.executor.pending(w.human.id)).toEqual([]);
@@ -340,7 +340,7 @@ describe("CommandExecutor", () => {
       await w.executor.confirmByText(p.pendingId, "ja", { kind: "human", id: w.human.id }),
     );
     expect(r.sentence).toBe(
-      "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo.",
+      "Raised tonight's session budget for PharmaWatch from CHF 5.00 to CHF 20.00, until 06:00. Undo.",
     );
     const row = await w.store.changeLog.mustGet(r.changeLogId);
     expect(row.expires_at).toBe(TOMORROW_0600);
@@ -368,7 +368,7 @@ describe("CommandExecutor", () => {
     const rows = await w.store.changeLog.list();
     const revert = rows.find((x) => x.id !== r.changeLogId);
     expect(revert?.sentence).toBe(
-      "Reverted tonight's session budget for PharmaWatch to CHF 5; the window until 06:00 ended.",
+      "Reverted tonight's session budget for PharmaWatch to CHF 5.00; the window until 06:00 ended.",
     );
     expect(revert?.undo_state).toBe("irreversible");
     expect(revert?.commands).toEqual([
@@ -452,7 +452,7 @@ describe("CommandExecutor", () => {
       await w.executor.confirmByText(p.pendingId, "yes", { kind: "human", id: w.human.id }),
     );
     expect(r.sentence).toBe(
-      "Switched the active project to Supplement Site. Undo. Raised tonight's session budget for Supplement Site from CHF 5 to CHF 20, until 06:00. Undo.",
+      "Switched the active project to Supplement Site. Undo. Raised tonight's session budget for Supplement Site from CHF 5.00 to CHF 20.00, until 06:00. Undo.",
     );
     const rows = await w.store.changeLog.list();
     expect(rows.length).toBe(1);

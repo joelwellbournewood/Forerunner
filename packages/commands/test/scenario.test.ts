@@ -42,7 +42,7 @@ describe("spec R: from the Android app a simulated user switches project, raises
       await w.executor.confirm(p.pendingId, { kind: "tap", by: { kind: "human", id: w.human.id } }),
     );
     expect(r.sentence).toBe(
-      "Switched the active project to Game. Undo. Raised tonight's session budget for Game from CHF 5 to CHF 15, until 06:00. Undo. Sent a start for Game to your PC (up to CHF 15); it picks it up in seconds.",
+      "Switched the active project to Game. Undo. Raised tonight's session budget for Game from CHF 5.00 to CHF 15.00, until 06:00. Undo. Sent a start for Game to your PC (up to CHF 15); it picks it up in seconds.",
     );
     const rows = await w.store.changeLog.list();
     expect(rows.length).toBe(1);

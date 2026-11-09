@@ -50,8 +50,8 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
     expect(p.decision).toBe("needs_device");
     expect(p.card.command).toBe("undo");
     expect(p.card.impact.risk).toBe("high");
-    expect(p.card.oldValue).toBe("CHF 100");
-    expect(p.card.newValue).toBe("CHF 150");
+    expect(p.card.oldValue).toBe("CHF 100.00");
+    expect(p.card.newValue).toBe("CHF 150.00");
     expect(p.readback).toContain("Confirm in the app on a paired device");
     // The Inbox shows the undo as a high-risk approval with the device's options.
     const request = await w.store.humanRequest.mustGet(p.pendingId);
@@ -72,7 +72,7 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
     const r = done(
       await w.executor.confirmFromDevice(p.pendingId, { deviceId: w.desktop.id, biometric: false }),
     );
-    expect(r.sentence).toBe("Undone: the monthly cap is back to CHF 150.");
+    expect(r.sentence).toBe("Undone: the monthly cap is back to CHF 150.00.");
     const human = await w.store.human.mustGet(w.human.id);
     expect(human.monthly_cap_usd_micro).toBe(0);
     expect((await w.store.changeLog.mustGet(lowered.changeLogId)).undo_state).toBe("undone");
@@ -92,7 +92,7 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
       }),
     );
     const u = done(await w.executor.undo(raised.changeLogId, w.ctx()));
-    expect(u.sentence).toBe("Undone: the session budget for PharmaWatch is back to CHF 5.");
+    expect(u.sentence).toBe("Undone: the session budget for PharmaWatch is back to CHF 5.00.");
     await w.store.close();
   });
 
@@ -110,9 +110,9 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
     const p = pending(await fresh.undo(lowered.changeLogId, w.ctx()));
     expect(p.decision).toBe("needs_device");
     // W15-34: the change's own name and one plain question, never "undo: …".
-    expect(p.card.what).toBe("Lowered the monthly cap from CHF 150 to CHF 100.");
+    expect(p.card.what).toBe("Lowered the monthly cap from CHF 150.00 to CHF 100.00.");
     expect(p.readback).toBe(
-      'Take back "Lowered the monthly cap from CHF 150 to CHF 100"? Confirm in the app on a paired device.',
+      'Take back "Lowered the monthly cap from CHF 150.00 to CHF 100.00"? Confirm in the app on a paired device.',
     );
     done(await fresh.confirmFromDevice(p.pendingId, { deviceId: w.phone.id, biometric: true }));
     expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(0);

@@ -14,7 +14,7 @@ import type { CommandContext, CommandDef, CommandOutcome, CommandScope, Risk } f
 import {
   asObject,
   authorOf,
-  chf,
+  chfExact as chf,
   patchHumanPrefs,
   patchProjectSettings,
   type ResolvedProject,

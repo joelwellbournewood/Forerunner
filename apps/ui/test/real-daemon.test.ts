@@ -12034,7 +12034,7 @@ describe("polish-screens, wave 13", () => {
     });
     expect(zero.status).toBe("done");
     expect(zero.sentence).toBe(
-      "Set the project budget for Zero budget from CHF 3 to no budget: only the monthly cap limits its spending. Undo.",
+      "Set the project budget for Zero budget from CHF 3.00 to no budget: only the monthly cap limits its spending. Undo.",
     );
     const row = (await client.settings()).find(
       (r) => r.key === "project.budget" && r.scopeId === p.id,

@@ -362,7 +362,7 @@ describe("conversation agent over the command registry", () => {
     expect(r2.actions[0]?.undoToken).toBeTruthy();
     expect(r2.reply).toContain("Switched the active project to PharmaWatch. Undo.");
     expect(r2.reply).toContain(
-      "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo.",
+      "Raised tonight's session budget for PharmaWatch from CHF 5.00 to CHF 20.00, until 06:00. Undo.",
     );
     expect(r2.activeProjectId).toBe(w.pharma);
     expect(w.agent.getActiveProject(w.human)).toBe(w.pharma);

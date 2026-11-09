@@ -294,4 +294,34 @@ describe("w15-chat, wave 15", () => {
     });
     expect((await w3.store.task.mustGet(older.id)).status).toBe("ready");
   });
+
+  // W15-44 (wave 13 polish-screens): budget.set's sentences wrote whole francs ("from CHF 3 to
+  // CHF 12") against design §5 rule 7's two decimals.
+  it("budget.set's sentences, read-backs and values show two decimals (W15-44)", async () => {
+    const w = await world();
+    const human = { kind: "human" as const, id: w.human.id };
+    const set = async (amountChf: number) => {
+      const r = await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "project", amountChf, project: "game" },
+        ctx: w.ctx(),
+      });
+      return r.status === "pending"
+        ? done(await w.executor.confirmByText(r.pendingId, "yes", human))
+        : done(r);
+    };
+    await set(3);
+    const card = await w.executor.plan(
+      { name: "budget.set", params: { scope: "project", amountChf: 12, project: "game" } },
+      w.ctx(),
+    );
+    expect(card.ask).toBe("Raise the project budget for Game to CHF 12.00?");
+    expect([card.oldValue, card.newValue]).toEqual(["CHF 3.00", "CHF 12.00"]);
+    expect((await set(12)).sentence).toBe(
+      "Raised the project budget for Game from CHF 3.00 to CHF 12.00. Undo.",
+    );
+    expect((await set(12.5)).sentence).toBe(
+      "Raised the project budget for Game from CHF 12.00 to CHF 12.50. Undo.",
+    );
+  });
 });

@@ -1,3 +1,4 @@
+import { formatAmount } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 import type { HumanRow, JsonObject, JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import { formatChfShort } from "../change-card.ts";
@@ -125,6 +126,15 @@ export function authorOf(ctx: CommandContext): {
 
 export function chf(chfMicro: number): string {
   return formatChfShort(chfMicro);
+}
+
+/**
+ * An amount with its two decimals, "CHF 3.00", "CHF 12.50" (design §5 rule 7): budget.set's
+ * sentences, read-backs and values (W15-44: they read "from CHF 3 to CHF 12"). A session
+ * start's "(up to CHF 5)" keeps `chf`, as the design's own read-back writes it.
+ */
+export function chfExact(chfMicro: number): string {
+  return `CHF ${formatAmount(chfMicro, { decimals: 2 })}`;
 }
 
 export function asObject(v: JsonValue | null | undefined): JsonObject {

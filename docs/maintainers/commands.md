@@ -552,6 +552,10 @@ among them.
   'Two tasks are called "Write the guide": #17 and #18. Say which, for example "Write the guide
   #17".' That word after the title picks one ("Write the guide #17", "Write the notes, the done
   one", "… older"), in the UI's commands and in chat ("redo Write the guide #18").
+- **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
+  "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
+  (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
+  read-back keeps `chf` ("up to CHF 5"), as the design writes it.
 
 ## How to change it
 
