@@ -14,6 +14,7 @@ import {
   ownChangeId,
   type RepoRef,
   resolveGitToken,
+  tryWorktree,
 } from "@forerunner/capabilities";
 import {
   type Clock,
@@ -39,7 +40,12 @@ import { SessionBudget } from "../enforcement/budget.ts";
 import { approvalKeyFor, type EnforcementHooks, type RunContext } from "../enforcement/hooks.ts";
 import type { AuditPort } from "../enforcement/ports.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
-import { MERGE_MODE_WORDS, mergeModeOf } from "./merge-mode.ts";
+import {
+  MERGE_MODE_WORDS,
+  mergeModeOf,
+  OWED_FOLDER_CHANGES,
+  owedFolderSentence,
+} from "./merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports.ts";
 
 /**
@@ -970,6 +976,14 @@ export class ReviewedPrMerge implements MergePort {
       for (const record of waiting) {
         if (this.inFlight.has(record.task_id)) continue;
         try {
+          // TM-5 (leftovers7-tailmerge): only a done task's pull request is merged by the pass.
+          // One redone (or cancelled, failed) while its record waited is being done again: its
+          // old head is not what it will be, and its run holds the task's folder, so the gate's
+          // look at a base that moved would wait for that run and hold the watcher's poll (no
+          // pull request events, copy refreshes or conflict notices) until it ended. The record
+          // stays as it is; the task's next accept moves it to the new head.
+          const task = await this.deps.store.task.get(record.task_id);
+          if (task?.status !== "done") continue;
           const still = await this.stillWaiting(record);
           if (still) {
             out.push(this.outcomeOf(still, "checks_pending"));
@@ -1341,7 +1355,11 @@ export class ReviewedPrMerge implements MergePort {
       // R-lock (leftovers7-merge2): its branch still owes a rebuild (what it builds on was merged,
       // closed or redone, and the rebuild has not run yet): not now. The record stays as it is
       // (no claim, no call); the watcher's sweep rebuilds it and the retry merges what it may.
-      if (record.rebuild_owed_for) return this.outcomeOf(record, "checks_pending");
+      if (record.rebuild_owed_for) {
+        // TM-4: when the rebuild cannot run because the task's folder holds changes nobody
+        // committed, the record says so (the rows read it); the merge still waits.
+        return this.outcomeOf(await this.sayOwedWait(record, worktree), "checks_pending");
+      }
       const claimed = await store.mergeRecord.claim(record);
       // Another process took it between the read and now: that one merges it.
       if (!claimed)
@@ -1852,6 +1870,43 @@ export class ReviewedPrMerge implements MergePort {
     }
   }
 
+  /**
+   * TM-4: a merge that waits for a rebuild its branch owes says why when the task's folder
+   * holds changes nobody committed (the rebuild never sweeps them in, so it waits until the
+   * person puts them away): `OWED_FOLDER_CHANGES` with `owedFolderSentence`. A folder that is
+   * clean again takes the words back; a busy one (a run, a rebuild) leaves them as they are.
+   * Nothing here lets the merge go on: the record still owes the rebuild (R-lock).
+   */
+  private async sayOwedWait(
+    record: MergeRecordRow,
+    worktree: string | null,
+  ): Promise<MergeRecordRow> {
+    if (!worktree) return record;
+    try {
+      const dirty = await tryWorktree(
+        worktree,
+        async () => (await new GitOps({ cwd: worktree }).status()).dirty,
+      );
+      if (dirty === null) return record;
+      if (dirty && record.last_outcome !== OWED_FOLDER_CHANGES)
+        return await this.deps.store.mergeRecord.move(record.id, record.state, {
+          last_outcome: OWED_FOLDER_CHANGES,
+          sentence: owedFolderSentence(record.pr_number),
+        });
+      if (!dirty && record.last_outcome === OWED_FOLDER_CHANGES)
+        return await this.deps.store.mergeRecord.move(record.id, record.state, {
+          last_outcome: "rebuild_owed",
+          sentence: "",
+        });
+    } catch (e) {
+      this.logger.warn("task folder not read for an owed rebuild", {
+        taskId: record.task_id,
+        error: errorMessage(e),
+      });
+    }
+    return record;
+  }
+
   private worktreeOf(task: TaskRow): string | null {
     if (!this.deps.worktreeRoot) return null;
     const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
@@ -1867,13 +1922,6 @@ function hostOf(url: string): string | null {
   }
 }
 
-/**
- * The request for a reviewed PR the merge step left open (U-028). Its card carries
- * `MERGE_LEFT_OPEN_KEY`, so `syncPrAnswers` (`session/pr-answers.ts`, from the daemon's
- * `syncApprovals`) applies the answer: "I merged it" records the merge on the task (its
- * `reason` names the PR and the person; the task stays `done`, which is where an accepted task
- * is), "Leave it open" records that the person keeps it open.
- */
 /**
  * The Update for a merge the app made by itself (R-mergeretry): one line, the pull request and
  * the task's title (design section 5). Polish owns the wording.
@@ -1896,6 +1944,13 @@ export const REBUILD_CARD_OPTIONS = {
   conflict: ["Redo", "Leave it open"],
 } as const;
 
+/**
+ * The request for a reviewed PR the merge step left open (U-028). Its card carries
+ * `MERGE_LEFT_OPEN_KEY`, so `syncPrAnswers` (`session/pr-answers.ts`, from the daemon's
+ * `syncApprovals`) applies the answer: "I merged it" records the merge on the task (its
+ * `reason` names the PR and the person; the task stays `done`, which is where an accepted task
+ * is), "Leave it open" records that the person keeps it open.
+ */
 export async function fileLeftOpenRequest(
   store: Pick<StateStore, "humanRequest">,
   input: {

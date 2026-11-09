@@ -338,3 +338,63 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
   its behaviour with an admin token is checked against GitHub's documentation.
 - **Retry inside the session for longer**: rejected; a session would hold the one-session rule
   for the length of someone's CI, and a sleep or a closed app would still lose the merge.
+
+## Amendment: the leftovers of waves 12 and 14, merge side ('leftovers7-tailmerge', 2026-11-09)
+
+1. **A redo that changes nothing leaves no empty pull request.** "No change" is now read from
+   the branch, not from the run's commit: the task's own files from where its work started
+   (the base, with the work it builds on). A redo from the base (the conflict notice's or a
+   rebuild card's Redo, "Drop the branch and retry from scratch") whose run changes nothing ends
+   as a fresh task with no change does: `failed`, with its failed-task card. The pull request
+   open on the branch is closed, with one comment saying why, instead of receiving the base's
+   head; its branch on the host stays as it was, so nothing the person dropped is deleted, and
+   Try again opens a new pull request from a fresh branch. Closing was chosen over keeping it
+   out of Merge: the pull request then holds only the work the person chose to drop, a failed
+   task's pull request is not listed on the Overview anyway, and "Mark done anyway" would
+   otherwise list it again with that dropped work and a Merge. Before, main's head was
+   force-pushed to the branch, the empty pull request went to review, and the app offered it
+   for Merge (bench, wave 14: it merged with no diff). The same reading keeps a run that
+   continues a paused task's work, and adds nothing more, out of "no changes". It is read again
+   once the branch is brought up to date with the base, before the push, and before the push of
+   a branch the person resolved ("I resolved it"): a branch whose change the base already has
+   (or whose resolution kept the base's side only) is not pushed, its pull request is closed
+   the same way, and the task fails in one sentence ("#4 no longer changes anything on main, so
+   it was closed."). The review of this amendment found the base's head still force-pushed to
+   an open pull request after a Tasks-tab Redo of a task whose change had reached main, the
+   critic accepting it and the Overview offering the empty pull request for Merge.
+2. **A person's resolution in the task's folder is used, never aborted.** "I resolved it"
+   given while the person's rebase or merge is still under way in the task's folder (the
+   conflict card's steps) has that step finished with their resolution (resolved files staged,
+   a commit the resolution emptied skipped), and the folder's branch is taken over the host's
+   when the person resolved it there. A file that still holds conflict markers brings the card
+   back with the step left as it was. Before, the run's start-up clean-up for a crash's
+   leftovers aborted the step and the same conflict came back as a second card.
+3. **A paused redo keeps its work.** The drop (or a card's Redo) stays in force until a run
+   reaches review, as before, so the old conflicting branch is never brought back; but a run
+   after the drop that pauses (a budget, a question) marks its work in progress as made from
+   the base, and the next run continues that work instead of starting from the base again. Its
+   push replaces the host's branch, so the pull request never carries the dropped commits.
+4. **The retry pass merges only a done task's pull request.** A task redone (or cancelled, or
+   failed) while its record waited for its checks is skipped by the watcher's retry pass; its
+   record stays as it is until the task's next accept moves it to the new head. Before, the
+   pass merged the old reviewed head while the task was being done again, or, when main had
+   moved, waited for the task folder's lock that the redo's run held, which held the watcher's
+   whole poll (no pull request events, copy refreshes or conflict notices) until the run ended.
+5. **A merge that waits for the task folder's changes says why.** A rebuild never sweeps in
+   changes nobody committed, so a task folder holding some keeps its rebuild owed and the merge
+   waits (R-lock is unchanged). The merge step now writes that wait on the record when it meets
+   it, and the Overview's row and the Tasks row say it in one sentence with the ways out (take
+   the changes out of the folder, or redo the task), instead of "Merging…" with no reason; the
+   folder's warning is logged once per such state instead of at every poll. The sentence offers
+   only ways out the code keeps: taken out, the next check rebuilds the branch and the record
+   says what came of it; a redo sets the changes aside and does the task again, and its record
+   waits for the person's Merge again. It does not offer "commit them" (its first wording did,
+   and the review of this amendment showed the commit dropped): the rebuild starts from the
+   branch as GitHub has it, so a commit made in the folder would be on no branch afterwards.
+6. **A conflict that goes away says again what was said before.** The conflict notice keeps what
+   the record said before it (its outcome and sentence, and the head it was given on) on its
+   card, and the words of a card it took over. When GitHub says the pull request merges cleanly
+   again on that same head, the record, the row and the card say it again, with the Merge they
+   offered: a rebuild's warning ("#8 was rebuilt without #4 ..."), or "builds on #X, which was
+   not merged". Before, the sentence was emptied, and a rebuilt record (whose head is not the
+   reviewed commit) read "changed after the review" with no Merge.

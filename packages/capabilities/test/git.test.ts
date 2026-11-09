@@ -721,4 +721,84 @@ describe("GitOps", { timeout: 120_000 }, () => {
     expect(readFileSync(join(dir, "README.md"), "utf8")).toBe("# seed\n");
     expect((await copy.status()).files).toEqual([]);
   });
+
+  it("untranslated: git runs in the C locale with no language list for a caller that reads its words; other calls keep the process's language (leftovers7-tailmerge, TM-6)", async () => {
+    const calls: NodeJS.ProcessEnv[] = [];
+    const runner = async (_argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> => {
+      calls.push(opts.env ?? {});
+      return {
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        timedOut: false,
+        durationMs: 1,
+      };
+    };
+    const was = { LANGUAGE: process.env.LANGUAGE, LC_ALL: process.env.LC_ALL };
+    process.env.LANGUAGE = "de";
+    process.env.LC_ALL = "de_DE.UTF-8";
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "fr-wt-"));
+      mkdirSync(join(dir, ".git"));
+      await new GitOps({ cwd: dir, identity, runner, untranslated: true }).status();
+      await new GitOps({ cwd: dir, identity, runner }).status();
+    } finally {
+      for (const [k, v] of Object.entries(was))
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+    }
+    const [plain, own] = [calls[0], calls[1]];
+    expect([plain?.LC_ALL, plain?.LANGUAGE]).toEqual(["C", ""]);
+    expect([own?.LC_ALL, own?.LANGUAGE]).toEqual(["de_DE.UTF-8", "de"]);
+  });
+
+  it("finishUnfinished ends a merge the person resolved, skips a rebase commit the resolution emptied, and leaves one with markers under way (leftovers7-tailmerge, TM-2)", async () => {
+    const { url } = await bareRepo();
+    const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
+    const dir = join(root, "a");
+    const a = new GitOps({ cwd: dir, identity });
+    await a.clone(url);
+    const sh = (args: string[]) =>
+      run(["git", "-C", dir, "-c", "user.name=T", "-c", "user.email=t@x.test", ...args], {
+        allowFailure: true,
+      });
+    expect(await a.finishUnfinished()).toEqual({ step: null, ok: true, conflicts: [] });
+    // Two branches change the same line.
+    await a.createBranch("side");
+    writeFileSync(join(dir, "README.md"), "# side\n");
+    await a.commitAll("side");
+    await a.checkout("main");
+    writeFileSync(join(dir, "README.md"), "# main\n");
+    await a.commitAll("main");
+    // A merge with the conflict resolved but not committed: finished with git's message.
+    await sh(["merge", "side"]);
+    writeFileSync(join(dir, "README.md"), "# both\n");
+    expect(await a.finishUnfinished()).toEqual({ step: "merge", ok: true, conflicts: [] });
+    expect((await a.status()).dirty).toBe(false);
+    expect((await sh(["log", "-1", "--format=%P"])).stdout.trim().split(" ")).toHaveLength(2);
+    // A rebase whose only commit the resolution makes empty (main's version kept): skipped.
+    const seed = (await sh(["rev-list", "--max-parents=0", "main"])).stdout.trim();
+    await a.createBranch("again", seed);
+    writeFileSync(join(dir, "README.md"), "# again\n");
+    await a.commitAll("again");
+    await sh(["rebase", "main"]);
+    expect((await sh(["status"])).stdout).toContain("rebase in progress");
+    writeFileSync(join(dir, "README.md"), "# both\n");
+    await sh(["add", "README.md"]);
+    expect(await a.finishUnfinished()).toEqual({ step: "rebase", ok: true, conflicts: [] });
+    expect(await a.headSha()).toBe((await sh(["rev-parse", "main"])).stdout.trim());
+    // Markers still in the file: not resolved, the rebase stays under way.
+    await a.createBranch("third", seed);
+    writeFileSync(join(dir, "README.md"), "# third\n");
+    await a.commitAll("third");
+    await sh(["rebase", "main"]);
+    expect(await a.finishUnfinished()).toEqual({
+      step: "rebase",
+      ok: false,
+      conflicts: ["README.md"],
+    });
+    expect((await sh(["status"])).stdout).toContain("rebase in progress");
+  });
 });

@@ -344,7 +344,15 @@ never repeats work that is already in the default branch:
   changes too.").
 - While #8's task folder is busy (a run, a merge under way, a change nobody committed), its
   rebuild waits and is tried again at every check (about a minute), also after Forerunner
-  restarts; until it ran, nothing merges #8, not even your Merge (the row waits). In a chain
+  restarts; until it ran, nothing merges #8, not even your Merge (the row waits). When what
+  holds it is a change nobody committed in the task's folder, the row says so: "#8 waits for
+  changes left in its task's folder: take them out or redo the task." (its task row: "Accepted ·
+  merge waits for you"). Take them out (move a file you want to keep somewhere else, put a
+  changed file back as it was): the rebuild runs at the next check and the row then says what
+  came of it (rebuilt without a closed pull request, it waits for your Merge again). Or press
+  **Redo**: the task is done again without them, reviewed again, and waits for your Merge. Do
+  not commit them in that folder: the rebuild starts from GitHub's copy of the branch, so the
+  commit would be dropped. In a chain
   (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt.
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a
@@ -354,17 +362,36 @@ card ('"Add the page" conflicts with main') offers **Redo** (the task is done ag
 **Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
 the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
 If the conflict goes away without a change to the pull request (the other change is taken out of
-main again), the row offers Merge again and the card closes. If you resolve it on GitHub with a
+main again), the row and its card say again what they said before (a rebuild's warning, for
+example) and offer Merge again; a card filed only for the conflict closes. If you resolve it on GitHub with a
 commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
 after the review: look at the new commits, then merge it yourself or send it back." and offers no
 Merge, and the card says the same; merge it on GitHub, or press **Redo**.
+
+**A conflict the agent cannot resolve while it works.** Its card offers **I resolved it**, **Drop
+the branch and retry from scratch** and **Cancel the task**. If you resolve it in the task's
+folder the card names, you may answer **I resolved it** before git's last step (the rebase's
+continue, or the merge's commit): Forerunner finishes that step with your resolution and opens or
+updates the pull request. A file that still holds conflict markers brings the card back, with
+your rebase or merge left as it was. A resolution that keeps only main's side leaves nothing to
+merge: the task fails ("#8 no longer changes anything on main, so it was closed.") and #8 is
+closed with its branch kept, instead of going to review empty.
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
 the way; the old pull request stays as it was. **Redo** on a rebuild's card (either card above)
 does the task again from the default branch: its next run starts the branch afresh from there
 (as "Drop the branch and retry from scratch" does), and #8 gets the new work, with only the
-task's own commit on top of the default branch.
+task's own commit on top of the default branch. If that redo pauses before its review (a budget,
+a question), its next run continues the work done since the redo, never the old branch. If that
+redo changes nothing (the default
+branch already has what the task asks for), the task fails as any task with no change does
+("Failed: Redone from main, it changed nothing, so #8 was closed.", with **Try again**, **Mark
+done anyway** and **Cancel task** on its card): #8 is closed on GitHub with a comment saying why,
+its branch is kept, and nothing empty is offered for Merge. The same holds for any redo or
+rework whose change the default branch already has by the time it is pushed (someone made the
+same change there): "Failed: #8 no longer changes anything on main, so it was closed."; press
+**Mark done anyway** if that is what you wanted.
 
 **Merging: you press Merge, or Forerunner merges after review.** Each repository project has a
 setting **Who merges accepted work** (Settings, Other settings; the Overview's line "Merging: you
@@ -446,7 +473,9 @@ and `node_modules` out of it. To give
 it a GitHub repository, click **Create a repository** on the project page: it shows the name
 (from the project's), your GitHub account (or an organization you name) and private, and **Yes**
 creates it with your GitHub token, puts the project's folder in it as the first commit and links
-it; from then on tasks work on branches with pull requests. "create a repository" in Chat does
+it; from then on tasks work on branches with pull requests. Closing the dialog without **Yes**
+(× or Escape) answers its card **No**, so nothing is left waiting in the Inbox. "create a
+repository" in Chat does
 the same. When a session plans code work for such a project, your agent asks in the Inbox
 (**Create the repository** or **Not now**); "Not now" is not asked again. It asks at every
 autonomy level, Autopilot too, and so does a "create a repository" the agent decides on in

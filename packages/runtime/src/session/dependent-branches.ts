@@ -17,6 +17,7 @@ import {
   REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
+import { OWED_FOLDER_CHANGES } from "../loop/merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest } from "../loop/ports.ts";
 import type { WatchedPullRequest } from "./githost-watcher.ts";
 
@@ -281,12 +282,19 @@ export class DependentBranches {
     const ref = { number: info.number, url: info.htmlUrl || pr.url };
     if (info.mergeable === true) {
       if (record.state !== "left_to_you" || record.last_outcome !== "conflict") return false;
+      // TM-7 (leftovers7-tailmerge): what the record said before the notice, and the head it
+      // was given on (kept on the notice's card, `before_conflict`).
+      const before = await this.beforeConflict(task.id);
+      const noticed = before?.head ?? record.reviewed_head_sha;
       // Merge is offered again only for the version the review read (main changed back, the
       // conflicting merge taken out). A head that moved since (the person's own resolution on
       // GitHub, as the notice asks) is not that version: the merge step would refuse it, so the
       // record says so as the merge step does (`head_moved`, no Merge on the Overview) and the
-      // open conflict card takes those words (the R-conflict review's fix-up).
-      if (record.reviewed_head_sha && info.head.sha !== record.reviewed_head_sha) {
+      // open conflict card takes those words (the R-conflict review's fix-up). The head is the
+      // one the notice was given on: a rebuilt branch's is not the reviewed one, and its record
+      // said so already (TM-7: before, it read "changed after the review" once the conflict
+      // went away on main).
+      if (noticed && info.head.sha !== noticed) {
         const sentence = headMovedSentence(info.number);
         await store.mergeRecord.move(record.id, "left_to_you", {
           sentence,
@@ -299,11 +307,15 @@ export class DependentBranches {
         });
         return true;
       }
+      // TM-7: the record says again what it said before the notice (a rebuild's warning, "builds
+      // on #X, which was not merged: merge #X first"), with the Merge it offered; before, the
+      // sentence was emptied. With nothing kept, it says nothing more, as before.
+      const said = before?.lastOutcome ? before : null;
       await store.mergeRecord.move(record.id, "left_to_you", {
-        sentence: "",
-        last_outcome: "conflict_resolved",
+        sentence: said ? said.sentence : "",
+        last_outcome: said ? said.lastOutcome : "conflict_resolved",
       });
-      await this.closeConflictCard(task);
+      if (!(await this.restoreCard(task, before))) await this.closeConflictCard(task);
       this.logger.info("pull request merges cleanly again", { taskId: task.id, pr: info.number });
       return true;
     }
@@ -327,33 +339,58 @@ export class DependentBranches {
       pr: info.number,
       files,
     });
-    await this.conflictCard(task, moved, ref, sentence, info.base.ref);
+    await this.conflictCard(task, moved, ref, sentence, info.base.ref, {
+      lastOutcome: record.last_outcome,
+      sentence: record.sentence,
+      head: info.head.sha,
+    });
     return true;
   }
 
-  /** One card for the conflict (an open card for the task's merge takes the new words). */
+  /**
+   * One card for the conflict (an open card for the task's merge takes the new words). The card
+   * keeps what the record (and an open card) said before (`before_conflict`, TM-7), so they can
+   * say it again once the conflict goes away with the same head.
+   */
   private async conflictCard(
     task: TaskRow,
     record: MergeRecordRow,
     pr: { number: number; url: string },
     sentence: string,
     base: string,
+    before: { lastOutcome: string | null; sentence: string; head: string },
   ): Promise<void> {
     const { store } = this.deps;
     const options = [...REBUILD_CARD_OPTIONS.conflict];
     const open = await this.openMergeCard(task.id);
+    const kept: JsonObject = {
+      last_outcome: before.lastOutcome,
+      sentence: before.sentence,
+      head: before.head,
+    };
     if (open) {
+      const card = (open.change_card ?? {}) as JsonObject;
       await store.humanRequest.patch(open.id, {
         why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
         options,
         // Its Details follow what it says now (a card that said a head moved, then conflicts).
         steps: leftOpenSteps("conflict"),
         change_card: {
-          ...((open.change_card ?? {}) as JsonObject),
+          ...card,
           sentence,
           status: "conflict",
           notice: "conflict",
           base,
+          before_conflict: {
+            ...kept,
+            card: {
+              why: open.why,
+              options: [...open.options],
+              steps: [...open.steps],
+              status: typeof card.status === "string" ? card.status : null,
+              sentence: typeof card.sentence === "string" ? card.sentence : null,
+            },
+          },
         },
       });
       return;
@@ -373,9 +410,72 @@ export class DependentBranches {
         reason: `PR left open for you: ${sentence}`,
         sentence,
       },
-      card: { notice: "conflict", base },
+      card: { notice: "conflict", base, before_conflict: kept },
       options,
     });
+  }
+
+  /**
+   * TM-7: what the record said before the task's last conflict notice and the head it was given
+   * on, from the notice's card (open or not, the newest that kept it); null when none kept it.
+   */
+  private async beforeConflict(taskId: string): Promise<{
+    lastOutcome: string | null;
+    sentence: string;
+    head: string | null;
+    card: JsonObject | null;
+  } | null> {
+    const rows = await this.deps.store.humanRequest.list({ task_id: taskId } as never, {
+      orderBy: [
+        { column: "updated_at", direction: "desc" },
+        { column: "id", direction: "desc" },
+      ],
+      limit: 50,
+    });
+    for (const row of rows) {
+      const card = (row.change_card ?? {}) as JsonObject;
+      const kept = card.before_conflict as JsonObject | undefined;
+      if (card.key !== MERGE_LEFT_OPEN_KEY || !kept || typeof kept !== "object") continue;
+      return {
+        lastOutcome: typeof kept.last_outcome === "string" ? kept.last_outcome : null,
+        sentence: typeof kept.sentence === "string" ? kept.sentence : "",
+        head: typeof kept.head === "string" ? kept.head : null,
+        card: kept.card && typeof kept.card === "object" ? (kept.card as JsonObject) : null,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * TM-7: the open card the conflict notice took over says again what it said before (its
+   * words, Details, options), with no notice. False when there is none to restore (the notice
+   * filed its own card, which `closeConflictCard` then closes).
+   */
+  private async restoreCard(
+    task: TaskRow,
+    before: Awaited<ReturnType<DependentBranches["beforeConflict"]>>,
+  ): Promise<boolean> {
+    const earlier = before?.card;
+    const open = await this.openMergeCard(task.id);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (!open || !earlier || card.notice !== "conflict") return false;
+    const strings = (v: unknown) =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    const { before_conflict: _kept, ...rest } = card;
+    await this.deps.store.humanRequest.patch(open.id, {
+      why: typeof earlier.why === "string" ? earlier.why : open.why,
+      options: strings(earlier.options),
+      steps: strings(earlier.steps),
+      change_card: {
+        ...rest,
+        notice: null,
+        base: null,
+        status: typeof earlier.status === "string" ? earlier.status : null,
+        sentence:
+          typeof earlier.sentence === "string" ? earlier.sentence : (before?.sentence ?? ""),
+      },
+    });
+    return true;
   }
 
   /**
@@ -499,8 +599,17 @@ export class DependentBranches {
       }
       this.owed.delete(o.taskId);
       if (!record?.rebuild_owed_for) return;
-      if (o.result !== "unchanged" || record.rebuild_owed_for === dependencyId)
+      if (o.result !== "unchanged" || record.rebuild_owed_for === dependencyId) {
         await store.mergeRecord.oweRebuild(o.taskId, null);
+        // TM-4: the wait for the folder's changes is over with the owed rebuild; a merge that
+        // waited goes on at the next retry and says what came of it.
+        const now = await store.mergeRecord.forTask(o.taskId);
+        if (now?.last_outcome === OWED_FOLDER_CHANGES)
+          await store.mergeRecord.move(now.id, now.state, {
+            last_outcome: "rebuild_owed",
+            sentence: "",
+          });
+      }
     } catch (e) {
       this.logger.warn("owed rebuild not recorded", { taskId: o.taskId, error: errorMessage(e) });
     }

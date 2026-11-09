@@ -875,3 +875,66 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     await w.close();
   });
 });
+
+describe("leftovers7-tailmerge, wave 13", () => {
+  /** A language git's messages are translated into here, or null when none is installed. */
+  async function translatedLanguage(): Promise<Record<string, string> | null> {
+    const dir = mkdtempSync(join(tmpdir(), "fr-lang-"));
+    const said = async (env: Record<string, string>) =>
+      (
+        await run(["git", "-C", dir, "rev-parse", "--verify", "no-such-ref"], {
+          allowFailure: true,
+          env: { ...process.env, ...env },
+        })
+      ).stderr;
+    await run(["git", "init", "-q", dir]);
+    try {
+      const english = await said({ LC_ALL: "C", LANGUAGE: "" });
+      for (const lang of ["de_DE.UTF-8", "fr_FR.UTF-8", "es_ES.UTF-8"]) {
+        const env = { LANGUAGE: lang.slice(0, 2), LC_ALL: lang, LANG: lang };
+        if ((await said(env)) !== english) return env;
+      }
+      return null;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("a copy that stops following says which file, also when the person's git speaks another language (TM-6)", async (ctx) => {
+    const language = await translatedLanguage();
+    if (!language) {
+      // GitOps' own env is tested in capabilities' git.test.ts ('untranslated'); here git would
+      // print English whatever the language asked, so the case proves nothing.
+      ctx.skip("git's translations (or the de, fr, es locales) are not installed on this machine");
+      return;
+    }
+    const was = Object.fromEntries(Object.keys(language).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, language);
+    const w = await loopWorld();
+    try {
+      const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+      const { root, bare } = await bareRepo();
+      const { docs } = await docsFor(w, root, bare);
+      await docs.refreshCopy(project);
+      const clone = join(root, "worktrees", w.project);
+      const seed = new GitOps({ cwd: join(root, "seed"), identity });
+      writeFileSync(join(clone, "README.md"), "# my own notes\n");
+      writeFileSync(join(root, "seed", "README.md"), "# sample, merged\n");
+      await seed.commitAll("merged README.md");
+      await seed.push("main");
+      await w.clock.advance(60_000);
+      await docs.refreshCopy(project, { head: await seed.headSha(), base: "main" });
+      // Before: git's message came in the person's language, `copyStoppedOf` read "other" and
+      // the Files line said "Git could not bring it to what is merged" with no file.
+      expect(docs.copyView(project)?.stopped).toMatchObject({
+        reason: "changed",
+        files: ["README.md"],
+      });
+    } finally {
+      for (const [k, v] of Object.entries(was))
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      await w.close();
+    }
+  });
+});

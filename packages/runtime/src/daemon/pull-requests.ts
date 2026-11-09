@@ -15,6 +15,7 @@ import {
   type MergeMode,
   mergeModeOf,
   mergesAfterSentence,
+  owedMergeWait,
 } from "../loop/merge-mode.ts";
 import type { TaskTakeOut } from "../loop/take-out.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
@@ -167,6 +168,20 @@ function rowSentence(record: MergeRecordRow): string | null {
   return s;
 }
 
+/**
+ * TM-4 (leftovers7-tailmerge): a merge that waits for the changes left in its task's folder (the
+ * rebuild its branch owes cannot run until they are put away, `owedMergeWait`) is said on its row
+ * with the way out, and offers no click: before, it read "Merging…" with no reason. It reads as
+ * a wait that ends without a click (`waiting_checks`), so the Overview reads the list again when
+ * the project changes (the merge, once the folder is clean).
+ */
+function owedWaitOf(
+  record: MergeRecordRow,
+): Omit<NonNullable<ProjectPullRequestView["merge"]>, "first"> | null {
+  const sentence = owedMergeWait(record);
+  return sentence ? { state: "waiting_checks", canMerge: false, sentence } : null;
+}
+
 /** What Merge does for a task's pull request, from its merge record (ADR 0111). */
 function mergeOfRecord(
   record: MergeRecordRow | undefined,
@@ -175,6 +190,8 @@ function mergeOfRecord(
 ): NonNullable<ProjectPullRequestView["merge"]> {
   const none = { first: [] as number[] };
   if (!record) return { state: "ready", canMerge: true, sentence: null, ...none };
+  const waits = owedWaitOf(record);
+  if (waits) return { ...waits, ...none };
   switch (record.state) {
     case "queued":
       // The person's Merge, waiting its turn; or an accept whose merge has not run yet, which

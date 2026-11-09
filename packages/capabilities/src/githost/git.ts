@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
   errorMessage,
@@ -127,6 +127,18 @@ export function tokenAuthHeader(token: string): string {
   return `AUTHORIZATION: basic ${basicCredential(token)}`;
 }
 
+/**
+ * Whether a file still holds git's conflict markers (a line that starts "<<<<<<< " or
+ * ">>>>>>> "): a conflict nobody resolved yet. A file that is gone or unreadable holds none.
+ */
+function holdsConflictMarkers(file: string): boolean {
+  try {
+    return /^(?:<{7}|>{7})(?: |$)/m.test(readFileSync(file, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 function basicCredential(token: string): string {
   return Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
 }
@@ -150,6 +162,14 @@ export interface GitOpsOptions {
    * the remote's default branch does not is refused with one sentence (`neverPushedWords`).
    */
   neverPush?: readonly string[];
+  /**
+   * TM-6 (leftovers7-tailmerge): git's own messages untranslated (`LC_ALL=C`, `LANGUAGE`
+   * empty) for a caller that reads them: the copy's "local changes ... would be overwritten"
+   * (`copyStoppedOf`), a push's refusal (`pushFailedWords`), the remote's credential prompt
+   * (`must`). Without it, git speaks the process's language, as before; a person's git in
+   * another language then gave the Files line without the file names.
+   */
+  untranslated?: boolean;
 }
 
 /**
@@ -181,6 +201,14 @@ const COMMIT_MAKERS = new Set([
   "am",
   "stash",
 ]);
+/**
+ * TM-6: the environment that keeps git's messages untranslated (`GitOpsOptions.untranslated`):
+ * the C locale for messages, and no language list (GNU gettext reads `LANGUAGE` first).
+ */
+export const UNTRANSLATED_ENV: Readonly<Record<string, string>> = {
+  LC_ALL: "C",
+  LANGUAGE: "",
+};
 /** The name git commits under when the person never set one (the address is `EMAIL`'s). */
 const FALLBACK_NAME = "Forerunner";
 
@@ -246,6 +274,8 @@ export class GitOps {
       GIT_ASKPASS: "",
       SSH_ASKPASS: "",
       GCM_INTERACTIVE: "never",
+      // TM-6: messages a caller parses are in git's own words, whatever the person's language.
+      ...(this.opts.untranslated ? UNTRANSLATED_ENV : {}),
     };
     const scope =
       this.opts.auth?.token && remoteUrl ? tokenScope(remoteUrl, this.opts.auth.origin) : null;
@@ -490,6 +520,64 @@ export class GitOps {
       if ((await this.git(abort)).code === 0) ended.push(abort[0] ?? marker);
     }
     return ended;
+  }
+
+  /** Whether git's step `marker` (`rebase-merge`, `MERGE_HEAD`, ...) is under way here. */
+  private async underWay(marker: string): Promise<boolean> {
+    const at = (await this.git(["rev-parse", "--git-path", marker])).stdout.trim();
+    return !!at && existsSync(isAbsolute(at) ? at : join(this.opts.cwd, at));
+  }
+
+  /**
+   * TM-2 (leftovers7-tailmerge): finishes a rebase or a merge a person left under way in this
+   * folder after resolving its conflicts (a conflict card's steps, answered "I resolved it"
+   * before `git rebase --continue` or the merge's commit). A file still holding conflict
+   * markers is not resolved: the step stays under way and `conflicts` names it. A resolved file
+   * not staged yet is staged; a commit the resolution left empty is skipped; a rebase that stops
+   * at a later commit's conflict is read the same way. `step` is null when nothing was under way.
+   * Git's messages are never parsed: the markers, the index and git's own step files decide.
+   */
+  async finishUnfinished(): Promise<{
+    step: "rebase" | "merge" | null;
+    ok: boolean;
+    conflicts: string[];
+  }> {
+    const rebasing = async () =>
+      (await this.underWay("rebase-merge")) || (await this.underWay("rebase-apply"));
+    const step = (await rebasing())
+      ? "rebase"
+      : (await this.underWay("MERGE_HEAD"))
+        ? "merge"
+        : null;
+    if (!step) return { step, ok: true, conflicts: [] };
+    // No editor ever opens: the commit message is the one git prepared.
+    const env = { GIT_EDITOR: "true" };
+    for (let i = 0; i < 500; i++) {
+      const unmerged = (await this.git(["diff", "--name-only", "--diff-filter=U"])).stdout
+        .split(/\r?\n/)
+        .filter(Boolean);
+      const marked = unmerged.filter((f) => holdsConflictMarkers(join(this.opts.cwd, f)));
+      if (marked.length) return { step, ok: false, conflicts: marked };
+      if (unmerged.length) this.must(await this.git(["add", "-A", "--", ...unmerged]), "add");
+      if (step === "merge") {
+        this.must(await this.git(["commit", "--no-edit"], { env }), "commit");
+        return { step, ok: true, conflicts: [] };
+      }
+      const r = await this.git(["rebase", "--continue"], { env });
+      if (!(await rebasing())) {
+        this.must(r, "rebase --continue");
+        return { step, ok: true, conflicts: [] };
+      }
+      if (r.code === 0) continue;
+      // Stopped again: a later commit's conflict (read at the next turn), or a commit the
+      // resolution left with nothing to commit, which is skipped.
+      const left = (await this.git(["diff", "--name-only", "--diff-filter=U"])).stdout.trim();
+      const staged = (await this.git(["diff", "--cached", "--quiet"])).code !== 0;
+      if (!left && !staged)
+        this.must(await this.git(["rebase", "--skip"], { env }), "rebase --skip");
+      else if (!left) this.must(r, "rebase --continue");
+    }
+    return { step, ok: false, conflicts: [] };
   }
 
   async status(): Promise<{ dirty: boolean; files: string[] }> {

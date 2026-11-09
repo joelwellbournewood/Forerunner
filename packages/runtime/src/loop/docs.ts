@@ -987,7 +987,10 @@ export class ProjectDocs implements ProjectDocsPort {
 
   /**
    * The git of the copy, with the token scoped to the repository's origin (ADR 0069) and the
-   * push guard on (merged-copy): no docs write ever uploads Local only or a try folder.
+   * push guard on (merged-copy): no docs write ever uploads Local only or a try folder. Its
+   * messages are untranslated (TM-6): `copyStoppedOf` reads git's words for why the copy
+   * stopped following, and a person's git in another language left the Files line without
+   * the file names.
    */
   private gitOf(dir: string, auth: GitAuth | undefined): GitOps {
     return new GitOps({
@@ -995,6 +998,7 @@ export class ProjectDocs implements ProjectDocsPort {
       ...(auth ? { auth } : {}),
       ...(this.deps.identity ? { identity: this.deps.identity } : {}),
       neverPush: NEVER_PUSHED,
+      untranslated: true,
     });
   }
 

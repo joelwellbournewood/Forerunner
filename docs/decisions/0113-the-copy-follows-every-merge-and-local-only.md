@@ -274,3 +274,13 @@ Windows run 42525106539 failed on exactly this).
   compare byte for byte); `* -text` in `.git/info/attributes` (it would override the
   repository's own `.gitattributes`, which Forerunner's git honours); treating a CRLF-only
   difference as no change (the copy would overwrite what the person's editor saved).
+
+## Amendment: git's words in any language ('leftovers7-tailmerge', 2026-11-09)
+
+Why the copy stopped following (R-copystuck) is read from git's own message, and so is a push's
+refusal. Git speaks the person's language, so on a git that prints in German the Files line fell
+back to "Git could not bring it to what is merged" with no file. The copy's git, the task
+branches' git and the empty repository's first push now run with git's messages untranslated
+(`LC_ALL=C`, an empty `LANGUAGE`; `GitOpsOptions.untranslated`); nothing else about them changes,
+and every other git call keeps the process's language. The stopped state is a file in the copy's
+`.git` and is tested across a restart of the composed runtime.

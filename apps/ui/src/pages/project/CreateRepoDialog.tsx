@@ -102,6 +102,12 @@ export function CreateRepoDialog({
   };
 
   const finish = () => {
+    // TM-8 (leftovers7-tailmerge): Preview filed the card in the Inbox; closing the dialog
+    // without Yes (×, Escape, Close) answers it No, as the dialog's own No does, so nothing is
+    // left open there. Before, the card stayed open for a repository the person walked away
+    // from. While Yes is being sent, the answer it gets stands.
+    if (result?.status === "pending" && result.pendingId && !busy)
+      void client.confirmCommand(result.pendingId, { answer: "no" }).catch(() => undefined);
     setResult(null);
     setError(null);
     onClose();

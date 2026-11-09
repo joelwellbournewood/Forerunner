@@ -2964,7 +2964,14 @@ on that commit, not in conflict) the attempt is counted (`attempts + 1`, so a da
 reaches `MAX_MERGE_ATTEMPTS` and the person's card) and nothing else happens: no token, no audit
 row. Anything else, and the day's last attempt, takes the gated call as before. Before, every
 pass made the full call for every waiting record, every minute (a token, an audit row and about
-five GitHub calls each). **A merge the app made by itself is an Update**: one Inbox message
+five GitHub calls each). **The retry pass merges only a done task's pull request** (TM-5,
+leftovers7-tailmerge): a record whose task is no longer `done` (redone, cancelled, failed while
+its merge waited) is skipped before any read and stays as it is; the task's next accept moves it
+to the new head (`MergeRecordRepo.pin`). Before, the pass merged the old head while the task was
+being done again (main unmoved), or, with main moved, its gate's look at the base waited for the
+task folder's lock, which the redo's run holds for the whole run, and so held the watcher's poll
+(no pull request events, copy refreshes or conflict notices) until the run ended. **A merge the
+app made by itself is an Update**: one Inbox message
 (`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
 for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
 says it) and the person's own click (answered where they pressed it) add none; the Update is
@@ -3260,7 +3267,26 @@ that owes one keeps it when a second dependency changes). `sweep` reads the owed
 poll, also the first after a restart (A merged and known by then, so nothing else would catch B),
 and clears those whose task is no longer done; an accept (`pin`) clears the mark (a new review reads the branch as it is). A task without a
 record (accepted before ADR 0111) keeps the old in-memory fallback. While a record owes a rebuild,
-nothing merges its pull request (`ReviewedPrMerge`, below). **The conflict notice** (R-conflict):
+nothing merges its pull request (`ReviewedPrMerge`, below). **A merge that waits for the task
+folder's changes says so** (TM-4, leftovers7-tailmerge): a rebuild never sweeps in changes nobody
+committed, so a folder holding some keeps the rebuild owed; the PR executor logs that once per
+such state (`heldByChanges`), not at every poll. When a merge reaches the owed record (the
+person's Merge, the automatic mode's), `ReviewedPrMerge.sayOwedWait` looks at the folder (no
+wait for its lock: a busy one changes nothing) and writes `last_outcome` `owed_folder_changes`
+(`OWED_FOLDER_CHANGES`, `owedFolderSentence` in `loop/merge-mode.ts`: "#8 waits for changes left
+in its task's folder: take them out or redo the task.") on the record, keeping its state; a clean
+folder takes the words back, and so does `settleOwed` once the rebuild ran. The sentence offers
+only ways out the code keeps (the review of wave 13): the changes taken out of the folder (the
+next check rebuilds the branch and the record says what came of it: a rebuild without a closed
+dependency waits for the person again), or a redo (its run sets them aside, as a cut-short
+run's, and does the task again; the critic reviews it and the record waits for the person's
+Merge again). Never "commit them": the rebuild starts from the branch as GitHub has it
+(`rebuildIn`'s `createBranch(branch, origin/<branch>)`), so such a commit would end on no branch.
+`owedMergeWait(record)` reads it for the Overview's row (`pull-requests.ts` `owedWaitOf`:
+`waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
+and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the
+sentence). Before, the row read "Merging…" and the Tasks row "Accepted · merging" with no
+reason. The merge still waits (R-lock holds). **The conflict notice** (R-conflict):
 `pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
 poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
 the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no
@@ -3272,9 +3298,16 @@ options Redo and Leave it open, `REBUILD_CARD_OPTIONS.conflict`; an open merge c
 words). `last_outcome` keeps it from being said twice, across polls and restarts; a record that
 owes a rebuild, or whose rebuild conflicted, is not noticed (that comes first). Once GitHub says
 it merges cleanly again, and its head is still the reviewed commit (main changed back, the
-conflicting change taken out), the record goes back to `left_to_you` with no sentence
-(`conflict_resolved`), the Overview offers Merge again and an open conflict card is withdrawn. A
-head that moved since (the person resolved it on GitHub with a commit of their own) is not the
+conflicting change taken out), the record goes back to `left_to_you` and says again what it
+said before the notice (TM-7, leftovers7-tailmerge: the notice's card keeps it,
+`change_card.before_conflict` with the record's `last_outcome`, `sentence` and the head the notice
+was given on, and, when the notice took over an open card, that card's words, Details, options
+and status; `beforeConflict`, `restoreCard`), or with no sentence (`conflict_resolved`) when
+nothing was kept; the Overview offers what it offered then (Merge, with a rebuild's warning), an
+open card the notice took over says again what it said, and a card the notice filed is withdrawn.
+"The head" is the one the notice was given on, not the reviewed one: a rebuilt branch's head is
+not the reviewed commit, and before, a conflict that went away on main left a rebuilt record
+"changed after the review" with no Merge and without its warning. A head that moved since (the person resolved it on GitHub with a commit of their own) is not the
 reviewed version, so the record says what the merge step would (`last_outcome` `head_moved`,
 `headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
 then merge it yourself or send it back."), the Overview offers no Merge, and the open conflict
@@ -6129,7 +6162,12 @@ default branch as the host has it after every merge, not only at a session's end
   since leftovers7-merge2 (R-copystuck) says why: `backToBase` returns `copyStoppedOf(error)`
   (`changed` for local changes the checkout would overwrite, `in_the_way` for untracked or ignored
   files it would overwrite, else `other`, with the files git named), kept as the record's
-  `stopped` until a refresh succeeds; the person's files are never touched.
+  `stopped` until a refresh succeeds; the person's files are never touched. The copy's git
+  (`gitOf`) runs with `untranslated` (TM-6, leftovers7-tailmerge: `LC_ALL=C`, `LANGUAGE`
+  empty), so the words `copyStoppedOf` reads are git's English ones whatever the person's
+  language; before, a git in another language left the Files line at `other` with no file. The
+  stopped state is a file in the copy's `.git`, so it crosses a restart (tested in
+  `loop-docs.test.ts` and, composed twice on one home, `merged-copy-restart.test.ts`).
 - Every checkout in the copy (`backToBase`, and `checkout`'s switch to a docs branch) goes
   through `switchCopy` (review of merged-copy, bench W8): git replaces ignored files without a
   word, and a repository that started tracking `Local only/notes.txt` (a collaborator's commit

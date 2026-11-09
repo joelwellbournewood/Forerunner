@@ -452,6 +452,15 @@ export function setAsideRef(taskId: string): string {
 export function wipRef(taskId: string): string {
   return `refs/forerunner/wip/${safeSegment(taskId)}`;
 }
+/**
+ * TM-3 (leftovers7-tailmerge): set beside `wipRef` when the work in progress was made by a run
+ * that started from the base after the person dropped the branch ("Drop the branch and retry
+ * from scratch", a card's Redo): the next run continues it, never the dropped branch, and its
+ * push replaces the host's branch. Removed with `wipRef` once the work goes to review.
+ */
+export function wipFromBaseRef(taskId: string): string {
+  return `refs/forerunner/wip-from-base/${safeSegment(taskId)}`;
+}
 /** A cancelled task's work in progress (its commits), kept until Undo brings it back. */
 export function setAsideWipRef(taskId: string): string {
   return `refs/forerunner/set-aside-wip/${safeSegment(taskId)}`;
@@ -459,6 +468,33 @@ export function setAsideWipRef(taskId: string): string {
 /** What a failed run left uncommitted in the task's worktree (W6-24), kept but out of the way. */
 export function failedRef(taskId: string): string {
   return `refs/forerunner/failed/${safeSegment(taskId)}`;
+}
+
+/**
+ * Why a task's branch holds no change of its own (TM-1, leftovers7-tailmerge): `redone`, a redo
+ * from the base whose run changed nothing; `empty`, a run that changed nothing on a branch that
+ * held nothing either; `up_to_date` (the fix-up), a branch that held a change until it was
+ * brought up to date with the base, which already has the same change (or the person's
+ * resolution kept the base's side only).
+ */
+export type EmptiedWhy = "redone" | "empty" | "up_to_date";
+
+/**
+ * TM-1 (leftovers7-tailmerge): the failed task's one sentence when its branch holds no change of
+ * its own and the pull request open on it was closed (`closeEmptied`): after a redo from the
+ * base ("Redone from main, it changed nothing, so #4 was closed."), a pull request that held no
+ * change either, or one that no longer changes anything once brought up to date. `prNumber` is
+ * null when no pull request was closed: only `up_to_date` has its own words then ("main already
+ * has this change."). Polish owns the words.
+ */
+export function emptiedSentence(prNumber: number | null, why: EmptiedWhy, base = "main"): string {
+  if (why === "up_to_date")
+    return prNumber === null
+      ? `${base} already has this change.`
+      : `#${prNumber} no longer changes anything on ${base}, so it was closed.`;
+  return why === "redone"
+    ? `Redone from ${base}, it changed nothing, so #${prNumber} was closed.`
+    : `It changed nothing and #${prNumber} held no change, so #${prNumber} was closed.`;
 }
 
 /** The first words of a work-in-progress commit's subject. */
@@ -574,6 +610,11 @@ export class PrTaskExecutor implements TaskExecutor {
   private readonly logger = log("pr-executor");
   /** The sentence a task's run left about Local only (the person's changes kept), by task. */
   private readonly localOnlyWords = new Map<string, string>();
+  /**
+   * TM-4: the tasks whose rebuild was last held by changes nobody committed in their folder:
+   * the warning is logged once per such state, not at every poll.
+   */
+  private readonly heldByChanges = new Set<string>();
 
   constructor(private readonly deps: PrTaskExecutorDeps) {}
 
@@ -680,6 +721,8 @@ export class PrTaskExecutor implements TaskExecutor {
       identity: this.deps.identity,
       // merged-copy: no push of a task branch carries Local only or a review's try folder.
       neverPush: NEVER_PUSHED,
+      // TM-6: a refused push is told apart by git's words (`pushFailedWords`), in any language.
+      untranslated: true,
     });
   }
 
@@ -693,9 +736,13 @@ export class PrTaskExecutor implements TaskExecutor {
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
     const auth = gitAuthFor(await resolveGitToken(this.deps.token), target.clone);
     const git = await this.gitFor(target, dir);
+    // The person's answer to the task's last conflict card, read first (TM-2): after "I resolved
+    // it", a rebase or merge under way in the folder is the person's resolution, which the run
+    // finishes (`continueResolved`), never a crash's leftover to end.
+    const answered = await this.conflictAnswer(task);
     if (existsSync(join(dir, ".git"))) {
       await git.fetch();
-      await this.cleanAfterCutShortRun(git, task);
+      if (answered?.outcome !== "resolved") await this.cleanAfterCutShortRun(git, task);
     } else await git.clone(target.clone);
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
     // .gitignore the project has (the push checks it again: a forced add gets past this). A
@@ -722,7 +769,6 @@ export class PrTaskExecutor implements TaskExecutor {
         return "Start the repository with a README\n\nThe repository was empty; Forerunner made this first commit so its tasks have a branch to start from.";
       },
     });
-    const answered = await this.conflictAnswer(task);
     if (answered?.outcome === "resolved") {
       if (!task.branch) await this.deps.store.task.patch(task.id, { branch });
       return this.continueResolved(ctx, { git, dir, branch, target, answered });
@@ -747,8 +793,15 @@ export class PrTaskExecutor implements TaskExecutor {
     if (branch !== task.branch) await this.deps.store.task.patch(task.id, { branch });
     // budget-resume: the task's own work in progress (a pause, a question, a stop) on its local
     // branch: this run continues from it. "Drop the branch and retry from scratch" drops it.
-    const wip = dropped ? null : await this.workInProgress(git, task, branch);
+    // TM-3 (leftovers7-tailmerge): after the drop, work in progress a run made from the base
+    // (`wipFromBaseRef`, a redo that paused before review) is continued, never dropped again;
+    // the host's branch, which holds the work the person dropped, is never brought into it, and
+    // the push replaces it. Before, the drop stayed in force until a run reached review, so each
+    // run after a pause started from the base again and lost the work since the redo.
+    const restarted = dropped ? await this.workInProgressFromBase(git, task, branch) : null;
+    const wip = dropped ? restarted : await this.workInProgress(git, task, branch);
     if (!wip) await git.setRef(wipRef(task.id), null);
+    if (!restarted) await git.setRef(wipFromBaseRef(task.id), null);
     const resume = (!!existingPr && !dropped) || !!wip;
     // C-49 (ADR 0106): the done tasks this one waits for whose pull requests are not merged
     // yet. Their branches are merged into this task's before it runs, so it sees their work;
@@ -759,7 +812,11 @@ export class PrTaskExecutor implements TaskExecutor {
         // The local branch as the last run left it (never `checkout -B` from the host); what a
         // person pushed to the host's copy meanwhile is brought in by a merge.
         await git.checkout(wip);
-        if ((await git.hasRef(`origin/${branch}`)) && !(await git.isAncestor(`origin/${branch}`))) {
+        if (
+          !restarted &&
+          (await git.hasRef(`origin/${branch}`)) &&
+          !(await git.isAncestor(`origin/${branch}`))
+        ) {
           const merged = await git.mergeFrom(`origin/${branch}`, `Bring in ${branch}`);
           if (!merged.ok)
             return this.conflict(ctx, {
@@ -769,7 +826,7 @@ export class PrTaskExecutor implements TaskExecutor {
               target,
               conflicts: merged.conflicts,
               costUsdMicro: 0,
-              force: false,
+              force: !!restarted,
               superseded: answered?.row ?? null,
               merging: true,
             });
@@ -787,7 +844,7 @@ export class PrTaskExecutor implements TaskExecutor {
           target,
           conflicts: rebuilt.conflicts,
           costUsdMicro: 0,
-          force: false,
+          force: !!restarted,
           superseded: answered?.row ?? null,
           merging: true,
           rebuild: rebuilt,
@@ -812,7 +869,7 @@ export class PrTaskExecutor implements TaskExecutor {
               target,
               conflicts: merged.conflicts,
               costUsdMicro: 0,
-              force: false,
+              force: !!restarted,
               superseded: answered?.row ?? null,
               merging: true,
             });
@@ -831,7 +888,7 @@ export class PrTaskExecutor implements TaskExecutor {
             target,
             conflicts: merged.conflicts,
             costUsdMicro: 0,
-            force: false,
+            force: !!restarted,
             superseded: answered?.row ?? null,
             merging: true,
           });
@@ -864,7 +921,7 @@ export class PrTaskExecutor implements TaskExecutor {
     // task's own branch (its next run continues from it); a failed run's leftovers are set
     // aside, so the next attempt starts clean (W6-24).
     if (WIP_OUTCOMES.has(result.outcome))
-      return this.saveWorkInProgress(ctx, { git, dir, branch, target, result });
+      return this.saveWorkInProgress(ctx, { git, dir, branch, target, result, fromBase: dropped });
     if (result.outcome === "failed" || result.outcome === "timeout") {
       await this.setLeftoversAside(git, task);
       return result;
@@ -875,11 +932,22 @@ export class PrTaskExecutor implements TaskExecutor {
     const commit = await git.commitAll(
       `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}\n\nTask ${task.id}.`,
     );
-    if (!commit.committed && !existingPr) {
+    // TM-1 (leftovers7-tailmerge): whether the branch holds any change of the task's own, from
+    // where its work starts (the base, with the work it builds on), not whether this run
+    // committed: a redo from the base ("Drop the branch and retry from scratch", a card's Redo)
+    // that commits nothing holds nothing, although a pull request is open (before, main's head
+    // was force-pushed to it and the empty pull request went to review and then to Merge); a run
+    // that continues a paused task's work and adds nothing more still holds that work.
+    if (!(await this.holdsOwnChange(git, target, excluded, commit.committed || !!existingPr))) {
+      const why = dropped ? "redone" : "empty";
+      const closed = existingPr ? await this.closeEmptied(target, existingPr, task, why) : false;
       return {
         ...result,
         outcome: "failed",
-        summary: `${result.summary}\n(no changes were made in the worktree)`,
+        summary:
+          closed && existingPr
+            ? emptiedSentence(existingPr.number, why, target.base)
+            : `${result.summary}\n(no changes were made in the worktree)`,
         checksPassed: false,
       };
     }
@@ -920,6 +988,18 @@ export class PrTaskExecutor implements TaskExecutor {
         merging,
       });
     }
+    // TM-1's sibling (leftovers7-tailmerge fix-up): brought up to date, the branch may hold no
+    // change of its own any more: the base already has the same change (the rebase drops a
+    // commit the base has; merging the base in leaves nothing). Read again before the push.
+    // Before, the base's head was force-pushed to the open pull request, which went to review
+    // empty and was offered for Merge (a Tasks-tab Redo or a rework of a task whose change had
+    // reached main), and a fresh task's push opened an empty pull request.
+    if (!(await this.holdsOwnChange(git, target, excluded, true)))
+      return this.endUpToDate(task, target, existingPr, {
+        ...result,
+        outcome: "failed",
+        checksPassed: false,
+      });
     let changedFiles: string[] = [];
     try {
       // The task's own work: from the base it started on (the default branch with the work it
@@ -963,6 +1043,7 @@ export class PrTaskExecutor implements TaskExecutor {
     if (answered) await this.consume(answered.row);
     // The work went to review: nothing of it is in progress any more.
     await git.setRef(wipRef(task.id), null);
+    await git.setRef(wipFromBaseRef(task.id), null);
     this.logger.info("pull request ready", {
       taskId: task.id,
       branch,
@@ -986,6 +1067,22 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
+   * TM-3: the task's work in progress when a run made it from the base after the person's drop
+   * (`wipFromBaseRef` marks the same commit as `wipRef`, on the task's local branch), else null.
+   * Work in progress from before the drop is never this: the first run after the drop removes
+   * its marker before anything else.
+   */
+  private async workInProgressFromBase(
+    git: GitOps,
+    task: TaskRow,
+    branch: string,
+  ): Promise<string | null> {
+    const fromBase = await git.resolveRef(wipFromBaseRef(task.id));
+    if (!fromBase || fromBase !== (await git.resolveRef(wipRef(task.id)))) return null;
+    return this.workInProgress(git, task, branch);
+  }
+
+  /**
    * The folders a task branch of this repository never stages (merged-copy, W6-26): Local only
    * and a review's try folder, or only the try's when the base tracks a folder named Local only
    * (the repository's own, R-exclude).
@@ -993,6 +1090,101 @@ export class PrTaskExecutor implements TaskExecutor {
   private async excludedFolders(git: GitOps, target: Target): Promise<readonly string[]> {
     const tracked = await git.trackedUnder(`origin/${target.base}`, [LOCAL_ONLY_DIR]);
     return tracked?.length ? [TRY_DIR] : NEVER_PUSHED;
+  }
+
+  /**
+   * TM-1: whether the checked-out branch holds a change of the task's own (a file it changes
+   * from where its work started: `DEPS_BASE_REF`, else the base), never counting Local only or a
+   * review's try folder. A git failure answers `fallback` (the old rule: this run committed, or a
+   * pull request is open), so an unreadable diff never fails a run that did work.
+   */
+  private async holdsOwnChange(
+    git: GitOps,
+    target: Target,
+    excluded: readonly string[],
+    fallback: boolean,
+  ): Promise<boolean> {
+    try {
+      const files = (await git.hasRef(DEPS_BASE_REF))
+        ? await git.filesBetween(DEPS_BASE_REF)
+        : await git.changedFiles(`origin/${target.base}`);
+      return files.some((f) => underNeverPushed([f], excluded).length === 0);
+    } catch (e) {
+      this.logger.warn("the task's own change was not read", { error: errorMessage(e) });
+      return fallback;
+    }
+  }
+
+  /**
+   * TM-1 (ADR 0111, leftovers7-tailmerge): a run that left its branch with no change of its own
+   * while a pull request is open on it closes that pull request, with one comment saying why,
+   * instead of pushing the base's head to it (an empty pull request the app would offer for
+   * Merge). Its branch on the host is kept as it was. After a redo from the base, the pull
+   * request holds only the work the person dropped; otherwise it holds no change either, or
+   * (`up_to_date`) what it changes is in the base already. False when the host refused (the pull
+   * request then stays as it was, and so does the branch).
+   */
+  private async closeEmptied(
+    target: Target,
+    pr: PullRequestInfo,
+    task: TaskRow,
+    why: EmptiedWhy,
+  ): Promise<boolean> {
+    const said =
+      why === "redone"
+        ? `Forerunner did this task again from ${target.base} and it changed nothing, so this pull request is closed. Its branch is kept.`
+        : why === "up_to_date"
+          ? `Brought up to date with ${target.base}, this task's work no longer changes anything, so this pull request is closed. Its branch is kept.`
+          : "Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.";
+    try {
+      await this.deps.host.commentOnPullRequest(target.repo, pr.number, said);
+    } catch (e) {
+      this.logger.warn("emptied pull request not commented", {
+        taskId: task.id,
+        pr: pr.number,
+        error: errorMessage(e),
+      });
+    }
+    try {
+      await this.deps.host.updatePullRequest(target.repo, pr.number, { state: "closed" });
+      this.logger.info("pull request closed: the run changed nothing", {
+        taskId: task.id,
+        pr: pr.number,
+        why,
+      });
+      return true;
+    } catch (e) {
+      this.logger.warn("emptied pull request not closed", {
+        taskId: task.id,
+        pr: pr.number,
+        error: errorMessage(e),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * TM-1's sibling (leftovers7-tailmerge fix-up): a branch brought up to date with the base that
+   * no longer holds any change of its own is not pushed. The pull request open on it is closed
+   * (`closeEmptied`, `up_to_date`), its branch on the host kept as it was, and the task fails in
+   * one sentence, as a task with no change does ("#4 no longer changes anything on main, so it
+   * was closed.", or "main already has this change." when no pull request was closed).
+   */
+  private async endUpToDate(
+    task: TaskRow,
+    target: Target,
+    pr: PullRequestInfo | undefined,
+    result: TaskExecutionResult,
+  ): Promise<TaskExecutionResult> {
+    const closed = pr ? await this.closeEmptied(target, pr, task, "up_to_date") : false;
+    this.logger.info("not pushed: the branch holds no change of its own once up to date", {
+      taskId: task.id,
+      pr: pr?.number ?? null,
+    });
+    return {
+      ...result,
+      summary: emptiedSentence(closed && pr ? pr.number : null, "up_to_date", target.base),
+    };
   }
 
   /** The task's own files on its branch: from the base its work started on, never Local only. */
@@ -1019,15 +1211,26 @@ export class PrTaskExecutor implements TaskExecutor {
    */
   private async saveWorkInProgress(
     ctx: ExecuteCtx,
-    s: { git: GitOps; dir: string; branch: string; target: Target; result: TaskExecutionResult },
+    s: {
+      git: GitOps;
+      dir: string;
+      branch: string;
+      target: Target;
+      result: TaskExecutionResult;
+      /** The run started from the base after a drop (TM-3): its work is marked as such. */
+      fromBase?: boolean;
+    },
   ): Promise<TaskExecutionResult> {
     const { task } = ctx;
     const { git, dir, branch, target, result } = s;
     let committed = false;
     try {
       committed = (await git.commitAll(workInProgressMessage(task, result))).committed;
-      if (committed || (await git.hasRef(wipRef(task.id))))
-        await git.setRef(wipRef(task.id), await git.headSha());
+      if (committed || (await git.hasRef(wipRef(task.id)))) {
+        const head = await git.headSha();
+        await git.setRef(wipRef(task.id), head);
+        if (s.fromBase) await git.setRef(wipFromBaseRef(task.id), head);
+      }
     } catch (e) {
       this.logger.warn("work in progress not committed", {
         taskId: task.id,
@@ -1070,11 +1273,6 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
-   * W6-24: what a failed run left uncommitted in the task's worktree goes out of the way (kept
-   * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
-   * next run's checkout carried the files over, or git refused when main had changed them.
-   */
-  /**
    * R-dirtyworktree (W6-24 for a crash): a run the app's close or a crash cut short leaves its
    * files uncommitted in the task's worktree, with no work-in-progress commit (that and the
    * leftovers set aside happen only after the inner executor returns). Before, the next run
@@ -1100,6 +1298,11 @@ export class PrTaskExecutor implements TaskExecutor {
     }
   }
 
+  /**
+   * W6-24: what a failed run left uncommitted in the task's worktree goes out of the way (kept
+   * under `failedRef`), so the next attempt starts from the branch's last commit: before, the
+   * next run's checkout carried the files over, or git refused when main had changed them.
+   */
   private async setLeftoversAside(git: GitOps, task: TaskRow): Promise<void> {
     try {
       const files = await git.setAside(
@@ -1571,12 +1774,18 @@ export class PrTaskExecutor implements TaskExecutor {
       }
     }
     // Work nobody committed (a person's change after the run) is never swept into a rebuild.
+    // TM-4: said once while the folder stays so (before, a WARN at every poll); the merge step
+    // says it on the pull request's row (`ReviewedPrMerge`, `owedFolderSentence`).
     if ((await git.status()).dirty) {
-      this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
-        taskId: task.id,
-      });
+      if (!this.heldByChanges.has(task.id)) {
+        this.heldByChanges.add(task.id);
+        this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
+          taskId: task.id,
+        });
+      }
       return { ...found, result: "busy" };
     }
+    this.heldByChanges.delete(task.id);
     // The branch as the host has it (a person may have pushed to it).
     await git.createBranch(branch, `origin/${branch}`);
     await this.dropStaleMarker(git);
@@ -2103,9 +2312,40 @@ export class PrTaskExecutor implements TaskExecutor {
     s: { git: GitOps; dir: string; branch: string; target: Target; answered: ConflictAnswer },
   ): Promise<TaskExecutionResult> {
     const { git, dir, branch, target, answered } = s;
+    // TM-2: a rebase or merge the person left under way in this folder (the card's steps, the
+    // answer given before its last command) is their resolution: finished here, never aborted.
+    // A file that still holds conflict markers asks again, with the step left under way.
+    const finished = await git.finishUnfinished();
+    if (!finished.ok)
+      return this.conflict(ctx, {
+        git,
+        dir,
+        branch,
+        target,
+        conflicts: finished.conflicts,
+        costUsdMicro: 0,
+        force: false,
+        superseded: answered.row,
+        again: true,
+        merging: finished.step === "merge",
+      });
+    // Anything else a process left half done (a revert, a cherry-pick) is ended, and changes
+    // nobody committed go out of the way, as after a run cut short.
+    await this.cleanAfterCutShortRun(git, ctx.task);
     const remote = await git.hasRef(`origin/${branch}`);
-    if (remote) await git.createBranch(branch, `origin/${branch}`);
-    else if (await git.hasRef(`refs/heads/${branch}`)) await git.checkout(branch);
+    const local = await git.hasRef(`refs/heads/${branch}`);
+    // The person's branch: the host's, unless they resolved it here (a step just finished, or
+    // the base is in the folder's branch and not in the host's: committed, not pushed). Before,
+    // a resolution only in the folder was replaced by the host's branch and conflicted again.
+    const here =
+      local &&
+      (finished.step !== null ||
+        (remote &&
+          (await git.isAncestor(`origin/${target.base}`, `refs/heads/${branch}`)) &&
+          !(await git.isAncestor(`origin/${target.base}`, `origin/${branch}`))));
+    if (here) await git.checkout(branch);
+    else if (remote) await git.createBranch(branch, `origin/${branch}`);
+    else if (local) await git.checkout(branch);
     else {
       await this.consume(answered.row);
       return {
@@ -2164,6 +2404,22 @@ export class PrTaskExecutor implements TaskExecutor {
       }
       rebased = true;
     }
+    // TM-1's sibling (leftovers7-tailmerge fix-up): a resolution that kept the base's side only
+    // leaves the branch with no change of its own: it is not pushed and its pull request does
+    // not go to review empty (before, the base's head was force-pushed to it and offered for
+    // Merge once accepted). The answer is used.
+    if (!(await this.holdsOwnChange(git, target, await this.excludedFolders(git, target), true))) {
+      const open = (
+        await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
+      )[0];
+      await this.consume(answered.row);
+      return this.endUpToDate(ctx.task, target, open, {
+        outcome: "failed",
+        summary: "",
+        costUsdMicro: 0,
+        branch,
+      });
+    }
     let changedFiles: string[] = [];
     try {
       changedFiles = (await git.hasRef(DEPS_BASE_REF))
@@ -2172,9 +2428,12 @@ export class PrTaskExecutor implements TaskExecutor {
     } catch {
       // informational, as above
     }
-    if (rebased || brought || !remote) {
+    // A branch resolved here by a rebase replaces the host's (with a lease); one resolved by a
+    // merge, or taken from the host, is pushed as it is.
+    const replaces = remote && !(await git.isAncestor(`origin/${branch}`));
+    if (rebased || brought || !remote || replaces) {
       try {
-        await git.push(branch, { force: rebased && remote, defaultBranch: target.base });
+        await git.push(branch, { force: replaces, defaultBranch: target.base });
       } catch (e) {
         return {
           outcome: "failed",

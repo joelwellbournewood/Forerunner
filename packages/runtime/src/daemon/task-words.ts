@@ -6,7 +6,13 @@ import type {
   TaskRow,
   TaskStatus,
 } from "@forerunner/state";
-import { type MergeMode, mergesAfterLabel, mergesAfterSentence } from "../loop/merge-mode.ts";
+import {
+  type MergeMode,
+  mergesAfterLabel,
+  mergesAfterSentence,
+  OWED_FOLDER_LABEL,
+  owedMergeWait,
+} from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
@@ -110,7 +116,13 @@ export interface TaskDisplayContext {
       Partial<
         Pick<
           MergeRecordRow,
-          "pr_number" | "take_out_pr_number" | "take_out_pr_url" | "take_out_state"
+          | "pr_number"
+          | "take_out_pr_number"
+          | "take_out_pr_url"
+          | "take_out_state"
+          // TM-4: a merge that waits for the task folder's changes (`owedMergeWait`).
+          | "rebuild_owed_for"
+          | "last_outcome"
         >
       >
   >;
@@ -395,6 +407,16 @@ function mergesBehind(
   return { after, waitingOn };
 }
 
+/**
+ * TM-4 (leftovers7-tailmerge): a done task whose merge waits for the changes left in its
+ * folder (`owedMergeWait`) says so with the way out, as the Overview's row does; null otherwise.
+ * Before, it read "Accepted · merging" with no reason for as long as the folder held them.
+ */
+function owedFolderWait(merge: Parameters<typeof owedMergeWait>[0]): TaskDisplay | null {
+  const sentence = owedMergeWait(merge);
+  return sentence ? display("done", OWED_FOLDER_LABEL, "warn", { detail: sentence }) : null;
+}
+
 export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay {
   const card = ctx.cards.get(task.id);
   switch (task.status) {
@@ -411,6 +433,8 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       // main (before, "Done" whether or not anything was merged, and nothing said which).
       const merge = ctx.merges?.get(task.id);
       if (!merge) return display("done", "Done", "good");
+      const waits = owedFolderWait(merge);
+      if (waits) return waits;
       const sentence = merge.sentence.trim();
       const detail =
         sentence && !/press Merge on the Overview\.?$/.test(sentence) ? sentence : null;

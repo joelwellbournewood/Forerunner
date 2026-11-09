@@ -175,7 +175,11 @@ with their milestone.
   rejected]", else git's first line that is not its framing, redacted; the host's progress lines,
   "remote: Resolving deltas ...", are never the reason); `pushFailedWords` (a task's branch) and
   `firstPushFailedWords` (an empty repository's first commit) word them. The runner cuts a
-  task's reason at 200 characters, so these stay under it for a usual name. `GitOps` reports a
+  task's reason at 200 characters, so these stay under it for a usual name. Their git runs
+  with `GitOpsOptions.untranslated` (the PR executor's `gitFor`, `ensureBaseBranch`'s scratch;
+  TM-6, leftovers7-tailmerge: `UNTRANSLATED_ENV`, `LC_ALL=C` and an empty `LANGUAGE`), so
+  git's words are read in English whatever the person's language; other GitOps keep the
+  process's language. `GitOps` reports a
   failed command as `git push <branch> failed: <git's stderr>`, so git's first line shares a line
   with that header: `pushFailure` takes the header off before reading the lines. With git's
   default configuration the host's `remote:` line is git's first line; before (CI on 193e579), it
@@ -290,8 +294,17 @@ with their milestone.
   whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
   (U-028): the runtime's `syncPrAnswers` applies the answer (`runtime.md`), and the task's next
   run reads it from the card (`outcome`, then `consumed_at` once a run used it). "I resolved
-  it" takes the person's branch (the host's, else the worktree's; `GitOps.hasRef`), checks the
-  base is in it (rebasing when not; a conflict that is still there files a new request), pushes
+  it" first finishes a rebase or merge the person left under way in the task's folder
+  (`GitOps.finishUnfinished`: a resolved file is staged, a commit the resolution emptied is
+  skipped, a file still holding conflict markers files the card again with the step left under
+  way; git's messages are never parsed), then takes the person's branch: the folder's when a
+  step was just finished there, or when it holds the base and the host's does not (committed
+  here, not pushed), else the host's, else the folder's (`GitOps.hasRef`). The run reads the
+  answer before its start's clean-up, which skips `cleanAfterCutShortRun` while "I resolved it"
+  waits (TM-2, leftovers7-tailmerge: before, the clean-up aborted the person's half-done
+  rebase, the resolution was lost and the same conflict came back as a second card). It then
+  checks the base is in it (rebasing when not; a conflict that is still there files a new
+  request), pushes (with a lease when the person's rebase rewrote it)
   and opens the PR without running the inner executor again (`costUsdMicro: 0`); "Drop the
   branch and retry from scratch" starts the branch again from the base, runs the inner
   executor and replaces the old branch on the host (force with lease); "Cancel the task" is the
@@ -300,7 +313,29 @@ with their milestone.
   rebuild card's Redo, R-rebuildcard's fix-up) is read as "dropped" (`conflictAnswer`), so its
   next run starts again from the base and the open pull request gets the new work; before, that
   redo resumed the open branch, rebuilt it again and hit the same conflict. No
-  changes means `failed`. A task without a repository runs in the folder `workspaceFor` names
+  changes means `failed`: the branch holds no file of the task's own from where its work
+  started (`holdsOwnChange`: from `DEPS_BASE_REF`, else the base; Local only and the try folder
+  never count; a git error falls back to "this run committed, or a pull request is open"), not
+  "this run committed nothing" (TM-1, leftovers7-tailmerge, ADR 0111 amended 2026-11-09).
+  Before, a redo from the base (Drop, a card's Redo) that changed nothing on a task with an
+  open pull request force-pushed the base's head to it, and the empty pull request went to
+  review and was offered for Merge; a run that continued a paused task's work and added
+  nothing more failed "no changes" although its branch held that work. A pull request open on
+  the branch is now closed instead (`closeEmptied`: one comment saying why, then the close;
+  the branch on the host stays as it was) and the result's summary is one sentence
+  (`emptiedSentence`: "Redone from main, it changed nothing, so #4 was closed."); a close the
+  host refuses leaves the pull request and the old summary. The same reading runs again after
+  the branch is brought up to date with the base (the rebase or the merge before the push) and
+  in `continueResolved` before its push (TM-1's sibling, the review fix-up): a branch whose
+  change the base already has (the rebase drops a commit the base holds, a merge of the base
+  leaves nothing, or the person's resolution kept the base's side only) is not pushed; its open
+  pull request is closed (`endUpToDate`, `closeEmptied` with `up_to_date`: "Brought up to date
+  with main, this task's work no longer changes anything, so this pull request is closed. Its
+  branch is kept.") and the task fails in one sentence ("#4 no longer changes anything on
+  main, so it was closed.", or "main already has this change." with no pull request). Before,
+  a Tasks-tab Redo or a rework of a task whose change had reached main force-pushed main's head
+  to its pull request, which the critic accepted and the Overview offered for Merge, and a fresh
+  task's push opened an empty pull request. A task without a repository runs in the folder `workspaceFor` names
   (U-037, ADR 0097: the runtime passes the project's workspace for a project with no repository
   link), kept as a local git repository: `inWorkspace` writes a `.gitignore` for caches when the
   folder has none (`ensureWorkspaceGitignore`, `WORKSPACE_GITIGNORE`: `__pycache__/`, `*.pyc`,
@@ -345,13 +380,20 @@ with their milestone.
   -B` from the host), merges in what a person pushed to the host's copy and the base when it
   moved (`Bring in main`; never a rebase, ADR 0111), and a conflict goes to `conflict` (the
   rebase-conflict card); "Drop the branch and retry from scratch" and the fresh path drop the
-  marker, and a run that went to review removes it; a pushed work in progress with no pull
+  marker, and a run that went to review removes it. A run after the drop that pauses before
+  review marks its work in progress as made from the base (`wipFromBaseRef`, beside `wipRef`):
+  the next run continues it while the drop is still unused (`workInProgressFromBase`), never
+  brings the host's branch (the dropped work) into it, and its pushes replace the host's branch
+  (TM-3, leftovers7-tailmerge; before, every run after such a pause started from the base again
+  and lost the work since the redo); a pushed work in progress with no pull
   request is replaced by a force-with-lease push. A `failed` or `timeout` result's leftovers go
   to `failedRef(task)` (`setLeftoversAside`, W6-24), so the next attempt starts clean. A run
   the app's close or a crash cut short does neither (both happen only after the inner executor
   returns): the next run first ends a git step left half done (`GitOps.abortUnfinished`: a
   rebase, merge, revert or cherry-pick) and sets uncommitted leftovers aside under the same ref
-  (`cleanAfterCutShortRun`, R-dirtyworktree, leftovers7-merge), before any checkout. Before, it
+  (`cleanAfterCutShortRun`, R-dirtyworktree, leftovers7-merge), before any checkout; while the
+  task's "I resolved it" waits, a step under way is the person's and is finished instead (TM-2,
+  above). Before, it
   carried them into its own work, git refused its `checkout -B` ("untracked working tree files
   would be overwritten"), or a half-done rebase made the next conflict card name no file. In a
   project's folder (`inWorkspace`) a pause is one commit of its own with the same message and
