@@ -67,22 +67,38 @@ export function removedProjectRefusal(project: ProjectRow): string | null {
 }
 
 /**
- * W15B-02: whether a session of the project runs now (running, paused or about to run), never
- * counting the intake's planning call or the chat's own row. The creation's Undo is refused while
- * one runs: removing the project under a working session would leave it spending on a project
- * that is gone.
+ * W15B-02: the state of a session of the project that runs now (running, paused or about to
+ * run; running first), never counting the intake's planning call or the chat's own row; null
+ * when none does. The creation's Undo is refused while one runs: removing the project under a
+ * working session would leave it spending on a project that is gone.
  */
-async function runningSessionOf(store: StateStore, projectId: string): Promise<boolean> {
+async function runningSessionOf(
+  store: StateStore,
+  projectId: string,
+): Promise<"running" | "paused" | "planned" | null> {
   const rows = await store.session.list({
     project_id: projectId,
     status: ["running", "paused", "planned"],
   } as never);
-  return rows.some((s) => {
+  const work = rows.filter((s) => {
     if (s.summary === "conversation") return false;
     const plan = s.plan as { intake?: unknown } | null;
     return !(plan && typeof plan === "object" && !Array.isArray(plan) && plan.intake);
   });
+  for (const state of ["running", "paused", "planned"] as const)
+    if (work.some((s) => s.status === state)) return state;
+  return null;
 }
+
+/**
+ * W15B-02 (review of fix/w15-tail): the session's state and what to do, true for each (§5 rule
+ * 9; the session page's own words: a paused session is one stopping after its task).
+ */
+const SESSION_STATE_WORDS = {
+  running: "is running. Stop it first",
+  paused: "is stopping after its task. Stop it now, or wait for it to end",
+  planned: "is starting. Stop it first",
+} as const;
 
 async function freedName(store: StateStore, name: string): Promise<string> {
   for (let n = 1; ; n++) {
@@ -300,8 +316,9 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
     if (!createdId) return null;
     const row = await ctx.store.project.get(createdId);
     if (!row || row.status === "archived") return null;
-    if (!(await runningSessionOf(ctx.store, createdId))) return null;
-    return `a session of ${row.name || params.name} is running. Stop it first`;
+    const state = await runningSessionOf(ctx.store, createdId);
+    if (!state) return null;
+    return `a session of ${row.name || params.name} ${SESSION_STATE_WORDS[state]}`;
   },
   /**
    * W15-36: the project goes. It is archived (its tasks, cards and changes keep their rows) and

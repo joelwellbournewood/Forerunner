@@ -14264,6 +14264,46 @@ describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", 
       await rt.close();
     }
   }, 120_000);
+
+  it("(e, stopping after its task) the creation's Undo while a session of that project stops after its task says so; stopped now, the Undo goes through (review of fix/w15-tail)", async () => {
+    // Review of fix/w15-tail (non-blocking): the line said "is running" for a session that was
+    // stopping after its task (status paused, the session page's "Stopping after this task").
+    // No restart here: a daemon that starts again ends the sessions the last one left (recovery).
+    const { rt, client } = await composeWithRolePlayer({}, persistedHome());
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      // A session of the project told "Stop after this task", as `session.pause` leaves it.
+      const paused = await rt.store.session.insert({
+        agent_id: agentId,
+        project_id: project.id,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 1_000_000,
+        step_cap: 100,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "paused",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      const reason =
+        "a session of Garden club is stopping after its task. Stop it now, or wait for it to end";
+      const listed = (await client.changes({ limit: 200 })).find((c) => c.id === creation.id);
+      expect(listed?.undoable).toBe(false);
+      expect(listed?.undoBlockedReason).toBe(reason);
+      const refused = await client.undoChange(creation.id);
+      expect(refused.status).toBe("refused");
+      expect(refused.reason).toBe(reason);
+      expect((await client.project(project.id)).status).toBe("active");
+      await client.stopSession(paused.id);
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      expect((await client.project(project.id)).status).toBe("archived");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });
 
 describe("w15-tail, wave 15 run B: the plan card says a research task can read no website (W15B-07)", () => {
