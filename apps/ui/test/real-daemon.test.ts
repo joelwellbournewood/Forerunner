@@ -12422,4 +12422,59 @@ describe("w15-chat, wave 15", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // W15-75 (wave 13 review of polish-words): a Yes the registry refused filed an Update of about
+  // 250 characters (changeNotAppliedWords, wired in compose's onRefused).
+  it("a Yes in the Inbox the change cannot take any more files a one-line Update (W15-75)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const project = await client.createProject({ name: "Merging", goal: "Merge words" });
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "merge_mode", value: "after_review", project: project.id },
+          },
+        ],
+        wordsUsed: "Settings: Who merges accepted work to Merge automatically after review",
+        source: "ui",
+        projectId: project.id,
+      });
+      expect(asked.status).toBe("pending");
+      // Meanwhile the setting is already so: the card's change has nothing left to do.
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.update(project.id, row.version, {
+        settings: { ...row.settings, merge_mode: "after_review" },
+      } as never);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "Yes",
+      });
+      let update: string | undefined;
+      await eventually(
+        async () => {
+          update = (await client.inbox(me.id)).messages
+            .map((m) => m.body)
+            .find((b) => /was not applied/.test(b));
+          return !!update;
+        },
+        "the Update of the Yes not applied",
+        async () => JSON.stringify((await client.inbox(me.id)).messages.map((m) => m.body)),
+        15_000,
+      );
+      // One line (design §5 rule 1): the question and why, no second sentence.
+      // Before: "Your Yes to "Set who merges …?" was not applied: Who merges … is already Merge
+      // automatically after review. Nothing changed; ask again if you still want it." (227).
+      expect(update).toBe(
+        "Your Yes was not applied: Who merges accepted work for Merging is already Merge automatically after review.",
+      );
+      expect(update?.length).toBeLessThanOrEqual(140);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

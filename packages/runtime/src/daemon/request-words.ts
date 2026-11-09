@@ -902,20 +902,31 @@ function rebuildTitle(card: JsonObject, taskTitle: string): string | null {
  * never by a kind name a person never saw ('the change card "a GitHub repository for X"').
  */
 export function changeNotAppliedWords(card: Record<string, unknown>, reason: string): string {
-  const ask = typeof card.ask === "string" ? card.ask.trim() : "";
+  // W15-75 (design §5 rule 1: an Update is one line): one sentence of at most
+  // `NOT_APPLIED_MAX` characters, the card named by its question when that fits, else by what it
+  // changes, else not at all when the reason names it already; the reason's first clause. Before,
+  // about 250 characters with "Nothing changed; ask again if you still want it." after it.
+  const ask = typeof card.ask === "string" ? firstSentence(card.ask.trim(), 120) : "";
   const what = typeof card.what === "string" ? card.what.trim() : "";
-  const about = ask
-    ? `Your Yes to "${firstSentence(ask, 120).replace(/"/g, "'")}"`
-    : what
-      ? `Your Yes about ${what}`
-      : "Your Yes";
   const why =
-    reason
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/[.\s]+$/, "") || "it was refused";
-  return `${about} was not applied: ${why}. Nothing changed; ask again if you still want it.`;
+    (reason.replace(/\s+/g, " ").trim().split(/;\s/)[0] ?? "").replace(/[.\s]+$/, "") ||
+    "it was refused";
+  const named = what && why.toLowerCase().includes(what.toLowerCase());
+  const abouts = [
+    ask ? `Your Yes to "${ask.replace(/"/g, "'")}"` : null,
+    what && !named ? `Your Yes about ${what}` : null,
+    "Your Yes",
+  ].filter((a): a is string => a !== null);
+  for (const about of abouts) {
+    const line = `${about} was not applied: ${why}.`;
+    if (line.length <= NOT_APPLIED_MAX) return line;
+  }
+  const lead = "Your Yes was not applied: ";
+  return `${lead}${cutWords(why, NOT_APPLIED_MAX - lead.length - 1).replace(/[.\s]+$/, "")}.`;
 }
+
+/** An Update's one line (design §5 rule 1), as long as a notification's body. */
+const NOT_APPLIED_MAX = 140;
 
 /**
  * A left-open card's title (`merge:left_open`), what it is about now: the conflict notice

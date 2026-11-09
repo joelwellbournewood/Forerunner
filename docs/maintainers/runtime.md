@@ -3184,7 +3184,12 @@ late Yes is refused. Before, the offer was filed beside such a card and, once ei
 the other's Yes posted 'Your answer to the change card "…" was not applied: … already has a
 repository'. That warning (`changeNotAppliedWords` in `request-words.ts`, W14-4, polish-words)
 names the card by the question the Inbox showed ('Your Yes to "Create the private GitHub
-repository o/r for 'X'?" was not applied: …'), never as "the change card". Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
+repository o/r for 'X'?" was not applied: …'), never as "the change card". W15-75: it is one
+line of at most 140 characters (design §5 rule 1; before, about 250 with "Nothing changed; ask
+again if you still want it."): the question when the line fits, else what the card changes,
+else no name when the reason names it already, and the reason's first clause ("Your Yes about a
+GitHub repository for Bat count was not applied: Bat count already has a repository
+(bench/bat-count)."). Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
 offer's Yes closing a previewed card, a link made another way).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
