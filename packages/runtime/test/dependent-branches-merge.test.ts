@@ -1825,3 +1825,34 @@ describe("w15-merge, wave 15: the Tasks tab's Redo on a task with a conflict not
     expect(await openCards(m, b.id)).toEqual([]);
   });
 });
+
+describe("w15-merge, wave 15: a merge GitHub does not answer (W15-68)", {
+  timeout: 240_000,
+}, () => {
+  it("the person's Merge whose call to GitHub gets no answer waits saying GitHub has not answered, not its checks; the Tasks row says the same", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const pr = await m.prNumber(a.id);
+    // GitHub stops answering while the merge call is on its way.
+    const held = m.hold("mergePullRequest");
+    const pressed = m.merge
+      .mergeRecorded(await m.record(a.id), { kind: "person", humanId: m.w.human })
+      .catch((e: unknown) => e);
+    await held.reached;
+    await m.host.stop();
+    held.release();
+    await pressed;
+    const r = await m.record(a.id);
+    expect(r).toMatchObject({
+      state: "waiting_checks",
+      last_outcome: "unreachable",
+      sentence: `GitHub did not answer about #${pr}: Forerunner tries the merge again.`,
+    });
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    expect(taskDisplay(await m.w.store.task.mustGet(a.id), ctx)).toMatchObject({
+      label: "Accepted · merges once GitHub answers",
+      detail: `GitHub did not answer about #${pr}: Forerunner tries the merge again.`,
+    });
+  });
+});

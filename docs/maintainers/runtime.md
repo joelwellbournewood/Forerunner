@@ -3194,6 +3194,15 @@ reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTas
 "Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
 and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
 mode read "waiting for you", although the retry merges it by itself). A record left to the person
+whose `last_outcome` says more than the plain wait reads it in its own label, as its Overview row
+says it (W15-55, design §2: one map; `LEFT_TO_YOU_LABELS`; before, every one read "waiting for you
+to merge"): `closed` "Accepted · pull request closed", `rebuild_conflict` "Accepted · could not be
+rebuilt", `head_moved` "Accepted · changed after the review", `rebuilt_without` and
+`rebuilt_changed` "Accepted · rebuilt: look before you merge", `checks_failed` "Accepted · a check
+failed", `blocked_by_rules` and `merge_commits_off` "Accepted · merge it on GitHub", each warn
+tone with the record's sentence as its detail; a merge waiting because GitHub did not answer
+(`waiting_checks` with `last_outcome` `unreachable`, also when the call threw after the claim)
+reads "Accepted · merges once GitHub answers" (W15-68: before, "merges when its checks pass"). One
 whose `last_outcome` is `conflict` (the conflict notice, or the merge step's own conflict) reads
 "Accepted · conflicts with main" (the base named in its sentence, "trunk" included), warn tone,
 the record's sentence ("#3 conflicts with main in README.md: resolve the conflict on GitHub, or

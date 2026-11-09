@@ -1432,10 +1432,17 @@ export class ReviewedPrMerge implements MergePort {
       // the record waiting as it was (never `merging` for good), and the retry tries it again
       // once work may run.
       const now = await store.mergeRecord.get(record.id).catch(() => undefined);
+      // W15-68: GitHub not answering is said as such, in the merge tool's words (the row and the
+      // Tasks label read it); before, it read "merges when its checks pass" whatever stopped it.
+      const unreachable =
+        e instanceof ForerunnerError && e.code === "provider_error" && e.retryable === true;
       if (now?.state === "merging")
         await store.mergeRecord
           .move(record.id, "waiting_checks", {
-            sentence: `${prName(record.pr_number)} merges when its checks pass.`,
+            sentence: unreachable
+              ? `GitHub did not answer about ${prName(record.pr_number)}: Forerunner tries the merge again.`
+              : `${prName(record.pr_number)} merges when its checks pass.`,
+            ...(unreachable ? { last_outcome: "unreachable" } : {}),
           })
           .catch(() => undefined);
       throw e;
