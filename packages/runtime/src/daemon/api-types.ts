@@ -426,7 +426,14 @@ export const TaskView = z.object({
   dependsOn: z.array(z.string()),
   budget: Money,
   estimate: Money,
+  /** What the task's work runs spent: the figure its budget counts (ADR 0112 point 4). */
   actual: Money,
+  /**
+   * What the task cost, its reviews included, from the cost ledger as Costs > By task reads it
+   * (W15-20): the figure the Tasks row and the drawer show, so the three agree. It follows each
+   * model call while the task runs (W15-21). Optional for an older daemon: then `actual`.
+   */
+  spent: Money.optional(),
   /**
    * What a run of the task stops at (U-042): what is left of `budget` when the task has one,
    * else its specialist's per-run limit. The estimate never caps a run.

@@ -1191,8 +1191,26 @@ export class LoopTaskExecutor implements TaskExecutor {
     const calls = new Map<string, { name: string; input: unknown }>();
     // The run's wrap-up line (its budget_line), which the wrap-up's own log line names.
     let runLine: RunWrapUpLine | undefined;
+    // W15-21 (design §4.14): the Run row's cost follows each model call while the run goes on
+    // (the drawer's run line read CHF 0.00 until the end); the end writes the run's own total.
+    let liveRunCost = 0;
+    let liveRunWrites: Promise<void> = Promise.resolve();
     const onEvent = (ev: RunEvent) => {
       this.deps.onEvent?.(task.id, ev);
+      if (ev.type === "model_call_end" && ev.costUsdMicro > 0) {
+        liveRunCost += ev.costUsdMicro;
+        const cost = liveRunCost;
+        liveRunWrites = liveRunWrites
+          .then(async () => {
+            await store.run.patch(run.id, { cost_usd_micro: cost });
+          })
+          .catch((e: unknown) =>
+            this.logger.warn("a model call's cost was not added to its run while it ran", {
+              runId: run.id,
+              error: errorMessage(e),
+            }),
+          );
+      }
       if (!ctx.onStep) return;
       // ADR 0112: the run's budget line at its start (the reserve, or "save only") and its
       // wrap-up are lines of the session's log.
@@ -1480,6 +1498,8 @@ export class LoopTaskExecutor implements TaskExecutor {
         : result.error?.code === "provider_auth" && choice.pick
           ? ("refused" as const)
           : null;
+    // The live writes of each call's cost come first, so the run's own total is the last word.
+    await liveRunWrites;
     try {
       await store.run.patch(run.id, {
         tokens_in: result.usage.input_tokens,

@@ -2107,7 +2107,15 @@ budget-stop; the owner's decision of 2026-11-02).**
   R-lateusage: before, the iterator was closed unread), and to the task's spent figure
   (`task.addCost`, one statement; the runner adds the run's own cost the same way, so neither
   addition writes over the other; TR-13: before, the runner wrote the task's figure from the row
-  it read and the tail never reached it; test `sdk-late-usage.test.ts`). Every late booking (`handle(m, false)`,
+  it read and the tail never reached it; test `sdk-late-usage.test.ts`). W15-21 (design §4.14):
+  the runner books each model call's cost on the task as the step arrives (`recordStep`) and adds
+  only the rest at the end, and the executor writes the running Run row's cost after each call
+  (`liveRunWrites`, awaited before the row's own total), so the Tasks row and the drawer follow a
+  running task; `task.addCost` does not bump the row's version, so a person's action sent with the
+  version the drawer read never meets `version_conflict` because a call was booked. `TaskView.spent`
+  (W15-20) is the cost ledger's figure for the task, reviews included, as Costs > By task reads it
+  (`GET /projects/:id/tasks` reads `costLedger.breakdown("task_id")` once per list); `actual`
+  stays the work-only figure the task's budget counts (ADR 0112 point 4). Every late booking (`handle(m, false)`,
   during `awaitExit` too) goes through `EnforcementHooks.afterModelCall(..., { afterStop: true })`,
   which needs no live token (`TokenIssuer.authentic`: the signature only) and allows nothing; and
   `afterModelCall` books before it checks the token, so a call that answered after Stop all

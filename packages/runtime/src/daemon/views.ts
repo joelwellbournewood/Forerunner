@@ -358,8 +358,16 @@ export function taskView(
   t: TaskRow,
   chfPerUsd: number,
   specialistLimit?: (name: string) => number | undefined,
-  /** The status in words (`taskDisplay`) and the place in the run order, when known. */
-  extra: { display?: TaskDisplay; runOrder?: number; check?: TaskCheck | null } = {},
+  /**
+   * The status in words (`taskDisplay`) and the place in the run order, when known; `spentUsdMicro`:
+   * what the cost ledger holds for the task, reviews included (W15-20), else its `actual`.
+   */
+  extra: {
+    display?: TaskDisplay;
+    runOrder?: number;
+    check?: TaskCheck | null;
+    spentUsdMicro?: number;
+  } = {},
 ): TaskView {
   const limit = specialistLimit?.(t.specialist ?? "coder");
   const cap = t.budget_usd_micro > 0 || limit !== undefined ? runCapOf(t, limit ?? 0) : null;
@@ -380,6 +388,7 @@ export function taskView(
     budget: money(t.budget_usd_micro, chfPerUsd),
     estimate: money(t.est_cost_usd_micro, chfPerUsd),
     actual: money(t.actual_cost_usd_micro, chfPerUsd),
+    spent: money(extra.spentUsdMicro ?? t.actual_cost_usd_micro, chfPerUsd),
     cap: money(cap?.usdMicro ?? 0, chfPerUsd),
     capSource: cap?.source ?? "unknown",
     specialist: t.specialist,

@@ -138,7 +138,7 @@ function DrawerBody({
         <span className="text-xs text-neutral-500">
           {reviewLevelName(reviewLevelValue(task.riskTier, task.specialist))} ·{" "}
           {PRIORITY_LABELS[task.priority]} priority · {whoName(task.specialist)} · spent{" "}
-          <Money value={task.actual} />
+          <Money value={task.spent ?? task.actual} />
         </span>
       </div>
       {d.detail ? <p className="text-neutral-700 dark:text-neutral-300">{d.detail}</p> : null}

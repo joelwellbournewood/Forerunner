@@ -1627,9 +1627,18 @@ export class SessionRunner {
           const execStarted = clock.monotonic();
           // Steps are recorded in order, one after the other, and all before the task ends.
           let steps: Promise<void> = Promise.resolve();
+          // W15-21 (design §4.14): each model call's cost reaches the task while it runs, not
+          // only when the run returns (the drawer and the Tasks row read CHF 0.00 until then);
+          // what was booked live is not added again at the end.
+          let bookedLive = 0;
           const recordStep = async (t: TaskRow, step: TaskStep) => {
             if (step.kind === "model") {
-              await store.session.recordSpend(session.id, Math.max(0, step.costUsdMicro), 1);
+              const cost = Math.max(0, step.costUsdMicro);
+              await store.session.recordSpend(session.id, cost, 1);
+              if (cost > 0) {
+                await store.task.addCost(t.id, cost);
+                bookedLive += cost;
+              }
               return;
             }
             // A line of the run's own (its budget line, its wrap-up; ADR 0112): no step.
@@ -1739,8 +1748,11 @@ export class SessionRunner {
           if (result.outcome !== "usage_limit")
             await sayStarted(result.specialist ?? runItem.specialist);
           // TR-13: added in one statement, so the tail a stopped run reports later (added the
-          // same way, `lateRunCost`) is never written over by this.
-          if (result.costUsdMicro) await store.task.addCost(task.id, result.costUsdMicro);
+          // same way, `lateRunCost`) is never written over by this. W15-21: less what each model
+          // call already booked while it ran (the steps are all recorded before this).
+          await steps;
+          const rest = (result.costUsdMicro ?? 0) - bookedLive;
+          if (rest > 0) await store.task.addCost(task.id, rest);
           task = await store.task.mustGet(task.id);
           await store.task.patch(task.id, {
             ...(result.prUrl ? { pr_url: result.prUrl } : {}),

@@ -107,10 +107,13 @@ export class TaskRepo extends Repository<TaskRow> {
    * this is the task's own counter, as `session.recordSpend` is the session's.
    */
   async addCost(id: string, usdMicro: number): Promise<TaskRow> {
-    const [row] = await this.updateWhere({}, '"id" = ?', [id], {
-      set: ['"actual_cost_usd_micro" = "actual_cost_usd_micro" + ?'],
-      params: [Math.max(0, Math.round(usdMicro))],
-    });
+    // W15-21: the spend is booked after every model call while a task runs, so it does not bump
+    // the row's version: a person's action sent with the version they read (Pause, Edit, Cancel
+    // in the drawer) never meets version_conflict because a call was booked meanwhile.
+    const [row] = await this.rows(
+      `UPDATE ${this.qt} SET "actual_cost_usd_micro" = "actual_cost_usd_micro" + ?, "updated_at" = ? WHERE "id" = ? RETURNING *`,
+      [Math.max(0, Math.round(usdMicro)), this.clock.nowIso(), id],
+    );
     if (!row) return this.mustGet(id);
     return row;
   }

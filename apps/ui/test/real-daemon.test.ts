@@ -12284,4 +12284,117 @@ describe("w15-run, wave 15", () => {
       await rt.close();
     }
   }, 60_000);
+  it("W15-20, W15-21: a running task's spend follows each call, the row and the drawer show what Costs shows, reviews included, and booking never moves the task's version", async () => {
+    // The coder's first call is held, then its second: what the screens read in between.
+    const holds = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    let coderCalls = 0;
+    const w = await world(
+      [
+        ...accepts,
+        toolReply("list_dir", { path: "." }, "Looking first.", {
+          when: (r: ModelRequest) =>
+            isRole("coder")(r) && !JSON.stringify(r.messages).includes("tool_result"),
+          usage: { input_tokens: 20_000, output_tokens: 100 },
+        }),
+        textReply("Wrote nothing; the folder is ready.\n\nLeft to do: nothing", {
+          when: isRole("coder"),
+          usage: { input_tokens: 25_000, output_tokens: 100 },
+        }),
+      ],
+      "spend",
+    );
+    const stream = w.fake.stream.bind(w.fake);
+    w.fake.stream = (r) => {
+      if (!isRole("coder")(r) || coderCalls >= holds.length) return stream(r);
+      const hold = holds[coderCalls++]?.promise ?? Promise.resolve();
+      return (async function* () {
+        await hold;
+        yield* stream(r);
+      })();
+    };
+    const { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({ name: "Spend", goal: "A folder" });
+      const created = await client.createTask(project.id, {
+        title: "Set up the folder",
+        outcome: "The folder is ready",
+        acceptanceCriteria: ["the folder exists"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      const taskId = created.id;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === taskId);
+      await eventually(
+        async () => coderCalls === 1,
+        "the coder's first call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      const before = await rt.store.task.mustGet(taskId);
+      expect(before.actual_cost_usd_micro).toBe(0);
+      holds[0]?.resolve();
+      await eventually(
+        async () => coderCalls === 2,
+        "the coder's second call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      // After its first call the task's spend is booked, while it still runs.
+      await eventually(
+        async () => ((await row())?.actual.usdMicro ?? 0) > 0,
+        "the first call's cost on the Tasks row",
+        async () => JSON.stringify((await row())?.actual),
+        20_000,
+      );
+      const live = await row();
+      expect(live?.status).toBe("in_progress");
+      expect(live?.spent?.usdMicro ?? 0).toBeGreaterThan(0);
+      // The drawer's run line of the run that goes on shows what it spent so far.
+      const runLine = async () => (await client.task(taskId)).runs.find((r) => r.kind !== "review");
+      await eventually(
+        async () => ((await runLine())?.cost.usdMicro ?? 0) > 0,
+        "the running run's cost in the drawer",
+        async () => JSON.stringify(await runLine()),
+        20_000,
+      );
+      expect((await rt.store.task.mustGet(taskId)).status).toBe("in_progress");
+      // Booking a call does not move the task's version: an action the person sends with the
+      // version the drawer read meets no version_conflict.
+      expect((await rt.store.task.mustGet(taskId)).version).toBe(before.version);
+      holds[1]?.resolve();
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const done = await row();
+      expect(done?.status).toBe("done");
+      // No double count: the task's actual is its work run's total.
+      const runs = await rt.store.run.forTask(taskId);
+      const work = runs.filter((r) => r.specialist !== "critic");
+      const reviews = runs.filter((r) => r.specialist === "critic");
+      expect(reviews.length).toBeGreaterThan(0);
+      expect(done?.actual.usdMicro).toBe(work.reduce((s, r) => s + r.cost_usd_micro, 0));
+      // The row, the drawer and Costs > By task show one figure, reviews included.
+      const costs = await client.costs({ projectId: project.id });
+      const byTask = JSON.stringify(costs);
+      const ledger = await rt.store.costLedger.sum({ taskId });
+      expect(done?.spent?.usdMicro).toBe(ledger.usd_micro);
+      expect(done?.spent?.usdMicro ?? 0).toBeGreaterThan(done?.actual.usdMicro ?? 0);
+      expect((await client.task(taskId)).task.spent?.usdMicro).toBe(ledger.usd_micro);
+      expect(byTask).toContain(taskId);
+    } finally {
+      for (const h of holds) h.resolve();
+      await rt.close();
+    }
+  }, 60_000);
 });

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { EventSourceLike, StreamOptions } from "../src/api/sse.ts";
+import { formatChf } from "../src/lib/money.ts";
 import {
   AGENT_ONLY_STATUSES as UI_AGENT_ONLY,
   TASK_TRANSITIONS as UI_TRANSITIONS,
@@ -13,7 +14,7 @@ import { AppRoutes } from "../src/routes.tsx";
 import { AppProvider } from "../src/store/context.tsx";
 import { fakeSandboxView } from "./fake-daemon.ts";
 import { projectTaskViews } from "./fake-tasks.ts";
-import { RUNS, TASKS } from "./fixtures.ts";
+import { money, RUNS, TASKS } from "./fixtures.ts";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -1654,5 +1655,28 @@ describe("leftovers7-tailrun, wave 13: New task's runs-on line reads the typed w
     await waitFor(() => expect(within(dialog).queryByTestId("task-who-note")).toBeNull(), {
       timeout: 5_000,
     });
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-20, live check 2's RUN-3): the Tasks row and the drawer showed the work's
+ * cost while Costs > By task showed it with the critic's reviews: two figures for one task. The
+ * daemon now sends `spent` (the ledger's figure, reviews included); the row and the drawer show it.
+ */
+describe("w15-run, wave 15: one figure per task (W15-20)", () => {
+  it("the Cost cell and the drawer's 'spent' show the task's spent figure, reviews included", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_spent", "Write the club notes", {
+      status: "done",
+      actual: money(10_000_000),
+      spent: money(15_000_000),
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_spent", harness);
+    const row = await rowOf("t_spent");
+    const shown = formatChf(money(15_000_000).chfMicro);
+    expect(row).toHaveTextContent(shown);
+    expect(row).not.toHaveTextContent(formatChf(money(10_000_000).chfMicro));
+    const drawer = await screen.findByTestId("task-drawer");
+    await waitFor(() => expect(drawer).toHaveTextContent(`spent ${shown}`));
   });
 });

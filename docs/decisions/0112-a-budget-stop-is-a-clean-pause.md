@@ -367,3 +367,11 @@ names the model. A model the price table does not know is priced as the run's mo
    moved them back (live check 2, RUN-2). A stopped call (`killed`) is no sample, and a task whose
    stopped run no completed run followed is none in either feed; once a later run completes the
    task, the stopped run's cost counts in its sample.
+6. **One figure per task, live (W15-20, W15-21; amends point 1 of the 'leftovers7-tailrun'
+   amendment).** The Tasks row and the drawer showed the work's cost while Costs > By task showed
+   the ledger's, the critic's reviews included (live check 2, RUN-3), and a running task read CHF
+   0.00 until its run ended (RUN-4). `actual_cost_usd_micro` stays the work-only figure the task's
+   budget counts; the screens show `TaskView.spent`, the ledger's figure for the task, so the row,
+   the drawer and Costs agree. Each model call's cost reaches the task and its Run row as the call
+   ends (the rest at the run's end, no double count), and a spend increment does not bump the
+   task's version, so a person's action during a run never fails on it.
