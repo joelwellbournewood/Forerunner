@@ -3232,10 +3232,14 @@ redo the task.") as its detail; Home's done line does not count it among the pul
 cannot merge it; tests: `real-daemon.test.ts` "a pull request that conflicts reads 'Accepted ·
 conflicts with <base>'", `polish-words.test.tsx` the same row and drawer). The session result's builder "merges by itself
 later" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges by itself once
-its checks pass or GitHub answers." (P7-5, polish-words: `waitingPrs` counts `checks_pending` and
-`unreachable` alike, so the line names both) and "Left N reviewed pull requests for you to merge."
-counts only what waits for the person
-(`ResultFacts.waitingPrs`, `openPrs`). The Overview's Last result gets "Since then: merged #2, #3
+its checks pass." for `checks_pending` and "1 reviewed pull request merges once GitHub answers;
+Forerunner tries again." for `unreachable` (W15-70: `ResultFacts.checksPendingPrs` and
+`unansweredPrs`, filled apart by the runner; P7-5 named both in one line) and "Left N reviewed pull
+requests for you to merge." counts only what waits for the person (`openPrs`). A session whose
+only work the person cancelled while it ran or was reviewed says 'You cancelled "X"; nothing else
+ran.' before its cost (W15-59: `LastSessionOutcome.cancelled`, the builder "cancelled by you";
+it said only "CHF 0.01."); the Update leaves it out (`NOT_NEWS`: the person's own click is no
+news, design §5 rule 11). The Overview's Last result gets "Since then: merged #2, #3
 and #4." (`mergedSinceLine` in `views.ts`) for the pull requests the session left open whose record
 says merged now.
 
@@ -6100,7 +6104,9 @@ carry `title`, `task.finished` also `specialist`; `eventViews` fills both in fro
 (`cutAtWord`), and "could not do" for a run whose report says it could not do the work although
 its outcome is "done" ("The writer could not do "Style the page": "The work needs something I
 do not have here""). `session.ended` names the counts that happened only ("Session over: 2 done,
-1 needs you. CHF 0.06."; "Stopped: Stop all: nothing done. CHF 0.00."); after a stop the
+1 needs you. CHF 0.06."; a task paused at a budget is "1 paused", W15-69: the runner's
+`session.ended` carries `paused` and leaves it out of `needsHuman`, which counted it as needing
+you; "Stopped: Stop all: nothing done. CHF 0.00."); after a stop the
 person made, whose own `session.stopped` line came just before (the runner sets `stopSaid`), it
 says only what it adds ("Session over: 1 done. CHF 0.02.", "Session over. CHF 0.00."): before
 (phase E, C-42) 'Stopped by you during "X". It is ready again.' was followed by "Stopped by

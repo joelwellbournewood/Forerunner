@@ -2522,6 +2522,7 @@ export class SessionRunner {
       ...blockedByFindings,
       ...retried,
       ...skipped,
+      ...cancelled,
     ]);
     const named = (id: string): NamedTask => ({
       id,
@@ -2607,6 +2608,14 @@ export class SessionRunner {
       waitingForDocker: waitingForSandbox
         .filter((t) => endState.readyNow.some((r) => r.id === t.id))
         .map((t) => ({ id: t.id, title: t.title })),
+      // W15-59: what the person cancelled while it ran or was reviewed, still cancelled now.
+      ...(uniq(cancelled).some((id) => endState.rows.get(id)?.status === "cancelled")
+        ? {
+            cancelled: uniq(cancelled)
+              .filter((id) => endState.rows.get(id)?.status === "cancelled")
+              .map(named),
+          }
+        : {}),
       stopReason,
       // The outer limit's amount, while the session still ends there (ADR 0112).
       ...(stopCapUsdMicro !== null && stopLimitWords(stopReason) !== null
@@ -2641,7 +2650,9 @@ export class SessionRunner {
       // merge-in-app: a merge that waits for its checks (or a silent GitHub) merges by itself
       // later, so it is not one the person must merge.
       openPrs: merges.filter((m) => m.status !== "merged" && !MERGE_WAITS.has(m.status)).length,
-      waitingPrs: merges.filter((m) => MERGE_WAITS.has(m.status)).length,
+      // W15-70: the checks that still run and a GitHub that did not answer, said apart.
+      checksPendingPrs: merges.filter((m) => m.status === "checks_pending").length,
+      unansweredPrs: merges.filter((m) => m.status === "unreachable").length,
     };
     const resultLines = sessionResultLines(resultFacts);
     const summary = resultLines.join("\n");
@@ -3065,8 +3076,9 @@ export class SessionRunner {
       inReview: inReview.length,
       failed: failed.length,
       // What needs the person now, as the result says it: a task the person paused is theirs,
-      // not "needs you" (design §2).
-      needsHuman: needsYouNow.length,
+      // not "needs you" (design §2); W15-69: a task paused at a budget is counted as paused.
+      needsHuman: needsYouNow.filter((id) => !pausedCards.has(id)).length,
+      paused: pausedNow.length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,

@@ -130,6 +130,8 @@ function endedCounts(p: Payload): string {
   add("completed", (n) => `${n} done`);
   add("failed", (n) => `${n} failed`);
   add("needsHuman", (n) => `${n} need${n === 1 ? "s" : ""} you`);
+  // W15-69: a task paused at a budget is paused, not one that needs you.
+  add("paused", (n) => `${n} paused`);
   add("retried", (n) => `${n} sent back`);
   add("inReview", (n) => `${n} in review`);
   add("skipped", (n) => `${n} not started`);

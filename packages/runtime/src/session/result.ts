@@ -60,6 +60,11 @@ export interface LastSessionOutcome {
    * Not in `needsYou`.
    */
   paused?: PausedTask[];
+  /**
+   * Tasks the person cancelled while the session ran or reviewed them (W15-59): a session whose
+   * only task they cancelled said only its cost ("CHF 0.01.").
+   */
+  cancelled?: NamedTask[];
   spentChfMicro: number;
 }
 
@@ -81,8 +86,13 @@ export interface ResultFacts {
   /** Reviewed pull requests the session merged, and those it left open for the person. */
   mergedPrs?: number;
   openPrs?: number;
-  /** Reviewed pull requests that merge by themselves once their checks pass (merge-in-app). */
-  waitingPrs?: number;
+  /**
+   * Reviewed pull requests that merge by themselves later (merge-in-app), apart (W15-70): those
+   * whose checks still run (`checks_pending`), and those GitHub did not answer about
+   * (`unreachable`, tried again). One line named both before.
+   */
+  checksPendingPrs?: number;
+  unansweredPrs?: number;
 }
 
 /** Merge outcomes that merge by themselves later (merge-in-app): not left for the person. */
@@ -232,6 +242,24 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
         : [],
   },
   {
+    // W15-59: a session whose only work the person cancelled says so, not only its cost.
+    name: "cancelled by you",
+    line: 2,
+    build: (f, o) => {
+      const gone = o.cancelled ?? [];
+      const did =
+        o.done.length ||
+        o.failed.length ||
+        o.needsYou.length ||
+        (o.paused?.length ?? 0) ||
+        f.inReview.length ||
+        f.mergedPrs;
+      return gone.length && !did
+        ? [`You cancelled ${namesOf(titlesOf(gone))}; nothing else ran.`]
+        : [];
+    },
+  },
+  {
     name: "in review",
     line: 2,
     build: (f) =>
@@ -330,18 +358,26 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   {
     // merge-in-app: what merges by itself once its checks pass is not left for the person
     // (before: "Left 1 reviewed pull request for you to merge" for one the retry then merged).
-    // P7-5 (polish-words): `waitingPrs` also counts a merge GitHub did not answer about
-    // (MERGE_WAITS "unreachable", tried again), so the line names both, never checks only.
+    // W15-70: the checks that still run and a GitHub that did not answer are said apart (P7-5
+    // named both in one line, "once its checks pass or GitHub answers").
     name: "merges by itself later",
     line: 3,
-    build: (f) =>
-      f.waitingPrs
+    build: (f) => [
+      ...(f.checksPendingPrs
         ? [
-            f.waitingPrs === 1
-              ? "1 reviewed pull request merges by itself once its checks pass or GitHub answers."
-              : `${f.waitingPrs} reviewed pull requests merge by themselves once their checks pass or GitHub answers.`,
+            f.checksPendingPrs === 1
+              ? "1 reviewed pull request merges by itself once its checks pass."
+              : `${f.checksPendingPrs} reviewed pull requests merge by themselves once their checks pass.`,
           ]
-        : [],
+        : []),
+      ...(f.unansweredPrs
+        ? [
+            f.unansweredPrs === 1
+              ? "1 reviewed pull request merges once GitHub answers; Forerunner tries again."
+              : `${f.unansweredPrs} reviewed pull requests merge once GitHub answers; Forerunner tries again.`,
+          ]
+        : []),
+    ],
   },
   {
     name: "waiting on other tasks",
@@ -452,7 +488,7 @@ export function needsYouSentence(titles: readonly string[]): string {
  * of polish-words: the Update read "Guides: Less than CHF 0.01." and nothing else).
  */
 const NOT_NEWS =
-  /^(?:(?:(?:Less than )?CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
+  /^(?:(?:(?:Less than )?CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.|You cancelled .+?; nothing else ran\.)\s*)+$/;
 
 /**
  * Whether a result line is news on its own (design §3.8, §5.10): more than money, how the

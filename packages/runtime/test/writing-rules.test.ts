@@ -5,7 +5,12 @@ import { requestWords } from "../src/daemon/request-words.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { scanForInjection } from "../src/injection/scan.ts";
 import * as producers from "../src/notifications/producers.ts";
-import { MERGE_WAITS, sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
+import {
+  isNewsLine,
+  MERGE_WAITS,
+  sessionResultLines,
+  sessionUpdateLine,
+} from "../src/session/result.ts";
 
 /*
  * The writing rules of core-experience design §5, checked mechanically on what the system writes
@@ -468,11 +473,12 @@ describe("polish-words, wave 13: the words a person reads (design §5)", () => {
     expect(violations(said, 100)).toEqual([]);
   });
 
-  it("the session result's merge-later line holds for a merge GitHub did not answer about, not only checks (P7-5)", () => {
-    // `waitingPrs` counts both MERGE_WAITS statuses: "checks_pending" and "unreachable" (GitHub
-    // did not answer; Forerunner tries the merge again), so the line may not promise checks only.
+  it("the session result's merge-later lines name the checks and a GitHub that did not answer apart (P7-5, W15-70)", () => {
+    // Both MERGE_WAITS statuses merge by themselves later: "checks_pending" and "unreachable"
+    // (GitHub did not answer; Forerunner tries the merge again). W15-70: each is said as what it
+    // is (P7-5 said both in one line: "once its checks pass or GitHub answers").
     expect([...MERGE_WAITS].sort()).toEqual(["checks_pending", "unreachable"]);
-    const lines = (waitingPrs: number) =>
+    const lines = (checksPendingPrs: number, unansweredPrs = 0) =>
       sessionResultLines({
         outcome: {
           done: [{ id: "t", title: "Write the page" }],
@@ -488,15 +494,21 @@ describe("polish-words, wave 13: the words a person reads (design §5)", () => {
         leftOutForBudget: [],
         sessionCapChfMicro: 1_000_000,
         openTasks: 0,
-        waitingPrs,
+        checksPendingPrs,
+        unansweredPrs,
       }).join(" ");
-    expect(lines(1)).toContain(
-      "1 reviewed pull request merges by itself once its checks pass or GitHub answers.",
-    );
+    expect(lines(1)).toContain("1 reviewed pull request merges by itself once its checks pass.");
     expect(lines(2)).toContain(
-      "2 reviewed pull requests merge by themselves once their checks pass or GitHub answers.",
+      "2 reviewed pull requests merge by themselves once their checks pass.",
     );
-    expect(lines(1)).not.toMatch(/merges when its checks pass\./);
+    expect(lines(0, 1)).toContain(
+      "1 reviewed pull request merges once GitHub answers; Forerunner tries again.",
+    );
+    expect(lines(1, 2)).toContain(
+      "1 reviewed pull request merges by itself once its checks pass. 2 reviewed pull requests merge once GitHub answers; Forerunner tries again.",
+    );
+    expect(lines(1)).not.toMatch(/GitHub answers/);
+    expect(lines(0, 1)).not.toMatch(/checks pass/);
   });
 
   it("the session result's failed line reads the run's report plain, cut at a word (L-18)", () => {
@@ -881,5 +893,47 @@ describe("polish-words, wave 13: merge, preview, take-out and page-reader words"
     const { PROXY_SENTENCE } = await import("../../capabilities/src/web/fetch.ts");
     expect(PROXY_SENTENCE).toMatch(/^If this computer reaches the internet only through its proxy/);
     expect(PROXY_SENTENCE.length).toBeLessThanOrEqual(140);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-59): a session whose only task the person cancelled during its review
+ * ended with the result "CHF 0.01." and nothing else (live check 2, RUN-10).
+ */
+describe("w15-run, wave 15: the result says what the person cancelled (W15-59)", () => {
+  const facts = (over: Partial<Parameters<typeof sessionResultLines>[0]["outcome"]> = {}) => ({
+    outcome: {
+      done: [],
+      failed: [],
+      needsYou: [],
+      leftOver: [],
+      waiting: [],
+      waitingForDocker: [],
+      stopReason: "queue_empty",
+      spentChfMicro: 8_000,
+      ...over,
+    },
+    inReview: [],
+    leftOutForBudget: [],
+    sessionCapChfMicro: 1_000_000,
+    openTasks: 0,
+  });
+
+  it("only a cancelled task: 'You cancelled \"X\"; nothing else ran.' and its cost, not only the cost", () => {
+    const lines = sessionResultLines(facts({ cancelled: [{ id: "t", title: "Contact page" }] }));
+    expect(lines).toEqual(['You cancelled "Contact page"; nothing else ran.', "CHF 0.01."]);
+    // The person's own click is no news for the Update (design §5 rule 11), nor is the money.
+    expect(lines.every((l) => !isNewsLine(l))).toBe(true);
+  });
+
+  it("with other work done the result says that work, not the cancel", () => {
+    const lines = sessionResultLines(
+      facts({
+        cancelled: [{ id: "t", title: "Contact page" }],
+        done: [{ id: "d", title: "Home page" }],
+      }),
+    );
+    expect(lines.join(" ")).toContain('Did 1 task: "Home page".');
+    expect(lines.join(" ")).not.toContain("You cancelled");
   });
 });
