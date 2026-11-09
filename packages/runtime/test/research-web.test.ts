@@ -12,12 +12,17 @@ import { MemoryAudit } from "../src/enforcement/ports.ts";
 import { loadRegistry } from "../src/registry/loader.ts";
 import { WEB_FETCH_TOOL } from "../src/registry/tools.ts";
 import {
+  hostsNamedIn,
   LoopTaskExecutor,
   NO_WEB_ACCESS_LINE,
   NO_WEB_SEARCH_LINE,
+  retryConstraints,
+  WEB_RULE_WINS_LINE,
+  webRuleRefuses,
 } from "../src/session/executor.ts";
 import { stepLine } from "../src/session/runner.ts";
 import { webSourceEvidence } from "../src/session/web-sources.ts";
+import { webAccessOf } from "../src/wiring/web-access.ts";
 import { webReadRulesResolver } from "../src/wiring/web-ports.ts";
 import {
   flatPricing,
@@ -102,6 +107,9 @@ async function world(opts: {
   title?: string;
   /** The reader's development seam (default on: the fixture is on 127.0.0.1). */
   loopback?: boolean;
+  /** The task's attempt (a retry) and the open findings of its last review. */
+  attempt?: number;
+  findings?: { severity: string; description: string; required_action: string }[];
 }) {
   const h = harness();
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
@@ -130,7 +138,32 @@ async function world(opts: {
     status: "in_progress",
     specialist: opts.specialist,
     budget_usd_micro: 2_000_000,
+    ...(opts.attempt ? { attempt: opts.attempt } : {}),
   });
+  if (opts.findings?.length) {
+    const review = await store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 40,
+      confidence: 0.8,
+      verdict: "revise",
+      evidence: [],
+      summary: "Sent back.",
+      author_agent: agent,
+    });
+    for (const [i, f] of opts.findings.entries())
+      await store.finding.insert({
+        review_id: review.id,
+        task_id: task.id,
+        severity: f.severity as never,
+        description: f.description,
+        required_action: f.required_action,
+        status: "open",
+        fingerprint: `fp-${i}`,
+        author_agent: agent,
+      });
+  }
   const audit = new MemoryAudit();
   const tools = toolsWith(store, audit, h, opts.noWeb ?? false, opts.loopback ?? true);
   const specs = specialistSpecFrom(shipped, { driver: "loop", tools: () => tools.names() });
@@ -316,5 +349,81 @@ describe("the session log names the page a run read (design §3.7)", () => {
         denied: false,
       }),
     ).toBe("read the web page 10.0.0.7 (failed)");
+  });
+});
+
+describe("w15-review, wave 15", () => {
+  const ONLY_IP = { web_access: { mode: "only", only: ["10.1.2.3"], never: [] } };
+  const RULE =
+    "This project's research reads only these websites and their subdomains: 10.1.2.3. Use no other source; say in the report which pages you could not read because of this rule.";
+
+  it("W15-25: the run returns the site rule its brief carried, for the critic", async () => {
+    const w = await world({
+      specialist: "researcher",
+      settings: ONLY_IP,
+      replies: [
+        { text: "The page is on developer.mozilla.org, which this project's rule keeps out." },
+      ],
+    });
+    expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(RULE);
+    expect(w.result.webRule).toBe(RULE);
+    // A project whose research may read any website has no rule to return.
+    const any = await world({ specialist: "researcher", replies: [{ text: "Done." }] });
+    expect(any.result.webRule).toBeUndefined();
+  });
+
+  it("W15-25: after Go ahead without, the next brief holds no order to read a page the site rule refuses", async () => {
+    const w = await world({
+      specialist: "researcher",
+      settings: ONLY_IP,
+      attempt: 1,
+      findings: [
+        {
+          severity: "high",
+          description: "dialog.md is missing; the refusal is probably wrong",
+          required_action:
+            "Fetch https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog and write dialog.md",
+        },
+        {
+          severity: "medium",
+          description: "The summary has four bullets, not five",
+          required_action: "Write five bullets in dialog.md",
+        },
+      ],
+      replies: [{ text: "Nothing I may read covers the dialog element." }],
+    });
+    const brief = w.provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).not.toContain("developer.mozilla.org");
+    expect(brief).not.toContain("Fetch https://");
+    // The order the rule allows stays; the rule wins over any finding, and says so once.
+    expect(brief).toContain(
+      "- [medium] The summary has four bullets, not five -> Write five bullets in dialog.md",
+    );
+    expect(brief).toContain(WEB_RULE_WINS_LINE);
+    expect(brief).toContain(RULE);
+  });
+
+  it("W15-25: a finding naming a host is an order as before where the rule refuses nothing, and for a specialist that reads no pages", () => {
+    const finding = {
+      severity: "high",
+      description: "The link to https://developer.mozilla.org/x is broken",
+      required_action: "Fix the link to developer.mozilla.org",
+    };
+    const refuses = webRuleRefuses(webAccessOf(ONLY_IP));
+    expect(refuses?.("developer.mozilla.org")).toBe(true);
+    expect(refuses?.("10.1.2.3")).toBe(false);
+    expect(webRuleRefuses(webAccessOf({}))).toBeNull();
+    expect(retryConstraints(1, [finding], { refusesHost: refuses }).join("\n")).not.toContain(
+      "Fix the link",
+    );
+    expect(retryConstraints(1, [finding], { refusesHost: null }).join("\n")).toContain(
+      "Fix the link to developer.mozilla.org",
+    );
+    // File names are not hosts.
+    expect(hostsNamedIn("Write dialog.md and wc.js; see index.html")).toEqual([]);
+    expect(hostsNamedIn("read developer.mozilla.org and http://10.1.2.3/a")).toEqual([
+      "10.1.2.3",
+      "developer.mozilla.org",
+    ]);
   });
 });

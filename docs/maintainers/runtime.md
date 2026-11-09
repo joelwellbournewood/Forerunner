@@ -2675,6 +2675,11 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   (`retryConstraints`) lists the open findings that are orders under "Critic findings to resolve"
   and the notes (`isReviewNote`: `info`, or a measured problem "(not caused by this task)") under
   "Notes from the review, for your information only: …", without their required action (L-4).
+  For a specialist that reads web pages, an order whose text names a host the project's site
+  rule refuses (`webRuleRefuses`, `hostsNamedIn`: web addresses, bare host names, IP addresses;
+  file names such as `dialog.md` are not hosts) is dropped, and `WEB_RULE_WINS_LINE` says the
+  rule comes before any finding (W15-25). The run returns the site rule line its brief carried
+  (`TaskExecutionResult.webRule`), and the critic's request states it (`critic.md`).
 
 | Verdict | What the runner sees | Task |
 | --- | --- | --- |

@@ -386,3 +386,20 @@ rewritten.
    A value is also found with Windows line endings when the vault holds it with Unix ones. A
    read with no value in it gets no replacement, as before. Only values the run's resolver has
    handed out are known (a secret the run never used is not), as on the API key.
+
+## Amendment 2026-11-09 (wave 15, 'w15-review'): the critic knows the rule the work ran under
+
+Point 7's rule line reached the worker's brief only. The review's request carried the brief as
+the task's title and outcome, so the critic saw "only 10.1.2.3" only inside the worker's report;
+it called the researcher's correct refusal "probably wrong", required "Fetch the MDN dialog page
+and write dialog.md", and the order was carried into the next brief (live check 2, research F7).
+
+1. **The run returns the rule line its brief carried** (`TaskExecutionResult.webRule`), and the
+   critic's request states it in its own section, "Web pages research may read (the project's
+   rule the worker ran under)", with the line that a page it refuses was rightly not read and
+   that no required action may ask for one. It is the rule the run ran under, never one changed
+   later. The critic's registry prompt (1.3.0) says the same.
+2. **A retry brief drops an order the rule refuses.** For a specialist that reads web pages, an
+   open finding whose text names a host the rule refuses is no order in the next brief, and the
+   brief says once that the rule comes before any finding. An order that names no host (the live
+   "Fetch the MDN dialog page") is answered by point 1 and by that line.

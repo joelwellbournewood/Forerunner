@@ -121,6 +121,11 @@ export interface ReviewEvidence {
   acceptanceCriteria: string[];
   /** The delegation brief as rendered for the worker (goal, constraints, criteria). */
   brief?: string;
+  /**
+   * The project's rule on which websites research may read, as the worker's brief said it
+   * (W15-25): the rule the work ran under. A page it refuses was rightly not read.
+   */
+  webRule?: string;
   artifacts?: string[];
   /** Maintainer docs the change touched (doc drift, tier 2+). Default: changedFiles under docs/. */
   docsTouched?: string[];

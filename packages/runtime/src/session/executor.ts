@@ -106,7 +106,12 @@ import {
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
 import { pricingFor as tablePricingFor } from "../wiring/billing-ports.ts";
-import { webAccessBriefLine, webAccessOf } from "../wiring/web-access.ts";
+import {
+  sitesCover,
+  type WebAccess,
+  webAccessBriefLine,
+  webAccessOf,
+} from "../wiring/web-access.ts";
 import type { WebSearchLists } from "../wiring/web-ports.ts";
 import {
   WEB_SEARCH_LISTS_LINE,
@@ -483,18 +488,68 @@ export function gitConstraints(
 export const LOCAL_ONLY_BRIEF_LINE =
   "A folder named \"Local only\" in the project's folder, when there is one, holds the person's own files on this computer and is never uploaded: read or change them when the task needs it, and put their content into your work only when the task asks for it.";
 
+/**
+ * The retry brief's line where the project's site rule limits research (W15-25): a finding that
+ * asks for a page the rule refuses is no order.
+ */
+export const WEB_RULE_WINS_LINE =
+  "The project's rule on which websites research may read comes before any finding: do not read a page it refuses, even where a review asked for one; say in the report what the rule kept out.";
+
+/**
+ * Whether the project's "Web pages research may read" refuses a host (W15-25): outside an "only"
+ * list, or on the "never" list. Null when the rule refuses nothing by name (any public website).
+ */
+export function webRuleRefuses(v: WebAccess): ((host: string) => boolean) | null {
+  if (v.mode !== "only" && !v.never.length) return null;
+  return (host) => (v.mode === "only" && !sitesCover(v.only, host)) || sitesCover(v.never, host);
+}
+
+/** Top-level names a finding may name a website by ("developer.mozilla.org"), never file types. */
+const HOST_TLD =
+  /\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|org|net|io|dev|app|edu|gov|info|ch|de|fr|uk|eu|us|co|ai|me|page|site|cloud)\b/gi;
+const WEB_ADDRESS = /\bhttps?:\/\/[^\s"'<>()]+/gi;
+
+/** The hosts a text names: the host of every web address, bare names ("developer.mozilla.org"), IPs. */
+export function hostsNamedIn(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(WEB_ADDRESS)) {
+    try {
+      out.add(new URL(m[0]).hostname.toLowerCase());
+    } catch {
+      // not an address
+    }
+  }
+  const bare = text.replace(WEB_ADDRESS, " ");
+  for (const m of bare.matchAll(HOST_TLD)) out.add(m[0].toLowerCase());
+  for (const m of bare.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) out.add(m[0]);
+  return [...out];
+}
+
 /** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
 export function retryConstraints(
   attempt: number,
   openFindings: readonly { severity: string; description: string; required_action: string }[],
-  /** `kept`: the second rung kept the specialist (no stand-in of its kind), nothing was handed over. */
-  opts: { kept?: boolean } = {},
+  /**
+   * `kept`: the second rung kept the specialist (no stand-in of its kind), nothing was handed
+   * over. `refusesHost`: the project's site rule (`webRuleRefuses`); a finding that orders a
+   * page of a host it refuses is no order (W15-25).
+   */
+  opts: { kept?: boolean; refusesHost?: ((host: string) => boolean) | null } = {},
 ): string[] {
   const lines: string[] = [];
+  // W15-25 (live check 2, research F7): a review that did not know the site rule ordered a
+  // fetch of a page the rule refuses, and the order was carried into the next brief. An order
+  // naming a host the rule refuses is dropped here; the brief says once that the rule wins (the
+  // rule's own line follows in the brief).
+  const refusesHost = opts.refusesHost;
+  const refused = (f: { description: string; required_action: string }) =>
+    !!refusesHost &&
+    hostsNamedIn(`${f.description}\n${f.required_action}`).some((h) => refusesHost(h));
+  const outside = openFindings.filter((f) => !isReviewNote(f) && refused(f));
   // L-4 (live, 2026-11-02): the critic's notes ([info]) and problems the task did not cause
   // ("... (not caused by this task)") are not orders. As orders, a retry "resolved" an unrelated
   // failing test by rewriting code outside its task and ran out of budget unreviewed.
-  const orders = openFindings.filter((f) => !isReviewNote(f));
+  const orders = openFindings.filter((f) => !isReviewNote(f) && !refused(f));
   const notes = openFindings.filter(isReviewNote);
   // The "findings below" line only when findings follow (design §4.6): a retry after an error
   // has none, and its brief said so anyway.
@@ -520,6 +575,7 @@ export function retryConstraints(
     for (const f of orders.slice(0, 20))
       lines.push(`- [${f.severity}] ${f.description} -> ${f.required_action}`);
   }
+  if (outside.length || (refusesHost && orders.length)) lines.push(WEB_RULE_WINS_LINE);
   if (notes.length) {
     lines.push(
       "Notes from the review, for your information only: they are not part of this task. Do not change code for them; if one stops your task, say so under 'Questions for the person:'.",
@@ -878,7 +934,13 @@ export class LoopTaskExecutor implements TaskExecutor {
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
         // ADR 0112: what the wrap-up's two headings are for.
         WRAP_UP_BRIEF_LINE,
-        ...retryConstraints(task.attempt, openFindings, { kept: keptByLadder }),
+        ...retryConstraints(task.attempt, openFindings, {
+          kept: keptByLadder,
+          // Only a specialist that reads web pages is held to the site rule's orders.
+          refusesHost: needsWeb(profileOf(defaultSpec))
+            ? webRuleRefuses(webAccessOf(project?.settings))
+            : null,
+        }),
       ],
       // The critic reviews against the same criterion (live2 #8: a generic one was "met").
       acceptanceCriteria: task.acceptance_criteria.length
@@ -967,10 +1029,13 @@ export class LoopTaskExecutor implements TaskExecutor {
       else webLines.push(NO_WEB_SEARCH_LINE);
     }
     // 'sites': a run that reads pages is told the project's "Web pages research may read" when
-    // it limits anything, and to say in its report what it could not read because of it.
+    // it limits anything, and to say in its report what it could not read because of it. The
+    // same line goes back with the result (W15-25): the critic judges the run under the rule it
+    // ran under, never one changed later.
+    let webRule: string | null = null;
     if (spec.allowedTools.includes(WEB_FETCH_TOOL)) {
-      const rule = webAccessBriefLine(webAccessOf(project?.settings));
-      if (rule) webLines.push(rule);
+      webRule = webAccessBriefLine(webAccessOf(project?.settings));
+      if (webRule) webLines.push(webRule);
     }
     // A run with no worktree on the SDK path still needs a working directory: its own,
     // under the executor's work root, and that is the only path the token allows.
@@ -1600,6 +1665,9 @@ export class LoopTaskExecutor implements TaskExecutor {
         ...(worktree ? { worktree } : {}),
         finalReport: finalText,
         lessons: this.screenedLessons(task.id, finalText, spec.name),
+        ...(webSources.length ? { webSources } : {}),
+        ...(searchSeen.length ? { searchSeen } : {}),
+        ...(webRule ? { webRule } : {}),
       };
     }
 
@@ -1634,6 +1702,8 @@ export class LoopTaskExecutor implements TaskExecutor {
       ...(webSources.length ? { webSources } : {}),
       // The search results it saw ('web-search'): one not opened is no source.
       ...(searchSeen.length ? { searchSeen } : {}),
+      // The project's rule the run read pages under (W15-25), for the critic.
+      ...(webRule ? { webRule } : {}),
     };
   }
 

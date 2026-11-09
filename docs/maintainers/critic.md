@@ -126,6 +126,15 @@ Verification (ADR 0104, `types.ts`):
 - **Questions for the person.** `evidence.questionsForPerson` (the report's "Questions for the
   person:" list) is rendered as such, and `rules.ts` turns an accept into `human`
   (`ASKS_PERSON_RULE`): work that waits for the person is never accepted.
+- **The site rule the worker ran under** (W15-25). `evidence.webRule` is the "Web pages research
+  may read" line the run's brief carried (the executor returns it with the result,
+  `TaskExecutionResult.webRule`), rendered right after the brief under its own section
+  (`EVIDENCE_SECTIONS.webRule`, never `limits`, which is an escalation ground) with
+  `WEB_RULE_TRUST_LINE`: a page the rule refuses was rightly not read, and no required action
+  asks for one. The registry prompt (critic 1.3.0) says the same. Live check 2 (research F7): a
+  review that saw the rule only inside the worker's report called a correct refusal "probably
+  wrong" and ordered a fetch the rule forbids. Test: `packages/runtime/test/verification.test.ts`
+  "W15-25: the critic's review request states the site rule".
 - **Not checked.** `evidence.notChecked` (what could not be run or tried, and why) is rendered
   with the artifacts.
 - **For the person.** A task review's output carries `verification` (`VerificationRecord`:

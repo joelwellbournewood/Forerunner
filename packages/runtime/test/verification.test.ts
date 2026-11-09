@@ -1460,4 +1460,49 @@ describe("w15-review, wave 15", () => {
     expect(JSON.stringify(reviewCalls(w)[0]?.request.messages)).not.toContain("ran node wc.js (");
     await w.close();
   });
+
+  it("W15-25: the critic's review request states the site rule the worker ran under, outside its report, and the critic is told a refusal under it is right", async () => {
+    // Live check 2 (research F7): under "only 10.1.2.3" the researcher rightly did not read MDN
+    // and asked the person; the review named the rule only inside the worker's report, called
+    // the refusal "probably wrong" and required "Fetch the MDN dialog page".
+    const rule =
+      "This project's research reads only these websites and their subdomains: 10.1.2.3. Use no other source; say in the report which pages you could not read because of this rule.";
+    const report = [
+      "I did not write dialog.md: the page is on developer.mozilla.org, which this project's research may not read.",
+      "",
+      "Questions for the person:",
+      "- Can developer.mozilla.org be added to the websites research may read?",
+    ].join("\n");
+    const w = await loopWorld({
+      projectSettings: { web_access: { mode: "only", only: ["10.1.2.3"], never: [] } },
+      replies: [
+        submitReply({ grade: 30, verdict: "revise", summary: "dialog.md is missing" }),
+        closingReply(),
+      ],
+    });
+    await w.addTask("Summarize the MDN page on the dialog element", {
+      outcome: "dialog.md summarizes the MDN page on the dialog element in five bullets",
+      acceptance_criteria: ["Every bullet names the page it was read from"],
+      specialist: "researcher",
+      risk_tier: 1,
+    });
+    const inner = doneExecutor(w, { finalReport: report });
+    await w.start(
+      w.runner({
+        ...inner,
+        execute: async (c) => ({ ...(await inner.execute(c)), webRule: rule }),
+      }),
+    );
+    const call = reviewCalls(w)[0]?.request;
+    const user = String(call?.messages[0]?.content ?? "");
+    const outsideReport = user.replace(/## Worker's final report[\s\S]*?```\n```/, "");
+    expect(outsideReport).toContain(
+      `## Web pages research may read (the project's rule the worker ran under)\n${rule}\n`,
+    );
+    expect(outsideReport).toContain("A page it refuses was rightly not read");
+    expect(String(call?.system ?? "")).toContain(
+      'a report that says so, or asks the person about it, is right,\n  never "probably wrong"',
+    );
+    await w.close();
+  });
 });

@@ -283,6 +283,11 @@ export interface TaskExecutionResult {
    * was not opened is no source; the critic is told which those are (`webSourceEvidence`).
    */
   searchSeen?: SearchSeen[];
+  /**
+   * The project's "Web pages research may read" line the run's brief carried (W15-25), when it
+   * limits anything: the critic judges the run under the rule it ran under.
+   */
+  webRule?: string;
 }
 
 /** One web search result a run saw ('web-search'), as the critic is told of it. */

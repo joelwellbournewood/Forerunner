@@ -413,6 +413,8 @@ export class CriticLoop implements CriticPort {
         ? task.acceptance_criteria
         : [outcomeCriterion(task.outcome)],
       brief: `${task.title}: ${task.outcome}`,
+      // W15-25: the site rule the run read pages under, which the critic judges a refusal by.
+      ...(result.webRule ? { webRule: result.webRule } : {}),
       finalReport: report,
       ...(questions.length ? { questionsForPerson: questions } : {}),
       notChecked: [
