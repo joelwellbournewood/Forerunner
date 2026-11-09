@@ -842,3 +842,114 @@ describe("GitHostWatcher against the fake git host", () => {
     expect(started).toHaveLength(1);
   });
 });
+
+/**
+ * w15-tail, wave 15 run B (W15B-05): the null-mergeable re-read (W15-07) waited up to about 15 s
+ * per pull request, one after another, on a real setTimeout that stop() did not cancel: after
+ * Quit a poll went on calling GitHub, and a main branch move with N open pull requests held one
+ * poll for N x 15 s.
+ */
+describe("w15-tail, wave 15 run B: the null-mergeable re-read (W15B-05)", () => {
+  /** GitHub working mergeability out for good: every read of an open PR answers null. */
+  function nullMergeableHost() {
+    const calls: string[] = [];
+    const host: GitHostWatcherDeps["host"] = {
+      whoAmI: async () => {
+        calls.push("whoAmI");
+        return { login: OWNER } as never;
+      },
+      getPullRequest: async (_repo, number) => {
+        calls.push(`get #${number}`);
+        return {
+          number,
+          title: `t${number}`,
+          body: "",
+          state: "open",
+          merged: false,
+          mergeable: null,
+          head: { ref: `feature/${number}`, sha: `sha${number}` },
+          base: { ref: "main", sha: "base" },
+          htmlUrl: `https://github.com/${OWNER}/app/pull/${number}`,
+          draft: false,
+        };
+      },
+      listPullRequestComments: async () => {
+        calls.push("comments");
+        return [];
+      },
+      listPullRequestReviews: async () => {
+        calls.push("reviews");
+        return [];
+      },
+      listPullRequestReviewComments: async () => {
+        calls.push("review comments");
+        return [];
+      },
+      listCheckRuns: async () => {
+        calls.push("checks");
+        return [];
+      },
+    };
+    return { host, calls };
+  }
+  /** Two more tasks of the agent with open pull requests: three in all. */
+  async function threePullRequests() {
+    for (const n of [9001, 9002]) {
+      await store.task.insert({
+        ...task,
+        id: undefined,
+        title: `Build part ${n}`,
+        pr_url: `https://github.com/${OWNER}/app/pull/${n}`,
+      } as never);
+    }
+  }
+
+  it("one poll's re-reads take about 15 s in all on the watcher's re-read clock, not 15 s per pull request", async () => {
+    await threePullRequests();
+    const { host, calls } = nullMergeableHost();
+    const reread = new SimulatedClock("2026-10-20T08:00:00.000Z");
+    const w = watcher({ host, rereadClock: reread } as Partial<GitHostWatcherDeps>);
+    let finished = false;
+    const done = w.pollOnce().then(() => {
+      finished = true;
+    });
+    let waited = 0;
+    // The poll's waits are on the injected clock: advance it until the poll ends.
+    for (let i = 0; i < 400 && !finished; i++) {
+      await reread.advance(250);
+      waited += 250;
+      await new Promise((r) => setImmediate(r));
+    }
+    // Before: 1 + 2 + 4 + 8 s of real time per pull request, 45 s for three, on a timer the
+    // injected clock never moved.
+    expect(finished, `the poll still runs after ${waited} ms of the re-read clock`).toBe(true);
+    await done;
+    expect(waited).toBeLessThanOrEqual(15_250);
+    expect(calls.filter((c) => c.startsWith("get ")).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("stop() during a re-read ends the poll at once, and no GitHub call follows it", async () => {
+    await threePullRequests();
+    const { host, calls } = nullMergeableHost();
+    const reread = new SimulatedClock("2026-10-20T08:00:00.000Z");
+    const w = watcher({ host, rereadClock: reread } as Partial<GitHostWatcherDeps>);
+    w.start();
+    const done = w.pollOnce();
+    // The first pull request was read and its re-read waits on the clock.
+    for (let i = 0; i < 200 && !calls.some((c) => c.startsWith("get ")); i++)
+      await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 20));
+    const before = calls.length;
+    w.stop();
+    const ended = await Promise.race([
+      done.then(() => "ended"),
+      new Promise((r) => setTimeout(() => r("still running after 10 s of real time"), 10_000)),
+    ]);
+    expect(ended).toBe("ended");
+    // Nothing more reaches GitHub, even once the clock moves past every wait.
+    await reread.advance(60_000);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.slice(before)).toEqual([]);
+    expect(started).toEqual([]);
+  }, 30_000);
+});

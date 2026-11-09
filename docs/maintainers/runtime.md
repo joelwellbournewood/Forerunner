@@ -3501,9 +3501,16 @@ merges cleanly (`closeStaleNotice`), and a notice that takes over an open card t
 earlier notice keeps that card's own earlier words, never notice words to restore. **The conflict notice** (R-conflict):
 `pullRequestState` keeps what the poll read of each open task pull request (W15-07: the watcher
 reads an open pull request whose `mergeable` is still null again after 1, 2, 4 and 8 s of real
-time, `MERGEABLE_REREAD_MS`, `mergeableRereadMs`, about 15 s at most, since GitHub works it out
+time, `MERGEABLE_REREAD_MS`, `mergeableRereadMs`, since GitHub works it out
 after the first read that follows a change; before, the null was dropped and a notice came and
-went one poll late, about two minutes live); `sweep`, after the
+went one poll late, about two minutes live; W15B-05: the re-reads of one poll wait about 15 s in
+all, the schedule's sum shared by its pull requests (`RereadBudget`; before, 15 s each, one after
+another, so a main branch move with N open pull requests held a poll for N x 15 s), on
+`deps.rereadClock` (default real time, a simulated clock in tests), and `stop()` aborts the wait:
+the poll ends there, leaves that pull request's cursor as it was, completes no baseline, and asks
+GitHub nothing more (no default branch heads, no merge retry, nothing fired); before, a bare
+`setTimeout` went on after Quit and the poll kept calling GitHub; test `githost-watcher.test.ts`
+"w15-tail, wave 15 run B"); `sweep`, after the
 poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
 the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no
 approval) and whose pull request GitHub says does not merge (`mergeable === false`): the record
