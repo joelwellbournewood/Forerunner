@@ -128,8 +128,8 @@ export interface TaskDisplayContext {
    */
   live?: (taskId: string) => boolean;
   /**
-   * Ready tasks that hold work in progress from a run that paused at a budget (P7-20): a Cancel
-   * sets it aside, as a paused task's does. Absent: none.
+   * Ready tasks that hold work in progress from a run that paused at a budget and left changed
+   * files (P7-20): a Cancel sets it aside, as a paused task's does. Absent: none.
    */
   heldWork?: ReadonlySet<string>;
   /**

@@ -2149,7 +2149,13 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   (the line after the action): a run or review stopped and its changes removed, a pull request
   kept, the person's own folder keeping what a run wrote (C-37; `TaskDisplayContext.ownFolder`
   from the project's absolute `repos[0]`), a paused task's work set aside. `taskDisplay` sends
-  the line as `TaskDisplay.cancelWork` for a running task, a live review and a paused one.
+  the line as `TaskDisplay.cancelWork` for a running task, a live review and a paused one, and
+  for a ready task holding a paused run's work (`TaskDisplayContext.heldWork`, P7-20,
+  polish-words: Continue, or a Reopen after a cancel). `loadTaskDisplayContext` counts a ready
+  task there only when its last work run paused and that run's session has a `task.files` event
+  for it with files (`runLeftFiles`): a run paused before it wrote anything holds nothing, and
+  the line would have promised a set-aside that never comes (the review of polish-words; test:
+  `real-daemon.test.ts` "Cancel on a ready task holding its work so far").
 - *Settings.* `push_unfinished_work` (`session/push-unfinished.ts`, `pushUnfinishedOf`): the
   project row "Push unfinished work to GitHub" in `settingsView` for a project on a host
   repository; compose passes it to `PrTaskExecutor` as `pushUnfinishedFor`.

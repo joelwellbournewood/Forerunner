@@ -53,7 +53,12 @@ import {
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
-import { reviewLevelName, reviewLevelValue, specialistName } from "../src/lib/task-actions.ts";
+import {
+  actionExplain,
+  reviewLevelName,
+  reviewLevelValue,
+  specialistName,
+} from "../src/lib/task-actions.ts";
 import { intakeCardOf } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
@@ -11363,4 +11368,112 @@ describe("polish-words, wave 13: the Inbox cards through the real daemon", () =>
       "Drops it; its work is set aside unless a later task built on it.",
     );
   });
+});
+
+describe("polish-words, wave 13: Cancel on a ready task holding its work so far (P7-20)", () => {
+  // A task paused at its budget, cancelled and reopened, is ready and holds its work in progress
+  // again: its Cancel sets that work aside, and the row's title, the dialog and the drawer say
+  // so. Only when the paused run left work: a run paused before it wrote anything holds none,
+  // and the line would promise a set-aside that never comes (the review of polish-words, bench:
+  // the CHF 0.004 guide wrote no file and its cancel set nothing aside).
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    // The stand-in writes the guides one part per call until the budget stops it.
+    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_LONG: "Write the guide" }));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a reopened task whose paused run wrote its file says Cancel sets it aside; one whose run wrote nothing, and one that never ran, do not", async () => {
+    const project = await client.createProject({ name: "Club guides", goal: "Guides" });
+    const make = (title: string, file: string, budgetUsdMicro: number, priority: "high" | "low") =>
+      client.createTask(project.id, {
+        title,
+        outcome: `${file} explains the club`,
+        acceptanceCriteria: [`${file} exists`],
+        priority,
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro,
+        specialist: "coder",
+        riskTier: 1,
+      });
+    // The members guide's budget (CHF 0.004, as on the bench) stops it before it writes
+    // anything; it runs first, so no task builds on the other guide's work in the folder. That
+    // one has about three times the reserve of two stand-in calls (budget-resume's journey): a
+    // few parts of guide.md, then the pause.
+    const empty = await make(
+      "Write the guide for members in members.md",
+      "members.md",
+      5_000,
+      "high",
+    );
+    const wrote = await make("Write the guide in guide.md", "guide.md", 45_000, "low");
+    const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, JSON.stringify(started)).toBeTruthy();
+    await eventually(
+      async () =>
+        !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () =>
+        (await client.tasks(project.id)).map((t) => `${t.title}=${t.display?.label}`).join(", "),
+      60_000,
+    );
+    const folder = projectWorkspaceDir(rt.data.assets.projectsRoot, project.id);
+    expect(existsSync(join(folder, "guide.md")), "the first run wrote guide.md").toBe(true);
+    expect(existsSync(join(folder, "members.md")), "the second run wrote nothing").toBe(false);
+    for (const t of [wrote, empty]) {
+      const row = (await client.tasks(project.id)).find((r) => r.id === t.id);
+      expect(row?.display?.label, `${t.title}: ${row?.reason}`).toBe("Paused at its budget");
+    }
+    // Cancel each from the Tasks tab, then Reopen it, as the person does.
+    const back: Record<string, string> = {};
+    for (const t of [wrote, empty]) {
+      const paused = await rt.store.task.mustGet(t.id);
+      const cancelled = await client.taskAction(t.id, {
+        version: paused.version,
+        action: "cancel",
+      });
+      expect(cancelled.status).toBe("cancelled");
+      const reopened = await client.taskAction(t.id, {
+        version: cancelled.version,
+        action: "reopen",
+      });
+      expect(reopened.status).toBe("ready");
+      back[t.id] = reopened.change?.sentence ?? "";
+    }
+    expect(back[wrote.id]).toContain("Its work so far is back.");
+    expect(back[empty.id]).not.toContain("Its work so far is back.");
+    // A task that never ran.
+    const fresh = await client.createTask(project.id, {
+      title: "Write the welcome note in welcome.md",
+      outcome: "welcome.md greets new members",
+      status: "ready",
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const rows = await client.tasks(project.id);
+    const row = (id: string) => rows.find((r) => r.id === id);
+    const held = row(wrote.id);
+    expect(held?.display).toMatchObject({
+      key: "ready",
+      label: "Ready",
+      cancelWork:
+        "Its work so far is set aside unless a later task built on it; Undo brings it back.",
+    });
+    // The row's button title, the dialog and the drawer read it from one place.
+    expect(held ? actionExplain("cancel", held) : "").toBe(
+      "Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.",
+    );
+    for (const id of [empty.id, fresh.id]) {
+      const r = row(id);
+      expect(r?.display?.key, r?.title).toBe("ready");
+      expect(r?.display?.cancelWork, r?.title).toBeUndefined();
+      expect(r ? actionExplain("cancel", r) : "", r?.title).toBe("Drops it.");
+    }
+  }, 120_000);
 });
