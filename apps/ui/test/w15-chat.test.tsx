@@ -71,4 +71,22 @@ describe("w15-chat, wave 15", () => {
       "Created the project Garden club and made it the active project. Undo.",
     );
   });
+
+  // W15-47 (design §5 rule 7, "Never USD"): fast mode's row and card were the one place in
+  // Settings that still quoted USD ("at USD 8 / 40 per million input / output tokens").
+  it("Settings shows no USD anywhere, Advanced open; fast mode's price reads about CHF (W15-47)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.fastMode = { proj_atlas: false, proj_beacon: true };
+    renderApp("/settings", harness);
+    await screen.findByTestId("settings-basics");
+    await user.click(screen.getByTestId("settings-advanced-summary"));
+    const card = await screen.findByTestId("fast-mode-card");
+    await within(card).findAllByTestId("fast-mode-row");
+    expect(within(card).getByTestId("fast-mode-effect")).toHaveTextContent(
+      "at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00",
+    );
+    await waitFor(() => expect(screen.getAllByTestId("setting-row").length).toBeGreaterThan(4));
+    expect(document.body.textContent ?? "").not.toMatch(/USD/);
+  });
 });

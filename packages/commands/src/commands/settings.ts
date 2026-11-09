@@ -85,6 +85,30 @@ export interface SettingSpec {
 export interface SettingEffectContext {
   /** The price table in force (`CommandPorts.pricingTable`); absent: the built-in table. */
   pricing?: PricingTable;
+  /** CHF per USD at the day's rate (`CommandPorts.chfPerUsd`); absent: the default rate. */
+  chfPerUsd?: number;
+}
+
+/**
+ * The prices and the day's rate an effect sentence quotes (W15-47: fast mode's price in CHF).
+ * Read only for a key with an effect; a rate that cannot be read leaves the default rate.
+ */
+async function effectContext(
+  spec: SettingSpec,
+  ctx: CommandContext,
+): Promise<SettingEffectContext> {
+  if (!spec.effect) return {};
+  const pricing = ctx.ports.pricingTable?.();
+  let chfPerUsd: number | undefined;
+  try {
+    chfPerUsd = await ctx.ports.chfPerUsd(ctx.clock.nowIso());
+  } catch {
+    chfPerUsd = undefined;
+  }
+  return {
+    ...(pricing ? { pricing } : {}),
+    ...(typeof chfPerUsd === "number" && chfPerUsd > 0 ? { chfPerUsd } : {}),
+  };
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -298,7 +322,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
       "Opus fast mode for urgent work (API only, priced separately): Opus runs of the project on an API key ask for the fast variant.",
     // Spec D.20, ADR 0057: the effect and the surcharge both ways, from the price table.
     // Priced from the table in force, so the card quotes the surcharge runs are charged.
-    effect: (value, ctx) => fastModeEffect(value === true, ctx.pricing),
+    // W15-47: in CHF at the day's rate, never the provider's USD (design §5 rule 7).
+    effect: (value, ctx) => fastModeEffect(value === true, ctx.pricing, ctx.chfPerUsd),
   },
   // C-57 (ADR 0106, the session lead's default): off, a repository project's docs/status.md
   // stays in the app; on, each session's status goes to the repository as one pull request.
@@ -766,8 +791,7 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
   const parsed = spec.schema.safeParse(p.value);
   if (!parsed.success) throw refusalOf(spec, parsed.error.issues);
   const human = await ctx.store.human.mustGet(ctx.humanId);
-  const pricing = ctx.ports.pricingTable?.();
-  const effect = spec.effect?.(parsed.data, pricing ? { pricing } : {});
+  const effect = spec.effect?.(parsed.data, await effectContext(spec, ctx));
   if (spec.scope === "project") {
     const { project, usedActive } = await resolveProject(ctx, p.project);
     const current = spec.column
@@ -965,9 +989,8 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
         ? await ctx.store.project.get(b.project_id)
         : undefined;
     const what = project ? `${spec.label} for ${project.name}` : spec.label;
-    const pricing = ctx.ports.pricingTable?.();
     const effect = spec
-      .effect?.(restored, pricing ? { pricing } : {})
+      .effect?.(restored, await effectContext(spec, ctx))
       ?.trim()
       .replace(/\.$/, "");
     const q = `Put ${what} back to ${showFor(spec, restored)}?`;

@@ -18,6 +18,7 @@ import {
   FAST_MODE_API_ONLY,
   FAST_MODE_AUDIT_TOOL,
   FAST_MODE_SETTING,
+  fastModeDescription,
   fastModeEffect,
   fastModeOf,
 } from "../src/models/fast-mode.ts";
@@ -432,16 +433,27 @@ describe("the fast-mode decision", () => {
 
   it("the effect sentence names the surcharge both ways, from the price table in force", () => {
     expect(fastModeEffect(true)).toBe(
-      "Opus runs of this project on an API key are requested in fast mode at USD 8 / 40 per million input / output tokens instead of USD 4 / 20, a 2x surcharge; a subscription ignores it (API only)",
+      "Opus runs of this project on an API key are requested in fast mode at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00, a 2x surcharge; a subscription ignores it (API only)",
     );
     expect(fastModeEffect(false)).toBe(
-      "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (2x, USD 8 / 40) stops",
+      "Opus runs of this project go back to the standard speed at about CHF 3.20 / 16.00 per million input / output tokens; the fast-mode surcharge (2x, about CHF 6.40 / 32.00) stops",
     );
     const corrected = mergePricing(BUILTIN_PRICING, {
       "claude-opus-5-5-fast": { input_per_mtok_usd: 30, output_per_mtok_usd: 150 },
     });
-    expect(fastModeEffect(true, corrected)).toContain("USD 30 / 150");
+    expect(fastModeEffect(true, corrected)).toContain("about CHF 24.00 / 120.00");
     expect(fastModeEffect(true, corrected)).toContain("7.5x");
+  });
+
+  it("the price reads in CHF at the day's rate, never in USD (W15-47, design §5 rule 7)", () => {
+    const on = fastModeEffect(true, BUILTIN_PRICING, 0.9);
+    expect(on).toContain("at about CHF 7.20 / 36.00 per million input / output tokens");
+    expect(on).toContain("instead of CHF 3.60 / 18.00, a 2x surcharge");
+    expect(fastModeEffect(false, BUILTIN_PRICING, 0.9)).toContain(
+      "the fast-mode surcharge (2x, about CHF 7.20 / 36.00) stops",
+    );
+    expect(fastModeDescription(BUILTIN_PRICING, 0.9)).not.toMatch(/USD/);
+    expect(fastModeDescription()).not.toMatch(/USD/);
   });
 });
 

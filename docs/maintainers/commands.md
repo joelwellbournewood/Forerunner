@@ -591,9 +591,13 @@ back): on, the fast-mode rate against the standard one and "a subscription ignor
 only)"; off, back to the standard rate and the surcharge stopping (`test/fast-mode.test.ts`).
 With the built-in table that is USD 8 / 40 against 4 / 20, a 2x surcharge; the description
 says "(API only, priced separately)" and not "research preview", because Opus 5.5 fast mode is
-generally available (ADR 0057 amendment, 2026-10-25).
-`SettingSpec.effect(value, ctx)` receives `{ pricing }` from the optional
-`CommandPorts.pricingTable()`. The daemon passes the table in force: the built-ins plus
+generally available (ADR 0057 amendment, 2026-10-25). The person reads it in CHF at the day's
+rate, "at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00"
+at 0.8 (W15-47, ADR 0057 amendment 2026-11-09; never USD, design §5 rule 7).
+`SettingSpec.effect(value, ctx)` receives `{ pricing, chfPerUsd }`: the table from the optional
+`CommandPorts.pricingTable()`, and the day's rate from `CommandPorts.chfPerUsd` at the clock's
+time (`effectContext`, read only for a key with an effect; a rate that cannot be read leaves
+the default rate). The undo's question (`undoAsk`) reads the same. The daemon passes the table in force: the built-ins plus
 `<config>/pricing.json` and adopted rows. So the card the human confirms, and the change-log
 sentence, quote the surcharge that runs are charged. The daemon's Settings row uses the same
 table. Without the port, the effect uses the built-in table.

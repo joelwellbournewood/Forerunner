@@ -279,7 +279,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
           key: `project.${FAST_MODE_SETTING}`,
           label: "Opus fast mode",
           value: fastModeOf(p.settings),
-          description: fastModeDescription(input.pricing),
+          description: fastModeDescription(input.pricing, rate),
           risk: "medium",
         }),
         // C-57: a repository project's status as a pull request, off unless turned on.

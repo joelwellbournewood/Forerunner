@@ -653,10 +653,12 @@ base model's rung, so the critic's retry ladder (`tierOfRun`) escalates from Opu
 the default rung. The daemon passes `pricingFor` (every loop run priced at the model its
 records name, from the table in force: its own rung, or the variant; before this every loop run
 was priced at the sonnet rung) and `pricingTable`, and lists `project.fast_mode` per project in
-`GET /settings` with `fastModeDescription(table in force)`: what the flag is and its effect
-both ways with the two rates (`fastModeEffect(on, table)`, the same text the change card and
-the change log sentence carry: the daemon's command loop gets the table in force through
-`CommandPorts.pricingTable`). The conversation agent, intake planning and the model watch's
+`GET /settings` with `fastModeDescription(table in force, day's rate)`: what the flag is and
+its effect both ways with the two rates (`fastModeEffect(on, table, chfPerUsd)`, the same text
+the change card and the change log sentence carry: the daemon's command loop gets the table in
+force through `CommandPorts.pricingTable` and the rate through `CommandPorts.chfPerUsd`). The
+rates read in CHF at the day's rate with "about", never in the provider's USD (W15-47, ADR 0057
+amendment 2026-11-09); the surcharge factor comes from the USD rows. The conversation agent, intake planning and the model watch's
 evals do not read the flag. None of them runs on Opus by default (ADR 0057). Tests:
 `test/fast-mode.test.ts`; for the critic, `packages/critic/test/fast-mode.test.ts`.
 

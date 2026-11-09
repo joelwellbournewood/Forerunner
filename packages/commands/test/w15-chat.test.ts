@@ -373,4 +373,40 @@ describe("w15-chat, wave 15", () => {
       "Set the monthly critic calibration from on, day 1 at 06:00 (the default) to on, day 3 at 05:30: each month the critic grades the eval sets. Undo.",
     );
   });
+
+  // W15-47 (design §5 rule 7, "Never USD"): fast mode's card quoted the provider's table,
+  // "at USD 8 / 40 per million input / output tokens instead of USD 4 / 20".
+  it("fast mode's card and its undo quote the price in CHF at the day's rate (W15-47)", async () => {
+    const w = await world();
+    w.ports.chfPerUsd = async () => 0.9;
+    const human = { kind: "human" as const, id: w.human.id };
+    const params = { key: "fast_mode", value: true, project: "game" };
+    const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
+    expect(card.ask).toContain(
+      "at about CHF 7.20 / 36.00 per million input / output tokens instead of CHF 3.60 / 18.00, a 2x surcharge",
+    );
+    expect(card.ask).not.toMatch(/USD/);
+    const asked = await w.executor.execute({ name: "settings.set", params, ctx: w.ctx() });
+    if (asked.status !== "pending") throw new Error(`expected pending, got ${asked.status}`);
+    const on = await w.executor.confirmByText(asked.pendingId, "yes", human);
+    if (on.status !== "done") throw new Error(`expected done, got ${on.status}`);
+    expect(on.sentence).not.toMatch(/USD/);
+    expect(on.sentence).toContain("about CHF 7.20 / 36.00");
+    // Turning it off; its undo turns it back on, so it waits for a yes and its question
+    // quotes the fast price too.
+    const askedOff = await w.executor.execute({
+      name: "settings.set",
+      params: { ...params, value: false },
+      ctx: w.ctx(),
+    });
+    if (askedOff.status !== "pending") throw new Error(`expected pending, got ${askedOff.status}`);
+    const off = await w.executor.confirmByText(askedOff.pendingId, "yes", human);
+    if (off.status !== "done") throw new Error(`expected done, got ${off.status}`);
+    expect(off.sentence).toContain("at about CHF 3.60 / 18.00 per million input / output tokens");
+    const undo = await w.executor.undo(off.changeLogId, w.ctx());
+    if (undo.status !== "pending") throw new Error(`expected pending, got ${undo.status}`);
+    expect(undo.card.ask).toContain("Put Opus fast mode for Game back to true?");
+    expect(undo.card.ask).toContain("about CHF 7.20 / 36.00");
+    expect(JSON.stringify(undo)).not.toMatch(/USD/);
+  });
 });

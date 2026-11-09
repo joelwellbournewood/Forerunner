@@ -12003,16 +12003,19 @@ describe("polish-screens, wave 13", () => {
   });
 
   it("a fresh install's monthly cap reads CHF 150.00 through GET /settings (later #28)", async () => {
+    // A project, so its rows (fast mode's among them) are read too.
+    await client.createProject({ name: "Fast price", goal: "One page" });
     const rows = await client.settings();
     const cap = rows.find((r) => r.key === "human.monthly_cap");
     // Before: CHF 150.40 (USD 188 read back at the day's rate), while setup said CHF 150.
     expect((cap?.value as { chfMicro?: number } | undefined)?.chfMicro).toBe(150_000_000);
     expect(cap?.risk).toBe("medium");
     expect(cap?.description).toContain("It cannot be 0");
-    // CHF, never USD, in the rows this area words (the calibration's run cap, later #38); fast
-    // mode's price table is quoted as the provider prices it (left as it is, see the report).
-    for (const r of rows.filter((x) => !x.key.endsWith("fast_mode")))
-      expect(`${r.description} ${JSON.stringify(r.value)}`).not.toMatch(/USD/);
+    // CHF, never USD, in every row (the calibration's run cap, later #38; fast mode's price at
+    // the day's rate, W15-47: no row is left out).
+    expect(rows.some((r) => r.key.endsWith("fast_mode"))).toBe(true);
+    for (const r of rows) expect(`${r.description} ${JSON.stringify(r.value)}`).not.toMatch(/USD/);
+    expect(rows.find((r) => r.key.endsWith("fast_mode"))?.description).toContain("about CHF");
     const calibration = rows.find((r) => r.key === "human.calibration");
     expect((calibration?.value as { budget_chf?: number } | undefined)?.budget_chf).toBe(8);
   });

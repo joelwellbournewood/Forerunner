@@ -1129,8 +1129,9 @@ your agents may reach beyond their built-in tools.
   GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
   mailbox and mode, on the Email page) and the other settings, each project's autonomy among
   them. Only settings you can change are listed; autonomy is always chosen by its name. Money is
-  in CHF, with a point or a comma; only Opus fast mode still quotes Anthropic's price per
-  million tokens in USD. A project's budget can be 0, which means no budget
+  in CHF, with a point or a comma. Opus fast mode quotes Anthropic's price per million tokens
+  in CHF at the day's rate ("about CHF 6.40 / 32.00 per million input / output tokens instead
+  of CHF 3.20 / 16.00"); Anthropic lists it as USD 8 / 40 against USD 4 / 20, a 2x surcharge. A project's budget can be 0, which means no budget
   (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
   stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
   change card shows the new value in words, with what it changes as the sentence under it.

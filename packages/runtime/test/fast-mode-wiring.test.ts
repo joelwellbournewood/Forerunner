@@ -115,7 +115,7 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
     expect(rt.pricingTable()["claude-opus-5-5-fast"]).toMatchObject(CORRECTED);
     const settings = (await (await req("/settings")).json()) as Json[];
     const row = settings.find((s) => s.key === "project.fast_mode" && s.scopeId === project);
-    expect(str(row?.description)).toContain("USD 30 / 150");
+    expect(str(row?.description)).toContain("about CHF 24.00 / 120.00");
     const ctx = await rt.commands.contextFor({
       humanId: rt.human.id,
       agentId: rt.agent.id,
@@ -130,7 +130,7 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
     );
     // P7-10: the value is the value; the price the person says yes to is in the read-back.
     expect(planned.newValue).toBe("true");
-    expect(planned.ask).toContain("USD 30 / 150");
+    expect(planned.ask).toContain("about CHF 24.00 / 120.00");
     expect(planned.ask).toContain("7.5x");
   });
 
