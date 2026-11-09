@@ -1,0 +1,103 @@
+{
+  "verdict": "pass",
+  "acceptance_walk": "I set up the worktree at fix/leftovers7-tailrun (fd6f53b), ran pnpm install --frozen-lockfile and copied the local Playwright config. I ran one bench, \"review-leftovers7-tailrun\" (daemon 48431, UI 2031), three times in a row, and stopped it each time. The bench home and browser profile are deleted. Screenshots are kept under /tmp/frbench/review-leftovers7-tailrun/walk-{a,b,c}-steps/.\n\nWalk A (TR-2 and TR-12). Bench: --provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=3, FORERUNNER_BENCH_DELAY_MS=2500. Script: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk-a.cjs, result in walk-a-steps/walk-a.json.\n- A session on a third project \"Trigger\" hit the key's limit, so the key rested until 01:16.\n- Start dialog on \"Looked\" and on \"Started\" (01-a01, 02-a02): both read \"Nothing can run until 01:16 (your API key's limit). Press Start and it runs then.\" with Start on. I closed the dialog on Looked without pressing anything.\n- I pressed Start in the UI on \"Started\" (03-a03). Its session met the wait and ended. Its Overview reads \"Waiting until 01:16 (your API key's limit): 1 task\" with Last result \"Waits until 01:16 (your API key's limit) and starts by itself. CHF 0.00.\" (04-a04).\n- Reopening the dialog on Started (05-a05) reads \"Nothing can run yet. Waits until 01:16 ... and starts by itself.\" with Start off.\n- At the reset the daemon logged \"work that waited for a credential starts again {started:2}\". budget_reset sessions: Trigger 1, Started 1, Looked 0. Looking started nothing; pressing Start waited and then started. This is TR-2's acceptance.\n- TR-12: a project \"Waiting\" with a ready task, then New project with a brief. The Start dialog during planning (08-a08) says \"Your agent is drafting a plan; this session starts once it is ready.\" with no \"This session runs\" and no \"Starts after the current session\". After Start (09-a09) the notice reads \"Queued: your agent is drafting a plan. This one starts when the plan is ready.\" The queued session then ran and completed by itself.\n\nWalk B (TR-11, TR-6, TR-9). Bench: --provider bench-api --api-key ok --subscription. Scripts walk-b.cjs and walk-b2.cjs.\n- New task, Who does it: coder. The coder alone and plain words show no runs-on line. Typing the outcome \"The page names the owner's choice of hosting\" shows \"Runs on your API key: only it can ask you questions while it works here.\" before Add task (walk-b-steps/01-b01). Changing it to plain words removes the line.\n- TR-6: the title \"Follow the owner's decision in docs/decisions/0001\" shows no line, so it runs as the coder's work. Adding \"... and get the owner's confirmation before deploying\" brings the API-key line back.\n- TR-9: in tab 1 the Overview's Research reads · Change added never facebook.com, and the line updated. In tab 2, Changes → Undo → Yes. Tab 1, untouched, went back to \"Research reads: any public website\". The project card and the stored setting agree.\n\nWalk C (TR-14). Bench: --provider bench. Project budget CHF 0.01 set through budget.set, one coder task, one session.\n- The task is \"Paused at the project's budget\".\n- The Inbox card (walk-c-steps/01-c01) reads '\"Write the notes in notes.md\" paused at the project's budget of CHF 0.01' with body \"The work is done; its review waits for room in the budget. It goes on by itself once you raise the project's budget in Settings.\", Open Settings and Cancel task, each with its one-line explanation.\n\nAgainst core-experience.md, the Start dialog, the New task line, the Overview line and the Inbox card each do their one job. Every new sentence uses CHF, names no ids and is at most two sentences. The work starts by itself at the reset only where Start kept the wait, as the session lead decided for TR-2.\n\nSteps not walkable here: TR-1, TR-10 and TR-13 need the subscription (Claude Code's binary), so the composed tests cover them. TR-4, TR-5, TR-7 and TR-8 have no screen.",
+  "blocking": [],
+  "claims_checked": [
+    {
+      "claim": "TR-1: a resolved secret in a built-in tool's output (Read, Grep, notebook, Bash) is redacted on the subscription in the tool's own shape, line numbers kept; a read without one gets no replacement",
+      "holds": true,
+      "note": "security-sdk.test.ts TR-1 (3 cases) and refs.test.ts TR-1 pass on the branch and FAIL with sdk.ts, hooks.ts, ports.ts and vault refs.ts reverted to claude/nifty-knuth-f9udt0 (4 failed). I confirmed the 'schema check, else original' claim in the bundled Claude Code 2.1.304 binary: e.outputSchema?.safeParse(...), and on a mismatch 'PostToolUse hook returned updatedToolOutput that does not match ...; using original output'. I also confirmed FileReadOutput/GrepOutput/BashOutput (notebook = Read type 'notebook') in sdk-tools.d.ts. Every built-in output type there is an object, so the string walk keeps the shape."
+    },
+    {
+      "claim": "TR-2: GET start-check records nothing; Start (and Continue) keep the wait; only that work starts at the reset",
+      "holds": true,
+      "note": "The real-daemon TR-2 case FAILS on base source: compose.ts, start-blocked.ts, credential-wait.ts and api-types.ts reverted, the blocked object lacks startable and has the old sentence. It passes on the branch. Bench walk A confirms it end to end: looked 0, started 1 at the reset. The project.test.tsx and shell-live.test.tsx TR-2 cases pass."
+    },
+    {
+      "claim": "TR-3: the Start check asks the pick with the request the next run makes (tier, stand-in, answered needs)",
+      "holds": true,
+      "note": "The composed credential-limits TR-3 test answers 'Go ahead without' through POST /requests/:id/answer with the label the Inbox shows; the run then goes to the subscription. I read nextRunBillingRequest against execute and it mirrors it: isPersonTask, canonical name, ladderStandIn, runSettingsOf/tierOf (same risk_tier as brief.riskTier), taskNeeds via personAnswered."
+    },
+    {
+      "claim": "TR-4: a refusal written between takeReady's list and its write survives",
+      "holds": true,
+      "note": "The billing-limits TR-4 test FAILS with base billing-pick.ts and passes on the branch."
+    },
+    {
+      "claim": "TR-5: the planner's line for an empty 'only' list names no website",
+      "holds": true,
+      "note": "intake.test.ts TR-5 passes."
+    },
+    {
+      "claim": "TR-6: a recorded answer is no question; a separate confirmation in the same text still is; isPersonTask agrees",
+      "holds": true,
+      "note": "person-questions TR-6 tests pass, and the New task runs-on line agrees on the bench (walk B)."
+    },
+    {
+      "claim": "TR-7: a throw after the planning session started releases the hold and closes the session",
+      "holds": true,
+      "note": "The budget and the first message are inside the try whose finally releases. The code between session.start and that try cannot throw. intake.test.ts TR-7 passes."
+    },
+    {
+      "claim": "TR-8: the sandbox refusal filter holds under ANSI colour",
+      "holds": true,
+      "note": "stripAnsi covers 7-bit and 8-bit CSI. browser-profile.test.ts TR-8 passes, including the dash-colour-tag and \\u009b cases."
+    },
+    {
+      "claim": "TR-9: the Research reads line shows a rule restored elsewhere",
+      "holds": true,
+      "note": "The project-overview.test.tsx TR-9 case passes. Two-tab walk B2 on the bench: undo in Changes in another tab, and the open Overview follows."
+    },
+    {
+      "claim": "TR-10: a subscription saved beside a refused key needs no restart, its runs get Claude Code's tools, and the refused key's card closes (and is filed again when work waits on the key)",
+      "holds": true,
+      "note": "The billing-limits TR-10 test FAILS on base billing-pick.ts. The composed credential-limits TR-10 test goes through POST /setup/anthropic, checks allowedTools contains Read, and checks the card closes. The fake daemon mirrors restartNeeded."
+    },
+    {
+      "claim": "TR-11: GET /settings/models reads typed words; New task shows the API-key line before Create",
+      "holds": true,
+      "note": "The real-daemon TR-11 case and the tasks.test.tsx TR-11 case pass, and the fake reads the same query. On the bench the line appears and goes as the words change."
+    },
+    {
+      "claim": "TR-12: start-check counts the planning hold (planning: true); the dialog and queued notice name the plan",
+      "holds": true,
+      "note": "The real-daemon TR-12 case, the project.test.tsx TR-12 case and a real planning call on the bench (walk A) all confirm it."
+    },
+    {
+      "claim": "TR-13: a killed run's tail reaches the task's spent figure (task.addCost, atomic)",
+      "holds": true,
+      "note": "sdk-late-usage TR-13 passes: it compares GET /tasks/:id against the ledger sum. The state suite adds three concurrent addCost calls (Postgres skipped without FORERUNNER_TEST_PG, as expected). Only the runner wrote actual_cost_usd_micro before."
+    },
+    {
+      "claim": "TR-14: a review paused at a budget says the work is done",
+      "holds": true,
+      "note": "The budget-pause body assertion passes, and the bench walk C card shows the sentence."
+    },
+    {
+      "claim": "TR-15 not built, with a design note in ADR 0112",
+      "holds": true,
+      "note": "The acceptance allows not_done with the design note. The ADR 0112 amendment of 2026-11-09 point 3 has the design."
+    },
+    {
+      "claim": "TR-16: the listed biome warnings are gone",
+      "holds": true,
+      "note": "pnpm lint: 43 warnings, none in fake-daemon.ts, inbound.ts or the email tests. The only test lines removed are the non-null assertions replaced by mustWorld/inboundOf; no assertion was removed."
+    },
+    {
+      "claim": "Validation suites green",
+      "holds": true,
+      "note": "Rerun here: pnpm test 477 files, 4919 passed / 6 skipped. test:integration 5 passed / 6 skipped. test:e2e 13 files, 25 passed / 1 skipped. UI vitest 85 files / 961 passed. Playwright (local config) 34 passed. typecheck, lint, lint:paths, docs-check --base claude/nifty-knuth-f9udt0 (59 files), link-check and secret-scan all ok. No conflict markers."
+    }
+  ],
+  "non_blocking": [
+    "TR-2, after pressing Start in the startable state (walk-a-steps/03-a03-after-start-pressed.png): the dialog fetches the check again while the session runs, so its top line becomes 'This session runs \"Write the Started note in notes.md\" (about CHF 0.03).' with Start still on and the notice 'Started: the session works until nothing more can run...'. Meanwhile the Overview already says 'Waiting until 01:16'. StartSessionDialog fetches the check only on checkTick, never on session events, so the stale line stays until the dialog is reopened. It was not reachable before, because Start was off. Suggestion (polish-screens or a follow-up): for a startable blocker, say in the notice that the work waits for the reset and starts by itself then.",
+    "The fixer's own new_problems hold: while the only key rests and no wait is kept, the project header reads 'Ready to continue: 1 task ready · Continue' (walk-a-steps/06-a06). Also, the chooser's runs-on wait sentence ('Waits until ... and starts by itself.') in New task, the plan card and Settings promises a start that only a kept wait gives. This is a TR-2 sibling, logged, not fixed.",
+    "TR-3 / R-refusedstays: credentialWaitNow returns null as soon as the first ready task gets no billing request: a person's task, an unknown specialist, a ladder with no stand-in, or a thrown error (.catch(() => null)). The wake's servesNow then takes the project off a resting or refused source and starts a session. That session files the person's card and its other tasks meet the wait again (kept again), so nothing loops. Still, one task decides the whole project, and an error reads as 'can run'.",
+    "TR-13: task.addCost goes through updateWhere, which bumps the task's version from the background drain of a killed run. I checked the runner's killed path: it uses releaseClaim/recordMove, with no version-checked transition after the drain starts. Budget and timeout stops wait for Claude Code to exit, so they have no late tail. So I found no conflict today. A person's drawer action sent with a version read just before the tail lands could still get a version_conflict. Worth a line in runtime.md.",
+    "TR-1 has no fail-closed fallback. If a future Claude Code tightens a built-in tool's outputSchema so that a redacted string no longer validates, Claude Code silently uses the original (unredacted) output and only its own log says so. Forerunner does not detect this. The spec's fallback (deny the read of a file holding a resolved value) was not built, because the shapes could be confirmed for 2.1.304. Consider a test that runs redactToolOutput against the bundled tool output schemas, or a deny path for unknown shapes.",
+    "Cosmetic: in StartSessionDialog.tsx, PLANNING_WAIT_LINE and its JSDoc were inserted between startNotice's existing JSDoc and the function. startNotice's doc now sits orphaned above another doc block.",
+    "Wording for polish-words (design §5): 'Your agent is drafting a plan; this session starts once it is ready.' — 'it' could read as the session. 'the plan is ready', as the queued notice says, would be unambiguous. 'Press Start and it runs then.' is fine, but the notice after Start does not confirm 'then'.",
+    "With planning and ahead > 0, startNotice falls back to 'your agent is in another session, and N other starts wait...'. That is inexact during planning but rare.",
+    "Live checks still owed to the session lead: TR-1 (a secret in a repository file on a real subscription), TR-10 (a revoked key plus a real subscription token pasted in the setup assistant), TR-13 (late usage on the subscription after Stop all) and TR-2/TR-12 with a real limited key. The fixer's check_in_the_app steps for these are precise enough to add to /tmp/frbench/phaseE7-live.md."
+  ]
+}

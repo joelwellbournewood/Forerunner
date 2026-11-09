@@ -1,0 +1,365 @@
+{
+  "area": "polish-words",
+  "branch": "fix/polish-words",
+  "head_sha": "39652081b8b8770e39f4a3b0e72db87126a89577",
+  "commits": [
+    {
+      "sha": "e4de2cb59883cd205d1f451aa9f9748252255296",
+      "subject": "push-words: an HTTPS refusal quotes GitHub, not \"could not be reached\" (U-074, R-2, R-3)"
+    },
+    {
+      "sha": "66c33e75c970e90bf85001fb4570218bfca4e338",
+      "subject": "task words: status line, sign-off rows, Tasks screen explains, costs and session end (U-074, C-21, C-58, L-9, L-13, L-21, P7-20, P7-21)"
+    },
+    {
+      "sha": "6c319238dc8eda0f6712a78299dde7ab2981f015",
+      "subject": "request words: plan card, budget card, card titles, rebuild card and plan runs-on lines (U-074, L-20, P7-7, P7-14, P7-15, P7-18, P7-19, P7-26, P7-33, W14-3)"
+    },
+    {
+      "sha": "d6319a7d6d54373b38187c6b05f8c6942c14f229",
+      "subject": "session words: money under a centime, budget lines, could-not reasons, branch names (U-074, W14-6, P7-1, P7-23, C-50, C-59)"
+    },
+    {
+      "sha": "8b4f7382dc7ccf7fcbea5907d4c179fdaeb01f16",
+      "subject": "notifications, merge and take-out words: no rule ids, one chain sentence, the way back (U-074, P7-11, P7-22, P7-24, P7-25, P7-27, P7-30, P7-34, W14-2)"
+    },
+    {
+      "sha": "f52a286ed93d86944d334e094e12872a2298f420",
+      "subject": "critic, import and Overview words: why a rule sent work back, empty runs, empty repositories, same-titled lines (U-074, C-19, L-18, C-55, W14-7, P7-13, P7-29, later #40)"
+    },
+    {
+      "sha": "a06c33cb4cbf8dc1c05da79dc4342e93fbd678cd",
+      "subject": "merge-side words: merge-later line, not-applied warning, conflict card title, stuck copy line (U-074, P7-5, W14-4, W14-5)"
+    },
+    {
+      "sha": "d524df95ed32d37b97293aa02da787679d8e558c",
+      "subject": "injection notification: a run's flag says the kind of content, not the tool's name (U-074, P7-22)"
+    },
+    {
+      "sha": "4ebc41324508aeb7331e44520de11ca16c812e0f",
+      "subject": "testing docs: the budget journey's tiny task keeps its work, not \"save only\" (U-074, P7-1)"
+    },
+    {
+      "sha": "39652081b8b8770e39f4a3b0e72db87126a89577",
+      "subject": "real-daemon tests: the done line, money under a centime and the plan's runs-on line as built (U-074, later #53, W14-6, P7-14)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "R-2, R-3: over HTTPS, a push GitHub refused (no write access, an archived repository) told the person \"GitHub could not be reached. Try again later.\"; a host line \"Writing to this repository is disabled\" was skipped as progress.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/capabilities/test/push-words.test.ts \"polish-words: git's HTTPS refusals (R-2, R-3)\" (3 of 4 cases)",
+      "how": "push-words.ts: a 401/403 or a remote line saying denied/permission is read before the unreachable pattern, and the refusal quotes the host's own line (`pushSaid`, `hostLine`): 'GitHub refused it: \"Permission to o/r.git denied to some-bot\". Check the GitHub token in Settings and the repository on GitHub, then press Try again.' The progress filter matches only progress shapes.",
+      "check_in_the_app": "Use a repository project whose GitHub token can only read (or an archived repository). Start a session so a task pushes. Open the task on the Tasks tab: its reason quotes GitHub's line (\"Permission to ... denied\") and says to check the token in Settings, never \"GitHub could not be reached\"."
+    },
+    {
+      "problem": "later #53/#54, C-58: Home's done line held the project's folder path (about 130 characters, with its id) and \"Open Files\"; a repository project said only \"Done\" while pull requests waited for the Merge. Owner question (taken-out count): recommendation (b) built.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"polish-words, wave 13\": \"a finished folder project's line is 'Done: all N tasks.' with no path; Open your files opens Files (later #53, #54)\" and \"a finished repository project says how many pull requests wait for the Merge and how many were taken out (C-58)\"",
+      "how": "project-status.ts: \"Done: all N tasks.\" with \"Open your files\" to /projects/:id/files; on a repository \"Done: all 6 tasks. 6 pull requests wait for you to merge.\" with Open Overview, and \"; 2 taken out\" when work was taken out (WAITING_FOR_YOUR_MERGE shared with task-words).",
+      "check_in_the_app": "Finish every task of a folder project (bench: a two-task greeter). On Home its line reads \"Done: all 2 tasks.\" with a button \"Open your files\" that opens the Files tab; no path. For a repository project with reviewed pull requests not merged, the line reads \"Done: all N tasks. N pull requests wait for you to merge.\" and its button opens the Overview."
+    },
+    {
+      "problem": "later #55, L-13a: Answer on Home linked /inbox, not the card; two cards of different kinds read \"2 questions\".",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"Answer opens the oldest card; two cards of different kinds are named by kind, not '2 questions' (later #55, L-13a)\"",
+      "how": "project-status.ts `cardKindsWords` names the kinds (\"1 sign-off and 1 paused task\") and the action links /inbox#card-<oldest id>.",
+      "check_in_the_app": "With a task that failed four times (bench --env FORERUNNER_BENCH_FAIL=Style), open Home: the project's line reads 'Waiting for you: \"Style the page in styles.css\"'; press Answer: the Inbox opens scrolled to that card. With a sign-off card and a paused task in one project the line names both kinds."
+    },
+    {
+      "problem": "C-21, L-9: a task waiting on its sign-off read \"Needs your decision ... try again\" and offered Try again, which withdrew the sign-off and ran accepted work again.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"a task waiting on its sign-off reads 'Needs your sign-off' ... (C-21, L-9)\"; apps/ui/test/polish-words.test.tsx \"a task waiting on its sign-off reads 'Needs your sign-off' and offers Answer and Cancel, row and drawer (C-21, L-9)\"; writing-rules.test.ts \"a sign-off card is its own kind\"",
+      "how": "task-words.ts `cardKindOf` returns \"signoff\" for critic:signoff reason verdict; label \"Needs your sign-off\", detail \"Its card is in the Inbox: accept the work, send it back, or cancel it.\"; actionsFor signoff = Answer, Cancel (api-types cardKind enum gains \"signoff\").",
+      "check_in_the_app": "Have a risk-tier-3 task the critic accepts (it then waits for sign-off). On the Tasks tab its row reads \"Needs your sign-off\" with Answer and Cancel only; open the drawer: \"Its card is in the Inbox: accept the work, send it back, or cancel it.\" and no Try again."
+    },
+    {
+      "problem": "later #74, C-23, P7-20, P7-21: the cap line said \"(writer-marketing limit)\" / \"(coder limit)\" beside Agent's choice; New task's light review said \"nothing runs in isolation\"; Cancel on a paused task, or on a ready task holding paused work, said only \"Drops it.\" in the drawer.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/polish-words.test.tsx \"the Tasks screen\" block (cap line, light review, the two Cancel cases); apps/ui/test/real-daemon.test.ts \"the Tasks screen names a specialist as the session log and the cards do (later #74)\"",
+      "how": "task-actions.ts `specialistName` (the critic's names) for the cap line, none for Agent's choice; light review label \"the critic reads the work and tries it here; nothing runs in Docker\"; one `actionExplain` for row title, dialog and drawer; the daemon marks a ready task whose last work run paused (TaskDisplayContext.heldWork).",
+      "check_in_the_app": "Open a project's Tasks tab: a writer task's row reads \"each run stops at CHF 1.20 (the writer's limit)\". Press New task and open the review level: the light choice says \"the critic reads the work and tries it here; nothing runs in Docker\". On a task paused at its budget, open the drawer and hover Cancel: \"Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.\""
+    },
+    {
+      "problem": "later #91, L-13e, later #94, L-21: Costs labelled specialists by registry key and counted critic and planner runs per model; an accepted info note showed \"To fix: Resolve it and show the evidence\"; withoutIds stripped any \"(run ...)\" parenthesis; an old session's page kept \"1 task needs you\" after the card was answered.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"Costs name the specialist as the log does ... (later #91)\", \"an accepted info note shows no 'To fix' line (L-13e)\", \"a session's page stops saying '1 task needs you' once the person answered its card (L-21)\"; writing-rules.test.ts \"withoutIds keeps a parenthesis of words and still takes out ids (later #94)\"",
+      "how": "views.ts costs `the ${saidByName(key)}`, work runs only per model; findingView requiredAction empty for info + NO_ACTION_GIVEN; `stillBlocked` used by the session routes; task-words IDS strips only id parentheses.",
+      "check_in_the_app": "Open a project's More > Costs: By specialist reads \"the writer\", \"the coder\"; By model counts only work runs. Open Reviews on an accepted task with an info note: no \"To fix\" line. Answer a session's card, then open that session's page: it no longer says \"1 task needs you\"."
+    },
+    {
+      "problem": "L-20: a one-task plan's Approve and start said \"starts working on them now\", and on a repository the card sat silent for about 7 s with greyed buttons.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/polish-words.test.tsx \"the Inbox plan card\" (2 cases); apps/ui/test/real-daemon.test.ts \"a one-task plan's Approve and start says 'it' and what it does while it works ... (L-20)\"; writing-rules.test.ts L-20 case",
+      "how": "request-words.ts intake explain \"starts working on it/them now\" and a choice `working` (\"Writing the plan…\" / \"Writing the plan and its docs pull request…\"), shown by InboxPage as `choice-working` while the answer is sent.",
+      "check_in_the_app": "Create a project with a one-line brief; in the Inbox the plan card's Approve and start reads \"Writes this task and starts working on it now.\"; press it: under the buttons \"Writing the plan…\" shows until the card moves (on a repository project: \"Writing the plan and its docs pull request…\")."
+    },
+    {
+      "problem": "P7-26, P7-19, P7-18, W14-3, P7-7, P7-14, P7-15, P7-33: card titles cut inside a quoted title; the project-budget card opened Settings at Basics; its Cancel promised \"set aside until you reopen it\"; the rebuild card ended \"or send it back\" beside Redo and the Decisions line read its filing words; \"is being redone\" stayed after the redo; \"its tests will not run\" under every code task; the research runs-on line was 122 characters.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/writing-rules.test.ts \"polish-words, wave 13: the Inbox cards' words\" and \"the plan card's runs-on lines\"; apps/ui/test/real-daemon.test.ts \"a project budget's card opens Settings at Other settings; Cancel promises nothing untrue (P7-18, P7-19)\"",
+      "how": "request-words.ts quote-aware firstSentence; budget card Open Settings to /settings#other-settings; Cancel explain says the work is set aside and names the stuck task; rebuild sentence \"look at it, then merge it or redo the task.\"; `leftOpenCardTitle` used by decisionPairs; droppedWords \"whose task was reopened\"; plan-tasks `onceForThePlan`; shorter credential-choice line.",
+      "check_in_the_app": "Pause a task at the project's budget; its Inbox card's Open Settings lands on Other settings, and hovering Cancel reads \"Drops it; its work is set aside ...\" naming the task that will be stuck. On the API key plus subscription with two code tasks, the plan card says \"On your subscription the tests of 2 tasks will not run\" once, under the first."
+    },
+    {
+      "problem": "W14-6, P7-1, P7-23, C-50, C-59: amounts above zero read \"CHF 0.00\" next to a budget with no room; a project budget \"resets\"; budget lines said \"save only\"; the overshoot note was two sentences; a could-not reason was cut at a file name's dot; the log and the session page named branches with the task-id prefix.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/writing-rules.test.ts \"polish-words, wave 13: money, budget lines, the log's lines\" (3 cases)",
+      "how": "session/money-words.ts `moneyWords` (\"less than CHF 0.01\") in the result, end line, log and budget lines; result/task-words \"once you raise that budget\"; budgetLineWords \"it pauses at its budget and keeps its work\"; couldNotWords splits sentences as quotedWords; `branchWords` drops the id; pullRequestsFromLog shows no branch beside a PR number.",
+      "check_in_the_app": "Run a session whose task spends less than a centime (bench stand-in): the session result reads \"Less than CHF 0.01.\", never \"CHF 0.00.\". Pause a task at a CHF 0.01 project budget: the Tasks row says it goes on once you raise the project's budget, nothing about a reset. On a session page, a task's line names its pull request, never \"fr/01a19c00-...\"."
+    },
+    {
+      "problem": "P7-22, P7-11, W14-2, P7-24, P7-25, P7-27, P7-34, P7-30: the injection notification listed rule ids and named the tool (\"from email_read\"); one blocked chain read two ways; the later-merge Update named no project; Open this version with a file open elsewhere failed in git words; the take-out answer had no way back; a proxy was stated as the cause of every failed read; \"task(s)\" plurals.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/writing-rules.test.ts \"polish-words, wave 13: merge, preview, take-out and page-reader words\" (4 cases) and the injection case; tests/e2e/scenarios/06-injection.scenario.test.ts \"a web page and an email both try to hijack Alice; both are reported and ignored\" (received \"from email_read\"); packages/runtime/test/capabilities-wiring.test.ts \"one scout session through the daemon\"",
+      "how": "producers.ts summarizeInjection: \"Ignored N passages from <where> that read like instructions. Open the session to read them.\" with a tool-name origin said as the kind of content; title \"Instructions in a web page were ignored\" (ADR 0047 amended); merge.ts `buildsOnSentence`, `mergedUpdateWords(pr, title, projectName)`; pull-requests.ts `previewFailedSentence`; take-out-words; fetch.ts PROXY_SENTENCE as a condition; session-review countWords.",
+      "check_in_the_app": "Run a research task whose page holds an injected instruction (scenario 6 fixture or the bench's injection page): the notification reads \"Instructions in a web page were ignored\" and \"Ignored N passages from a web page that read like instructions. Open the session to read them.\" with no rule names. Merge a pull request later from the Overview: the Inbox Update starts with the project's name."
+    },
+    {
+      "problem": "C-19, L-18, C-55, W14-7: a review a code rule sent back showed the model's \"Accepted ...\"; a run that changed no file failed with markdown and \"(no changes were made in the worktree)\", cut mid-word; importing into an empty GitHub repository failed with git's \"is not a commit\"; two same-titled tasks gave the Overview duplicate React keys.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/critic/test/critic.test.ts \"a failed required check blocks accept at tier 1 whatever the model said (B.4)\"; packages/runtime/test/writing-rules.test.ts \"the session result's failed line reads the run's report plain, cut at a word (L-18)\"; packages/runtime/test/data-import-github.test.ts \"an empty repository gets its first commit and the migration branch from it, never git's 'is not a commit' (C-55)\"; apps/ui/test/polish-words.test.tsx \"two tasks titled alike render two Next lines with no duplicate-key error\"",
+      "how": "critic.ts `ruledSummary` leads with why (\"Sent back: the check \"pnpm test\" failed.\"); pr-executor `emptyChangeSummary` (\"The run changed no file. It reported: ...\"); findings.ts and result.ts read reasons through plainReason (cut at a word); import.ts writes the first commit with `ensureBaseBranch` when the remote has no default branch; SummaryTab `withKeys`.",
+      "check_in_the_app": "Have a task whose project test fails while the critic's model accepts: Reviews shows \"Sent back: the check ... failed.\" first. Have a run that changes nothing: its failed-task card starts \"The run changed no file.\" with no ** or backticks. Import a folder project into a new empty GitHub repository from More > Data: it succeeds. Create two tasks both titled \"Write the guide\" and run them: the Overview's Next lists both."
+    },
+    {
+      "problem": "P7-5, W14-4, W14-5: the session result said a merge GitHub did not answer about \"merges when its checks pass\"; a not-applied Yes named 'the change card \"a GitHub repository for X\"'; the rebase-conflict card's title named the branch; the Files line for a stuck copy was three sentences; a conflicting PR's row read \"waiting for you to merge\".",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/writing-rules.test.ts \"the session result's merge-later line holds for a merge GitHub did not answer about, not only checks (P7-5)\" and \"a Yes on a change card that was not applied names the card's question, not 'the change card' (W14-4)\"; packages/capabilities/test/pr-executor.test.ts \"a rebase a crash left half done in the task's worktree ... (R-dirtyworktree)\"; apps/ui/test/project-overview.test.tsx \"a copy that stopped following what is merged says so and why\"",
+      "how": "result.ts merge-later builder \"1 reviewed pull request merges by itself once its checks pass or GitHub answers.\"; request-words.ts `changeNotAppliedWords` used in compose.ts onRefused; pr-executor conflict `what` names the task ('\"Write the guide\" conflicts with main in README.md'); FilesTab repositoryLine \"This computer's copy of o/r has not followed merges since 14:05.\" + why; task-words \"Accepted · conflicts with <base>\".",
+      "check_in_the_app": "In Chat, ask for a repository for a project (repo.create card), then link one through the offer; press Yes on the first card: the Update reads 'Your Yes to \"Create the private GitHub repository ... for 'X'?\" was not applied: ...'. Make main and a task's branch change the same line: the Inbox card's title reads '\"<task>\" conflicts with main in <file>'. Edit a merged file in this computer's copy and merge a PR changing it: Files says \"This computer's copy of o/r has not followed merges since HH:MM.\" and why."
+    },
+    {
+      "problem": "later #40, P7-3, P7-13, P7-29, P7-30 (docs and comments): apps.md described the old typed Next session queue; validation.md described the window check's Ctrl-click as before Q7; docs and compose.ts comments said level 3 merges; the user guide promised the unopened-results list on the subscription.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "none (docs only; docs check and link check green)",
+      "how": "apps.md summary row (one \"Note for the next session\" box), validation.md, runtime.md and compose.ts comments (no level merges), user guide (the list on the API key only), the doc comment moved above navigationInterruptedRetry.",
+      "check_in_the_app": "Open the project's Overview: one \"Note for the next session\" box with Dismiss on queued items, as docs/maintainers/apps.md now says."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "C-39: a session whose only task the person cancelled ends 'CHF 0.00.' with nothing else (expected 'You cancelled \"X\"; nothing else ran.').",
+      "why": "The result needs the cancelled tasks in the session outcome, which runner.ts fills; runner.ts belongs to leftovers7-tailrun this wave. result.ts can take a `cancelled` list once runner.ts passes it."
+    },
+    {
+      "problem": "P7-17: the session's end line says '1 needs you' for a task that paused at its budget.",
+      "why": "Needs a paused count in the session.ended payload built in runner.ts (leftovers7-tailrun's file this wave); event-lines.ts endedCounts can then read it."
+    },
+    {
+      "problem": "P7-6: cards, Overview and Tasks say 'main' whatever the default branch is called.",
+      "why": "Needs a base-branch field on the task display and pull-request views (api-types) and per-task take-out explains across request-words, event-lines, merge.ts, SummaryTab and task-actions; too wide to finish safely in this wave next to the other areas' edits of those files. Today's behaviour kept."
+    },
+    {
+      "problem": "W14-1: review of every wave 12/14 sentence against design §5.",
+      "why": "Partly done: mergedUpdateWords, the rebuild card's explains and body, the conflict notice title, the repo.create warning, the merge-later line and the injection words were reviewed and reworded with tests. Not reviewed one by one: redoWhileTakingOutSentence, 'Stopped: Anthropic refused the credential', the credential wait labels, 'Nothing can run yet. ' + waitSentence, 'the browser did not start (...)', the reader refusal '... list, which names no website', repoFileFlaggedNote."
+    },
+    {
+      "problem": "W14-6 (rest): the plan card's per-task figures may not add up to its rounded total.",
+      "why": "The money rule for spent amounts is done; the plan card totals (plan-tasks/estimates rounding) were not changed."
+    },
+    {
+      "problem": "W14-7 (rest): Chat 'redo Write the guide' cannot tell same-titled tasks apart; the two pull request rows read the same.",
+      "why": "Only the Overview's duplicate keys were fixed (withKeys). Chat's intent matching and the PR rows' distinguishing words were not changed."
+    },
+    {
+      "problem": "W14-5 (rest) / P7-5 precise words: the acceptance's '#N merges once GitHub answers.' for an unreachable merge only.",
+      "why": "The result's count `waitingPrs` (filled in runner.ts) does not split checks_pending from unreachable, so the line names both cases; splitting needs runner.ts (leftovers7-tailrun)."
+    },
+    {
+      "problem": "C-19 at GET /tasks/:id through the real daemon.",
+      "why": "Tested at the critic (critic.test.ts, the summary a ruling changed); no real-daemon case was added."
+    },
+    {
+      "problem": "P7-2 and R-2 CHANGELOG lines.",
+      "why": "The common rule leaves CHANGELOG.md to the session lead; the lines were made in e4de2cb and taken out again in d6319a7. Text for the lead: '... now open in your browser. A Ctrl- or Shift-click on one of the app's own links works like a plain click and shows that page in the same window.' and '- When GitHub refuses a push for its own reason (an archived repository, a token that may not write, a rule), also over HTTPS where git then says it could not access the URL, the failed task quotes GitHub's sentence instead of git's generic \"pre-receive hook declined\" or \"GitHub could not be reached\".'"
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (at d524df9; lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0: 4928 passed, 6 skipped; docs-check could not diff against origin/main in the worktree"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 (at 3965208)",
+      "result": "docs-check: ok (83 files) after 4ebc413 touched testing.md for the budget journey"
+    },
+    {
+      "command": "pnpm lint; pnpm docs:links; pnpm secrets:scan (at 3965208)",
+      "result": "lint exit 0 (69 warnings, none new to this area's files); link-check ok (206 files); secret-scan clean (2074 files)"
+    },
+    {
+      "command": "pnpm test:integration (at d524df9)",
+      "result": "exit 0: 30 passed, 75 skipped"
+    },
+    {
+      "command": "pnpm test:e2e (at d524df9)",
+      "result": "exit 0: 25 passed, 1 skipped (the first run failed scenario 6 on the old injection words; fixed in d524df9)"
+    },
+    {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts (at 3965208)",
+      "result": "86 files, 970 tests passed (the first run had 4 real-daemon cases on old words; updated in 3965208)"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (at 3965208; config not committed, ignored by .git/info/exclude)",
+      "result": "34 passed"
+    },
+    {
+      "command": "npx tsc --noEmit -p packages/runtime / packages/capabilities / packages/critic / apps/ui",
+      "result": "clean"
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+    },
+    {
+      "command": "FR_REPO=<worktree> node /tmp/frbench/fix-polish-words/walk.cjs fix-polish-words after; walk2.cjs fix-polish-words after (fresh --provider bench from the worktree)",
+      "result": "walk ran; Answer links /inbox#card-<id>; plan card \"starts working on it now\" and \"Writing the plan…\" while busy; cap lines \"(the writer's limit)\"; Costs \"the writer\"; done line \"Done: all 2 tasks.\" + Open your files. Bench stopped with scripts/bench/stop.mjs; its home deleted"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-polish-words/before/01-01-plan-card-one-task.png",
+      "/tmp/frbench/fix-polish-words/before/02-02-plan-card-busy.png",
+      "/tmp/frbench/fix-polish-words/before/03-03-home.png",
+      "/tmp/frbench/fix-polish-words/before/04-04-quote-tasks.png",
+      "/tmp/frbench/fix-polish-words/before/05-05-quote-style-drawer.png",
+      "/tmp/frbench/fix-polish-words/before/07-07-inbox.png",
+      "/tmp/frbench/fix-polish-words/before/09-09-quote-costs.png",
+      "/tmp/frbench/fix-polish-words/before/12-21-home-done.png",
+      "/tmp/frbench/fix-polish-words/before/13-22-greeter-overview.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-polish-words/after/01-01-plan-card-one-task.png",
+      "/tmp/frbench/fix-polish-words/after/02-02-plan-card-busy.png",
+      "/tmp/frbench/fix-polish-words/after/03-03-home.png",
+      "/tmp/frbench/fix-polish-words/after/04-04-quote-tasks.png",
+      "/tmp/frbench/fix-polish-words/after/05-05-quote-style-drawer.png",
+      "/tmp/frbench/fix-polish-words/after/07-07-inbox.png",
+      "/tmp/frbench/fix-polish-words/after/09-09-quote-costs.png",
+      "/tmp/frbench/fix-polish-words/after/12-21-home-done.png",
+      "/tmp/frbench/fix-polish-words/after/13-22-greeter-overview.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/capabilities/test/pr-executor.test.ts, packages/runtime/test/docs-scaffold.test.ts",
+      "why": "R-2: a push refusal quotes the host's line; L-18: an empty run reads \"The run changed no file.\"; W14-5: the conflict card's title names the task; C-59: branch without its id"
+    },
+    {
+      "test": "packages/runtime/test/project-status.test.ts, apps/ui/test/home.test.tsx, apps/ui/test/real-daemon.test.ts (project status sentence)",
+      "why": "later #53/#55: the done line has no path, Answer links the oldest card"
+    },
+    {
+      "test": "apps/ui/test/tasks.test.tsx",
+      "why": "C-23 light review words, later #74 cap line, P7-25 take-out answer"
+    },
+    {
+      "test": "packages/runtime/test/session-budget-card.test.ts, apps/ui/test/inbox.test.tsx, apps/ui/test/real-daemon.test.ts",
+      "why": "P7-18 budget card Cancel explain and Done line; W14-3 rebuild sentence"
+    },
+    {
+      "test": "packages/runtime/test/dependent-branches-merge.test.ts",
+      "why": "W14-3 rebuild sentence ends \"look at it, then merge it or redo the task.\""
+    },
+    {
+      "test": "packages/runtime/test/credential-chooser.test.ts, apps/ui/test/real-daemon.test.ts (both credentials)",
+      "why": "P7-15 shorter research line, P7-33 exact line, P7-14 shared runs-on line said once"
+    },
+    {
+      "test": "packages/runtime/test/budget-pause.test.ts, scripts/bench/journeys/budget.cjs",
+      "why": "P7-1: no \"save only\""
+    },
+    {
+      "test": "packages/runtime/test/executor-web-search.test.ts",
+      "why": "P7-23 one-sentence overshoot note"
+    },
+    {
+      "test": "packages/runtime/test/task-moved-while-running.test.ts, where-last-run-stopped.test.ts, apps/ui/test/real-daemon.test.ts (Cancel on the running task; Paused by you)",
+      "why": "W14-6: \"Less than CHF 0.01.\"; a project budget never resets"
+    },
+    {
+      "test": "packages/runtime/test/pr-answers.test.ts, apps/ui/test/session.test.tsx",
+      "why": "C-59: no task-id prefix in branch names on screen"
+    },
+    {
+      "test": "packages/runtime/test/capabilities-wiring.test.ts, notifications-channels.test.ts, writing-rules.test.ts, tests/e2e/scenarios/06-injection.scenario.test.ts",
+      "why": "P7-22 (ADR 0047 amended 2026-11-09): no rule ids in the body, the kind of content in words, not the tool's name"
+    },
+    {
+      "test": "packages/runtime/test/merge-in-app.test.ts",
+      "why": "P7-11 one chain sentence"
+    },
+    {
+      "test": "packages/runtime/test/merge-record.test.ts, apps/ui/test/real-daemon.test.ts",
+      "why": "W14-2 later-merge Update names its project"
+    },
+    {
+      "test": "packages/runtime/test/take-out*.test.ts",
+      "why": "P7-25 the take-out answer names the way back"
+    },
+    {
+      "test": "packages/runtime/test/session-review.test.ts",
+      "why": "P7-34 plurals without \"(s)\""
+    },
+    {
+      "test": "packages/runtime/test/web-fetch.test.ts",
+      "why": "P7-27 proxy sentence as a condition"
+    },
+    {
+      "test": "packages/runtime/test/data-import-github.test.ts (hostile repository case)",
+      "why": "C-55: an empty repository gets its first commit; the refusal reads firstPushFailedWords"
+    },
+    {
+      "test": "packages/critic/test/critic.test.ts (B.4 failed check)",
+      "why": "C-19: the shown summary starts \"Sent back: the check ... failed.\""
+    },
+    {
+      "test": "packages/runtime/test/loop-merge.test.ts",
+      "why": "P7-5 merge-later line"
+    },
+    {
+      "test": "apps/ui/test/project-overview.test.tsx",
+      "why": "W14-5 two-sentence stuck-copy line"
+    }
+  ],
+  "new_problems": [
+    "The task drawer's run rows and the Tasks tab's Who column still show the registry key (\"writer-marketing · Nov 09 ... Finished\") while the cap line and Costs now say \"the writer\": apps/ui/src/pages/project/TaskDrawer.tsx:326 and :140 use whoName(). Seen in /tmp/frbench/fix-polish-words/after/05-05-quote-style-drawer.txt. Screen wording, polish-screens' or a later area's.",
+    "The merge record still words an 'unreachable' merge as \"#4 merges when its checks pass.\" on the Overview row (docs/maintainers/runtime.md, merge record section); only the session result's line was made true for both cases here."
+  ],
+  "notes_for_other_areas": [
+    "OWNER QUESTION WAITING: C-58's taken-out count, recommendation (b), is built: \"Done: all 6 tasks; 2 taken out.\" (project-status.ts). It waits for the owner's answer; options (a) and (c) are not built.",
+    "New exports: task-words.ts WAITING_FOR_YOUR_MERGE (\"Accepted · waiting for you to merge\"), cardKindOf returns \"signoff\" (api-types cardKind enum has \"signoff\"), TaskDisplayContext.heldWork; ui lib/task-actions.ts actionExplain(key, task), specialistName(id); views.ts stillBlocked(store, handoff) and sessionView's 5th param blockedNow (server.ts session list and GET /sessions/:id pass it).",
+    "request-words.ts: RequestChoiceWords.working (choice schema working nullable optional, shown by InboxPage as data-testid choice-working), RequestWordsContext.projectRepository, leftOpenCardTitle(card, taskTitle) (also used by wiring/state-ports.ts decisionPairs), changeNotAppliedWords(cardJson, reason) (compose.ts onRefused). pausedWorkSentence untouched (leftovers7-tailrun's).",
+    "session/money-words.ts moneyWords(formatted, amount) and moneyWordsFirst: an amount above zero below a centime reads \"less than CHF 0.01\"; use it for any new spent-amount sentence.",
+    "capabilities: branchWords(branch) in githost/local-only.ts drops the fr/<8 hex>- prefix; pr-executor emptyChangeSummary(report); loop/merge.ts buildsOnSentence(pr, on) and mergedUpdateWords(pr, title, projectName?) (tellMerged reads the project name); pull-requests.ts previewFailedSentence(number, error); critic.ts ruledSummary(verdict, rule, findings, modelSummary); ui SummaryTab withKeys(lines).",
+    "For leftovers7-tailrun (runner.ts): C-39 needs the session outcome to carry the tasks the person cancelled during the session (result.ts can then add 'You cancelled \"X\"; nothing else ran.'); P7-17 needs a paused count in session.ended (event-lines.ts endedCounts); P7-5's precise words need waitingPrs split into checks_pending and unreachable counts.",
+    "New person-facing sentences for polish-screens to keep in step: 'Done: all N tasks.' + 'Open your files'; 'Needs your sign-off'; '(the writer's limit)'; 'Writing the plan…'; 'Less than CHF 0.01.'; 'This computer's copy of o/r has not followed merges since 14:05.'; 'Instructions in a web page were ignored'; '\"X\" conflicts with main in <file>; ...'; 'N reviewed pull requests merge by themselves once their checks pass or GitHub answers.'"
+  ]
+}

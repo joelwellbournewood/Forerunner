@@ -1,0 +1,378 @@
+{
+  "area": "polish-screens",
+  "branch": "fix/polish-screens",
+  "head_sha": "3409c5b79c84d058aa9ef7847b9e48e20f2c1c96",
+  "commits": [
+    {
+      "sha": "aeb044c",
+      "subject": "project page: one start button in the header; tab links keep only the Tasks filters (later #56, #57)"
+    },
+    {
+      "sha": "cc7aa02",
+      "subject": "shell: the palette's Stop all asks first and shows only while something runs; no no-key bar on /setup (later #59, #63)"
+    },
+    {
+      "sha": "b23a590",
+      "subject": "home: opening a project is a look, not a switch; a card with nothing to answer offers its own button (later #61, P7-8)"
+    },
+    {
+      "sha": "2906347",
+      "subject": "session page and times: 24-hour HH:MM on every screen; the stream badge in plain words (later #66, P7-4, P7-9)"
+    },
+    {
+      "sha": "aa4db7d",
+      "subject": "start dialog: count right, name states in words, one over-budget line, no second Start (later #48, #69, C-45, P7-16)"
+    },
+    {
+      "sha": "eb1dfcc",
+      "subject": "settings and setup: true words for money, change cards and the site rule; setup opens on the step not done; links land (later #43, #30/#99/#38, #28, P7-10, P7-12, P7-28, P7-31, P7-32, W14-8)"
+    },
+    {
+      "sha": "e8f33ad",
+      "subject": "overview: a decision as a short question; the plan banner says how long drafting takes (later #79, #30)"
+    },
+    {
+      "sha": "050a01b",
+      "subject": "settings: a project without a budget reads 'no budget' on its row (later #43)"
+    },
+    {
+      "sha": "3409c5b",
+      "subject": "ui e2e: Settings lists each project's budget row, as the daemon does (later #43)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "later #56: with ready tasks the project header had two buttons that opened the same Start dialog: the status's Continue and Start session.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"with ready tasks the header has one start button, not Continue beside Start session\"",
+      "how": "ProjectPage no longer passes onStart to ProjectStatus in the header. The status sentence keeps its other actions (Answer, Open, Try again), so Start session is the page's one start button. Home's rows keep Continue.",
+      "check_in_the_app": "Open a project that has two ready tasks and no session. The header reads 'Ready to continue: 2 tasks ready' with one blue Start session button and no Continue. Live check: the same with the real model, after approving a plan with Reject/Approve and waiting for its session to end with tasks still ready."
+    },
+    {
+      "problem": "later #57: tab links kept the whole query, so Files (/files?path=script.js) then Tasks gave /tasks?path=script.js, and an open task's ?task= followed you to every tab.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"after Files, the Tasks tab link keeps the Tasks filters and drops the file's path\" and \"an open task drawer's id is not carried to another tab\"",
+      "how": "tabTo keeps only the Tasks filters (status, who, q), through tasksFilters.",
+      "check_in_the_app": "In a project, open Files and click a file (the address ends ?path=…). Hover or click the Tasks tab: the address is /projects/<id>/tasks with no ?path=. Set a status filter on Tasks, go to Files and back: the filter is still set."
+    },
+    {
+      "problem": "later #59: the palette's 'Stop all sessions' was listed while nothing ran, stopped at once without the question the header asks, and read 'Resume all sessions' when stopped.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"lists Stop all only while something runs, asks once before stopping, then offers Allow sessions again\"",
+      "how": "buildCommands lists 'Stop all (N running)' only while a project card has `working` and sessions are not stopped. It opens the header's own question: the shell now holds StopAll's `asking`. While stopped, the palette lists 'Allow sessions again' (POST /kill/resume). toggleKill is gone.",
+      "check_in_the_app": "With nothing running, press Ctrl+K and type 'stop': nothing is listed. Start a session, press Ctrl+K and type 'stop all': 'Stop all (1 running)' is listed. Press Enter: the header's question 'Stops every running session now. No session starts until you allow it again.' opens and nothing has stopped yet. Click Stop all. Press Ctrl+K again: 'Allow sessions again' is listed, and choosing it removes the stopped bar."
+    },
+    {
+      "problem": "later #63: the no-key bar also showed on /setup, where its Connect link points.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"the no-key bar does not show on the setup page its Connect points to\"",
+      "how": "NoKeyBar returns nothing when the path starts with /setup.",
+      "check_in_the_app": "Without a Claude key, Home shows the bar 'Claude is not connected: …' with Connect. Click Connect: the setup page shows no such bar."
+    },
+    {
+      "problem": "later #61: opening a project from Home ran project.switch, which wrote 'Switch project: …' to Changes on every visit.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"opening a project from Home writes nothing to Changes and switches nothing\". The real daemon is covered by real-daemon.test.ts \"polish-screens, wave 13\": the project page's reads leave GET /changes as it was.",
+      "how": "ProjectRow's link only opens the project; it no longer calls switchActiveProject. The project page already names the project on screen (U-056). The header's switcher and the palette still switch.",
+      "check_in_the_app": "With two projects, open the second one from Home, go back and open the first. Changes (More, Changes) shows no 'Switch project' row. The header names the project you are looking at."
+    },
+    {
+      "problem": "P7-8: Home's Needs you row offered 'Answer' on every card, the refused-key card included, though its only action is 'Save a new key'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"a card with nothing to answer offers its own button, not Answer: the refused key's Save a new key\"",
+      "how": "homeCardAction: a card with no choices, reply 'none' and a link of its own offers that link (label and target). Any other card keeps 'Answer', which goes to the card in the Inbox. The test id is now home-card-action.",
+      "check_in_the_app": "Bench with --provider bench-api --api-key refused: run a task so the key is refused. Home's Needs you row 'Anthropic refused your API key' shows 'Save a new key', which opens the setup assistant on its Claude step. Rows for other cards say 'Answer'."
+    },
+    {
+      "problem": "later #66 and P7-9: times were written three ways on one screen. In an en-US browser the session title read 'session at 12:01 AM' and the log '04:32:05 AM', Settings read 'Nov 03, 2026, 04:36 AM' and Changes 'Nov 08, 2026, 11:03 PM', all beside the daemon's 'Waits until 04:36'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"the session title and its log stamps read like 'Waits until 04:36', never '04:32:05 AM'\" and \"Settings' 'Resting until' reads the same way\", both with toLocale* forced to en-US",
+      "how": "lib/time.ts now uses one 24-hour format, en-GB with hourCycle h23. formatTime gives '16:02' with no seconds. formatDateTime gives '3 Nov 2026, 04:36' and formatDate '3 Nov 2026'. A new formatClock gives '04:36' today and '4 Nov, 04:36' on another day, as the daemon's clockTime does; BillingOrderSection's 'Resting until' uses it. startedAtWords uses formatTime. FilesTab is unchanged: it already wrote 24 hours, and the meaning of its time is an open owner question.",
+      "check_in_the_app": "Set the system or browser language to English (US). Open a session page: the title is '<project> · session at HH:MM' in 24 hours, and the log stamps are HH:MM with no AM/PM and no seconds. Settings, Advanced, Claude: which to use first: a resting credential reads 'Resting until HH:MM'. Changes shows '8 Nov 2026, 23:03'."
+    },
+    {
+      "problem": "P7-4: the session page's stream badge read 'finished', 'live', 'polling every 5 s' or the raw mode value, and its notice read 'live stream unavailable in this browser; polling every 5 s'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"the stream badge reads plain words: 'Updates every 5 s' while it polls, nothing once the session ended\"",
+      "how": "streamWords returns 'Live', 'Updates every 5 s' or 'Connecting…', and no badge once the session has ended (the status badge says so). The stream notices in api/sse.ts are now sentences ('Live updates do not work here; the page checks every 5 s instead.').",
+      "check_in_the_app": "Start a session and open its page: the badge reads 'Live' (the bench shows it). When it ends, the badge goes and the status says Done."
+    },
+    {
+      "problem": "later #48 and #69: the Start dialog said '… continues with up to N more as they become ready' for tasks that were ready now, and its stuck lines printed raw statuses such as '(cancelled)' and '(draft)'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"two tasks ready now: 'and 1 more', not 'as they become ready'\" and \"a stuck line names what holds it in words, never '(cancelled)' or '(draft)'\"",
+      "how": "planSentence now says 'This session runs \"X\" (about CHF …) and N more (about CHF …)' for the tasks ready now, then ', then continues with up to M more as they become ready (…)' for `later`. waitsOnText says '\"A\", which was cancelled' (also failed, needs your answer, running, being reviewed, a draft, has not run yet). Each line ends with what to do, from stuckAdvice.",
+      "check_in_the_app": "In a project with three tasks, two ready and one waiting on the first, open Start session. It reads 'This session runs \"Create index.html\" (about CHF 0.03) and 1 more (about CHF 0.03), then continues with up to 1 more as they become ready (about CHF 0.03).' (bench screenshot 03-after-start-dialog.png). Cancel a dependency of a waiting task: the dialog says '… waits on \"X\", which was cancelled, so it cannot run. Change what it waits for on the Tasks tab.'"
+    },
+    {
+      "problem": "C-45: with nothing fitting the budget, each left-out task had its own line saying the same thing. 'The tasks that run first take about Z' added up every runnable task, including tasks that run after the one left out.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"two tasks larger than the work budget are one line, not one each\" and \"'the tasks that run first' sums only the tasks ordered before the one left out\". Real daemon: real-daemon.test.ts \"polish-screens, wave 13\" \"GET start-check says what runs before a task left out for the budget (C-45)\".",
+      "how": "session/start-check.ts gives each task left out for budget `aheadUsdMicro`, read in plan order (the cut is greedy). GET /projects/:id/start-check sends it as overBudget[].ahead, an optional field in StartCheckTaskView; the fake daemon does the same. BlockerLines uses it, and puts every task larger than the work budget in one line ('\"A\" (about CHF 8.00) and \"B\" (about CHF 9.60) each need more than this session's work budget of CHF 4.00 …').",
+      "check_in_the_app": "Create three ready tasks: A (high priority, budget CHF 2.40), B (low, CHF 2.40) and C (low, CHF 0.80). Open Start with a budget of CHF 5.00 (work budget CHF 4.00). The line reads '\"B\" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 2.40 …'; before it said 3.20. Give two tasks budgets above CHF 4.00: one line names both."
+    },
+    {
+      "problem": "P7-16: after Start, the dialog showed 'Started: …' beside a Start button that was enabled again.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"after Start the dialog says it started, with no second Start beside it\"",
+      "how": "Once the notice shows, the dialog has Close and Open the session and no Start button, and submit does nothing. A second start means opening the dialog again, which then reads 'Starts after the current session'.",
+      "check_in_the_app": "Start a session from the dialog. It says 'Started: …' with Open the session and Close, and there is no Start button (bench 05-after-start-dialog-after-start.png)."
+    },
+    {
+      "problem": "later #43 (money fields and 0): Settings refused a project budget of 0 although the caps hook already reads it as none, and the design says money fields explain 0. The monthly cap's 0 was refused without saying why.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/commands/test/polish-screens.test.ts \"a project's budget of 0 is accepted and reads 'no budget'\" and \"the monthly cap's 0 is refused in words saying why; a session's too\". apps/ui/test/polish-screens.test.tsx \"a project's budget takes 0 as no budget and says so…\" and \"a project without a budget reads 'no budget' on its row, never 'CHF 0.00'\". real-daemon \"budget.set with 0 on a project is no budget…\".",
+      "how": "budget.set takes 0 for a project. The sentence reads 'Set the project budget for X from CHF 3 to no budget: only the monthly cap limits its spending.' and the read-back 'Remove the project budget for X? Only the monthly cap limits its spending then.' A 0 for the month or a session is refused with why (ZERO_REFUSED, as the parameters' issue). In Settings, money fields carry SettingCommand.zero: the project budget's hint says '0 means no budget: only the monthly cap limits it.' and its row reads 'no budget'. The monthly cap's field refuses 0 with 'The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.' The fake daemon lists each project's budget row, as the daemon does.",
+      "check_in_the_app": "Settings, Advanced, Other settings, a project's 'Project budget', Change. The hint ends '0 means no budget: only the monthly cap limits it.' Type 0 and apply: the row reads 'no budget'. Basics, Monthly spending cap, Change, type 0: the field refuses it with the sentence above."
+    },
+    {
+      "problem": "later #30, #99 and #38 (Settings): the calibration's change read 'from unset to {\"enabled\":false,…}'. Its row said 'up to USD 10' and its field 'Budget for the run (USD)'. The monthly cap row said 'high' risk while lowering it files a 'medium' card.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "packages/commands/test/polish-screens.test.ts \"the calibration's change says it in words, never JSON\". real-daemon \"a fresh install's monthly cap reads CHF 150.00…\" asserts no USD in rows and the risk.",
+      "how": "settings.ts adds calibrationWords, handoverWords and modelWatchWords as displays, and show() never prints JSON. settings-view.ts gives the monthly jobs' value a budget_chf beside the stored budget_usd; the fields are typed in CHF ('Budget for the run (CHF)') and sent back as budget_usd at the same rate. The descriptions are in CHF ('up to about CHF 8.00'). The monthly cap row's risk is medium, and its line says it cannot be 0 and that raising it needs this computer's OK.",
+      "check_in_the_app": "Settings, Advanced, Other settings: 'Monthly critic calibration' reads 'on, day 1 at 06:00, up to CHF 8.00, grades the light review' (bench 13-after-settings-hash-other-settings.png). Change, turn it off, apply: the sentence reads '… from on, day 1 at 06:00 (the default) to off: …' with no braces."
+    },
+    {
+      "problem": "later #28: a fresh install's monthly cap read CHF 150.40 while setup said 'CHF 150 a month'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"polish-screens, wave 13\" \"a fresh install's monthly cap reads CHF 150.00 through GET /settings (later #28)\"",
+      "how": "compose.ts inserts the first human with notify_prefs.monthly_cap_chf_micro 150_000_000 beside the USD cap (150 / rate, to the micro), as budget.set stores a cap. This is the only change in compose.ts.",
+      "check_in_the_app": "Fresh install (bench --fresh). Settings, Basics: Monthly spending cap reads CHF 150.00, and the Start dialog says 'Left this month: CHF 150.00' (bench 03-after-start-dialog.png; before it read CHF 150.40)."
+    },
+    {
+      "problem": "later #28 and wave 7's P-welcome: reopening setup always started at Welcome, whose Continue needed the name typed again. A refused key's 'Save a new key' (/setup) landed there too.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"reopened after the Claude step was skipped, it opens the Claude step; no name to type again\" and \"a refused key's 'Save a new key' (/setup) lands on the Claude step, though a key is saved\"",
+      "how": "firstStep picks the step: Welcome while the daemon still shows the assistant (a fresh install); after that, Claude while no Claude credential is saved or the saved one is refused (from GET /settings/billing-order), then GitHub, else Welcome. The '/setup' links stay as they are.",
+      "check_in_the_app": "Click 'Set up later' without a key, then Settings, Accounts and keys, Open the setup assistant: it opens on the Claude step with Welcome ticked (bench 16-after-setup-reopened.png). With a refused key, Home's 'Save a new key' opens the Claude step."
+    },
+    {
+      "problem": "P7-10: the 'Who merges accepted work' change card showed the label plus the whole 290-character effect inside its monospace value.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "packages/commands/test/polish-screens.test.ts \"the merge mode's card value is its label; what it means is the read-back's second sentence\". real-daemon \"a settings.set merge_mode card: its value is the label, what it means is the Inbox card's body (P7-10)\".",
+      "how": "One rule for every settings.set card. newValue is the value in words. The effect is the change-log sentence and the read-back's second sentence (askOf: 'Set X to b? <Effect>.'). Settings shows that read-back under the card, and the Inbox shows it as the card's body. The contract types ChangeCardView.ask, and the fake daemon's read-back follows it.",
+      "check_in_the_app": "On a project with a GitHub repository (bench --githost), open Settings, Other settings, Who merges accepted work, Change, then 'Merge automatically after review'. The card's value reads only 'Merge automatically after review'; the line under it reads 'Set who merges accepted work for X to Merge automatically after review? Forerunner merges each task's pull request once the critic accepts it. Merges show under your GitHub name, …'. The Inbox card has the question as its title and the rest as its body. Live check: the same with the real model and a forerunner-sandbox project."
+    },
+    {
+      "problem": "P7-28: the 'Web pages research may read' row was one long paragraph containing \"Static hosts's research\" and 'on both credentials'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/web-access.test.tsx (UI) row assertions with the fake's row words, and real-daemon \"a fresh install's monthly cap…\", which checks rows without USD. There is no separate failing test for the old sentence: its words came from settings-view, and the new constant is asserted where the fake reads it.",
+      "how": "WEB_ACCESS_ROW_WORDS in wiring/web-access.ts has two short sentences: 'Any public website, or only the websites you list (with their subdomains); never this computer or your home or office network. The agent browser's own site list is separate and changes nothing here'. It keeps the owner's 'sites' sentence and has no project name and no 'credentials'. The proxy sentence is added only where a proxy applies. settings-view and the fake both use it.",
+      "check_in_the_app": "Settings, Other settings: the 'Web pages research may read' row for a project named 'Static hosts' reads the two sentences above, with no \"hosts's\"."
+    },
+    {
+      "problem": "P7-31, P7-32 and W14-8: the site-rule change sentence had a double colon ('… to Only these websites: example.com: research reads …'). 'Saved as:' showed five sites and then 'and N more'. An empty 'only' list read 'Only these websites: none'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "packages/commands/test/polish-screens.test.ts \"the site rule's change sentence has one colon, and its value names the sites\". apps/ui/test/polish-screens.test.tsx \"'Saved as:' lists every site before saving, all seven\" and \"an 'only' list the clean-up left empty reads 'no website'…\". real-daemon (the merge_mode case's second half).",
+      "how": "webAccessWords is lower case and has no colon: 'any public website', 'any public website, never a.com', 'only example.com', 'no website'. It names up to five sites, then 'and N more'. With { all: true } it names every site, and WebAccessInput's 'Saved as:' uses that.",
+      "check_in_the_app": "Settings, a project's 'Web pages research may read', Change, Only these websites: type seven sites. 'Saved as:' names all seven. Apply: the sentence reads 'Set web pages research may read for X from any public website to only a.com, …: research reads only these websites …' with one colon."
+    },
+    {
+      "problem": "P7-12: the Overview's 'Change' link (/settings#other-settings) opened Settings at its top.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"/settings#other-settings, opened before the rows load, lands on Other settings\". It records whether the rows were on the page when the page scrolled.",
+      "how": "SettingsPage calls useScrollToHash(!settings.loading). The hook also waits, with a MutationObserver for up to 15 s, for an element that is not there yet. Before, it scrolled once at mount, and the rows that loaded afterwards pushed the section down.",
+      "check_in_the_app": "On a project's Overview, click 'Change' after 'Research reads: …' (or open /settings#other-settings). Settings opens with Advanced open and 'Other settings' at the top of the view (bench 13-after-settings-hash-other-settings.png)."
+    },
+    {
+      "problem": "later #30 (intake): the plan banner said only 'Drafting the plan…' for the roughly 42 s planning takes.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/project.test.tsx, the drafting banner assertion (updated to the new words; it fails on the old code)",
+      "how": "DRAFTING_WORDS: 'Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.'",
+      "check_in_the_app": "Create a project with a brief: while the plan is drafted, the banner says it usually takes about a minute."
+    },
+    {
+      "problem": "later #79: decisions kept the card's whole question ('Where should the page be published: GitHub Pages, Netlify, or only as a local file?').",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx \"a decision reads as a short question with its answer when the answer names an option\"",
+      "how": "shortQuestion drops the options after the question's colon when the answer names one of them, with no model call. Otherwise the question stays whole.",
+      "check_in_the_app": "Answer a decision card whose question lists options after a colon by picking one of them. Its Overview line reads 'Where should the page be published? Only as a local file for now; … (Robin, 9 Nov)'. Live check: the intake decision of a real plan, if its question lists options."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "W14-9: show each session's CHF on the project's Sessions tab (/projects/:id/sessions).",
+      "why": "The project has no Sessions tab. PROJECT_TABS (ProjectPage.tsx) lists Overview, Tasks, Chat, Files, Plan, Docs, Reviews, Costs and Data, and /projects/:id/sessions redirects to the Overview. The fixup's own screenshot of that 'tab' (/tmp/frbench/fixup-leftovers7-session/steps/06-after-sessions-tab-after-crash.png) is the Overview, and so is mine (14-after-sessions-tab.png). A list of a project's sessions would be a new screen, which design §6 does not have. The one session a project shows (Last result) carries its CHF in the session's result sentence ('… CHF 0.80.'), and its page shows the spend. Left for the owner or the session lead to decide whether a sessions list is wanted."
+    },
+    {
+      "problem": "Fast mode's row and card quote the price table in USD ('USD 8 / 40 per million …'). The acceptance asks for no 'USD' anywhere in Settings.",
+      "why": "Those words are fastModeDescription and the fast_mode effect, which quote the provider's price table. Turning them into CHF changes a pricing statement that commands/fast-mode tests and ADR 0057 assert, and that is not one of this area's items. The real-daemon case excludes that row and says so. The calibration and handover, which are this area's, are now in CHF."
+    },
+    {
+      "problem": "Existing installs keep reading CHF 150.40 for the default cap.",
+      "why": "Only a fresh install's first human now gets the CHF figure (compose.ts insert). An install created earlier has USD 188 with no CHF figure, so settings-view's capMoney converts at the day's rate, as before. Correcting stored rows would be a migration, which is outside this area. Saving any cap in Settings stores the CHF figure."
+    },
+    {
+      "problem": "Owner questions: the monthly cap and 0; the meaning of the Files line's time.",
+      "why": "Not decided. The monthly cap's 0 is built as recommended meanwhile: refused, with why, and a project's and a task's budget take 0 (see notes). FilesTab is unchanged because the owner has not answered; its time was already 24-hour."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check",
+      "result": "exit 0: lint (warnings only, none new), lint:paths, typecheck, unit tests 478 files with 4909 passed and 6 skipped, docs:links, secret-scan clean (2074 files). docs:check cannot diff against origin/main here; `node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0` gives 'docs-check: ok (56 files)'."
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 75 skipped (Postgres tests skip without FORERUNNER_TEST_PG)"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 86 files, 981 tests passed (real-daemon.test.ts included; its 'polish-screens, wave 13' block has 5 cases)"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "34 passed (first run: 1 failed, e2e/palette.spec.ts, which counted 20 settings rows; the fake now lists each project's budget row as the daemon does, the count was updated to 22 in 3409c5b, and the rerun passed 34/34)"
+    },
+    {
+      "command": "npx vitest run --project unit packages/commands/test/ (and packages/runtime/test web-access, daemon, fast-mode-wiring, task-dependencies)",
+      "result": "all green after updating the assertions of texts this area changes (listed under tests_changed_for_design)"
+    },
+    {
+      "command": "Failing-first checks: scratchpad oldrun.sh runs each new UI case with the changed sources put back to HEAD",
+      "result": "Each new polish-screens.test.tsx case failed on the old sources (header/tabs 3, shell 2, home 2, times 3, Start dialog 5, setup and hash 3, decisions 1, 'no budget' row 1). The commands cases failed before the budget.ts and settings.ts changes, and the real-daemon cases for ahead and the default cap failed before the start-check.ts and compose.ts changes."
+    },
+    {
+      "command": "Bench fix-polish-screens (--provider bench, daemon 48423, UI 2023): before walk (with --githost 48424), then a fresh bench for the after walk (scratchpad walk.cjs before|after, walk2.cjs)",
+      "result": "Before: two start buttons; Tasks href ?path=index.html; session title '11:03 PM'; palette lists 'Stop all sessions' while idle; Changes '11:03 PM'; 'Left this month: CHF 150.40'; after Start a second Start shows. After: one Start session; Tasks href clean; title 'session at 00:06' with badge 'Live'; palette lists 'Stop all (1 running)' only while running; Changes has no 'Switch project'; CHF 150.00; after Start only Close; /settings#other-settings lands on Other settings; Project budget 'no budget'; reopened setup opens on Claude. Bench stopped with stop.mjs; home and browser profile deleted."
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"; git status --short",
+      "result": "no conflict markers; tree clean; fix/polish-screens = HEAD = 3409c5b"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-polish-screens-before/steps/01-before-project-header-ready.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/02-before-files-tab.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/03-before-start-dialog.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/05-before-start-dialog-after-start.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/06-before-session-page.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/08-before-palette-stop-all-idle.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/10-before-changes-after-open-from-home.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/12-before-settings-advanced.png",
+      "/tmp/frbench/fix-polish-screens-before/steps/13-before-settings-hash-other-settings.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-polish-screens-after/steps/01-after-project-header-ready.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/02-after-files-tab.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/03-after-start-dialog.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/05-after-start-dialog-after-start.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/06-after-session-page.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/07-after-palette-stop-all-running.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/08-after-palette-stop-all-idle.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/10-after-changes-after-open-from-home.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/12-after-settings-advanced.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/13-after-settings-hash-other-settings.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/15-after-settings-other-settings-no-budget.png",
+      "/tmp/frbench/fix-polish-screens-after/steps/16-after-setup-reopened.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "apps/ui/test/home.test.tsx \"Needs you lists every open card…\"",
+      "why": "The row's button test id is now home-card-action, because it is not always Answer (P7-8). The test still asserts 'Answer' and the /inbox#card- link."
+    },
+    {
+      "test": "apps/ui/test/shell.test.tsx and hotkey.test.tsx (buildCommands contexts)",
+      "why": "toggleKill was removed from CommandContext (the palette now asks, later #59). Only the context literals changed; no assertion did."
+    },
+    {
+      "test": "apps/ui/test/session.test.tsx (two finished-session cases, one polling case), apps/ui/test/sse.test.ts, apps/ui/e2e/session.spec.ts",
+      "why": "P7-4: no stream badge once the session ended (it read 'finished'); 'Updates every 5 s' and 'Live' replace 'polling every 5 s' and 'live'; the notice says 'checks every 5 s'."
+    },
+    {
+      "test": "apps/ui/test/settings-billing-order.test.tsx",
+      "why": "The expected 'Resting until' is built with formatClock (24 hours, P7-9) instead of formatDateTime."
+    },
+    {
+      "test": "apps/ui/test/project.test.tsx: \"a task that only does not fit after the tasks before it\", \"warns when ready tasks exist but none can run\", \"a second queued start says how many wait before it\", and the drafting banner",
+      "why": "later #48: 'and 1 more (…)' for a task ready now. C-45: the sum was the bug, 3.20 becomes 2.40. later #69: the stuck line in words. P7-16: no second Start in the same dialog, so the U-043 case opens it again. later #30: the banner says how long drafting takes."
+    },
+    {
+      "test": "packages/commands/test/commands.test.ts (project budget, handover and calibration sentences)",
+      "why": "later #43: 'from no budget', never 'CHF 0'. later #30: the handover test and the calibration in words, never JSON."
+    },
+    {
+      "test": "packages/commands/test/fast-mode.test.ts, small-project.test.ts, speed-quality.test.ts; packages/runtime/test/fast-mode-wiring.test.ts",
+      "why": "P7-10: a card's newValue is the value alone. Each test still asserts the effect, now in card.ask (the read-back)."
+    },
+    {
+      "test": "packages/runtime/test/daemon.test.ts (monthly cap row)",
+      "why": "later #99: the row's risk is the card's, medium (it was 'high')."
+    },
+    {
+      "test": "packages/runtime/test/web-access.test.ts, apps/ui/test/web-access.test.tsx, real-daemon.test.ts:5301",
+      "why": "P7-31 and W14-8: the rule reads 'any public website' and 'only example.com', lower case with no colon. The widening read-back says 'Research reads …' as its second sentence."
+    },
+    {
+      "test": "apps/ui/test/settings.test.tsx, settings-models.test.tsx, e2e/palette.spec.ts (row counts), settings.test.tsx (calibration and handover fields)",
+      "why": "The fake now lists each project's budget row, as the daemon always did, so there are 2 more rows. later #38: the monthly jobs' run cap fields are budget_chf plus a hidden usd_per_chf, sent as budget_usd."
+    },
+    {
+      "test": "apps/ui/test/settings-money.test.tsx, settings-basics.test.tsx, fast-mode.test.tsx",
+      "why": "later #43: what 0 means is said per field (refused for the monthly cap and a session, with why; negatives read 'must be CHF 0 or more'). P7-10: the fast mode card's value is 'true' and the effect is in the read-back."
+    }
+  ],
+  "new_problems": [
+    "Sibling of later #61: creating a project in the New project dialog still runs project.switch after project.create (NewProjectDialog.tsx calls switchActiveProject), so one click writes two Changes rows. Left as built: U-056 makes the new project the active one for chat, voice and the phone. A project.create with params.switch would do both in one row.",
+    "budget.set's sentences write whole francs without decimals ('from CHF 3 to CHF 12'; the chf() helper in commands/shared.ts), against design §5's 'two decimals'. This area's own new sentences keep that helper, so the words stay the same everywhere; changing chf() touches many command tests. Not done.",
+    "A 0 for a session or the month, sent through POST /commands/execute, is refused as 'budget.set: invalid parameters'. The words are in the error's details.issues, which chat's question shows. Settings refuses it in words before sending; another client would see the generic reason. The executor's refusal reason could include the issue messages (packages/commands/src/executor.ts, not this area's)."
+  ],
+  "notes_for_other_areas": [
+    "Waiting for the owner's answer (U-074; build-meanwhile recommendation): a project's budget takes 0, meaning no budget, through budget.set, Settings and the 'no budget' words (a task's budget already did). The monthly cap stays positive and refuses 0 with 'The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.' (ZERO_REFUSED in packages/commands/src/commands/budget.ts; MONTHLY_CAP_ZERO in SettingsPage.tsx). Record the answer in U-074.",
+    "Route change: GET /projects/:id/start-check overBudget[] carries an optional `ahead` Money (what the tasks planned before that task take; StartCheckTaskView in api-types.ts; computed in session/start-check.ts as aheadUsdMicro). It is one small hunk in server.ts's start-check mapping; leftovers7-tailrun owns that route, so merge keeping both hunks. The fake daemon's fakeStartCheck sends it too.",
+    "Rule for every settings.set change card (P7-10): newValue is the value in words (the key's `display`); the effect goes in the change-log sentence and in card.ask as the second sentence ('Set X to b? <Effect>.', askOf in settings.ts). The Inbox's approval card shows ask's first sentence as the title and the rest as the body. The UI contract ChangeCardView has `ask` optional. polish-words: request-words' approval body comes from ask, so a key's effect now shows there.",
+    "webAccessWords(value, { all? }) returns lower-case phrases with no colon ('any public website', 'only example.com', 'no website'). WEB_ACCESS_ROW_WORDS (wiring/web-access.ts) is the Settings row's two sentences; the fake daemon imports it.",
+    "New words a person sees, all within design §5: 'Stop all (N running)' (palette, hint 'asks first'), 'Allow sessions again'; 'Updates every 5 s', 'Live', 'Connecting…'; the stream notices ('Live updates do not work here; the page checks every 5 s instead.'); 'and N more (about CHF …), then continues with up to …'; '\"A\", which was cancelled, so it cannot run. Change what it waits for on the Tasks tab.'; '… each need more than this session's work budget of …'; 'no budget'; the 0 refusals above; the monthly cap row's line; the calibration and handover row lines in CHF; DRAFTING_WORDS. polish-words: SessionPage.tsx is shared, and only pullRequestsFromLog is yours; I did not touch it.",
+    "Times: lib/time.ts now has formatClock(iso, now) ('04:36' today, '4 Nov, 04:36' another day) and 24-hour formatTime, formatDateTime and formatDate, used on every screen through those helpers. FilesTab's copyUpdatedWords is unchanged (open owner question).",
+    "compose.ts: one hunk in the first human's insert (notify_prefs.monthly_cap_chf_micro and the USD rounding). Nothing else in compose.ts changed.",
+    "Live checks for phaseE7-live.md (real model, after the merge): (1) a real plan's decision card with options after a colon. Answer with one option: the Overview line is the short question. (2) On a forerunner-sandbox project, Settings, Who merges accepted work, then Merge automatically after review: the card value is the label, and the Inbox card's body is the effect. (3) Create a project with a brief: the drafting banner says 'about a minute', and planning takes about that long. No credential is needed beyond the usual real-model setup; (2) needs FORERUNNER_TEST_GITHUB_TOKEN and forerunner-sandbox."
+  ]
+}

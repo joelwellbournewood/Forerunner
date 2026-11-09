@@ -1,0 +1,174 @@
+{
+  "area": "polish-words",
+  "branch": "fix/polish-words",
+  "head_sha": "aa8fa8dc8986e8da60fe0ac53854136e252ba995",
+  "commits": [
+    {
+      "sha": "1f32faed4cae438a80a8dffb8294a3ae3779cc0a",
+      "subject": "push-words: a push GitHub refused names no task branch and leads with GitHub's line (U-074, C-59, R-2)"
+    },
+    {
+      "sha": "3fff3de6ff60775a789e242141cd13b935093fe1",
+      "subject": "task display: a ready task says Cancel sets its work aside only when its paused run left work (U-074, P7-20)"
+    },
+    {
+      "sha": "ecd984921538010629fd84d1879fdd7f845d0f28",
+      "subject": "tests: a conflicting pull request's Tasks row, through the real daemon and on the screen (U-074, W14-5)"
+    },
+    {
+      "sha": "41099ce75fe85da65cd38f09042668c3f50ef52c",
+      "subject": "result, status and plan words: a cost under a centime is no news, three card kinds named, no dangling \"it\" (U-074, W14-6, L-13a, P7-14)"
+    },
+    {
+      "sha": "aa8fa8dc8986e8da60fe0ac53854136e252ba995",
+      "subject": "tasks screen: Answer and the drawer's Open go to the task's own card (U-074, later #55)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking 1 (C-59 and R-2): when GitHub refused a push, the task's reason still began 'Forerunner could not push the branch fr/1a2b3c4d-write-the-guide to o/r: GitHub refused it: ...'. That reason is the Tasks row's 'Failed: …' (cut at 100 characters), the drawer and the failed-task card. The id part broke design §5.3, and the long head used up the row, so GitHub's own line never showed.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/capabilities/test/push-words.test.ts \"names no task id, and GitHub's own line comes within the row's first 100 characters (C-59 sibling, review of polish-words)\"; packages/runtime/test/writing-rules.test.ts \"a push GitHub refused reads on the Tasks row with GitHub's own line and no task id (C-59, R-2; review of polish-words)\" (before, the row read 'Failed: Forerunner could not push the branch fr/01a19c00-write-a-short-readme-section to…')",
+      "how": "Root cause: pushFailedWords (push-words.ts) put the raw taskBranchName and the repository before the reason, and withoutIds/plainReason do not strip 'fr/<hex>-'. The sentence now names no branch, because the row, drawer and card already name the task. A refusal leads with GitHub's line: 'GitHub refused the push: \"Permission to o/r.git denied to some-bot\". Check the GitHub token in Settings and o/r on GitHub, then press Try again.' A refusal without a host line reads 'GitHub refused the push to o/r (the token may not write to it, or a rule protects the branch). …'. An unreachable host and any other failure read 'Forerunner could not push the work to o/r: …'. The signature is unchanged, because pr-executor.ts's call sites belong to leftovers7-tailmerge. Updated in place: the exact sentences in push-words.test.ts and pr-executor.test.ts:327; the pr-executor case now also asserts that res.branch is not named. Docs: capabilities.md.",
+      "check_in_the_app": "Bench (done here): a pre-receive hook in the stand-in's bench/seeded.git prints 'Permission to bench/seeded.git denied to bench.' A coder task on that repository fails. Its Tasks row reads 'Failed: GitHub refused the push: \"Permission to bench/seeded.git denied to bench\". Check the GitHub token…'. The drawer, the Inbox card ('What failed: GitHub refused the push: …') and the session result say the same, and none names fr/<id> (/tmp/frbench/fixup-polish-words/steps/38-51-push-refused-row-and-drawer.png, walk-e.json). Live check for phaseE7-live.md (needs FORERUNNER_TEST_GITHUB_TOKEN reduced to read-only, or a read-only fine-grained token on forerunner-sandbox): 1) Settings > GitHub: save a token that can read but not write forerunner-sandbox. 2) Create a project on that repository and add one small coder task. 3) Start a session. 4) On the Tasks tab the failed row reads 'Failed: GitHub refused the push: \"Permission to <owner>/forerunner-sandbox.git denied to <user>\"…' (GitHub's own words in the first 100 characters). 5) Neither the row nor the drawer nor the Inbox card names a branch fr/<8 hex>-…, or says 'GitHub could not be reached'."
+    },
+    {
+      "problem": "Blocking 2 (P7-20): no daemon-side or real-daemon test covered the new rule that a ready task whose last work run paused gets display.cancelWork on GET /projects/:id/tasks. The only test seeded the fake daemon's heldWork by hand. On the bench the line also promised 'Its work so far is set aside' for a reopened task whose paused run (CHF 0.004 budget) had written no file.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"polish-words, wave 13: Cancel on a ready task holding its work so far (P7-20)\" > \"a reopened task whose paused run wrote its file says Cancel sets it aside; one whose run wrote nothing, and one that never ran, do not\" (before the fix, the task that wrote nothing still had cancelWork 'Its work so far is set aside unless a later task built on it; Undo brings it back.')",
+      "how": "Root cause: loadTaskDisplayContext (task-display.ts) put a ready task in heldWork from its last run's outcome alone (paused or budget_exceeded). It now also requires runLeftFiles: the session that ran the paused run must hold a task.files event for that task with files. The runner emits that event for a paused run with its changed files, in the worktree or the folder. The test goes through the real daemon and the stand-in. A guide that writes guide.md and pauses at USD 0.045, and one at CHF 0.004 that pauses before writing anything, are both cancelled and reopened with the Tasks tab's own POST /tasks/:id/action. Only the first row carries cancelWork, which the UI's actionExplain reads ('Drops it. Its work so far is set aside…'). The second row and a task that never ran read 'Drops it.'. Docs: runtime.md (Cancel words) and apps.md (the Tasks row); the TaskDisplayContext.heldWork doc is updated.",
+      "check_in_the_app": "Bench (done here, walks C and E): the Members guide paused at CHF 0.004 with no file written; after Cancel and Reopen, its row's and drawer's Cancel read only 'Drops it.' (29-28-reopened-ready-drawer.png). A 'Club guides' guide paused after writing guide.md; Cancel removes the file and Reopen brings it back; the ready row's title and the drawer read 'Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.' (42-55-ready-holding-work-drawer.png). Live check: on a folder project, give a coder task a budget of about CHF 0.05 so it pauses after writing part of its file. Cancel it on the Tasks tab, then Reopen it. Open its drawer: Cancel says its work is set aside. Repeat with a CHF 0.01 budget that pauses before any file is written: Cancel says only 'Drops it.'."
+    },
+    {
+      "problem": "Blocking 3 (W14-5): the new row label 'Accepted · conflicts with <base>' (warn tone, the merge record's sentence as its detail) had no test at any level, and fake-tasks.ts's last_outcome was set by no UI test.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "none failed before: the label already worked, it only lacked tests. The new cases fail when the conflict branch in taskDisplay is disabled (checked by hand, then restored): apps/ui/test/real-daemon.test.ts \"polish-words, wave 13\" > \"a pull request that conflicts reads 'Accepted · conflicts with <base>' with what to do, never 'waiting for you to merge'; the done line counts what Merge can merge (W14-5)\"; apps/ui/test/polish-words.test.tsx \"a pull request that conflicts reads 'Accepted · conflicts with main' on its row and says what to do in the drawer; the mergeable one waits for the Merge (W14-5)\"",
+      "how": "Real daemon: merge records are left to the person with last_outcome 'conflict', worded by the real conflictNoticeSentence for main (with README.md) and for trunk, next to one that Merge can merge. The case asserts labels, tone and details ('#3 conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.'), that no row names a branch, and that Home's done line reads 'Done: all 3 tasks. 1 pull request waits for you to merge.'. That line counts only what Merge can merge; the conflicting ones say so on their rows and on the Overview. Fake daemon: the row and the drawer through polish-words.test.tsx. Docs: runtime.md (what the person reads), apps.md (Tasks row statuses), user-guide.md (a pull request that no longer merges cleanly).",
+      "check_in_the_app": "Not walked on the bench, because a real conflict needs two merges that change the same lines. The real-daemon case covers the route. Live check: on a repository project, merge one task's pull request on GitHub that changes a line which another task's open pull request also changes. Wait for the conflict notice in the Inbox. On the Tasks tab, the second task's row reads 'Accepted · conflicts with main' and its drawer says '#N conflicts with main in <file>: resolve the conflict on GitHub, or redo the task.'. Neither names a branch."
+    },
+    {
+      "problem": "Non-blocking review item (W14-6 sibling of this area): the bench's Inbox Update read 'Guides: Less than CHF 0.01.' and nothing else. Before polish-words, 'CHF 0.00.' gave no Update at all.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/session-update.test.ts \"a cost under a centime is money, not news: no Update says only that (the review of polish-words)\" (got 'Guides: Less than CHF 0.01.')",
+      "how": "Root cause: polish-words' moneyWordsFirst starts a result line with 'Less than CHF 0.01.'. NOT_NEWS (result.ts) only knew 'CHF n.nn.', so isNewsLine treated that line as news, and the session-end notification uses the same test. NOT_NEWS now also accepts an optional 'Less than ' before the amount. Docs: runtime.md (the session's Update).",
+      "check_in_the_app": "Bench walk D: a repository session whose only news is a cost under a centime posts no 'Guides: Less than CHF 0.01.' Update (walk-d.json, costOnlyUpdate false). In the app: run a session that does almost nothing and fails. The Inbox's Updates get no line that only gives the cost."
+    },
+    {
+      "problem": "Non-blocking review item (L-13a, design §5.5): with three kinds of cards, the status line read 'Waiting for you: 1 question, 1 paused task and 1 more'.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/project-status.test.ts \"names up to three kinds of cards, then 'and N more' (design §5.5; the review of polish-words)\"",
+      "how": "cardKindsWords (project-status.ts) now names up to three kinds, then 'and N more'. With two kinds it still reads 'a and b'. Docs: runtime.md.",
+      "check_in_the_app": "Bench walk C: the Members project reads 'Waiting for you: 1 question, 1 paused task and 1 sign-off' on Home (24-23-home-three-kinds.png)."
+    },
+    {
+      "problem": "Non-blocking review item (P7-14): when several tasks shared the plan card's runs-on line, it read 'On your subscription the tests of 2 tasks will not run: it cannot run commands there.', and 'it' named no one.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/writing-rules.test.ts \"'its tests will not run' is said once for the plan, under the first task (P7-14)\" with the exact line (updated in place, as was real-daemon.test.ts's credential-chooser assertion)",
+      "how": "onceForThePlan (plan-tasks.ts) now writes the shared line as '…: commands cannot run there.'. Docs: apps.md (the plan card).",
+      "check_in_the_app": "With an API key and a subscription saved, and a plan holding two code tasks on the subscription: the plan card says 'On your subscription the tests of 2 tasks will not run: commands cannot run there.' once, under the first of them."
+    },
+    {
+      "problem": "Non-blocking review item (sibling of later #55): the Tasks row's and the drawer's Answer ('Opens its card in the Inbox.'), and the drawer's Open next to each card, went to the top of the Inbox, not to the card.",
+      "u_ids": [
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/polish-words.test.tsx \"Answer on the row and the drawer's Open go to the task's own card in the Inbox, as Home's Answer does (later #55 sibling)\" and \"the drawer's Open beside a card links to that card\"",
+      "how": "TasksTab.tsx's Answer now navigates to /inbox#card-<id> from display.blocker (when it is a card), and to /inbox otherwise. TaskDrawer.tsx's card list links each card by its id. The Inbox's useScrollToHash scrolls to the card and marks it. Docs: apps.md.",
+      "check_in_the_app": "Bench walk C: Answer on the sign-off task's row opened /inbox#card-<its card> (23-22b-row-answer-opens-card.png). In the app: on the Tasks tab press Answer on a task that needs you; the Inbox opens at that task's card."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "A paused task's own Cancel line (needs_human with a budget card: the row, the drawer, and the Inbox card's 'Drops it; its work is set aside unless a later task built on it.') still promises a set-aside even when the paused run wrote nothing. On the bench, the Members guide's paused drawer showed it while guide.md never existed.",
+      "why": "This is budget-resume's logic: taskDisplay's needs_human/budget case sends cancelWork for every paused task, and the UI's cancelWorkLine falls back to the 'paused' kind from the budget card even without the daemon's line. Making it true needs the same runLeftFiles check in the daemon, a UI fallback that trusts the daemon's display, and the budget card's explain in request-words. That touches the fake daemon and several existing tests, which is too wide for this fixup. Logged in new_problems as a sibling (validation rule 8). The ready-task line that P7-20 introduced is now true."
+    },
+    {
+      "problem": "Other non-blocking review items left as they were: ruledSummary's asks-person branches are dead code (Reviews shows 'needs you' above 'Accepted: …'); budgets and estimates under a centime still read 'CHF 0.00'; the empty-change failed card body is about 300 characters and 6 sentences; registry keys remain on the plan card and in the Tasks 'Who does it' column; heldWork/stillBlocked read costs; C-19 is not tested at GET /tasks/:id.",
+      "why": "The task asked for every blocking finding. These are screen or logic items outside the three blockers. The plan card's and Who column's registry names are screen wording (polish-screens). The rest were already in the fixer's not_done or are listed in new_problems with the reviewer's evidence."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan) at 41099ce",
+      "result": "exit 0: 477 files, 4932 passed, 6 skipped; link-check ok (206 files); secret-scan clean (2074 files); docs-check cannot diff against origin/main in a worktree (as for the fixer)"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (84 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 30 passed, 75 skipped (Postgres-backed tests skip without FORERUNNER_TEST_PG)"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts (at aa8fa8d)",
+      "result": "86 files, 975 tests passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local config, not committed)",
+      "result": "34 passed"
+    },
+    {
+      "command": "npx tsc --noEmit -p packages/runtime; -p apps/ui; npx biome check on each changed file",
+      "result": "clean"
+    },
+    {
+      "command": "Mutation check: 'false &&' added before taskDisplay's merge.last_outcome === 'conflict', then restored with git checkout",
+      "result": "both new W14-5 cases (real-daemon and polish-words.test.tsx) fail; they pass once the line is restored"
+    },
+    {
+      "command": "Bench fixup-polish-words (--fresh --provider bench, stand-in GitHub on 48444, FORERUNNER_BENCH_FAIL=Style, MISSING='Chart the members', LONG='Write the guide'); the reviewer's walks A-D adapted (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx-walk-{a,b,c,d}.cjs) plus a new walk E (fx-walk-e.cjs)",
+      "result": "A: plan card 'starts working on it now', busy lines, repository done line 'Done: all 4 tasks. 4 pull requests wait for you to merge.', no fr/ branch on the session page. The folder 'Notes' done check fails exactly as in the reviewer's run: its index.html task matches the bench's FAIL=Style. B: Greeter 'Done: all 2 tasks.' with Open your files to Files; the walk's API call to /projects/:id/costs is a 404 in the walk script itself, and Costs is checked on the page in C. C: sign-off row and drawer, both Answers open /inbox#card-<id>, three kinds named, paused drawer's set-aside line, the reopened no-work guide reads 'Drops it.', Costs 'the writer', session 'Ended: 1 task needs you' -> 'Done'. D: empty-change texts plain, no cost-only Update. E: push refusal quotes GitHub with no fr/ branch (row, drawer, card, session result); the ready guide holding work says its Cancel sets it aside. All PASS. Bench stopped with scripts/bench/stop.mjs; its home, stand-in GitHub repositories and browser profile deleted; screenshots in /tmp/frbench/fixup-polish-words/steps/"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-polish-words/steps/29-28-reopened-ready-drawer.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-polish-words/steps/38-51-push-refused-row-and-drawer.png",
+      "/tmp/frbench/fixup-polish-words/steps/39-52-push-refused-inbox.png",
+      "/tmp/frbench/fixup-polish-words/steps/29-28-reopened-ready-drawer.png",
+      "/tmp/frbench/fixup-polish-words/steps/42-55-ready-holding-work-drawer.png",
+      "/tmp/frbench/fixup-polish-words/steps/23-22b-row-answer-opens-card.png",
+      "/tmp/frbench/fixup-polish-words/steps/24-23-home-three-kinds.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/capabilities/test/push-words.test.ts (three exact sentences), packages/capabilities/test/pr-executor.test.ts:327",
+      "why": "C-59/R-2: a push failure names no task branch, and a refusal leads with GitHub's line ('GitHub refused the push: \"…\". Check the GitHub token in Settings and o/r on GitHub, then press Try again.'). The pr-executor case now also asserts that the branch is absent."
+    },
+    {
+      "test": "packages/runtime/test/writing-rules.test.ts (the plan card's runs-on case), apps/ui/test/real-daemon.test.ts:7404 (credential chooser, both credentials)",
+      "why": "P7-14: the shared runs-on line reads '…: commands cannot run there.' instead of a dangling 'it'"
+    }
+  ],
+  "new_problems": [
+    "Sibling of P7-20, not fixed: a task paused at its budget (needs_human with a budget card) still shows 'Its work so far is set aside unless a later task built on it; Undo brings it back.' on its row and in its drawer, and its Inbox card's Cancel explain says 'Drops it; its work is set aside unless a later task built on it.', even when the paused run wrote nothing. Evidence: bench walk C, Members guide at CHF 0.004: guide.md was absent before and after the cancel, and the cancel's sentence said only 'Its card in the Inbox was withdrawn.' (/tmp/frbench/fixup-polish-words/steps/26-25-paused-drawer.txt). Code: packages/runtime/src/daemon/task-words.ts needs_human/budget case (cancelWork for every paused task), apps/ui/src/lib/task-actions.ts cancelWorkLine's fallback (paused kind from the budget card), and request-words' budget card Cancel explain. The fix is task-display.ts's runLeftFiles applied to paused tasks, plus a UI fallback that trusts the daemon's display."
+  ],
+  "notes_for_other_areas": [
+    "pushFailedWords(repoName, _branch, e) keeps its signature; its sentences no longer name the branch. A refusal reads 'GitHub refused the push: \"<host line>\". Check the GitHub token in Settings and <repo> on GitHub, then press Try again.'; one without a host line reads 'GitHub refused the push to <repo> (the token may not write to it, or a rule protects the branch). …'; an unreachable host or anything else reads 'Forerunner could not push the work to <repo>: …'. leftovers7-tailmerge's pr-executor.ts call sites need no change.",
+    "task-display.ts: runLeftFiles(store, run, taskId) reports whether a run's session holds a task.files event for the task with files. heldWork (P7-20) now uses it. A paused task's own cancelWork could use the same check (see new_problems).",
+    "result.ts NOT_NEWS now counts 'Less than CHF 0.01.' as money: a session whose only result is a cost under a centime posts no Update and, through isNewsLine, no session-end notification. leftovers7-tailrun's C-39/P7-17 lines are unaffected.",
+    "project-status.ts cardKindsWords names up to three kinds ('1 question, 1 paused task and 1 sign-off'), then 'and N more'. Every status-line assertion with one or two kinds is unchanged.",
+    "New person-facing sentences for polish-screens to keep in step: 'GitHub refused the push: \"…\". Check the GitHub token in Settings and <repo> on GitHub, then press Try again.'; 'Forerunner could not push the work to <repo>: GitHub could not be reached. Try again later.'; 'On your subscription the tests of N tasks will not run: commands cannot run there.'; 'Waiting for you: 1 question, 1 paused task and 1 sign-off'.",
+    "OWNER QUESTION STILL WAITING (unchanged from the fixer's report): C-58's taken-out count, recommendation (b), built in project-status.ts ('Done: all 6 tasks; 2 taken out.')."
+  ]
+}

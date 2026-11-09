@@ -1,0 +1,301 @@
+{
+  "area": "leftovers7-tailrun",
+  "branch": "fix/leftovers7-tailrun",
+  "head_sha": "fd6f53bfe22eed663b0a409dc0f27c9889ff3c36",
+  "commits": [
+    {
+      "sha": "7b6eb43",
+      "subject": "sdk: a resolved secret in a built-in tool's output is scrubbed on the subscription (TR-1)"
+    },
+    {
+      "sha": "95d63dd",
+      "subject": "browser: the sandbox refusal filter holds under colour (TR-8)"
+    },
+    {
+      "sha": "5c8d965",
+      "subject": "billing: a refusal written while the waits are taken survives (TR-4)"
+    },
+    {
+      "sha": "2bfc113",
+      "subject": "runtime: the Start check asks the pick the run will make (TR-3)"
+    },
+    {
+      "sha": "f941ec6",
+      "subject": "start-check: looking records nothing; Start keeps a credential wait (TR-2)"
+    },
+    {
+      "sha": "15ac5d0",
+      "subject": "intake: a throw after planning started releases the hold on the agent (TR-7)"
+    },
+    {
+      "sha": "131ac9d",
+      "subject": "intake: the planner's web line names no website for an empty list (TR-5)"
+    },
+    {
+      "sha": "924cb9e",
+      "subject": "person-questions: a recorded answer is no question; another need beside it still is (TR-6)"
+    },
+    {
+      "sha": "1a4f434",
+      "subject": "billing: a subscription that takes a refused key's work needs no restart, and the key's card closes (TR-10)"
+    },
+    {
+      "sha": "5338a68",
+      "subject": "runner: a killed run's tail reaches the task's spent figure (TR-13)"
+    },
+    {
+      "sha": "e0825bd",
+      "subject": "budget-card: a review paused at a budget says the work is done (TR-14)"
+    },
+    {
+      "sha": "78caa18",
+      "subject": "new-task: the runs-on line reads the typed words (TR-11)"
+    },
+    {
+      "sha": "d22b106",
+      "subject": "start-check: a Start while a plan is drafted says it waits for the plan (TR-12)"
+    },
+    {
+      "sha": "2cb9eeb",
+      "subject": "overview: the 'Research reads:' line shows a rule restored elsewhere (TR-9)"
+    },
+    {
+      "sha": "f1d14a7",
+      "subject": "lint: the listed biome warnings are gone (TR-16)"
+    },
+    {
+      "sha": "fd6f53b",
+      "subject": "docs: ADR 0112 amendment for TR-13 and TR-14, and the review-only pass not built (TR-15)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "TR-1 (security): on the subscription, Claude Code's built-in Read/Grep/notebook reads (and Bash, Edit: siblings) reached the model with a resolved secret's value unredacted, since the PostToolUse hook gave built-ins no replacement after R-readhook.",
+      "u_ids": [
+        "TR-1"
+      ],
+      "failing_test_before": "packages/runtime/test/security-sdk.test.ts \"leftovers7-tailrun, wave 13: a secret in a file a built-in tool shows never reaches the model (TR-1)\" (Read; Grep, notebook, Bash; flagged read); packages/vault/test/refs.test.ts \"a value that spans lines: found with either line ending; keepLines leaves its breaks (TR-1)\"",
+      "how": "The shapes were confirmed from the bundled Agent SDK (sdk-tools.d.ts FileReadOutput/GrepOutput/BashOutput; Read covers notebooks with type \"notebook\") and from the bundled Claude Code binary (it checks updatedToolOutput with the tool's outputSchema.safeParse and falls back to the original on a mismatch). EnforcementHooks.redactToolOutput walks the tool's own output and redacts each string with redactValues' new keepLines (a multi-line value leaves its line breaks behind the marker), keeping keys, arrays and numbers (numLines/startLine), so the schema check passes and line numbers do not move. sdk.ts returns it as updatedToolOutput only when a value was found (a read without one still gets nothing: R-readhook keeps); the flagged-file note still goes beside. redactValues also finds a multi-line value written with CRLF (Windows checkout). ADR 0107 amended.",
+      "check_in_the_app": "Live (session lead, real Claude subscription): 1) In a project with a repository folder, save a test secret in the vault (Settings) and grant it, e.g. via a task that uses it once (a deploy-like task whose tool call uses secret:<name>). 2) Write the secret's exact value into a repository file, e.g. .env line 2 (GH_TOKEN=<value>) and a 3-line PEM-like value further down. 3) Run a coder task on the subscription whose brief says to read .env and quote line 2 and the line after the PEM block with their line numbers. Expect: the model's reply and Claude Code's session transcript (~/.claude/projects/... jsonl for that run) show [REDACTED] in place of the value, the quoted line after the PEM block keeps its original line number, and the daemon log has no 'hook_error' / 'does not match ... output shape' line. 4) Read a file with no secret: no replacement, nothing in the log."
+    },
+    {
+      "problem": "TR-8 (security guard): sandboxRefusalOf's `<launching>` filter did not match Playwright's coloured call log, so a profile path holding a marker's words could read as the browser's sandbox refusal and drop Chromium's sandbox.",
+      "u_ids": [
+        "TR-8"
+      ],
+      "failing_test_before": "packages/capabilities/test/browser-profile.test.ts \"TR-8: a coloured call log's command line is never read as the browser's refusal; a coloured refusal is read, without its colour\"",
+      "how": "sandboxRefusalOf reads every line through stripAnsi (7-bit and 8-bit escapes) before the filters and markers, and returns plain text; the unavailable reasons' first lines (profile.ts launch error, try-page firstLine) are stripped too. ADR 0110 amended; browser.md.",
+      "check_in_the_app": "No visible change unless the sandbox cannot start. Live (Windows/Linux with FORCE_COLOR=1 in the environment): start a task that tries a page (light review) on a machine where Chromium's sandbox works: the log has no 'runs without Chromium's own sandbox' line. On a Linux root box without user namespaces the line appears once and its reason has no escape codes."
+    },
+    {
+      "problem": "TR-4: billing-pick takeReady judged 'refused' from the snapshot read before its version-checked write; a refusal written between was read as stale, cleared with its Inbox card, and the waiting work started on the refused key.",
+      "u_ids": [
+        "U-078",
+        "TR-4"
+      ],
+      "failing_test_before": "packages/runtime/test/billing-limits.test.ts \"leftovers7-tailrun, wave 13: a refusal written while the waits are taken survives (TR-4)\"",
+      "how": "The vault's credential is read once before the write; the updater judges refusedNow in the copy it writes (each retry again), so a refusal of the credential the vault holds is kept with its card and the waiting entry stays.",
+      "check_in_the_app": "Not visible in a walk (a race). Live: none needed; covered by the composed test."
+    },
+    {
+      "problem": "TR-3: the Start check's credential pick used tier 'sonnet' and ignored the person's answers, so a task whose questions were answered could read 'Nothing can run yet' while its run went to the subscription.",
+      "u_ids": [
+        "U-078",
+        "TR-3"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts \"TR-3: a task whose questions the person answered: the Start check says it runs, as the run's own pick does\"",
+      "how": "LoopTaskExecutor.nextRunBillingRequest(task, who) builds the request the next run makes (canonical specialist, ladder stand-in, tier via the shared runSettingsOf/tierOf, needs with personAnswered, the person's mid-session mode); compose's credentialWaitNow asks the pick with it. personAnswered (person-questions.ts) is the one reader of 'they answered', used by execute too.",
+      "check_in_the_app": "Bench (--provider bench-api --api-key limited --subscription) or live with both credentials: a task whose outcome says it needs 'the owner's choice of hosting'; answer its questions card (or Go ahead without) in the Inbox; while the API key rests, open Start: the dialog says what the session runs (not 'Nothing can run yet'), and Start runs it on the subscription."
+    },
+    {
+      "problem": "TR-2: GET /projects/:id/start-check recorded the credential wait, so only opening the Start dialog (or the stopped bar's Continue reading the check) made a session start by itself at the reset.",
+      "u_ids": [
+        "U-078",
+        "TR-2"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"leftovers7-tailrun, wave 13\" > \"TR-2: looking at the Start check while the only key rests records nothing; Start keeps the wait and that work starts at the reset\"; apps/ui/test/project.test.tsx \"leftovers7-tailrun, wave 13: Start keeps a credential wait, looking does not (TR-2)\"; apps/ui/test/shell-live.test.tsx \"leftovers7-tailrun, wave 13: Continue keeps a credential wait (TR-2)\"",
+      "how": "Session lead's decision applied: waits.now only reads. A wait already kept on its source says '... and starts by itself.' with Start off; a resting credential's wait nobody kept says 'Nothing can run until 15:40 (your API key's limit). Press Start and it runs then.' with StartCheckView.blocked.startable, so the dialog keeps Start on and the stopped bar's Continue starts it; that session meets the wait and keeps it (executor noteWait), so the work starts at the reset. A refused credential's wait keeps Start off. Fake daemon credentialWaitNow takes startable. ADR 0100 amended; runtime.md, apps.md, user guide.",
+      "check_in_the_app": "Bench walk done: /tmp/frbench/fix-leftovers7-tailrun/walk.cjs on --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=1. Before: opening the dialog on a project nobody started read 'Nothing can run yet. Waits until 22:32 ... and starts by itself.' (Start off) and at the reset that project got a session too (lookedSessionsAtReset 1). After: 'Nothing can run until 22:36 (your API key's limit). Press Start and it runs then.' with Start on; the project whose session met the limit reads '... and starts by itself.' with Start off; at the reset only that one starts (lookedSessionsAtReset 0). Live (API key at a spend limit): same steps; open and close the dialog on a second project and confirm nothing starts there at the reset; press Start on it and confirm it starts at the reset."
+    },
+    {
+      "problem": "TR-7: the planning hold (R-planningstart) was not released when the first message or SessionBudget threw after the planning session started: the agent stayed held and every start queued until a restart.",
+      "u_ids": [
+        "TR-7"
+      ],
+      "failing_test_before": "packages/runtime/test/intake.test.ts \"TR-7: a throw after the planning session started releases the hold on the agent and closes the session\"",
+      "how": "The budget and the first message are built inside the try whose finally closes the planning session and releases the hold.",
+      "check_in_the_app": "Not reachable by a person; covered by the test."
+    },
+    {
+      "problem": "TR-5: the planner's web line for an empty 'only these websites' list read '...only these websites and their subdomains: . Plan no research ...' (model-facing).",
+      "u_ids": [
+        "U-044",
+        "TR-5"
+      ],
+      "failing_test_before": "packages/runtime/test/intake.test.ts \"leftovers7-tailrun, wave 13: the planner's web line for an empty list (TR-5)\"",
+      "how": "onlyWebsitesLines says research reads no website for an empty list (the brief line already did).",
+      "check_in_the_app": "Model-facing only: on the bench, a project whose stored web_access only list holds nothing usable, New project with a brief; the intake call's system/user text in the model-call log has 'reads no website (its list of websites is empty)' and no ': .'."
+    },
+    {
+      "problem": "TR-6: isPersonTask matched 'the owner's decision' in a legacy title even where the decision is recorded and followed; and a recorded answer removed the need from a whole text, losing a separate 'get the owner's confirmation'.",
+      "u_ids": [
+        "U-078",
+        "TR-6"
+      ],
+      "failing_test_before": "packages/runtime/test/person-questions.test.ts \"leftovers7-tailrun, wave 13: a recorded answer is no question; another need in the same text still is (TR-6)\"",
+      "how": "asksPersonsAnswer takes every RECORDED_ANSWER match out of the text before reading PERSONS_ANSWER; isPersonTask and needsPersonsAnswers both use it.",
+      "check_in_the_app": "Bench: New task 'Follow the owner's decision in docs/decisions/0001' for the coder: it runs as the coder's task (no questions card); a task 'Follow the owner's decision in docs/x and get the owner's confirmation before deploying' still needs the person (New task's runs-on line says the API key, with both credentials)."
+    },
+    {
+      "problem": "TR-10: once a subscription took a refused key's work, the refused-key card kept saying the work waits; setup answered restartNeeded: true; and (found while fixing) the sessions' grant read 'subscription saved' only at start, so a subscription saved at runtime got none of Claude Code's tools until a restart.",
+      "u_ids": [
+        "U-078",
+        "TR-10"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-limits.test.ts \"TR-10: a subscription takes the work of a refused key: setup needs no restart, its runs get Claude Code's tools, and the refused key's card closes\"; packages/runtime/test/billing-limits.test.ts \"leftovers7-tailrun, wave 13: the refused key's card says the truth about the work (TR-10)\"",
+      "how": "takeReady withdraws the card ('Closed: it no longer needs you.') when the source stays refused and another credential took all its waiting work; noteWait files it again when work waits on the refused source once more; compose keeps subscriptionSaved (set by credentialSaved('subscription'), read by sessionGrant); setup answers restartNeeded false for a subscription saved beside an API key while onClaudeCredentialSaved is wired. Fake daemon mirrors the rule. ADR 0100 amended; user guide.",
+      "check_in_the_app": "Live (session lead, needs a revoked API key and a real subscription token): with only a revoked key, start a session on a project with two tasks (Inbox: 'Anthropic refused your API key...'). In the setup assistant paste the subscription token: the assistant does not ask to restart; within seconds a session starts by itself and the coder works on the subscription with its tools (it reads and writes files: the files appear); the refused-key card shows 'Closed: it no longer needs you.'; Settings still shows the key Refused."
+    },
+    {
+      "problem": "TR-13: a killed run's late usage reached the ledger, the session's spend and the Run row, not the task's own spent figure.",
+      "u_ids": [
+        "U-042",
+        "TR-13"
+      ],
+      "failing_test_before": "packages/runtime/test/sdk-late-usage.test.ts \"leftovers7-tailrun, wave 13: a killed run's tail reaches the task's spent figure (TR-13)\" (task 3000 against ledger 15000)",
+      "how": "state: TaskRepo.addCost (one UPDATE ... + ? statement); the runner adds the run's cost with it; lateRunCost adds the tail to the run's task after the Run row. State suite covers concurrent additions; schema description updated and data-model.md regenerated. ADR 0112 amended.",
+      "check_in_the_app": "Live (subscription): start a long coder task, press Stop all while it works; after a minute the task drawer's cost equals the sum of its runs (and the Costs tab), including what Claude Code reported after the stop."
+    },
+    {
+      "problem": "TR-14: the Inbox card of a review paused at a budget said 'It stopped before it could say where it stood; its work so far is kept.' though the specialist had finished.",
+      "u_ids": [
+        "U-042",
+        "TR-14"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"no verdict and no failed try: paused at the project's budget with one card; raising the budget reviews it once\" (new body assertion)",
+      "how": "BudgetStopCardInput.reviewWaits; the runner's review-refusal branch passes it; the card stores review_waits; pausedWorkSentence says 'The work is done; its review waits for room in the budget.'",
+      "check_in_the_app": "Bench (--provider bench): a project budget of CHF 0.01 and a one-call coder task; run a session: the Inbox card '\"X\" paused at the project's budget of CHF 0.01' says 'The work is done; its review waits for room in the budget.'"
+    },
+    {
+      "problem": "TR-11 (R-newtaskwords): New task's runs-on line ignored the typed words, so a task whose words need the owner's decision ran on the API key while New task said nothing.",
+      "u_ids": [
+        "U-078",
+        "TR-11"
+      ],
+      "failing_test_before": "apps/ui/test/tasks.test.tsx \"leftovers7-tailrun, wave 13: New task's runs-on line reads the typed words (TR-11)\"; apps/ui/test/real-daemon.test.ts \"TR-11: New task's runs-on line for words that need the owner's decision is the API key's, before Create\"",
+      "how": "GET /settings/models takes ?title=&outcome=&criteria= (capped) and passes them to chooser.forTask; client.modelSettings(signal, projectId, words); NewTaskDialog sends the typed words, asked again 400 ms after typing stops; the fake reads the same query.",
+      "check_in_the_app": "Bench (--provider bench-api --api-key ok --subscription) or live with both credentials: Tasks, New task, Who does it: coder, type outcome 'The page names the owner's choice of hosting': under the select 'Runs on your API key: only it can ask you questions while it works here.' appears before Create; change the outcome to plain words and it goes."
+    },
+    {
+      "problem": "TR-12: during planning the Start dialog said 'This session runs ...' and after Start 'Queued: your agent is in another session', while the person sees 'Drafting the plan'.",
+      "u_ids": [
+        "U-078",
+        "TR-12"
+      ],
+      "failing_test_before": "apps/ui/test/project.test.tsx \"leftovers7-tailrun, wave 13: Start while a plan is drafted (TR-12)\"; apps/ui/test/real-daemon.test.ts \"TR-12: while a planning call holds the agent the Start check says so; a Start queues behind it\"",
+      "how": "Scheduler.isHeld; start-check's busy counts the hold and the view gains `planning`; StartSessionDialog shows 'Your agent is drafting a plan; this session starts once it is ready.' in place of the plan sentence and, after a queued Start, 'Queued: your agent is drafting a plan. This one starts when the plan is ready.'; fake option agentPlanning.",
+      "check_in_the_app": "Bench walk done (walk-planning.cjs, FORERUNNER_BENCH_DELAY_MS=3000): before 'This session runs \"Write the waiting note in notes.md\" (about CHF 0.01).' and 'Queued: your agent is in another session...'; after the two new sentences. Live: create a New project with a brief and at once open Start on another project with a ready task: the dialog says the plan is being drafted; press Start: the queued notice names the plan; when the plan card arrives the session starts."
+    },
+    {
+      "problem": "TR-9: the Overview's 'Research reads:' line kept its own line while the card still said the line it replaced, so a rule restored elsewhere (Chat undoing the change) showed the stale line.",
+      "u_ids": [
+        "TR-9"
+      ],
+      "failing_test_before": "apps/ui/test/project-overview.test.tsx \"leftovers7-tailrun, wave 13: the 'Research reads:' line shows a restored rule (TR-9)\"",
+      "how": "A change from the Overview shows its line only until the project's card is read again (refreshProjects right after the change); then the card's line, the one place of the fact.",
+      "check_in_the_app": "Overview: Research reads · Change, add facebook.com to never, close: the line says 'never facebook.com'. Then in Chat ask to read any public website again (or undo the change in Changes): the line goes back to 'Research reads: any public website'."
+    },
+    {
+      "problem": "TR-16: biome warnings (useOptionalChain in fake-daemon.ts x2 and capabilities email/inbound.ts; noNonNullAssertion in the three email tests).",
+      "u_ids": [
+        "TR-16"
+      ],
+      "failing_test_before": "pnpm lint warnings (no test); after the change biome reports none in those files",
+      "how": "task?.status in the fake; re?.test(subject) ?? false; inboundOf takes a missing message and says so; mustWorld() in the closures; the approval ticket checked before use.",
+      "check_in_the_app": "pnpm lint: none of the listed warnings."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "TR-15: no review-only pass. A task whose review was refused at a budget (or by a credential) still reruns its specialist in the next session before the critic reviews it (one more specialist call; at the task's own budget Continue may have to be pressed twice).",
+      "why": "Time: the other 15 items were finished first as the brief asked. It needs more than this wave could carry safely: (a) keep the run's result for the review (summary, final report, changed files, PR/branch, web sources, search results, checks) and the head it reviewed, e.g. a review_pending entry in the specialist Run row's artifacts (no migration); (b) the runner, before execute, going straight to reviewTask when the task's latest work run has an unconsumed entry with the same attempt and head, then clearing it whatever the verdict; (c) the executor preparing the review's workspace without running the specialist (PrTaskExecutor must check the branch out into a worktree; the critic's project checks and tries run there); (d) a compose-twice restart test with the model-call log showing one specialist call in all. Recorded as 'Still not built' with this design in the ADR 0112 amendment of 2026-11-09."
+    },
+    {
+      "problem": "Live checks with real credentials (TR-1 subscription redaction, TR-10 subscription saved at runtime, TR-13 late usage on the subscription, TR-12/TR-2 with a real limited key).",
+      "why": "This wave may use only the stand-in; precise live steps are in each item's check_in_the_app."
+    },
+    {
+      "problem": "Desktop shell checks (cargo fmt/clippy/test).",
+      "why": "apps/desktop/src-tauri was not touched."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "green: 477 test files, 4919 passed / 6 skipped; lint 0 errors (43 warnings, none of TR-16's list); docs-check could not diff origin/main in the worktree, so run separately"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (59 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 tests passed, 75 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed; 25 passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "85 files, 961 tests passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "34 passed"
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "nothing"
+    },
+    {
+      "command": "bench walks: node /tmp/frbench/fix-leftovers7-tailrun/walk.cjs and walk-planning.cjs (before at ce13bb1, after at the branch; --provider bench-api --api-key limited)",
+      "result": "before: looked project started at the reset (1), planning dialog 'This session runs ...'; after: looked 0, started 1, planning sentences as designed; bench stopped, home deleted"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-leftovers7-tailrun/before/01-before-01-start-dialog-looked.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/before/02-before-02-start-dialog-started.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/before/03-before-03-home-after-reset.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/before/05-before-06-start-dialog-while-planning.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/before/06-before-07-after-start-while-planning.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/before/before-walk.json",
+      "/tmp/frbench/fix-leftovers7-tailrun/before/before-planning.json"
+    ],
+    "after": [
+      "/tmp/frbench/fix-leftovers7-tailrun/after/01-after-01-start-dialog-looked.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/after/02-after-02-start-dialog-started.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/after/03-after-03-home-after-reset.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/after/06-after-06-start-dialog-while-planning.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/after/07-after-07-after-start-while-planning.png",
+      "/tmp/frbench/fix-leftovers7-tailrun/after/after-walk.json",
+      "/tmp/frbench/fix-leftovers7-tailrun/after/after-planning.json"
+    ]
+  },
+  "tests_changed_for_design": [],
+  "new_problems": [
+    "Sibling of TR-2 (words, not fixed): the chooser's runs-on line for a resting credential (New task, the plan card, Settings) is waitSentence 'Waits until 15:40 (...) and starts by itself.', but creating such a task records no wait, so nothing starts by itself at the reset unless a session met the wait (compose chooserBatch / R-runsonrefused). Same promise problem the Start check had; suggest the startKeepsWaitSentence form or no 'starts by itself' there.",
+    "While the only key rests and no wait is kept, the project header reads 'Ready to continue: 1 task ready · Continue' (bench after/01 screenshot): true now that Continue keeps the wait, but it does not say the work waits for the reset (polish / project status).",
+    "Bash, Edit and other built-in tools' outputs on the subscription also carried resolved secret values; TR-1's fix covers every built-in tool (not only Read/Grep), noted here because it widens R-readhook's scope.",
+    "A secret the run never resolved (written in a repo file but not used by any tool call) is not known to the resolver and reaches the model on both drivers (SecretResolver only knows values it handed out); a by-design limit, documented in runtime.md's limits list.",
+    "pnpm lint still has other warnings outside TR-16's list (e.g. runtime agent/loop.ts:1166 and daemon/compose.ts pairingGuideUrl useOptionalChain, provider/anthropic.ts:275 noNonNullAssertion); left to their owners."
+  ],
+  "notes_for_other_areas": [
+    "New person-facing sentences (design §5 checked; polish-words/polish-screens own the wording): 'Nothing can run until 15:40 (your API key's limit). Press Start and it runs then.' (credential-wait.ts startKeepsWaitSentence, the Start check's blocker with startable); 'Your agent is drafting a plan; this session starts once it is ready.' (StartSessionDialog PLANNING_WAIT_LINE); 'Queued: your agent is drafting a plan. This one starts when the plan is ready.' (startNotice with { planning }); 'The work is done; its review waits for room in the budget.' (request-words.ts pausedWorkSentence for review_waits). Model-facing: onlyWebsitesLines for an empty list 'Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; ...'. The refused-key card now also closes with the existing 'Closed: it no longer needs you.'.",
+    "Route shapes (fake daemon changed in the same commits; real-daemon cases in describe 'leftovers7-tailrun, wave 13'): StartCheckView.blocked.startable?: boolean (TR-2) and StartCheckView.planning: boolean default false (TR-12); GET /settings/models takes ?title=&outcome=&criteria= (criteria one per line) (TR-11); client.modelSettings(signal, projectId, words?). Fake daemon: credentialWaitNow entries take startable; options.agentPlanning; the setup restartNeeded rule mirrors the daemon's.",
+    "APIs added: EnforcementHooks.redactToolOutput(value) and vault redactValues(text, values, marker, { keepLines }) / SecretResolver.redact(text, opts) / SecretsPort.redact(text, opts?) (TR-1); LoopTaskExecutor.nextRunBillingRequest(task, { agentId, ownerHumanId, runner? }) and person-questions personAnswered(store, task) (TR-3); Scheduler.isHeld(agentId) (TR-12); state TaskRepo.addCost(id, usdMicro) (TR-13: use it for any addition to a task's spent figure, never a patch of actual_cost_usd_micro); BudgetStopCardInput.reviewWaits / change_card.review_waits (TR-14); compose subscriptionSaved read by sessionGrant (TR-10).",
+    "Shared files touched by this area besides its own: StartSessionDialog.tsx (only the planning/queued line and the Start-disabled condition for a startable blocker: `stops`), ShellBars.tsx StoppedBar Continue (skips only a non-startable blocker), SummaryTab.tsx ResearchReads only, request-words.ts pausedWorkSentence only, compose.ts credentialWaitNow/waits.now/credentialSaved/sessionGrant's cc-tools flag only, executor.ts (taskNeeds/billingRequest refactored into runSettingsOf/tierOf/billingRequestOf, same behaviour), packages/vault refs.ts (keepLines, CRLF needles).",
+    "No owner-question recommendation was built by this area."
+  ]
+}

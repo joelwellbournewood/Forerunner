@@ -1,0 +1,113 @@
+{
+  "merged": [
+    "fix/leftovers7-tailmerge (101448b) -> merge e10c245",
+    "fix/leftovers7-tailrun (fd6f53b) -> merge 5273c6c",
+    "fix/polish-words (aa8fa8d) -> merge cc22760",
+    "fix/polish-screens (24007d4) -> merge 81cc64e"
+  ],
+  "head_sha": "7d54fff0a363fbd854bd1c42fa767e80a75a39ce",
+  "pushed": true,
+  "conflicts_resolved": [
+    "leftovers7-tailmerge into 29e0c81, docs/decisions/0113-the-copy-follows-every-merge-and-local-only.md: R-copystuck (29e0c81) and tailmerge each appended an amendment at the end. Both are kept, R-copystuck's first.",
+    "leftovers7-tailmerge, packages/capabilities/test/git.test.ts: R-copystuck's line-endings case and tailmerge's two cases (untranslated, finishUnfinished) were all appended at the end of describe GitOps. All three are kept. I added the closing brace of the first case, and biome passes on the file.",
+    "leftovers7-tailrun, apps/ui/test/real-daemon.test.ts: append-only file. Both describe blocks are kept, tailmerge's first.",
+    "leftovers7-tailrun, docs/maintainers/apps.md (/projects/:id/:tab? row): the conflict was within one table row. I merged it word by word with a 3-way merge and checked that every sentence from both sides is present (TM-8, TR-9, TR-2, TR-12).",
+    "polish-words, packages/capabilities/src/githost/pr-executor.ts (executeIn's no-change return): tailmerge's logic is kept, so a closed pull request still reads emptiedSentence(existingPr.number, why, target.base). The other path now uses polish-words' emptyChangeSummary(result.summary) (L-18) in place of '<report>\\n(no changes were made in the worktree)'. This follows the wave 13 rule: tailmerge owns the logic, polish-words the empty-change sentence.",
+    "polish-words, packages/runtime/src/daemon/task-words.ts (TaskDisplayContext.merges Pick list): tailmerge's list already contains polish-words' added last_outcome, so tailmerge's side is kept.",
+    "polish-words, apps/ui/test/real-daemon.test.ts: polish-words' three describe blocks are appended after tailmerge's and tailrun's.",
+    "polish-words, docs/maintainers/apps.md (two table rows) and docs/maintainers/runtime.md (the retry pass paragraph: TM-5 sentence and W14-2 example): merged word by word, every change from both sides checked present.",
+    "polish-screens, apps/ui/src/pages/project/StartSessionDialog.tsx: tailrun owns which blocker stops Start (TR-2) and polish-screens owns the state after Start (P7-16). submit now returns on `busy || notice || !identity || stops || problem`. The Start button is hidden once the notice shows and disabled on `stops`, not on every blocker.",
+    "polish-screens, apps/ui/test/real-daemon.test.ts: polish-screens' describe block is appended last.",
+    "polish-screens, docs/maintainers/apps.md (two rows): merged word by word, all 35 changes from both sides checked present."
+  ],
+  "integration_fixes": [
+    "7d54fff test: tailmerge's TM-4 and TM-7 cases read the rebuild warning as polish-words words it (W14-3, U-028). Two cases that tailmerge added in packages/runtime/test/dependent-branches-merge.test.ts (lines 1289 and 1428) still spelled the rebuilt-without warning '... look at it before you merge it, or send it back.'. polish-words reworded that sentence for W14-3 ('... look at it, then merge it or redo the task.'), owns its text in wave 13, and had already updated every other case that quotes it. On the merged tree both cases failed, and the sentence was the only difference. Only that expected string changed: state, sentence and Merge are still asserted. After the change the file passes 31/31."
+  ],
+  "validation": [
+    {
+      "command": "git grep -n \"^<<<<<<< \" (after each merge)",
+      "result": "nothing found"
+    },
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "ok"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "EXIT 0 (node packages, apps/ui, apps/approvals-web)"
+    },
+    {
+      "command": "pnpm check (FORCE_COLOR=0), before the integration fix",
+      "result": "lint exit 0 (43 warnings, 0 errors), lint:paths ok, typecheck ok. Unit: 1 file failed, 2 tests failed, 4973 passed, 7 skipped. The two failures were the dependent-branches-merge TM-4 and TM-7 wording cases, fixed in 7d54fff. The docs, links and secrets steps did not run because of the failure; they were run separately below."
+    },
+    {
+      "command": "npx vitest run --project unit packages/runtime/test/dependent-branches-merge.test.ts (after 7d54fff)",
+      "result": "31 passed"
+    },
+    {
+      "command": "pnpm docs:check (default base)",
+      "result": "origin/main does not exist here, so the script reports 'nothing to check' (same as for the area fixers)"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (187 files)"
+    },
+    {
+      "command": "pnpm docs:links; pnpm secrets:scan; pnpm lint:paths",
+      "result": "link-check: ok (206 files); secret-scan: clean (2078 files); check-paths: ok (1470 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0. 5 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG); 30 tests passed, 75 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0. 13 files passed; 25 passed, 1 skipped"
+    },
+    {
+      "command": "pnpm --filter @forerunner/live test",
+      "result": "EXIT 0. 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+    },
+    {
+      "command": "pnpm test:injection",
+      "result": "EXIT 0. PASS: 59 cases (42 hostile, 17 controls), 59 passed, 0 failed, 0 controls flagged"
+    },
+    {
+      "command": "HOME=<empty dir> FORCE_COLOR=1 pnpm test (CI-style unit suite, at 7d54fff)",
+      "result": "EXIT 0. 479 files passed; 4975 tests passed, 7 skipped"
+    },
+    {
+      "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+      "result": "EXIT 0. 87 files, 1022 tests passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local config, not committed, not in git status)",
+      "result": "EXIT 0. 35 passed"
+    },
+    {
+      "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+      "result": "not run: no area touched apps/desktop (git diff origin..HEAD -- apps/desktop is empty)"
+    },
+    {
+      "command": "git diff --name-only origin/claude/nifty-knuth-f9udt0..HEAD -- docs/status CHANGELOG.md docs/requirements.md",
+      "result": "empty: UPDATE-LOG, CHANGELOG and requirements are untouched"
+    },
+    {
+      "command": "signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD) ... grep '^gpgsig'",
+      "result": "all 64 commits are signed (nothing printed)"
+    },
+    {
+      "command": "git push -u origin claude/nifty-knuth-f9udt0",
+      "result": "29e0c81..7d54fff pushed on the first try; origin equals HEAD (7d54fff)"
+    }
+  ],
+  "smoke": "The bench smoke passed 25/25 (node scripts/bench/start.mjs --name merge-w13 --daemon-port 48450 --ui-port 2050 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w13):\n- 0 findings and 0 recorded problems.\n- Model calls: intake 1, specialist 9, critic 6, chat 1.\n- One Approve and start ran both planned tasks to done in one session, so the journey script needed no change.\n\nThe bench was stopped with scripts/bench/stop.mjs (the daemon quit by itself and the UI ended) and its home was deleted. Logs and the smoke result are in /tmp/frbench/merge-w13/ (smoke.log, steps/smoke-result.json).",
+  "problems_left": [
+    "Nothing is broken on 7d54fff: every suite above is green, and it is pushed and signed.",
+    "Not merge problems, carried over from the area reports for the session lead:\n- tailmerge's new sentences were never reviewed by polish-words, which ran in parallel. These are emptiedSentence ('Redone from main, it changed nothing, so #4 was closed.', a comma splice the review flagged), the closeEmptied PR comments, owedFolderSentence, and the 'up_to_date' sentences.\n- tailrun's new sentences were not reviewed by polish-words either: startKeepsWaitSentence, PLANNING_WAIT_LINE, the planning queued notice, and the review_waits line.\n- Both lists are in the areas' notes_for_other_areas.",
+    "Not done items the areas reported:\n- leftovers7-tailrun TR-15: the review-only pass, with its design in the ADR 0112 amendment.\n- polish-words: C-39, P7-17, P7-6, the rest of W14-1, the plan-card totals in W14-6, the chat and PR rows in W14-7, and the P7-5 split. Several of these need runner.ts changes.\n- polish-screens: W14-9 (no Sessions tab exists), the USD price table in fast mode, and CHF 150.40 on existing installs.",
+    "Owner questions still waiting:\n- C-58: the taken-out count on the done line, built as recommendation (b).\n- A project's budget of 0 means no budget, while the monthly cap stays positive and refuses 0. This is built as recommended meanwhile (U-074).",
+    "docs/decisions/0111 line 148 still quotes the earlier rebuild-card wording ('... or send it back.'). It sits inside an older dated amendment and records what was built then, so I left it as is.",
+    "Live checks with real credentials (TR-1, TR-10, TR-13, TR-2/TR-12, TM-1 to TM-9, R-2, and the polish-screens live steps) are still owed to the session lead. Each area's check_in_the_app has the steps for phaseE7-live.md."
+  ]
+}

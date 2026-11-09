@@ -1,0 +1,165 @@
+{
+  "area": "polish-screens",
+  "branch": "fix/polish-screens",
+  "head_sha": "24007d44fd809a21a08d393873ead0833161b57a",
+  "commits": [
+    {
+      "sha": "60071fd",
+      "subject": "settings: a link to Other settings stays on it while the sections above load (P7-12, U-077)"
+    },
+    {
+      "sha": "33de381",
+      "subject": "settings: the subscription allowance in CHF only (later #43, U-074, U-077)"
+    },
+    {
+      "sha": "f87ae15",
+      "subject": "shell: the palette's Start session names the project it starts (later #61, U-077)"
+    },
+    {
+      "sha": "9fd8809",
+      "subject": "start dialog: after Start only what happened stays (P7-16, U-077)"
+    },
+    {
+      "sha": "24007d4",
+      "subject": "setup: a refused key reads refused on the Claude step, not saved (later #28, U-077)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking 1 (P7-12): the Overview's 'Change' and /settings#other-settings still did not land on Other settings. The reviewer measured the section 400 to 1900 px down a 900 px window. The hook scrolled once, smoothly, when Settings' rows loaded, then stopped watching. The sections above (models, subscription allowance, credential order, devices, sources, voice) load later and pushed the section down, and the smooth scroll aimed at where the section was when it began.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/e2e/settings-links.spec.ts 'a link to Other settings lands on it after the sections above it load, and stops once the person scrolls' (new, Chromium: before, the section's top was 1158 px below the top of the scrolling area); apps/ui/test/polish-screens.test.tsx 'a section above that loads after the rows: it lands again, at once; once the person scrolls, it stops'",
+      "how": "lib/use-hash-scroll.ts lands at once (scrollIntoView with behavior 'instant'). It lands again, throttled to one animation frame, whenever the page changes (MutationObserver on body for childList, subtree and characterData; ResizeObserver on body where it exists). It stops at the person's first wheel, touchstart, keydown, pointerdown or mousedown (capture listeners on window), or after 15 s, and the effect's cleanup stops it too. data-targeted is set once. The Inbox's #card- links use the same hook. In the Playwright spec the routes of the sections above are held back until the rows are visible. Once they load, the spec checks that the section's top is within 2 px of main's top. After a wheel scroll it checks that a later section (voice) no longer moves the page.",
+      "check_in_the_app": "Fresh install (bench --fresh --provider bench, 1400x900 window). Open /settings#other-settings five times, and once more through an in-app navigation from Home. Each time, 'Other settings' is at the top of the page under the header. Bench before (sources put back to 3409c5b): fresh loads 352, 0, 0, 0, 0 px; in-app navigation 241, 385, 241 px. After: 0 px every time. On --provider bench-api --api-key refused, five fresh loads gave 0 px (the reviewer had 1387 to 1903). Scroll with the mouse wheel while the page still loads: it stays where you put it. Evidence: /tmp/frbench/fixup-polish-screens-evidence/bench1/03-before-in-app-link-top-241.png, 10-after-in-app-link-top-0.png, bench2/after2-hash-load-*-top-0.png. Live check (real model, githost or forerunner-sandbox project): on the Overview, click 'Merging: … · Change'. Settings opens with Advanced open and 'Other settings' at the top of the view."
+    },
+    {
+      "problem": "Blocking 2 (later #43 acceptance, design §5 rule 7): Settings, Advanced, Claude subscription allowance read 'the default (USD 50) is set low on purpose' and 'Now: CHF 40.00 a month (the default), stored as USD 50.00 at today's rate.' on every install. The user guide said 'Money is in CHF everywhere'.",
+      "u_ids": [
+        "U-074",
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx 'no USD in Settings with Advanced open, the subscription allowance included; fast mode's price table aside'. It renders the whole Settings page with a fast-mode row, as the daemon lists one, and finds no USD outside fast mode. It failed on the 'Now:' line.",
+      "how": "PlanAllowanceSection.tsx: the intro says 'the default is set low on purpose'. The line reads 'Now: CHF 40.00 a month (the default).' with no stored-USD clause. The user guide no longer says 'USD 50, about CHF 40'. Its Settings paragraph now says money is in CHF, and that only Opus fast mode still quotes Anthropic's price per million tokens in USD. The apps.md row says the allowance shows CHF only. Also removed the useless-fragment lint info that 050a01b added in SettingsPage's SettingValue (same behaviour: words || <Money/>).",
+      "check_in_the_app": "Settings, Advanced, Claude subscription allowance: 'Enter what your plan covers: the default is set low on purpose, and a Max plan covers much more.' and 'Now: CHF 40.00 a month (the default).' with no USD (bench: /tmp/frbench/fixup-polish-screens-evidence/bench1/after-allowance.png; before: before-allowance.png). On the bench, no text in Settings outside fast mode's rows and card contains USD (after-walk.json usdOutsideFastMode: [])."
+    },
+    {
+      "problem": "Blocking 3 (regression from later #61): opening a project from Home no longer makes it the active project. The palette still read 'Start session: Atlas · the active project' on Beacon's page, and its dialog started Beacon.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx 'Start session names the project its dialog starts: the one on screen, else the active one'. Before, the entry read 'Start session: Atlas', 'the active project', on Beacon's page.",
+      "how": "shell/commands.ts: CommandContext gets viewedProjectId. The Start session entry names the project on screen with the hint 'the project on screen', else the active project with 'the active project'. That is the same choice Shell.tsx makes for the StartSessionDialog (viewed ?? activeProject). Shell passes viewed?.id and adds viewed to the memo's dependencies. The user guide and apps.md say the same.",
+      "check_in_the_app": "With two projects, make 'Quote page' active (header switcher or Ctrl+K 'Switch project'). Go Home and open 'Recipe card' from its row. Press Ctrl+K and type 'start session'. The only entry is 'Start session: Recipe card' with 'the project on screen'. Enter, then Start: the session runs on Recipe card. Back on Home, the entry reads 'Start session: Quote page' with 'the active project'. Bench before: 'Start session: Quote page · the active project' on Recipe card's page, while the session started on Recipe card (05-before-palette-…png). After: 12-after-palette-start-session-on-recipe-card.png and 14-after-palette-start-session-on-home.png."
+    },
+    {
+      "problem": "Non-blocking from the review (P7-16 leftover): after Start, the dialog read the start check again. It still said 'This session runs …' for a session that would not start, above a budget field and a note that nothing would use.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx 'after Start, what Start would do and its fields go: only what happened stays' (start-session-plan was still rendered)",
+      "how": "StartSessionDialog renders the plan sentence, the blocker block and lines, the budget and its problem, and the note only while no notice shows. After Start it shows the notice with Open the session, and Close.",
+      "check_in_the_app": "Start a session from the Start dialog, or from the palette. The dialog shows only 'Started: the session works until nothing more can run, the budget is used, or you stop it. Open the session' and Close (bench 13-after-start-dialog-after-start-from-palette.png). Before, the plan sentence and both fields stayed (06-before-…png)."
+    },
+    {
+      "problem": "Non-blocking from the review (later #28): 'Save a new key' on 'Anthropic refused your API key' opens the setup assistant on its Claude step. That step said '✓ An API key is saved.' above 'Replace the API key'.",
+      "u_ids": [
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/polish-screens.test.tsx 'there, the Claude step says the saved key was refused, never '✓ An API key is saved.'' (no setup-refused line)",
+      "how": "SetupPage keeps which saved credential is refused (API key, subscription token), read from GET /settings/billing-order. Before, that read was used only to pick the first step. The Claude step then says 'Anthropic refused the saved API key. Paste a new one below.' (or the subscription token's sentence) in amber instead of '✓ … is saved.', until a new one of that kind passes its check. A refused subscription with no key saved opens the subscription tab. The test also saves a new key and checks that the line turns to 'An API key is saved.'",
+      "check_in_the_app": "Bench --provider bench-api --api-key refused: run a task so the key is refused. Home's Needs you row offers 'Save a new key'. Click it: the setup assistant opens on Claude with Welcome ticked, and the amber line reads 'Anthropic refused the saved API key. Paste a new one below.' (/tmp/frbench/fixup-polish-screens-evidence/bench2/02-after2-setup-from-save-a-new-key.png). Paste a working key and click Check and save: the line becomes '✓ An API key is saved.'"
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "Opus fast mode's Settings row and card still quote 'USD 8 / 40 per million input / output tokens' (acceptance: no USD anywhere in Settings).",
+      "why": "Unchanged from the fixer's not_done, and the reviewer marked it non-blocking for the session lead or owner to decide. It is the provider's price table (fastModeEffect in packages/runtime/src/models/fast-mode.ts, asserted by the commands fast-mode tests and ADR 0057). The user guide now names it as the one place USD remains, so it no longer claims 'CHF everywhere'. The new no-USD UI test excludes only the fast-mode card and the project.fast_mode rows."
+    },
+    {
+      "problem": "The subscription allowance's override line names the environment variable FORERUNNER_PLAN_USD_MONTHLY.",
+      "why": "It is the exact name of a variable the person set and must remove; it is not an amount. It shows only when that variable decides the allowance."
+    },
+    {
+      "problem": "Other non-blocking review items: (1) the C-45 'each need more than the work budget' line names every task, with no 'and N more' after three; (2) the monthly cap's 0 refusal says why but not what to do, and through POST /commands/execute it reads only 'budget.set: invalid parameters'; (3) budget sentences use whole francs ('CHF 3'); (4) the handover change sentence repeats the schedule; (5) the Inbox's Yes explanation repeats a settings.set card's body (polish-words' request-words.ts); (6) the real-daemon 'opening a project writes nothing to GET /changes' case would also pass on the base; (7) palette.spec's row count (3409c5b) and the fake-daemon change it needs (eb1dfcc) are in different commits.",
+      "why": "These are outside the three blocking findings. (1) to (4) are wording or command-text changes that touch commands tests or polish-words' shared sentences. (5) is polish-words' file. (6) adds no behaviour; the UI test carries the claim. (7) would need a history rewrite of the reviewed commits. Only the cheap UI items (the dialog after Start, the refused key on setup, the lint info) were done."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check",
+      "result": "exit 0: lint (warnings only; none in the changed files, `biome check` on them is clean), lint:paths, typecheck, unit tests 478 files (4909 passed, 6 skipped), docs:links, secret-scan clean (2075 files). docs:check cannot diff against origin/main here; `node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0` on the final head gave 'docs-check: ok (60 files)'. Lint, typecheck, docs:links and lint:paths were run again on the final head 24007d4: all exit 0."
+    },
+    {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "exit 0: 86 files, 986 tests passed (981 before plus 5 new polish-screens cases)"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 35 passed (34 plus the new e2e/settings-links.spec.ts)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 75 skipped (Postgres tests skip without FORERUNNER_TEST_PG)"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "Failing first: each new case was run against the earlier sources (the file copied back from HEAD, then restored)",
+      "result": "settings-links.spec.ts failed with 1158 px; the jsdom P7-12 case failed ('expected false to be true': no landing after the allowance loaded); the no-USD case failed on 'stored as USD 50.00'; the palette case received 'Start session: Atlas · the active project'; the dialog case found start-session-plan after Start; the setup case found no setup-refused line. All pass on the fix. A check that the no-USD test is not vacuous: the fast-mode card in it contains USD, and the case asserts that."
+    },
+    {
+      "command": "Bench fixup-polish-screens (daemon 48443, UI 2043), bench 1: --fresh --provider bench. Before walk with apps/ui/src put back to 3409c5b, after walk on the fixup head (scratchpad walk.cjs)",
+      "result": "Before: /settings#other-settings fresh loads 352, 0, 0, 0, 0 px; in-app navigation 241, 385, 241 px. Palette on Recipe card's page: 'Start session: Quote page · the active project', while the session started on Recipe card. The allowance had two USD lines. The dialog after Start kept the plan sentence and fields. After: hash loads 0 ×5; in-app 0 ×3. Palette: 'Start session: Recipe card · the project on screen'; the session started on Recipe card; on Home, 'Start session: Quote page · the active project'. Allowance 'Now: CHF 40.00 a month (the default).'; no USD outside fast mode. The dialog after Start shows only the notice and Close. No console or HTTP problems in the after walk."
+    },
+    {
+      "command": "Bench 2: --fresh --provider bench-api --api-key refused (scratchpad walk2.cjs)",
+      "result": "The refused card had options [] and links [Save a new key → /setup]. Home's row offered 'Save a new key'. Clicking it opened the setup step Claude with 'Anthropic refused the saved API key. Paste a new one below.' and no '✓ … saved'. /settings#other-settings fresh loads: 0, 0, 0, 0, 0 px. Both benches were stopped with stop.mjs; home and browser profile deleted; evidence in /tmp/frbench/fixup-polish-screens-evidence/."
+    },
+    {
+      "command": "git status --short; git rev-parse HEAD fix/polish-screens",
+      "result": "tree clean; fix/polish-screens = HEAD = 24007d44fd809a21a08d393873ead0833161b57a"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/01-before-settings-hash-load-1-top-352.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/03-before-in-app-link-top-241.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/before-allowance.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/05-before-palette-start-session-on-recipe-card.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/06-before-start-dialog-after-start-from-palette.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/07-before-palette-start-session-on-home.png",
+      "/tmp/frbench/review-polish-screens-evidence/02-setup-from-save-a-new-key.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/08-after-settings-hash-load-1-top-0.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/10-after-in-app-link-top-0.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/after-allowance.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/11-after-settings-advanced.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/12-after-palette-start-session-on-recipe-card.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/13-after-start-dialog-after-start-from-palette.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench1/14-after-palette-start-session-on-home.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench2/01-after2-home-refused-key.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench2/02-after2-setup-from-save-a-new-key.png",
+      "/tmp/frbench/fixup-polish-screens-evidence/bench2/after2-hash-load-1-top-0.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "apps/ui/test/settings-plan-allowance.test.tsx 'shows the default in CHF, saves what the person types and says when it applies'",
+      "why": "The 'Now:' line no longer adds 'stored as USD … at today's rate' (design §5 rule 7), so its two assertions read 'Now: CHF 40.00 a month (the default).' and 'Now: CHF 160.00 a month.'. Both now also assert that the section has no USD, which makes the case stronger."
+    }
+  ],
+  "new_problems": [
+    "The Overview's Next list keys each line by its text (apps/ui/src/pages/project/SummaryTab.tsx:186, <li key={s}>). Two tasks with the same title and state give React's 'Encountered two children with the same key' warning: the bench logged it for two tasks titled \"Add a before note to Recipe card\" (/tmp/frbench/fixup-polish-screens-evidence/bench1/problems.jsonl). A person can make two tasks with the same title, so the key should include the index or the task id. Not this area's item."
+  ],
+  "notes_for_other_areas": [
+    "useScrollToHash (apps/ui/src/lib/use-hash-scroll.ts) now lands again, at once, on every page change until the person moves the page (wheel, touch, key, pointer or mouse down) or 15 s pass. Any page with #hash links that loads in parts (Inbox #card-, Settings #sandbox and #other-settings) gets this behaviour.",
+    "Palette (shell/commands.ts): CommandContext.viewedProjectId names the project on screen. The 'Start session: <project>' entry's hint is 'the project on screen' or 'the active project'. New person-facing words: 'the project on screen'.",
+    "New person-facing sentences in this fixup (design §5, CHF only, no ids): 'Now: CHF 40.00 a month (the default).'; 'Enter what your plan covers: the default is set low on purpose, and a Max plan covers much more.'; 'Anthropic refused the saved API key. Paste a new one below.'; 'Anthropic refused the saved subscription token. Paste a new one below.' polish-words: none of these are in shared files.",
+    "Live checks for phaseE7-live.md (real model, after the merge): (1) on a forerunner-sandbox project (needs FORERUNNER_TEST_GITHUB_TOKEN), click the Overview's 'Merging: … · Change'. Settings opens with Advanced open and 'Other settings' at the top of the view, after every section has loaded. (2) With two real projects, make one active, open the other from Home, press Ctrl+K and type 'start session'. The entry names the project on screen, and Start runs a session there. (3) Settings, Advanced, Claude subscription allowance shows no USD."
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "Setup: worktree detached at fix/polish-words (3965208), pnpm install --frozen-lockfile, Playwright local config copied. Bench \"review-polish-words\" (daemon 48432, UI 2032, stand-in GitHub on 48434), --fresh --provider bench, with FORERUNNER_BENCH_FAIL=Style, FORERUNNER_BENCH_MISSING=\"Chart the members\" and FORERUNNER_BENCH_LONG=\"Write the guide\". It ran from this worktree, was stopped with scripts/bench/stop.mjs, and its home, stand-in GitHub and browser profile are deleted. The walk scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk-{a,b,c,d}.cjs. Screenshots and texts are in /tmp/frbench/review-polish-words/steps/ (walk-a.json, walk-c.json and walk-d.json hold the checks).\n\nA, plan cards and done lines (steps 01-10):\n- One-task folder plan: \"Writes this task and starts working on it now.\" With the answer held 4 s, the card shows \"Writing the plan…\" under the greyed buttons (02-02-plan-card-busy-folder.png). On a bench/seeded repository project it shows \"Writing the plan and its docs pull request…\" (04-04).\n- The repository project finished. Its Home line reads \"Done: all 4 tasks. 4 pull requests wait for you to merge.\" with Open Overview (05-05-home.png).\n- The session page names each PR as '\"<title>\" · pull request #N', with no fr/<id> branch (09-09).\n\nB, Greeter and Members (steps 11-20):\n- Folder project Greeter reads \"Done: all 2 tasks.\" with no path. Its \"Open your files\" lands on /projects/<id>/files (11, 12).\n- Members project: the MISSING task became a questions card, the CHF 0.004-budget guide paused, and the writer task was done. Home reads \"Waiting for you: 1 question and 1 paused task\" and Answer goes to /inbox#card-<oldest>.\n- The paused row's Cancel title: \"Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.\"\n\nC (steps 21-33):\n- No Docker here, so a sign-off card (critic:signoff, reason verdict) was seeded into the bench's SQLite on a draft task. The row reads \"Needs your sign-off\" with Answer and Cancel only. The drawer reads \"Its card is in the Inbox: accept the work, send it back, or cancel it.\" with no Try again (22-21). The Inbox card keeps Accept the work / Send it back / Cancel task (34-41).\n- With three cards the status line reads \"Waiting for you: 1 question, 1 paused task and 1 more\". Home's Answer opens /inbox#card-<oldest>.\n- Paused drawer's Cancel has the set-aside line (26-25); so do the row title and the dialog (27-26). After Cancel, then Reopen, the ready task's row and drawer Cancel carry the set-aside line from the real daemon's heldWork (29-28).\n- Costs: By specialist \"the critic / the writer / the coder\"; By model counts work runs only, 1 / 2 (30-29).\n- Session page statusText went \"Ended: 2 tasks need you\" -> \"Ended: 1 task needs you\" (after the guide's cancel and reopen) -> \"Done\" (after Cancel task on the questions card) (32-31, 33-32).\n\nD, an empty-change run on the repository (steps 34-37):\n- The task reason, failed card, Last result and session result start \"The run changed no file.\" with no ** and no backticks, cut at a word.\n- The Update reads \"Guides: Less than CHF 0.01.\"\n\nThe screens match design §2/§3.5/§3.8 for C-21, L-20, later #53/#55/#74/#91, C-58 and L-21. Gaps are listed below.\n\nTests:\n- At HEAD: full unit suite 4928 passed / 6 skipped; UI vitest 970 passed; Playwright (local config) 34 passed; e2e 25 passed / 1 skipped; integration 30 passed / 75 skipped; typecheck clean; lint exit 0 (69 warnings); lint:paths ok; docs-check against the base ok (83 files).\n- Failing-before: I checked out the base's 36 changed source files under the branch's tests. All 18 polish-words UI and real-daemon cases fail, e.g. 'Done: all 2 tasks. Your files: /tmp/…' vs 'Done: all 2 tasks.', the sign-off display mismatch, and 'Ended: 1 task needs you'. 24 unit cases also fail: the R-2/R-3 push-words cases, the C-19 critic case, and the writing-rules and polish-words blocks. Then I restored the branch; the worktree is clean.",
+  "blocking": [
+    {
+      "issue": "C-59 / design §5.3 sibling in a sentence this area rewrote (R-2): a push GitHub refused still names the task's branch with the task-id part, e.g. 'Forerunner could not push the branch fr/1a2b3c4d-write-the-guide to o/r: GitHub refused it: ...'. This text is the task's reason (Tasks row 'Failed: …', drawer) and the failed-task card's body. The 100-character row cut is spent on the head, so the row never reaches GitHub's quoted line that R-2's check_in_the_app tells the lead to look for.",
+      "where": "packages/capabilities/src/githost/push-words.ts:110 (pushFailedWords head uses the raw `branch`)",
+      "evidence": "push-words.ts:110: const head = `Forerunner could not push the branch ${branch} to ${repoName}`. pr-executor.test.ts:326-327 asserts exactly `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it: \"Permission to o/sample denied to the token\". …`, and res.branch is taskBranchName (pr-executor.ts:345-352: 'fr/<last 8 hex of the task id>-<title>'). plainReason/withoutIds (task-words.ts IDS) do not strip 'fr/<hex>-'. The same area applied branchWords to neverPushedWords (local-only.ts) and to the task.files log line, but not here.",
+      "expected": "The head names the branch without its id part (branchWords(branch), as neverPushedWords does), or names the task instead. pr-executor.test.ts:327 and the push-words cases are updated to assert it."
+    },
+    {
+      "issue": "P7-20's new daemon logic has no daemon-side or real-daemon test. A ready task whose last non-critic run paused gets display.cancelWork in GET /projects/:id/tasks. The only test (polish-words.test.tsx 'Cancel on a ready task holding work in progress…') seeds the fake daemon's taskMeta.heldWork set by hand, so the code that decides the row's Cancel line on the real route is never run by any test.",
+      "where": "packages/runtime/src/daemon/task-display.ts:52-68 (heldWork), task-words.ts:690-697",
+      "evidence": "grep finds heldWork only in task-display.ts, task-words.ts and apps/ui/test/fake-tasks.ts. The real-daemon 'polish-words, wave 13' block has no ready-task Cancel case. The spec's acceptance line names 'real-daemon GET /projects/:id/tasks' for P7-20, and validation.md rule 3 says a changed daemon route gets a real-daemon.test.ts case. On the bench it does work after Cancel and Reopen of a paused task (29-28-reopened-ready-drawer). There the line also promised 'Its work so far is set aside' for a paused run that had written no file: guide.md was absent before and after, and the cancel's sentence said only 'Its card in the Inbox was withdrawn.'.",
+      "expected": "A real-daemon case in the polish-words block: a task paused at its budget, cancelled and reopened (or put back to ready), shows display.cancelWork on GET /projects/:id/tasks, and a ready task without such a run does not. Ideally the line is true only when there is work to set aside."
+    },
+    {
+      "issue": "W14-5's conflicting row label 'Accepted · conflicts with <base>' (warn tone) is new person-facing daemon output with no test at any level. The fixer reports W14-5 as fixed, citing pr-executor.test.ts and project-overview.test.tsx, but neither reads the Tasks row.",
+      "where": "packages/runtime/src/daemon/task-words.ts:471-478",
+      "evidence": "grep -rn \"Accepted · conflicts\" over packages, apps and tests finds only the source line. fake-tasks.ts gained `last_outcome` for this, but no UI test sets it. The acceptance line 'W14-2..W14-5 (real-daemon, polish-words block): … a conflicting pull request's Tasks row says it conflicts with main' has no case.",
+      "expected": "A real-daemon case (a merge record left_to_you with last_outcome 'conflict' and its sentence) asserting the row's label and detail. The fake gets a matching UI check in polish-words.test.tsx, and the done line's PR count stays right beside it."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "R-2/R-3: an HTTPS 401/403 or a 'remote: … denied/permission' line is a refusal that quotes the host; only a real network failure says 'could not be reached'; 'Writing to this repository is disabled' is no longer skipped as progress",
+      "holds": true,
+      "note": "push-words.test.ts cases pass at HEAD; 3 of 4 fail on the base source. But the refusal's head still names fr/<task-id>- (blocking 1)."
+    },
+    {
+      "claim": "later #53/#54, C-58: 'Done: all N tasks.' + Open your files; on a repository 'Done: all N tasks. N pull requests wait for you to merge.' + Open Overview; '; N taken out' (owner question, recommendation b)",
+      "holds": true,
+      "note": "Bench Greeter and Guides; the real-daemon cases pass and fail on the base."
+    },
+    {
+      "claim": "later #55, L-13a: Answer links /inbox#card-<oldest>; card kinds named",
+      "holds": true,
+      "note": "Bench Members: '1 question and 1 paused task', '1 question and 1 sign-off'. With three kinds it names two plus 'and 1 more' (non-blocking)."
+    },
+    {
+      "claim": "C-21, L-9: sign-off task reads 'Needs your sign-off', detail names the card's choices, row and drawer offer Answer and Cancel only",
+      "holds": true,
+      "note": "Bench with a seeded sign-off card, plus the real-daemon and UI cases; both fail on the base."
+    },
+    {
+      "claim": "later #74, C-23, P7-21: cap line '(the writer's limit)' and none for Agent's choice; light review words; Cancel explain the same in row title, dialog and drawer",
+      "holds": true,
+      "note": "Bench rows show '(the coder's limit)'; paused-task drawer, row and dialog agree."
+    },
+    {
+      "claim": "P7-20: a ready task holding work in progress says its work is set aside",
+      "holds": true,
+      "note": "Works on the bench, but the daemon logic is untested (blocking 2), and it promises set-aside when the paused run wrote nothing."
+    },
+    {
+      "claim": "later #91: Costs 'the writer', By model counts work runs only",
+      "holds": true,
+      "note": "Bench Costs tab and the real-daemon case."
+    },
+    {
+      "claim": "L-13e: accepted info note has no 'To fix' line",
+      "holds": true,
+      "note": "real-daemon case"
+    },
+    {
+      "claim": "later #94: withoutIds keeps '(run node --check)' and still strips ids",
+      "holds": true,
+      "note": "writing-rules case; fails on the base."
+    },
+    {
+      "claim": "L-21: a session page stops saying '1 task needs you' once answered",
+      "holds": true,
+      "note": "Bench: 'Ended: 2 tasks need you' -> 'Ended: 1 task needs you' -> 'Done'; real-daemon case."
+    },
+    {
+      "claim": "L-20: 'starts working on it now' and the busy line ('Writing the plan…' / '…and its docs pull request…')",
+      "holds": true,
+      "note": "Bench screenshots 02-02 and 04-04."
+    },
+    {
+      "claim": "P7-26, P7-19, P7-18, W14-3, P7-7, P7-14, P7-15, P7-33",
+      "holds": true,
+      "note": "Unit and real-daemon cases pass and fail on the base. P7-14's merged line has a vague 'it' (non-blocking)."
+    },
+    {
+      "claim": "W14-6, P7-1, P7-23, C-50, C-59: money under a centime, budget lines, could-not reasons, branch names",
+      "holds": true,
+      "note": "Spent amounts read 'less than CHF 0.01'. Budget amounts and estimates under a centime still read 'CHF 0.00' (non-blocking). C-59 is not complete: see blocking 1."
+    },
+    {
+      "claim": "P7-22 etc.: injection notification without rule ids or tool names; one chain sentence; later-merge Update names its project; take-out answer names the way back; proxy as a condition; no '(s)'",
+      "holds": true,
+      "note": "e2e scenario 6 passes. It still asserts the rules in the audit row (lines 244, 369, 373), so no security evidence was dropped. ADR 0047 is amended."
+    },
+    {
+      "claim": "C-19: a rule that sends work back leads the summary with why",
+      "holds": true,
+      "note": "critic.test.ts B.4 passes and fails on the base. The asks-person (human) case is excluded, and Reviews still shows 'needs you' above 'Accepted: …' (non-blocking sibling)."
+    },
+    {
+      "claim": "L-18: empty change reads 'The run changed no file.' first, plain, cut at a word",
+      "holds": true,
+      "note": "Bench walk D. The failed card's body is still ~300 characters and 6 sentences (non-blocking)."
+    },
+    {
+      "claim": "C-55: an empty repository import makes the first commit via ensureBaseBranch",
+      "holds": true,
+      "note": "data-import-github.test.ts ran here (7 passed, none skipped). ensureBaseBranch refuses a non-empty repository without 'main', so the broad .catch is safe."
+    },
+    {
+      "claim": "P7-5, W14-4, W14-5 (copy line, conflict card title)",
+      "holds": true,
+      "note": "Their tests pass. The W14-5 Tasks row label is untested (blocking 3)."
+    },
+    {
+      "claim": "Docs: later #40, P7-3, P7-13, P7-29; no CHANGELOG/UPDATE-LOG/requirements edits; commit trailers on all 10 commits",
+      "holds": true,
+      "note": "No 'level 3 merges' left in runtime.md or compose.ts; docs-check ok."
+    },
+    {
+      "claim": "not_done items (C-39, P7-17, P7-6, W14-1 rest, W14-6 plan totals, W14-7 chat/PR rows, P7-5 split, C-19 at GET /tasks/:id, CHANGELOG lines) carry a reason",
+      "holds": true,
+      "note": "The reasons are valid: runner.ts belongs to leftovers7-tailrun, and CHANGELOG to the lead. P7-6 was declined as too wide."
+    }
+  ],
+  "non_blocking": [
+    "C-19 sibling on the Reviews tab: when the asks-person rule turns the model's accept into 'human', the review shows 'needs you' above 'Accepted: the changed file matches the brief.' (bench, Members, 31-30-members-reviews.txt). ruledSummary's human branches are dead code because of the guard at critic.ts:903. Not logged as a new problem (validation rule 8).",
+    "The Update line reads 'Guides: Less than CHF 0.01.', capitalised after the colon. moneyWordsFirst is new, and sessionUpdateLine (result.ts:504) lowercases only 'Did'/'Nothing'. The Update also says nothing but the cost.",
+    "Money under a centime still reads CHF 0.00 for budgets and estimates: 'paused at its budget of CHF 0.00', 'stopped at its budget of CHF 0.00: it spent CHF 0.00', 'started … (about CHF 0.00)'. The session log's right-hand cost column shows 'CHF 0.00' beside '(less than CHF 0.01)'; that column is SessionPage, polish-screens' area.",
+    "The failed-task card body for an empty-change run is ~300 characters and 6 sentences. It includes the report's 'Files changed: none. Criteria - The work itself shows this outcome (…)', against design §5.1's card body of at most 2 sentences. The Overview's Last result ends 'any….' (double punctuation). emptyChangeSummary embeds the whole report; quoting only its first sentence would fit §5.",
+    "The project status names two card kinds then 'and 1 more' ('Waiting for you: 1 question, 1 paused task and 1 more'). Design §5.5 says name up to three, and all three fit in 80 characters.",
+    "Sibling of later #55: the Tasks row's and the drawer's Answer go to /inbox, not /inbox#card-<id> (TasksTab.tsx:303, TaskDrawer.tsx:216), while 'Opens its card in the Inbox.' is the explain.",
+    "Registry keys still on screen beside 'the writer' wording: the plan card ('writer-marketing · about CHF 0.05', 03-03/04-04), and the Tasks 'Who does it' column and filter. The fixer noted the drawer and Who column.",
+    "P7-14's merged line 'On your subscription the tests of 2 tasks will not run: it cannot run commands there.' leaves 'it' without a subject and does not say which 2 tasks.",
+    "changeNotAppliedWords makes about 250-character Updates for repo.create (writing-rules case). The compose.ts onRefused wiring is tested only through the pure function.",
+    "Read cost: heldWork reads up to 5 runs per ready task on every GET /projects/:id/tasks, and stillBlocked does a task.get per blocked id per session on GET /sessions.",
+    "After the person acts, the session page header reads 'Done' while the result below still says '\"Chart the members…\" needs your decision (Inbox)'. This is by design (the record of its end) but can read as a contradiction.",
+    "C-19 is tested at the critic only, not at GET /tasks/:id (the fixer's own not_done). The route passes the stored summary through.",
+    "Live checks for the lead to add to phaseE7-live.md:\n(1) R-2 over real HTTPS with a read-only token on forerunner-sandbox: the failed task's reason quotes GitHub's line and names no fr/<id> branch (after blocking 1).\n(2) A deploy task the critic accepts, with Docker: its row reads 'Needs your sign-off' with Answer and Cancel only.\n(3) An asks-person accept: the Reviews tab wording."
+  ]
+}

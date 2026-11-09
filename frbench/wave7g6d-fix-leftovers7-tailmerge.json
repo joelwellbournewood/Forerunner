@@ -1,0 +1,235 @@
+{
+  "area": "leftovers7-tailmerge",
+  "branch": "fix/leftovers7-tailmerge",
+  "head_sha": "10c562eee812a22eb758f2c44d125d4725abe5c8",
+  "commits": [
+    {
+      "sha": "1548bff",
+      "subject": "pr-executor: a redo from main that changes nothing closes its pull request instead of emptying it (TM-1, U-028)"
+    },
+    {
+      "sha": "7a03abc",
+      "subject": "pr-executor: \"I resolved it\" finishes the person's rebase in the task folder instead of aborting it (TM-2, U-028)"
+    },
+    {
+      "sha": "274559f",
+      "subject": "pr-executor: a redo from main that pauses keeps its work at the next run (TM-3, U-028)"
+    },
+    {
+      "sha": "ab203fe",
+      "subject": "merge: the retry pass merges only a done task's pull request; a redo no longer holds the watcher's poll (TM-5, U-028)"
+    },
+    {
+      "sha": "03220ab",
+      "subject": "merge: a merge held by changes left in the task folder says why on both rows; the warning is logged once (TM-4, U-028)"
+    },
+    {
+      "sha": "16b2e4a",
+      "subject": "git: the messages Forerunner reads are git's English ones in any language (TM-6, U-037)"
+    },
+    {
+      "sha": "1789239",
+      "subject": "merged-copy: the copy's stopped state is tested across a restart of the composed runtime (TM-9, U-037)"
+    },
+    {
+      "sha": "aec6eb6",
+      "subject": "ui: closing Create a repository after Preview answers its card No (TM-8, U-037)"
+    },
+    {
+      "sha": "167241d",
+      "subject": "dependent-branches: a conflict that goes away says again what the record said before it (TM-7, U-028)"
+    },
+    {
+      "sha": "02f07a7",
+      "subject": "task-words: the display context's merge rows carry the owed-rebuild fields TM-4 reads (TM-4 follow-up, U-028)"
+    },
+    {
+      "sha": "10c562e",
+      "subject": "cleanup: doc blocks back above their functions; repo.ts reads the offer's card key from its producer (TM-10)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "TM-1 [major]: a redo from main (conflict notice's or rebuild card's Redo, 'Drop the branch and retry from scratch') whose run changed nothing, on a task with an open pull request, force-pushed main's head to the task branch; the task went to review and done, and the empty PR was offered for Merge. Root cause: PrTaskExecutor.executeIn's only no-change check was `!commit.committed && !existingPr`. Sibling fixed: a run continuing a paused task's work that added nothing more failed 'no changes were made' although its branch held the paused work.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'leftovers7-tailmerge, wave 13' > \"'Drop the branch and retry from scratch' whose run changes nothing ... closed, never emptied to main's head (TM-1)\" (was in_review, main's head pushed) and '... a paused task's work and adds nothing more goes to review ... (TM-1's sibling)' (was failed); packages/runtime/test/dependent-branches-merge.test.ts 'leftovers7-tailmerge, wave 13' > \"the conflict notice's Redo whose run changes nothing ...\" and \"'Drop the branch and retry from scratch' whose run changes nothing ...\" (task was done with an empty open PR)",
+      "how": "'No change' is read from the branch: holdsOwnChange (files from DEPS_BASE_REF, else origin/base; Local only and the try folder never count; a git error falls back to the old rule). No own change = failed, as a fresh task. An open PR on the branch is closed with one comment (closeEmptied; the branch on the host is kept, nothing force-pushed) and the summary is one sentence (emptiedSentence: 'Redone from main, it changed nothing, so #4 was closed.'). Try again then opens a new PR from a fresh branch (freshBranch). ADR 0111 amended (closing chosen over keeping it out of Merge: Mark done anyway would otherwise relist the dropped work with Merge). Composed test checks GET /projects/:id/pull-requests (ProjectPullRequests.view: no row) and the Tasks row ('Failed: Redone from main, it changed nothing, so #N was closed.').",
+      "check_in_the_app": "Bench/tests: composed tests above. LIVE (forerunner-sandbox, GitHub token, 'You press Merge'): 1) project linked to forerunner-sandbox, one task 'Add the line Hello to notes.txt'; let it finish (PR #N open, row 'Accepted · waiting for you to merge'). 2) On GitHub, commit to main a notes.txt holding 'Hello' and a second line 'World' (add/add conflict). Within a minute the Overview row says '#N conflicts with main in notes.txt: ...' and one Inbox card offers Redo / Leave it open. 3) Press Redo. Expect, when the redo's run changes nothing (main already has the line): Tasks row 'Failed: Redone from main, it changed nothing, so #N was closed.' with the failed card (Try again / Mark done anyway / Cancel task); #N closed on GitHub (not merged) with Forerunner's comment '... changed nothing, so this pull request is closed. Its branch is kept.'; its branch still on GitHub; no #N under 'Waiting for you to merge'. If the model does change the file, the same PR gets the new work (existing path) and nothing is closed."
+    },
+    {
+      "problem": "TM-2: cleanAfterCutShortRun ran before the conflict answer was read, so a person who resolved a rebase conflict in the task folder (the card's 'branch only on this computer' steps) and answered 'I resolved it' with the rebase still under way had the resolution aborted and got a second card. Sibling fixed: a resolution committed only in the folder (not pushed) was replaced by the host's branch.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'leftovers7-tailmerge, wave 13' > \"'I resolved it' with the rebase still in progress in the task's folder ... (TM-2)\" (needs_human, second card) and \"'I resolved it' with the resolution not staged yet, or with conflict markers still in a file ... (TM-2)\" (rebase aborted); new git.test.ts 'finishUnfinished ...'",
+      "how": "executeIn reads conflictAnswer first and skips cleanAfterCutShortRun while 'I resolved it' waits. continueResolved first runs the new GitOps.finishUnfinished (stages resolved files, `rebase --continue`/merge commit with GIT_EDITOR=true, skips a commit the resolution emptied, stops at files still holding conflict markers; no git message parsed), files the card again (step left under way) when markers remain, then takes the folder's branch when a step was just finished there or when it holds the base and the host's branch does not; a rewritten branch is pushed with a lease.",
+      "check_in_the_app": "LIVE (forerunner-sandbox): make a rework run's rebase conflict (task done, then main changes the same line, then Redo on the Tasks tab) so the rebase-conflict card appears. In the task's folder (<data>/worktrees/<task id>): `git fetch`, `git rebase origin/main`, fix the file, `git add` it, do NOT run `git rebase --continue`; answer 'I resolved it'. Expect: the next session takes the task to review with your resolution on the PR (GitHub shows it rebased on main), no second conflict card. Answer again with markers still in the file: one new card 'still conflicts', and `git status` in the folder still shows the rebase in progress."
+    },
+    {
+      "problem": "TM-3: an unconsumed 'dropped' answer (Drop, a card's Redo) dropped a paused run's work in progress at the next run (executeIn: wip = dropped ? null : ...), so a redo that paused (budget, question) started from main again at Continue.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'leftovers7-tailmerge, wave 13' > 'a redo from main whose run pauses before review: the next run continues the work done since the redo, and the pull request never gets the old conflicting commits (TM-3)' (the next run saw main's README.md, not the paused work)",
+      "how": "The fix-up's constraint is kept (the drop stays unconsumed until review, so the old conflicting host branch is never merged into the work in progress). A run after the drop that pauses marks its work in progress as made from the base (wipFromBaseRef = the same commit as wipRef); the next run with the drop still unused continues it (workInProgressFromBase), never brings origin/<branch> (the dropped work) into it, and its pushes (final push and any conflict card's push) replace the host branch. Marker cleared with wipRef at review, dropped when it does not match. ADR 0111 amended (points 2 and 3).",
+      "check_in_the_app": "LIVE: on a conflict notice card (see TM-1 step 2) press Redo on a task whose task budget is small (e.g. CHF 0.05, set in the task drawer before) so the redo's run pauses at its budget; press 'Continue (CHF N more)' on the budget card. Expect: the next run's brief starts with 'Where the last run stopped' and continues the redo's work; the PR on GitHub then has only the redo's commits (no commit of the old conflicting branch: compare `git log main..<branch>` with the branch before the Redo)."
+    },
+    {
+      "problem": "TM-5: watcher stall and worse. A done task redone while its merge record waited (queued/waiting_checks): with main moved, the retry pass (awaited by the watcher's poll) waited on the task folder's lock held by the redo's run, so the poll delivered no PR events until the run ended; with main unmoved, the pass merged the OLD reviewed head while the task was being done again.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'leftovers7-tailmerge, wave 13' > 'a done task redone while its merge waits for its checks, main moved: ... (TM-5)' (poll did not end within 15 s) and '..., main where it was: ... (TM-5)' (old head merged)",
+      "how": "ReviewedPrMerge.retryWaiting skips a record whose task is not done (before any read); the record stays as it is and the task's next accept moves it to the new head (pin). chainWorld got holdRun(title) to keep a run open in its folder. ADR 0111 amended (point 4).",
+      "check_in_the_app": "Not live-checkable on forerunner-sandbox (it has no CI checks, so no record waits for checks). Covered by the composed tests. On a repository with checks: 'Merge automatically after review', a task accepted while its checks run (row 'Accepted · merges when its checks pass'), press Redo on its row before the checks finish; expect: PR comments and other PR events keep arriving while the redo runs, and the old head is never merged."
+    },
+    {
+      "problem": "TM-4: Merge pressed while a rebuild is owed because the task folder holds changes nobody committed: the record waited queued, the Overview row read 'Merging…' and the Tasks row 'Accepted · merging' with no reason; 'dependent branch not rebuilt: its worktree has uncommitted changes' was a WARN at every poll.",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'leftovers7-tailmerge, wave 13' > 'Merge pressed while a rebuild is owed because the task's folder holds changes nobody committed ... (TM-4)' (row state queued, no sentence); apps/ui/test/real-daemon.test.ts 'leftovers7-tailmerge, wave 13' > 'Merge pressed while a rebuild is owed for a task folder holding changes nobody committed ... (TM-4)' (the record never said the wait)",
+      "how": "R-lock unchanged: the merge still waits. ReviewedPrMerge.sayOwedWait (at the owed check in run) looks at the folder with tryWorktree (never waits for the lock) and writes last_outcome owed_folder_changes + owedFolderSentence ('#8 waits for the changes left in its task's folder: commit or remove them, or redo the task.'); a clean folder or the rebuild (DependentBranches.settleOwed) takes it back. owedMergeWait (loop/merge-mode.ts, import-free) is read by pull-requests.ts owedWaitOf (state waiting_checks, the sentence, no Merge; no route shape change) and task-words.ts owedFolderWait (label 'Accepted · merge waits for you', tone warn, the sentence as detail). PrTaskExecutor logs the dirty folder once per such state (heldByChanges). ADR 0111 amended (point 5).",
+      "check_in_the_app": "Bench (done, /tmp/frbench/fix-leftovers7-tailmerge/steps/06-09): chain A, B on bench/seeded, a file left in B's folder, A's PR closed, Merge on B: row '#3 waits for the changes left in its task's folder: commit or remove them, or redo the task.', Tasks row 'Accepted · merge waits for you', daemon.log warning once; file removed: next poll rebuilds B and the row shows the rebuilt-without warning with Merge. LIVE (forerunner-sandbox): two tasks, B depends on A, both done with PRs; put any file into B's folder (<data>/worktrees/<B's task id>/notes.txt); close A's PR on GitHub; wait a minute; press Merge on B's row. Expect the sentence above (no 'Merging…'), the Tasks row label, and in daemon.log 'its worktree has uncommitted changes' once over several minutes. Delete the file: within a minute B's row says it was rebuilt without #A, with Merge."
+    },
+    {
+      "problem": "TM-6: copyStoppedOf (loop/docs.ts) matches git's English messages while GitOps ran git in the process's language, so a git in another language left the Files line at 'Git could not bring it to what is merged…' without the file. Siblings: pushFailure/pushFailedWords and firstPushFailedWords (push refusals), must()'s credential-prompt detection.",
+      "u_ids": [
+        "U-037"
+      ],
+      "failing_test_before": "packages/capabilities/test/git.test.ts 'untranslated: git runs in the C locale with no language list ... (TM-6)' (new option; the env carried the process's de_DE). packages/runtime/test/loop-docs.test.ts 'leftovers7-tailmerge, wave 13' > 'a copy that stops following says which file, also when the person's git speaks another language (TM-6)' skips here with its reason: no git translations and no de/fr/es locale on this machine.",
+      "how": "GitOpsOptions.untranslated adds UNTRANSLATED_ENV (LC_ALL=C, LANGUAGE empty) to every command of that GitOps only; used by the copy's git (ProjectDocs.gitOf), the task branches' git (PrTaskExecutor.gitFor) and ensureBaseBranch's scratch. Every other GitOps keeps the process's language. Conflict files (diff --diff-filter=U, merge-tree --no-messages) were already locale-free. ADR 0113 amended.",
+      "check_in_the_app": "LIVE (Windows or Linux with git in another language, e.g. LANGUAGE=de or a German Windows): repository project; in this computer's copy (Files tab's folder) edit README.md; merge a PR that changes README.md on GitHub; wait a minute. Expect Files: 'This computer's copy of <repo>, not updated since HH:MM. You changed README.md in this copy, and a merge changed it too: ...' (the file named), not 'Git could not bring it to what is merged'."
+    },
+    {
+      "problem": "TM-8: the project page's Create a repository dialog filed its pending card on Preview; closing the dialog with × or Escape left that card open in the Inbox.",
+      "u_ids": [
+        "U-037"
+      ],
+      "failing_test_before": "apps/ui/test/create-repo.test.tsx \"closing the dialog with the × button after Preview answers its card No ... (TM-8)\" and '... with Escape ...' (no confirm call sent)",
+      "how": "CreateRepoDialog.finish() answers a pending card No (POST /commands/:id/confirm {answer: 'no'}), the dialog's own No call, unless Yes is being sent. No route or shape change. Real-daemon case (my describe): the Preview call files one open card and the No leaves none open in GET /inbox; Preview then Yes still creates (existing UI case + bench).",
+      "check_in_the_app": "Bench (done): /tmp/frbench/fix-leftovers7-tailmerge/steps/02-tm8-preview-shown.png (card open, Inbox 1) -> 04-tm8-inbox-after-close.png ('Nothing needs you.', Answered (1)) -> 05-tm8-yes-created.png (Preview then Yes created bench/recipe-box). LIVE (no repository is created on the owner's account): a project with no repository, Create a repository, Preview, then ×; the Inbox shows nothing waiting for it; repeat with Escape."
+    },
+    {
+      "problem": "TM-9: CopyRecord.stopped (the copy's 'stopped following' state, a file in the copy's .git) had no restart test of the composed runtime (validation rule 4).",
+      "u_ids": [
+        "U-037"
+      ],
+      "failing_test_before": "none: coverage gap closed; packages/runtime/test/merged-copy-restart.test.ts 'leftovers7-tailmerge, wave 13' passes before and after (the bench had shown it survives a restart)",
+      "how": "New test composes the runtime twice on one home with the fake GitHub: the copy stops at the person's README change; after the restart copyView still says it (also after the new daemon's first refresh), and it follows again once the change is put back.",
+      "check_in_the_app": "LIVE: make the copy stop (TM-6 steps, any language), Quit Forerunner from the tray and start it again; Files still says 'not updated since ...' with README.md named; put README.md back, wait a minute: Files says 'As merged on GitHub, updated HH:MM'."
+    },
+    {
+      "problem": "TM-7: a record whose left-to-you sentence said something else (a rebuild's 'reviewed with #A's changes' warning, 'builds on #X, which was not merged: merge #X first') lost it after a conflict was resolved (conflict_resolved with ''); a rebuilt_without record even read 'changed after the review' with no Merge once the conflict went away on main (its head is not the reviewed commit).",
+      "u_ids": [
+        "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'leftovers7-tailmerge, wave 13' > 'a record rebuilt without its dependency that then conflicts with main, and the conflict goes away on main ... (TM-7)' (was head_moved, 'changed after the review')",
+      "how": "No migration: the conflict notice's card keeps change_card.before_conflict (the record's last_outcome, sentence, the head at the notice; for a card it took over, its why/options/steps/status/sentence). When GitHub says it merges cleanly again on that head, the record says it again (left_to_you), an open card the notice took over is restored (restoreCard), a card the notice filed is withdrawn; nothing kept -> conflict_resolved '' as before; a head moved since -> head_moved as before. ADR 0111 amended (point 6).",
+      "check_in_the_app": "LIVE (forerunner-sandbox): chain A <- B where B edits README.md's title; close A's PR (B shows 'rebuilt without #A ... look at it before you merge it' with Merge); on GitHub change main's README title (B's row: conflict notice, no Merge); then put main's title back. Within a minute B's row and its card say the rebuilt-without warning again, with Merge and Redo."
+    },
+    {
+      "problem": "TM-10 (cosmetic): pr-executor.ts setLeftoversAside's doc sat above cleanAfterCutShortRun's; merge.ts fileLeftOpenRequest's doc sat above mergedUpdateWords; commands/repo.ts defined its own REPO_OFFER_KEY_PREFIX = 'repo:create:'.",
+      "u_ids": [],
+      "failing_test_before": "none (no behaviour change): packages/commands/test and packages/runtime/test/repo-create.test.ts stay green",
+      "how": "Doc blocks moved above their functions (merge.ts in the TM-4 commit); repo.ts imports ANSWER_CARD_KEYS.repoCreatePrefix from @forerunner/runtime/wiring/request-answers.",
+      "check_in_the_app": "None (no visible change)."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "TM-6 end to end with a real translated git",
+      "why": "This machine has no git translations (/usr/share/locale/*/LC_MESSAGES/git.mo absent) and no de/fr/es locales, so loop-docs.test.ts' TM-6 case skips with that reason; a GIT_TEXTDOMAINDIR stand-in .mo did not activate either (C locales only). The env itself is tested in git.test.ts; the live step is in check_in_the_app."
+    },
+    {
+      "problem": "TM-1 and TM-3 bench walks",
+      "why": "The bench stand-in writes the same content for same-file tasks and cannot be steered to 'change nothing' or to pause inside a Redo reliably; both are covered by composed tests (fake GitHub, real git, runner, critic, merge step) and executor tests, with live steps written. TM-3's test is at the PR executor (budget pause result), not through the budget card's Continue."
+    },
+    {
+      "problem": "BEFORE screenshots taken on this branch's bench",
+      "why": "The bench runs this branch's code; the BEFORE evidence is the earlier walks on the same base: /tmp/frbench/fixup-leftovers7-merge/steps/05-b-preview-shown.png and 06-b-02-inbox-one-card.png (TM-8), /tmp/frbench/review-leftovers7-merge2/steps/14-overview-merge-pressed-while-b-owes-a-rebuild.png (TM-4)."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (FORCE_COLOR=1; lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+      "result": "EXIT 0; unit 478 files, 4918 passed, 7 skipped; lint 69 warnings, 0 errors; docs:check could not diff origin/main (no such ref here)"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (25 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "EXIT 0; 5 files passed, 6 skipped (Postgres), 30 passed / 75 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "EXIT 0; 13 files, 25 passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "EXIT 0; 85 files, 956 passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "34 passed"
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "nothing found"
+    },
+    {
+      "command": "failing-first checks (HEAD sources swapped back, scratchpad before.sh / before-ui.sh)",
+      "result": "TM-1 composed x2, TM-4 composed + real-daemon, TM-5 x2, TM-7, TM-2 x2, TM-3, TM-8 x2 all failed before the fix and pass after"
+    },
+    {
+      "command": "bench fix-leftovers7-tailmerge (--provider bench --githost 48421), walks walk-tm8.cjs and walk-tm4.cjs",
+      "result": "TM-8: card open after Preview, none after ×, Yes still creates; TM-4: row sentence, Tasks label, warning logged once, after cleanup rebuilt-without with Merge. Bench stopped, home deleted."
+    },
+    {
+      "command": "cargo (apps/desktop/src-tauri)",
+      "result": "not run: the desktop shell was not touched"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fixup-leftovers7-merge/steps/05-b-preview-shown.png",
+      "/tmp/frbench/fixup-leftovers7-merge/steps/06-b-02-inbox-one-card.png",
+      "/tmp/frbench/review-leftovers7-merge2/steps/14-overview-merge-pressed-while-b-owes-a-rebuild.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/02-tm8-preview-shown.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/03-tm8-closed.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/04-tm8-inbox-after-close.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/05-tm8-yes-created.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/06-tm4-overview-before-merge.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/07-tm4-overview-merge-waits-for-folder.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/08-tm4-tasks-merge-waits-for-folder.png",
+      "/tmp/frbench/fix-leftovers7-tailmerge/steps/09-tm4-overview-after-the-folder-is-clean.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/dependent-branches-merge.test.ts > 'a conflict that goes away on main (the conflicting change taken out again) leaves the reviewed version as it was ... (R-conflict fix-up)'",
+      "why": "TM-7 changes what the record says after the conflict goes away: it says again what it said before the notice (here last_outcome not_allowed, '#N waits for you to merge it: press Merge on the Overview.') instead of conflict_resolved with ''. The visible result is unchanged and now asserted too: the Overview row offers Merge with no sentence; the merge still goes through."
+    }
+  ],
+  "new_problems": [
+    "Tasks row of a task whose pull request was closed on GitHub still reads 'Accepted · waiting for you to merge' (bench step 08, task 'Write the page in page.html' after PR #2 was closed; its record is left_to_you 'closed', '#2 was closed without merging.'). Words for polish-words (task-words.ts default left_to_you label).",
+    "On the Tasks table only the label 'Accepted · merge waits for you' shows; the sentence with the way out is the row's detail (drawer). If polish wants it on the table, it is display.detail.",
+    "must()'s credential-prompt detection ('could not read Username for' / 'Authentication failed for') is still locale-dependent in GitOps instances that do not set untranslated (merge.ts' update push, take-out, docs' non-copy GitOps); it only changes the wording when no token is configured.",
+    "TM-7 edge: the earlier sentence is read from the newest left-open card that kept before_conflict; a notice that could not file a card (no owner human for the record's agent) would read an older card's. Practically unreachable on a single install.",
+    "Coordination: the session lead's Windows R-copystuck fix (wf_86b5da49-f48) may touch loop/docs.ts and loop-docs.test.ts; this branch changes ProjectDocs.gitOf (untranslated) and appends a describe to loop-docs.test.ts."
+  ],
+  "notes_for_other_areas": [
+    "polish-words, new person-facing sentences (design §5) to review: (1) pr-executor.ts emptiedSentence: 'Redone from main, it changed nothing, so #4 was closed.' and 'It changed nothing and #4 held no change, so #4 was closed.' (the failed task's reason, Tasks row 'Failed: ...'); (2) pr-executor.ts closeEmptied PR comments: 'Forerunner did this task again from main and it changed nothing, so this pull request is closed. Its branch is kept.' and \"Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.\"; (3) loop/merge-mode.ts owedFolderSentence: '#8 waits for the changes left in its task's folder: commit or remove them, or redo the task.' and OWED_FOLDER_LABEL 'Accepted · merge waits for you' (Tasks row, tone warn); (4) user-guide paragraphs: 'A conflict the agent cannot resolve while it works' (new), the Redo paragraph's two added sentences (paused redo, redo that changes nothing), the owed-rebuild bullet's folder sentence, the conflict-notice paragraph's 'say again what they said before', Create a repository's '× or Escape answers its card No'.",
+    "APIs added: GitOps.finishUnfinished(), GitOpsOptions.untranslated + UNTRANSLATED_ENV; pr-executor wipFromBaseRef(taskId), emptiedSentence(pr, redone, base), private holdsOwnChange/closeEmptied/workInProgressFromBase, PrTaskExecutor.heldByChanges; loop/merge-mode.ts OWED_FOLDER_CHANGES, owedFolderSentence, OWED_FOLDER_LABEL, owedMergeWait(record) (import-free, usable from task-words and commands); ReviewedPrMerge.sayOwedWait; merge_record.last_outcome value 'owed_folder_changes'; left-open card change_card.before_conflict {last_outcome, sentence, head, card?}; TaskDisplayContext.merges now carries rebuild_owed_for and last_outcome; test helper chainWorld.holdRun(title) in dependent-branches-merge.test.ts.",
+    "Behaviour other areas should know: ReviewedPrMerge.retryWaiting now skips records whose task is not done (TM-5); 'no change' in executeIn is read from the branch, not the run's commit (TM-1); while 'I resolved it' waits, the run's start-up clean-up does not abort a rebase/merge in the task folder (TM-2).",
+    "No state migration was added (TM-4 uses last_outcome, TM-7 the card's change_card): leftovers7-tailrun is free to take migration 0009. compose.ts, server.ts, fake-daemon.ts and fake-tasks.ts are untouched; real-daemon.test.ts has one new describe at the end, 'leftovers7-tailmerge, wave 13' (repository alice/l7tm, two cases).",
+    "Owner questions: nothing built that answers one; the rebuild card's Merge on rebuilt_changed and the Overview rules' staleness are unchanged.",
+    "Live checks for phaseE7-live.md: the steps are in each fixed item's check_in_the_app (TM-1, TM-2, TM-3, TM-4, TM-6, TM-7, TM-8, TM-9 need the GitHub token on forerunner-sandbox; TM-5 needs a repository with CI checks; TM-8 answers No, nothing is created)."
+  ]
+}

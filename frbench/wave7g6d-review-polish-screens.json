@@ -1,0 +1,157 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "Worktree detached at fix/polish-screens (3409c5b), pnpm install, local Playwright config copied. I ran two benches named review-polish-screens, one after the other, on ports 48433 and 2033.\n\n**Bench 1: `--fresh --provider bench`, stand-in GitHub on port 48435, `FORERUNNER_BENCH_DELAY_MS=2500`, Chromium locale en-US.** I lost bench 1's screenshots: the second `--fresh` start wiped `/tmp/frbench/review-polish-screens/steps`. I looked at each one before it was lost, and the numbers below are what the scripts measured.\n- **Fresh install and setup:** the setup assistant opened on Welcome. After \"Set up later\", reopening /setup opened the Claude step with Welcome ticked, no name field and no no-key bar.\n- **Settings Basics:** the monthly cap read CHF 150.00. GET /me gave usdMicro 187500000 and chfMicro 150000000.\n- **New project dialog:** with a brief, the banner read \"Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.\"\n- **Running session:**\n  - Inbox \"Approve and start\" started a session. The header read \"Working on … · Open running session\".\n  - The session page title read \"Quote page · session at 01:18\". Log stamps were HH:MM with no AM/PM. The badge read \"Live\".\n  - Ctrl+K \"stop\" listed only \"Stop all (1 running) / asks first\". Enter opened the header's question, and nothing had stopped yet.\n  - Stop all brought the stopped bar. The palette then listed only \"Allow sessions again\"; Enter removed the bar. With nothing running, \"stop\" listed nothing.\n- **Project page with tasks ready:** the header read \"Ready to continue: 2 tasks ready\" with \"Create a repository\" and one \"Start session\".\n  - From Files with ?path=index.html, the Tasks tab link was /tasks with no query. From tasks?status=ready, then Files and back, the filter was kept.\n- **Start dialog:** it read 'This session runs \"Style the page in styles.css\" (about CHF 0.02) and 1 more (about CHF 0.05), then continues with up to 1 more as they become ready (about CHF 0.07).' After Start the buttons were only ×, \"Open the session\" and Close.\n- **Home:** opening \"Seeded site\" and then \"Quote page\" from Home added no rows to GET /changes, and Changes shows no \"Switch project\".\n- **Settings:**\n  - \"Seeded site\" project budget: CHF 3 → 0 with hint \"0 means no budget…\". The card read \"CHF 3 → no budget\"; ask \"Remove the project budget…\"; sentence \"…from CHF 3 to no budget: only the monthly cap limits its spending.\"; the row then read \"no budget\".\n  - Monthly cap 0 was refused with the new sentence; budget per session 0 was refused with its own sentence.\n  - The calibration row read \"on, day 1 at 06:00, up to CHF 8.00, grades the light review\". Turning it off gave \"…from on, day 1 at 06:00 (the default) to off: …\" with no JSON.\n  - Site rule with 7 sites: \"Saved as: only a.com, b.org, c.net, d.io, e.ch, f.de and g.fr\". The sentence has one colon.\n  - Merge mode: the card value was \"Merge automatically after review\" and the read-back carried the effect. The Inbox card's title was the question and its body the effect.\n  - No \"tier\" and no JSON anywhere in Settings. USD is still shown in the subscription allowance and in fast mode (blocking 2).\n  - /settings#other-settings (blocking 1): data-targeted was set, but the section's top was measured at 401, 1105, 625, 1105, 421, 545, 625, 625 and 625 px on fresh loads, with a 900 px viewport. From the Overview's merge-mode Change link it was 804, 290, 290 and 454. With the base hash code put back temporarily it was 3906 and 3593, so the fix helps but does not land.\n- **Ended session:** no stream badge.\n- **Changes:** times read \"9 Nov 2026, 01:23\".\n\n**Bench 2: `--fresh --provider bench-api --api-key refused`.** Screenshots are kept in /tmp/frbench/review-polish-screens-evidence/.\n- A task ran into the refused key. The real daemon's card had choices [], reply \"none\" and links [Save a new key → /setup]. Home's row offered \"Save a new key\" → /setup (01-home-refused-key.png).\n- Clicking it opened the setup assistant on the Claude step with no no-key bar (02-setup-from-save-a-new-key.png). That step still says \"✓ An API key is saved.\"\n- /settings#other-settings landed with \"Other settings\" at 1387 to 1903 px on 5 of 5 loads; the view showed \"Models per agent and specialist\" (hash-load-1..5-*.png).\n- The USD lines are in settings-usd-lines.txt and settings-allowance-usd.png.\n\nBoth benches are stopped with stop.mjs, and the home and browser profile are deleted.\n\n**Tests and failing first.**\n- Full UI vitest: 86 files, 981 tests passed.\n- `pnpm check`: exit 0, unit 478 files, 4909 passed and 6 skipped. `docs-check --base claude/nifty-knuth-f9udt0`: ok (57 files).\n- Playwright with the local config: 34 passed. `pnpm test:e2e`: 25 passed, 1 skipped. `pnpm test:integration`: 30 passed, 75 skipped.\n- Failing first, UI: a reduced copy of polish-screens.test.tsx (its 23 cases that do not import helpers the base lacks) passed 23/23 on the fix. With apps/ui/src put back to claude/nifty-knuth-f9udt0 it failed 21/23. The two that passed are the runtime webAccessWords case and the fresh-install-Welcome control. Examples:\n  - header: ['Continue','Start session'] instead of ['Start session']\n  - Start dialog: \"take about CHF 3.20\" instead of 2.40\n  - project budget 0: \"The amount must be more than CHF 0.\"\n  - palette: \"Stop all\" listed while idle\n- Failing first, commands: packages/commands/test/polish-screens.test.ts failed 5/5 against the base packages/commands/src and web-access.ts, and passes 5/5 on the fix.\n- Temporary review probe, deleted afterwards: open Beacon from Home, then Ctrl+K \"start session\". The palette listed \"Start session: Atlas / the active project\", and Start posted {projectId: proj_beacon} (blocking 3).\n\nAll temporary source reverts and test files were removed. The tree is clean at 3409c5b.",
+  "blocking": [
+    {
+      "issue": "P7-12 is claimed fixed, but on the real app the Overview's 'Change' link and /settings#other-settings still do not land on Other settings: the section ends up below the visible part of the page or halfway down it, never at the top.",
+      "where": "apps/ui/src/lib/use-hash-scroll.ts:20-31 and apps/ui/src/pages/SettingsPage.tsx:991",
+      "evidence": "**bench-api bench**, 5 of 5 fresh loads: the 'Other settings' heading's top was at 1387, 1749, 1423, 1903 and 1903 px with a 900 px viewport. The view shows 'Models per agent and specialist' (/tmp/frbench/review-polish-screens-evidence/hash-load-4-top-1903.png). data-targeted was 'true' every time.\n\n**--provider bench bench**, fresh loads: 401, 1105, 625, 1105, 421, 545, 625, 625 and 625 px, so 2 of 9 off screen. From the Overview's merge-mode Change link: 804, 290, 290 and 454 px.\n\n**Cause:** the hook scrolls once, smoothly, as soon as the settings rows have loaded, then disconnects its observer. The sections above (models, fast mode, the credential order, the subscription allowance, voice) load afterwards and push the target down.\n\n**Tests and evidence:** the unit test only records that rows existed when scrollIntoView was called, so it cannot see this. The fixer's own before screenshot (fix-polish-screens-before/13) already showed 'Other settings' at the top, so their before and after pair does not show the fix either.",
+      "expected": "The link lands with 'Other settings' at the top of the view on every load. For example, keep re-landing on layout changes until the sections above have loaded, stopping once the person scrolls themselves, and scroll without the smooth animation. Add a UI test in which a section above the target loads after the rows and the target still ends in view."
+    },
+    {
+      "issue": "Acceptance says 'no USD … anywhere in Settings'. Settings → Advanced → Claude subscription allowance still shows USD on every install. This is neither fixed nor listed in not_done, while the user guide paragraph this area added says 'Money is in CHF everywhere'.",
+      "where": "apps/ui/src/pages/PlanAllowanceSection.tsx:76 and :90; docs/user-guide.md (the Settings paragraph added in eb1dfcc)",
+      "evidence": "On both benches Settings shows 'Enter what your plan covers: the default (USD 50) is set low on purpose…' and 'Now: CHF 40.00 a month (the default), stored as USD 50.00 at today's rate.' (/tmp/frbench/review-polish-screens-evidence/settings-allowance-usd.png and settings-usd-lines.txt). Design §5 rule 7 says 'CHF everywhere… Never USD'. The real-daemon case 'a fresh install's monthly cap reads CHF 150.00' checks only daemon rows, so it cannot see this UI section. Fast mode's USD price table is listed in not_done with a reason; the allowance is not.",
+      "expected": "The allowance in CHF only, for example 'the default (CHF 40) is set low on purpose' with the 'stored as USD …' clause dropped, asserted in a Settings UI test. Or list it in not_done with a reason. Either way, the user guide must not say CHF everywhere while Settings shows USD."
+    },
+    {
+      "issue": "Regression from later #61: Home no longer switches the active project, so the palette's 'Start session' entry names the active project while it opens and starts the Start dialog for the project on screen.",
+      "where": "apps/ui/src/shell/commands.ts:127-136 (uses state.activeProjectId) vs apps/ui/src/shell/Shell.tsx:46 and :459-465 (the dialog uses viewed ?? activeProject)",
+      "evidence": "Review probe with the fake daemon: Home → open Beacon (active project stays Atlas) → Ctrl+K 'start session'. The palette lists 'Start session: Atlas', with the hint 'the active project'. Enter, then Start, posts POST /sessions {agentId: agent_alice, projectId: proj_beacon, trigger: manual}. The dialog names no project, so a person who chose 'Start session: Atlas' starts a session on Beacon. Before this branch, opening Beacon from Home made it active, and the label and the action agreed on the common path.",
+      "expected": "The palette's entry names the project its dialog starts: the project on screen when there is one, as Shell's dialog does, else the active one. Add a palette test that opens a project from Home and checks both the title and the posted projectId."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "later #56: one start button in the project header with ready tasks",
+      "holds": true,
+      "note": "Bench: 'Ready to continue: 2 tasks ready' with only 'Create a repository' and 'Start session'. The UI test fails on base: ['Continue','Start session']."
+    },
+    {
+      "claim": "later #57: tab links keep only the Tasks filters",
+      "holds": true,
+      "note": "Bench: Files ?path=index.html → Tasks link /tasks. tasks?status=ready → Files → Tasks keeps status=ready. The Files link carries ?status=ready, which is harmless."
+    },
+    {
+      "claim": "later #59: palette lists Stop all only while running, asks first, then offers Allow sessions again",
+      "holds": true,
+      "note": "Bench and UI test. The palette opened the header's question; nothing stopped before the confirmation; 'Allow sessions again' removed the stopped bar."
+    },
+    {
+      "claim": "later #63: no no-key bar on /setup",
+      "holds": true,
+      "note": "UI test, and both bench setup pages."
+    },
+    {
+      "claim": "later #61: opening a project from Home writes nothing to Changes",
+      "holds": true,
+      "note": "Bench: GET /changes unchanged and no 'Switch project'. Side effect: the palette's Start session is now mislabelled (blocking 3)."
+    },
+    {
+      "claim": "P7-8: a card with nothing to answer offers its own button (refused key's Save a new key)",
+      "holds": true,
+      "note": "Real daemon on bench-api with a refused key: the Home row reads 'Save a new key → /setup'."
+    },
+    {
+      "claim": "later #66 / P7-9: 24-hour HH:MM on the session title, log, Settings and Changes in an en-US browser",
+      "holds": true,
+      "note": "Bench en-US: 'session at 01:18', log '01:18', Changes '9 Nov 2026, 01:23'."
+    },
+    {
+      "claim": "P7-4: stream badge in plain words, none after the end",
+      "holds": true,
+      "note": "Bench: 'Live' while running, no badge on the ended session. UI test covers 'Updates every 5 s'."
+    },
+    {
+      "claim": "later #48/#69: 'and N more' for tasks ready now; stuck lines in words",
+      "holds": true,
+      "note": "Bench sentence quoted in the walk. UI tests fail on base."
+    },
+    {
+      "claim": "C-45: one line for tasks too large for the budget; 'run first' sums only the tasks before the left-out one (ahead)",
+      "holds": true,
+      "note": "UI tests fail on base (3.20 vs 2.40). The real-daemon case reads ahead through GET start-check; the fake changed in the same commit."
+    },
+    {
+      "claim": "P7-16: no second Start after Start",
+      "holds": true,
+      "note": "Bench: × / Open the session / Close only. The re-checked plan sentence stays (non_blocking)."
+    },
+    {
+      "claim": "later #43: a project budget of 0 is no budget; the monthly cap's 0 is refused with why",
+      "holds": true,
+      "note": "Bench Settings walk, commands tests (fail on base), real-daemon case."
+    },
+    {
+      "claim": "later #30/#99/#38: calibration in words and CHF; monthly cap row risk medium",
+      "holds": true,
+      "note": "Bench row and change sentence without JSON; handover field shows 4.00 CHF."
+    },
+    {
+      "claim": "No 'USD' anywhere in Settings (acceptance)",
+      "holds": false,
+      "note": "Subscription allowance: 'USD 50', 'stored as USD 50.00'; it is not in not_done. Fast mode is in not_done."
+    },
+    {
+      "claim": "later #28: a fresh install's cap reads CHF 150.00",
+      "holds": true,
+      "note": "Bench /me chfMicro 150000000, Basics CHF 150.00, Start dialog 'Left this month' based on CHF 150. The USD cap is now 187.50 instead of 188 (rounding also changed in the hunk)."
+    },
+    {
+      "claim": "later #28 / P-welcome: reopened setup opens the step not done; Save a new key lands on the Claude step",
+      "holds": true,
+      "note": "Bench 1: 'Set up later' then /setup opened Claude with no name field. Bench 2: refused key → Claude step."
+    },
+    {
+      "claim": "P7-10: a change card's value is the label; the effect is the read-back and the Inbox body",
+      "holds": true,
+      "note": "Bench merge_mode card and Inbox card. Side effect: the Inbox Yes explanation repeats the body, cut at 100 characters (non_blocking)."
+    },
+    {
+      "claim": "P7-28 / P7-31 / P7-32 / W14-8: site-rule row in two sentences, one colon, all seven sites in 'Saved as:'",
+      "holds": true,
+      "note": "Bench walk."
+    },
+    {
+      "claim": "P7-12: /settings#other-settings lands on Other settings (bench 13-after shows it at the top)",
+      "holds": false,
+      "note": "Measured 13 loads and 4 link clicks on bench 1 and 5 loads on bench 2. Never at the top, often below the fold (blocking 1)."
+    },
+    {
+      "claim": "later #30 intake banner says about a minute; later #79 short decision question",
+      "holds": true,
+      "note": "Banner seen on the bench. Decision covered by the UI test only; no question with options came up on the bench."
+    },
+    {
+      "claim": "W14-9 not_done: no Sessions tab",
+      "holds": true,
+      "note": "PROJECT_TABS has no sessions entry; an unknown tab redirects to the Overview (ProjectPage.tsx:87); design §6 lists no such tab."
+    },
+    {
+      "claim": "Validation: pnpm check, integration, e2e, UI vitest, Playwright green",
+      "holds": true,
+      "note": "All rerun here and green. Lint has a new warning: SettingsPage.tsx:738 noUselessFragments, against the report's 'none new'."
+    },
+    {
+      "claim": "No test weakened",
+      "holds": true,
+      "note": "Every changed assertion follows a changed text and still asserts the effect, in card.ask instead of newValue. Row counts went up because the fake now lists the budget rows."
+    }
+  ],
+  "non_blocking": [
+    "**P7-16 leftover** (StartSessionDialog.tsx): after Start the dialog re-checks and still shows a plan sentence for a session that will not start. Bench: 'This session runs \"Write the README…\" … Started: …' while the started session runs \"Style the page\". The budget and note fields also stay editable with nothing to apply them to. Hide the plan sentence and the fields once the notice shows.",
+    "**P7-10 side effect in the Inbox** (polish-words' request-words.ts): settings.set cards now show the effect as the body, and Yes's explanation repeats its first 100 characters cut with '…' (bench: 'Yes: Forerunner merges each task's pull request once the critic accepts it. Merges show under your…'). Tell polish-words: when the body is the consequence, Yes could say 'Makes the change now.'",
+    "**New lint warning:** apps/ui/src/pages/SettingsPage.tsx:738 `<>{words}</>` (noUselessFragments), added in 050a01b. The report says none new.",
+    "**Fast mode** rows and section still quote 'USD 8 / 40 per million …'. This is in not_done with a reason, but the acceptance line says no USD in Settings: the session lead or owner decides.",
+    "**Setup Claude step:** reached from 'Anthropic refused your API key', it says '✓ An API key is saved.' with 'Replace the API key'; it should say the saved key was refused. This text existed before the branch; the branch now sends people straight to it.",
+    "**Weak real-daemon case:** 'opening a project … writes nothing to GET /changes' only makes GET reads and would pass on base too, since the switch was a UI call. The UI test carries the claim.",
+    "**Commit order:** the Playwright count change (palette.spec 20→22) is in 3409c5b, but the fake-daemon change that needs it is in eb1dfcc. eb1dfcc alone fails the browser suite.",
+    "**C-45 long list:** the 'each need more than this session's work budget' line names every task, with no 'and N more' after three (design §5 rule 5).",
+    "**Monthly cap 0 refusal:** the sentence says why but not what to do (§5 rule 8). Through POST /commands/execute it is only 'budget.set: invalid parameters' (the fixer noted this).",
+    "**Budget sentences** say whole francs ('CHF 3', 'CHF 150 → CHF 120'), not two decimals (fixer's new_problem).",
+    "**Handover change sentence** repeats the schedule: '…from off to on, day 2 at 08:00: a fresh agent runs the seeded change on day 2 at 08:00 each month…'.",
+    "**compose.ts:** the one hunk also changes the enforced default cap from USD 188 to USD 187.50 (150 / 0.8 to the micro). This is consistent with CHF 150, but it is a change to the enforced limit and is worth naming in the report.",
+    "**Sibling (fixer's new_problem):** New project still runs project.switch, so a 'Switched the active project to …' row appears in Changes after creating a project (seen on the bench).",
+    "**Lost screenshots:** bench 1's screenshots were overwritten when bench 2 started with --fresh. Bench 2's evidence is kept in /tmp/frbench/review-polish-screens-evidence/."
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I ran a bench named review-leftovers7-tailmerge from my worktree at 10c562e. It used --provider bench and the fake GitHub on port 48432. I then restarted the daemon with FORERUNNER_GITHOST_POLL_MS=10000 so the walks would go faster. Screenshots and text are in /tmp/frbench/review-leftovers7-tailmerge/steps/. The bench is stopped and its home is deleted.\n\nTM-8 (steps 01-05):\n- Create a repository → Preview filed one open card ('Create the private GitHub repository bench/recipe-box for \"Recipe box\"?', step 01).\n- Closing the dialog with × left no open card in GET /inbox. The Inbox read \"Nothing needs you.\" with Answered (1) (step 02).\n- The same with Escape gave the same result, Answered (2) (steps 03-04).\n- Preview then Yes still created bench/recipe-box and linked it, with no card left (step 05).\n- Passes.\n\nTM-4 (steps 06-13):\n- Chain A \"Write the page in page.html\" <- B \"Write the footer in footer.html\" on bench/seeded. Both were done with pull requests #2 and #3.\n- I wrote notes.txt into B's folder (<home>/worktrees/<B id>) and closed #2 on the fake GitHub, then pressed Merge on #3 in the Overview.\n- Within 3 s and without a reload, the row read \"#3 waits for the changes left in its task's folder: commit or remove them, or redo the task.\" with no Merge and no 'Merging…' (step 07). The API showed state waiting_checks and canMerge false.\n- The Tasks row read 'Accepted · merge waits for you' in warn tone, and the drawer gave the sentence as its detail (steps 10-11).\n- daemon.log had 'dependent branch not rebuilt: its worktree has uncommitted changes' exactly once over about 7 minutes of 10 s polls.\n- After I deleted the file, the next poll rebuilt B. The row then showed the rebuilt-without warning with Merge (step 14).\n- Passes as specified, but see blocking item 1 about the \"commit\" way out.\n\nTM-7 (steps 14-19):\n- From the rebuilt_without state (Merge plus the warning; card offering Merge and Redo), I pushed a different footer.html to main. The row showed '#3 conflicts with main in footer.html: resolve the conflict on GitHub, or redo the task.' with no Merge, and the card offered Redo and Leave it open (steps 15-16).\n- I then removed footer.html from main again. The pull request's head was unchanged (ec9ecc1). The row and the card again said '#3 was rebuilt without #2, which was closed. It was reviewed with #2's changes, so it waits for you: …' with Merge, and the card offered Merge and Redo again (steps 17-18).\n- Passes.\n\nTM-1 (steps 20-25, 31-48):\n- The stand-in model writes different content on a redo, so two attempts took the existing path: the same pull request got new work.\n- On the third attempt (task C \"Write the header in header.html\", PR #4), main first conflicted (notice card, step 39). I then gave main exactly C's content and pressed the card's Redo at once.\n- Result: the Tasks row read 'Failed: Redone from main, it changed nothing, so #4 was closed.' (step 41).\n- The Inbox showed the failed card with Try again, Mark done anyway and Cancel task (step 44).\n- On the fake GitHub, #4 was closed and not merged, with Forerunner's comment '…did this task again from main and it changed nothing, so this pull request is closed. Its branch is kept.' The branch was kept at 8dab491.\n- #4 was not under 'Waiting for you to merge' (step 43).\n- Mark done anyway then gave 'Done: accepted without review' and nothing was offered for Merge (steps 45-50).\n- The acceptance journey passes.\n\nSibling of TM-1 (steps 26-30), which still fails:\n- main already held the same footer.html as PR #3 (`git diff main <branch>` empty, #3 mergeable).\n- I pressed Redo on B in the Tasks tab, then Start.\n- The run went to review, and the rebase dropped the commit that main already had. The task branch was force-pushed to main's head: PR #3 head became 6940bae, the same as main, and GET /pulls/3/files returned 0 files.\n- The critic accepted. The Tasks row read 'Accepted · waiting for you to merge' and the Overview offered Merge on the empty #3 (step 29).\n\nWork continues by itself:\n- The card's Redo started a session at once, and the failed card appeared after it.\n- The Tasks-tab Redo only makes the task ready, as designed.",
+  "blocking": [
+    {
+      "issue": "The new TM-4 sentence offers 'commit them' as a way out, and the code then silently drops the person's commit. If the person commits the folder's change as the row tells them, the next poll's rebuild resets the task branch to the host's (`git.createBranch(branch, origin/${branch})` right after the dirty check). The commit ends up on no branch, is never pushed, and the file is gone from the folder; only the reflog keeps it. Nothing tells the person. This breaks design §5 rule 9 (no promises the code does not keep) and rule 8 (the 'what to do' must work) for a new person-facing sentence.",
+      "where": "packages/runtime/src/loop/merge-mode.ts:85 (owedFolderSentence); packages/capabilities/src/githost/pr-executor.ts:1739 (the rebuild's reset); also docs/user-guide.md:349 and ADR 0111 amendment point 5",
+      "evidence": "I appended a case to dependent-branches-merge.test.ts temporarily (since reverted). chainWorld: A <- B, notes.txt written in B's folder, A closed, poll (rebuild owed). Then `git add notes.txt && git commit` in B's folder, as the sentence says, then poll. Result (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/review-tm/exp-out.json): owed null, last_outcome 'rebuilt_without', `git branch --contains <the person's commit>` empty, the host branch has no notes.txt, and `git ls-files notes.txt` in the folder is empty (the file was removed by the checkout).",
+      "expected": "The sentence offers only ways out the code keeps (for example 'move them out of the folder or delete them, or redo the task'). Alternatively, the rebuild refuses or keeps a local branch that is ahead of the host's and says so, instead of resetting it. Either way, a test does the sentence's way out and asserts what becomes of the person's change. Update the user guide paragraph and ADR 0111 point 5 to match, and name the new wording in notes_for_other_areas for polish-words."
+    },
+    {
+      "issue": "A sibling of TM-1 is missed (validation rule 8): an empty pull request is still offered for Merge. `holdsOwnChange` runs before the sync. When main already holds the task's change, a run that resumes the open pull request's branch (Tasks tab Redo, or a rework run) passes the check. The rebase onto main then drops the already-upstream commit, the branch becomes main's head, and it is force-pushed (`force: !!existingPr`). The critic accepts and the Overview offers Merge on a pull request with no change. This is the same visible failure as the [major] TM-1, and the report neither fixes nor logs it.",
+      "where": "packages/capabilities/src/githost/pr-executor.ts:926 (check before the sync), :963 (rebaseOnto), :995 (force push)",
+      "evidence": "Bench steps 26-30 (/tmp/frbench/review-leftovers7-tailmerge/steps/29-tm1c-overview-after.png). main had the same footer.html as PR #3 (diff empty). I pressed Redo on the Tasks tab, then Start. After the session the task was done, 'Accepted · waiting for you to merge'. PR #3's head was 6940bae, equal to main (`git diff main <branch>` empty), and GET /repos/bench/seeded/pulls/3/files returned []. The Overview listed #3 with Merge. The code has behaved this way since before the branch; the fix's check is placed before the rebase, so it does not cover this case.",
+      "expected": "Read the task's own change again after the sync (rebase or merge) and before the push: for example, `changedFiles` already computed at :975 is empty, or `holdsOwnChange` is false after `synced`. An existing pull request then takes the TM-1 path (close it with one sentence, or fail as a no-change task) instead of being force-pushed to the base's head. Add a composed test: an open pull request whose change has landed on main, Redo from the Tasks tab, and assert that no empty pull request is offered for Merge. Alternatively, log it as a new U-entry with the evidence if the session lead defers it."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "TM-1: a conflict-notice Redo or 'Drop the branch and retry from scratch' whose run changes nothing fails with one sentence; the pull request is closed with a comment and its branch is kept; nothing is offered for Merge",
+      "holds": true,
+      "note": "Composed tests (both paths) and the executor test fail on claude/nifty-knuth-f9udt0 sources (task done with an empty PR; 'expected in_review to be failed') and pass at HEAD. Walked on the bench: steps 39-44. The sibling path is still open (blocking item 2)."
+    },
+    {
+      "claim": "TM-1 sibling: a run that continues paused work and adds nothing more goes to review",
+      "holds": true,
+      "note": "Executor test fails before ('no changes were made') and passes after."
+    },
+    {
+      "claim": "TM-2: 'I resolved it' with the rebase still under way finishes the person's resolution; with conflict markers left, the card is filed again and the rebase stays under way",
+      "holds": true,
+      "note": "Both executor tests fail on the base ('rebase conflict in README.md', rebase aborted) and pass at HEAD. The git.test finishUnfinished case passes. Not walkable on the bench."
+    },
+    {
+      "claim": "TM-3: a paused redo continues its own work at the next run and never brings back the old conflicting commits",
+      "holds": true,
+      "note": "Executor test fails on the base (saw '# sample by main') and passes after. It is tested at the executor, not through the budget card's Continue."
+    },
+    {
+      "claim": "TM-5: the retry pass skips a record whose task is not done; the poll is not held and the old head is not merged",
+      "holds": true,
+      "note": "Both composed tests fail on the base (poll did not end within 15 s; old head merged) and pass after. The Overview lists only done tasks, so skipped records are not shown."
+    },
+    {
+      "claim": "TM-4: the Overview and Tasks rows say why the merge waits, never 'Merging…'; the warning is logged once",
+      "holds": true,
+      "note": "The composed test and the real-daemon case fail on the base (record queued, '#3 merges now: you pressed Merge.') and pass after. Bench: sentence, label and one log line. The wording's 'commit' way out loses the person's commit (blocking item 1)."
+    },
+    {
+      "claim": "TM-6: GitOps untranslated (LC_ALL=C, LANGUAGE empty) is used for the copy, task branches and the first push; other GitOps keep the locale",
+      "holds": true,
+      "note": "git.test env case passes. The loop-docs language case skips here because no translations are installed, so a live check is needed."
+    },
+    {
+      "claim": "TM-7: after a conflict goes away on the same head, the record and card say again what they said before, with their Merge",
+      "holds": true,
+      "note": "Composed test fails on the base and passes after. Bench steps 14-18 confirm it. The changed R-conflict fix-up assertion is a design change with an added visible Overview assertion, not a weakening."
+    },
+    {
+      "claim": "TM-8: closing Create a repository after Preview answers its card No; Preview then Yes still creates the repository",
+      "holds": true,
+      "note": "Both UI tests fail on the base and pass after. Bench steps 01-05 confirm it."
+    },
+    {
+      "claim": "TM-9: the copy's stopped state survives a restart of the composed runtime",
+      "holds": true,
+      "note": "merged-copy-restart.test.ts composes twice on one home and asserts the person-facing line."
+    },
+    {
+      "claim": "TM-10: doc blocks moved; repo.ts reads ANSWER_CARD_KEYS.repoCreatePrefix",
+      "holds": true,
+      "note": "No load-time cycle: request-answers.ts has only type and platform imports."
+    },
+    {
+      "claim": "No route shape changed, so fake-daemon.ts is unchanged; real-daemon.test.ts has its own describe",
+      "holds": true,
+      "note": "The waiting_checks plus sentence shape already existed. Rule 3 is satisfied."
+    },
+    {
+      "claim": "Validation green",
+      "holds": true,
+      "note": "Rerun here at HEAD: pnpm test 478 files, 4918 passed; typecheck ok; lint 69 warnings, 0 errors; lint:paths ok; docs-check --base claude/nifty-knuth-f9udt0 ok; test:integration 30 passed; test:e2e 25 passed; UI vitest 85 files, 956 passed; Playwright 34 passed."
+    }
+  ],
+  "non_blocking": [
+    "Merging into the current claude/nifty-knuth-f9udt0 (29e0c81, R-copystuck, committed after base ce13bb1) conflicts in two append-only places: docs/decisions/0113-...md (both amendments appended at the end) and packages/capabilities/test/git.test.ts (both cases appended at the end of describe GitOps). Keep both. The rest auto-merges, including loop/docs.ts.",
+    "docs/user-guide.md:350 says 'once they are put away, the rebuild runs at the next check and your Merge goes on'. When the owed rebuild drops a closed dependency (rebuilt_without), the Merge does not go on: the record waits for the person again with the warning (bench step 14). Say that the row then says what came of the rebuild.",
+    "Before Merge is pressed, a row whose rebuild is owed and whose folder holds changes shows a plain Merge with no hint (bench step 06; fixer's step 06 too). The wait is said only after the click.",
+    "TM-4's sentence names 'its task's folder' without saying where it is or offering Open folder. A person cannot easily act on it (polish-words / polish-screens).",
+    "Critic column shows a raw lowercase verdict, 'accepted', for a failed task and for a 'Mark done anyway' task (bench steps 41, 46). This existed before this branch (taskCheck returns null when the task is not done) and breaks design §2/§5 plain words; for polish.",
+    "emptiedSentence 'Redone from main, it changed nothing, so #4 was closed.' is a comma splice. The no-change fallback '<summary>\\n(no changes were made in the worktree)', which existed before, is still what a Try again on the same task shows. Both are polish-words' to reword.",
+    "The bench stand-in writes different content on a redo (the 'quotes' switch), so TM-1 could be walked only by giving main the redo's own output and pressing Redo within one poll. Reaching it took three attempts (steps 31-44).",
+    "finishUnfinished: (a) a resolved file that legitimately has a line starting with '<<<<<<< ' or '>>>>>>> ' is read as unresolved forever; (b) unstaged edits to other files during the person's rebase make `rebase --continue` refuse, and must() throws, so the run fails with git's text. Both are edge cases and untested.",
+    "TM-3 is tested at the PR executor, not through the budget card's 'Continue (CHF N more)'. The live step in check_in_the_app covers it.",
+    "The new TM-4 and TM-7 fields (last_outcome 'owed_folder_changes', change_card.before_conflict) cross a restart only through the existing row and card persistence. No restart case was added; low risk, since both are plain DB columns.",
+    "Pre-existing, seen on the bench: the drawer's 'It waits for' and the Tasks row of a task whose pull request was closed still read 'Accepted · waiting for you to merge' (also in the fixer's new_problems)."
+  ]
+}
