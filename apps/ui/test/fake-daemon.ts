@@ -1131,6 +1131,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // The fake withdraws a card only on a person's task move.
         movedByYou: r.status === "withdrawn" && !!task,
         waiting,
+        // L-20 (polish-words): the plan card says the docs pull request while Approve works.
+        ...(repositoryOf(state.projects.find((p) => p.id === r.projectId)?.repos ?? [])
+          ? { projectRepository: true }
+          : {}),
       },
     );
     return { ...r, ...words };

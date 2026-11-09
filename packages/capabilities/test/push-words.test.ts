@@ -72,7 +72,7 @@ describe("a push the host refused, in the person's words", () => {
         'o/archived is empty and Forerunner could not make its first commit: git said "This repository is archived and read-only". Add a README on GitHub, then press Try again.',
       );
       expect(pushFailedWords("o/archived", "fr/1-page", e)).toBe(
-        'Forerunner could not push the branch fr/1-page to o/archived: git said "This repository is archived and read-only". Press Try again; if it fails again, look at the repository on GitHub.',
+        'Forerunner could not push the work to o/archived: git said "This repository is archived and read-only". Press Try again; if it fails again, look at the repository on GitHub.',
       );
     });
   }
@@ -103,5 +103,109 @@ describe("a push the host refused, in the person's words", () => {
       kind: "other",
       said: "fatal: the object directory is corrupt",
     });
+  });
+});
+
+/**
+ * polish-words (R-2, R-3): on github.com over HTTPS a push refused for lack of write access, or
+ * because the repository is archived, prints the host's line and then git's
+ * "fatal: unable to access '<url>': The requested URL returned error: 403". Before, "unable to
+ * access" was read first and the person was told GitHub could not be reached; and a host line
+ * that starts with a progress word ("Writing to this repository is disabled") was skipped.
+ */
+describe("polish-words: git's HTTPS refusals (R-2, R-3)", () => {
+  const https403 = (hostLine: string) =>
+    [
+      `remote: ${hostLine}`,
+      "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403",
+      "",
+    ].join("\n");
+
+  it("a token that may not write: a refusal quoting the host's line, with what to do", async () => {
+    const e = await pushError(https403("Permission to o/r.git denied to some-bot."));
+    expect(pushFailure(e)).toEqual({
+      kind: "refused",
+      said: "Permission to o/r.git denied to some-bot",
+    });
+    expect(pushFailedWords("o/r", "fr/write-the-page", e)).toBe(
+      'GitHub refused the push: "Permission to o/r.git denied to some-bot". Check the GitHub token in Settings and o/r on GitHub, then press Try again.',
+    );
+    expect(firstPushFailedWords("o/r", e)).toBe(
+      'o/r is empty and GitHub refused Forerunner\'s first commit: "Permission to o/r.git denied to some-bot". Check the token in Settings, then press Try again.',
+    );
+  });
+
+  it("an archived repository: a refusal quoting the host's line, never 'could not be reached'", async () => {
+    const e = await pushError(https403("This repository was archived so it is read-only."));
+    expect(pushFailure(e)).toEqual({
+      kind: "refused",
+      said: "This repository was archived so it is read-only",
+    });
+    expect(pushFailedWords("o/r", "fr/write-the-page", e)).not.toMatch(/could not be reached/);
+  });
+
+  it("a host line that starts with a progress word is the reason shown (R-3)", async () => {
+    const e = await pushError(https403("Writing to this repository is disabled."));
+    expect(pushFailure(e)).toEqual({
+      kind: "refused",
+      said: "Writing to this repository is disabled",
+    });
+    const local = await pushError(
+      ["remote: Writing to this repository is disabled.", ...TAIL].join("\n"),
+    );
+    expect(pushFailure(local)).toEqual({
+      kind: "other",
+      said: "Writing to this repository is disabled",
+    });
+  });
+
+  it("names no task id, and GitHub's own line comes within the row's first 100 characters (C-59 sibling, review of polish-words)", async () => {
+    // A task's branch is `fr/<8 hex of its id>-<its title>`; the reason is the Tasks row's
+    // "Failed: …" (cut at 100), the drawer and the failed-task card, which name the task.
+    // Before: 'Forerunner could not push the branch fr/1a2b3c4d-write-a-short-readme-section to
+    // owner/forerunner-sandbox: GitHub refused it: "…' spent the row on the head.
+    const branch = "fr/1a2b3c4d-write-a-short-readme-section";
+    const repoName = "owner/forerunner-sandbox";
+    const refused = await pushError(
+      [
+        "remote: Permission to owner/forerunner-sandbox.git denied to some-bot.",
+        "fatal: unable to access 'https://github.com/owner/forerunner-sandbox.git/': The requested URL returned error: 403",
+        "",
+      ].join("\n"),
+    );
+    const words = pushFailedWords(repoName, branch, refused);
+    expect(words).toBe(
+      'GitHub refused the push: "Permission to owner/forerunner-sandbox.git denied to some-bot". Check the GitHub token in Settings and owner/forerunner-sandbox on GitHub, then press Try again.',
+    );
+    expect(words.slice(0, 100)).toContain(
+      '"Permission to owner/forerunner-sandbox.git denied to some-bot"',
+    );
+    const unreachable = await pushError(
+      "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\n",
+    );
+    const local = await pushError(
+      ["remote: Writing to this repository is disabled.", ...TAIL].join("\n"),
+    );
+    const silent = await pushError(
+      "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403\n",
+    );
+    for (const e of [refused, unreachable, local, silent]) {
+      const w = pushFailedWords(repoName, branch, e);
+      expect(w).not.toContain("1a2b3c4d");
+      expect(w).not.toContain("fr/");
+    }
+    expect(pushFailedWords(repoName, branch, silent)).toBe(
+      "GitHub refused the push to owner/forerunner-sandbox (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.",
+    );
+  });
+
+  it("only a real network failure says GitHub could not be reached", async () => {
+    const e = await pushError(
+      "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\n",
+    );
+    expect(pushFailure(e)).toEqual({ kind: "unreachable" });
+    expect(pushFailedWords("o/r", "fr/write-the-page", e)).toBe(
+      "Forerunner could not push the work to o/r: GitHub could not be reached. Try again later.",
+    );
   });
 });

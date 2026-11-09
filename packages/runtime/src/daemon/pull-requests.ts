@@ -9,7 +9,7 @@ import {
   parseRepoRef,
   STATUS_BRANCH,
 } from "../loop/docs.ts";
-import { type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
+import { buildsOnSentence, type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
 import {
   MERGE_MODE_WORDS,
   type MergeMode,
@@ -132,6 +132,22 @@ export interface PullRequestPreviewPort {
     projectId: string,
   ): { number: number; folder: string; combined: boolean; base: string } | null;
   dropPreview(projectId: string, number?: number): Promise<boolean>;
+}
+
+/**
+ * Why "Open this version" could not put a pull request's version on this computer (design §5.8:
+ * what went wrong and what to do). P7-24 (polish-words): a file of the old version open in another
+ * program (Windows' EBUSY or EPERM) is the one cause the person can fix here, so it is said.
+ */
+export function previewFailedSentence(number: number, e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  const busy =
+    code === "EBUSY" ||
+    code === "EPERM" ||
+    /\b(EBUSY|EPERM)\b|resource busy|being used by another process/i.test(errorMessage(e));
+  return busy
+    ? `#${number}'s version could not be put on this computer: a file of it is open in another program. Close it and try again.`
+    : `#${number}'s version could not be put on this computer. Try again, or open it on GitHub.`;
 }
 
 /** What a preview's row says with its folder (design §5: what it is, and that nothing is kept). */
@@ -441,7 +457,7 @@ export class ProjectPullRequests {
           ...row.merge,
           state: "blocked",
           canMerge: false,
-          sentence: `${prName(row.number)} builds on ${prName(stuck.number)}, which Forerunner cannot merge: merge ${prName(stuck.number)} on GitHub first.`,
+          sentence: buildsOnSentence(row.number, stuck.number),
         };
     }
     for (const [url] of this.docs) if (!prs.some((p) => p.htmlUrl === url)) this.docs.delete(url);
@@ -531,7 +547,7 @@ export class ProjectPullRequests {
       return refused(
         e instanceof ForerunnerError && e.code === "not_found"
           ? e.message
-          : `${prName(number)}'s version could not be put on this computer. Try again, or open it on GitHub.`,
+          : previewFailedSentence(number, e),
       );
     }
   }

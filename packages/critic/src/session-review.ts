@@ -153,6 +153,8 @@ export async function loadSessionReviewData(
 }
 
 const chfText = (micro: number): string => `CHF ${(micro / 1_000_000).toFixed(2)}`;
+/** "1 finding", "2 findings" (P7-34: never "finding(s)"). */
+const countWords = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 /**
  * Claims a summary makes that the store can check. Deliberately narrow: counts introduced by
@@ -611,9 +613,10 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
   const spentChf =
     checks.metrics.actualChfMicro ?? Math.round(checks.metrics.actualUsdMicro * rate);
   const summary =
-    `Session review: ${checks.metrics.doneTasks} done task(s) (${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned), ` +
+    // P7-34 (polish-words): plurals as the number says, never "(s)".
+    `Session review: ${countWords(checks.metrics.doneTasks, "done task")} (${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned), ` +
     `cost ${chfText(spentChf)} against an estimate of ${chfText(Math.round(checks.metrics.estimateUsdMicro * rate))}; ` +
-    `${checks.findings.length} finding(s).`;
+    `${countWords(checks.findings.length, "finding")}.`;
   const out: ReviewOutput = {
     grade: ruled.grade,
     confidence: ruled.confidence,

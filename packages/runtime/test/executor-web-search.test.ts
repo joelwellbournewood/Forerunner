@@ -316,7 +316,7 @@ describe("the executor offers web search on the API key ('web-search')", () => {
     const notes = w.steps.filter((s) => s.startsWith("Web search results were larger"));
     expect(notes).toHaveLength(1);
     expect(notes[0]).toMatch(
-      /^Web search results were larger than planned: this step cost CHF \d+\.\d\d, more than the CHF \d+\.\d\d planned\. The next step is checked against what is left\.$/,
+      /^Web search results were larger than planned: this call cost CHF \d+\.\d\d, more than the CHF \d+\.\d\d planned, and the next one must fit what is left\.$/,
     );
   });
 });

@@ -58,6 +58,7 @@ import {
 } from "./model.ts";
 import { patternsFor } from "./patterns.ts";
 import {
+  ASKS_PERSON_RULE,
   applyVerdictRules,
   type EscalationGrounds,
   maxSeverity,
@@ -895,6 +896,12 @@ export class CriticService {
         requiredAction: "Address the critic's summary and resubmit",
       });
     }
+    // C-19 (polish-words): a code rule that changed the model's verdict says why first; the
+    // model's own words follow without the verdict they no longer carry. Before: "Accepted: 1
+    // changed file matches the brief." under a review that sent the work back.
+    // A sign-off's card says itself that it waits for the person, and quotes these words.
+    if (submitted && ruled.verdict !== verdict && ruled.verdict !== "human")
+      summary = ruledSummary(ruled.verdict, ruled.adjustments.at(-1)?.rule, findings, summary);
     return {
       grade: ruled.grade,
       confidence: ruled.confidence,
@@ -1235,6 +1242,40 @@ function failedRun(runId: string, message: string): RunResult {
  * finding (the retry brief reads "<finding> -> <action>").
  */
 export const NO_ACTION_GIVEN = "Resolve it and show the evidence";
+
+/**
+ * The review's shown summary when a code rule changed the model's verdict (C-19, polish-words):
+ * why first, in words ('Sent back: the check "test" failed.'), then the model's own words without
+ * a verdict word they no longer carry ("Accepted: 1 changed file matches the brief." read
+ * under a review that sent the work back).
+ */
+export function ruledSummary(
+  verdict: Verdict,
+  rule: string | undefined,
+  findings: readonly { severity: string; description: string }[],
+  modelSummary: string,
+): string {
+  const blocking = findings.find((f) => f.severity === "critical" || f.severity === "high");
+  const check = blocking ? /^Check failed: (.+)$/.exec(blocking.description)?.[1] : undefined;
+  const lead =
+    verdict === "revise"
+      ? check
+        ? `Sent back: the check "${check.trim()}" failed.`
+        : blocking
+          ? `Sent back: ${blocking.description.replace(/[.\s]+$/, "")}.`
+          : "Sent back: the work fell short of the brief."
+      : verdict === "human"
+        ? rule === ASKS_PERSON_RULE
+          ? "Waits for you: the report asks you something."
+          : "Waits for your sign-off."
+        : verdict === "escalate"
+          ? "Waits for you: the critic was not sure."
+          : "Accepted.";
+  const said = modelSummary
+    .replace(/^\s*(?:accepted|accept|approved|sent back(?: for changes)?|revise)\s*[:.-]\s*/i, "")
+    .trim();
+  return said ? `${lead} ${said.charAt(0).toUpperCase()}${said.slice(1)}` : lead;
+}
 
 /**
  * Whether the model's `doc_drift` says there is none. Live (2026-11-02, B3), "none

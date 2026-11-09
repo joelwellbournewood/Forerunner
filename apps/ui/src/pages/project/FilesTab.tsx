@@ -37,9 +37,11 @@ export function repositoryLine(
   const where = "Work waiting in a pull request is on the Overview.";
   // leftovers7-merge2 (R-copystuck): a copy that stopped following what is merged says so and
   // why (the daemon's line), never "As merged" with a time that no longer moves.
+  // W14-5 (polish-words): two sentences, what happened and what to do; the pull requests' line
+  // is left out here (it made three, and has nothing to do with the stuck copy).
   if (stopped) {
-    const since = updatedAt ? `, not updated since ${copyUpdatedWords(updatedAt, now)}` : "";
-    return `This computer's copy of ${fullName}${since}. ${stopped.line} ${where}`;
+    const since = updatedAt ? ` since ${copyUpdatedWords(updatedAt, now)}` : "";
+    return `This computer's copy of ${fullName} has not followed merges${since}. ${stopped.line}`;
   }
   if (!updatedAt) return `This computer's copy of ${fullName}. ${where}`;
   return `This computer's copy of ${fullName}. As merged on GitHub, updated ${copyUpdatedWords(updatedAt, now)}. ${where}`;

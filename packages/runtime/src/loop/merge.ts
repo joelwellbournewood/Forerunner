@@ -280,6 +280,16 @@ function prName(n: number): string {
 }
 
 /**
+ * A pull request that waits because one it builds on was not merged, one string for the Tasks
+ * row and the Overview (P7-11, polish-words: they read "which was not merged: merge #12 first"
+ * and "which Forerunner cannot merge: merge #12 on GitHub first" of one chain). The one it waits
+ * on says itself what to do.
+ */
+export function buildsOnSentence(pr: number, on: number): string {
+  return `${prName(pr)} builds on ${prName(on)}, which is not merged yet: merge ${prName(on)} first.`;
+}
+
+/**
  * The rules Forerunner cannot meet, as the record's sentence (ADR 0111). Nothing here is ever
  * gone around, on an unattended merge or on the person's click.
  */
@@ -1043,7 +1053,11 @@ export class ReviewedPrMerge implements MergePort {
         project_id: record.project_id ?? task.project_id,
         task_id: task.id,
         type: "info",
-        body: mergedUpdateWords(record.pr_number, task.title),
+        body: mergedUpdateWords(
+          record.pr_number,
+          task.title,
+          (await this.deps.store.project.get(task.project_id).catch(() => undefined))?.name,
+        ),
         requires_ack: false,
         author_agent: record.agent_id,
       });
@@ -1190,7 +1204,7 @@ export class ReviewedPrMerge implements MergePort {
           await store.mergeRecord.move(row.id, "left_to_you", {
             approval: "none",
             approved_by: null,
-            sentence: `${prName(row.pr_number)} builds on ${prName(current.pr_number)}, which was not merged: merge ${prName(current.pr_number)} first.`,
+            sentence: buildsOnSentence(row.pr_number, current.pr_number),
             last_outcome: "not_allowed",
           });
         }
@@ -1926,8 +1940,17 @@ function hostOf(url: string): string | null {
  * The Update for a merge the app made by itself (R-mergeretry): one line, the pull request and
  * the task's title (design section 5). Polish owns the wording.
  */
-export function mergedUpdateWords(prNumber: number, title: string): string {
-  return `Merged ${prName(prNumber)}: "${title.replace(/\s+/g, " ").trim()}".`;
+export function mergedUpdateWords(
+  prNumber: number,
+  title: string,
+  projectName?: string | null,
+): string {
+  const quoted = `"${title.replace(/\s+/g, " ").trim()}"`;
+  // W14-2 (polish-words): named by its project, as the session Updates are ("Two guides: …").
+  const name = projectName?.replace(/\s+/g, " ").trim();
+  return name
+    ? `${name}: merged ${prName(prNumber)}, ${quoted}.`
+    : `Merged ${prName(prNumber)}: ${quoted}.`;
 }
 
 export const MERGE_LEFT_OPEN_KEY = "merge:left_open";

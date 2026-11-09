@@ -26,14 +26,15 @@ import type { MoneyLike } from "../../lib/money.ts";
 import { verdictLabel } from "../../lib/plain-words.ts";
 import {
   ACTIONS,
+  actionExplain,
   actionsFor,
-  cancelWorkLine,
   displayOf,
   elapsed,
   isFinished,
   reviewLevelName,
   reviewLevelValue,
   STATUS_FILTERS,
+  specialistName,
   stuckLine,
   type TaskActionKey,
   WHO_PERSON,
@@ -86,7 +87,10 @@ function TaskCap({ task, specialist }: { task: TaskView; specialist: string | nu
         data-testid="task-cap"
         title="The task has no budget: each run stops at its specialist's limit. Set a budget to change it."
       >
-        each run stops at <Money value={task.cap} /> ({specialist ?? "coder"} limit)
+        each run stops at <Money value={task.cap} />
+        {/* later #74: the specialist as the log names it ("the writer's limit"); Agent's
+            choice names none (before: "(coder limit)" beside "Agent's choice"). */}
+        {specialistName(specialist) ? ` (the ${specialistName(specialist)}'s limit)` : ""}
       </div>
     );
   return null;
@@ -296,7 +300,15 @@ export function TasksTab({
   const start = (task: TaskView, key: TaskActionKey) => {
     if (key === "edit") return setOpen(task.id);
     if (key === "dependencies") return setEditingDeps(task);
-    if (key === "answer") return navigate("/inbox");
+    // "Opens its card in the Inbox": that card, as Home's Answer does (later #55's sibling).
+    if (key === "answer") {
+      const card = displayOf(task).blocker;
+      return navigate(
+        card?.kind === "card" && card.requestId
+          ? `/inbox#card-${encodeURIComponent(card.requestId)}`
+          : "/inbox",
+      );
+    }
     if (key === "take_out") return setTakingOut(task);
     setPending({ task, action: key });
   };
@@ -502,7 +514,7 @@ export function TasksTab({
                               key={a}
                               variant={i === 0 && a !== "cancel" ? "secondary" : "ghost"}
                               className="px-2 py-0.5 text-xs"
-                              title={ACTIONS[a].explain}
+                              title={actionExplain(a, t)}
                               onClick={() => start(t, a)}
                               data-testid={`action-${a}`}
                             >
@@ -636,7 +648,6 @@ export function ActionDialog({
   const def = ACTIONS[action];
   const offered = actionsFor(displayOf(task).key, task).includes(action);
   const stuck = action === "cancel" ? stuckLine(waitingOn(task, tasks).map((t) => t.title)) : null;
-  const work = action === "cancel" ? cancelWorkLine(task) : null;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
@@ -655,8 +666,7 @@ export function ActionDialog({
     <Dialog open onClose={onClose} title={`${def.label} "${task.title}"?`} testId="action-dialog">
       <form onSubmit={submit} className="space-y-3">
         <p className="text-sm" data-testid="action-explain">
-          {def.explain}
-          {work ? ` ${work}` : ""}
+          {actionExplain(action, task)}
           {stuck ? ` ${stuck}` : ""}
         </p>
         {offered ? (

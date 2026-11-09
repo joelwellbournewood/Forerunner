@@ -235,9 +235,13 @@ async function main() {
     lines.filter((l) => /^Told the/.test(l)).join(" | "),
   );
   check(
-    "the tiny task's log line says save only",
-    lines.some((l) => /too little to wrap up \(two steps may cost CHF [\d.]+\): save only/.test(l)),
-    lines.filter((l) => /save only/.test(l)).join(" | "),
+    "the tiny task's log line says it pauses and keeps its work",
+    lines.some((l) =>
+      /too little to wrap up \(two steps may cost CHF [\d.]+\): it pauses at its budget and keeps its work/.test(
+        l,
+      ),
+    ),
+    lines.filter((l) => /too little to wrap up/.test(l)).join(" | "),
   );
   if (below) {
     const B = result.tasks[below.title];
@@ -245,7 +249,7 @@ async function main() {
       "the task below its first step's cost made no call and says so",
       B.specialistCalls === 0 &&
         lines.some((l) =>
-          /less than its first step may cost \(CHF [\d.]+\): save only, it pauses at its budget before that step\.$/.test(
+          /less than its first step may cost .*: it pauses at its budget before that step\.$/.test(
             l,
           ),
         ),

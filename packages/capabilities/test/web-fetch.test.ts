@@ -440,7 +440,7 @@ describe("web_fetch says what went wrong with a page (ADR 0107)", () => {
       message: `nowhere.example.test was not found (no such host, or no network). ${PROXY_SENTENCE}`,
     });
     expect(PROXY_SENTENCE).toBe(
-      "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works.",
+      "If this computer reaches the internet only through its proxy, the page reader cannot read pages here yet; web search still works.",
     );
     // An answer from the site itself is not the proxy's doing.
     const missing = await refusal(

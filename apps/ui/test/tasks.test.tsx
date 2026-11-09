@@ -159,11 +159,11 @@ describe("Tasks tab (design §3.5)", () => {
     expect(within(waiting).getByTestId("task-status")).toHaveTextContent(
       'Waiting for "Decide the versioning scheme"',
     );
-    // No specialist chosen yet: the agent's choice, and the cap is the coder's (the planner's).
+    // No specialist chosen yet: the agent's choice, and the cap is the coder's (the planner's);
+    // the line names no specialist the row does not show (polish-words, later #74).
     expect(waiting).toHaveTextContent("Agent's choice");
-    expect(within(waiting).getByTestId("task-cap")).toHaveTextContent(
-      "each run stops at CHF 2.40 (coder limit)",
-    );
+    expect(within(waiting).getByTestId("task-cap")).toHaveTextContent("each run stops at CHF 2.40");
+    expect(within(waiting).getByTestId("task-cap")).not.toHaveTextContent(/coder/);
     // A task for the person: "You", and no run limit (no specialist runs it).
     const mine = await rowOf("task_me");
     expect(mine).toHaveTextContent("You");
@@ -651,7 +651,7 @@ describe("Tasks tab (design §3.5)", () => {
     expect(within(form).getByTestId("edit-docker-note")).toBeInTheDocument();
     await user.selectOptions(
       level,
-      "Light review: the critic reads the work, nothing runs in isolation",
+      "Light review: the critic reads the work and tries it here; nothing runs in Docker",
     );
     await user.click(within(form).getByTestId("save-task"));
     await waitFor(() => expect(postedCalls(harness, "/tasks/task_3")).toHaveLength(1));
@@ -716,7 +716,7 @@ describe("Tasks tab (design §3.5)", () => {
     level = within(form).getByTestId("edit-risk-tier") as HTMLSelectElement;
     expect(level.value).toBe("1");
     expect(level.selectedOptions[0]?.textContent).toBe(
-      "Light review: the critic reads the work, nothing runs in isolation",
+      "Light review: the critic reads the work and tries it here; nothing runs in Docker",
     );
     expect(within(form).queryByTestId("edit-full-review-note")).toBeNull();
     const title = within(form).getByTestId("edit-title");
@@ -1091,7 +1091,7 @@ describe("Tasks tab (design §3.5)", () => {
     expect(withBudget).not.toHaveTextContent("CHF 3.20");
     // No budget: each run stops at the researcher's limit per run (USD 2.50, CHF 2.00).
     expect(within(await rowOf("task_3")).getByTestId("task-cap")).toHaveTextContent(
-      "each run stops at CHF 2.00 (researcher limit)",
+      "each run stops at CHF 2.00 (the researcher's limit)",
     );
     await user.click(screen.getByTestId("new-task"));
     const dialog = await screen.findByTestId("new-task-dialog");
@@ -1276,7 +1276,9 @@ describe("Tasks tab (design §3.5)", () => {
     const level = within(dialog).getByTestId("task-risk-tier") as HTMLSelectElement;
     const labels = [...level.options].map((o) => o.textContent ?? "");
     expect(labels.join(" / ")).not.toMatch(/checks only|automatic checks|tier/i);
-    expect(labels).toContain("Light review: the critic reads the work, nothing runs in isolation");
+    expect(labels).toContain(
+      "Light review: the critic reads the work and tries it here; nothing runs in Docker",
+    );
     expect([...level.options].map((o) => o.value)).not.toContain("0");
   });
 
@@ -1514,7 +1516,7 @@ describe("Take this work out (merged-actions, the owner's decision of 2026-11-02
     await user.click(within(dialog).getByTestId("confirm-take-out"));
     await waitFor(() => expect(postedCalls(harness, "/tasks/task_1/take-out")).toHaveLength(1));
     expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
-      'Opened #41 to take "Index the documentation pages" out. It waits for you to merge it. "Add the search box to the header" built on it: check it still works once #41 is merged.',
+      'Opened #41 to take "Index the documentation pages" out: merge it to remove the work, or close it to keep the work. "Add the search box to the header" built on it: check it still works once #41 is merged.',
     );
     expect(screen.queryByTestId("take-out-dialog")).toBeNull();
     await waitFor(async () =>

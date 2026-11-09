@@ -135,8 +135,8 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   keep your own files in its Local only folder, not beside the merged ones. If you changed a
   file in the copy that a merge changes too, or left a file where a merge brings one, Forerunner
   never overwrites it: the copy stops following and the line says so and why ("This computer's
-  copy of o/r, not updated since 14:05. You changed README.md in this copy, and a merge changed it
-  too: move your change out of the way and the copy follows again."). Move your change away and
+  copy of o/r has not followed merges since 14:05. You changed README.md in this copy, and a merge
+  changed it too: move your change out of the way and the copy follows again."). Move your change away and
   the next merge brings the copy up to date again.
 - **Local only** (on Files, for a repository project): a folder inside this computer's copy,
   "Never uploaded. Agents can read and change it." Put files there that the work may use but
@@ -161,7 +161,9 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   **Needs your decision: tried 4 times** (it failed after its tries; its card is in the Inbox,
   and the row offers **Answer**, **Try again** and **Cancel**), **Paused at its budget** (or
   at the limit that stopped it: **Paused at this month's cap**, **Paused at the project's
-  budget**) and **Needs your decision: it could not run** (its card in the Inbox says
+  budget**), **Needs your sign-off** (a deploy or a migration the critic accepted waits for
+  your OK: its card offers **Accept the work**, **Send it back** and **Cancel task**; the row
+  offers **Answer** and **Cancel**) and **Needs your decision: it could not run** (its card in the Inbox says
   why; the row offers **Answer** and **Cancel**, and **Edit** is in the task), **Needs your
   decision** on a task whose review could not finish or found something still open (its card
   offers **Try again**, **Mark done anyway** and **Cancel task**; the row offers **Answer** and
@@ -336,7 +338,7 @@ never repeats work that is already in the default branch:
 - **#4 closed without merging, or its task redone or cancelled**: #8 is rebuilt without #4. It was
   reviewed with #4's changes, so it no longer merges by itself: one Inbox card says so ("#8 was
   rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you:
-  look at it before you merge it, or send it back."). Look at it on GitHub, then merge it
+  look at it, then merge it or redo the task."). Look at it on GitHub, then merge it
   yourself, or press **Redo** on its task.
 - If #8 cannot be rebuilt without #4 (it changes #4's own files), its branch stays as it was and
   one card says so ("#8 could not be rebuilt without #4, which was closed: both change
@@ -357,9 +359,10 @@ never repeats work that is already in the default branch:
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a
 task's open pull request, Forerunner says so once: the Overview row shows "#8 conflicts with main
-in index.html: resolve the conflict on GitHub, or redo the task." instead of Merge, and one Inbox
-card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from main) and
-**Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
+in index.html: resolve the conflict on GitHub, or redo the task." instead of Merge, the task's row
+on the Tasks tab says "Accepted · conflicts with main" (the same sentence in its drawer), and one
+Inbox card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from
+main) and **Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
 the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
 If the conflict goes away without a change to the pull request (the other change is taken out of
 main again), the row and its card say again what they said before (a rebuild's warning, for
@@ -656,6 +659,8 @@ The cards you meet most:
   both use what it learned. **Approve and start** writes the tasks and
   starts working on them now (or, when the work waits for your answers first, says so and puts
   their card in your Inbox: "the work starts once you answer its questions in the Inbox").
+  While it writes them the card says so ("Writing the plan…", and on a repository "Writing the
+  plan and its docs pull request…", which takes a few seconds).
   **Change the plan** opens a box: say what to change and the agent drafts a new plan
   for you to approve; it is told the plan you read, so "drop the first task" works. To start
   without the task for you, say so ("drop the task that asks me for content", "I have nothing
@@ -829,7 +834,8 @@ ends with a small table, **What each can do here**:
   and the plan card has nothing to say. If your account's administrator has switched web search
   off for your API key, the table says "No: switched off for this API key" under search, and
   research runs on the subscription when you have one; with the API key alone the plan card says
-  "it can read web pages here but not search". The science evaluator reads pages and has no
+  "it reads web pages here but cannot search, so it reads known addresses". The science evaluator
+  reads pages and has no
   search, on either credential.
 - **A task that needs your answers** (its words say it needs your decision) runs where it can
   ask you while it works: the API key ("Runs on your API key: only it can ask you questions
@@ -848,7 +854,8 @@ can ask you questions while it works here." before you press Create.
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
-run stops at CHF 2.40 (coder limit)"); a done or cancelled task shows no limit. The estimate a
+run stops at CHF 2.40 (the coder's limit)"; a task you left to the agent's choice names no
+specialist there); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
 forecast. It starts from what that kind of work cost on the real model (a page or a coder
 task a few centimes, a test task a little more, a research task that reads web pages about
@@ -963,8 +970,9 @@ it starts), and close to that point it is offered fewer searches, then none. On 
 subscription it searches with Claude Code's search, and opens pages with Forerunner's reader as
 on the key (Claude Code's own page reader is switched off). Search only finds pages: a claim in
 the research counts as sourced only when its page was opened and read, so the researcher opens
-the pages it uses, and the review is told which search results it saw but never opened (a claim
-that cites only one of those is not sourced). The project's setting applies to the search too:
+the pages it uses, and on the API key the review is told which search results it saw but never
+opened (a claim that cites only one of those is not sourced; on the subscription Claude Code
+searches by itself, and that list is not kept). The project's setting applies to the search too:
 "Only these websites" limits it to those sites, and the never list keeps those out. Search
 results and pages are information for the researcher, never instructions, on both credentials:
 a result whose title reads like instructions is named in the session's log and told to the

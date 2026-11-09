@@ -321,9 +321,10 @@ export const TaskDisplay = z.object({
        * done anyway, Cancel task); `questions`, a card that asks (answer, or go ahead without);
        * `budget`, a task stopped at its own budget (Raise the budget, Cancel task);
        * `cannot_run`, a task a run left waiting without asking anything (Try again, Cancel
-       * task). Absent from an older service.
+       * task); `signoff`, accepted work waiting on the person's sign-off (Accept the work, Send
+       * it back, Cancel task; C-21). Absent from an older service.
        */
-      cardKind: z.enum(["retry", "questions", "budget", "cannot_run"]).optional(),
+      cardKind: z.enum(["retry", "signoff", "questions", "budget", "cannot_run"]).optional(),
       /**
        * False on a questions card that offers no Go ahead without: the person went ahead without
        * answering on this task before (live L-3), so the Tasks tab offers Answer and Cancel.
@@ -760,6 +761,8 @@ export const HumanRequestView = z.object({
         tone: z.enum(["primary", "secondary", "danger"]),
         confirm: z.string().nullable(),
         input: z.enum(["note", "text"]).nullable(),
+        /** The line the card shows while this answer is sent (L-20); absent: none. */
+        working: z.string().nullable().optional(),
       }),
     )
     .optional(),

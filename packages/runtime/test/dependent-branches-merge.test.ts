@@ -537,7 +537,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
       m.fileOf("Add page"),
     );
     expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
-    const sentence = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+    const sentence = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
     expect(await m.record(b.id)).toMatchObject({ state: "left_to_you", sentence });
     // One card, titled by the task and the pull request it was rebuilt without.
     expect(await m.cards(b.id)).toEqual([
@@ -696,7 +696,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
-      sentence: `#${prB} was rebuilt without #${prA}, which is being redone. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`,
+      sentence: `#${prB} was rebuilt without #${prA}, whose task was reopened. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`,
     });
     // A later poll changes nothing more.
     const head = (await m.pr(b.id)).head.sha;
@@ -719,7 +719,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     await m.poll();
     expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
     expect((await m.record(b.id)).sentence).toBe(
-      `#${prB} was rebuilt without #${prA}, whose task was cancelled. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`,
+      `#${prB} was rebuilt without #${prA}, whose task was cancelled. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`,
     );
   });
 
@@ -768,7 +768,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
-      sentence: `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`,
+      sentence: `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`,
     });
     await m.merge.retryWaiting();
     expect((await m.pr(b.id)).merged).toBe(false);
@@ -826,7 +826,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
       ),
     ]);
   const withoutA = (prB: number, prA: number) =>
-    `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+    `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
 
   it("a dependency closed while the person's Merge brings main into the dependent: the rebuild waits for the merge step's git, and the head that still holds the closed work is never merged (R-lock)", async () => {
     const m = await chainWorld({ level: 2 });

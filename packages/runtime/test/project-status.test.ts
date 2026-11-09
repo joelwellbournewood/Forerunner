@@ -120,15 +120,16 @@ describe("project status sentence (design §2)", () => {
         change_card: null,
         author_agent: agent,
       });
-    await ask(a);
+    const first = await ask(a);
     expect((await card()).statusLine?.text).toBe(
       'Waiting for you: "Decide where the page is published"',
     );
     await ask(null);
+    // Answer opens the oldest card, as Home's Needs you rows do (polish-words, later #55).
     expect((await card()).statusLine).toMatchObject({
       kind: "waiting",
       text: "Waiting for you: 2 questions",
-      action: { label: "Answer", to: "/inbox" },
+      action: { label: "Answer", to: `/inbox#card-${first.id}` },
     });
   });
 
@@ -388,18 +389,54 @@ describe("project status sentence (design §2)", () => {
       expect(l.text.length).toBeLessThanOrEqual(80);
   });
 
-  it("6. every task done: 'Done: all 3 tasks. Your files: <path>' (cancelled ones not counted)", async () => {
+  it("6. every task done: 'Done: all 3 tasks.' with Open your files; the path stays on the card (cancelled ones not counted)", async () => {
     await task("Create index.html", "done");
     await task("Style the page", "done");
     await task("Write the README", "done");
     await task("An idea dropped", "cancelled");
     const c = await card();
+    // polish-words (later #53, #54): the path, with the project's id in it, is not in the
+    // sentence; the Overview's Your files shows it (`folder`).
     expect(c.statusLine).toMatchObject({
       kind: "done",
-      text: "Done: all 3 tasks. Your files: /work/quote",
+      text: "Done: all 3 tasks.",
+      action: { kind: "link", label: "Open your files" },
     });
     expect(c.progress).toEqual({ done: 3, total: 3 });
     expect(c.folder).toBe("/work/quote");
+  });
+
+  it("names up to three kinds of cards, then 'and N more' (design §5.5; the review of polish-words)", () => {
+    const kinds = [
+      { key: "critic:signoff", reason: "verdict" },
+      { key: "task:budget_stop", source: "task" },
+      { key: "person:questions" },
+      { key: "findings:blocked" },
+      { key: "findings:blocked" },
+    ];
+    const line = (n: number) =>
+      projectStatusLine({
+        projectId: "p1",
+        tasks: kinds.slice(0, n).map((_, i) => ({
+          id: `t${i}`,
+          title: `Task ${i}`,
+          status: "needs_human",
+          depends_on: [],
+        })),
+        displays: new Map(),
+        cards: kinds.slice(0, n).map((c, i) => ({
+          id: `r${i}`,
+          task_id: `t${i}`,
+          change_card: { task_id: `t${i}`, ...c } as never,
+        })),
+        plan: null,
+        working: null,
+        folder: null,
+      }).text;
+    // Before: "Waiting for you: 1 sign-off, 1 paused task and 1 more" (the bench's three kinds).
+    expect(line(3)).toBe("Waiting for you: 1 sign-off, 1 paused task and 1 question");
+    expect(line(5)).toBe("Waiting for you: 1 sign-off, 1 paused task, 1 question and 2 more");
+    expect(line(5).length).toBeLessThanOrEqual(80);
   });
 
   it("writes no raw states, ids or zero counts, within 80 characters but for the path", () => {

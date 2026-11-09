@@ -1,7 +1,8 @@
 import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource } from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
-import { ForerunnerError } from "@forerunner/platform";
+import { NO_ACTION_GIVEN, saidByName } from "@forerunner/critic";
+import { ForerunnerError, isAbsolute } from "@forerunner/platform";
 import type {
   AgentRow,
   ChangeLogRow,
@@ -424,11 +425,28 @@ export function runView(
   };
 }
 
+/**
+ * How many of the tasks a session left waiting for the person (`handoff.blocked`) still wait
+ * now (L-21): a task the person answered, retried or merged since does not ("Ended: 1 task
+ * needs you" stayed on the page after the retry and the merge).
+ */
+export async function stillBlocked(store: StateStore, handoff: unknown): Promise<number> {
+  const ids = blockedTaskIds(handoff);
+  let n = 0;
+  for (const id of new Set(ids)) {
+    const t = await store.task.get(id);
+    if (t && (t.status === "needs_human" || t.status === "failed")) n += 1;
+  }
+  return n;
+}
+
 export function sessionView(
   s: SessionRow,
   agentName: string,
   chfPerUsd: number,
   current: SessionView["currentTask"] = null,
+  /** The tasks it left waiting that still wait now (`stillBlocked`); absent: as it left them. */
+  blockedNow?: number,
 ): SessionView {
   return {
     id: s.id,
@@ -453,7 +471,7 @@ export function sessionView(
     statusText: endedStatusText(
       s.status,
       stopReasonOfHandoff(s.handoff),
-      blockedOfHandoff(s.handoff),
+      blockedNow ?? blockedOfHandoff(s.handoff),
     ),
   };
 }
@@ -707,9 +725,16 @@ export async function requestContexts(
       "projectName" | "taskTitle"
     >
   >();
+  // L-20: which projects work on a repository (the plan card's line while Approve and start
+  // writes its docs pull request).
+  const onRepository = new Map<string, boolean>();
   for (const r of rows) {
-    if (r.project_id && !projects.has(r.project_id))
-      projects.set(r.project_id, (await store.project.get(r.project_id))?.name ?? r.project_id);
+    if (r.project_id && !projects.has(r.project_id)) {
+      const p = await store.project.get(r.project_id);
+      projects.set(r.project_id, p?.name ?? r.project_id);
+      const first = p?.repos[0]?.trim() ?? "";
+      onRepository.set(r.project_id, !!first && !isAbsolute(first));
+    }
     let tasks: TaskRow[] = [];
     if (r.task_id) {
       const task = await store.task.get(r.task_id);
@@ -739,6 +764,7 @@ export async function requestContexts(
     out.set(r.id, {
       projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
       taskTitle: null,
+      ...(r.project_id && onRepository.get(r.project_id) ? { projectRepository: true } : {}),
       ...(r.status === "open"
         ? { credentialGoesOn: await credentialGoesOnFor(store, r).catch(() => null) }
         : {}),
@@ -838,9 +864,18 @@ export async function costView(
       b.accepted = facts.acceptedRunsByTask.get(b.key) ?? 0;
     } else if (b.key === "(none)") b.label = "Planning and chat";
   }
+  // later #91: a model's accepted runs are compared with its work runs (before, the critic's
+  // reviews and the planning call counted too: "Accepted 3 / 16"); a model only the critic or
+  // the planner used shows its runs and no accepted figure.
   for (const b of byModel) {
-    b.runs = facts.runsByModel.get(b.key) ?? b.runs;
-    b.accepted = facts.acceptedRunsByModel.get(b.key) ?? null;
+    const work = facts.runsByModel.get(b.key);
+    if (work) {
+      b.runs = work;
+      b.accepted = facts.acceptedRunsByModel.get(b.key) ?? 0;
+    } else {
+      b.runs = facts.allRunsByModel.get(b.key) ?? b.runs;
+      b.accepted = null;
+    }
   }
   for (const b of byProject) {
     const name = b.key === "(none)" ? null : (await store.project.get(b.key))?.name;
@@ -892,7 +927,9 @@ async function costFacts(
   acceptedRunsByTask: Map<string, number>;
   acceptedRunsByModel: Map<string, number>;
   runsByTask: Map<string, number>;
+  /** Work runs per model: not the critic's reviews, not the planning call. */
   runsByModel: Map<string, number>;
+  allRunsByModel: Map<string, number>;
   first: string | null;
   last: string | null;
 }> {
@@ -953,20 +990,25 @@ async function costFacts(
     }
     specialists.set(key, s);
   }
+  // The planning run and the critic's reviews are no work for the critic to accept.
+  const notWork = (key: string) =>
+    key === "critic" || key === "(none)" || key === INTAKE_RUN_SPECIALIST;
   const runsByTask = new Map<string, number>();
   const runsByModel = new Map<string, number>();
+  const allRunsByModel = new Map<string, number>();
   for (const r of runs.values()) {
     // A task's runs are its work runs; the critic's reviews of it are not attempts.
     if (r.task_id && r.specialist !== "critic")
       runsByTask.set(r.task_id, (runsByTask.get(r.task_id) ?? 0) + 1);
-    runsByModel.set(r.model, (runsByModel.get(r.model) ?? 0) + 1);
+    allRunsByModel.set(r.model, (allRunsByModel.get(r.model) ?? 0) + 1);
+    if (!notWork(r.specialist ?? "(none)"))
+      runsByModel.set(r.model, (runsByModel.get(r.model) ?? 0) + 1);
   }
-  // The planning run and the critic's reviews are no work for the critic to accept.
-  const notWork = (key: string) =>
-    key === "critic" || key === "(none)" || key === INTAKE_RUN_SPECIALIST;
   const bySpecialist = [...specialists.entries()]
     .map(([key, s]) => ({
       key,
+      // later #91: the specialist as the session log names it ("the writer", not the registry's
+      // "writer-marketing").
       label:
         key === "(none)"
           ? "Planning and chat"
@@ -974,7 +1016,7 @@ async function costFacts(
             ? "the critic"
             : key === INTAKE_RUN_SPECIALIST
               ? "planning"
-              : key,
+              : `the ${saidByName(key) ?? key}`,
       usdMicro: s.usdMicro,
       runs: s.runs.size || s.entries,
       accepted: notWork(key) ? null : s.accepted,
@@ -988,6 +1030,7 @@ async function costFacts(
     acceptedRunsByModel,
     runsByTask,
     runsByModel,
+    allRunsByModel,
     first: times[0] ?? null,
     last: times.at(-1) ?? null,
   };
@@ -1019,7 +1062,12 @@ export function findingView(f: FindingRow): FindingView {
     // phase E #80: the session check's findings read "1 of the 2 task(s)"). The row keeps the
     // critic's own text, which the fingerprints are computed from.
     description: plainPlurals(withoutIds(f.description)),
-    requiredAction: plainPlurals(withoutIds(f.required_action)),
+    // L-13e: a note the critic gave no fix for (an info finding, filled with NO_ACTION_GIVEN)
+    // shows no "To fix" line under it.
+    requiredAction:
+      f.severity === "info" && f.required_action.trim() === NO_ACTION_GIVEN
+        ? ""
+        : plainPlurals(withoutIds(f.required_action)),
     status: f.status,
     resolvedByRun: f.resolved_by_run,
     fingerprint: f.fingerprint,

@@ -1206,7 +1206,8 @@ export class LoopTaskExecutor implements TaskExecutor {
       else if (ev.type === "web_search_overshoot")
         ctx.onStep({
           kind: "note",
-          text: `Web search results were larger than planned: this step cost ${this.chfText(ev.costUsdMicro)}, more than the ${this.chfText(ev.estimateUsdMicro)} planned. The next step is checked against what is left.`,
+          // P7-23 (polish-words): "this call", not a "step"; one sentence.
+          text: `Web search results were larger than planned: this call cost ${this.chfText(ev.costUsdMicro)}, more than the ${this.chfText(ev.estimateUsdMicro)} planned, and the next one must fit what is left.`,
         });
       else if (ev.type === "wrap_up_sent")
         ctx.onStep({

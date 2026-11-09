@@ -14,6 +14,7 @@ import type {
   TaskRow,
   TaskStatus,
 } from "@forerunner/state";
+import { plainReason } from "../daemon/task-words.ts";
 import { answerNote, blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.ts";
 import { noteAboutTask, recordStart, resumeWork, type StartPort } from "./resume-work.ts";
 
@@ -366,7 +367,8 @@ export async function fileFailedTaskCard(
   ).find((r) => keyOf(r) === SIGNOFF_KEY);
   if (open) return { request: open, reused: true };
   const title = `"${task.title.replace(/\s+/g, " ").trim()}" failed`;
-  const said = input.reason.replace(/\s+/g, " ").trim().slice(0, 300) || null;
+  // L-18 (polish-words): plain (no markdown, no ids) and cut at a word, never mid-word.
+  const said = plainReason(input.reason, 300) || null;
   const request = await store.humanRequest.insert({
     human_id: input.humanId,
     project_id: task.project_id,

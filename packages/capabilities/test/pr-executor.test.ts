@@ -324,9 +324,12 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     });
     expect(res.outcome).toBe("failed");
     expect(res.summary).toBe(
-      `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`,
+      'GitHub refused the push: "Permission to o/sample denied to the token". Check the GitHub token in Settings and o/sample on GitHub, then press Try again.',
     );
     expect(res.summary).not.toContain("git push");
+    // C-59 (the review of polish-words): the task's branch, with its id part, is not named.
+    expect(res.branch).toMatch(/^fr\/[0-9a-f]{8}-/);
+    expect(res.summary).not.toContain(res.branch ?? "fr/");
     await w.store.close();
   });
 
@@ -386,7 +389,7 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
       signal: new AbortController().signal,
     };
     const words =
-      "o/empty is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.";
+      'o/empty is empty and GitHub refused Forerunner\'s first commit: "Permission to o/empty denied to the token". Check the token in Settings, then press Try again.';
     // The runner makes the message the task's reason (cut at 200) and the failed-task card's
     // text; the code is not a transient one, so the runner does not try again at once.
     await expect(exec.execute(ctx)).rejects.toMatchObject({
@@ -592,7 +595,8 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
       identity,
     }).execute(ctx);
     expect(noChange.outcome).toBe("failed");
-    expect(noChange.summary).toContain("no changes");
+    // L-18 (polish-words): what went wrong first, then the run's own report, plain.
+    expect(noChange.summary).toMatch(/^The run changed no file\./);
     const noRepo = await new PrTaskExecutor({
       store: w.store,
       clock: w.clock,
@@ -1010,7 +1014,7 @@ describe("Local only: the person's folder the run can use and that never leaves 
     ).execute(await ctx());
     expect(res.outcome).toBe("failed");
     expect(res.summary).toMatch(
-      /^Forerunner did not upload the branch fr\/[0-9a-f]{8}-write-the-page: it holds "Local only\/notes\.txt", files of Local only, which never leave this computer\. Press Try again to redo the work without them\.$/,
+      /^Forerunner did not upload the branch write-the-page: it holds "Local only\/notes\.txt", files of Local only, which never leave this computer\. Press Try again to redo the work without them\.$/,
     );
     expect(await onHost(res.branch)).toEqual([]);
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toEqual([]);
@@ -1801,7 +1805,13 @@ describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_00
     const card = (await s.w.store.humanRequest.list({ status: "open" } as never)).find(
       (r) => r.task_id === task.id,
     );
-    expect(card?.why).toContain("conflicts in README.md");
+    expect(card?.why).toContain("conflicts with main in README.md");
+    // W14-5 (polish-words): the card's title names the task, not its branch (it read "Rebase of
+    // fr/e34de89b-write-the-welcome-page-in-index.html onto main conflicts in …"); the steps
+    // still name the branch, where the person fetches it.
+    expect(card?.why).toMatch(/^"Write the guide" conflicts with main in README\.md;/);
+    expect(card?.why).not.toMatch(/fr\/|Rebase of/);
+    expect(card?.steps.join(" ")).toMatch(/fr\//);
     await s.w.store.close();
   });
 

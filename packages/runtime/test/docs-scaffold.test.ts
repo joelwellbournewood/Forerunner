@@ -467,7 +467,7 @@ describe("standard doc set at project creation (G.5)", () => {
       onEvent: (type, payload) => events.push({ type, payload }),
     });
     const words =
-      "o/locked is empty and GitHub refused Forerunner's first commit (the token may not write to it). Add a README on GitHub or check the token in Settings, then press Try again.";
+      'o/locked is empty and GitHub refused Forerunner\'s first commit: "Permission to o/locked denied to the token". Check the token in Settings, then press Try again.';
     expect(result.failed).toEqual([task.id]);
     const failed = await rt.store.task.mustGet(task.id);
     expect(failed.status).toBe("failed");

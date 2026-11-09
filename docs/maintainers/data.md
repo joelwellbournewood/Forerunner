@@ -193,9 +193,12 @@ gitignore guard. `importZip` and `importFolder` never touch the original (A.3).
 5. The migration branch: on a re-import, the branch the checkout sits on when it is a
    `forerunner/migration-*` branch, else the newest such local branch (checked out), else a
    new `migrationBranchName(clock)` = `forerunner/migration-<YYYY-MM-DD>` created from
-   `origin/<default branch>` (`refs/remotes/origin/HEAD`; an empty repository is
-   `validation`). The import never checks out, commits to or pushes the default branch, and
-   it pushes nothing at all; it then asserts the checkout is on the migration branch and not
+   `origin/<default branch>` (`refs/remotes/origin/HEAD`; an empty repository gets its first
+   commit on `main` through `ensureBaseBranch`, as the task executor does, ADR 0106, and a refused
+   first push reads `firstPushFailedWords`, C-55, polish-words; before, it was
+   `validation`). Beyond that first commit the import never checks out, commits to or pushes the
+   default branch, and
+   it pushes nothing else; it then asserts the checkout is on the migration branch and not
    the default one (`internal` otherwise). Steps 4 and 5 run under one guard: a fresh clone
    that fails anywhere before the migration branch (git refusing the checkout, an empty
    repository, the time limit) is removed whole and nothing is recorded; an existing checkout
@@ -377,8 +380,10 @@ No ADR number was reserved for this module, so the open points are decided here:
   (no request sent, the checkout untouched); a hostile tree with `..` and `.git` entries
   (written raw into the fake host's bare repository) refused by git at checkout with the
   clone removed and nothing anywhere else under the install dir, symlinks pointing outside
-  never followed by the walk, the asset or the sample, an empty repository refused at the
-  default branch with its clone removed, a server that accepts and never answers killed at
+  never followed by the walk, the asset or the sample, an empty repository whose first commit
+  is refused said in words (`firstPushFailedWords`, C-55), an empty repository given a token
+  getting its first commit and the migration branch, the clone of a refused one
+  removed, a server that accepts and never answers killed at
   `gitTimeoutMs` as `timeout` with the clone removed, a `url.*.insteadOf` rewrite in the
   environment reaching the host without `Authorization` (refused, nothing left) while the
   unrewritten URL clones; credentials in the URL, a raw token as `tokenRef`, an unknown

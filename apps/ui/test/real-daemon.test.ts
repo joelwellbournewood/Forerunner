@@ -24,6 +24,7 @@ import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
@@ -32,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
 import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
+import { saidByName } from "../../../packages/critic/src/followup.ts";
 import {
   AcceptingCriticProvider,
   ScriptedProvider,
@@ -52,7 +54,12 @@ import {
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
-import { reviewLevelName, reviewLevelValue } from "../src/lib/task-actions.ts";
+import {
+  actionExplain,
+  reviewLevelName,
+  reviewLevelValue,
+  specialistName,
+} from "../src/lib/task-actions.ts";
 import { intakeCardOf } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 
@@ -1278,9 +1285,14 @@ describe("the UI client against the real daemon", () => {
       }
     const done = await client.project(own.id);
     expect(done.statusLine?.kind).toBe("done");
-    expect(done.statusLine?.text).toMatch(/^Done: all 2 tasks\. Your files: /);
+    // later #53/#54 (polish-words): no path in the line (it held the project's id, about 130
+    // characters); "Open your files" opens Files, and the Overview shows the folder.
+    expect(done.statusLine?.text).toBe("Done: all 2 tasks.");
+    expect(done.statusLine?.action).toMatchObject({
+      label: "Open your files",
+      to: `/projects/${own.id}/files`,
+    });
     expect(done.folder).toBeTruthy();
-    expect(done.statusLine?.text).toContain(done.folder ?? "-");
     expect(done.progress).toEqual({ done: 2, total: 2 });
   });
 
@@ -2036,8 +2048,9 @@ describe("the UI client against the real daemon: a task a session is running", (
     expect(await statusOf(first.id)).toBe("cancelled");
     expect(await statusOf(second.id)).toBe("done");
     // The result names the work done; the person's own Cancel is not echoed (design §5.11).
+    // W14-6 (polish-words): an amount above zero never reads "CHF 0.00".
     expect((await client.session(sessionId)).summary).toBe(
-      'Did 1 task: "Second task".\nNothing left. CHF 0.00.',
+      'Did 1 task: "Second task".\nNothing left. Less than CHF 0.01.',
     );
   });
 
@@ -2241,7 +2254,8 @@ describe("the UI client against the real daemon: the Tasks tab's Stop while a se
     // The session went on with the second task; the person's own Stop is not news, and the
     // paused task has no card, so nothing says it needs a decision in the Inbox.
     const session = await client.session(sessionId);
-    expect(session.summary).toBe('Did 1 task: "Second task".\nCHF 0.00.');
+    // W14-6 (polish-words): an amount above zero never reads "CHF 0.00".
+    expect(session.summary).toBe('Did 1 task: "Second task".\nLess than CHF 0.01.');
     const inbox = await client.inbox(me.id);
     expect(inbox.requests.filter((r) => r.projectId === project.id)).toEqual([]);
     const lines = inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body);
@@ -4621,7 +4635,7 @@ describe("the UI client against the real daemon: a task that stops waits on one 
         "Adds CHF 0.08 to its budget and starts a session that goes on from where it stopped.",
         "primary",
       ],
-      ["Cancel task", "Drops it; its work is set aside until you reopen it.", "danger"],
+      ["Cancel task", "Drops it; its work is set aside unless a later task built on it.", "danger"],
     ]);
     // The session's result points at the card that is there; the Tasks tab says the same.
     expect(session.summary).toContain(
@@ -7273,7 +7287,8 @@ describe("the UI client against the real daemon: research on a Claude subscripti
       const runsOn = Object.fromEntries(models.specialists.map((x) => [x.name, x.runsOn]));
       expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
       expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
-      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
+      // P7-33 (polish-words): asserted exactly, not only as not naming web pages.
+      expect(runsOn["science-evaluator"]).toEqual({ kind: "subscription", line: null });
     } finally {
       await sub.rt.close();
     }
@@ -7345,7 +7360,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
       const runsOn = Object.fromEntries(models.specialists.map((s) => [s.name, s.runsOn]));
       expect(runsOn.researcher).toEqual({ kind: "subscription", line: null });
       expect(runsOn["science-evaluator"]?.kind).toBe("subscription");
-      expect(runsOn["science-evaluator"]?.line ?? "").not.toContain("web pages");
+      // P7-33 (polish-words): asserted exactly, not only as not naming web pages.
+      expect(runsOn["science-evaluator"]).toEqual({ kind: "subscription", line: null });
       // Settings' "What each can do here": the capability function's output.
       expect(models.credentials?.columns).toEqual([
         { kind: "api_key", name: "API key", saved: true },
@@ -7381,9 +7397,12 @@ describe("the UI client against the real daemon: the credential chooser says whe
         line: "On your subscription its tests will not run: it cannot run commands there.",
       });
       const plan = (await client.inbox(me.id)).requests.find((r) => r.id === card.id);
-      expect(plan?.planTasks?.find((t) => t.specialist === "coder")?.runsOn?.line).toBe(
-        "On your subscription its tests will not run: it cannot run commands there.",
-      );
+      // P7-14 (polish-words): the plan card says a shared runs-on line once, for the plan, under
+      // the first task it holds for ("the tests of 2 tasks"), not under every code task.
+      const said = (plan?.planTasks ?? []).map((t) => t.runsOn?.line).filter(Boolean);
+      expect(said.filter((l) => /tests .*will not run/.test(l ?? ""))).toEqual([
+        "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
+      ]);
       // "Code tasks that need commands: the API key", as the Settings dialog sends it (a yes).
       const asked = await client.executeCommands({
         commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
@@ -9691,7 +9710,7 @@ describe("the UI client against the real daemon: Open this version and Take this
     const answer = await client.takeOutTask(a.task.id);
     expect(answer).toEqual({
       state: "opened",
-      sentence: `Opened #${answer.number} to take "Add the basket" out. It waits for you to merge it. "Add the receipt" built on it: check it still works once #${answer.number} is merged.`,
+      sentence: `Opened #${answer.number} to take "Add the basket" out: merge it to remove the work, or close it to keep the work. "Add the receipt" built on it: check it still works once #${answer.number} is merged.`,
       number: expect.any(Number),
       url: expect.stringContaining(`/pull/${answer.number}`),
       builtOn: ["Add the receipt"],
@@ -10272,7 +10291,8 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
       async () => JSON.stringify(await rt.store.mergeRecord.forTask(c.task.id)),
       30_000,
     );
-    const merged = `Merged #${c.pr.number}: "Add the late notes".`;
+    // W14-2 (polish-words): the Update is named by its project.
+    const merged = `Merged later: merged #${c.pr.number}, "Add the late notes".`;
     // While the checks run, the retry pass says nothing.
     await rt.merge.retryWaiting();
     expect((await client.inbox(rt.human.id)).messages.map((m) => m.body)).not.toContain(merged);
@@ -10840,9 +10860,9 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect(merged()[0]?.notification.link).toBe(`/projects/${project.id}`);
     // The Update in the Inbox, once.
     const bodies = (await client.inbox(rt.human.id)).messages.map((m) => m.body);
-    expect(bodies.filter((b) => b === `Merged #${c.pr.number}: "Add the late page".`)).toHaveLength(
-      1,
-    );
+    expect(
+      bodies.filter((b) => b === `Later merge: merged #${c.pr.number}, "Add the late page".`),
+    ).toHaveLength(1);
     await rt.merge.retryWaiting();
     expect(merged()).toHaveLength(1);
   }, 120_000);
@@ -11310,6 +11330,616 @@ describe("leftovers7-tailrun, wave 13", () => {
     } finally {
       await rt.kill.stop("all", "test over", { by: "you", freeze: false }).catch(() => undefined);
       await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("polish-words, wave 13", () => {
+  // The words the routes serve (design §5), read through the UI's own client against the real
+  // daemon: the project's status line, the Tasks rows, the costs, the reviews, a session's end.
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+  let bench: BenchOptions;
+
+  beforeAll(async () => {
+    ({ rt, client, bench } = await composeWithRolePlayer({}));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const seedTask = (
+    projectId: string,
+    title: string,
+    over: Record<string, unknown> = {},
+  ): Promise<{ id: string; version: number }> =>
+    rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title} is done`,
+      acceptance_criteria: ["it is done"],
+      risk_tier: 1,
+      status: "done",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+      ...over,
+    } as never) as never;
+
+  const card = async (
+    projectId: string,
+    taskId: string,
+    changeCard: Record<string, unknown>,
+    options: string[],
+  ) => {
+    const me = await client.me();
+    return rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: projectId,
+      task_id: taskId,
+      session_id: null,
+      kind: "approval",
+      why: "seed",
+      steps: [],
+      options,
+      blocking: true,
+      risk: "medium",
+      change_card: changeCard,
+      author_agent: rt.agent.id,
+    } as never);
+  };
+
+  it("a finished folder project's line is 'Done: all N tasks.' with no path; Open your files opens Files (later #53, #54)", async () => {
+    const project = await client.createProject({ name: "Notes", goal: "A notes page" });
+    await seedTask(project.id, "Write the notes in notes.md");
+    await seedTask(project.id, "Check the notes");
+    const line = (await client.project(project.id)).statusLine;
+    expect(line?.text).toBe("Done: all 2 tasks.");
+    expect(line?.text.length).toBeLessThanOrEqual(80);
+    expect(line?.text).not.toContain(project.id);
+    expect(line?.action).toEqual({
+      kind: "link",
+      label: "Open your files",
+      to: `/projects/${project.id}/files`,
+    });
+    // The Overview keeps the path (FolderPath reads `folder`).
+    expect((await client.project(project.id)).folder).toContain(project.id);
+  });
+
+  it("a finished repository project says how many pull requests wait for the Merge and how many were taken out (C-58)", async () => {
+    const project = await client.createProject({ name: "Guides", goal: "Two guides" });
+    await rt.store.project.patch(project.id, { repos: ["o/guides"] } as never);
+    const agentId = rt.agent.id;
+    for (const [i, title] of ["Write the guide", "Write the notes"].entries()) {
+      const url = `https://github.com/o/guides/pull/${i + 2}`;
+      const t = await seedTask(project.id, title, { pr_url: url });
+      const record = await rt.store.mergeRecord.pin({
+        task_id: t.id,
+        project_id: project.id,
+        agent_id: agentId,
+        pr_number: i + 2,
+        pr_url: url,
+        reviewed_head_sha: "a".repeat(40),
+      } as never);
+      await rt.store.mergeRecord.move(record.id, "left_to_you", {
+        sentence: `#${i + 2} waits for you: press Merge on the Overview.`,
+      });
+    }
+    // One merged and taken out again in #9 (merged-actions).
+    const url = "https://github.com/o/guides/pull/1";
+    const out = await seedTask(project.id, "Write the intro", { pr_url: url });
+    const merged = await rt.store.mergeRecord.pin({
+      task_id: out.id,
+      project_id: project.id,
+      agent_id: agentId,
+      pr_number: 1,
+      pr_url: url,
+      reviewed_head_sha: "b".repeat(40),
+    } as never);
+    await rt.store.mergeRecord.patch(merged.id, {
+      state: "merged",
+      take_out_pr_number: 9,
+      take_out_pr_url: "https://github.com/o/guides/pull/9",
+      take_out_state: "merged",
+    } as never);
+    const line = (await client.project(project.id)).statusLine;
+    expect(line?.text).toBe(
+      "Done: all 3 tasks; 1 taken out. 2 pull requests wait for you to merge.",
+    );
+    expect(line?.text.length).toBeLessThanOrEqual(80);
+    expect(line?.action).toEqual({
+      kind: "link",
+      label: "Open Overview",
+      to: `/projects/${project.id}`,
+    });
+  });
+
+  it("Answer opens the oldest card; two cards of different kinds are named by kind, not '2 questions' (later #55, L-13a)", async () => {
+    const project = await client.createProject({ name: "Deploys", goal: "A deploy" });
+    const deploy = await seedTask(project.id, "Deploy the page", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+    });
+    const signoff = await card(
+      project.id,
+      deploy.id,
+      {
+        key: "critic:signoff",
+        task_id: deploy.id,
+        review_id: null,
+        run_id: null,
+        finding_ids: [],
+        reason: "verdict",
+        applied_at: null,
+      },
+      ["accept", "revise", "cancel"],
+    );
+    const one = (await client.project(project.id)).statusLine;
+    expect(one?.text).toBe('Waiting for you: "Deploy the page"');
+    expect(one?.action).toEqual({
+      kind: "link",
+      label: "Answer",
+      to: `/inbox#card-${signoff.id}`,
+    });
+    const long = await seedTask(project.id, "Write the long guide", { status: "needs_human" });
+    await card(project.id, long.id, { key: "task:budget_stop", task_id: long.id, source: "task" }, [
+      "Continue",
+      "Cancel task",
+    ]);
+    const two = (await client.project(project.id)).statusLine;
+    expect(two?.text).toBe("Waiting for you: 1 sign-off and 1 paused task");
+    expect(two?.action?.to).toBe(`/inbox#card-${signoff.id}`);
+  });
+
+  it("a task waiting on its sign-off reads 'Needs your sign-off' with its card's own choices; the card is unchanged (C-21, L-9)", async () => {
+    const project = await client.createProject({ name: "Sign-offs", goal: "A deploy" });
+    const deploy = await seedTask(project.id, "Deploy the page to the server", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+    });
+    const request = await card(
+      project.id,
+      deploy.id,
+      {
+        key: "critic:signoff",
+        task_id: deploy.id,
+        review_id: null,
+        run_id: null,
+        finding_ids: [],
+        reason: "verdict",
+        applied_at: null,
+      },
+      ["accept", "revise", "cancel"],
+    );
+    const row = (await client.tasks(project.id)).find((t) => t.id === deploy.id);
+    expect(row?.display).toMatchObject({
+      key: "answer",
+      label: "Needs your sign-off",
+      detail: "Its card is in the Inbox: accept the work, send it back, or cancel it.",
+      blocker: { kind: "card", requestId: request.id, cardKind: "signoff" },
+    });
+    expect(row?.display?.label).not.toMatch(/decision/);
+    // The card itself: Accept the work, Send it back, Cancel task (unchanged).
+    const me = await client.me();
+    const shown = (await client.inbox(me.id)).requests.find((r) => r.id === request.id);
+    expect(shown?.choices?.map((c) => c.label)).toEqual([
+      "Accept the work",
+      "Send it back",
+      "Cancel task",
+    ]);
+  });
+
+  it("an accepted info note shows no 'To fix' line (L-13e)", async () => {
+    const project = await client.createProject({ name: "Notes review", goal: "A page" });
+    const task = await seedTask(project.id, "Write the page");
+    const review = await rt.store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 90,
+      confidence: 0.9,
+      verdict: "accept",
+      evidence: [],
+      summary: "Accepted: the changed file matches the brief.",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    await rt.store.finding.insert({
+      review_id: review.id,
+      task_id: task.id,
+      severity: "info",
+      description: "The page has no favicon.",
+      required_action: "Resolve it and show the evidence",
+      status: "open",
+      fingerprint: "fp-favicon",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    await rt.store.finding.insert({
+      review_id: review.id,
+      task_id: task.id,
+      severity: "medium",
+      description: "The title is missing.",
+      required_action: "Resolve it and show the evidence",
+      status: "open",
+      fingerprint: "fp-title",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    const view = await client.reviews(project.id);
+    const findings = view.reviews.flatMap((r) => r.findings);
+    expect(findings.find((f) => f.severity === "info")?.requiredAction).toBe("");
+    // A finding that asks for a fix keeps it.
+    expect(findings.find((f) => f.severity === "medium")?.requiredAction).toBe(
+      "Resolve it and show the evidence",
+    );
+  });
+
+  it("the Tasks screen names a specialist as the session log and the cards do (later #74)", () => {
+    for (const id of [
+      "writer-marketing",
+      "migration-specialist",
+      "data-analyst",
+      "ops-deploy",
+      "science-evaluator",
+      "coder",
+      "some_new-kind",
+    ])
+      expect(specialistName(id)).toBe(saidByName(id));
+  });
+
+  it("Costs name the specialist as the log does, and a model's accepted runs compare with its work runs (later #91)", async () => {
+    const project = await client.createProject({ name: "Writer costs", goal: "A README" });
+    const task = await client.createTask(project.id, {
+      title: "Write the README in README.md",
+      outcome: "README.md says what the project is",
+      riskTier: 1,
+      specialist: "writer-marketing",
+    });
+    const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () => !["planned", "running"].includes((await client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () => `${(await client.task(task.id)).task.status}`,
+      60_000,
+    );
+    expect((await client.task(task.id)).task.status).toBe("done");
+    const costs = await client.costs({ projectId: project.id });
+    const labels = costs.bySpecialist.map((s) => s.label);
+    expect(labels).toContain("the writer");
+    expect(labels).toContain("the critic");
+    expect(labels).not.toContain("writer-marketing");
+    // One work run, accepted: the critic's review and the planning call are not runs to accept.
+    const model = costs.byModel.find((b) => b.accepted !== null);
+    expect(model?.runs).toBe(1);
+    expect(model?.accepted).toBe(1);
+  }, 90_000);
+
+  it("a session's page stops saying '1 task needs you' once the person answered its card (L-21)", async () => {
+    const project = await client.createProject({ name: "Answered", goal: "A page" });
+    const task = await client.createTask(project.id, {
+      title: "Write the broken page in page.html",
+      outcome: "page.html exists",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    bench.fail = ["broken page"];
+    let sessionId = "";
+    try {
+      const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => !["planned", "running"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => `${(await client.task(task.id)).task.status}`,
+        60_000,
+      );
+    } finally {
+      bench.fail = [];
+    }
+    expect((await client.session(sessionId)).statusText).toBe("Ended: 1 task needs you");
+    const me = await client.me();
+    const open = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    expect(open).toBeTruthy();
+    await client.answerRequest(open?.id ?? "", {
+      version: open?.version ?? 0,
+      answer: "Cancel task",
+    });
+    await eventually(
+      async () => (await client.task(task.id)).task.status === "cancelled",
+      "the card's Cancel task to cancel it",
+    );
+    const after = await client.session(sessionId);
+    expect(after.statusText).not.toMatch(/needs you/);
+    expect((await client.sessions({ projectId: project.id }))[0]?.statusText).not.toMatch(
+      /needs you/,
+    );
+  }, 90_000);
+
+  it("a pull request that conflicts reads 'Accepted · conflicts with <base>' with what to do, never 'waiting for you to merge'; the done line counts what Merge can merge (W14-5)", async () => {
+    const project = await client.createProject({ name: "Conflicts", goal: "Three guides" });
+    await rt.store.project.patch(project.id, { repos: ["o/conflicts"] } as never);
+    // As the merge record says it (the conflict notice, `dependent-branches.ts`; the merge
+    // step's own conflict uses the same `last_outcome`), with the card answered "Leave it open":
+    // nothing else holds the task.
+    const seedPr = async (title: string, n: number, sentence: string, lastOutcome?: string) => {
+      const url = `https://github.com/o/conflicts/pull/${n}`;
+      const t = await seedTask(project.id, title, { pr_url: url });
+      const record = await rt.store.mergeRecord.pin({
+        task_id: t.id,
+        project_id: project.id,
+        agent_id: rt.agent.id,
+        pr_number: n,
+        pr_url: url,
+        reviewed_head_sha: String(n).repeat(40),
+      } as never);
+      await rt.store.mergeRecord.move(record.id, "left_to_you", {
+        sentence,
+        ...(lastOutcome ? { last_outcome: lastOutcome } : {}),
+      });
+      return t;
+    };
+    const waiting = await seedPr(
+      "Write the guide",
+      2,
+      "#2 waits for you: press Merge on the Overview.",
+    );
+    const onMain = await seedPr(
+      "Write the notes",
+      3,
+      conflictNoticeSentence(3, "main", ["README.md"]),
+      "conflict",
+    );
+    const onTrunk = await seedPr(
+      "Write the intro",
+      4,
+      conflictNoticeSentence(4, "trunk", []),
+      "conflict",
+    );
+    const rows = await client.tasks(project.id);
+    const display = (id: string) => rows.find((r) => r.id === id)?.display;
+    expect(display(onMain.id)).toMatchObject({
+      key: "done",
+      label: "Accepted · conflicts with main",
+      tone: "warn",
+      detail:
+        "#3 conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.",
+    });
+    expect(display(onTrunk.id)).toMatchObject({
+      label: "Accepted · conflicts with trunk",
+      tone: "warn",
+      detail: "#4 conflicts with trunk: resolve the conflict on GitHub, or redo the task.",
+    });
+    // The one Merge can merge says so, and its detail (the Overview's button) is not repeated.
+    expect(display(waiting.id)).toMatchObject({
+      label: "Accepted · waiting for you to merge",
+      tone: "good",
+      detail: null,
+    });
+    // No row names a branch (C-59).
+    expect(JSON.stringify(rows.map((r) => r.display))).not.toMatch(/fr\/|branch/);
+    // Home's done line counts the pull request Merge can merge; the two that conflict say so on
+    // their rows and the Overview, where its button leads.
+    const line = (await client.project(project.id)).statusLine;
+    expect(line?.text).toBe("Done: all 3 tasks. 1 pull request waits for you to merge.");
+    expect(line?.action?.to).toBe(`/projects/${project.id}`);
+  });
+});
+
+describe("polish-words, wave 13: the Inbox cards through the real daemon", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({}));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const intakeCard = async (projectId: string, titles: string[]) => {
+    const me = await client.me();
+    return rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: projectId,
+      task_id: null,
+      session_id: null,
+      kind: "approval",
+      why: "Intake",
+      steps: [],
+      options: ["approve", "change", "reject"],
+      blocking: true,
+      risk: "medium",
+      change_card: {
+        key: `intake:${projectId}`,
+        docs_target: "workspace",
+        applied_at: null,
+        proposal: {
+          plan: {
+            tasks: titles.map((title, i) => ({ key: `t${i}`, title, specialist: "coder" })),
+          },
+          docs: { "README.md": "# Notes" },
+        },
+      },
+      author_agent: rt.agent.id,
+    } as never);
+  };
+
+  it("a one-task plan's Approve and start says 'it' and what it does while it works; on a repository, the docs pull request (L-20)", async () => {
+    const me = await client.me();
+    const folder = await client.createProject({ name: "One note", goal: "A note" });
+    const one = await intakeCard(folder.id, ["Write the note in note.md"]);
+    const card = (await client.inbox(me.id)).requests.find((r) => r.id === one.id);
+    const approve = card?.choices?.find((c) => c.label === "Approve and start");
+    expect(approve?.explain).toBe("Writes this task and starts working on it now.");
+    expect(approve?.working).toBe("Writing the plan…");
+    const repo = await client.createProject({ name: "Repo notes", goal: "Notes" });
+    await rt.store.project.patch(repo.id, { repos: ["o/notes"] } as never);
+    const two = await intakeCard(repo.id, ["Write the note", "Check the note"]);
+    const card2 = (await client.inbox(me.id)).requests.find((r) => r.id === two.id);
+    const approve2 = card2?.choices?.find((c) => c.label === "Approve and start");
+    expect(approve2?.explain).toBe("Writes these 2 tasks and starts working on them now.");
+    expect(approve2?.working).toBe("Writing the plan and its docs pull request…");
+  });
+
+  it("a project budget's card opens Settings at Other settings; Cancel promises nothing untrue (P7-18, P7-19)", async () => {
+    const me = await client.me();
+    const project = await client.createProject({ name: "Budgeted", goal: "A guide" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Write the long guide",
+      outcome: "guide.md exists",
+      acceptance_criteria: ["guide.md exists"],
+      risk_tier: 1,
+      status: "needs_human",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "paused",
+    } as never);
+    const request = await rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: project.id,
+      task_id: task.id,
+      session_id: null,
+      kind: "approval",
+      why: '"Write the long guide" paused at the project\'s budget.',
+      steps: [],
+      options: ["Cancel task"],
+      blocking: true,
+      risk: "medium",
+      change_card: {
+        key: "task:budget_stop",
+        task_id: task.id,
+        source: "project",
+        done: null,
+        left: [],
+        title: '"Write the long guide" paused at the project\'s budget',
+      },
+      author_agent: rt.agent.id,
+    } as never);
+    const card = (await client.inbox(me.id)).requests.find((r) => r.id === request.id);
+    expect(card?.links?.[0]).toMatchObject({
+      label: "Open Settings",
+      to: "/settings#other-settings",
+    });
+    expect(card?.choices?.[0]?.explain).toBe(
+      "Drops it; its work is set aside unless a later task built on it.",
+    );
+  });
+});
+
+describe("polish-words, wave 13: Cancel on a ready task holding its work so far (P7-20)", () => {
+  // A task paused at its budget, cancelled and reopened, is ready and holds its work in progress
+  // again: its Cancel sets that work aside, and the row's title, the dialog and the drawer say
+  // so. Only when the paused run left work: a run paused before it wrote anything holds none,
+  // and the line would promise a set-aside that never comes (the review of polish-words, bench:
+  // the CHF 0.004 guide wrote no file and its cancel set nothing aside).
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    // The stand-in writes the guides one part per call until the budget stops it.
+    ({ rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_LONG: "Write the guide" }));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a reopened task whose paused run wrote its file says Cancel sets it aside; one whose run wrote nothing, and one that never ran, do not", async () => {
+    const project = await client.createProject({ name: "Club guides", goal: "Guides" });
+    const make = (title: string, file: string, budgetUsdMicro: number, priority: "high" | "low") =>
+      client.createTask(project.id, {
+        title,
+        outcome: `${file} explains the club`,
+        acceptanceCriteria: [`${file} exists`],
+        priority,
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro,
+        specialist: "coder",
+        riskTier: 1,
+      });
+    // The members guide's budget (CHF 0.004, as on the bench) stops it before it writes
+    // anything; it runs first, so no task builds on the other guide's work in the folder. That
+    // one has about three times the reserve of two stand-in calls (budget-resume's journey): a
+    // few parts of guide.md, then the pause.
+    const empty = await make(
+      "Write the guide for members in members.md",
+      "members.md",
+      5_000,
+      "high",
+    );
+    const wrote = await make("Write the guide in guide.md", "guide.md", 45_000, "low");
+    const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, JSON.stringify(started)).toBeTruthy();
+    await eventually(
+      async () =>
+        !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () =>
+        (await client.tasks(project.id)).map((t) => `${t.title}=${t.display?.label}`).join(", "),
+      60_000,
+    );
+    const folder = projectWorkspaceDir(rt.data.assets.projectsRoot, project.id);
+    expect(existsSync(join(folder, "guide.md")), "the first run wrote guide.md").toBe(true);
+    expect(existsSync(join(folder, "members.md")), "the second run wrote nothing").toBe(false);
+    for (const t of [wrote, empty]) {
+      const row = (await client.tasks(project.id)).find((r) => r.id === t.id);
+      expect(row?.display?.label, `${t.title}: ${row?.reason}`).toBe("Paused at its budget");
+    }
+    // Cancel each from the Tasks tab, then Reopen it, as the person does.
+    const back: Record<string, string> = {};
+    for (const t of [wrote, empty]) {
+      const paused = await rt.store.task.mustGet(t.id);
+      const cancelled = await client.taskAction(t.id, {
+        version: paused.version,
+        action: "cancel",
+      });
+      expect(cancelled.status).toBe("cancelled");
+      const reopened = await client.taskAction(t.id, {
+        version: cancelled.version,
+        action: "reopen",
+      });
+      expect(reopened.status).toBe("ready");
+      back[t.id] = reopened.change?.sentence ?? "";
+    }
+    expect(back[wrote.id]).toContain("Its work so far is back.");
+    expect(back[empty.id]).not.toContain("Its work so far is back.");
+    // A task that never ran.
+    const fresh = await client.createTask(project.id, {
+      title: "Write the welcome note in welcome.md",
+      outcome: "welcome.md greets new members",
+      status: "ready",
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const rows = await client.tasks(project.id);
+    const row = (id: string) => rows.find((r) => r.id === id);
+    const held = row(wrote.id);
+    expect(held?.display).toMatchObject({
+      key: "ready",
+      label: "Ready",
+      cancelWork:
+        "Its work so far is set aside unless a later task built on it; Undo brings it back.",
+    });
+    // The row's button title, the dialog and the drawer read it from one place.
+    expect(held ? actionExplain("cancel", held) : "").toBe(
+      "Drops it. Its work so far is set aside unless a later task built on it; Undo brings it back.",
+    );
+    for (const id of [empty.id, fresh.id]) {
+      const r = row(id);
+      expect(r?.display?.key, r?.title).toBe("ready");
+      expect(r?.display?.cancelWork, r?.title).toBeUndefined();
+      expect(r ? actionExplain("cancel", r) : "", r?.title).toBe("Drops it.");
     }
   }, 120_000);
 });

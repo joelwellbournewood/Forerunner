@@ -73,6 +73,10 @@ export function actionsFor(
   if (key === "answer" && task?.status === "in_review") return ["answer", "cancel"];
   if (key === "answer" && task?.display?.blocker?.cardKind === "retry")
     return ["answer", "try_again", "cancel"];
+  // Accepted work waiting on the person's sign-off (C-21, L-9): the card accepts it or sends it
+  // back; a Try again here withdrew the sign-off and ran the accepted work again.
+  if (key === "answer" && task?.display?.blocker?.cardKind === "signoff")
+    return ["answer", "cancel"];
   // Stopped at its own budget (live walk 2, B2): its card raises the budget; Edit changes it.
   // Could not run (live walk 4): its card tries again; Edit changes what stopped it (who does
   // it). Neither offers Resume, which only started the same stop again.
@@ -139,6 +143,22 @@ export function cancelWorkLine(
     ownFolder: false,
   });
   return kind ? cancelWorkWords(kind) : null;
+}
+
+/**
+ * An action's one line for this task (P7-21): the drawer's "What you can do", the row's button
+ * title and the dialog say the same. Cancel adds what becomes of the task's work (a paused
+ * task's, or a ready one's work in progress, is set aside: P7-20), within 100 characters
+ * after "Drops it." (`cancel-words.ts`).
+ */
+export function actionExplain(
+  key: TaskActionKey,
+  task: Pick<TaskView, "status" | "prUrl" | "display" | "reason">,
+): string {
+  const base = ACTIONS[key].explain;
+  if (key !== "cancel") return base;
+  const work = cancelWorkLine(task);
+  return work ? `${base} ${work}` : base;
 }
 
 /** The actions that open a form or a page instead of the confirm dialog. */
@@ -225,7 +245,12 @@ export function reviewLevelChoices(dockerReady: boolean | null): { tier: number;
       ? "needs Docker, not running on this computer"
       : "the work runs in Docker, isolated";
   return [
-    { tier: 1, label: "Light review: the critic reads the work, nothing runs in isolation" },
+    // C-23: the project's checks and the page's try run for a light review too (ADR 0104); only
+    // Docker is what the full review adds.
+    {
+      tier: 1,
+      label: "Light review: the critic reads the work and tries it here; nothing runs in Docker",
+    },
     { tier: 2, label: `Full review: ${docker}` },
     { tier: 3, label: `Full review and your sign-off: ${docker}` },
   ];
@@ -239,6 +264,26 @@ export function whoName(specialist: string | null | undefined): string {
   if (!specialist) return "Agent's choice";
   if (specialist === WHO_PERSON) return "You";
   return specialist;
+}
+
+/**
+ * The registry's specialists whose id is not how a person names them, as the session log and
+ * the cards name them (`saidByName`, `@forerunner/critic`; `polish-words.test.tsx` holds them
+ * equal): "writer-marketing" is "the writer".
+ */
+const SPECIALIST_WORDS: Readonly<Record<string, string>> = {
+  "writer-marketing": "writer",
+  "migration-specialist": "migration specialist",
+  "data-analyst": "data analyst",
+  "ops-deploy": "deployment specialist",
+  "science-evaluator": "evaluator",
+};
+
+/** A specialist as a sentence names it ("writer", "coder"), or null (later #74). */
+export function specialistName(specialist: string | null | undefined): string | null {
+  const id = specialist?.trim().toLowerCase();
+  if (!id || id === WHO_PERSON) return null;
+  return SPECIALIST_WORDS[id] ?? (id.replace(/[-_\s]+/g, " ").trim() || null);
 }
 
 /** Minutes since an instant, in words: "just now", "2 min", "1 h 5 min". */

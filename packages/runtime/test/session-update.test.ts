@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
+import { isNewsLine, sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
 import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -27,6 +27,17 @@ describe("a session's Update", () => {
         ["B"],
       ),
     ).toBe('Quote page: "A" failed: Claude did not answer.');
+  });
+
+  it("a cost under a centime is money, not news: no Update says only that (the review of polish-words)", () => {
+    // polish-words' moneyWordsFirst starts a line "Less than CHF 0.01."; the bench's Update read
+    // "Guides: Less than CHF 0.01." and nothing else, where "CHF 0.00." gave none.
+    expect(isNewsLine("Less than CHF 0.01.")).toBe(false);
+    expect(isNewsLine("Stopped by you. Less than CHF 0.01.")).toBe(false);
+    expect(sessionUpdateLine("Guides", ["Less than CHF 0.01."], [])).toBeNull();
+    expect(
+      sessionUpdateLine("Guides", ['Did 1 task: "Write the guide".', "Less than CHF 0.01."], []),
+    ).toBe('Guides: did 1 task: "Write the guide".');
   });
 
   it("removes the card's sentence by its names: a title with a dot, a quote or a second name leaves the rest whole", () => {

@@ -324,7 +324,8 @@ export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state
     case "closed":
       return `${name}, which was closed`;
     case "redone":
-      return `${name}, which is being redone`;
+      // P7-7: true whenever read; "which is being redone" stayed on the card after the redo.
+      return `${name}, whose task was reopened`;
     case "cancelled":
       return `${name}, whose task was cancelled`;
     case "copied":
@@ -361,6 +362,16 @@ export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: 
       pr.body ?? "",
     )?.[1];
   return !!named && named.toLowerCase() !== taskId.toLowerCase();
+}
+
+/**
+ * A run that changed no file (L-18, polish-words): "The run changed no file." first, then its own
+ * report, plain (no markdown) and on one line, which the reason and the failed-task card cut at
+ * a word.
+ */
+export function emptyChangeSummary(report: string): string {
+  const said = plainReport(report).replace(/\s+/g, " ").trim();
+  return said ? `The run changed no file. It reported: ${said}` : "The run changed no file.";
 }
 
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */
@@ -944,10 +955,12 @@ export class PrTaskExecutor implements TaskExecutor {
       return {
         ...result,
         outcome: "failed",
+        // L-18 (polish-words): what went wrong first, in plain words; the run's own report
+        // after it without markdown (it read "failed: **Result: …** `README.md` …").
         summary:
           closed && existingPr
             ? emptiedSentence(existingPr.number, why, target.base)
-            : `${result.summary}\n(no changes were made in the worktree)`,
+            : emptyChangeSummary(result.summary),
         checksPassed: false,
       };
     }
@@ -2494,13 +2507,17 @@ export class PrTaskExecutor implements TaskExecutor {
     const { task } = ctx;
     const { branch, target, conflicts } = c;
     const repoName = `${target.repo.owner}/${target.repo.name}`;
+    // W14-5 (polish-words): the card's first sentence (its title in the Inbox) names the task,
+    // never its branch ("Rebase of fr/e34de89b-… onto main conflicts"); the steps below still
+    // name the branch, where the person fetches it.
+    const named = `"${task.title.replace(/\s+/g, " ").trim()}"`;
     const what = c.again
-      ? `The branch ${branch} still conflicts with ${target.base}`
+      ? `${named} still conflicts with ${target.base}`
       : c.rebuild
-        ? `Rebuilding ${branch} without ${andList(c.rebuild.dropped.map(droppedWords))} conflicts`
+        ? `Rebuilding ${named} without ${andList(c.rebuild.dropped.map(droppedWords))} conflicts`
         : c.merging
-          ? `Bringing ${target.base} and the work it builds on into ${branch} conflicts`
-          : `Rebase of ${branch} onto ${target.base} conflicts`;
+          ? `Bringing ${target.base} and the work ${named} builds on into it conflicts`
+          : `${named} conflicts with ${target.base}`;
     let pushed = true;
     try {
       await c.git.push(branch, { force: c.force, defaultBranch: target.base });

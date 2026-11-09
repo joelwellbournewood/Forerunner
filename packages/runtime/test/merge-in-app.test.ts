@@ -121,7 +121,7 @@ describe("the merge mode and the person's Merge in the app (merge-in-app)", {
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
       approval: "none",
-      sentence: `#${prB.number} builds on #${prA.number}, which was not merged: merge #${prA.number} first.`,
+      sentence: `#${prB.number} builds on #${prA.number}, which is not merged yet: merge #${prA.number} first.`,
     });
     // Nothing later merges B unattended in this mode.
     await m.merge.retryWaiting();

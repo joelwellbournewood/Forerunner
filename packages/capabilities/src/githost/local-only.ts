@@ -134,6 +134,15 @@ export function underNeverPushed(paths: readonly string[], folders = NEVER_PUSHE
 /** Why a push was refused: the branch tracks a path that never leaves this computer. */
 export const NEVER_PUSHED_CAUSE = "never_pushed";
 
+/**
+ * A task's branch as a person may read it (C-59, polish-words; design §5.3, no ids): without the
+ * task-id part `taskBranchName` puts first, "fr/1a2b3c4d-write-the-guide" reads
+ * "write-the-guide". The stored name keeps it, so two tasks of one title keep two branches.
+ */
+export function branchWords(branch: string): string {
+  return branch.replace(/^fr\/[0-9a-f]{8}-/i, "") || branch;
+}
+
 /** The refusal's sentence (design §5.8: what went wrong and what to do). */
 export function neverPushedWords(branch: string, paths: readonly string[]): string {
   const first = paths[0] ?? LOCAL_ONLY_DIR;
@@ -141,7 +150,7 @@ export function neverPushedWords(branch: string, paths: readonly string[]): stri
   const what = first.startsWith(`${TRY_DIR}/`)
     ? "Forerunner's own files of a review"
     : "files of Local only, which never leave this computer";
-  return `Forerunner did not upload the branch ${branch}: it holds "${first}"${more}, ${what}. Press Try again to redo the work without them.`;
+  return `Forerunner did not upload the branch ${branchWords(branch)}: it holds "${first}"${more}, ${what}. Press Try again to redo the work without them.`;
 }
 
 /** Whether an error is the push guard's refusal (`neverPushedWords`). */

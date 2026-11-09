@@ -1,6 +1,7 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
-import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
+import { plainReason } from "../daemon/task-words.ts";
+import { moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
 import {
   MONTH_CAP_STOP,
@@ -205,7 +206,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       if (o.failed.length === 1 && o.failed[0]) {
         const f0 = o.failed[0];
         // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
-        const reason = plainPlurals(withoutIds(f0.reason)).replace(/\s*\(\s*\)/g, "");
+        // L-18 (polish-words): plain (no markdown) and cut at a word, as the Tasks row reads it.
+        const reason = plainReason(f0.reason, 160).replace(/\s*\(\s*\)/g, "");
         return [`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`];
       }
       return o.failed.length > 1 ? [`${namesOf(titlesOf(o.failed))} failed.`] : [];
@@ -328,14 +330,16 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   {
     // merge-in-app: what merges by itself once its checks pass is not left for the person
     // (before: "Left 1 reviewed pull request for you to merge" for one the retry then merged).
-    name: "merges when its checks pass",
+    // P7-5 (polish-words): `waitingPrs` also counts a merge GitHub did not answer about
+    // (MERGE_WAITS "unreachable", tried again), so the line names both, never checks only.
+    name: "merges by itself later",
     line: 3,
     build: (f) =>
       f.waitingPrs
         ? [
             f.waitingPrs === 1
-              ? "1 reviewed pull request merges when its checks pass."
-              : `${f.waitingPrs} reviewed pull requests merge when their checks pass.`,
+              ? "1 reviewed pull request merges by itself once its checks pass or GitHub answers."
+              : `${f.waitingPrs} reviewed pull requests merge by themselves once their checks pass or GitHub answers.`,
           ]
         : [],
   },
@@ -359,7 +363,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   {
     name: "cost",
     line: 3,
-    build: (_f, o) => [`${formatChf(o.spentChfMicro)}.`],
+    // W14-6: a spend under a centime reads "Less than CHF 0.01.", never "CHF 0.00."
+    build: (_f, o) => [`${moneyWordsFirst(formatChf(o.spentChfMicro), o.spentChfMicro)}.`],
   },
   {
     // budget-resume: a task paused at a budget, by the limit its card names; its card is the
@@ -369,6 +374,17 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     build: (_f, o, told) => pausedSentences(o.paused ?? [], told),
   },
 ];
+
+/**
+ * How a task paused at a limit no Continue lifts goes on (W14-6, polish-words): a project's
+ * budget never resets, so only raising it lets the task go on; a month's cap or the
+ * subscription's share also reset.
+ */
+function goesOnByItself(limit: string): string {
+  return /^the project's budget\b/.test(limit)
+    ? "it goes on by itself once you raise that budget."
+    : "it goes on by itself once that limit is raised or resets.";
+}
 
 /** A task paused at a budget, as the result names it (`LastSessionOutcome.paused`). */
 export type PausedTask = NamedTask & { limit: string; waits?: boolean };
@@ -389,7 +405,7 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   if (shown.length === 1)
     return [
       one.waits
-        ? `"${one.title}" paused at ${one.limit}: it goes on by itself once that limit is raised or resets.`
+        ? `"${one.title}" paused at ${one.limit}: ${goesOnByItself(one.limit)}`
         : `"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`,
     ];
   const names = namesOf(titlesOf(shown));
@@ -430,9 +446,13 @@ export function needsYouSentence(titles: readonly string[]): string {
   return `${namesOf(titles)} ${plural(titles.length, "needs", "need")} your decision (Inbox).`;
 }
 
-/** Money, how the session ended and what waits: not news on their own in an Update. */
+/**
+ * Money, how the session ended and what waits: not news on their own in an Update. A spend
+ * under a centime reads "Less than CHF 0.01." (`moneyWordsFirst`, W14-6): money too (the review
+ * of polish-words: the Update read "Guides: Less than CHF 0.01." and nothing else).
+ */
 const NOT_NEWS =
-  /^(?:(?:CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
+  /^(?:(?:(?:Less than )?CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
 
 /**
  * Whether a result line is news on its own (design §3.8, §5.10): more than money, how the

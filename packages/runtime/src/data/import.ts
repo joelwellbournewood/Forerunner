@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { ensureBaseBranch } from "@forerunner/capabilities/githost/base-branch";
 import { GitOps } from "@forerunner/capabilities/githost/git";
 import {
   basename,
@@ -580,7 +581,24 @@ export class DataImporter {
     try {
       if (existed) await git.fetch();
       else await git.clone(target.url);
-      defaultBranch = await git.remoteDefaultBranch();
+      // C-55 (polish-words): an empty repository has no default branch to start from. As the
+      // task executor does (ADR 0106), its first commit is made (`ensureBaseBranch`), and a
+      // refusal reads `firstPushFailedWords`, never git's "'origin/main' is not a commit".
+      defaultBranch = await git.remoteDefaultBranch().catch(async () => {
+        await ensureBaseBranch({
+          git,
+          cloneUrl: target.url,
+          base: "main",
+          repoName: target.slug,
+          scratchDir: `${dir}.first`,
+          ...(token ? { auth: { token, origin: new URL(target.url).origin } } : {}),
+          first: (scratch) => {
+            writeFileSync(join(scratch, "README.md"), `# ${target.name}\n`, "utf8");
+            return `Start ${target.slug}`;
+          },
+        });
+        return "main";
+      });
       // The migration branch: the one the checkout already sits on, else the newest one made
       // earlier, else a new one from today's date, always from the default branch's remote head.
       if (existed) {

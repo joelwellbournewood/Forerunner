@@ -382,45 +382,49 @@ export function criticVerdict(
   };
 }
 
+/** Where flagged content came from, as the notification's title names it (P7-22). */
+const SOURCE_WORDS: Readonly<Record<string, string>> = {
+  web_page: "a web page",
+  email: "an email",
+  repo_file: "a repository file",
+  issue_comment: "an issue comment",
+  agent_output: "an agent's answer",
+  tool_output: "a tool's result",
+  attachment: "an attachment",
+  voice_transcript: "a voice transcript",
+};
+
 /**
- * The report's summary for a notification body: where the content came from, how many
- * instruction-like passages the scan found and which rules fired, never the passages
- * themselves (ADR 0047: a notification travels through channels the flagged text must not
- * reach; the quoted passages stay in the session log the link opens). One line within the
- * body's 140 characters (design §5.1): the origin is shortened first (to its host), then the
- * rule list ("and 2 more"); the count and the first rules stay. The source is the title's.
- * Before (phase E #80): "Content from … (web_page) contained 3 instruction-like passage(s).
- * They were ignored:" and one line per rule and the score, up to 1000 characters.
+ * The report's summary for a notification body: where the content came from and how many
+ * instruction-like passages the scan found, never the passages themselves (ADR 0047: a
+ * notification travels through channels the flagged text must not reach; the quoted passages
+ * stay in the session log the link opens). One line within the body's 140 characters (design
+ * §5.1): the origin is shortened to its host when the whole would not fit. The scanner's rule
+ * ids ("approval_bypass") are no words of the person's (P7-22, polish-words; ADR 0047 amended
+ * 2026-11-09): they stay in the audit row and the session log. Before (phase E #80): "Content
+ * from … (web_page) contained 3 instruction-like passage(s). They were ignored:" and one line
+ * per rule and the score, up to 1000 characters.
  */
 export function summarizeInjection(report: InjectionReport, origin?: string): string {
   const total = report.matches.length;
-  const counts = new Map<string, number>();
-  for (const m of report.matches) counts.set(m.rule, (counts.get(m.rule) ?? 0) + 1);
-  // The rules that fired most first; a count only where a rule fired more than once.
-  const rules = [...counts]
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
-    .map(([rule, n]) => (n > 1 ? `${rule} (${n})` : rule));
+  // A run's flag names the tool that read it ("email_read", "web_fetch"): no words of the
+  // person's either (P7-22), so the kind of content stands for it ("from an email").
+  if (!origin || /^[a-z][a-z0-9_]*$/i.test(origin)) origin = SOURCE_WORDS[report.source];
   const action = "Open the session to read them.";
-  const build = (from: string | undefined, shown: number) => {
-    const listed = shown
-      ? `${rules.slice(0, shown).join(", ")}${rules.length > shown ? ` and ${rules.length - shown} more` : ""}`
-      : `${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
-    return `Ignored ${total} ${total === 1 ? "passage" : "passages"}${from ? ` from ${from}` : ""} (${listed}). ${action}`;
-  };
-  const whole = build(origin, rules.length);
+  const build = (from: string | undefined) =>
+    `Ignored ${total} ${total === 1 ? "passage" : "passages"}${from ? ` from ${from}` : ""} that read like instructions. ${action}`;
+  const whole = build(origin);
   if (whole.length <= NOTIFICATION_BODY_MAX) return whole;
   const host = origin ? /^[a-z][\w+.-]*:\/\/([^/?#]+)/i.exec(origin)?.[1] : undefined;
   const short = host ?? (origin ? cut(origin, 40) : undefined);
-  for (let shown = rules.length; shown >= 0; shown--) {
-    const text = build(short, shown);
-    if (text.length <= NOTIFICATION_BODY_MAX) return text;
-  }
-  return cut(build(undefined, 0), NOTIFICATION_BODY_MAX);
+  const text = build(short);
+  return text.length <= NOTIFICATION_BODY_MAX ? text : cut(build(undefined), NOTIFICATION_BODY_MAX);
 }
 
 /**
  * Prompt injection seen and ignored (scenario 6): always urgent, the human is told where and
- * which rules fired; the passages themselves are in the audit row and the session log.
+ * what kind of content it was; the rules that fired and the passages themselves are in the audit
+ * row and the session log.
  */
 export function injectionFlagged(
   humanId: string,
@@ -431,7 +435,7 @@ export function injectionFlagged(
   return {
     kind: "injection_flagged",
     humanId,
-    title: `Instructions found in ${report.source} content were ignored`,
+    title: `Instructions in ${SOURCE_WORDS[report.source] ?? "what it read"} were ignored`,
     body: summarizeInjection(report, opts.origin),
     link: opts.sessionId ? `/sessions/${opts.sessionId}` : "/inbox",
     projectId: opts.projectId ?? undefined,

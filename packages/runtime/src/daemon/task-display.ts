@@ -52,6 +52,27 @@ export async function loadTaskDisplayContext(
   }
   const runs = new Map<string, RunRow>();
   const agentNames = new Map<string, string>();
+  // P7-20: a ready task whose last work run paused at a budget (Continue, or a Reopen after a
+  // cancel) holds that work in progress: its Cancel sets it aside, and the dialog says so. Only
+  // when that run left work (the session's `task.files` for it): a run paused before it wrote
+  // anything holds none, and the line would promise a set-aside that never comes (the review of
+  // polish-words: the bench's CHF 0.004 guide wrote no file, and its cancel set nothing aside).
+  const heldWork = new Set<string>();
+  for (const t of projectTasks) {
+    if (t.status !== "ready") continue;
+    const latest = (
+      await store.run.list({ task_id: t.id } as never, {
+        orderBy: [{ column: "created_at", direction: "desc" }],
+        limit: 5,
+      })
+    ).find((r) => r.specialist !== "critic");
+    if (
+      latest &&
+      (latest.outcome === "paused" || latest.outcome === "budget_exceeded") &&
+      (await runLeftFiles(store, latest, t.id))
+    )
+      heldWork.add(t.id);
+  }
   for (const t of projectTasks) {
     if (t.status !== "claimed" && t.status !== "in_progress") continue;
     const latest = await store.run.list({ task_id: t.id } as never, {
@@ -90,11 +111,30 @@ export async function loadTaskDisplayContext(
     agentNames,
     reviews,
     merges,
+    ...(heldWork.size ? { heldWork } : {}),
     // R-queuedwords: a queued accept merges by itself in the automatic mode.
     ...(project ? { mergeMode: mergeModeOf(project.settings) } : {}),
     ...(credentialWait ? { credentialWait } : {}),
     ...(linked && isAbsolute(linked) ? { ownFolder: true } : {}),
   };
+}
+
+/**
+ * Whether `run` of the task left changed files (P7-20): the runner reports them as its session's
+ * `task.files` event after the run ends, a paused run's included (its work in progress, in the
+ * task's worktree or the project's folder). A run that wrote nothing reports none.
+ */
+async function runLeftFiles(
+  store: StateStore,
+  run: Pick<RunRow, "session_id" | "created_at">,
+  taskId: string,
+): Promise<boolean> {
+  for (const e of await store.event.list(run.session_id, 0, 10_000)) {
+    if (e.type !== TASK_FILES_EVENT || e.created_at < run.created_at) continue;
+    const p = (e.payload ?? {}) as { taskId?: unknown; files?: unknown };
+    if (p.taskId === taskId && Array.isArray(p.files) && p.files.length > 0) return true;
+  }
+  return false;
 }
 
 /**

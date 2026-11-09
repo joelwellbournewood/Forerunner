@@ -162,9 +162,10 @@ is a candidate for the next work:
   workflow's `window` job (`scripts/desktop-window-check.mjs`, `testing.md`) installs the MSI,
   starts it as a person does on the stand-in model and drives its own window: New project from
   a brief, the plan card, Approve and start, the session, the Tasks tab, and what the shell does
-  with the PR link, a web link, a new-window link, Ctrl- and Shift-clicked links (out of the
-  app, and Ctrl on one of its own), a `file:` link and Open folder, and that the page threw no
-  uncaught error (a refusal by the shell's ACL above all). Still missing:
+  with the PR link, a web link, a new-window link, Ctrl- and Shift-clicked links (a link out of
+  the app opens in the browser; one of its own shows that page in the window), a `file:` link
+  and Open folder, and that the page threw no uncaught error (a refusal by the shell's ACL
+  above all). Still missing:
   a standard user, an Inbox question answered, Quit from the tray with nothing left running,
   upgrade and uninstall after a journey (`installed-check.ps1` does those around `--self-test`).
 - A full-review task in the real Docker sandbox runs in CI on Linux since 2026-11-02 (the

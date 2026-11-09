@@ -35,6 +35,11 @@ export interface RequestChoiceWords {
    * (`{ choice, note }`); `text`, words the choice needs (the plan's change); null, none.
    */
   input: "note" | "text" | null;
+  /**
+   * One line the card shows while this choice's answer is being sent, where that takes a while
+   * ("Writing the plan and its docs pull request…", L-20); absent: nothing is said.
+   */
+  working?: string | null;
 }
 
 /** A link a card offers that is not an answer (Set up Docker opens Settings). */
@@ -84,6 +89,11 @@ export interface RequestWordsContext {
    * one can serve; null or absent under 'Wait', where the work waits for a new one.
    */
   credentialGoesOn?: string | null;
+  /**
+   * The card's project works on a repository (its approved plan's docs go in as a pull
+   * request): the plan card's line while Approve and start works says so (L-20).
+   */
+  projectRepository?: boolean;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -135,19 +145,35 @@ function afterDone(waiting: readonly string[]): string {
   return ` The ${waiting.length} tasks after it will run.`;
 }
 
+/**
+ * Where a text's first sentence ends: after the first ".", "!", "?" or ":" followed by a space
+ * or the end, outside double quotes (P7-26: a quoted task title with ": " in it, 'Change "Write
+ * the README: how to open it"', was cut inside the quotes). -1 when there is none.
+ */
+function firstSentenceEnd(t: string): number {
+  let quoted = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i] as string;
+    if (c === '"') quoted = !quoted;
+    else if (!quoted && ".!?:".includes(c) && i > 0 && (i + 1 === t.length || t[i + 1] === " "))
+      return i;
+  }
+  return -1;
+}
+
 /** The first sentence of a text (the title of a card with no title of its own). */
 function firstSentence(text: string, max = 90): string {
   const t = text.replace(/\s+/g, " ").trim();
-  const m = /^(.+?[.!?:])(\s|$)/.exec(t);
-  return cutWords((m?.[1] ?? t).replace(/[.:]$/, ""), max);
+  const end = firstSentenceEnd(t);
+  return cutWords((end >= 0 ? t.slice(0, end + 1) : t).replace(/[.:]$/, ""), max);
 }
 
 /** The rest of a text after its first sentence (the body of a card titled by that sentence). */
 function afterFirstSentence(text: string): string | null {
   const t = text.replace(/\s+/g, " ").trim();
-  const m = /^(.+?[.!?:])(\s|$)/.exec(t);
-  if (!m) return null;
-  const rest = t.slice(m[0].length).trim();
+  const end = firstSentenceEnd(t);
+  if (end < 0) return null;
+  const rest = t.slice(end + 1).trim();
   return rest || null;
 }
 
@@ -413,10 +439,15 @@ function intakeCard(
         label: option === "approve" ? "Approve and start" : option,
         explain: workWaitsOnPerson(card)
           ? `Writes ${n}; the work starts once you answer its questions in the Inbox.`
-          : `Writes ${n} and starts working on them now.`,
+          : `Writes ${n} and starts working on ${tasks === 1 ? "it" : "them"} now.`,
         tone: "primary",
         confirm: null,
         input: null,
+        // L-20: on a repository the docs go in as a pull request first (about 7 s); the card
+        // says what it is doing meanwhile instead of greying its buttons in silence.
+        working: ctx.projectRepository
+          ? "Writing the plan and its docs pull request…"
+          : "Writing the plan…",
       });
     else if (/^(change the plan|change)$/.test(w))
       choices.push({
@@ -579,7 +610,9 @@ function budgetCard(
       ? [
           {
             label: "Open Settings",
-            to: "/settings",
+            // P7-19: the project's budget is under Other settings, not Basics (as the
+            // Overview's Change links it).
+            to: card.source === "project" ? "/settings#other-settings" : "/settings",
             explain: card.source === "plan" ? null : "Raise it there; the task goes on by itself.",
           },
         ]
@@ -660,11 +693,18 @@ function goesOnWords(card: JsonObject): string | null {
   }
 }
 
-/** What Cancel does to a paused task: its work goes aside, what waits is stuck (design §3.5). */
+/**
+ * What Cancel does to a paused task: its work goes aside unless a later task built on it (in a
+ * project's folder it then stays; P7-18: "until you reopen it" was promised there too), what
+ * waits is stuck (design §3.5).
+ */
 function cancelPausedExplain(waiting: readonly string[]): string {
-  const base = "Drops it; its work is set aside until you reopen it";
-  if (waiting.length === 0) return `${base}.`;
-  if (waiting.length === 1) return `${base}; ${q(waiting[0] as string)} will be stuck.`;
+  if (waiting.length === 0)
+    return "Drops it; its work is set aside unless a later task built on it.";
+  // Tasks that wait on it have not built on it: within 100 characters (design §5.1).
+  const base = "Drops it; its work is set aside";
+  if (waiting.length === 1)
+    return `${base}; "${cutWords(waiting[0] as string, 35)}" will be stuck.`;
   return `${base}; the ${waiting.length} tasks after it will be stuck.`;
 }
 
@@ -688,11 +728,19 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
       return `Raised the budget of ${task}${to ? ` to ${to}` : ""}${started ? `: ${started}` : ": the next session tries again"}.`;
     }
     case "cancel": {
+      // P7-18: the Done line names what is stuck now, as the Cancel's explain said it would be.
+      const waiting = ctx.waiting ?? [];
+      const stuck =
+        waiting.length === 0
+          ? ""
+          : waiting.length === 1
+            ? ` ${q(waiting[0] as string)} is stuck.`
+            : ` ${waiting.length} tasks after it are stuck.`;
       const kept = str(card.kept);
-      if (kept) return `${task} was cancelled; its files stay in the folder: ${kept}.`;
+      if (kept) return `${task} was cancelled; its files stay in the folder: ${kept}.${stuck}`;
       return typeof card.set_aside === "number" && card.set_aside > 0
-        ? `${task} was cancelled; its work is set aside until you reopen it.`
-        : `${task} was cancelled.`;
+        ? `${task} was cancelled; its work is set aside until you reopen it.${stuck}`
+        : `${task} was cancelled.${stuck}`;
     }
     case "task_moved_on":
       return `${task} had moved on already, so nothing changed.`;
@@ -836,6 +884,42 @@ function rebuildTitle(card: JsonObject, taskTitle: string): string | null {
 }
 
 /**
+ * The Update when a Yes on a change card from Chat, Talk or the phone was not applied (W14-4,
+ * polish-words): it names the card by the question the Inbox showed (its title, `ChangeCard.ask`),
+ * never by a kind name a person never saw ('the change card "a GitHub repository for X"').
+ */
+export function changeNotAppliedWords(card: Record<string, unknown>, reason: string): string {
+  const ask = typeof card.ask === "string" ? card.ask.trim() : "";
+  const what = typeof card.what === "string" ? card.what.trim() : "";
+  const about = ask
+    ? `Your Yes to "${firstSentence(ask, 120).replace(/"/g, "'")}"`
+    : what
+      ? `Your Yes about ${what}`
+      : "Your Yes";
+  const why =
+    reason
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[.\s]+$/, "") || "it was refused";
+  return `${about} was not applied: ${why}. Nothing changed; ask again if you still want it.`;
+}
+
+/**
+ * A left-open card's title (`merge:left_open`), what it is about now: the conflict notice
+ * ('"X" conflicts with main', R-conflict), a rebuild ('"X" was rebuilt without pull request
+ * #4'), else the pull request not merged. The Overview's Decisions line reads it too (W14-3:
+ * after Redo it read the card's filing words, '... #4 was not merged. Redo.').
+ */
+export function leftOpenCardTitle(card: JsonObject, taskTitle: string): string {
+  if (card.notice === "conflict")
+    return `${q(taskTitle)} conflicts with ${str(card.base) ?? "main"}`;
+  return (
+    rebuildTitle(card, taskTitle) ??
+    `The critic accepted ${q(taskTitle)}, but ${prOfCard(card)} was not merged`
+  );
+}
+
+/**
  * A reviewed pull request the merge step left to the person (U-028, ADR 0111,
  * `fileLeftOpenRequest` in `loop/merge.ts`): titled by its task, the merge record's sentence
  * as the body (what happened and what to do, no commit ids), each answer with what it does.
@@ -862,17 +946,8 @@ function mergeLeftOpenCard(
     confirm: null,
     input: null,
   }));
-  // R-conflict (leftovers7-merge2): an open pull request that stopped merging cleanly into main.
-  const conflictTitle =
-    card.notice === "conflict" && ctx.taskTitle
-      ? `${q(ctx.taskTitle)} conflicts with ${str(card.base) ?? "main"}`
-      : null;
   return {
-    title: ctx.taskTitle
-      ? (conflictTitle ??
-        rebuildTitle(card, ctx.taskTitle) ??
-        `The critic accepted ${q(ctx.taskTitle)}, but ${prOfCard(card)} was not merged`)
-      : firstSentence(r.why),
+    title: ctx.taskTitle ? leftOpenCardTitle(card, ctx.taskTitle) : firstSentence(r.why),
     body: str(card.sentence) ?? afterFirstSentence(r.why),
     choices,
     links: [],

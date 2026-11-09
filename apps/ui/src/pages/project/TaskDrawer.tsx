@@ -35,6 +35,7 @@ import {
 import { taskStepsFromLog, useSessionLog } from "../../lib/session-steps.ts";
 import {
   ACTIONS,
+  actionExplain,
   actionsFor,
   displayOf,
   FULL_REVIEW_SPECIALISTS,
@@ -167,8 +168,11 @@ function DrawerBody({
               >
                 {ACTIONS[key].label}
               </Button>
-              <span className="text-xs text-neutral-600 dark:text-neutral-400">
-                {ACTIONS[key].explain}
+              <span
+                className="text-xs text-neutral-600 dark:text-neutral-400"
+                data-testid={`drawer-explain-${key}`}
+              >
+                {actionExplain(key, task)}
               </span>
             </li>
           ))}
@@ -209,7 +213,10 @@ function DrawerBody({
             {detail.cards.map((c) => (
               <li key={c.requestId}>
                 {c.question}{" "}
-                <Link to="/inbox" className="text-blue-700 hover:underline dark:text-blue-300">
+                <Link
+                  to={`/inbox#card-${encodeURIComponent(c.requestId)}`}
+                  className="text-blue-700 hover:underline dark:text-blue-300"
+                >
                   Open
                 </Link>
               </li>

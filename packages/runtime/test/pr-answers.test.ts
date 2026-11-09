@@ -368,7 +368,8 @@ describe("rebase conflict card: every option does what it says (U-028)", {
     expect(calls.n).toBe(0);
     expect(res.outcome).toBe("failed");
     expect(res.summary).toBe(
-      `Forerunner did not upload the branch ${branch}: it holds "Local only/notes.txt", files of Local only, which never leave this computer. Press Try again to redo the work without them.`,
+      // C-59 (polish-words): the branch is named without its task-id part.
+      `Forerunner did not upload the branch ${branch.replace(/^fr\/[0-9a-f]{8}-/, "")}: it holds "Local only/notes.txt", files of Local only, which never leave this computer. Press Try again to redo the work without them.`,
     );
     expect(res.summary).not.toContain("git said");
     expect(await w.host.listPullRequests(REPO)).toHaveLength(0);

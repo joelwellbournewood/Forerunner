@@ -47,7 +47,8 @@ Action classes map to decisions per level 0–4. `destructive`, `financial`, `cr
 `permission_change` and `capability_grant` need a human at every level. Level 0 proposes only,
 level 1 runs routine work after plan approval (the approval is of one plan, bound by its
 `plan_id`: "Plan approval" under Sessions), level 2 frees routine reversible work, level 3
-also merges reviewed PRs and deploys to staging, level 4 everything else. The merge of a
+also deploys to staging, level 4 everything else; no level merges a reviewed PR since
+merge-in-app (`FREE_AT.merge_pr` is null: the project's merge mode or the person's Merge does, P7-13). The merge of a
 reviewed PR is a `merge_pr` tool call the session runner makes after an accepting review
 (`src/loop/merge.ts`, "Merge of a reviewed PR" under the core loop; its gate `mayMerge` and the
 merge record, ADR 0111): unattended, so at level 2
@@ -1946,7 +1947,8 @@ returns `paused` too (ADR 0112, below; before, `needs_human` at the task's own c
 `budget_exceeded` at the session's). `taskView(t, chf, specialistLimit)` carries the cap to the Tasks tab
 (`cap`, `capSource`: `task_budget`, `specialist_limit`, or `unknown` when neither a budget nor
 a runnable specialist is known), which shows "of CHF x budget" or "no budget; each run stops
-at CHF y (coder limit)". Tests: `task-budget-cap.test.ts` (past the estimate within the
+at CHF y (the coder's limit)" (polish-words, later #74: the specialist as the session log names
+it, `specialistName`; none for Agent's choice). Tests: `task-budget-cap.test.ts` (past the estimate within the
 budget, no budget, the budget reached mid-run, a spent budget, the session's own stop),
 `real-daemon.test.ts` and `tasks.test.tsx` in `apps/ui`.
 
@@ -2005,10 +2007,14 @@ budget-stop; the owner's decision of 2026-11-02).**
   and `wrap_up_sent`, and report `wrapUpSent`. The executor turns both into session-log lines
   (`TaskStep` `note` → `task.step`, Details; `budgetLineWords`, `wrapUpSentWords`): "This run may
   spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
-  "... too little to wrap up (two steps may cost CHF 0.02): save only, ...", "This run may spend
-  CHF 0.02, less than its first step may cost (CHF 0.05): save only, it pauses at its budget
+  "... too little to wrap up (two steps may cost CHF 0.02): it pauses at its budget and keeps its
+  work.", "This run may spend
+  CHF 0.02, less than its first step may cost (CHF 0.05): it pauses at its budget
   before that step.", and "Told the coder to wrap up: it spent CHF 0.30 of CHF 0.40, and the
-  last CHF 0.08 is kept to finish." (it said "about a fifth is left" while about 40% was). The brief says what the two headings are for
+  last CHF 0.08 is kept to finish." (it said "about a fifth is left" while about 40% was). No
+  "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
+  "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
+  line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for
   (`WRAP_UP_BRIEF_LINE`).
 - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
@@ -2139,7 +2145,9 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Before budget-resume, Raise the budget started a session that stopped at once at the same cap
   and filed the same card again.
 - *Words.* The row: `budgetPauseLabel` and `budgetPauseDetail` ("Continue or cancel in the
-  Inbox.", or "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."); the
+  Inbox.", "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.", or at
+  the project's budget, which never resets, "It goes on by itself once you raise the project's budget;
+  cancel it in the Inbox.", W14-6); the
   card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ..." or "It stopped
   before it could say where it stood; its work so far is kept.", then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
@@ -2161,7 +2169,13 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   (the line after the action): a run or review stopped and its changes removed, a pull request
   kept, the person's own folder keeping what a run wrote (C-37; `TaskDisplayContext.ownFolder`
   from the project's absolute `repos[0]`), a paused task's work set aside. `taskDisplay` sends
-  the line as `TaskDisplay.cancelWork` for a running task, a live review and a paused one.
+  the line as `TaskDisplay.cancelWork` for a running task, a live review and a paused one, and
+  for a ready task holding a paused run's work (`TaskDisplayContext.heldWork`, P7-20,
+  polish-words: Continue, or a Reopen after a cancel). `loadTaskDisplayContext` counts a ready
+  task there only when its last work run paused and that run's session has a `task.files` event
+  for it with files (`runLeftFiles`): a run paused before it wrote anything holds nothing, and
+  the line would have promised a set-aside that never comes (the review of polish-words; test:
+  `real-daemon.test.ts` "Cancel on a ready task holding its work so far").
 - *Settings.* `push_unfinished_work` (`session/push-unfinished.ts`, `pushUnfinishedOf`): the
   project row "Push unfinished work to GitHub" in `settingsView` for a project on a host
   repository; compose passes it to `PrTaskExecutor` as `pushUnfinishedFor`.
@@ -2911,7 +2925,11 @@ waits on you" while 4 tasks waited on it).
 - **The Tasks tab** reads which card holds a task (`cardKindOf`, `TaskDisplay.blocker.cardKind`):
   a task waiting on its retry card is "Needs your decision: tried 4 times" and offers Answer, Try
   again (now offered from `needs_human` too; it withdraws the card) and Cancel, never Go ahead
-  without.
+  without. A task waiting on its sign-off (`critic:signoff` with `reason: "verdict"`, a deploy or
+  a migration the critic accepted) is its own kind, `signoff` (C-21, L-9, polish-words): "Needs
+  your sign-off" with "Its card is in the Inbox: accept the work, send it back, or cancel it.",
+  offering Answer and Cancel; before, it read as a retry card and its Try again withdrew the
+  sign-off and ran the accepted work again.
 
 Tests: `apps/ui/test/real-daemon.test.ts` ("a task that fails gets one card, and answering it
 resumes work": one card after the in-session retries, its title, the specialist's words, what
@@ -2994,7 +3012,7 @@ being done again (main unmoved), or, with main moved, its gate's look at the bas
 task folder's lock, which the redo's run holds for the whole run, and so held the watcher's poll
 (no pull request events, copy refreshes or conflict notices) until the run ended. **A merge the
 app made by itself is an Update**: one Inbox message
-(`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
+(`tellMerged`, `mergedUpdateWords`: 'Two guides: merged #4, "Add the page".', named by its project as the session Updates are, W14-2; the project and the task set)
 for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
 says it) and the person's own click (answered where they pressed it) add none; the Update is
 followed by `onMergedLater` listeners, which compose binds to one `pr_merged` notification
@@ -3037,7 +3055,7 @@ answer, so a restart loses nothing; then `mergeApproved` runs in the background
 (`ProjectPullRequests.background`, awaited by `idle()` and at the daemon's close): each record
 through `mergeRecorded` on the person's click, in order; one that waits for its checks keeps the
 rest queued for the retry pass (which keeps the order, above), one left to the person leaves the
-rest to the person with "#5 builds on #4, which was not merged: merge #4 first." A docs pull request
+rest to the person with "#5 builds on #4, which is not merged yet: merge #4 first." (`buildsOnSentence`, the same words on the Overview's row, P7-11) A docs pull request
 (no task, no record) merges as it is through `ReviewedPrMerge.mergeAsIs`: one `merge_pr` call on its
 own narrow token with the person's approval, the branch's rules read first; never unattended, in
 either mode. Every merge ends with `changed(projectId)`, a `project` event, so the Overview reads
@@ -3059,7 +3077,9 @@ cleanly is aborted and the folder keeps the branch's own version. `preview.json`
 the number and whether it merged cleanly; `previewOf` reads it (no git), and the view puts it on
 the row (`ProjectPullRequestView.preview`: the folder and `previewSentence`: "#7 as it would be
 merged. Changes here are not kept." or "#7 as its branch has it: it does not merge cleanly with
-main yet. Changes here are not kept."). Nothing runs there and Local only is not copied in (the
+main yet. Changes here are not kept."); when it could not be put there, `previewFailedSentence` says
+why where the person can act ("a file of it is open in another program. Close it and try again."
+for EBUSY or EPERM, P7-24). Nothing runs there and Local only is not copied in (the
 folder is a plain checkout; nothing reads it as evidence). One preview per project: the next one
 replaces it, and it is removed (`dropPreview`, under the lock, `GitOps.worktreeRemove` and the
 record) when its pull request is merged (`merge.onMerged`), closed (the watcher's
@@ -3087,7 +3107,8 @@ undo safely; undo it on GitHub."), `not_in_main` or `no_repository`. On `pushed`
 it, and the task's merge record keeps it (`take_out_pr_number`, `take_out_pr_url`,
 `take_out_state: "open"`; a merge with no record gets one, `merged`, `reviewed_head_sha` empty).
 The answer (`TaskTakeOutAnswer`) is `opened` with `takeOutOpenedSentence` ("Opened #9 to take "X"
-out. It waits for you to merge it. "Y" built on it: check it still works once #9 is merged."),
+out: merge it to remove the work, or close it to keep the work. "Y" built on it: check it still
+works once #9 is merged." P7-25: at most two sentences, naming the way back),
 `conflict` with `takeOutConflictSentence` and one Inbox notice per task (`kind: "info"`, key
 `TAKE_OUT_NOTICE_PREFIX` + task, no task id: `holdsTask` leaves it out with `isTakeOutNotice`, so
 the project's line does not wait on it), or `refused`. The notice's card keeps `task_title` and
@@ -3152,7 +3173,9 @@ behind a withdrawn or expired `repo.create` card is dropped (`RepoProposals.with
 `RepoProposals`) and at the next sync otherwise, so Chat no longer reads it back as waiting and a
 late Yes is refused. Before, the offer was filed beside such a card and, once either was answered,
 the other's Yes posted 'Your answer to the change card "…" was not applied: … already has a
-repository'. Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
+repository'. That warning (`changeNotAppliedWords` in `request-words.ts`, W14-4, polish-words)
+names the card by the question the Inbox showed ('Your Yes to "Create the private GitHub
+repository o/r for 'X'?" was not applied: …'), never as "the change card". Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
 offer's Yes closing a previewed card, a link made another way).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
@@ -3166,9 +3189,18 @@ names them); a task without a record stays "Done". A `queued` record the person 
 reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTaskDisplayContext`):
 "Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
 and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
-mode read "waiting for you", although the retry merges it by itself). The session result's builder "merges when its checks
-pass" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges when its checks
-pass." and "Left N reviewed pull requests for you to merge." counts only what waits for the person
+mode read "waiting for you", although the retry merges it by itself). A record left to the person
+whose `last_outcome` is `conflict` (the conflict notice, or the merge step's own conflict) reads
+"Accepted · conflicts with main" (the base named in its sentence, "trunk" included), warn tone,
+the record's sentence ("#3 conflicts with main in README.md: resolve the conflict on GitHub, or
+redo the task.") as its detail; Home's done line does not count it among the pull requests that
+"wait for you to merge" (W14-5, polish-words: it read "waiting for you to merge", and Merge
+cannot merge it; tests: `real-daemon.test.ts` "a pull request that conflicts reads 'Accepted ·
+conflicts with <base>'", `polish-words.test.tsx` the same row and drawer). The session result's builder "merges by itself
+later" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges by itself once
+its checks pass or GitHub answers." (P7-5, polish-words: `waitingPrs` counts `checks_pending` and
+`unreachable` alike, so the line names both) and "Left N reviewed pull requests for you to merge."
+counts only what waits for the person
 (`ResultFacts.waitingPrs`, `openPrs`). The Overview's Last result gets "Since then: merged #2, #3
 and #4." (`mergedSinceLine` in `views.ts`) for the pull requests the session left open whose record
 says merged now.
@@ -3202,7 +3234,7 @@ pending too); `mergeable: false` is a conflict (the files from `GitOps.conflictF
 worktree is there).
 
 **What the record says.** Merged: `merged` with `merge_sha`, `method: "merge"`, the approval and
-who gave it (`approved_by`: `autonomy level 3`, or the person), and every `onMerged` listener is
+who gave it (`approved_by`: the merge mode's setting, or the person; no autonomy level merges, P7-13), and every `onMerged` listener is
 called (`ReviewedPrMerge.onMerged(listener)` / `merged(event)`: compose logs it and emits the
 project event; 'dependent-branches' and 'merged-copy' subscribe, and 'dependent-branches' calls
 `merged` for PRs the watcher sees merged on GitHub). Checks still running or the host silent
@@ -3265,8 +3297,9 @@ alone (its `onMerged` was heard). `dependencyMerged` (an `onMerged` listener) an
 `rebuildFor(projectId, taskId)`, which is `PrTaskExecutor.rebuildDependents` with `beforePush`
 settling each dependent's record before its push: a dependency dropped whose work is not in main
 (closed, redone, cancelled) voids the review, `left_to_you` with "#8 was rebuilt without #4,
-which was closed. It was reviewed with #4's changes, so it waits for you: look at it before you
-merge it, or send it back." (`rebuiltWithoutSentence`; "which is being redone", "whose task was
+which was closed. It was reviewed with #4's changes, so it waits for you: look at it, then
+merge it or redo the task." (`rebuiltWithoutSentence`; the card offers Merge and Redo, W14-3;
+"whose task was reopened", true whenever read, P7-7, polish-words; "whose task was
 cancelled") and one card; a rebuild that only dropped what main has (a squash or rebase merge)
 keeps the record, moved to the new head with its `own_change_id`, when `ownChangeId` is
 unchanged, else `left_to_you` with `rebuiltChangedSentence` and one card; a rebuild that
@@ -3666,7 +3699,7 @@ its page from the GitHub API base: `api.github.com` is github.com, GitHub Enterp
 git host serve pages at the API's origin) and then no `folder`, since this install's docs clone
 holds only the default branch. `GET /projects/:id/pull-requests` (`projectPullRequests`, served
 by `docs-routes.ts`) reads the host's open PRs when asked and lists those that wait for the
-person: each done task's (the critic accepted it and nothing merged it: below level 3 the merge is
+person: each done task's (the critic accepted it and nothing merged it: under "You press Merge" the merge is
 the person's) and Forerunner's docs PRs ("Project status (docs/status.md)", "The project's
 standard docs", "The project's docs from the plan"), sorted by number; a PR of a task still
 running or in review, or of someone else's, is not listed; a host that does not answer is
@@ -4597,12 +4630,12 @@ ignored, nothing was refused; the session, run, agent, human, the tool and sourc
 `input_summary`, the passage count, rules and score in `result_summary`) and one urgent
 notification through `notifications.injectionFlagged` with the run's session and project.
 The producer's title names the source and its body (`summarizeInjection`) the number of
-passages, the origin and the rules that fired (a count beside a rule that fired more than
-once), never the passages: they are in the tool call's own audit row and the session log the
+passages and where from, never the passages: they are in the tool call's own audit row and the session log the
 notification links to. The body is one line within 140 characters ("Ignored 4 passages from
-email_read (approval_bypass, exfiltrate, ignore_previous, new_identity). Open the session to
-read them."): a long origin is shortened to its host first, then the rule list ends in "and 2
-more". Before (phase E #80) it was "Content from … (web_page) contained 4 instruction-like
+an email that read like instructions. Open the session to read them."): a long origin is
+shortened to its host, and a run's origin, the tool that read it ("email_read"), is said as the
+kind of content; the rules that fired stay in the audit row and the session log (P7-22,
+polish-words; ADR 0047 amended 2026-11-09). Before (phase E #80) it was "Content from … (web_page) contained 4 instruction-like
 passage(s). They were ignored:", one line per rule and the score, up to 1000 characters.
 Failures to notify are logged, never fail the run. The Reviews tab's finding words are read
 like its summaries (`findingView`: plurals as the number says, no ids), so the session check's
@@ -5514,8 +5547,8 @@ it, 0 for the person's questions, while the task itself keeps the plan's bounded
 `est_cost_usd_micro`; the leftovers of wave 7: the card showed the guess while the Start dialog
 showed it times the learned ratio; `real-daemon.test.ts` "the plan card's figure is the Start
 dialog's"), New task and Settings
-show (`choiceLine`: "Runs on your API key: it can read web pages here but not search, so the
-researcher reads pages whose address it knows." when the key's search is off, "Runs on your API key: only it can read web
+show (`choiceLine`: "Runs on your API key: it reads web pages here but cannot search, so it reads
+known addresses." (within 100 characters, P7-15, polish-words) when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your
 subscription its tests will not run: it cannot run commands there."); `chooser.table()` is
 Settings' "What each can do here" (`abilityTable`). Tests: `credential-chooser.test.ts` (research
@@ -5668,7 +5701,7 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   keeps `NO_WEB_SEARCH_LINE`. The session log gets "searched the web for <query>" (`stepLine`,
   also for Claude Code's `WebSearch` on a subscription), the refusal's line once
   (`WEB_SEARCH_OFF_LINE`, `WEB_SEARCH_LISTS_LINE`), the overshoot ("Web search results were
-  larger than planned: this step cost CHF X, more than the CHF Y planned. ...") and a flagged
+  larger than planned: this call cost CHF X, more than the CHF Y planned, and the next one must fit what is left.", P7-23) and a flagged
   result ("A web search result reads like instructions; the researcher and the critic were told
   it is information only.", without the scan's rule names) as notes.
   The Run row's artifacts count `{ webSearches }`; `TaskExecutionResult.searchSeen` (url, title,
@@ -5686,7 +5719,7 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   chooser reads and on the scheduler's tick). `chooserFacts.keySearch` is
   `webSearchOn && !keySearchOff()` and `keySearchOff` the mark itself, which only the words read
   (Settings: "No: switched off for this API key", else "No: search is off here"; the plan card:
-  "it can read web pages here but not search"); `capabilitiesOf` searches on the key only beside
+  "it reads web pages here but cannot search"); `capabilitiesOf` searches on the key only beside
   the page reader.
 Tests: `web-search-provider.test.ts` (the adapter through the Messages API stand-in: the tool
 sent, the blocks back byte for byte, a changed result refused, the mixed step, `pause_turn`,
@@ -5991,7 +6024,10 @@ on the payload so the live stream and a reload split the log the same way: `task
 `again` when the task already started in this session (a detail) and `handedFrom` when another
 specialist takes over ('The writer takes over "Style the page" from the designer.', a person
 line); `task.finished` has `review` when the critic reviews the run next, `couldNot` (the
-specialist's words, `couldNotWords`) when its report says it could not do the work, and `again`.
+specialist's words, `couldNotWords`, which ends a sentence only at a dot before a space, so
+"index.html" or "data/members.csv" stays whole, C-50) when its report says it could not do the
+work, and `again`. A task's changed files name its pull request, never its branch with the task's
+id (C-59; without a pull request, `branchWords` drops the id part).
 A reviewed run's own line is a detail when it could not do the work or is a retry; the critic's
 line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `specialist`, and
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,
@@ -6034,7 +6070,7 @@ evidence listed the prompt hash and the run id.
 ### The session's Update (design §3.8, §5.10, §5.11)
 
 `sessionUpdateLine` (`session/result.ts`) gives the Inbox one line of news per session, or
-null: what an open card says is the card's to say, and a line that is only money, how the
+null: what an open card says is the card's to say, and a line that is only money ("Less than CHF 0.01." included, the review of polish-words), how the
 session ended or what waits is no news (`isNewsLine`). The runner builds the Update from
 `SessionResult.news`, the result computed with `sessionResultLines(f, told)` where `told`
 holds the tasks an open card is about (`holdsTask`), whether the project's Docker card is open
@@ -6077,7 +6113,11 @@ each accepting review; per task, per specialist and per model). `runs` counts ru
 ledger's entries (one per model call): a task's work runs, a model's runs; the planning run is
 "planning" and, like the critic's reviews, has no accepted count. Without a period asked for,
 `from` and `to` are the first and the last entry's time, which the Costs tab says in words
-("1 Nov to 3 Nov"). Before, tasks were listed by id, every specialist as "(none)", Accepted "—"
+("1 Nov to 3 Nov"). A specialist reads as the session log names it ("the writer", `saidByName`,
+not "writer-marketing"), and a model's `runs` are its work runs when it did any, so its accepted
+count compares like with like (later #91, polish-words: "Accepted 3 / 16" counted the critic's
+reviews and the planning call; a model only the critic used keeps its runs and no accepted
+figure). Before, tasks were listed by id, every specialist as "(none)", Accepted "—"
 and the period "— → —".
 
 ### Session counts (U-072)
@@ -6110,15 +6150,21 @@ card for the phone and the state service). `projectCard` adds, computed when rea
 
 - `statusLine {kind, text, action}` from the pure `projectStatusLine`, first match wins: the
   plan waiting for approval or an open card ("Waiting for you: approve the plan", 'Waiting for
-  you: "X"', "Waiting for you: 2 questions"; the Docker card asks nothing, `holdsTask`); a
+  you: "X"', "Waiting for you: 2 questions", or the kinds of the cards, "Waiting for you: 1
+  sign-off and 1 paused task" (L-13a; up to three kinds named, then "and N more"), with Answer opening the oldest card,
+  `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
   waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
   the Start dialog; only when that dialog would start: without Claude "Ready: 3 tasks. Claude is
   not connected." with Connect Claude, and under Stop all "Ready: 3 tasks. Sessions are
   stopped." with no button, the header's stopped bar having Allow sessions again; the card's
-  facts `hasModel` and `stopped`, later #62, #49); the plan being drafted, failed or rejected; "Done: all 7 tasks. Your
-  files: <folder>"; then paused or draft work. The task words are `taskDisplay`'s, so the
+  facts `hasModel` and `stopped`, later #62, #49); the plan being drafted, failed or rejected; "Done: all 7 tasks."
+  with Open your files (the folder's path, with the project's id in it, stays in `folder`, which
+  the Overview shows: later #53, #54), or for a repository project "Done: all 6 tasks. 2 pull
+  requests wait for you to merge." with Open Overview (the rows reading `WAITING_FOR_YOUR_MERGE`,
+  C-58) and "; 2 taken out" when tasks were taken out (the owner question's recommendation, built
+  meanwhile); then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
 - A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
   §5.1; review of fix/progress-navigation: Home showed the intake's whole error, about 170
@@ -6155,7 +6201,9 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   not connected" bar reads it.
 - `SessionView.statusText` of a session that completed with tasks waiting for the person
   (`handoff.blocked`: needs an answer or failed) reads "Ended: 1 task needs you", not "Done"
-  (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`;
+  (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`; the routes count only the
+  tasks that still wait now, `stillBlocked` in `views.ts`, so a page read after the person
+  answered the card or the task moved on no longer says it, L-21, polish-words;
   `test/session-status-words.test.ts`).
 
 ### The project's files (design §3.10; `daemon/docs-routes.ts`)
@@ -6263,7 +6311,8 @@ default branch as the host has it after every merge, not only at a session's end
   change out of the way and the copy follows again.", "notes.md in this copy is in the way of a
   merged file: move it and the copy follows again.", "Git could not bring it to what is merged;
   it tries again at the next merge."), absent otherwise; the Files tab then says "This
-  computer's copy of <repo>, not updated since 14:05." and the line, never "As merged". Tests:
+  computer's copy of <repo> has not followed merges since 14:05." and the line, never "As merged",
+  and leaves out its pull requests' line (W14-5, polish-words: it made three sentences). Tests:
   `loop-docs.test.ts` "a copy that cannot follow a merge says why", `real-daemon.test.ts` and
   `project-overview.test.tsx` (R-copystuck).
 
@@ -6465,7 +6514,8 @@ distinct for two ids of one minute.
 
 `loop-merge.test.ts` (spec J.9, ADR 0062; the runner with `PrTaskExecutor` and
 `ReviewedPrMerge` on the testenv fake git host over REST and git smart HTTP, its own hooks
-with an approval port that would approve anything): at level 3 an accepted task's PR is
+with an approval port that would approve anything): under the merge mode that merges (no level merges since
+merge-in-app, P7-13) an accepted task's PR is
 merged on the host (state closed, the file on `main`), one allowed `merge_pr` audit row, no
 approval asked, the task's reason, `merges`, `handoff.merges`, the `pr.merged` event and the
 summary record it; at level 2 the hooks refuse it (`autonomy_insufficient: autonomy level 2`
@@ -6487,7 +6537,7 @@ pending while no CI on either merges, a conflicting PR is refused before the mer
 real worktree and bare repository, a host that still shows the reviewed head right after the
 rebase push is waited for and the rebased head merged (not taken for a moved head). The
 daemon (`composeRuntime` on the fake git host as its configured API base, the token in the
-vault, a token issued from `RuntimeApp.sessionGrant`): at level 3 `RuntimeApp.merge` merges
+vault, a token issued from `RuntimeApp.sessionGrant`): under the merge mode that merges `RuntimeApp.merge` merges
 the PR on the host with an allowed `audit_log` row, at level 2 it writes the
 `autonomy_insufficient` refusal and the PR stays open, so a grant without `merge_pr` fails
 both. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an

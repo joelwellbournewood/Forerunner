@@ -67,7 +67,12 @@ export function pullRequestsFromLog(events: readonly EventView[]): SessionPullRe
       taskTitle: (taskId && titles.get(taskId)) || "a task",
       url: p.prUrl,
       number: n ? Number(n) : null,
-      branch: typeof p.branch === "string" && p.branch ? p.branch : null,
+      // C-59 (polish-words): the number names the pull request; a branch without one is named
+      // without its task-id part ("fr/1a2b3c4d-write-the-guide" reads "write-the-guide").
+      branch:
+        !n && typeof p.branch === "string" && p.branch
+          ? p.branch.replace(/^fr\/[^/-]+-/, "")
+          : null,
     });
   }
   return [...byUrl.values()];

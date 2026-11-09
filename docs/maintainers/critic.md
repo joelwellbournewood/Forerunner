@@ -135,7 +135,8 @@ Verification (ADR 0104, `types.ts`):
 - A `doc_drift` that starts with "none" (or "no drift", "n/a") is no drift (`noDocDrift`; live,
   "none (docs/testing.md still says …)" turned an accept into a revise), and a finding the model
   gave no action for asks to "Resolve it and show the evidence" (`NO_ACTION_GIVEN`), never
-  "Fix: <the finding>".
+  "Fix: <the finding>". The Reviews tab shows no "To fix" line for an info note that carries
+  only `NO_ACTION_GIVEN` (`findingView`, L-13e, polish-words): a note asks for no fix.
 
 Mandatory tiers (open decision in the spec): anything touching main, security, data, money or
 science claims is reviewed at tier 2 or higher. The runtime reviews every task an agent finished
@@ -235,7 +236,11 @@ evidence, so a light read grades the diff by reading. The section titles are con
 ### Rules in code (`rules.ts`)
 
 Applied to every verdict, tier 0 included, and recorded as `adjustments` so the review shows
-what the model said and what the code made of it:
+what the model said and what the code made of it. When a rule changes the verdict to a revise
+or an escalate, the shown summary says why first and the model's words follow without the verdict
+word they no longer carry (`ruledSummary`, C-19, polish-words: 'Sent back: the check "test"
+failed. 1 changed file matches the brief.', not "Accepted: …" under a sent-back review; a
+sign-off's card says itself that it waits):
 
 0. `escalate_needs_reason` (ADR 0042): an `escalate` must stand on a ground the code can see,
    checked by `rules.ts#escalationCheck` in this order: a critical or high finding (verified or
@@ -412,7 +417,8 @@ Money in its findings and evidence is CHF (design §5 rule 7): `sessionChecks` c
 ledger's own rate (`ledgerChfMicro / ledgerUsdMicro`), else `DEFAULT_CHF_PER_USD` ("Session cost
 CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". The runner does not
 ask for a session review when the session ended no task (stopped in its first seconds, nothing
-planned): there is no work to grade, and it read "Session review: accepted (grade 100)". The
+planned): there is no work to grade, and it read "Session review: accepted (grade 100)". Its
+summary counts as the number says ("1 done task", "2 findings"; P7-34: never "(s)"). The
 Reviews tab folds these session checks under "Session checks" and does not count their findings
 as open work (`runtime.md`, "Reviews view").
 

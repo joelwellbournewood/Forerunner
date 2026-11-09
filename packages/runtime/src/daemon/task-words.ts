@@ -140,6 +140,11 @@ export interface TaskDisplayContext {
    */
   live?: (taskId: string) => boolean;
   /**
+   * Ready tasks that hold work in progress from a run that paused at a budget and left changed
+   * files (P7-20): a Cancel sets it aside, as a paused task's does. Absent: none.
+   */
+  heldWork?: ReadonlySet<string>;
+  /**
    * The project is linked to the person's own folder (C-37): a Cancel sets nothing aside there,
    * so what a run wrote stays (`cancelWork`). Absent: a project's folder or a repository.
    */
@@ -168,9 +173,13 @@ export function shortTitle(title: string, max = 40): string {
   return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
-/** Ids a person never reads (UUIDs, `request <id>`, `run:<id>`, `task:<id>`). */
+/**
+ * Ids a person never reads (UUIDs, `request <id>`, `run:<id>`, `task:<id>`, "(task 01a1…)").
+ * A parenthesis is taken out only when an id follows its word (later #94: "(run node --check)"
+ * and "(task list)" are words, and stay).
+ */
 const IDS =
-  /\s*\((?:request|run|session|task)[ :][^)]*\)|\b(?:request|run|session|task)[ :]?[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+  /\s*\((?:request|run|session|task)[ :]\s*(?:[0-9a-f]{8}[0-9a-f-]*|[0-9a-f]{4,}(?:…|\.{3}))[^)]*\)|\b(?:request|run|session|task)[ :]?[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 /** A text without the ids a person never reads (design §5 rule 3), whitespace folded. */
 export function withoutIds(text: string): string {
@@ -208,7 +217,9 @@ export function plainReason(reason: string, max = 100): string {
     .replace(/\bat (?:haiku|sonnet|opus)\b/gi, "")
     .replace(/:\s*human decides$/i, "")
     .replace(/\[stand-in model\]\s*/gi, "")
-    .replace(/\*\*/g, "");
+    // L-18: a report's markdown ("**Result: the check fails.**", "`README.md`") reads plain.
+    .replace(/\*\*|__|`+/g, "")
+    .replace(/(^|\s)#{1,6}\s+/g, "$1");
   r = plainPlurals(r).replace(/\s+/g, " ").trim();
   if (r.length <= max) return r;
   const cut = r.slice(0, max - 1);
@@ -218,13 +229,14 @@ export function plainReason(reason: string, max = 100): string {
 
 /**
  * Which kind of card holds a task (design §2, §3.8): `retry`, the decision after its tries
- * (Try again, Mark done anyway, Cancel task: the critic's retry card, a sign-off, a failed run,
- * a blocked or failed review); `questions`, anything that asks the person (answer it, or go
- * ahead without).
+ * (Try again, Mark done anyway, Cancel task: the critic's retry card, a failed run, a blocked or
+ * failed review); `signoff`, the person's sign-off on accepted work (a deploy, a migration:
+ * Accept the work, Send it back, Cancel task); `questions`, anything that asks the person
+ * (answer it, or go ahead without).
  */
 export function cardKindOf(
   card: { change_card?: unknown } | undefined,
-): "retry" | "questions" | "budget" | "cannot_run" {
+): "retry" | "signoff" | "questions" | "budget" | "cannot_run" {
   const c = card?.change_card;
   const key =
     c && typeof c === "object" && !Array.isArray(c) ? (c as { key?: unknown }).key : undefined;
@@ -232,10 +244,25 @@ export function cardKindOf(
   if (key === "task:budget_stop") return "budget";
   // A task a run left waiting without asking anything (live walk 4): Try again or Cancel task.
   if (key === "task:cannot_run") return "cannot_run";
+  // C-21, L-9: a sign-off card (`reason: "verdict"`) is no retry card: before, its row read
+  // "Needs your decision" with "try again, mark it done anyway" and offered Try again, which
+  // withdrew the sign-off and ran accepted work again.
+  if (key === "critic:signoff" && (c as { reason?: unknown }).reason === "verdict")
+    return "signoff";
   return key === "critic:signoff" || key === "findings:blocked" || key === "critic:review_failed"
     ? "retry"
     : "questions";
 }
+
+/** A sign-off task's row and drawer (C-21): its card's own choices, in the row's words. */
+const SIGNOFF_LABEL = "Needs your sign-off";
+const SIGNOFF_DETAIL = "Its card is in the Inbox: accept the work, send it back, or cancel it.";
+
+/**
+ * A done task whose pull request waits for the person's Merge (merge-in-app): the row's words,
+ * which the project's done line counts (C-58).
+ */
+export const WAITING_FOR_YOUR_MERGE = "Accepted · waiting for you to merge";
 
 /**
  * A task's status while its budget card is open (ADR 0112): paused at the limit the card names
@@ -264,7 +291,10 @@ export function budgetPauseLabel(source: unknown): string {
  * or resets (`wakeBudgetWaits`; room alone never wakes it, the review of budget-resume).
  */
 export function budgetPauseDetail(source: unknown): string {
-  return source === "month" || source === "project" || source === "plan"
+  // W14-6 (polish-words): a project's budget never resets; only raising it lets the task on.
+  if (source === "project")
+    return "It goes on by itself once you raise the project's budget; cancel it in the Inbox.";
+  return source === "month" || source === "plan"
     ? "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."
     : "Continue or cancel in the Inbox.";
 }
@@ -452,7 +482,7 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
           if (merge.approval !== "person")
             return ctx.mergeMode === "after_review"
               ? display("done", "Accepted · merging", "good")
-              : display("done", "Accepted · waiting for you to merge", "good");
+              : display("done", WAITING_FOR_YOUR_MERGE, "good");
           // The person's Merge, waiting its turn behind pull requests whose checks still run
           // (review, 2026-11-08: "Accepted · merging" for as long as those checks ran).
           const behind = mergesBehind(task, ctx);
@@ -462,8 +492,15 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
               })
             : display("done", "Accepted · merging", "good");
         }
-        default:
-          return display("done", "Accepted · waiting for you to merge", "good", { detail });
+        default: {
+          // W14-5: a pull request that stopped merging cleanly (the conflict notice) says so; its
+          // record's sentence names the branch it conflicts with and what to do.
+          if (merge.last_outcome === "conflict") {
+            const base = / conflicts with ([^\s:]+)/.exec(sentence)?.[1] ?? "main";
+            return display("done", `Accepted · conflicts with ${base}`, "warn", { detail });
+          }
+          return display("done", WAITING_FOR_YOUR_MERGE, "good", { detail });
+        }
       }
     }
     case "failed": {
@@ -488,6 +525,17 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
       // earlier finding is still open) waits on its card: no critic is checking the work, and
       // only the card moves it (phase C review: it read "Being reviewed", and Cancel promised
       // to stop a review that was not running).
+      if (card && cardKindOf(card) === "signoff")
+        return display("answer", SIGNOFF_LABEL, "warn", {
+          detail: SIGNOFF_DETAIL,
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "signoff",
+          },
+        });
       if (card && cardKindOf(card) === "retry")
         return display("answer", "Needs your decision", "warn", {
           detail: "Its card is in the Inbox: try again, mark it done anyway, or cancel it.",
@@ -549,6 +597,19 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
             requestId: card.id,
             title: null,
             cardKind: "cannot_run",
+          },
+        });
+      // C-21, L-9: accepted work waiting on the person's sign-off reads as its card does (Accept
+      // the work, Send it back, Cancel task); the row offers Answer and Cancel.
+      if (card && cardKindOf(card) === "signoff")
+        return display("answer", SIGNOFF_LABEL, "warn", {
+          detail: SIGNOFF_DETAIL,
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "signoff",
           },
         });
       if (card && cardKindOf(card) === "retry") {
@@ -651,7 +712,13 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         return display("waiting", ctx.credentialWait.label, "warn", {
           detail: ctx.credentialWait.detail,
         });
-      return display("ready", "Ready", "neutral");
+      // P7-20: work in progress from a paused run is set aside by a Cancel (before: "Drops it.").
+      return display(
+        "ready",
+        "Ready",
+        "neutral",
+        ctx.heldWork?.has(task.id) ? { cancelWork: cancelWorkOf(task, ctx, { paused: true }) } : {},
+      );
     }
   }
 }

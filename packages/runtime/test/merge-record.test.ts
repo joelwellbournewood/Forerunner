@@ -489,7 +489,8 @@ describe("the retry pass reads the checks first and says what it merged (R-merge
     expect(mergeRows(m.audit)).toHaveLength(rows + 1);
     expect(await m.record(t.id)).toMatchObject({ state: "merged", method: "merge" });
     const added = (await updates(m)).filter((b) => !before.includes(b));
-    expect(added).toEqual([`Merged #${pr.number}: "Add feature".`]);
+    // W14-2 (polish-words): named by its project.
+    expect(added).toEqual([`Sample: merged #${pr.number}, "Add feature".`]);
     const message = (await m.w.store.message.inbox({ humanId: m.w.human }, { limit: 100 })).find(
       (x) => x.body === added[0],
     );
@@ -511,7 +512,7 @@ describe("the retry pass reads the checks first and says what it merged (R-merge
     });
     const t = await m.runTask("Add feature");
     expect((await m.record(t.id)).state).toBe("merged");
-    expect((await updates(m)).filter((b) => b.startsWith("Merged #"))).toEqual([]);
+    expect((await updates(m)).filter((b) => /\bmerged #\d+/i.test(b))).toEqual([]);
     expect(later).toEqual([]);
   });
 
@@ -530,8 +531,8 @@ describe("the retry pass reads the checks first and says what it merged (R-merge
     });
     await m.merge.resumeAtStart();
     expect((await m.record(t.id)).state).toBe("merged");
-    expect((await updates(m)).filter((b) => b.startsWith("Merged #"))).toEqual([
-      `Merged #${pr.number}: "Add feature".`,
+    expect((await updates(m)).filter((b) => /\bmerged #\d+/i.test(b))).toEqual([
+      `Sample: merged #${pr.number}, "Add feature".`,
     ]);
     expect(later).toEqual([t.id]);
   });

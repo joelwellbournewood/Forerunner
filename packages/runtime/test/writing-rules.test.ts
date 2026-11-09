@@ -5,7 +5,7 @@ import { requestWords } from "../src/daemon/request-words.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { scanForInjection } from "../src/injection/scan.ts";
 import * as producers from "../src/notifications/producers.ts";
-import { sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
+import { MERGE_WAITS, sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
 
 /*
  * The writing rules of core-experience design §5, checked mechanically on what the system writes
@@ -390,7 +390,7 @@ describe("writing rules (design §5)", () => {
     for (const n of notes.slice(0, -1)) expect(n.title).toMatch(/^Quote page: /);
   });
 
-  it("an injection notification: within 140, no '(s)', the count, where from and the rules that fired (ADR 0047), never the passages", () => {
+  it("an injection notification: within 140, no '(s)', the count and where from, never the rule ids or the passages (ADR 0047 amended)", () => {
     // Phase E #80: the body was "Content from … (web_page) contained 3 instruction-like
     // passage(s). They were ignored:\n- exfiltrate: 1 passage\n- …\nScore 9; …", up to 1000
     // characters over several lines. The facts stay; the rule list is shortened, not them.
@@ -406,12 +406,15 @@ describe("writing rules (design §5)", () => {
       const n = producers.injectionFlagged("h-1", report, { origin, sessionId: "s-1" });
       expect(violations(n.body, producers.NOTIFICATION_BODY_MAX), n.body).toEqual([]);
       expect(n.body).toContain(`Ignored ${report.matches.length} passages`);
-      expect(n.body).toContain(rules[0] as string);
+      // P7-22 (polish-words): no rule ids; the title names the kind of content.
+      for (const rule of rules) expect(n.body).not.toContain(rule);
+      expect(n.title).toBe("Instructions in a web page were ignored");
+      expect(n.title.length).toBeLessThanOrEqual(60);
       expect(n.body).toMatch(/example\.test/);
       expect(n.body).toMatch(/Open the session to read them\.$/);
       expect(n.body).not.toContain("attacker@example.test");
     }
-    // Many rules: the list ends in "and N more", the count stays whole.
+    // Many rules: the count stays whole, and no rule is named.
     const many = {
       ...report,
       matches: Array.from({ length: 9 }, (_, i) => ({
@@ -422,7 +425,7 @@ describe("writing rules (design §5)", () => {
     const n = producers.injectionFlagged("h-1", many, { origin: "https://example.test/page" });
     expect(violations(n.body, producers.NOTIFICATION_BODY_MAX), n.body).toEqual([]);
     expect(n.body).toContain("Ignored 9 passages");
-    expect(n.body).toMatch(/and \d+ more/);
+    expect(n.body).not.toMatch(/planted_rule/);
   });
 
   it("the checker itself finds a planted violation of each kind", () => {
@@ -439,5 +442,444 @@ describe("writing rules (design §5)", () => {
     expect(violations("Fine words, cut at a …", 200)).not.toEqual([]);
     expect(violations("Fine words, cut at a word…", 200)).toEqual([]);
     expect(violations('Quote page: "Style the page in…" needs your decision', 60)).toEqual([]);
+  });
+});
+
+describe("polish-words, wave 13: the words a person reads (design §5)", () => {
+  it("withoutIds keeps a parenthesis of words and still takes out ids (later #94)", async () => {
+    const { withoutIds } = await import("../src/daemon/task-words.ts");
+    expect(withoutIds("The check failed (run node --check).")).toBe(
+      "The check failed (run node --check).",
+    );
+    expect(withoutIds("Pick one (task list) first.")).toBe("Pick one (task list) first.");
+    expect(withoutIds(`Stopped (task 01a196fe…) at its budget.`)).toBe("Stopped at its budget.");
+    expect(withoutIds(`Stopped (run ${ID}) here.`)).toBe("Stopped here.");
+    expect(withoutIds(`Answer request ${ID} now.`)).toBe("Answer now.");
+    expect(withoutIds(`It is ${ID}.`)).toBe("It is .");
+  });
+
+  it("a failure reason reads plain: no markdown asterisks, no backticks, cut at a word (L-18)", async () => {
+    const { plainReason } = await import("../src/daemon/task-words.ts");
+    const said = plainReason(
+      "**Result: the check fails.** The page links `styles.css`, which `README.md` names, but this branch doesn't have it, so the check cannot pass.",
+    );
+    expect(said).not.toMatch(/\*\*|`/);
+    expect(said).toMatch(/^Result: the check fails\. The page links styles\.css/);
+    expect(violations(said, 100)).toEqual([]);
+  });
+
+  it("the session result's merge-later line holds for a merge GitHub did not answer about, not only checks (P7-5)", () => {
+    // `waitingPrs` counts both MERGE_WAITS statuses: "checks_pending" and "unreachable" (GitHub
+    // did not answer; Forerunner tries the merge again), so the line may not promise checks only.
+    expect([...MERGE_WAITS].sort()).toEqual(["checks_pending", "unreachable"]);
+    const lines = (waitingPrs: number) =>
+      sessionResultLines({
+        outcome: {
+          done: [{ id: "t", title: "Write the page" }],
+          failed: [],
+          needsYou: [],
+          leftOver: [],
+          waiting: [],
+          waitingForDocker: [],
+          stopReason: "queue_empty",
+          spentChfMicro: 20_000,
+        },
+        inReview: [],
+        leftOutForBudget: [],
+        sessionCapChfMicro: 1_000_000,
+        openTasks: 0,
+        waitingPrs,
+      }).join(" ");
+    expect(lines(1)).toContain(
+      "1 reviewed pull request merges by itself once its checks pass or GitHub answers.",
+    );
+    expect(lines(2)).toContain(
+      "2 reviewed pull requests merge by themselves once their checks pass or GitHub answers.",
+    );
+    expect(lines(1)).not.toMatch(/merges when its checks pass\./);
+  });
+
+  it("the session result's failed line reads the run's report plain, cut at a word (L-18)", () => {
+    const lines = sessionResultLines({
+      outcome: {
+        done: [],
+        failed: [
+          {
+            id: "t",
+            title: "Write the page",
+            reason:
+              "The run changed no file. It reported: **Result: the check fails.** The page links `styles.css`, which `README.md` names, but this branch does not have it, so the check cannot pass until a later task adds it to the branch.",
+          },
+        ],
+        needsYou: [],
+        leftOver: [],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "queue_empty",
+        spentChfMicro: 20_000,
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      sessionCapChfMicro: 1_000_000,
+      openTasks: 1,
+    });
+    const failed = lines.find((l) => l.startsWith('"Write the page" failed'));
+    expect(failed).toMatch(
+      /^"Write the page" failed: the run changed no file\. It reported: Result/,
+    );
+    expect(failed).not.toMatch(/\*\*|`/);
+    // Cut at a word: never half a word before the ellipsis.
+    expect(failed).not.toMatch(/\w…\w/);
+  });
+
+  it("a sign-off card is its own kind; a failed-task card stays a retry card (C-21, L-9)", async () => {
+    const { cardKindOf } = await import("../src/daemon/task-words.ts");
+    const signoff = (reason: string) => ({ change_card: { key: "critic:signoff", reason } });
+    expect(cardKindOf(signoff("verdict"))).toBe("signoff");
+    expect(cardKindOf(signoff("failed"))).toBe("retry");
+    expect(cardKindOf(signoff("retry_ladder_exhausted"))).toBe("retry");
+  });
+});
+
+describe("polish-words, wave 13: the Inbox cards' words (design §5)", () => {
+  const row = (over: Partial<HumanRequestRow>): HumanRequestRow =>
+    ({
+      id: "r1",
+      human_id: "h",
+      project_id: "p",
+      task_id: null,
+      session_id: null,
+      kind: "approval",
+      why: "seed",
+      steps: [],
+      options: [],
+      blocking: true,
+      risk: "medium",
+      change_card: null,
+      status: "open",
+      answer: null,
+      answered_by: null,
+      answered_at: null,
+      created_at: "2026-11-08T10:00:00.000Z",
+      updated_at: "2026-11-08T10:00:00.000Z",
+      version: 1,
+      ...over,
+    }) as HumanRequestRow;
+  const plan = (n: number) => ({
+    key: "intake:p",
+    proposal: {
+      plan: {
+        tasks: Array.from({ length: n }, (_, i) => ({ key: `t${i}`, title: `Task ${i}` })),
+      },
+    },
+  });
+
+  it("a one-task plan starts working on 'it'; Approve says what it does while it works (L-20)", () => {
+    const one = requestWords(
+      row({ options: ["approve", "change", "reject"], change_card: plan(1) as never }),
+      { projectName: "Notes" },
+    );
+    const approve = one.choices.find((c) => c.label === "Approve and start");
+    expect(approve?.explain).toBe("Writes this task and starts working on it now.");
+    expect(approve?.working).toBe("Writing the plan…");
+    const two = requestWords(
+      row({ options: ["approve", "change", "reject"], change_card: plan(2) as never }),
+      { projectName: "Notes", projectRepository: true },
+    );
+    const approve2 = two.choices.find((c) => c.label === "Approve and start");
+    expect(approve2?.explain).toBe("Writes these 2 tasks and starts working on them now.");
+    expect(approve2?.working).toBe("Writing the plan and its docs pull request…");
+  });
+
+  it("a card titled by its first sentence keeps a quoted title whole (P7-26)", () => {
+    const w = requestWords(
+      row({
+        kind: "decision",
+        why: 'Change "Write the README: how to open it" to a light review? It costs less.',
+        options: ["Yes", "No"],
+      }),
+      {},
+    );
+    expect(w.title).toBe('Change "Write the README: how to open it" to a light review?');
+    expect(w.body).toBe("It costs less.");
+  });
+
+  it("a project budget's card opens Other settings; Cancel says what is true in a folder, and its Done line names what is stuck (P7-18, P7-19)", () => {
+    const card = {
+      key: "task:budget_stop",
+      task_id: "t",
+      source: "project",
+      done: null,
+      left: [],
+      title: '"Write the guide" paused at the project\'s budget',
+    };
+    const open = requestWords(row({ options: ["Cancel task"], change_card: card as never }), {
+      taskTitle: "Write the guide",
+      waiting: ["Write the index"],
+    });
+    expect(open.links).toEqual([
+      expect.objectContaining({ label: "Open Settings", to: "/settings#other-settings" }),
+    ]);
+    expect(open.choices[0]?.explain).toBe(
+      'Drops it; its work is set aside; "Write the index" will be stuck.',
+    );
+    expect(open.choices[0]?.explain?.length).toBeLessThanOrEqual(100);
+    const month = requestWords(
+      row({ options: ["Cancel task"], change_card: { ...card, source: "month" } as never }),
+      { taskTitle: "Write the guide" },
+    );
+    expect(month.links[0]?.to).toBe("/settings");
+    const done = requestWords(
+      row({
+        status: "answered",
+        options: ["Cancel task"],
+        change_card: { ...card, outcome: "cancel", set_aside: 2 } as never,
+      }),
+      { taskTitle: "Write the guide", waiting: ["Write the index"] },
+    );
+    expect(done.outcome).toBe(
+      '"Write the guide" was cancelled; its work is set aside until you reopen it. "Write the index" is stuck.',
+    );
+  });
+
+  it("a left-open card's title says what it is about now, and the Overview's Decisions line asks the same (W14-3)", async () => {
+    const { decisionPairs } = await import("../src/wiring/state-ports.ts");
+    const { leftOpenCardTitle } = await import("../src/daemon/request-words.ts");
+    const conflict = {
+      key: "merge:left_open",
+      pr_url: "https://github.com/o/r/pull/4",
+      notice: "conflict",
+      base: "trunk",
+    };
+    expect(leftOpenCardTitle(conflict, "Write the welcome page")).toBe(
+      '"Write the welcome page" conflicts with trunk',
+    );
+    const [pair] = decisionPairs({
+      why: 'The critic accepted "Write the welcome page", but pull request #4 was not merged. #4 conflicts with trunk in index.html: resolve the conflict on GitHub, or redo the task.',
+      steps: [],
+      options: ["Redo", "Leave it open"],
+      answer: "Redo" as never,
+      change_card: conflict as never,
+    });
+    expect(pair?.question).toBe('"Write the welcome page" conflicts with trunk');
+    expect(pair?.chosen).toBe("Redo");
+  });
+});
+
+describe("polish-words, wave 13: the plan card's runs-on lines", () => {
+  it("'its tests will not run' is said once for the plan, under the first task (P7-14)", async () => {
+    const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
+    const line = "On your subscription its tests will not run: it cannot run commands there.";
+    const views = await planTaskViews(
+      {
+        status: "open",
+        project_id: "p",
+        change_card: {
+          key: "intake:p",
+          proposal: {
+            plan: {
+              tasks: [
+                { key: "a", title: "Build the page", specialist: "coder" },
+                { key: "b", title: "Add the script", specialist: "coder" },
+                { key: "c", title: "Write the README", specialist: "writer-marketing" },
+              ],
+            },
+          },
+        } as never,
+      },
+      {
+        has: () => true,
+        forTask: async ({ specialist }) =>
+          specialist === "coder"
+            ? { kind: "subscription", line }
+            : { kind: "subscription", line: null },
+      },
+    );
+    expect(views?.map((v) => v.runsOn?.line ?? null)).toEqual([
+      "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
+      null,
+      null,
+    ]);
+    expect(views?.[0]?.runsOn?.line?.length).toBeLessThanOrEqual(100);
+  });
+
+  it("research on the API key without search says so within 100 characters (P7-15)", async () => {
+    const { choiceLine } = await import("../src/session/credential-choice.ts");
+    const said = choiceLine(
+      {
+        kind: "api_key",
+        lacks: ["webSearch"],
+        hard: ["webRead", "webSearch"],
+        onlyIt: [],
+        lost: [],
+      } as never,
+      { specialist: "researcher", dependencies: false },
+    );
+    expect(said).toBe(
+      "Runs on your API key: it reads web pages here but cannot search, so it reads known addresses.",
+    );
+    expect(violations(said ?? "", 100)).toEqual([]);
+  });
+});
+
+describe("polish-words, wave 13: money, budget lines, the log's lines", () => {
+  it("a reason with a file name is quoted whole in the 'could not' line (C-50)", async () => {
+    const { couldNotWords } = await import("../src/daemon/event-lines.ts");
+    expect(
+      couldNotWords(
+        "I could not complete this task. The file index.html cannot be created from data/members.csv here.",
+      ),
+    ).toBe("The file index.html cannot be created from data/members.csv here");
+  });
+
+  it("an amount above zero never reads CHF 0.00 (W14-6, P7-1)", async () => {
+    const { moneyWords } = await import("../src/session/money-words.ts");
+    const { budgetLineWords } = await import("../src/session/budget-pause.ts");
+    expect(moneyWords("CHF 0.00", 3_000)).toBe("less than CHF 0.01");
+    expect(moneyWords("CHF 0.00", 0)).toBe("CHF 0.00");
+    expect(moneyWords("CHF 0.40", 400_000)).toBe("CHF 0.40");
+    const chf = (usd: number) => `CHF ${(Math.round(usd * 0.8) / 1_000_000).toFixed(2)}`;
+    const tiny = budgetLineWords(
+      {
+        capUsdMicro: 4_000,
+        lineUsdMicro: 0,
+        reserveUsdMicro: 20_000,
+        firstCallUsdMicro: 2_000,
+        saveOnly: true,
+      } as never,
+      chf,
+    );
+    expect(tiny).toBe(
+      "This run may spend less than CHF 0.01, too little to wrap up (two steps may cost CHF 0.02): it pauses at its budget and keeps its work.",
+    );
+    expect(tiny).not.toMatch(/save only|CHF 0\.00/);
+    const result = sessionResultLines({
+      outcome: {
+        done: [],
+        failed: [],
+        needsYou: [],
+        leftOver: [],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "budget_project",
+        stopCapChfMicro: 10_000,
+        paused: [
+          {
+            id: "t",
+            title: "Write the guide",
+            limit: "the project's budget of CHF 0.01",
+            waits: true,
+          },
+        ],
+        spentChfMicro: 4_000,
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      sessionCapChfMicro: 1_000_000,
+      openTasks: 1,
+    });
+    const all = result.join(" ");
+    expect(all).not.toContain("CHF 0.00");
+    expect(all).toMatch(/Less than CHF 0\.01\.$/);
+    // A project's budget never resets.
+    expect(all).toContain(
+      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once you raise that budget.',
+    );
+    expect(all).not.toMatch(/resets/);
+  });
+
+  it("the log names a pull request, not a branch with the task's id (C-59)", async () => {
+    const { neverPushedWords } = await import("../../capabilities/src/githost/local-only.ts");
+    const line = describeEvent("task.files", {
+      taskId: ID,
+      title: "Write the guide",
+      files: ["guide.md"],
+      prUrl: "https://github.com/o/r/pull/7",
+      branch: "fr/01a19c00-write-the-guide",
+    } as never);
+    expect(line).not.toMatch(/01a19c00|fr\//);
+    expect(line).toContain("#7");
+    expect(neverPushedWords("fr/01a19c00-write-the-guide", ["Local only/notes.txt"])).toMatch(
+      /^Forerunner did not upload the branch write-the-guide: /,
+    );
+  });
+
+  it("a push GitHub refused reads on the Tasks row with GitHub's own line and no task id (C-59, R-2; review of polish-words)", async () => {
+    const { pushFailedWords } = await import("../../capabilities/src/githost/push-words.ts");
+    const { plainReason } = await import("../src/daemon/task-words.ts");
+    const reason = pushFailedWords(
+      "owner/forerunner-sandbox",
+      "fr/01a19c00-write-a-short-readme-section",
+      new Error(
+        "git push fr/01a19c00-write-a-short-readme-section failed: remote: Permission to owner/forerunner-sandbox.git denied to some-bot.\nfatal: unable to access 'https://github.com/owner/forerunner-sandbox.git/': The requested URL returned error: 403",
+      ),
+    );
+    // What the row shows (`taskDisplay`'s "Failed: " + plainReason, cut at 100).
+    const row = `Failed: ${plainReason(reason)}`;
+    expect(row).toBe(
+      'Failed: GitHub refused the push: "Permission to owner/forerunner-sandbox.git denied to some-bot". Check…',
+    );
+    expect(row).not.toMatch(/01a19c00|fr\//);
+    expect(violations(reason, 220)).toEqual([]);
+  });
+});
+
+describe("polish-words, wave 13: merge, preview, take-out and page-reader words", () => {
+  it("a Yes on a change card that was not applied names the card's question, not 'the change card' (W14-4)", async () => {
+    const { changeNotAppliedWords } = await import("../src/daemon/request-words.ts");
+    // The repo.create card of the bench's walk 8, answered after the offer linked a repository.
+    const said = changeNotAppliedWords(
+      {
+        what: "a GitHub repository for Bat count",
+        ask: 'Create the private GitHub repository bench/bat-count for "Bat count"? Its tasks then run on branches with pull requests.',
+      },
+      "Bat count already has a repository (bench/bat-count); one is created only for a project without one",
+    );
+    expect(said).toBe(
+      "Your Yes to \"Create the private GitHub repository bench/bat-count for 'Bat count'?\" was not applied: Bat count already has a repository (bench/bat-count); one is created only for a project without one. Nothing changed; ask again if you still want it.",
+    );
+    expect(said).not.toMatch(/change card/);
+    // A card with no question of its own reads by what it is about.
+    expect(changeNotAppliedWords({ what: 'the task "Write the guide"' }, "")).toBe(
+      'Your Yes about the task "Write the guide" was not applied: it was refused. Nothing changed; ask again if you still want it.',
+    );
+  });
+
+  it("a preview blocked by a file open in another program says so and what to do (P7-24)", async () => {
+    const { previewFailedSentence } = await import("../src/daemon/pull-requests.ts");
+    const busy = Object.assign(new Error("EBUSY: resource busy or locked, rmdir 'C:\\x'"), {
+      code: "EBUSY",
+    });
+    expect(previewFailedSentence(7, busy)).toBe(
+      "#7's version could not be put on this computer: a file of it is open in another program. Close it and try again.",
+    );
+    expect(previewFailedSentence(7, new Error("boom"))).toBe(
+      "#7's version could not be put on this computer. Try again, or open it on GitHub.",
+    );
+  });
+
+  it("a take-out's answer names the way back in at most two sentences (P7-25)", async () => {
+    const { takeOutOpenedSentence } = await import("../src/daemon/take-out-words.ts");
+    const one = takeOutOpenedSentence("Add the page", 9, []);
+    expect(one).toMatch(/close it to keep the work\.$/);
+    const two = takeOutOpenedSentence("Add the page", 9, ["Style it", "Test it"]);
+    expect(two.split(/(?<=\.)\s/).length).toBeLessThanOrEqual(2);
+  });
+
+  it("a chain of pull requests reads the same on the row and the Overview; the later merge names its project (P7-11, W14-2)", async () => {
+    const { buildsOnSentence, mergedUpdateWords } = await import("../src/loop/merge.ts");
+    expect(buildsOnSentence(5, 4)).toBe(
+      "#5 builds on #4, which is not merged yet: merge #4 first.",
+    );
+    expect(mergedUpdateWords(3, "Write the guide", "Two guides")).toBe(
+      'Two guides: merged #3, "Write the guide".',
+    );
+    expect(violations(mergedUpdateWords(3, "Write the guide", "Two guides"), 140)).toEqual([]);
+  });
+
+  it("with a proxy set, the page reader names the proxy only as a condition (P7-27)", async () => {
+    const { PROXY_SENTENCE } = await import("../../capabilities/src/web/fetch.ts");
+    expect(PROXY_SENTENCE).toMatch(/^If this computer reaches the internet only through its proxy/);
+    expect(PROXY_SENTENCE.length).toBeLessThanOrEqual(140);
   });
 });

@@ -188,6 +188,20 @@ with their milestone.
   ("fatal: expected 'acknowledgments'...", "warning: push negotiation failed..."), as in the
   development container's global config; `push-words.test.ts` feeds both shapes, and Windows'
   CRLF, through `GitOps.push` with a stub runner, so it does not depend on the machine's git.
+  Over HTTPS a refused push (a token that may not write, an archived repository) ends with git's
+  "fatal: unable to access '<url>': The requested URL returned error: 403" after the host's line:
+  `HOST_REFUSED` (a 401 or 403, or a `remote:` line saying denied or permission) is read before
+  "unable to access" counts as unreachable, and a refusal carries the host's line (`said`), which
+  the words quote with what to do (R-2, polish-words: before, the person read "GitHub could not
+  be reached"). A progress line is only a progress shape ("Writing objects", "Resolving deltas",
+  "Total 3"): a host's reason that starts with such a word ("Writing to this repository is
+  disabled") is the reason shown (R-3). `pushFailedWords` names no branch (C-59; the review of
+  polish-words): the task's branch carries its id part ("fr/1a2b3c4d-write-the-guide"), and the
+  sentence is the task's reason, read on its row, drawer and card, which name the task. A
+  refusal leads with the host's line ('GitHub refused the push: "Permission to o/r.git denied to
+  some-bot". Check the GitHub token in Settings and o/r on GitHub, then press Try again.'), so
+  the Tasks row's "Failed: …", cut at 100 characters, reaches it; before, the head with the
+  branch and the repository took the row.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD; `filesBetween(from, to)` compares two trees;
   `hasMergesSince(base, head)`, `setRef(ref, rev | null)`, `mergeFrom(ref, message?, {
@@ -214,6 +228,9 @@ with their milestone.
   request whose body carries the outcome, the acceptance criteria (no heading when there are
   none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
+  A run that changed no file fails with "The run changed no file. It reported: …" in plain words
+  (`emptyChangeSummary`, L-18, polish-words; before, the raw report and "(no changes were made in
+  the worktree)").
   **One branch per task** (R-branch, leftovers7-merge): the branch is
   `taskBranchName(task)`, `fr/<the id's last 8 hex characters>-<title>`, stored on the task at
   its first run. Before, it took the id's first 8 characters, which are a UUIDv7's creation
@@ -291,7 +308,10 @@ with their milestone.
   before it starts with no `DEPS_BASE_REF` and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
-  whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
+  whether it was pushed) with the task outcome `needs_human`. Its first sentence, the card's
+  title, names the task ('"Write the guide" conflicts with main in README.md'), never the branch
+  (W14-5, polish-words: it read "Rebase of fr/e34de89b-… onto main conflicts in …"); the steps
+  name the branch, where the person fetches it. Its options each lead somewhere
   (U-028): the runtime's `syncPrAnswers` applies the answer (`runtime.md`), and the task's next
   run reads it from the card (`outcome`, then `consumed_at` once a run used it). "I resolved
   it" first finishes a rebase or merge the person left under way in the task's folder
@@ -468,6 +488,9 @@ with their milestone.
   repository's own; any is a `path_not_allowed` refusal with `neverPushedWords` ("Forerunner did
   not upload the branch ...: it holds "Local only/notes.txt", files of Local only, which never
   leave this computer. Press Try again to redo the work without them."), `isNeverPushed` tells it.
+  The branch is named without its task-id part (`branchWords`: "fr/1a2b3c4d-write-the-guide" reads
+  "write-the-guide", C-59, polish-words); the stored name keeps it, so same-titled tasks keep two
+  branches.
   `trackedUnder(rev, folders)` reads the files a commit tracks under them (`-z`, raw names).
   `PrTaskExecutorDeps.localOnlyFor(task)` names the project's folder (in its copy, runtime.md);
   `execute` wraps the inner run (`withLocalOnly`): a copy an earlier run left is copied back
@@ -759,7 +782,9 @@ unless `FORERUNNER_WEB_FETCH=off`.
   `bench-api`) and tests set it; no list, setting or environment variable does.
 - **A proxy.** The reader connects directly. With `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set
   (`proxySetIn(opts.env ?? process.env)`), a connection that never reached the site (not found,
-  refused, reset, unreachable, timed out) adds `PROXY_SENTENCE` to its words.
+  refused, reset, unreachable, timed out) adds `PROXY_SENTENCE` to its words, as a condition ("If
+  this computer reaches the internet only through its proxy, …", P7-27: a mistyped host fails
+  too, so the proxy is not said to be the cause).
 - **The read (`fetch.ts`, `readWebPage`).** A GET over `node:http(s)` with `agent: false` and a
   `lookup` that resolves every address of the host (`opts.resolve`, default `dns.lookup` with
   `all: true`) and refuses the connection when one is not allowed, so the check is on the
@@ -843,8 +868,8 @@ called (the old code asked it to `get` and then `erase`) and the stale credentia
 
 `pr-executor.test.ts` runs `PrTaskExecutor` against local bare repositories and
 `MemoryGitHost`: the PR flow end to end, a push the host refuses (a pre-receive hook) failing
-the task with `pushFailedWords` ("Forerunner could not push the branch <branch> to <repo>: GitHub
-refused it (...). Check the GitHub token in Settings, then press Try again."; the network and
+the task with `pushFailedWords` ('GitHub refused the push: "<the host's line>". Check the GitHub
+token in Settings and <repo> on GitHub, then press Try again.', no branch named; the network and
 other refusals have their own words; before, the reason was git's output), an empty repository getting its README commit on
 `main` before the task's branch and PR (the branch holding only the task's change), a base
 branch the remote lacks failing in words, an empty repository whose host refuses the first

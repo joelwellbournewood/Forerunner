@@ -712,6 +712,10 @@ describe("CriticService: rules in code", () => {
           where: "2 failing",
         }),
       );
+      // C-19 (polish-words): the shown summary says why first, never "Accepted" under a review
+      // that sent the work back.
+      expect(out.summary).toMatch(/^Sent back: the check "pnpm test" failed\./);
+      expect(out.summary).not.toMatch(/\bAccepted\b/);
     } finally {
       await w.close();
     }
