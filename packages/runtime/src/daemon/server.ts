@@ -980,11 +980,18 @@ export function createDaemonApp(
       ...(await loadTaskDisplayContext(rt.store, rows, sandboxReady())),
       live: (taskId: string) => rt.kill.hasTask(taskId),
     };
+    // W15-20: what each task cost, its reviews included, as Costs > By task reads the ledger.
+    const booked = new Map(
+      (await rt.store.costLedger.breakdown("task_id", { projectId }).catch(() => []))
+        .filter((b) => b.key !== null && b.entries > 0)
+        .map((b) => [b.key as string, b.usd_micro]),
+    );
     return runOrder(rows).map((t, i) =>
       taskView(t, chf(), specialistLimit, {
         display: taskDisplay(t, ctx),
         runOrder: i,
         check: taskCheck(t, ctx.reviews?.get(t.id)),
+        ...(booked.has(t.id) ? { spentUsdMicro: booked.get(t.id) } : {}),
       }),
     );
   };

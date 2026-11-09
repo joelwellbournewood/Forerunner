@@ -1094,10 +1094,10 @@ function report(
 }
 
 /**
- * What the runtime's wrap-up message starts with (`WRAP_UP_TEXT` in the runtime's agent loop,
+ * What the runtime's wrap-up message starts with (`WRAP_UP_MARK` in the runtime's agent loop,
  * ADR 0112); testenv does not import the runtime.
  */
-export const WRAP_UP_MARK = "About a fifth of this task's budget is left";
+export const WRAP_UP_MARK = "Wrap up now:";
 /** How many parts a FORERUNNER_BENCH_LONG specialist writes before it reports as usual. */
 const LONG_PARTS = 30;
 

@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
+import { WRAP_UP_MARK } from "@forerunner/runtime/agent/loop";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import {
   type ComposeOptions,
@@ -47,11 +48,13 @@ import {
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { FakeGitHost } from "../../../testenv/src/githost/fake-git-host.ts";
+import { FakeProvider } from "../../../testenv/src/provider/fake-provider.ts";
 import {
   keyRule,
   messagesApiStandIn,
   standInFetch,
 } from "../../../testenv/src/provider/messages-api.ts";
+import { type ScriptedReply, textReply, toolReply } from "../../../testenv/src/provider/replies.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
@@ -7875,7 +7878,7 @@ describe("the UI client against the real daemon: a budget stop is a clean pause 
     const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
     expect(
       lines.some((l) =>
-        /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
+        /^This run may spend CHF [\d.]+: before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
           l,
         ),
       ),
@@ -9457,7 +9460,7 @@ describe("the UI client against the real daemon: research searches the web on th
       // Offering search leaves the run's wrap-up line where it is (review of 'web-search': ten
       // searches' worst case had moved it to CHF 0.77, a reserve of CHF 1.23).
       expect(lines).toContain(
-        "This run may spend CHF 2.00: at CHF 1.60 it is told to wrap up, keeping a reserve of CHF 0.40 to finish.",
+        "This run may spend CHF 2.00: before a step that could take it past CHF 1.60 it is told to wrap up, keeping a reserve of CHF 0.40 to finish.",
       );
       expect(lines.some((l) => l?.startsWith("Told the researcher to wrap up"))).toBe(false);
       // The run's cost holds the search's USD 0.01, and its row counts the task's searches.
@@ -12512,4 +12515,575 @@ describe("w15-merge, wave 15: a merge that waits for its task's folder (W15-05)"
       await host.stop();
     }
   }, 240_000);
+});
+
+describe("w15-run, wave 15", () => {
+  /** A daemon on the fake provider (one micro-USD a token), its client, and its model calls. */
+  async function world(replies: ScriptedReply[], name: string) {
+    const home = mkdtempSync(join(tmpdir(), `fr-ui-real-w15run-${name}-`));
+    const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+    const fake = new FakeProvider({ clock, latency: "none", onNoMatch: "echo", replies });
+    const calls: ModelRequest[] = [];
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    const options: ComposeOptions = {
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: fake,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    };
+    const open = async () => {
+      const rt = await composeRuntime(options);
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    return { open, clock, fake, calls, home };
+  }
+
+  /** Start a session on the project and wait for its end (at least 20 s of real time). */
+  async function sessionOn(client: DaemonClient, projectId: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      async () => (await client.session(sessionId)).status,
+      20_000,
+    );
+    return sessionId;
+  }
+
+  /** The critic accepts every review (its first turn), then closes. */
+  const accepts: ScriptedReply[] = [
+    toolReply(
+      "submit_review",
+      {
+        grade: 92,
+        confidence: "high",
+        verdict: "accept",
+        summary: "Criteria met.",
+        findings: [],
+        criteria: [],
+        checks_run: [],
+      },
+      "Reviewing the evidence.",
+      {
+        when: (r: ModelRequest) =>
+          (r.tools ?? []).some((t) => t.name === "submit_review") &&
+          !JSON.stringify(r.messages.at(-1)?.content ?? "").includes("tool_result"),
+        times: Number.POSITIVE_INFINITY,
+      },
+    ),
+    textReply("Rationale recorded.", {
+      when: { lastUserIncludes: "Review recorded" },
+      times: Number.POSITIVE_INFINITY,
+    }),
+  ];
+  const isRole = (role: string) => (r: ModelRequest) =>
+    (r.system ?? "").includes(`You are the ${role} specialist`);
+  const heardWrapUp = (r: ModelRequest) =>
+    JSON.stringify(r.messages.at(-1) ?? "").includes(WRAP_UP_MARK);
+
+  it("W15-14: a researcher at Budget 0.15 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
+    const report = [
+      'I wrote `popover-hint.md` with three MDN pages that mention `popover="hint"`.',
+      "",
+      "Where I stopped: `popover-hint.md` is written and complete with three opened and cited pages. Nothing is half-done.",
+      "",
+      "Left to do:",
+      "- Nothing for the acceptance criteria.",
+      "- Optionally, add a `popover-hint` section to a fresh `answer.md` once the existing one is archived or moved.",
+    ].join("\n");
+    const w = await world(
+      [
+        ...accepts,
+        textReply(report, {
+          when: (r: ModelRequest) => isRole("researcher")(r) && heardWrapUp(r),
+          times: Number.POSITIVE_INFINITY,
+        }),
+        // One write whose input is large: the next step's worst case passes the run's line.
+        toolReply(
+          "write_file",
+          { path: "popover-hint.md", content: "# Popover hint\n\n- three pages" },
+          "Writing the notes.",
+          {
+            when: isRole("researcher"),
+            usage: { input_tokens: 145_000, output_tokens: 200 },
+          },
+        ),
+      ],
+      "left",
+    );
+    const { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Popover", goal: "Popover notes" });
+      const created = await client.createTask(project.id, {
+        title: "Search MDN for pages that mention popover hint",
+        outcome: "popover-hint.md lists up to three MDN pages that mention popover hint",
+        acceptanceCriteria: ["popover-hint.md names each page with its link"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 187_500,
+        specialist: "researcher",
+        riskTier: 1,
+      });
+      const taskId = created.id;
+      await sessionOn(client, project.id);
+      expect(w.calls.filter(isRole("researcher")).some(heardWrapUp)).toBe(true);
+      const row = (await client.tasks(project.id)).find((t) => t.id === taskId);
+      expect(row?.status).toBe("done");
+      expect(row?.display?.label).toBe("Done");
+      const detail = await client.task(taskId);
+      expect(detail.review).toBeTruthy();
+      const cards = (await client.inbox(me.id)).requests.filter((q) => q.taskId === taskId);
+      expect(cards.map((q) => q.title)).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+  it("W15-20, W15-21: a running task's spend follows each call, the row and the drawer show what Costs shows, reviews included, and booking never moves the task's version", async () => {
+    // The coder's first call is held, then its second: what the screens read in between.
+    const held = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const holds = [held(), held()];
+    let coderCalls = 0;
+    const w = await world(
+      [
+        ...accepts,
+        toolReply("list_dir", { path: "." }, "Looking first.", {
+          when: (r: ModelRequest) =>
+            isRole("coder")(r) && !JSON.stringify(r.messages).includes("tool_result"),
+          usage: { input_tokens: 20_000, output_tokens: 100 },
+        }),
+        textReply("Wrote nothing; the folder is ready.\n\nLeft to do: nothing", {
+          when: isRole("coder"),
+          usage: { input_tokens: 25_000, output_tokens: 100 },
+        }),
+      ],
+      "spend",
+    );
+    const stream = w.fake.stream.bind(w.fake);
+    w.fake.stream = (r) => {
+      if (!isRole("coder")(r) || coderCalls >= holds.length) return stream(r);
+      const hold = holds[coderCalls++]?.promise ?? Promise.resolve();
+      return (async function* () {
+        await hold;
+        yield* stream(r);
+      })();
+    };
+    const { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({ name: "Spend", goal: "A folder" });
+      const created = await client.createTask(project.id, {
+        title: "Set up the folder",
+        outcome: "The folder is ready",
+        acceptanceCriteria: ["the folder exists"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      const taskId = created.id;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === taskId);
+      await eventually(
+        async () => coderCalls === 1,
+        "the coder's first call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      const before = await rt.store.task.mustGet(taskId);
+      expect(before.actual_cost_usd_micro).toBe(0);
+      holds[0]?.resolve();
+      await eventually(
+        async () => coderCalls === 2,
+        "the coder's second call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      // After its first call the task's spend is booked, while it still runs.
+      await eventually(
+        async () => ((await row())?.actual.usdMicro ?? 0) > 0,
+        "the first call's cost on the Tasks row",
+        async () => JSON.stringify((await row())?.actual),
+        20_000,
+      );
+      const live = await row();
+      expect(live?.status).toBe("in_progress");
+      expect(live?.spent?.usdMicro ?? 0).toBeGreaterThan(0);
+      // The drawer's run line of the run that goes on shows what it spent so far.
+      const runLine = async () => (await client.task(taskId)).runs.find((r) => r.kind !== "review");
+      await eventually(
+        async () => ((await runLine())?.cost.usdMicro ?? 0) > 0,
+        "the running run's cost in the drawer",
+        async () => JSON.stringify(await runLine()),
+        20_000,
+      );
+      expect((await rt.store.task.mustGet(taskId)).status).toBe("in_progress");
+      // Booking a call does not move the task's version: an action the person sends with the
+      // version the drawer read meets no version_conflict.
+      expect((await rt.store.task.mustGet(taskId)).version).toBe(before.version);
+      holds[1]?.resolve();
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const done = await row();
+      expect(done?.status).toBe("done");
+      // No double count: the task's actual is its work run's total.
+      const runs = await rt.store.run.forTask(taskId);
+      const work = runs.filter((r) => r.specialist !== "critic");
+      const reviews = runs.filter((r) => r.specialist === "critic");
+      expect(reviews.length).toBeGreaterThan(0);
+      expect(done?.actual.usdMicro).toBe(work.reduce((s, r) => s + r.cost_usd_micro, 0));
+      // The row, the drawer and Costs > By task show one figure, reviews included.
+      const costs = await client.costs({ projectId: project.id });
+      const byTask = JSON.stringify(costs);
+      const ledger = await rt.store.costLedger.sum({ taskId });
+      expect(done?.spent?.usdMicro).toBe(ledger.usd_micro);
+      expect(done?.spent?.usdMicro ?? 0).toBeGreaterThan(done?.actual.usdMicro ?? 0);
+      expect((await client.task(taskId)).task.spent?.usdMicro).toBe(ledger.usd_micro);
+      expect(byTask).toContain(taskId);
+    } finally {
+      for (const h of holds) h.resolve();
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("W15-21: the person's Stop, sent with the version the Tasks tab read before any call was booked, stops the run without a version_conflict", async () => {
+    // The coder's first call is held, then its second: the Stop goes in between.
+    const held = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const holds = [held(), held()];
+    let coderCalls = 0;
+    const w = await world(
+      [
+        ...accepts,
+        toolReply("list_dir", { path: "." }, "Looking first.", {
+          when: (r: ModelRequest) =>
+            isRole("coder")(r) && !JSON.stringify(r.messages).includes("tool_result"),
+          usage: { input_tokens: 20_000, output_tokens: 100 },
+        }),
+        textReply("Wrote nothing; the folder is ready.\n\nLeft to do: nothing", {
+          when: isRole("coder"),
+          usage: { input_tokens: 25_000, output_tokens: 100 },
+        }),
+      ],
+      "stop",
+    );
+    const stream = w.fake.stream.bind(w.fake);
+    w.fake.stream = (r) => {
+      if (!isRole("coder")(r) || coderCalls >= holds.length) return stream(r);
+      const hold = holds[coderCalls++]?.promise ?? Promise.resolve();
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          void hold.then(resolve);
+          if (r.signal?.aborted) resolve();
+          r.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield* stream(r);
+      })();
+    };
+    const { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({ name: "Stop", goal: "A folder" });
+      const created = await client.createTask(project.id, {
+        title: "Set up the folder",
+        outcome: "The folder is ready",
+        acceptanceCriteria: ["the folder exists"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      const taskId = created.id;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === taskId);
+      await eventually(
+        async () => coderCalls === 1,
+        "the coder's first call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      // What the Tasks tab shows while the first call runs: nothing spent yet.
+      const read = await row();
+      expect(read?.status).toBe("in_progress");
+      expect(read?.spent?.usdMicro ?? 0).toBe(0);
+      holds[0]?.resolve();
+      await eventually(
+        async () => coderCalls === 2,
+        "the coder's second call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      await eventually(
+        async () => ((await row())?.spent?.usdMicro ?? 0) > 0,
+        "the first call's cost on the Tasks row",
+        async () => JSON.stringify((await row())?.spent),
+        20_000,
+      );
+      // Stop, with the version the row showed before the call was booked.
+      const stopped = await client.taskAction(taskId, {
+        action: "stop",
+        version: read?.version ?? -1,
+      });
+      // The task is paused by the person (no version_conflict, no "This task changed").
+      expect(stopped.status).toBe("needs_human");
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const after = await row();
+      expect(after?.status).toBe("needs_human");
+      expect(after?.display?.label).toBe("Paused by you");
+      // What the stopped run spent stays on the task, once.
+      const runs = await rt.store.run.forTask(taskId);
+      expect(after?.actual.usdMicro).toBe(runs.reduce((s, r) => s + r.cost_usd_micro, 0));
+      expect(after?.actual.usdMicro ?? 0).toBeGreaterThan(0);
+    } finally {
+      for (const h of holds) h.resolve();
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("W15-18: the Start dialog prices a four-file task with tests above a one-line change, near what it cost live, and the same after a restart", async () => {
+    const w = await world([], "size");
+    let { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({
+        name: "Club tools",
+        goal: "Tools for the club",
+      });
+      // Live check 2 (RUN-16): this task's work cost USD 0.21; the footer's USD 0.03. Both read
+      // "about CHF 0.03" in the Start dialog.
+      const big = await client.createTask(project.id, {
+        title: "Write the Swiss pairing tool with tests",
+        outcome:
+          "A Node.js command line tool for the club's Swiss-system tournaments, in four files plus a README: src/elo.js (Elo ratings, K=20), src/swiss.js (pairs players by score then rating, no rematches, a bye for an odd count), test/elo.test.js and test/swiss.test.js (node:test, at least six cases each), and README.md with usage examples. Usage: node src/swiss.js players.json",
+        acceptanceCriteria: [
+          "src/elo.js, src/swiss.js, test/elo.test.js and test/swiss.test.js exist",
+          "node --test passes",
+          "README.md shows how to run it with an example players.json",
+        ],
+        riskTier: 0,
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+      const small = await client.createTask(project.id, {
+        title: "Add a footer with the club address to index.html",
+        outcome: "index.html ends with a footer: Chess club, Marktgasse 1, 3011 Bern",
+        acceptanceCriteria: [],
+        riskTier: 0,
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+      const figures = async () => {
+        const check = await client.startCheck(project.id);
+        const of = (id: string) =>
+          [...check.runnable, ...check.later].find((t) => t.taskId === id)?.estimate.usdMicro ?? 0;
+        return { big: of(big.id), small: of(small.id) };
+      };
+      const shown = await figures();
+      expect(shown.small).toBeGreaterThan(0);
+      expect(shown.big).toBeGreaterThanOrEqual(3 * shown.small);
+      // "About" within twice what the work cost live (USD 0.208).
+      expect(shown.big).toBeGreaterThanOrEqual(208_000 / 2);
+      expect(shown.big).toBeLessThanOrEqual(208_000 * 2);
+      // Deterministic: a restart prices both the same.
+      await rt.close();
+      ({ rt, client } = await w.open());
+      expect(await figures()).toEqual(shown);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // Live check 2 (RUN-2): the plan card priced 'Review src/clamp.js for bugs' about CHF 0.04;
+  // after Approve and start and Stop now the Start dialog said about CHF 0.02, and a restart
+  // moved it back. The stopped run's partial cost had taught the live estimates; the fold after
+  // a restart takes finished tasks only.
+  it("W15-19: after Approve and start and Stop now during the first task's run, the Start dialog gives each task the plan card's figure, and the same after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15run-stop-"));
+    const clock = new ShiftedClock("2026-11-09T09:00:00Z");
+    const provider = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    // The first specialist call is paid; the second is held until the stop aborts it, so the
+    // run the person stops has spent something (what taught the estimates before).
+    let specialistCalls = 0;
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => {
+      if (detectRole(req).role !== "specialist") return stream(req);
+      specialistCalls += 1;
+      if (specialistCalls !== 2) return stream(req);
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          void held.then(resolve);
+          if (req.signal?.aborted) resolve();
+          req.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield* stream(req);
+      })();
+    };
+    const open = async () => {
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    let { rt, client } = await open();
+    try {
+      const brief = "A page that shows a random quote";
+      const project = await client.createProject({
+        name: "Stopped quote",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      if (!card?.planTasks) throw new Error(`no plan card: ${JSON.stringify(card)}`);
+      // What the plan card shows for each task the plan writes.
+      const onCard = new Map(
+        card.planTasks
+          .filter((t) => t.specialist !== null)
+          .map((t) => [t.title, t.estimateUsdMicro] as const),
+      );
+      expect(onCard.size).toBeGreaterThan(0);
+
+      await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+      await eventually(
+        async () => specialistCalls >= 2,
+        "the first task's second model call",
+        async () => `${specialistCalls} specialist calls`,
+        20_000,
+      );
+      const running = (await client.sessions({ projectId: project.id })).find(
+        (s) => s.status === "running",
+      );
+      if (!running) throw new Error("no running session after Approve and start");
+      // Stop now, as the session page sends it.
+      await client.stopSession(running.id, "stopped from the live view");
+      await eventually(
+        async () =>
+          (await client.sessions({ projectId: project.id })).every((s) => s.status !== "running"),
+        "the stopped session to end",
+        async () => (await client.sessions({ projectId: project.id })).map((s) => s.status).join(),
+        20_000,
+      );
+      // The run the person stopped spent something: what the estimates learned from before.
+      const tasks = await client.tasks(project.id);
+      const stopped = tasks.filter((t) => t.actual.usdMicro > 0);
+      expect(stopped.map((t) => t.status)).toEqual(["ready"]);
+
+      const figures = async () => {
+        const check = await client.startCheck(project.id);
+        const all = [...check.runnable, ...check.later];
+        const out: Record<string, number> = {};
+        for (const t of tasks) {
+          if (!onCard.has(t.title)) continue;
+          const item = all.find((i) => i.taskId === t.id);
+          if (!item) throw new Error(`"${t.title}" is not in the Start check`);
+          out[t.title] = item.estimate.usdMicro;
+        }
+        return out;
+      };
+      const want = Object.fromEntries(onCard);
+      // Before: the stopped task's figure was its stopped run's partial cost's lesson.
+      expect(await figures()).toEqual(want);
+      // A restart reads the same figures (validation rule 4).
+      await rt.close();
+      ({ rt, client } = await open());
+      expect(await figures()).toEqual(want);
+    } finally {
+      release();
+      await rt.close();
+    }
+  }, 90_000);
 });

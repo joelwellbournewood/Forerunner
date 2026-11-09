@@ -8,7 +8,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { requestView } from "../src/daemon/views.ts";
-import { PLAN_ESTIMATE_BOUND, STARTING_ESTIMATES_USD_MICRO } from "../src/estimates/model.ts";
+import {
+  PLAN_ESTIMATE_BOUND,
+  STARTING_ESTIMATES_USD_MICRO,
+  taskSizeFactor,
+} from "../src/estimates/model.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import { chfText } from "../src/money-words.ts";
 import type { StateBrief } from "../src/session/brief.ts";
@@ -29,6 +33,19 @@ import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /** A coder task's plan estimate at the top of its calibrated band ('cost', L-22). */
 const CODER_BAND = Math.round((STARTING_ESTIMATES_USD_MICRO.coder as number) * PLAN_ESTIMATE_BOUND);
+/**
+ * The scaffold's band: "A runnable skeleton with tests" is a little larger than a typical task
+ * (W15-18, `taskSizeFactor`: tests to write).
+ */
+const SCAFFOLD_BAND = Math.round(
+  (STARTING_ESTIMATES_USD_MICRO.coder as number) *
+    taskSizeFactor({
+      outcome: "A runnable skeleton with tests",
+      acceptance_criteria: ["pnpm test passes"],
+      specialist: "coder",
+    }) *
+    PLAN_ESTIMATE_BOUND,
+);
 /** The plan card's words for an amount (the intake's own `approxChf`). */
 const approxChfOf = (micro: number) => chfText(micro);
 
@@ -265,13 +282,15 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       // 'cost' (L-22): the model guessed USD 0.40 and 0.25 for two coder tasks; the card keeps
       // each within its kind's calibrated band (a coder task's work cost USD 0.01-0.09 live).
       const coderBand = CODER_BAND;
+      // W15-18: within the band of its size (the scaffold writes tests).
+      expect(SCAFFOLD_BAND).toBeGreaterThan(coderBand);
       expect(prop.firstSession.items).toEqual([
-        expect.objectContaining({ key: "scaffold", estimateUsdMicro: coderBand }),
+        expect.objectContaining({ key: "scaffold", estimateUsdMicro: SCAFFOLD_BAND }),
         expect.objectContaining({ key: "ci", estimateUsdMicro: coderBand }),
       ]);
-      expect(row.why).toContain(`(~${approxChfOf(2 * coderBand)})`);
+      expect(row.why).toContain(`(~${approxChfOf(SCAFFOLD_BAND + coderBand)})`);
       expect(row.steps.find((st) => st.startsWith("First session:"))).toContain(
-        `1. Scaffold the repository (~${approxChfOf(coderBand)})`,
+        `1. Scaffold the repository (~${approxChfOf(SCAFFOLD_BAND)})`,
       );
       expect(Object.keys(prop.docs)).toContain("docs/decisions/0001-stack.md");
       expect(row.why).toContain("2 milestone(s)");
@@ -350,8 +369,8 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         author_human: rt.human.id,
         author_agent: rt.agent.id,
         reason: "planned from the brief",
-        // The guess (USD 0.40) kept within the coder's band ('cost', L-22).
-        est_cost_usd_micro: CODER_BAND,
+        // The guess (USD 0.40) kept within the coder's band ('cost', L-22), sized (W15-18).
+        est_cost_usd_micro: SCAFFOLD_BAND,
       });
       // The docs: the drafted ones as drafted, the two the model left out from the templates.
       const dir = rt.intake.workspaceDir(projectId);
@@ -368,11 +387,11 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const first = (project.summary_cache as { first_session?: JsonObject }).first_session;
       expect(first).toMatchObject({
         request_id: requestId,
-        estimate_usd_micro: 2 * CODER_BAND,
+        estimate_usd_micro: SCAFFOLD_BAND + CODER_BAND,
         summary: "Scaffold first, then wire CI; sign-in waits for the skeleton.",
       });
       expect(first?.items).toEqual([
-        expect.objectContaining({ task_id: scaffold?.id, estimate_usd_micro: CODER_BAND }),
+        expect.objectContaining({ task_id: scaffold?.id, estimate_usd_micro: SCAFFOLD_BAND }),
         expect.objectContaining({ task_id: ci?.id, estimate_usd_micro: CODER_BAND }),
       ]);
       expect((project.summary_cache as { next_steps?: string[] }).next_steps).toEqual([

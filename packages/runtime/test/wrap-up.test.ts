@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { LoopAgentDriver, type RunEvent, WRAP_UP_TEXT } from "../src/agent/loop.ts";
+import { LoopAgentDriver, type RunEvent, WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
+
+/** A fixed wrap-up text: these cases test where and how often it goes (W15-16: the runtime's own
+ * text is worded from the run's spend when it is sent). */
+const WRAP_UP_TEXT = wrapUpText(50_000, 250_000);
+
 import { type QueryLike, SdkAgentDriver } from "../src/agent/sdk.ts";
 import type { ChatMessage } from "../src/provider/types.ts";
 import { budget, flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
@@ -70,7 +75,7 @@ describe("the loop's wrap-up message (budget-stop)", () => {
     // The tool results first, then the one text block: never inside a tool result.
     expect(blocks.map((b) => b.type)).toEqual(["tool_result", "text"]);
     expect(textBlocks(last)).toEqual([{ type: "text", text: WRAP_UP_TEXT }]);
-    expect(JSON.stringify(blocks[0])).not.toContain("About a fifth");
+    expect(JSON.stringify(blocks[0])).not.toContain(WRAP_UP_MARK);
     // Once: the whole conversation of the last request holds one wrap-up block.
     const all = provider.calls.at(-1)?.messages ?? [];
     expect(all.flatMap((m) => textBlocks(m)).filter((b) => b.text === WRAP_UP_TEXT)).toHaveLength(
@@ -89,8 +94,7 @@ describe("the loop's wrap-up message (budget-stop)", () => {
     const res = await result;
     expect(res.outcome).toBe("budget_exceeded");
     expect(res.wrapUpSent).toBe(false);
-    for (const c of provider.calls)
-      expect(JSON.stringify(c.messages)).not.toContain("About a fifth");
+    for (const c of provider.calls) expect(JSON.stringify(c.messages)).not.toContain(WRAP_UP_MARK);
     expect(events.find((e) => e.type === "budget_line")).toMatchObject({ saveOnly: true });
   });
 
@@ -112,8 +116,7 @@ describe("the loop's wrap-up message (budget-stop)", () => {
     const { provider, result } = run(30_000, 6, { wrapUp: false });
     const res = await result;
     expect(res.wrapUpSent).toBe(false);
-    for (const c of provider.calls)
-      expect(JSON.stringify(c.messages)).not.toContain("About a fifth");
+    for (const c of provider.calls) expect(JSON.stringify(c.messages)).not.toContain(WRAP_UP_MARK);
   });
 });
 

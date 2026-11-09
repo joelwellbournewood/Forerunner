@@ -890,8 +890,14 @@ specialist there); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
 forecast. It starts from what that kind of work cost on the real model (a page or a coder
 task a few centimes, a test task a little more, a research task that reads web pages about
-CHF 0.40), whatever the plan model guessed, and it learns from every task that finishes: after
-three tasks of a kind it is within about twice what they really cost. Questions the plan asks
+CHF 0.40), whatever the plan model guessed, and grows with the task's size as its outcome and
+checks describe it: each file it names, tests to write, "at least six cases" and a long list of
+checks make it larger, up to four times (a tool in four files with its tests is about CHF 0.11,
+a footer line a few centimes). It learns from every task that finishes, per unit of that size,
+so a large task does not make the small ones look dear: after three tasks of a kind it is
+within about twice what they really cost. The session review sets the work's cost against the
+estimate and names the critic's reviews apart ("cost CHF 0.25 (work CHF 0.15 against an
+estimate of CHF 0.14, reviews CHF 0.10)"), since the estimate is the work's. Questions the plan asks
 you cost nothing and the plan counts them at CHF 0.00. A task that stopped at its budget does
 not count toward what the estimates learn, even after you raise its budget and it finishes,
 since its first run did not finish its work; restarting the app changes none of these figures.
@@ -908,16 +914,21 @@ or cancel in the Inbox.", with Answer (the card), Edit (set another budget yours
 Cancel.
 
 A budget stop is a pause, not a failure. Before a task's run reaches its budget, the agent is
-told once that about a fifth of its budget is left: it starts nothing new, leaves the files
-working and ends its report with "Where I stopped:" and "Left to do:". The reserve for that is a
-fifth of the run's budget, or the cost of two calls when that is more; the session's log
+told once to wrap up, with how much of its budget it has used: it starts nothing new, leaves the
+files working and ends its report with "Where I stopped:" and "Left to do:". The reserve for that
+is a fifth of the run's budget, or the cost of two calls when that is more; the session's log
 (Details) says at the start of each run where its wrap-up comes ("This run may spend CHF 0.40:
-at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish."). A budget too small
+before a step that could take it past CHF 0.32 it is told to wrap up, keeping a reserve of CHF
+0.08 to finish."). Since one step can cost a lot (a long file, a large page), the wrap-up can come
+before the run has spent that much, and the log says so ("Told the researcher to wrap up: it spent
+CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A budget too small
 for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
 smaller than a single step's cost says so and pauses before that step. A run that stopped at a
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
-nothing left is reviewed as usual. The card and the task name the limit that stopped it: the
+nothing left is reviewed as usual. "Left to do" counts only what the task's acceptance criteria
+still need: "Nothing for the acceptance criteria" is nothing, and an optional extra the agent
+suggests is kept as a note, so finished work goes to its review instead of waiting on a card. The card and the task name the limit that stopped it: the
 task's budget, the specialist's limit, the session's budget, the project's budget, this month's
 cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,
 the project's budget, the month's cap or the subscription's share ends the session, and the
@@ -996,8 +1007,11 @@ On an API key the researcher also **searches the web** with Anthropic's web sear
 searches per task, fewer when the task's money left would not pay for them, at about 1 cent each
 plus the results it reads (the task's cost and the session's log include them: "searched the web
 for ..."). Searching never eats the reserve a run keeps to finish: the run is told to wrap up at
-the same point with or without search (a fifth of its budget left, as the session's log says when
-it starts), and close to that point it is offered fewer searches, then none. On a Claude
+the same point with or without search (as the session's log says when it starts). A run is offered
+up to two searches a step, the same offer for the whole run (changing it would make the run pay to
+send its conversation again), until the money before its wrap-up point no longer covers them; then
+search goes away for the rest of the run and it reads pages by their address. A task whose budget
+is too small for even one search is told so in its brief and reads pages by their address. On a Claude
 subscription it searches with Claude Code's search, and opens pages with Forerunner's reader as
 on the key (Claude Code's own page reader is switched off). Search only finds pages: a claim in
 the research counts as sourced only when its page was opened and read, so the researcher opens

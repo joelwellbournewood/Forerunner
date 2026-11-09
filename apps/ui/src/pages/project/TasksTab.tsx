@@ -482,7 +482,8 @@ export function TasksTab({
                     </td>
                     <td className="py-1.5 pr-2">{whoName(who)}</td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
-                      <Money value={t.actual} />
+                      {/* W15-20: what it cost, its reviews included, as Costs reads it. */}
+                      <Money value={t.spent ?? t.actual} />
                       {isFinished(t) || who === WHO_PERSON ? null : (
                         <TaskCap task={t} specialist={who} />
                       )}

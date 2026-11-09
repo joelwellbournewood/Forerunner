@@ -17,8 +17,10 @@ import {
   PLAN_ESTIMATE_BOUND,
   planEstimateUsdMicro,
   RATIO_MAX,
+  SIZE_FACTOR_MAX,
   type SpecialistDefaults,
   STARTING_ESTIMATES_USD_MICRO,
+  taskSizeFactor,
 } from "../src/estimates/model.ts";
 import { EstimateAccuracyViewSchema, estimateAccuracyView } from "../src/estimates/view.ts";
 import { cutPlanToBudget, type SessionPlan } from "../src/session/runner.ts";
@@ -786,5 +788,174 @@ describe("estimate accuracy view", () => {
       bias_pct: 0,
       within_25_pct_share: 0,
     });
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-19, live check 2's RUN-2): after Stop now the plan card and the Start
+ * dialog gave different figures for the same task: the runner's task.finished hook fed the killed
+ * call's partial cost to the learner (the live feed), the task went back to Ready, and a restart
+ * moved the figure back (the fold takes finished tasks only). A killed run of a task that did not
+ * finish is no sample; its cost counts once the task finishes, in both feeds.
+ */
+describe("w15-run, wave 15: a stopped run teaches the estimates nothing (W15-19)", () => {
+  it("Stop now: no sample live, none after a restart; once the task finishes its sample holds the stopped run's cost, live and folded alike", async () => {
+    const w = await world();
+    worlds.push(w);
+    const live = new EstimateModel({ defaults });
+    const query = { specialist: "coder", risk_tier: 1, est_cost_usd_micro: 100_000 };
+    const before = live.estimate(query);
+    // Stopped during its first call: the run is killed, the task back to Ready.
+    const stopped = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 30_000,
+      outcomes: ["killed"],
+      status: "ready",
+      ledger: true,
+    });
+    expect(await live.observeTaskRuns(w.store, stopped, w.clock.nowIso(), "killed")).toBe(false);
+    expect(live.estimate(query)).toEqual(before);
+    expect(live.recentSamples()).toEqual([]);
+    // A restart changes no figure.
+    const restarted = await EstimateModel.fromStore(w.store, { defaults });
+    expect(restarted.estimate(query)).toEqual(live.estimate(query));
+    // The task runs again and finishes: one sample, its cost the stopped run's and the last one's.
+    await w.clock.advance(60_000);
+    const again = await w.store.run.insert({
+      task_id: stopped.id,
+      session_id: w.session,
+      specialist: "coder",
+      model: "fake-sonnet",
+      provider: "fake",
+      effort: "medium",
+      cost_usd_micro: 70_000,
+      duration_ms: 200_000,
+      outcome: "completed",
+    });
+    await w.store.costLedger.record({
+      human_id: w.human,
+      agent_id: w.agent,
+      project_id: w.project,
+      session_id: w.session,
+      task_id: stopped.id,
+      run_id: again.id,
+      kind: "api",
+      usd_micro: 70_000,
+      model: "fake-sonnet",
+    });
+    const done = await w.store.task.patch(stopped.id, { status: "done" });
+    expect(await live.observeTaskRuns(w.store, done, w.clock.nowIso(), "done")).toBe(true);
+    expect(live.recentSamples().map((s) => [s.taskId, s.actualUsdMicro])).toEqual([
+      [stopped.id, 100_000],
+    ]);
+    const folded = await EstimateModel.fromStore(w.store, { defaults });
+    expect(folded.recentSamples()).toEqual(live.recentSamples());
+    expect(folded.estimate(query)).toEqual(live.estimate(query));
+  });
+
+  it("a task cancelled after Stop now is no sample in either feed: what it spent is a lower bound", async () => {
+    const w = await world();
+    worlds.push(w);
+    const live = new EstimateModel({ defaults });
+    const cancelled = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 30_000,
+      outcomes: ["killed"],
+      status: "cancelled",
+      ledger: true,
+    });
+    expect(await live.observeTaskRuns(w.store, cancelled, w.clock.nowIso(), "done")).toBe(false);
+    expect((await EstimateModel.fromStore(w.store, { defaults })).recentSamples()).toEqual([]);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-18, live check 2's RUN-16): estimates knew only the specialist and the
+ * tier, so "Write the Swiss pairing tool with tests" (four files and their tests, USD 0.21 of
+ * work) was "about CHF 0.03" like a one-line footer.
+ */
+describe("w15-run, wave 15: an estimate grows with the task's size (W15-18)", () => {
+  const swiss = {
+    specialist: "coder",
+    risk_tier: 0,
+    outcome:
+      "A Node.js command line tool for the club's Swiss-system tournaments, in four files plus a README: src/elo.js (Elo ratings, K=20), src/swiss.js (pairs players by score then rating, no rematches, a bye for an odd count), test/elo.test.js and test/swiss.test.js (node:test, at least six cases each), and README.md with usage examples. Usage: node src/swiss.js players.json",
+    acceptance_criteria: [
+      "src/elo.js, src/swiss.js, test/elo.test.js and test/swiss.test.js exist",
+      "node --test passes",
+      "README.md shows how to run it with an example players.json",
+    ],
+  };
+  const footer = {
+    specialist: "coder",
+    risk_tier: 0,
+    outcome: "index.html ends with a footer: Chess club, Marktgasse 1, 3011 Bern",
+    acceptance_criteria: [],
+  };
+
+  it("a task with no estimate of its own: the starting figure times its size, deterministic, within its bounds", () => {
+    const m = new EstimateModel({ defaults });
+    const big = m.estimate(swiss);
+    const small = m.estimate(footer);
+    expect(small.usdMicro).toBe(STARTING_ESTIMATES_USD_MICRO.coder);
+    expect(big.usdMicro).toBeGreaterThanOrEqual(3 * small.usdMicro);
+    expect(big.usdMicro).toBeGreaterThanOrEqual(208_000 / 2);
+    expect(big.usdMicro).toBeLessThanOrEqual(208_000 * 2);
+    expect(new EstimateModel({ defaults }).estimate(swiss)).toEqual(big);
+    // "A Node.js tool" names no file; a tester's tests are its starting figure's work.
+    expect(taskSizeFactor({ outcome: "A Node.js tool that prints the date" })).toBe(1);
+    expect(
+      taskSizeFactor({ outcome: "test/a.test.js tests src/a.js", specialist: "tester" }),
+    ).toBeLessThan(
+      taskSizeFactor({ outcome: "test/a.test.js tests src/a.js", specialist: "coder" }),
+    );
+    const huge = {
+      outcome: Array.from({ length: 30 }, (_, i) => `src/f${i}.js`).join(", "),
+      acceptance_criteria: Array.from({ length: 20 }, (_, i) => `check ${i}`),
+    };
+    expect(taskSizeFactor(huge)).toBe(SIZE_FACTOR_MAX);
+    // A task with its own estimate keeps it: the plan's figure already holds the size.
+    expect(m.estimate({ ...swiss, est_cost_usd_micro: 90_000 }).usdMicro).toBe(90_000);
+  });
+
+  it("the plan's guess is kept in the band of the sized starting figure, and the task row it writes is priced the same", () => {
+    const size = taskSizeFactor(swiss);
+    const base = STARTING_ESTIMATES_USD_MICRO.coder ?? 0;
+    // The planning model's low guess for a large task is lifted to the sized band's floor.
+    const bounded = boundedPlanEstimate(30_000, "coder", size);
+    expect(bounded).toBe(Math.round((base * size) / PLAN_ESTIMATE_BOUND));
+    expect(boundedPlanEstimate(0, "coder", size)).toBe(Math.round(base * size));
+    // Size 1 (a typical task) is the band it was.
+    expect(boundedPlanEstimate(30_000, "coder", 1)).toBe(boundedPlanEstimate(30_000, "coder"));
+    // The plan card and the Start dialog: the same figure for the row the plan writes.
+    const m = new EstimateModel({ defaults });
+    const row = {
+      ...swiss,
+      est_cost_usd_micro: bounded,
+      budget_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+    };
+    expect(planEstimateUsdMicro(m, row as unknown as TaskRow)).toBe(
+      planEstimateUsdMicro(m, {
+        ...row,
+        outcome: "",
+        acceptance_criteria: [],
+      } as unknown as TaskRow),
+    );
+  });
+
+  it("the learner learns per unit of size: a large task's sample does not lift a small task's figure", () => {
+    const m = new EstimateModel({ defaults });
+    const learned = m.observeTask(
+      { id: "t-swiss", est_cost_usd_micro: 0, budget_usd_micro: 0, ...swiss },
+      { usdMicro: 208_000, wallMs: 600_000, at: "2026-11-09T10:00:00.000Z" },
+    );
+    expect(learned).toBe(true);
+    const [s] = m.recentSamples();
+    expect(s?.estimateUsdMicro).toBe(
+      Math.round((STARTING_ESTIMATES_USD_MICRO.coder ?? 0) * taskSizeFactor(swiss)),
+    );
+    // The footer's figure moves by the large task's ratio per unit of size, under x2.
+    expect(m.estimate(footer).usdMicro).toBeLessThan(2 * (STARTING_ESTIMATES_USD_MICRO.coder ?? 0));
   });
 });

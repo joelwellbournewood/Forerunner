@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { personLine } from "../src/daemon/event-lines.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpers.ts";
 
@@ -332,5 +333,25 @@ describe("session log lines in plain words (U-074)", () => {
     } finally {
       await w.close();
     }
+  });
+});
+
+/** w15-run, wave 15 (W15-69): the session's end line said "1 needs you" for a paused task. */
+describe("w15-run, wave 15: the end line counts a task paused at its budget as paused (W15-69)", () => {
+  it("1 paused, never 1 needs you", () => {
+    const line = personLine(
+      "session.ended",
+      {
+        status: "completed",
+        stopReason: "queue_empty",
+        spentUsdMicro: 300_000,
+        completed: 1,
+        needsHuman: 0,
+        paused: 1,
+      },
+      0.8,
+    );
+    expect(line).toBe("Session over: 1 done, 1 paused. CHF 0.24.");
+    expect(line).not.toMatch(/needs you/);
   });
 });

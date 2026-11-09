@@ -386,9 +386,17 @@ describe("LoopTaskExecutor: the Run row (D.5, D.19)", () => {
     const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
     const w = await seed(store);
     const provider = new ScriptedProvider([{ text: "Added the endpoint." }], h.clock);
-    vi.spyOn(store.run, "patch").mockRejectedValueOnce(
-      new ForerunnerError("internal", "disk full"),
-    );
+    // The end's write fails (the one that carries the outcome; W15-21: each model call's cost
+    // is written to the row as the call ends, before it).
+    const patch = store.run.patch.bind(store.run);
+    let refused = false;
+    vi.spyOn(store.run, "patch").mockImplementation(async (id, change) => {
+      if (!refused && "outcome" in change) {
+        refused = true;
+        throw new ForerunnerError("internal", "disk full");
+      }
+      return patch(id, change);
+    });
     const records: LogRecord[] = [];
     const off = Logger.addSink((r) => records.push(r));
     try {

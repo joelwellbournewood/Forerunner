@@ -23,8 +23,16 @@ export type BudgetStopSource =
 export interface RunHandoff {
   /** Its "Where I stopped:" text, or "" when it wrote none (a hard stop, a tiny budget). */
   stopped: string;
-  /** Its "Left to do:" items; empty for "nothing" or none written. */
+  /**
+   * Its "Left to do:" items that the task's criteria still need; empty for "nothing" (also
+   * "Nothing for the acceptance criteria.") or none written. Only these pause a run (W15-14).
+   */
   leftToDo: string[];
+  /**
+   * Its optional extras ("Optionally, ...", "Nice to have: ..."): kept as notes for the run that
+   * continues or the critic, never a reason to pause.
+   */
+  optional?: string[];
   /** `wrap_up`: it heard the wrap-up and listed work left; `budget`: a budget refused a call. */
   stoppedBy: "wrap_up" | "budget";
 }
@@ -34,14 +42,37 @@ export interface RunHandoff {
  * wrap-up ends its report with them.
  */
 export const WRAP_UP_BRIEF_LINE =
-  "If Forerunner tells you that about a fifth of this task's budget is left, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (a list of what is still to do, or 'nothing'): the run that continues this task starts from them.";
+  "If Forerunner tells you to wrap up, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras): the run that continues this task starts from them.";
 
 const MAX_STOPPED_CHARS = 600;
 const MAX_ITEMS = 20;
 const MAX_ITEM_CHARS = 200;
 
-/** "nothing", "none", "nothing left", "n/a": an empty list. */
-const NOTHING = /^(?:nothing|none|no(?:thing)? (?:more|left)|n\/a|-)\b[\s.!]*$/i;
+/**
+ * "nothing", "none", "nothing left", "n/a": an empty list; also with what it is about ("Nothing
+ * for the acceptance criteria.", "None required by the criteria", "Nothing left: all criteria
+ * are met"), as the live researcher wrote it (W15-14). "Nothing works yet" and "None of the
+ * tests pass" are items: a qualifier counts only when it is about the criteria or says done.
+ * What it is about ends the line ("Nothing in the task works yet" is an item), and the words
+ * that say done are whole words ("incomplete" says nothing is done; review of W15-14).
+ */
+const NOTHING =
+  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)|\s*[:;,(\u2013\u2014-]\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$/i;
+/**
+ * A "nothing" that goes on to name work ("Nothing - but the README is incomplete", "Nothing:
+ * the criteria are not met yet", "... except the tests still fail") is work left (review of
+ * W15-14): read as nothing, unfinished work went to review instead of a pause.
+ */
+const NOT_NOTHING =
+  /\b(?:but|except|however|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
+const isNothing = (text: string) => NOTHING.test(text) && !NOT_NOTHING.test(text);
+/**
+ * An optional extra ("Optionally, ...", "(optional) ...", "Nice to have: ..."): never work left.
+ * A hedge alone ("Maybe fix the failing build", "Perhaps the most important: finish the
+ * parser") is work left (review of W15-14).
+ */
+const OPTIONAL =
+  /^(?:\(?optional(?:ly)?\)?\b|nice[- ]to[- ]have\b|if (?:you|the person) (?:want|wish|like)s?\b|could also\b)|\(optional\)[\s.]*$/i;
 const ITEM = /^\s*(?:[-*•+]|\d+[.)])\s+(.*\S)\s*$/;
 
 /** A heading line of the two ("Where I stopped:", "**Left to do:**", "## Left to do"), or null. */
@@ -69,10 +100,13 @@ const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimE
  * list under its last "Left to do:". Tolerant of markdown (bold, headings, numbered or bulleted
  * lists, the text on the heading's own line). Cut to bounded sizes; never throws.
  */
-export function parseHandoff(report: string): Pick<RunHandoff, "stopped" | "leftToDo"> {
+export function parseHandoff(
+  report: string,
+): Pick<RunHandoff, "stopped" | "leftToDo" | "optional"> {
   const lines = report.replace(/\r\n?/g, "\n").split("\n");
   let stopped = "";
   let leftToDo: string[] = [];
+  let optional: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const h = headingOf(lines[i] ?? "");
     if (!h) continue;
@@ -91,29 +125,36 @@ export function parseHandoff(report: string): Pick<RunHandoff, "stopped" | "left
       continue;
     }
     const items: string[] = [];
-    if (h.rest && !NOTHING.test(h.rest)) items.push(h.rest);
-    if (!h.rest || !NOTHING.test(h.rest)) {
+    const extras: string[] = [];
+    const add = (text: string) => {
+      if (!text || isNothing(text)) return;
+      (OPTIONAL.test(text) ? extras : items).push(text);
+    };
+    if (h.rest && !isNothing(h.rest)) add(h.rest);
+    if (!h.rest || !isNothing(h.rest)) {
       for (let j = i + 1; j < lines.length; j++) {
         const l = lines[j] ?? "";
         if (!l.trim()) {
-          if (items.length) break;
+          if (items.length || extras.length) break;
           continue;
         }
         const item = ITEM.exec(l);
         if (item) {
-          const text = (item[1] ?? "").replace(/\*\*|__/g, "").trim();
-          if (text && !NOTHING.test(text)) items.push(text);
+          add((item[1] ?? "").replace(/\*\*|__/g, "").trim());
           continue;
         }
-        if (!items.length && NOTHING.test(l.trim())) break;
         break;
       }
     }
     leftToDo = items;
+    optional = extras;
   }
   return {
     stopped: cut(stopped, MAX_STOPPED_CHARS),
     leftToDo: leftToDo.slice(0, MAX_ITEMS).map((t) => cut(t, MAX_ITEM_CHARS)),
+    ...(optional.length
+      ? { optional: optional.slice(0, MAX_ITEMS).map((t) => cut(t, MAX_ITEM_CHARS)) }
+      : {}),
   };
 }
 
@@ -152,9 +193,11 @@ export function stopEndsSession(source: BudgetStopSource): boolean {
 export function limitWords(
   source: BudgetStopSource,
   capUsdMicro: number,
-  chf: (usdMicro: number) => string,
+  chfOf: (usdMicro: number) => string,
   specialist: string,
 ): string {
+  // W15-16: a limit under a centime reads "less than CHF 0.01", never "CHF 0.00".
+  const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   switch (source) {
     case "task_budget":
       return `its budget of ${chf(capUsdMicro)}`;
@@ -234,35 +277,37 @@ export function budgetLineWords(line: RunWrapUpLine, chfOf: (usdMicro: number) =
       : `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses at its budget before that step.`;
   return line.saveOnly
     ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses at its budget and keeps its work.`
-    : `This run may spend ${chf(line.capUsdMicro)}: at ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
+    : `This run may spend ${chf(line.capUsdMicro)}: before a step that could take it past ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
 }
 
 /**
  * The session log's line when the run is told to wrap up (ADR 0112): what it spent of what it
- * may spend, and the reserve kept to finish. The call that would pass the line brings the
- * wrap-up, so more than a fifth is usually left: "about a fifth ... is left (it spent CHF 0.02
- * of CHF 0.04)" was not true (review of budget-stop).
+ * may spend, and why now, as the start line names it (W15-16): the step it was about to take
+ * could pass the line, so it may hear it well before its spend reaches the line ("at CHF 0.07 it
+ * is told to wrap up" was followed by "it spent CHF 0.02": live check 2, F4).
  */
 export function wrapUpSentWords(
   specialist: string,
   spentUsdMicro: number,
   capUsdMicro: number,
   line: RunWrapUpLine | undefined,
-  chf: (usdMicro: number) => string,
+  chfOf: (usdMicro: number) => string,
 ): string {
+  const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   return line
-    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and the last ${chf(line.reserveUsdMicro)} is kept to finish.`
+    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and its next step could take it past ${chf(line.lineUsdMicro)}.`
     : `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
 }
 
 /** A handoff as the run's artifact stores it: data only, already redacted and cut. */
 export function handoffArtifact(handoff: RunHandoff): {
-  handoff: { stopped: string; leftToDo: string[]; stoppedBy: string };
+  handoff: { stopped: string; leftToDo: string[]; optional?: string[]; stoppedBy: string };
 } {
   return {
     handoff: {
       stopped: handoff.stopped,
       leftToDo: [...handoff.leftToDo],
+      ...(handoff.optional?.length ? { optional: [...handoff.optional] } : {}),
       stoppedBy: handoff.stoppedBy,
     },
   };
@@ -282,6 +327,9 @@ export function handoffOf(artifacts: unknown): RunHandoff | null {
       leftToDo: Array.isArray(o.leftToDo)
         ? o.leftToDo.filter((t): t is string => typeof t === "string")
         : [],
+      ...(Array.isArray(o.optional)
+        ? { optional: o.optional.filter((t): t is string => typeof t === "string") }
+        : {}),
       stoppedBy,
     };
   }

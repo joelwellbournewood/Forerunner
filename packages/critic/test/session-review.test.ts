@@ -571,3 +571,128 @@ describe("session review (H.6)", () => {
     }
   });
 });
+
+/**
+ * w15-run, wave 15 (W15-18, live check 2's RUN-16): the session review set the ledger's figure,
+ * the critic's reviews included, against the plan's estimate, which counts the work only:
+ * "CHF 0.17 spent of a CHF 0.05 estimate" for work within its estimate.
+ */
+describe("w15-run, wave 15: the session review sets the work's cost against the estimate (W15-18)", () => {
+  it("work within its estimate plus reviews: no overrun finding, and the summary says the work and the reviews apart", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({
+        status: "done",
+        title: "Write the Swiss pairing tool with tests",
+      });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [{ taskId: a.id, title: a.title, estimateUsdMicro: 140_000 }],
+          estimateUsdMicro: 140_000,
+          summary: "",
+        },
+        summary: "Done: 1.",
+        status: "completed",
+      });
+      // The work: USD 0.15; the critic's two reviews: USD 0.10 more.
+      for (const [specialist, usd] of [
+        ["coder", 150_000],
+        ["critic", 60_000],
+        ["critic", 40_000],
+      ] as const) {
+        await w.store.run.insert({
+          task_id: a.id,
+          session_id: w.ids.session,
+          specialist,
+          model: "fake-sonnet",
+          provider: "fake",
+          effort: "medium",
+          cost_usd_micro: usd,
+          duration_ms: 60_000,
+          outcome: "completed",
+        });
+        await w.store.costLedger.record({
+          human_id: w.ids.human,
+          session_id: w.ids.session,
+          task_id: a.id,
+          kind: "api",
+          usd_micro: usd,
+          chf_micro: usd,
+          rate_chf_per_usd: 1,
+          model: "fake-sonnet",
+        });
+      }
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.metrics).toMatchObject({
+        estimateUsdMicro: 140_000,
+        actualUsdMicro: 250_000,
+        reviewsUsdMicro: 100_000,
+        workUsdMicro: 150_000,
+      });
+      expect(checks.findings.map((f) => f.description)).not.toContainEqual(
+        expect.stringContaining("exceeded its estimate"),
+      );
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.summary).toContain(
+        "cost CHF 0.25 (work CHF 0.15 against an estimate of CHF 0.14, reviews CHF 0.10)",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("work over its estimate: the finding names the work's cost and the reviews apart", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [{ taskId: a.id, title: a.title, estimateUsdMicro: 50_000 }],
+          estimateUsdMicro: 50_000,
+          summary: "",
+        },
+        summary: "Done: 1.",
+        status: "completed",
+      });
+      for (const [specialist, usd] of [
+        ["coder", 120_000],
+        ["critic", 50_000],
+      ] as const) {
+        await w.store.run.insert({
+          task_id: a.id,
+          session_id: w.ids.session,
+          specialist,
+          model: "fake-sonnet",
+          provider: "fake",
+          effort: "medium",
+          cost_usd_micro: usd,
+          duration_ms: 60_000,
+          outcome: "completed",
+        });
+        await w.store.costLedger.record({
+          human_id: w.ids.human,
+          session_id: w.ids.session,
+          kind: "api",
+          usd_micro: usd,
+          chf_micro: usd,
+          rate_chf_per_usd: 1,
+          model: "fake-sonnet",
+        });
+      }
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.findings.map((f) => f.description)).toContainEqual(
+        "Session work cost CHF 0.12 exceeded its estimate CHF 0.05 by 140% (the reviews, CHF 0.05 more, are not in the estimate)",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+});

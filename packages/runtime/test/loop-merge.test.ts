@@ -407,8 +407,9 @@ describe("merge of a reviewed PR after an accepting review (spec J.9)", {
     // merge-in-app: the result and the session line say it merges by itself, never that it was
     // left for the person (before: "Left 1 reviewed pull request for you to merge." and "...
     // waits for you to merge it: a check is still running after 0 s: ci/test.").
+    // W15-70: a check that still runs is said as that; a silent GitHub has its own line.
     expect(result.summary).toContain(
-      "1 reviewed pull request merges by itself once its checks pass or GitHub answers.",
+      "1 reviewed pull request merges by itself once its checks pass.",
     );
     expect(result.summary).not.toContain("for you to merge");
     const left = m.w.events.find((e) => e.type === "pr.left_open");

@@ -4,6 +4,9 @@ import { z } from "zod";
 import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
 import {
   type SessionBudget,
+  searchOfferAtStart,
+  searchOfferCovered,
+  WEB_SEARCH_MAX_USES_PER_CALL,
   WRAP_UP_CALLS,
   WRAP_UP_SHARE,
   wrapUpLineIn,
@@ -42,8 +45,10 @@ import type { ToolRegistry, ToolSpec } from "./tools.ts";
 export const DEFAULT_MAX_TOKENS_PER_CALL = 4096;
 /**
  * A reply cut off at `max_tokens` inside a tool call, or before it said anything, is asked
- * again with four times the limit, at most this often per run and never above
- * `CUT_OFF_MAX_TOKENS` (or the model's own limit). The owner's coder wrote a whole file in one
+ * again with up to four times the limit, that call only and as far as the money below the run's
+ * wrap-up line pays (W15-13), never above `CUT_OFF_MAX_TOKENS` (or the model's own limit); a
+ * reply with nothing usable is asked again at most this often per run, while its complete tool
+ * calls before the cut one are kept and run. The owner's coder wrote a whole file in one
  * `write_file` call, the reply stopped at 4096 tokens mid-call, and the loop took it for the
  * end: the run "completed" with no report and no change (U-085).
  */
@@ -55,9 +60,11 @@ export const CUT_OFF_MAX_TOKENS = 32_000;
  * ceiling of its own ('cost', L-15): room for a whole file in one call, so the first long write
  * is not cut off at 4096 tokens and asked again (the research task of 2026-11-02 paid USD 0.17
  * for a reply cut off with nothing usable before its 16,384 retry). It is used only as far as
- * the run's budget leaves room: each call's worst case at most the room the hooks report, and
- * at most half the fifth of the run's budget kept to wrap up (ADR 0112), never below the
- * floor's; so a small budget keeps the floor and its wrap-up reserve does not grow.
+ * the run's budget leaves room: each call's worst case at most the room the hooks report and,
+ * once the run's first call fixed its wrap-up line, at most the money below that line less the
+ * call's searches (W15-13), so a larger cap never brings a wrap-up the floor would not. The
+ * first call keeps to half the fifth of the run's budget kept to wrap up (ADR 0112), never below
+ * the floor's, so its worst case does not grow the reserve.
  */
 export const WRITE_MAX_TOKENS_PER_CALL = 16_384;
 /** The tools a run writes files with on the loop driver (`daemon/tools.ts`; `registry/tools.ts`). */
@@ -77,15 +84,29 @@ export const CACHE_TTL_MARGIN_MS = 30_000;
  * driver, PostToolUse's `additionalContext` on the Agent SDK path. The brief says what the two
  * headings are for (`session/executor.ts`).
  */
+/** How the wrap-up starts, whatever it says after (the bench's stand-in hears it by this). */
+export const WRAP_UP_MARK = "Wrap up now:";
+
+/**
+ * The wrap-up a task's run hears (ADR 0112), with what is true when it is sent (W15-16): how much
+ * of the run's budget it used, and why now. The wrap-up comes before the step that could take the
+ * run past its wrap-up line (its spend and that step's worst case), so it may come with much of
+ * the budget left; "About a fifth of this task's budget is left" was told to a run that had
+ * spent 13% of it (live check 2, F4). The share is of the run's cap, which on a continued run is
+ * what is left of the task's budget, so it says "this run ... of what it may spend".
+ */
+export function wrapUpText(spentUsdMicro: number, capUsdMicro: number): string {
+  const share = capUsdMicro > 0 ? (Math.max(0, spentUsdMicro) / capUsdMicro) * 100 : 100;
+  const used = spentUsdMicro > 0 && share < 1 ? "under 1%" : `${Math.min(100, Math.round(share))}%`;
+  return `${WRAP_UP_MARK} this run has used ${used} of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).`;
+}
+
 /**
  * How often in a row a run continues a turn the provider paused (`pause_turn`, a long web search;
  * 'web-search'). Each continuation is a model call, counted against the run's and the session's
  * step caps like any other; past this the run ends with an error that says so.
  */
 export const MAX_PAUSE_CONTINUATIONS = 5;
-
-export const WRAP_UP_TEXT =
-  "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: as a list.";
 
 export interface RunPricing {
   /**
@@ -184,9 +205,10 @@ export interface RunRequest {
   headroomUsed?: boolean;
   /**
    * A task's run: the text it hears once when its next call would take it past its wrap-up
-   * line (`WRAP_UP_TEXT`, ADR 0112). Absent (chat, planning, reviews): it never hears one.
+   * line (`wrapUpText`, ADR 0112), or the function that words it from the run's spend and cap
+   * when it is sent (W15-16). Absent (chat, planning, reviews): it never hears one.
    */
-  wrapUp?: string;
+  wrapUp?: string | ((spentUsdMicro: number, capUsdMicro: number) => string);
   /**
    * Anthropic's web search ('web-search', the owner's decision of 2026-11-02): offered on each
    * call while the run's token grants `web_search`, the provider runs it
@@ -199,6 +221,12 @@ export interface RunRequest {
   webSearch?: {
     /** Searches this run may still make (the task's cap less its earlier runs' searches). */
     limit: number;
+    /**
+     * The run's `max_uses`, decided once before its brief (W15-17, `searchOfferAtStart` in the
+     * executor): the loop sends it unchanged while the offer stands. Absent: the loop decides it
+     * at its first call with the same helper.
+     */
+    maxUses?: number;
     /** The project's lists in the server's form (`wiring/web-ports.ts`); never both. */
     allowedDomains?: string[];
     blockedDomains?: string[];
@@ -462,6 +490,10 @@ export class LoopAgentDriver {
       req.provider.serverWebSearch === true &&
       typeof req.pricing.searches === "function";
     let searchesMade = 0;
+    // W15-15: the run's one search offer (`max_uses`, fixed at its first call) and whether it
+    // was dropped, which is for good.
+    let searchFixed: number | undefined;
+    let searchDropped = false;
     const searchResults: WebSearchHit[] = [];
     const searchQueries = new Map<string, string>();
     let webSearchRefused: "off" | "lists" | undefined;
@@ -498,10 +530,12 @@ export class LoopAgentDriver {
     let cachedPrefix = 0;
     let cacheFrom: number | undefined;
     let sentMessages = 0;
-    // After a reply cut off inside a tool call (U-085): the raised floor of every later call,
-    // and how often it happened.
-    let cutOffFloor: number | undefined;
+    // After a reply cut off at the output limit (U-085, W15-13): the raised cap of the next
+    // call only, how often nothing of a cut reply could be used, and what the next call is told
+    // when the money below the run's line cannot raise its cap.
+    let retryCap: number | undefined;
     let cutOffs = 0;
+    let cutNote: { maxOut: number; text: string; always?: boolean } | undefined;
 
     emit({ type: "run_start", runId: claims.runId, model: recordedModel });
     try {
@@ -526,10 +560,7 @@ export class LoopAgentDriver {
           cached > 0 ? req.provider.countTokens(JSON.stringify(messages.slice(sentMessages))) : 0;
         const inputTokens = Math.max(counted, cached + added);
         const priceAt = (n: number) => req.pricing.estimate(inputTokens, n, cached);
-        const floor = Math.max(
-          req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL,
-          cutOffFloor ?? 0,
-        );
+        const floor = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
         if (turn === 1 && ceilingAsked !== undefined) {
           ceiling = await clampToModelLimit(
             req.provider,
@@ -539,48 +570,94 @@ export class LoopAgentDriver {
             clock,
           );
         }
-        let maxOut = floor;
-        if (ceiling !== undefined && ceiling > floor) {
-          let room = await this.deps.hooks.callRoomUsdMicro(ctx);
-          if (roomForWrites)
-            room = Math.min(
-              room,
-              Math.max(
-                Math.floor((WRAP_UP_SHARE * claims.budgetUsdMicro) / WRAP_UP_CALLS),
-                priceAt(floor),
-              ),
-            );
-          maxOut = fitMaxTokens(priceAt, floor, ceiling, room);
-        }
-        // 'web-search': the call's `max_uses`, set here from the money left after the call's own
-        // worst case and the searches the run may still make; a search the last turn left pending
-        // runs at the start of this call whatever, so the tool stays and its price is counted.
-        // The searches are paid only from the money below the run's wrap-up line (ADR 0112, its
-        // amendment in ADR 0107 of 2026-11-08): offering them never eats the reserve kept to
-        // finish, so near the line fewer are offered, and none once past it or told to wrap up.
+        // After a reply cut off at the output limit (U-085): the raised cap is this call's only.
+        const raise = retryCap;
+        retryCap = undefined;
+        const callCeiling = Math.max(ceiling ?? floor, raise ?? 0);
+        // The run's wrap-up line, once its first call fixed it (ADR 0112), and its spend so far.
+        const fixedLine = ctx.phase === "work" ? req.budget.wrapUpLineOf(claims.runId) : undefined;
+        const runSpent = req.budget.spentByRunId(claims.runId);
+        // 'web-search' (W15-15): the offer is decided once, at the run's first call, and its
+        // definition stays byte-identical while it stands: a changed `max_uses` or a dropped tool
+        // rewrites the cached conversation (live check 2, F3: a quarter to a third of a research
+        // run's cost). Every limit stays in code: `max_uses` is fixed at the smaller of the
+        // searches left, `WEB_SEARCH_MAX_USES_PER_CALL` and what the money below the run's
+        // wrap-up line pays (`searchOfferAtStart`, the executor's decision when it gave one);
+        // every call that offers the tool counts the whole `max_uses` in its worst case; and the
+        // tool is dropped, once and for good, at the first call where the searches left, the
+        // money below the line or the room no longer cover it, or the run was told to wrap up
+        // (a search never eats the reserve kept to finish, ADR 0107's amendment of 2026-11-08).
+        // A search the last turn left pending runs at the start of this call whatever, so the
+        // tool stays for it and its price is counted. Once the line is fixed the offer is
+        // checked before the output cap, which then gets what the searches leave (W15-13); the
+        // first call fixes the line from its own worst case, so there it comes after it.
         const pendingSearches = pendingServerToolUses(messages).length;
-        const tokensWorstCase = priceAt(maxOut);
-        let maxUses = 0;
-        if (searchOn || pendingSearches > 0) {
-          const left = Math.max(0, (req.webSearch?.limit ?? 0) - searchesMade);
-          const per = req.pricing.searches?.(1) ?? 0;
-          if (searchOn && left > 0 && !wrapUpDue) {
-            let spare = (await this.deps.hooks.callRoomUsdMicro(ctx)) - tokensWorstCase;
-            const line = req.budget.lineFor(
-              claims.runId,
-              claims.budgetUsdMicro,
-              tokensWorstCase,
-              ctx.phase,
-            );
-            if (line)
-              spare = Math.min(
-                spare,
-                line.lineUsdMicro - req.budget.spentByRunId(claims.runId) - tokensWorstCase,
+        const searchesLeft = Math.max(0, (req.webSearch?.limit ?? 0) - searchesMade);
+        const offerStands = async (tokensUsdMicro: number): Promise<boolean> => {
+          if (!searchOn || searchDropped || !searchFixed) return false;
+          if (pendingSearches > 0) return true;
+          if (wrapUpDue || wrapUpSent || searchesLeft < searchFixed) return false;
+          const line =
+            fixedLine ??
+            req.budget.lineFor(claims.runId, claims.budgetUsdMicro, tokensUsdMicro, ctx.phase);
+          return searchOfferCovered({
+            lineUsdMicro: line ? line.lineUsdMicro : Number.POSITIVE_INFINITY,
+            spentUsdMicro: runSpent,
+            callUsdMicro: tokensUsdMicro,
+            searchesUsdMicro: req.pricing.searches?.(searchFixed) ?? 0,
+            roomUsdMicro: await this.deps.hooks.callRoomUsdMicro(ctx),
+          });
+        };
+        let offered = fixedLine ? await offerStands(priceAt(floor)) : false;
+        const searchesBefore = offered ? (req.pricing.searches?.(searchFixed ?? 0) ?? 0) : 0;
+        let maxOut = floor;
+        if (callCeiling > floor) {
+          let room = (await this.deps.hooks.callRoomUsdMicro(ctx)) - searchesBefore;
+          // W15-13: one rule for a file-writing run's cap and the cut-off retry: a call is paid
+          // only from the money below the run's wrap-up line, as a search is, so a larger cap
+          // never brings a wrap-up the usual cap would not. The first call fixes the line from
+          // its own worst case, so it keeps to half the fifth kept to wrap up and the reserve
+          // does not grow (ADR 0112, its 'cost' amendment); after the wrap-up the reserve pays,
+          // as it does every call of a run that finishes.
+          if (roomForWrites || raise !== undefined) {
+            if (fixedLine) {
+              if (!wrapUpSent)
+                room = Math.min(room, fixedLine.lineUsdMicro - runSpent - searchesBefore);
+            } else if (ctx.phase === "work")
+              room = Math.min(
+                room,
+                Math.max(
+                  Math.floor((WRAP_UP_SHARE * claims.budgetUsdMicro) / WRAP_UP_CALLS),
+                  priceAt(floor),
+                ),
               );
-            maxUses = Math.min(left, per > 0 ? Math.max(0, Math.floor(spare / per)) : left);
           }
-          maxUses = Math.max(maxUses, pendingSearches);
+          maxOut = fitMaxTokens(priceAt, floor, callCeiling, room);
         }
+        const tokensWorstCase = priceAt(maxOut);
+        if (searchOn && searchFixed === undefined) {
+          searchFixed = Math.min(
+            req.webSearch?.maxUses ??
+              searchOfferAtStart({
+                capUsdMicro: claims.budgetUsdMicro,
+                firstCallUsdMicro: tokensWorstCase,
+                perSearchUsdMicro: req.pricing.searches?.(1) ?? 0,
+                searchesLeft,
+                roomUsdMicro: await this.deps.hooks.callRoomUsdMicro(ctx),
+              }),
+            searchesLeft,
+            WEB_SEARCH_MAX_USES_PER_CALL,
+          );
+        }
+        if (!fixedLine) offered = await offerStands(tokensWorstCase);
+        // Gone once, gone for the run: never offered again.
+        if (searchFixed && !offered && !searchDropped && searchOn) searchDropped = true;
+        const maxUses = offered ? (searchFixed ?? 0) : 0;
+        // A retry the money below the line could not raise is asked to send less (U-085).
+        if (cutNote && (cutNote.always || raise === undefined || maxOut <= cutNote.maxOut)) {
+          appendText(messages, cutNote.text);
+        }
+        cutNote = undefined;
         const searchUsdMicro = maxUses > 0 ? (req.pricing.searches?.(maxUses) ?? 0) : 0;
         const estimate = tokensWorstCase + searchUsdMicro;
         // Every cap gets the whole worst case, the searches included; the run's wrap-up line is
@@ -610,7 +687,12 @@ export class LoopAgentDriver {
         ) {
           wrapUpSent = true;
           finishCurrent = true;
-          appendText(messages, req.wrapUp);
+          appendText(
+            messages,
+            typeof req.wrapUp === "function"
+              ? req.wrapUp(req.budget.spentByRunId(claims.runId), claims.budgetUsdMicro)
+              : req.wrapUp,
+          );
           emit({
             type: "wrap_up_sent",
             spentUsdMicro: req.budget.spentByRunId(claims.runId),
@@ -758,17 +840,29 @@ export class LoopAgentDriver {
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
           .map((b) => b.text)
           .join("");
-        const toolUses = response.content.filter(
+        let toolUses = response.content.filter(
           (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
         );
-        // Cut off inside a tool call or before any text (U-085): the reply is not used (its tool
-        // input is incomplete) and the call is asked again with a larger limit; after
-        // `CUT_OFF_RETRIES` the run ends as an error that says so, never as "completed".
+        let content = response.content;
+        // Cut off inside a tool call or before any text (U-085): the call being written when the
+        // limit came (the reply's last block) is never run, and the next call is asked with a
+        // larger limit, that call only, as far as the money below the run's line pays (W15-13).
+        // The reply's complete tool calls before it are kept and run (a paid reply is not thrown
+        // away), and the next call is told the cut one did not run; a reply with server blocks
+        // goes back only whole, so nothing of it is kept. With nothing kept the reply is not
+        // used, and after `CUT_OFF_RETRIES` the run ends as an error that says so.
+        let keptFromCut = false;
         if (response.stop_reason === "max_tokens" && (toolUses.length > 0 || !text)) {
-          cutOffs++;
-          const where = toolUses[0]
-            ? `inside a ${toolUses[0].name} call`
-            : "before it said anything";
+          const last = response.content.at(-1);
+          const cutCall = last?.type === "tool_use" ? last : undefined;
+          const kept = response.raw
+            ? []
+            : toolUses.filter((b) => b !== cutCall && !("_unparsed" in (b.input ?? {})));
+          const where = cutCall
+            ? `inside a ${cutCall.name} call`
+            : toolUses[0]
+              ? `inside a ${toolUses[0].name} call`
+              : "before it said anything";
           const top = await clampToModelLimit(
             req.provider,
             req.model,
@@ -777,25 +871,39 @@ export class LoopAgentDriver {
             clock,
           );
           const next = Math.min(maxOut * 4, top);
-          if (cutOffs <= CUT_OFF_RETRIES && next > maxOut) {
-            cutOffFloor = next;
+          if (kept.length > 0) {
+            keptFromCut = true;
+            toolUses = kept;
+            content = response.content.filter((b) => b.type !== "tool_use" || kept.includes(b));
+            if (next > maxOut) retryCap = next;
             emit({
               type: "warning",
-              message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again with ${next}`,
+              message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; its ${kept.length} complete tool call(s) ran, the cut one did not`,
             });
-            continue;
+          } else {
+            cutOffs++;
+            if (cutOffs <= CUT_OFF_RETRIES && next > maxOut) {
+              retryCap = next;
+              cutNote = { maxOut, text: cutOffNote(maxOut, where, false) };
+              emit({
+                type: "warning",
+                message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again with up to ${next}`,
+              });
+              continue;
+            }
+            throw new ForerunnerError(
+              "provider_error",
+              `The reply was cut off at the output limit (${maxOut} tokens) ${where}, ${cutOffs} time(s); nothing from it was used. Work this large has to be written in smaller parts.`,
+              { retryable: false, details: { stopReason: "max_tokens", maxTokens: maxOut } },
+            );
           }
-          throw new ForerunnerError(
-            "provider_error",
-            `The reply was cut off at the output limit (${maxOut} tokens) ${where}, ${cutOffs} time(s); nothing from it was used. Work this large has to be written in smaller parts.`,
-            { retryable: false, details: { stopReason: "max_tokens", maxTokens: maxOut } },
-          );
+          if (cutCall) cutNote = { maxOut, text: cutOffNote(maxOut, where, true), always: true };
         }
         // A turn with a server tool's blocks, or a paused one, keeps the provider's own copy, which
         // goes back exactly as it came ('web-search').
         messages.push({
           role: "assistant",
-          content: response.content,
+          content,
           ...(response.raw ? { raw: response.raw } : {}),
         });
         if (text) finalText = text;
@@ -813,7 +921,7 @@ export class LoopAgentDriver {
         }
         pauses = 0;
 
-        if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
+        if (toolUses.length === 0 || (response.stop_reason !== "tool_use" && !keptFromCut)) {
           if (response.stop_reason === "max_tokens") {
             emit({ type: "warning", message: "model hit max_tokens; output may be truncated" });
           }
@@ -1157,13 +1265,28 @@ export function fitMaxTokens(
 }
 
 /**
+ * What the call after a reply cut off at the output limit is told (U-085, W15-13), as a text block
+ * after the last tool results: the cut call did not run (`kept`: the calls before it did), or,
+ * when the money below the run's line could not raise the limit, that nothing of the reply was
+ * used and less must go in one reply.
+ */
+export function cutOffNote(maxOut: number, where: string, kept: boolean): string {
+  const said = `Your last reply was cut off at the output limit (${maxOut} tokens) ${where}`;
+  if (kept)
+    return `${said}, so that call did not run; the calls before it ran. Make it again on its own.`;
+  return where === "before it said anything"
+    ? `${said}, and nothing of it was used. Answer again, more briefly.`
+    : `${said}, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.`;
+}
+
+/**
  * Add a text block to the conversation's last message, a user message (the tool results of the
  * last step, or the brief on a first call asked again): after its blocks, never inside a tool
  * result (ADR 0112).
  */
 function appendText(messages: ChatMessage[], text: string): void {
   const last = messages.at(-1);
-  if (!last || last.role !== "user") {
+  if (last?.role !== "user") {
     messages.push({ role: "user", content: [{ type: "text", text }] });
     return;
   }

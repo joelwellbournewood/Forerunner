@@ -386,3 +386,38 @@ rewritten.
    A value is also found with Windows line endings when the vault holds it with Unix ones. A
    read with no value in it gets no replacement, as before. Only values the run's resolver has
    handed out are known (a secret the run never used is not), as on the API key.
+
+## Amendment 2026-11-09 (wave 15, the run side: 'w15-run')
+
+1. **A scrubbed built-in output is sent only in a shape the guard confirms; otherwise the run
+   stops (W15-12; amends point 1 of the amendment above).** Claude Code checks a replacement
+   against the tool's own output schema and, when it does not match, keeps the ORIGINAL output:
+   a replacement in a shape it rejects would let the resolved value through. The Agent SDK ships
+   the shapes as TypeScript types only (`sdk-tools.d.ts`), so `src/agent/cc-tool-outputs.ts`
+   writes them out as strict schemas (Bash, Read's six variants, Edit, Write, Glob, Grep,
+   NotebookEdit, TodoWrite, WebFetch, WebSearch), tied to the SDK's types so `pnpm typecheck`
+   fails when an upgrade moves one, with one fixture per tool in `security-sdk.test.ts` typed
+   with `satisfies`. An output that holds a resolved value is replaced only when its tool has a
+   shape, the original is one of them and the replacement is the same one. An unknown tool, an
+   output in none of its shapes (a key the SDK does not name included), a bare string, or a key
+   holding the value is refused: an audit row with the reason, `continue: false`, and the run is
+   aborted at once, ending as `tool_not_allowed` with that reason. A read without a value gets no
+   replacement, as before (R-readhook). WebFetch's and WebSearch's replacements are scrubbed whole
+   (their `url` and `query` went back unredacted before).
+2. **The search offer is decided once and stays the same for the run (W15-15, W15-17; amends
+   points 4 and 9 of the 'web-search' amendment).** Live check 2 measured what point 9 assumed
+   away: dropping the server tool voids the system and every message entry of the prompt cache,
+   and a changed `max_uses` once a search's blocks are in the history voids the message entries
+   from them on (F3: a quarter to a third of a research run's cost was cache rewrites). And the
+   brief said "Use web_search" to a run whose budget let no call offer it (F5). Now one helper,
+   `searchOfferAtStart`, decides the offer before the brief (the executor) with the loop's own
+   arithmetic: the smaller of the task's searches left, `WEB_SEARCH_MAX_USES_PER_CALL` (2: every
+   call that offers the tool counts its whole `max_uses`, so a small number keeps the offer for
+   most of a run instead of its first call; the model searches again in a later call) and what the
+   money below the run's wrap-up line pays after the first call. 0 means no search line, no grant
+   and no tool. The definition is sent byte-identical while the offer stands; the tool is dropped,
+   once and for good, at the first call where the searches left, the money below the line or the
+   room no longer cover the whole `max_uses`, or the run is told to wrap up. Every limit stays in
+   code (ADR 0112's "a search never eats the reserve kept to finish" holds); `WEB_SEARCH_LINE`
+   says to read pages by their address once search is no longer offered. The prompt-cache
+   stand-in plays these rules, so a test sees a rewrite.

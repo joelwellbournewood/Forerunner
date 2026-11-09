@@ -4,7 +4,7 @@ import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ToolRegistry } from "../src/agent/tools.ts";
 import { ContextManager } from "../src/context/manager.ts";
 import { DEFAULT_CONTEXT_SETTINGS } from "../src/context/pipeline.ts";
-import { SessionBudget } from "../src/enforcement/budget.ts";
+import { SessionBudget, WEB_SEARCH_MAX_USES_PER_CALL } from "../src/enforcement/budget.ts";
 import type { ModelProvider } from "../src/provider/types.ts";
 import {
   LoopTaskExecutor,
@@ -16,7 +16,7 @@ import {
 import { stepLine } from "../src/session/runner.ts";
 import { searchSeenOf, webSourceEvidence } from "../src/session/web-sources.ts";
 import { serverDomainOf, webSearchListsResolver } from "../src/wiring/web-ports.ts";
-import { WEB_SEARCH_TASK_CAP, WebSearchMarks } from "../src/wiring/web-search.ts";
+import { WebSearchMarks } from "../src/wiring/web-search.ts";
 import { FakeHeadroom, ProxyableScriptedProvider, seedWorld } from "./context-helpers.ts";
 import { flatPricing, harness, issue, type ScriptReply } from "./helpers.ts";
 
@@ -46,7 +46,9 @@ class SearchingProvider extends ProxyableScriptedProvider {
   readonly serverWebSearch = true;
 }
 
-async function world(opts: { searchesBefore?: number; headroom?: boolean } = {}) {
+async function world(
+  opts: { searchesBefore?: number; headroom?: boolean; budgetUsdMicro?: number } = {},
+) {
   const h = harness();
   const store: StateStore = await openStore({ url: "sqlite::memory:", clock: h.clock });
   const w = await seedWorld(store, {
@@ -62,7 +64,7 @@ async function world(opts: { searchesBefore?: number; headroom?: boolean } = {})
     status: "in_progress",
     priority: 5,
     depends_on: [],
-    budget_usd_micro: 0,
+    budget_usd_micro: opts.budgetUsdMicro ?? 0,
     est_cost_usd_micro: 0,
     actual_cost_usd_micro: 0,
     attempt: 0,
@@ -174,8 +176,9 @@ describe("the executor offers web search on the API key ('web-search')", () => {
     expect(brief).not.toContain(NO_WEB_SEARCH_LINE);
     // `*.example.org` is sent as `example.org` (it covers the subdomains there); `localhost`
     // is no domain to the server, so it is left out (the page reader still refuses it).
+    // W15-15: one fixed offer for the run, at most `WEB_SEARCH_MAX_USES_PER_CALL` a call.
     expect(call?.webSearch).toEqual({
-      maxUses: WEB_SEARCH_TASK_CAP,
+      maxUses: WEB_SEARCH_MAX_USES_PER_CALL,
       blockedDomains: ["example.org"],
     });
   });
@@ -193,7 +196,12 @@ describe("the executor offers web search on the API key ('web-search')", () => {
     const seven = await world({ searchesBefore: 7 });
     const p7 = new SearchingProvider(searched, seven.h.clock);
     await seven.run(p7);
-    expect(p7.calls[0]?.webSearch?.maxUses).toBe(3);
+    // W15-15: at most two a call, fixed for the run; the loop drops the tool once fewer are left.
+    expect(p7.calls[0]?.webSearch?.maxUses).toBe(WEB_SEARCH_MAX_USES_PER_CALL);
+    const nine = await world({ searchesBefore: 9 });
+    const p9 = new SearchingProvider(searched, nine.h.clock);
+    await nine.run(p9);
+    expect(p9.calls[0]?.webSearch?.maxUses).toBe(1);
     const ten = await world({ searchesBefore: 10 });
     const p10 = new SearchingProvider(searched, ten.h.clock);
     await ten.run(p10);
@@ -433,5 +441,52 @@ describe("the critic's evidence of search results never opened ('web-search')", 
     expect(broken.artifacts.every((a) => !a.includes("\n"))).toBe(true);
     // Without searches the evidence is as before (ADR 0107).
     expect(webSourceEvidence([{ url: "https://a.example/", text: "x" }]).artifacts).toEqual([]);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-17, live check 2's F5): the brief told a researcher at CHF 0.15 to "Use
+ * web_search to find pages" while no call of its run could offer it (the loop pays searches only
+ * from the money below the run's wrap-up line). The offer is now decided once, before the brief,
+ * with the loop's own arithmetic (`searchOfferAtStart`).
+ */
+describe("w15-run, wave 15: the brief's search line follows what the run can pay (W15-17)", () => {
+  /** The child tokens the executor derived, to read the run's grant. */
+  const grants = (w: Awaited<ReturnType<typeof world>>) => {
+    const seen: string[][] = [];
+    const derive = w.h.tokens.derive.bind(w.h.tokens);
+    w.h.tokens.derive = ((t: Parameters<typeof derive>[0], o: Parameters<typeof derive>[1]) => {
+      seen.push([...(o.allowedTools ?? [])]);
+      return derive(t, o);
+    }) as typeof w.h.tokens.derive;
+    return seen;
+  };
+
+  it("a run whose budget pays for no search below its line: the no-search line, no grant, no tool on any call", async () => {
+    // 40,000 micro-USD: the line leaves less than one search (30,000) after the first call.
+    const w = await world({ budgetUsdMicro: 40_000 });
+    const seen = grants(w);
+    const provider = new SearchingProvider(searched, w.h.clock);
+    await w.run(provider);
+    expect(provider.calls.length).toBeGreaterThan(0);
+    for (const c of provider.calls) expect(c.webSearch).toBeUndefined();
+    const brief = JSON.stringify(provider.calls[0]?.messages ?? []);
+    expect(brief).toContain(NO_WEB_SEARCH_LINE);
+    expect(brief).not.toContain(WEB_SEARCH_LINE);
+    expect(seen.at(-1)).not.toContain("web_search");
+  });
+
+  it("the control at USD 5: the search line, the grant and the tool, which says what to do once it is gone", async () => {
+    const w = await world();
+    const seen = grants(w);
+    const provider = new SearchingProvider(searched, w.h.clock);
+    await w.run(provider);
+    expect(provider.calls[0]?.webSearch?.maxUses).toBe(WEB_SEARCH_MAX_USES_PER_CALL);
+    const brief = JSON.stringify(provider.calls[0]?.messages ?? []);
+    expect(brief).toContain(WEB_SEARCH_LINE);
+    expect(WEB_SEARCH_LINE).toContain(
+      "When web_search is no longer offered (its searches or this run's budget for them are used), read pages by their address with web_fetch.",
+    );
+    expect(seen.at(-1)).toContain("web_search");
   });
 });

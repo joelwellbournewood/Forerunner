@@ -1,14 +1,28 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import type {
+  BashOutput,
+  FileEditOutput,
+  FileReadOutput,
+  FileWriteOutput,
+  GlobOutput,
+  GrepOutput,
+  NotebookEditOutput,
+  TodoWriteOutput,
+  WebFetchOutput,
+  WebSearchOutput,
+} from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import type { BillingSource } from "@forerunner/billing";
 import { join, Logger, type LogRecord, redact } from "@forerunner/platform";
 import { openStore } from "@forerunner/state";
 import { MemoryVault, SecretResolver } from "@forerunner/vault";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { CC_TOOL_OUTPUT_SHAPES, unconfirmedToolOutput } from "../src/agent/cc-tool-outputs.ts";
 import { withClaudeCodeTools } from "../src/agent/cc-tools.ts";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { type QueryLike, SdkAgentDriver, scrubEnv } from "../src/agent/sdk.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
+import { KNOWN_CLAUDE_CODE_TOOLS } from "../src/registry/types.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
 import {
   budget,
@@ -789,5 +803,363 @@ describe("SDK path through the executor: what a run's final text may carry", () 
     expect(res.summary).not.toContain(OAUTH);
     expect(res.finalReport).not.toContain(OAUTH);
     expect(redact(res.summary)).toBe(res.summary);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-12, the guard of TR-1): Claude Code checks a built-in tool's replacement
+ * output against the tool's own output schema and, when it does not match, silently keeps the
+ * ORIGINAL output, so a scrubbed replacement in a shape Claude Code rejects would let the resolved
+ * secret reach the model. The Agent SDK ships these shapes as TypeScript types only
+ * (`sdk-tools.d.ts`), so one hand-written fixture per built-in tool the SDK path allows is typed
+ * with `satisfies` against them (`pnpm typecheck` fails when an SDK upgrade changes a shape), and
+ * the hook sends a replacement only in a shape it can confirm. An unknown tool, or an output in
+ * none of its tool's shapes, that holds a resolved secret is refused: the run stops before the
+ * model sees it, with a reason and an audit row.
+ */
+describe("w15-run, wave 15: a built-in tool's output with a secret is replaced only in a shape the guard confirms (W15-12)", () => {
+  const V = VAULT_VALUE;
+  const ALL = [
+    "cc:Read",
+    "cc:Edit",
+    "cc:Write",
+    "cc:Bash",
+    "cc:Grep",
+    "cc:Glob",
+    "cc:LS",
+    "cc:WebFetch",
+    "cc:WebSearch",
+    "cc:TodoWrite",
+    "cc:NotebookEdit",
+    "use_secret",
+  ];
+
+  const shapeOf = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(shapeOf)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shapeOf(x)]))
+        : typeof v;
+  /** Every non-string value at its path: what the scrub must leave exactly as it was. */
+  const nonStrings = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(nonStrings)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, nonStrings(x)]))
+        : typeof v === "string"
+          ? "string"
+          : v;
+
+  const patch = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-x", `+T=${V}`] }];
+  const gitDiff = {
+    filename: ".env",
+    status: "modified" as const,
+    additions: 1,
+    deletions: 1,
+    changes: 2,
+    patch: `@@ -1 +1 @@\n-x\n+T=${V}`,
+    repository: null,
+  };
+  /** One fixture per built-in tool the SDK path allows, each holding the value in a string. */
+  const FIXTURES: { tool: string; output: unknown }[] = [
+    {
+      tool: "Bash",
+      output: {
+        stdout: `T=${V}\n`,
+        stderr: "",
+        interrupted: false,
+        returnCodeInterpretation: "exit 0",
+        noOutputExpected: false,
+        gitOperation: { commit: { sha: "abc1234", kind: "committed", branch: "main" } },
+      } satisfies BashOutput,
+    },
+    {
+      tool: "Read",
+      output: {
+        type: "text",
+        file: {
+          filePath: "/repo/.env",
+          content: `T=${V}`,
+          numLines: 1,
+          startLine: 1,
+          totalLines: 1,
+        },
+      } satisfies FileReadOutput,
+    },
+    {
+      tool: "Read",
+      output: {
+        type: "notebook",
+        file: { filePath: "/repo/a.ipynb", cells: [{ cell_type: "code", source: `t="${V}"` }] },
+      } satisfies FileReadOutput,
+    },
+    {
+      tool: "Read",
+      output: {
+        type: "pdf",
+        file: { filePath: `/repo/${V}.pdf`, base64: "JVBERi0=", originalSize: 5 },
+      } satisfies FileReadOutput,
+    },
+    {
+      tool: "Read",
+      output: {
+        type: "parts",
+        file: { filePath: "/repo/a.pdf", originalSize: 9, count: 1, outputDir: `/tmp/${V}` },
+        firstPage: 1,
+      } satisfies FileReadOutput,
+    },
+    {
+      tool: "Read",
+      output: {
+        type: "file_unchanged",
+        file: { filePath: `/repo/${V}.txt` },
+      } satisfies FileReadOutput,
+    },
+    {
+      tool: "Read",
+      output: {
+        type: "image",
+        file: {
+          base64: `iVBOR${V}`,
+          type: "image/png",
+          originalSize: 10,
+          dimensions: { originalWidth: 2, originalHeight: 2 },
+        },
+      } satisfies FileReadOutput,
+    },
+    {
+      tool: "Edit",
+      output: {
+        filePath: "/repo/.env",
+        oldString: "x",
+        newString: `T=${V}`,
+        originalFile: "x\n",
+        structuredPatch: patch,
+        userModified: false,
+        replaceAll: false,
+        gitDiff,
+      } satisfies FileEditOutput,
+    },
+    {
+      tool: "Write",
+      output: {
+        type: "update",
+        filePath: "/repo/.env",
+        content: `T=${V}\n`,
+        structuredPatch: patch,
+        originalFile: null,
+        gitDiff,
+      } satisfies FileWriteOutput,
+    },
+    {
+      tool: "Glob",
+      output: {
+        durationMs: 3,
+        numFiles: 1,
+        filenames: [`/repo/${V}.txt`],
+        truncated: false,
+        totalMatches: 1,
+      } satisfies GlobOutput,
+    },
+    {
+      tool: "Grep",
+      output: {
+        mode: "content",
+        numFiles: 1,
+        filenames: ["/repo/.env"],
+        content: `/repo/.env:1:T=${V}`,
+        numLines: 1,
+      } satisfies GrepOutput,
+    },
+    {
+      tool: "NotebookEdit",
+      output: {
+        new_source: `t="${V}"`,
+        cell_type: "code",
+        language: "python",
+        edit_mode: "replace",
+        notebook_path: "/repo/a.ipynb",
+        original_file: "{}",
+        updated_file: `{"t":"${V}"}`,
+      } satisfies NotebookEditOutput,
+    },
+    {
+      tool: "TodoWrite",
+      output: {
+        oldTodos: [],
+        newTodos: [{ content: `rotate ${V}`, status: "pending", activeForm: "Rotating" }],
+      } satisfies TodoWriteOutput,
+    },
+    {
+      tool: "WebFetch",
+      output: {
+        bytes: 40,
+        code: 200,
+        codeText: "OK",
+        result: `the page says ${V}`,
+        durationMs: 12,
+        url: `https://api.example.com/?k=${V}`,
+      } satisfies WebFetchOutput,
+    },
+    {
+      tool: "WebSearch",
+      output: {
+        query: `who leaked ${V}`,
+        results: [
+          {
+            tool_use_id: "srvtoolu_1",
+            content: [{ title: "A page", url: "https://a.example.com/", snippet: `it holds ${V}` }],
+          },
+          `summary with ${V}`,
+        ],
+        durationSeconds: 1.5,
+      } satisfies WebSearchOutput,
+    },
+  ];
+
+  async function resolvedRun() {
+    const h = harness({ secrets: new SecretResolver(new MemoryVault({ gh: V })) });
+    const run = await runDriver(h, { grantedSecrets: ["gh"], allowedTools: ALL });
+    expect(
+      decision(
+        await run.pre({
+          tool_name: "mcp__forerunner__use_secret",
+          tool_input: { token: "secret:gh" },
+          tool_use_id: "s1",
+        }),
+      ),
+    ).toBe("allow");
+    await run.post({
+      tool_name: "mcp__forerunner__use_secret",
+      tool_input: { token: "secret:gh" },
+      tool_response: "ok",
+      tool_use_id: "s1",
+    });
+    return { h, ...run };
+  }
+  const replacementOf = (r: Record<string, unknown>) =>
+    (r.hookSpecificOutput as { updatedToolOutput?: unknown } | undefined)?.updatedToolOutput;
+
+  it("every built-in tool the SDK path allows has a typed fixture and a shape; the rest are refused when they hold a value", () => {
+    const allowedByRegistry = [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash",
+      "Grep",
+      "Glob",
+      "WebFetch",
+      "WebSearch",
+    ];
+    for (const t of [...allowedByRegistry, "NotebookEdit", "TodoWrite"]) {
+      expect(Object.keys(CC_TOOL_OUTPUT_SHAPES)).toContain(t);
+      expect(FIXTURES.some((f) => f.tool === t)).toBe(true);
+    }
+    // The Claude Code names the registry may grant with no output type in the SDK: refused.
+    for (const t of KNOWN_CLAUDE_CODE_TOOLS.filter((x) => !Object.hasOwn(CC_TOOL_OUTPUT_SHAPES, x)))
+      expect(unconfirmedToolOutput(t, {}, {})).toMatch(/no output shape/);
+    // Each fixture is one of its tool's shapes, as written.
+    for (const f of FIXTURES) expect(unconfirmedToolOutput(f.tool, f.output, f.output)).toBeNull();
+  });
+
+  it("each fixture: the scrub keeps every key and every non-string value, the replacement is confirmed and sent, the value never", async () => {
+    const { h, post } = await resolvedRun();
+    let n = 0;
+    for (const f of FIXTURES) {
+      const scrubbed = h.hooks.redactToolOutput(f.output);
+      expect(scrubbed.changed).toBe(true);
+      expect(shapeOf(scrubbed.value)).toEqual(shapeOf(f.output));
+      expect(nonStrings(scrubbed.value)).toEqual(nonStrings(f.output));
+      expect(JSON.stringify(scrubbed.value)).not.toContain(V);
+      const r = await post({
+        tool_name: f.tool,
+        tool_use_id: `f${n++}`,
+        tool_input: f.tool === "WebFetch" ? { url: "https://api.example.com/" } : {},
+        tool_response: f.output,
+      });
+      expect(r.continue, f.tool).not.toBe(false);
+      const out = replacementOf(r);
+      expect(out, f.tool).toBeDefined();
+      expect(JSON.stringify(r), f.tool).not.toContain(V);
+      // The replacement is the tool's own shape (the web tools' results are the wrapped text).
+      expect(unconfirmedToolOutput(f.tool, f.output, out), f.tool).toBeNull();
+      if (f.tool !== "WebFetch" && f.tool !== "WebSearch")
+        expect(shapeOf(out), f.tool).toEqual(shapeOf(f.output));
+    }
+    expect(h.audit.entries.some((a) => !a.allowed)).toBe(false);
+  });
+
+  it("a read without a resolved value gets no replacement, and an unknown tool without one passes as it is (R-readhook)", async () => {
+    const { post } = await resolvedRun();
+    expect(
+      await post({
+        tool_name: "Bash",
+        tool_use_id: "n1",
+        tool_input: { command: "ls" },
+        tool_response: { stdout: "a.txt\n", stderr: "", interrupted: false },
+      }),
+    ).toEqual({});
+    expect(
+      await post({
+        tool_name: "LS",
+        tool_use_id: "n2",
+        tool_input: { path: "/repo" },
+        tool_response: "a.txt\nb.txt",
+      }),
+    ).toEqual({});
+  });
+
+  const refusals: { name: string; tool: string; output: unknown }[] = [
+    { name: "a tool with no known shape", tool: "LS", output: `- /repo/\n  - ${V}.txt` },
+    {
+      name: "a known tool in a shape it does not have",
+      tool: "Read",
+      output: { type: "binary", file: { filePath: "/repo/.env", content: `T=${V}` } },
+    },
+    {
+      name: "a known shape with a key the SDK does not name",
+      tool: "Bash",
+      output: { stdout: `T=${V}`, stderr: "", interrupted: false, newField: "x" },
+    },
+    {
+      name: "a key that holds the value",
+      tool: "Bash",
+      output: { stdout: "", stderr: "", interrupted: false, structuredContent: [{ [V]: 1 }] },
+    },
+    { name: "a bare string from a built-in tool", tool: "Grep", output: `/repo/.env:1:T=${V}` },
+  ];
+  for (const c of refusals) {
+    it(`refused, never passed: ${c.name}`, async () => {
+      const { h, post, res } = await resolvedRun();
+      const r = await post({
+        tool_name: c.tool,
+        tool_use_id: "x1",
+        tool_input: {},
+        tool_response: c.output,
+      });
+      // Claude Code is told to stop: the output never reaches a next model call.
+      expect(r.continue).toBe(false);
+      expect(String(r.stopReason)).toMatch(/secret/);
+      expect(JSON.stringify(r)).not.toContain(V);
+      // One audit row says it was refused, and why; none carries the value.
+      const row = h.audit.entries.find((a) => !a.allowed && a.tool === `cc:${c.tool}`);
+      expect(row?.deniedReason).toMatch(/^tool_not_allowed: .*secret/);
+      expect(JSON.stringify(h.audit.entries)).not.toContain(V);
+      // The run ends as an error with that reason (no hook_error, never "completed").
+      for (const release of openRuns.splice(0)) release();
+      const done = await res;
+      expect(done.outcome).toBe("error");
+      expect(done.error?.code).toBe("tool_not_allowed");
+      expect(done.error?.message).toMatch(/secret/);
+      expect(done.error?.message).not.toContain(V);
+    });
+  }
+
+  it("a scrub that would change a fixed word is not confirmed", () => {
+    const grep = { mode: "content", numFiles: 0, filenames: [] } satisfies GrepOutput;
+    expect(unconfirmedToolOutput("Grep", grep, { ...grep, mode: "[REDACTED]" })).toMatch(
+      /would not keep its shape/,
+    );
+    expect(unconfirmedToolOutput("Grep", grep, grep)).toBeNull();
   });
 });

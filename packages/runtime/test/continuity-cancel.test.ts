@@ -778,3 +778,87 @@ describe("Undo of a cancel after the session's next task changed the same file (
     expect(readFileSync(join(workspace, "index.html"), "utf8")).toContain("Nussgipfel");
   }, 60_000);
 });
+
+/**
+ * w15-run, wave 15 (W15-59, live check 2's RUN-10): a session whose only task the person cancelled
+ * during its review ended with the result "CHF 0.01." and nothing else. The session page reads the
+ * result from GET /sessions/:id.
+ */
+describe("w15-run, wave 15: the result of a session whose only task you cancelled (W15-59)", () => {
+  const clock = new SimulatedClock("2026-11-09T10:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-run-cancel-"));
+  const provider = new ScriptedProvider(
+    [
+      write("about.html", "<p>The club.</p>\n"),
+      { text: "Wrote about.html." },
+      { ttftMs: HOUR, text: "never sent" },
+    ],
+    clock,
+  );
+  let rt: RuntimeApp;
+  let req: Awaited<ReturnType<typeof compose>>["req"];
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, provider));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("says 'You cancelled \"About page\"; nothing else ran.' with its cost, not only the cost", async () => {
+    const project = await rt.store.project.insert({
+      name: "About club",
+      goal: "An about page",
+      autonomy_level: 2,
+    });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "About page",
+      outcome: "about.html says what the club is",
+      acceptance_criteria: ["about.html exists"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      specialist: "coder",
+      est_cost_usd_micro: 100_000,
+      reason: "seed",
+    });
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
+    });
+    const sessionId = (((await started.json()) as Json).session as Json).id as string;
+    await waitFor(
+      async () =>
+        provider.calls.length === 3 && (await rt.store.task.mustGet(task.id)).status === "in_review"
+          ? true
+          : undefined,
+      async () => `the critic to review (${provider.calls.length} calls)`,
+    );
+    const res = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          {
+            name: "task.transition",
+            params: { task: task.id, to: "cancelled", project: project.id },
+          },
+        ],
+        source: "ui",
+        confirm: "tap",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const ended = await waitFor(
+      async () => {
+        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
+        return isEnded(s) ? s : undefined;
+      },
+      async () => `the session to end (task ${(await rt.store.task.mustGet(task.id)).status})`,
+    );
+    const summary = String(ended.summary ?? "");
+    expect(summary.split("\n")[0]).toBe('You cancelled "About page"; nothing else ran.');
+    expect(summary).toMatch(
+      /^You cancelled "About page"; nothing else ran\.\n(?:Less than )?CHF \d+\.\d{2}\.$/,
+    );
+  }, 60_000);
+});

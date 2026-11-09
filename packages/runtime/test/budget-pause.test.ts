@@ -1,15 +1,30 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
-import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
+import {
+  FakeProvider,
+  messagesApiStandIn,
+  standInFetch,
+  textReply,
+  toolReply,
+} from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { WRAP_UP_TEXT } from "../src/agent/loop.ts";
+import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
-import { handoffOf } from "../src/session/budget-pause.ts";
+import {
+  budgetLineWords,
+  handoffOf,
+  limitWords,
+  parseHandoff,
+  pauseSentence,
+  WRAP_UP_BRIEF_LINE,
+  wrapUpSentWords,
+} from "../src/session/budget-pause.ts";
+import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -27,7 +42,7 @@ import { closingReply, submitReply } from "./loop-helpers.ts";
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
 type Json = Record<string, unknown>;
-const WRAP = "About a fifth of this task's budget is left";
+const WRAP = WRAP_UP_MARK;
 
 const textOf = (m: ChatMessage) =>
   typeof m.content === "string"
@@ -247,7 +262,15 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     const last = mine[first]?.messages.at(-1);
     const blocks = Array.isArray(last?.content) ? last.content : [];
     expect(blocks.map((b) => b.type)).toEqual(["tool_result", "text"]);
-    expect(blocks.filter((b) => b.type === "text")).toEqual([{ type: "text", text: WRAP_UP_TEXT }]);
+    // W15-16: worded when it is sent, with the share of the budget really used.
+    expect(blocks.filter((b) => b.type === "text")).toEqual([
+      {
+        type: "text",
+        text: expect.stringMatching(
+          /^Wrap up now: this run has used \d+% of what it may spend, and its next step could take it past the share kept to finish\./,
+        ),
+      },
+    ]);
     expect(mine.slice(0, first).some(heardWrapUp)).toBe(false);
     // Paused: the task waits on its card, no critic reviewed it, no try was counted.
     const task = await rt.store.task.mustGet(r.taskId);
@@ -275,7 +298,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     const said = lines(r.events);
     expect(
       said.some((l) =>
-        /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
+        /^This run may spend CHF [\d.]+: before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
           l,
         ),
       ),
@@ -284,7 +307,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     // CHF 0.04)" was not what was left, since the call that would pass the line brings it).
     expect(
       said.some((l) =>
-        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.24, and the last CHF 0\.05 is kept to finish\.$/.test(
+        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.24, and its next step could take it past CHF 0\.19\.$/.test(
           l,
         ),
       ),
@@ -389,9 +412,11 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     // run may spend the session's work budget, USD 1.60 (CHF 1.28), not the whole USD 2. (The
     // Start dialog's check needs the work budget to hold the coder's estimate of USD 1.50.)
     const r = await runOne(req, rt, "Big report", { sessionBudgetUsdMicro: 2_000_000 });
-    expect(lines(r.events).some((l) => l.startsWith("This run may spend CHF 1.28: at CHF "))).toBe(
-      true,
-    );
+    expect(
+      lines(r.events).some((l) =>
+        l.startsWith("This run may spend CHF 1.28: before a step that could take it past CHF "),
+      ),
+    ).toBe(true);
     // It heard the wrap-up inside the work budget, finished, and the critic reviewed it.
     expect(coderCalls("Big report").some(heardWrapUp)).toBe(true);
     expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
@@ -849,4 +874,322 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     expect((await rt.store.task.mustGet(r.taskId)).attempt).toBe(0);
     expect((await cardsOf(r.taskId)).map((q) => q.status)).toEqual(["withdrawn"]);
   }, 120_000);
+});
+
+/**
+ * w15-run, wave 15 (W15-13, live check 2's RUN-1): through the composed runtime on an API key (the
+ * Messages API stand-in, so the runtime prices Sonnet 5.5 as it does live), a CHF 0.20 coder task
+ * whose four files need more than the usual 4,096-token cap. Before, the write call kept the flat
+ * write room of a tenth of the budget (the 4,096 floor), the reply was cut, every write in it was
+ * thrown away, and the retry at 16,384 tokens passed the run's line: the coder heard "about a
+ * fifth of this task's budget is left" after spending CHF 0.05, wrote nothing and paused.
+ */
+describe("w15-run, wave 15: a coder's multi-file write is paid from below its line and the task is done (W15-13)", () => {
+  const KEY = ["sk-ant-api03-", "w15-run-", "7".repeat(40)].join(""); // not-a-secret
+  const TITLE = "Write the Swiss pairing tool with tests";
+  const FILES = ["src/elo.js", "src/swiss.js", "test/elo.test.js", "test/swiss.test.js"];
+  const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-run-write-"));
+  const isCoder = (r: ModelRequest) =>
+    (r.system ?? "").includes("You are the coder specialist") &&
+    JSON.stringify(r.messages).includes(TITLE);
+  const heard = (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_MARK);
+  const writes = FILES.map((path) => ({
+    name: "write_file",
+    input: { path, content: `// ${path}\n${"export const x = 1;\n".repeat(20)}` },
+  }));
+  const model = new FakeProvider({
+    clock,
+    latency: "none",
+    onNoMatch: "echo",
+    replies: [
+      submitReply({}, { times: Number.POSITIVE_INFINITY }),
+      closingReply(),
+      // What the live model did once told to wrap up: start nothing new, list the files left.
+      textReply(
+        "Read the project.\n\nWhere I stopped: nothing is written yet.\n\nLeft to do:\n- write src/elo.js\n- write src/swiss.js\n- write the tests",
+        { when: (r: ModelRequest) => isCoder(r) && heard(r), times: Number.POSITIVE_INFINITY },
+      ),
+      toolReply("list_dir", { path: "." }, "Looking at the project first.", {
+        when: (r: ModelRequest) =>
+          isCoder(r) && !JSON.stringify(r.messages).includes("tool_result"),
+      }),
+      // The four files need about 6,000 output tokens: below that the reply is cut in the fourth.
+      {
+        when: (r: ModelRequest) => isCoder(r) && r.max_tokens < 6_000,
+        reply: { toolCalls: writes, stopReason: "max_tokens", usage: { output_tokens: 4_096 } },
+        times: Number.POSITIVE_INFINITY,
+      },
+      {
+        when: (r: ModelRequest) => isCoder(r) && !JSON.stringify(r.messages).includes("wrote "),
+        reply: { toolCalls: writes, usage: { output_tokens: 6_000 } },
+        times: Number.POSITIVE_INFINITY,
+      },
+      textReply(
+        "Wrote the pairing tool and its tests.\n\nWhere I stopped: every file is written.\n\nLeft to do: nothing",
+        { when: isCoder, times: Number.POSITIVE_INFINITY },
+      ),
+    ],
+  });
+  const seen: ModelRequest[] = [];
+  const stream = model.stream.bind(model);
+  model.stream = (r) => {
+    seen.push({ ...r, messages: structuredClone(r.messages) });
+    return stream(r);
+  };
+  const standIn = messagesApiStandIn({ model, clock });
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ [SECRET_NAMES.anthropic]: KEY }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("CHF 0.20: the four files are written in one call, no wrap-up comes before them, and the task is reviewed and done", async () => {
+    const r = await runOne(req, rt, TITLE, { budgetUsdMicro: 250_000 });
+    const coder = seen.filter(isCoder);
+    // The write call asked enough for the four files; no request carried the wrap-up.
+    expect(coder.length).toBeGreaterThanOrEqual(3);
+    expect(coder[1]?.max_tokens).toBeGreaterThanOrEqual(6_000);
+    expect(coder.some((b) => JSON.stringify(b.messages).includes(WRAP_UP_MARK))).toBe(false);
+    // Done and reviewed, its files written; never "paused before its budget".
+    const task = await rt.store.task.mustGet(r.taskId);
+    expect(task.status, lines(r.events).join(" | ")).toBe("done");
+    expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+    expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+    expect(lines(r.events).join(" | ")).not.toMatch(
+      /paused before its budget|Told the coder to wrap up/,
+    );
+    // The drawer lists the four files the run wrote.
+    const detail = JSON.stringify(await (await req(`/tasks/${r.taskId}`)).json());
+    for (const f of FILES) expect(detail).toContain(f);
+  }, 120_000);
+});
+
+/**
+ * w15-run, wave 15 (W15-14, live check 2's F4): a run that heard the wrap-up and listed only
+ * "Nothing for the acceptance criteria." and an optional extra was paused at its budget with its
+ * work done and no review: `parseHandoff` counted both lines as work left. The live report (the
+ * researcher's task.finished of session 01a1be9f, word for word) is the fixture.
+ */
+const LIVE_F4_REPORT = [
+  'I wrote `popover-hint.md` with three MDN pages that mention `popover="hint"`. Each has its link and one sentence on what it says. I did not run any build, lint or test command.',
+  "",
+  "**How I found them:** I used MDN's own search endpoint, `https://developer.mozilla.org/api/v1/search?q=popover%20hint&locale=en-US`. I had no separate web_search tool. I then opened each listed page with web_fetch.",
+  "",
+  "**`answer.md` left unchanged:** It already holds the finished report for a different task, the MDN CSS 2026 one. Overwriting it would have destroyed that result, so I put the evidence in this message instead. `popover-hint.md` is the deliverable the brief names.",
+  "",
+  "Where I stopped: `popover-hint.md` is written and complete with three opened and cited pages. Nothing is half-done.",
+  "",
+  "Left to do:",
+  "- Nothing for the acceptance criteria.",
+  "- Optionally, add a `popover-hint` section to a fresh `answer.md` once the existing one is archived or moved.",
+  "",
+  "Lesson: When the task directory's `answer.md` belongs to an earlier task, don't overwrite it. Put the report in the final message and say so.",
+].join("\n");
+
+describe("w15-run, wave 15: 'Left to do' counts only what the criteria still need (W15-14)", () => {
+  it("the live report: nothing left, the optional extra kept apart as a note", () => {
+    const h = parseHandoff(LIVE_F4_REPORT);
+    expect(h.leftToDo).toEqual([]);
+    expect(h.optional).toEqual([
+      "Optionally, add a `popover-hint` section to a fresh `answer.md` once the existing one is archived or moved.",
+    ]);
+    expect(h.stopped).toBe(
+      "`popover-hint.md` is written and complete with three opened and cited pages. Nothing is half-done.",
+    );
+  });
+
+  it("nothing with what it is about is nothing; work stays work, also when it starts with 'none' or 'nothing'", () => {
+    const left = (lines: string[]) =>
+      parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+    expect(left(["- None required by the criteria."]).leftToDo).toEqual([]);
+    expect(left(["- Nothing left for the criteria"]).leftToDo).toEqual([]);
+    expect(left(["- Nothing: all criteria are met."]).leftToDo).toEqual([]);
+    expect(parseHandoff("Left to do: nothing for this task.").leftToDo).toEqual([]);
+    expect(left(["- Nothing works yet: fix the build"]).leftToDo).toEqual([
+      "Nothing works yet: fix the build",
+    ]);
+    expect(left(["- None of the tests pass"]).leftToDo).toEqual(["None of the tests pass"]);
+    expect(left(["- write the last section", "- (optional) add a print style"])).toMatchObject({
+      leftToDo: ["write the last section"],
+      optional: ["(optional) add a print style"],
+    });
+    expect(left(["- Nice to have: a dark theme", "- check the links"])).toMatchObject({
+      leftToDo: ["check the links"],
+      optional: ["Nice to have: a dark theme"],
+    });
+  });
+
+  it("a 'nothing' that goes on to name work, and a hedged item, stay work left (review of W15-14)", () => {
+    const left = (lines: string[]) =>
+      parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+    // Before: 'complete' inside 'incomplete' and 'task' with anything after it read as nothing.
+    for (const line of [
+      "Nothing - but the README is incomplete",
+      "Nothing in the task works yet",
+      "Nothing: the criteria are not met yet",
+      "Nothing for the criteria, except the tests still fail",
+      "None for the task; the parser is missing",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+    // Before: filed as optional extras.
+    for (const line of [
+      "Perhaps the most important: finish the parser",
+      "Maybe fix the failing build",
+    ])
+      expect(left([`- ${line}`]), line).toEqual({ stopped: "here.", leftToDo: [line] });
+    // What reads as nothing still does.
+    for (const line of [
+      "Nothing for the task's acceptance criteria.",
+      "Nothing within the scope of the brief",
+      "Nothing left: the task is complete.",
+      "None; every criterion is met",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+  });
+
+  it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
+    expect(wrapUpText(10_000, 100_000)).toContain(
+      "Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+    );
+    expect(WRAP_UP_BRIEF_LINE).toContain(
+      "'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras)",
+    );
+  });
+
+  describe("through the composed runtime", () => {
+    const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-w15-run-left-"));
+    const calls: ModelRequest[] = [];
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works("Popover notes", 30_000, LIVE_F4_REPORT),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    let rt: RuntimeApp;
+    let req: Req;
+    beforeAll(async () => {
+      ({ rt, req } = await compose(home, clock, fake));
+    }, 120_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    it("a run that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is reviewed and done, with no budget card", async () => {
+      const r = await runOne(req, rt, "Popover notes", { budgetUsdMicro: 300_000 });
+      const mine = calls.filter(coderOn("Popover notes"));
+      const told = mine.find(heardWrapUp);
+      expect(told).toBeDefined();
+      // The request the model received asked for what the criteria still need, or nothing.
+      expect(JSON.stringify(told?.messages.at(-1))).toContain(
+        "only what the task's criteria still need, as a list, or nothing; no optional extras",
+      );
+      // Reviewed and done; never paused at its budget.
+      const task = await rt.store.task.mustGet(r.taskId);
+      expect(task.status).toBe("done");
+      expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+      expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+      expect(lines(r.events).join(" | ")).not.toMatch(/paused before its budget/);
+      const cards = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+        (q) => q.taskId === r.taskId,
+      );
+      expect(cards).toEqual([]);
+    }, 60_000);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-16, live check 2's F4 and RUN-1): the wrap-up's words were not true. The
+ * log said "at CHF 0.07 it is told to wrap up" and the run was told at CHF 0.02 (the wrap-up comes
+ * before the step whose worst case could pass the line); the model heard "About a fifth of this
+ * task's budget is left" with 87% left; and an amount under a centime read "CHF 0.00".
+ */
+describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () => {
+  const line = {
+    capUsdMicro: 187_500,
+    reserveUsdMicro: 100_000,
+    lineUsdMicro: 87_500,
+    firstCallUsdMicro: 50_000,
+    saveOnly: false,
+  };
+  const chf = (usdMicro: number) => `CHF ${((usdMicro * 0.8) / 1_000_000).toFixed(2)}`;
+
+  it("the start line names the real trigger, and the told line agrees with it", () => {
+    expect(budgetLineWords(line, chf)).toBe(
+      "This run may spend CHF 0.15: before a step that could take it past CHF 0.07 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
+    );
+    expect(wrapUpSentWords("researcher", 29_045, 187_500, line, chf)).toBe(
+      "Told the researcher to wrap up: it spent CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07.",
+    );
+  });
+
+  // The share is of the run's cap, which on a continued run is what is left of the task's
+  // budget: "this run ... of what it may spend" is true on every run (review of W15-16).
+  it("the model hears the share it really used, not 'about a fifth is left'", () => {
+    expect(wrapUpText(29_045, 187_500)).toBe(
+      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+    );
+    expect(wrapUpText(1_000, 300_000)).toMatch(
+      /^Wrap up now: this run has used under 1% of what it may spend,/,
+    );
+    expect(wrapUpText(29_045, 187_500)).not.toMatch(/a fifth/);
+  });
+
+  it("amounts under a centime read 'less than CHF 0.01', never 'CHF 0.00'", () => {
+    expect(limitWords("task_budget", 4_000, chf, "coder")).toBe("its budget of less than CHF 0.01");
+    expect(wrapUpSentWords("coder", 3_000, 6_000, { ...line, lineUsdMicro: 4_000 }, chf)).toBe(
+      "Told the coder to wrap up: it spent less than CHF 0.01 of less than CHF 0.01, and its next step could take it past less than CHF 0.01.",
+    );
+    expect(
+      pauseSentence(
+        { stopped: "", leftToDo: [], stoppedBy: "budget" },
+        limitWords("task_budget", 4_000, chf, "coder"),
+        3_000,
+        4_000,
+        chf,
+      ),
+    ).toBe(
+      "The run stopped at its budget of less than CHF 0.01: it spent less than CHF 0.01, and its next step would have gone over.",
+    );
+  });
 });

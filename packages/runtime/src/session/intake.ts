@@ -33,7 +33,7 @@ import { type LoopAgentDriver, type RunPricing, type RunResult, wholeMs } from "
 import { ToolRegistry } from "../agent/tools.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { boundedPlanEstimate } from "../estimates/model.ts";
+import { boundedPlanEstimate, taskSizeFactor } from "../estimates/model.ts";
 import type { ProjectDocsPort } from "../loop/ports.ts";
 import {
   capEffort,
@@ -964,6 +964,9 @@ interface PlanTaskNamed {
   key: string;
   title: string;
   specialist: string | null;
+  /** What it delivers and its checks: its size (`taskSizeFactor`, W15-18). */
+  outcome: string;
+  acceptanceCriteria: readonly string[];
 }
 
 /** Every plan task that has a key, with what the first-session plan needs of it. */
@@ -971,7 +974,13 @@ function keyedTasks(plan: ProjectPlan): Map<string, PlanTaskNamed> {
   const out = new Map<string, PlanTaskNamed>();
   for (const t of [...plan.milestones.flatMap((m) => m.tasks), ...plan.tasks]) {
     if (t.key !== undefined)
-      out.set(t.key, { key: t.key, title: t.title, specialist: t.specialist ?? null });
+      out.set(t.key, {
+        key: t.key,
+        title: t.title,
+        specialist: t.specialist ?? null,
+        outcome: t.outcome ?? "",
+        acceptanceCriteria: t.acceptanceCriteria ?? [],
+      });
   }
   return out;
 }
@@ -2492,7 +2501,17 @@ function withBoundedEstimates(p: IntakeProposal): IntakeProposal {
           estimateUsdMicro:
             specialist === PERSON_SPECIALIST
               ? 0
-              : boundedPlanEstimate(item.estimateUsdMicro, specialist),
+              : boundedPlanEstimate(
+                  item.estimateUsdMicro,
+                  specialist,
+                  t
+                    ? taskSizeFactor({
+                        outcome: t.outcome,
+                        acceptance_criteria: t.acceptanceCriteria,
+                        specialist,
+                      })
+                    : 1,
+                ),
         };
       }),
     },

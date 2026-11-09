@@ -35,6 +35,12 @@ export interface EstimateInput {
   budget_usd_micro?: number;
   /** Explicit kind label; defaults to the risk tier (see kindOf). */
   kind?: string;
+  /**
+   * What the task is to deliver and its checks (W15-18): the size factor a task with no estimate
+   * of its own is priced with (`taskSizeFactor`). Absent: size 1, the figure of a typical task.
+   */
+  outcome?: string | null;
+  acceptance_criteria?: readonly string[] | null;
 }
 
 export type EstimateBasis =
@@ -168,6 +174,82 @@ export const DEFAULT_STARTING_ESTIMATE_USD_MICRO = 60_000;
  */
 export const PLAN_ESTIMATE_BOUND = 1.5;
 
+/**
+ * W15-18 (live check 2, RUN-16): the starting estimates are one typical task's work, so a coder
+ * task writing four files and their tests ("Write the Swiss pairing tool with tests", USD 0.21
+ * of work) and a one-line footer (USD 0.03) were both "about CHF 0.03". `taskSizeFactor` reads
+ * the task's outcome and criteria, deterministically and without a model call, and scales the
+ * starting figure (and the band a plan's guess is kept in) by it: each file the task names
+ * beyond the first, tests to write (not for the tester, whose starting figure is test work),
+ * "at least N cases" beyond three, and each criterion beyond three. It stays between 1 and
+ * `SIZE_FACTOR_MAX`; the learner then learns its ratio per unit of size (`sampleForTask`), so
+ * a large task's sample does not lift the figure of a small one.
+ */
+export const SIZE_FACTOR_MAX = 4;
+const SIZE_PER_FILE = 0.4;
+const SIZE_FOR_TESTS = 0.4;
+const SIZE_PER_CASE = 0.05;
+const SIZE_CASES_MAX = 1;
+const SIZE_PER_CRITERION = 0.1;
+const SIZE_FREE_CRITERIA = 3;
+/** A file name or path: `src/elo.js`, `README.md`, `data/sales.csv`. */
+const FILE_NAME =
+  /(?:^|[\s"'`([,;:])((?:[\w.-]+\/)*[\w-]+(?:\.[\w-]+)*\.(?:js|mjs|cjs|jsx|ts|tsx|py|rb|go|rs|java|kt|swift|c|h|cpp|cs|php|html?|css|scss|md|txt|json|ya?ml|toml|csv|sql|sh|svg|xml))(?=$|[\s"'`)\],;:!?]|\.(?:\s|$))/gi;
+/** Names that end like a file but are a product: "a Node.js tool". */
+const NOT_A_FILE =
+  /^(?:node|vue|next|nuxt|express|react|three|d3|chart|ember|backbone|angular|deno|socket\.io)\.js$/i;
+/** Tests the task writes ("with tests", "test/elo.test.js", "node --test"), not "runs the tests". */
+const TESTS_TO_WRITE =
+  /\b(?:with|write|writes|add|adds|plus|and) (?:unit |e2e |end-to-end )?tests\b|\btests? for\b|node:test|\.(?:test|spec)\.|--test\b/i;
+const NUMBER_WORDS: Readonly<Record<string, number>> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  fifteen: 15,
+  twenty: 20,
+};
+const AT_LEAST_CASES =
+  /\bat least (\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty) (?:[a-z-]+ )?(?:cases|tests|test cases|examples)\b/gi;
+
+/** The task's size, 1 for a typical task (W15-18; see `SIZE_FACTOR_MAX`). */
+export function taskSizeFactor(task: {
+  outcome?: string | null;
+  acceptance_criteria?: readonly string[] | null;
+  specialist?: string | null;
+}): number {
+  const criteria = (task.acceptance_criteria ?? []).filter((c) => c.trim() !== "");
+  const text = [task.outcome ?? "", ...criteria].join("\n");
+  if (text.trim() === "") return 1;
+  const files = new Set<string>();
+  for (const m of text.matchAll(FILE_NAME)) {
+    const name = (m[1] ?? "").toLowerCase();
+    if (name && !NOT_A_FILE.test(name)) files.add(name);
+  }
+  let cases = 0;
+  for (const m of text.matchAll(AT_LEAST_CASES)) {
+    const word = (m[1] ?? "").toLowerCase();
+    const n = /^\d+$/.test(word) ? Number(word) : (NUMBER_WORDS[word] ?? 0);
+    cases += Math.max(0, n - 3) * SIZE_PER_CASE;
+  }
+  const tests = task.specialist !== "tester" && TESTS_TO_WRITE.test(text);
+  const size =
+    1 +
+    SIZE_PER_FILE * Math.max(0, files.size - 1) +
+    (tests ? SIZE_FOR_TESTS : 0) +
+    Math.min(SIZE_CASES_MAX, cases) +
+    SIZE_PER_CRITERION * Math.max(0, criteria.length - SIZE_FREE_CRITERIA);
+  return Math.round(clamp(size, 1, SIZE_FACTOR_MAX) * 100) / 100;
+}
+
 /** The calibrated starting estimate of one task of `specialist`'s kind (coder when none). */
 export function startingEstimateUsdMicro(
   specialist: string | null | undefined,
@@ -179,14 +261,16 @@ export function startingEstimateUsdMicro(
 
 /**
  * The plan model's guess for one task, kept within `PLAN_ESTIMATE_BOUND` of its kind's starting
- * estimate (the intake stores this as the task's estimate, the plan card shows it); no guess,
- * the starting estimate. The learner corrects it from there.
+ * estimate times the task's size (`taskSizeFactor`, W15-18; the intake stores this as the
+ * task's estimate, the plan card shows it); no guess, that sized starting estimate. The
+ * learner corrects it from there.
  */
 export function boundedPlanEstimate(
   guessUsdMicro: number,
   specialist: string | null | undefined,
+  size = 1,
 ): number {
-  const base = startingEstimateUsdMicro(specialist);
+  const base = Math.round(startingEstimateUsdMicro(specialist) * Math.max(1, size));
   if (!(guessUsdMicro > 0)) return base;
   return clamp(
     Math.round(guessUsdMicro),
@@ -209,13 +293,19 @@ export const FINISHED_TASK_STATUSES: readonly TaskStatus[] = ["done", "failed", 
 export const BUDGET_STOP_RUN_OUTCOMES: readonly string[] = ["paused", "budget_exceeded"];
 /**
  * Executor call outcomes the live feed takes no sample from (`observeTaskRuns`): a budget stop,
- * and a call a credential stopped or kept from starting (`usage_limit`, U-078: the task runs
- * again, and what this call spent is no part of a finished task's cost on its own).
+ * a call a credential stopped or kept from starting (`usage_limit`, U-078: the task runs again,
+ * and what this call spent is no part of a finished task's cost on its own), and a call the
+ * person stopped (`killed`, W15-19: Stop now puts the task back to Ready; its partial cost taught
+ * the live learner, the plan card and the Start dialog then disagreed, and a restart, whose fold
+ * takes finished tasks only, moved the figure back).
  */
 export const NO_SAMPLE_CALL_OUTCOMES: readonly string[] = [
   ...BUDGET_STOP_RUN_OUTCOMES,
   "usage_limit",
+  "killed",
 ];
+/** The Run row outcome of a run the person, Stop now or the kill switch stopped. */
+const KILLED_RUN_OUTCOME = "killed";
 /** The specialist name a review's Run row carries: its cost is no part of the work's. */
 const CRITIC_RUN_SPECIALIST = "critic";
 /** Ids per IN (...) clause when the fold lists runs (SQLite's parameter limit is far above this). */
@@ -268,11 +358,12 @@ export interface TaskActuals {
   at: string;
 }
 
-/** The task columns a sample needs; a TaskRow satisfies it. */
+/** The task columns a sample needs; a TaskRow satisfies it (outcome and criteria: its size). */
 export type EstimateTaskInput = Pick<
   TaskRow,
   "id" | "specialist" | "risk_tier" | "est_cost_usd_micro" | "budget_usd_micro"
->;
+> &
+  Partial<Pick<TaskRow, "outcome" | "acceptance_criteria">>;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
@@ -306,6 +397,9 @@ export interface RunTally {
   fast: boolean;
   /** A work run that stopped at a budget (`BUDGET_STOP_RUN_OUTCOMES`, ADR 0112). */
   budgetStop: boolean;
+  /** A work run that was stopped (`killed`), and the work runs that completed (W15-19). */
+  killed: boolean;
+  completed: number;
   /**
    * When the last finished work run ended (its row's last update, written at its end), "" with
    * none: the sample's time in both feeds, so a restart does not move it.
@@ -321,6 +415,8 @@ export function emptyRunTally(): RunTally {
     finished: 0,
     fast: false,
     budgetStop: false,
+    killed: false,
+    completed: 0,
     endedAt: "",
   };
 }
@@ -337,6 +433,8 @@ export function tallyRun(acc: RunTally, r: SampleRunInput): RunTally {
   // fast-mode surcharge: the task is no sample of what the work costs.
   if (isFastModeVariant(r.model)) acc.fast = true;
   if (BUDGET_STOP_RUN_OUTCOMES.includes(r.outcome)) acc.budgetStop = true;
+  if (r.outcome === KILLED_RUN_OUTCOME) acc.killed = true;
+  if (r.outcome === "completed") acc.completed += 1;
   acc.cost += r.cost_usd_micro;
   acc.wall += r.duration_ms ?? 0;
   acc.finished += 1;
@@ -345,12 +443,14 @@ export function tallyRun(acc: RunTally, r: SampleRunInput): RunTally {
 }
 
 /**
- * Whether a task is no sample of what its work costs: no finished work run, a fast-mode run, or
- * a run that stopped at a budget, however the task went on afterwards (raised, continued, done
- * or cancelled: what it spent is a lower bound, 'cost', ADR 0112).
+ * Whether a task is no sample of what its work costs: no finished work run, a fast-mode run, a
+ * run that stopped at a budget, however the task went on afterwards (raised, continued, done
+ * or cancelled: what it spent is a lower bound, 'cost', ADR 0112), or a stopped run with no run
+ * that completed the work (W15-19: cancelled after Stop now; once a later run completes it, the
+ * stopped run's cost counts in the task's).
  */
 export function isNoSample(t: RunTally): boolean {
-  return t.finished === 0 || t.fast || t.budgetStop;
+  return t.finished === 0 || t.fast || t.budgetStop || (t.killed && t.completed === 0);
 }
 
 /**
@@ -517,7 +617,12 @@ export class EstimateModel implements EstimatePort {
     const kind = this.opts.kindOf ? this.opts.kindOf(task) : kindOfTask(task);
     const cold = this.coldStart(specialist);
     const taskEstimate = task.est_cost_usd_micro ?? 0;
-    const baseCost = taskEstimate > 0 ? Math.round(taskEstimate) : cold.usdMicro;
+    // A task with no estimate of its own: the starting figure times its size (W15-18). A task's
+    // own estimate (the plan's, bounded with the same size) already holds it.
+    const baseCost =
+      taskEstimate > 0
+        ? Math.round(taskEstimate)
+        : Math.round(cold.usdMicro * taskSizeFactor({ ...task, specialist }));
     const baseWall = cold.wallMs;
     const s = this.keys.get(this.keyOf(specialist, kind));
     const raw = this.ratios(s);
@@ -688,8 +793,10 @@ export class EstimateModel implements EstimatePort {
 
   /**
    * The sample for a finished task: the estimate is the task's own `est_cost_usd_micro` when
-   * > 0, else the cold start; the wall estimate is always the cold start. Never the figure the
-   * planner already corrected: measuring against that feeds the correction back into itself.
+   * > 0, else the cold start times the task's size (W15-18: `estimate` prices it so, and the
+   * learner learns per unit of size); the wall estimate is always the cold start. Never the
+   * figure the planner already corrected: measuring against that feeds the correction back
+   * into itself.
    */
   sampleForTask(task: EstimateTaskInput, actual: TaskActuals): EstimateSample {
     const specialist = task.specialist ?? this.opts.defaultSpecialist;
@@ -704,7 +811,10 @@ export class EstimateModel implements EstimatePort {
     return {
       specialist,
       kind,
-      estimateUsdMicro: task.est_cost_usd_micro > 0 ? task.est_cost_usd_micro : cold.usdMicro,
+      estimateUsdMicro:
+        task.est_cost_usd_micro > 0
+          ? task.est_cost_usd_micro
+          : Math.round(cold.usdMicro * taskSizeFactor({ ...task, specialist })),
       actualUsdMicro: actual.usdMicro,
       estimateWallMs: cold.wallMs,
       actualWallMs: actual.wallMs,
@@ -777,6 +887,8 @@ export function planEstimateUsdMicro(port: EstimatePort, task: TaskRow): number 
       risk_tier: task.risk_tier,
       est_cost_usd_micro: task.est_cost_usd_micro,
       budget_usd_micro: task.budget_usd_micro,
+      outcome: task.outcome,
+      acceptance_criteria: task.acceptance_criteria,
     }).usdMicro,
     task,
   );

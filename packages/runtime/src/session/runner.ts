@@ -1627,9 +1627,18 @@ export class SessionRunner {
           const execStarted = clock.monotonic();
           // Steps are recorded in order, one after the other, and all before the task ends.
           let steps: Promise<void> = Promise.resolve();
+          // W15-21 (design §4.14): each model call's cost reaches the task while it runs, not
+          // only when the run returns (the drawer and the Tasks row read CHF 0.00 until then);
+          // what was booked live is not added again at the end.
+          let bookedLive = 0;
           const recordStep = async (t: TaskRow, step: TaskStep) => {
             if (step.kind === "model") {
-              await store.session.recordSpend(session.id, Math.max(0, step.costUsdMicro), 1);
+              const cost = Math.max(0, step.costUsdMicro);
+              await store.session.recordSpend(session.id, cost, 1);
+              if (cost > 0) {
+                await store.task.addCost(t.id, cost);
+                bookedLive += cost;
+              }
               return;
             }
             // A line of the run's own (its budget line, its wrap-up; ADR 0112): no step.
@@ -1739,8 +1748,11 @@ export class SessionRunner {
           if (result.outcome !== "usage_limit")
             await sayStarted(result.specialist ?? runItem.specialist);
           // TR-13: added in one statement, so the tail a stopped run reports later (added the
-          // same way, `lateRunCost`) is never written over by this.
-          if (result.costUsdMicro) await store.task.addCost(task.id, result.costUsdMicro);
+          // same way, `lateRunCost`) is never written over by this. W15-21: less what each model
+          // call already booked while it ran (the steps are all recorded before this).
+          await steps;
+          const rest = (result.costUsdMicro ?? 0) - bookedLive;
+          if (rest > 0) await store.task.addCost(task.id, rest);
           task = await store.task.mustGet(task.id);
           await store.task.patch(task.id, {
             ...(result.prUrl ? { pr_url: result.prUrl } : {}),
@@ -2522,6 +2534,7 @@ export class SessionRunner {
       ...blockedByFindings,
       ...retried,
       ...skipped,
+      ...cancelled,
     ]);
     const named = (id: string): NamedTask => ({
       id,
@@ -2607,6 +2620,14 @@ export class SessionRunner {
       waitingForDocker: waitingForSandbox
         .filter((t) => endState.readyNow.some((r) => r.id === t.id))
         .map((t) => ({ id: t.id, title: t.title })),
+      // W15-59: what the person cancelled while it ran or was reviewed, still cancelled now.
+      ...(uniq(cancelled).some((id) => endState.rows.get(id)?.status === "cancelled")
+        ? {
+            cancelled: uniq(cancelled)
+              .filter((id) => endState.rows.get(id)?.status === "cancelled")
+              .map(named),
+          }
+        : {}),
       stopReason,
       // The outer limit's amount, while the session still ends there (ADR 0112).
       ...(stopCapUsdMicro !== null && stopLimitWords(stopReason) !== null
@@ -2641,7 +2662,9 @@ export class SessionRunner {
       // merge-in-app: a merge that waits for its checks (or a silent GitHub) merges by itself
       // later, so it is not one the person must merge.
       openPrs: merges.filter((m) => m.status !== "merged" && !MERGE_WAITS.has(m.status)).length,
-      waitingPrs: merges.filter((m) => MERGE_WAITS.has(m.status)).length,
+      // W15-70: the checks that still run and a GitHub that did not answer, said apart.
+      checksPendingPrs: merges.filter((m) => m.status === "checks_pending").length,
+      unansweredPrs: merges.filter((m) => m.status === "unreachable").length,
     };
     const resultLines = sessionResultLines(resultFacts);
     const summary = resultLines.join("\n");
@@ -3065,8 +3088,9 @@ export class SessionRunner {
       inReview: inReview.length,
       failed: failed.length,
       // What needs the person now, as the result says it: a task the person paused is theirs,
-      // not "needs you" (design §2).
-      needsHuman: needsYouNow.length,
+      // not "needs you" (design §2); W15-69: a task paused at a budget is counted as paused.
+      needsHuman: needsYouNow.filter((id) => !pausedCards.has(id)).length,
+      paused: pausedNow.length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,

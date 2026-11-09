@@ -26,15 +26,20 @@ import {
   type RunEvent,
   type RunOutcome,
   type RunPricing,
-  WRAP_UP_TEXT,
   wholeMs,
+  wrapUpText,
 } from "../agent/loop.ts";
 import type { SdkAgentDriver, SdkRunRequest } from "../agent/sdk.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import { type DelegationBrief, renderBrief, validateBrief } from "../brief.ts";
 import { headroomHeaders, isProxyable } from "../context/headroom.ts";
 import type { ContextManager } from "../context/manager.ts";
-import type { RunWrapUpLine } from "../enforcement/budget.ts";
+import {
+  type RunWrapUpLine,
+  searchOfferAtStart,
+  WRAP_UP_CALLS,
+  WRAP_UP_SHARE,
+} from "../enforcement/budget.ts";
 import type { RunBilling } from "../enforcement/hooks.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import {
@@ -145,6 +150,7 @@ import {
 } from "./credential-wait.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
+import { moneyWords } from "./money-words.ts";
 import { renderQueueNotes } from "./next-session.ts";
 import {
   ASK_PERSON_TOOL,
@@ -203,7 +209,7 @@ export const NO_WEB_SEARCH_LINE =
  * a claim against one).
  */
 export const WEB_SEARCH_LINE =
-  "Use web_search to find pages, then open each page you use with web_fetch. Cite only pages you opened with web_fetch, never a search result on its own: a search result is not a source.";
+  "Use web_search to find pages, then open each page you use with web_fetch. Cite only pages you opened with web_fetch, never a search result on its own: a search result is not a source. When web_search is no longer offered (its searches or this run's budget for them are used), read pages by their address with web_fetch.";
 
 /**
  * The brief's line for a researcher on a Claude subscription ('sites', the owner's decision of
@@ -685,7 +691,12 @@ export class LoopTaskExecutor implements TaskExecutor {
   /** An amount in micro-USD as a person reads it: "CHF 0.01" at the day's rate. */
   private chfText(usdMicro: number): string {
     const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
-    return formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate));
+    // W15-16: an amount under a centime reads "less than CHF 0.01", never "CHF 0.00" (the run's
+    // pause and stop sentences: "stopped at its budget of CHF 0.00: it spent CHF 0.00").
+    return moneyWords(
+      formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate)),
+      Math.max(0, usdMicro),
+    );
   }
 
   /** `execute`; `routed` is set on the second pass after a web-routing hand-over (U-044). */
@@ -924,7 +935,12 @@ export class LoopTaskExecutor implements TaskExecutor {
     // for an entry that names `cc:WebSearch` and reads pages (a search alone sources nothing),
     // on a provider that runs it, while the key and the project's lists are not refused and the
     // task has searches left of its ten.
-    const search = await this.searchPlanFor(task, choice, spec, base);
+    const search = await this.searchPlanFor(task, choice, spec, base, {
+      capUsdMicro: brief.budgetUsdMicro,
+      model: modelIdFor(tier, this.deps.provider.name, modelConfig?.ladder),
+      maxTokens: settings.maxTokens,
+      brief,
+    });
     // Web work goes where the web is (U-044, ADR 0107). On the loop driver, which runs what is
     // billed to an API key, `cc:WebFetch` is the web capability's `web_fetch`, so the researcher
     // and the science-evaluator keep their tasks. Where this runtime offers no web reader (an
@@ -1175,8 +1191,26 @@ export class LoopTaskExecutor implements TaskExecutor {
     const calls = new Map<string, { name: string; input: unknown }>();
     // The run's wrap-up line (its budget_line), which the wrap-up's own log line names.
     let runLine: RunWrapUpLine | undefined;
+    // W15-21 (design §4.14): the Run row's cost follows each model call while the run goes on
+    // (the drawer's run line read CHF 0.00 until the end); the end writes the run's own total.
+    let liveRunCost = 0;
+    let liveRunWrites: Promise<void> = Promise.resolve();
     const onEvent = (ev: RunEvent) => {
       this.deps.onEvent?.(task.id, ev);
+      if (ev.type === "model_call_end" && ev.costUsdMicro > 0) {
+        liveRunCost += ev.costUsdMicro;
+        const cost = liveRunCost;
+        liveRunWrites = liveRunWrites
+          .then(async () => {
+            await store.run.patch(run.id, { cost_usd_micro: cost });
+          })
+          .catch((e: unknown) =>
+            this.logger.warn("a model call's cost was not added to its run while it ran", {
+              runId: run.id,
+              error: errorMessage(e),
+            }),
+          );
+      }
       if (!ctx.onStep) return;
       // ADR 0112: the run's budget line at its start (the reserve, or "save only") and its
       // wrap-up are lines of the session's log.
@@ -1289,7 +1323,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           // before the run registers with the kill switch (U-039).
           signal: ctx.signal,
           // ADR 0112: a task's run hears the wrap-up once, at its line.
-          wrapUp: WRAP_UP_TEXT,
+          wrapUp: wrapUpText,
         });
         result = {
           outcome: r.outcome,
@@ -1351,12 +1385,13 @@ export class LoopTaskExecutor implements TaskExecutor {
           // before the run registers with the kill switch (U-039).
           signal: ctx.signal,
           // ADR 0112: a task's run hears the wrap-up once, at its line.
-          wrapUp: WRAP_UP_TEXT,
+          wrapUp: wrapUpText,
           // 'web-search': the task's searches left and the project's lists in the server's form.
           ...(search
             ? {
                 webSearch: {
                   limit: search.limit,
+                  maxUses: search.maxUses,
                   ...(search.lists.allowedDomains
                     ? { allowedDomains: search.lists.allowedDomains }
                     : search.lists.blockedDomains
@@ -1463,6 +1498,8 @@ export class LoopTaskExecutor implements TaskExecutor {
         : result.error?.code === "provider_auth" && choice.pick
           ? ("refused" as const)
           : null;
+    // The live writes of each call's cost come first, so the run's own total is the last word.
+    await liveRunWrites;
     try {
       await store.run.patch(run.id, {
         tokens_in: result.usage.input_tokens,
@@ -1648,7 +1685,8 @@ export class LoopTaskExecutor implements TaskExecutor {
     choice: { driver: SpecialistDriver; sourceId: string },
     spec: SpecialistSpec,
     provider: ModelProvider,
-  ): Promise<{ limit: number; lists: WebSearchLists } | null> {
+    run: { capUsdMicro: number; model: string; maxTokens?: number; brief: DelegationBrief },
+  ): Promise<{ limit: number; lists: WebSearchLists; maxUses: number } | null> {
     if (choice.driver === "sdk" || !this.deps.webSearch) return null;
     if (!spec.allowedTools.includes(WEB_SEARCH_TOOL) || !spec.allowedTools.includes(WEB_FETCH_TOOL))
       return null;
@@ -1670,7 +1708,48 @@ export class LoopTaskExecutor implements TaskExecutor {
           if (typeof n === "number" && n > 0) before += n;
         }
     const limit = WEB_SEARCH_TASK_CAP - before;
-    return limit > 0 ? { limit, lists } : null;
+    if (limit <= 0) return null;
+    // W15-17: the run's offer, decided here once with the loop's own arithmetic
+    // (`searchOfferAtStart`, the helper the loop's first call uses): a run whose budget pays for
+    // no search below its wrap-up line gets no search line, no grant and no tool. Before, the
+    // brief said "Use web_search" while every call of a small budget offered none (live check
+    // 2, F5). The first call's worst case is counted from the brief with the search lines and
+    // the tools, as the loop counts it, at the most the loop's first call may ask (a run that
+    // writes files: up to half the fifth of its budget kept to wrap up), so the offer never
+    // promises more than that call can keep.
+    const pricing = this.deps.pricingFor?.(run.model) ?? this.deps.pricing;
+    const per = pricing.searches?.(1) ?? 0;
+    const tools = this.deps.toolsFor?.() ?? this.deps.tools;
+    const defs = tools.definitions(
+      spec.allowedTools,
+      (x) => z.toJSONSchema(x) as Record<string, unknown>,
+    );
+    const briefText = renderBrief({
+      ...run.brief,
+      constraints: [...run.brief.constraints, WEB_SEARCH_LINE, SEARCH_INFO_LINE],
+    });
+    const input = provider.countTokens(
+      spec.prompt + JSON.stringify([{ role: "user", content: briefText }]) + JSON.stringify(defs),
+    );
+    const floor = run.maxTokens ?? 4096;
+    const atFloor = pricing.estimate(input, floor);
+    const writes = defs.some((d) => d.name === "write_file");
+    const firstCallUsdMicro = writes
+      ? Math.max(
+          atFloor,
+          Math.min(
+            Math.floor((WRAP_UP_SHARE * run.capUsdMicro) / WRAP_UP_CALLS),
+            pricing.estimate(input, 16_384),
+          ),
+        )
+      : atFloor;
+    const maxUses = searchOfferAtStart({
+      capUsdMicro: run.capUsdMicro,
+      firstCallUsdMicro,
+      perSearchUsdMicro: per,
+      searchesLeft: limit,
+    });
+    return maxUses > 0 ? { limit, lists, maxUses } : null;
   }
 
   /**

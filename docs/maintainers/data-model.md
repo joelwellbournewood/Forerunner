@@ -972,7 +972,7 @@ Carries the common columns (see Invariants).
 | `depends_on` | json | no | `[]` |  | Task ids that must be done first. |
 | `budget_usd_micro` | money | no | `0` |  | Cap for this task in micro-USD. |
 | `est_cost_usd_micro` | money | no | `0` |  | Estimate before the run. |
-| `actual_cost_usd_micro` | money | no | `0` |  | Recorded after the runs: each run's cost, and the tail a stopped run reported later, each added in one statement (`task.addCost`). |
+| `actual_cost_usd_micro` | money | no | `0` |  | The work's cost: each model call's as it ends (W15-21), the rest of a run's at its end, and the tail a stopped run reported later, each added in one statement (`task.addCost`, which does not bump `version`: a spend increment is no edit a person's action could conflict with). Reviews are not in it; `TaskView.spent` reads the ledger for the figure with them. |
 | `owner_agent_id` | text | yes |  | `agent.id` | Agent responsible for the task. |
 | `specialist` | text | yes |  |  | Specialist name chosen for the task. |
 | `attempt` | int | no | `0` |  | Retry counter; failed -> ready increments it. |

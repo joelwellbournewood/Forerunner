@@ -60,6 +60,13 @@ export interface SessionMetrics {
   doneTasks: number;
   estimateUsdMicro: number;
   actualUsdMicro: number;
+  /**
+   * W15-18: the critic's reviews in `actualUsdMicro` (their Run rows) and the work's cost
+   * without them, what the plan's estimate counts (the estimate is the work's; reviews are paid
+   * from the session's review reserve). Absent from metrics written before.
+   */
+  reviewsUsdMicro?: number;
+  workUsdMicro?: number;
   costPerDoneTaskUsdMicro: number | null;
   claimedDone: number | null;
   claimedCostUsdMicro: number | null;
@@ -89,6 +96,8 @@ export interface SummaryClaims {
 export const COST_OVERRUN_RATIO = 1.5;
 /** Overruns and cost claims below this absolute difference are noise (one US cent). */
 export const COST_NOISE_USD_MICRO = 10_000;
+/** The specialist a review's Run row names (`CriticService`): its cost is no part of the work's. */
+const CRITIC_RUN_SPECIALIST = "critic";
 /** A cost claim in the summary may differ from the ledger by this share. */
 export const COST_CLAIM_TOLERANCE = 0.1;
 
@@ -254,6 +263,16 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     }
   }
   const actual = data.ledgerUsdMicro ?? session.spent_usd_micro;
+  // W15-18 (live check 2, RUN-16): the estimate counts the work only, so the overrun compares
+  // the work's cost with it; the reviews are said apart ("CHF 0.17 spent of a CHF 0.05
+  // estimate" counted the critic's reviews against an estimate without them).
+  const reviews = Math.min(
+    actual,
+    data.runs
+      .filter((r) => r.specialist === CRITIC_RUN_SPECIALIST)
+      .reduce((s, r) => s + Math.max(0, r.cost_usd_micro), 0),
+  );
+  const work = Math.max(0, actual - reviews);
   if (planItems.length === 0 && actual > 0) {
     add(
       "medium",
@@ -272,13 +291,15 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   const doneTasks = [...data.tasks.values()].filter((t) => t.status === "done").length;
   if (
     estimate > 0 &&
-    actual > estimate * COST_OVERRUN_RATIO &&
-    actual - estimate > COST_NOISE_USD_MICRO
+    work > estimate * COST_OVERRUN_RATIO &&
+    work - estimate > COST_NOISE_USD_MICRO
   ) {
-    const pct = Math.round(((actual - estimate) / estimate) * 100);
+    const pct = Math.round(((work - estimate) / estimate) * 100);
     add(
       "medium",
-      `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%`,
+      reviews > 0
+        ? `Session work cost ${money(work)} exceeded its estimate ${money(estimate)} by ${pct}% (the reviews, ${money(reviews)} more, are not in the estimate)`
+        : `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%`,
       "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
     );
   }
@@ -449,6 +470,8 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       doneTasks,
       estimateUsdMicro: estimate,
       actualUsdMicro: actual,
+      reviewsUsdMicro: reviews,
+      workUsdMicro: work,
       costPerDoneTaskUsdMicro: costPerDone,
       claimedDone: claims.done ?? null,
       claimedCostUsdMicro: claims.costUsdMicro ?? null,
@@ -612,10 +635,17 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
       : DEFAULT_CHF_PER_USD;
   const spentChf =
     checks.metrics.actualChfMicro ?? Math.round(checks.metrics.actualUsdMicro * rate);
+  const estimateText = chfText(Math.round(checks.metrics.estimateUsdMicro * rate));
+  const reviewsUsd = checks.metrics.reviewsUsdMicro ?? 0;
+  // W15-18: with reviews, the work's cost is what the estimate is set against.
+  const costText =
+    reviewsUsd > 0
+      ? `cost ${chfText(spentChf)} (work ${chfText(Math.round((checks.metrics.workUsdMicro ?? 0) * rate))} against an estimate of ${estimateText}, reviews ${chfText(Math.round(reviewsUsd * rate))})`
+      : `cost ${chfText(spentChf)} against an estimate of ${estimateText}`;
   const summary =
     // P7-34 (polish-words): plurals as the number says, never "(s)".
     `Session review: ${countWords(checks.metrics.doneTasks, "done task")} (${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned), ` +
-    `cost ${chfText(spentChf)} against an estimate of ${chfText(Math.round(checks.metrics.estimateUsdMicro * rate))}; ` +
+    `${costText}; ` +
     `${countWords(checks.findings.length, "finding")}.`;
   const out: ReviewOutput = {
     grade: ruled.grade,

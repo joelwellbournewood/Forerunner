@@ -314,3 +314,67 @@ names the model. A model the price table does not know is priced as the run's mo
    place), since the critic's project checks and its tries run in that workspace; (d) a restart
    test (compose twice: the review-only pass after a restart, the model-call log showing one
    specialist call in all). A changed head or attempt falls back to today's rerun.
+
+## Amendment 2026-11-09 (wave 15, the run side: 'w15-run')
+
+1. **One rule for the write cap and the cut-off retry (W15-13; amends point 3 of the 'cost'
+   amendment and U-085).** Live check 2 found a CHF 0.20 coder told "about a fifth of this task's
+   budget is left" after spending CHF 0.05, pausing with nothing written (RUN-1), and a CHF 0.48
+   research run paying for a reply that was thrown away (F8). The write cap was a flat tenth of
+   the run's cap on every call (on Sonnet 5.5 the 4,096 floor for any run under about USD 1.70),
+   so the first long write was cut; the cut reply, its complete `write_file` calls included, was
+   discarded; and the retry asked four times the limit with no room check and kept it as the
+   floor of every later call, whose worst case then passed the line. Now a file-writing run's
+   call and the call after a cut are paid only from the money below the run's wrap-up line, as
+   web search is (ADR 0107's amendment of 2026-11-08), after the call's searches: once the first
+   call fixed the line, the cap is fitted to `line - spent - searches`, so a larger cap never
+   brings a wrap-up the floor would not. The first call keeps to half the fifth kept to wrap up,
+   since its own worst case fixes the reserve ("a small budget keeps 4,096" holds for that call
+   only). The raised limit is the retried call's only. A cut reply's complete tool calls before
+   the cut one are kept and run (a cut call never runs; a reply with server blocks goes back only
+   whole, so nothing of it is kept), and the next request says the cut call did not run; when the
+   money below the line cannot raise the limit, it says to send less in one reply. After the
+   wrap-up the reserve pays, as it does every call of a run that finishes.
+2. **"Left to do" counts only what the criteria still need (W15-14; amends point 5).** A
+   researcher that heard the wrap-up and ended with "Left to do: - Nothing for the acceptance
+   criteria. - Optionally, add a section to answer.md" was paused at its budget with its work
+   done and no review (live check 2, F4): `parseHandoff` took any line but a bare "nothing" as
+   an item. "Nothing"/"none" with what it is about (the criteria, the brief, the task) or with a
+   reason that says it is done is nothing, and an optional extra goes to the handoff's
+   `optional` notes, never a reason to pause; "Nothing works yet" or "None of the tests pass"
+   stays work, and so does a "nothing" that goes on to name work ("Nothing - but the README is
+   incomplete", "Nothing in the task works yet") or a hedge alone ("Maybe fix the failing
+   build"). The wrap-up and the brief's line ask for only what the criteria still need, as a
+   list, or "nothing", with no optional extras.
+3. **Searches near the line (W15-15; amends the 'web-search' note in ADR 0107).** A run is no
+   longer offered fewer searches call by call as it nears its line: its fixed offer stands while
+   the money below the line covers it whole, then goes for the rest of the run (ADR 0107's
+   amendment of 2026-11-09, point 2).
+4. **The wrap-up's words say what is true (W15-16; amends points 3 and 4).** The wrap-up comes
+   before the step that could take the run past its line (its spend plus that step's worst
+   case), so on a small budget it can come early: the log said "at CHF 0.07 it is told to wrap
+   up" and the run was told at CHF 0.02, and the model heard "About a fifth of this task's budget
+   is left" with 87% left (live check 2, F4). The start line now reads "This run may spend CHF
+   0.15: before a step that could take it past CHF 0.07 it is told to wrap up, keeping a reserve
+   of CHF 0.08 to finish.", the told line "Told the researcher to wrap up: it spent CHF 0.02 of
+   CHF 0.15, and its next step could take it past CHF 0.07.", and the model hears "Wrap up now:
+   this run has used 15% of what it may spend, and its next step could take it past the share
+   kept to finish. Start nothing new, ..." (`wrapUpText`, worded when it is sent; the share is of
+   the run's cap, which on a continued run is what is left of the task's budget; the brief's line
+   says "If Forerunner tells you to wrap up"). The trigger itself is unchanged. An amount under a
+   centime in these sentences and in the pause and stop sentences reads "less than CHF 0.01".
+5. **A stopped run teaches the estimates nothing (W15-19; amends point 4 of the 'cost'
+   amendment).** After Stop now the task goes back to Ready, but the runner's task.finished hook
+   fed the stopped call's partial cost to the live learner, so the plan card and the Start dialog
+   gave other figures for the same task until a restart, whose fold takes finished tasks only,
+   moved them back (live check 2, RUN-2). A stopped call (`killed`) is no sample, and a task whose
+   stopped run no completed run followed is none in either feed; once a later run completes the
+   task, the stopped run's cost counts in its sample.
+6. **One figure per task, live (W15-20, W15-21; amends point 1 of the 'leftovers7-tailrun'
+   amendment).** The Tasks row and the drawer showed the work's cost while Costs > By task showed
+   the ledger's, the critic's reviews included (live check 2, RUN-3), and a running task read CHF
+   0.00 until its run ended (RUN-4). `actual_cost_usd_micro` stays the work-only figure the task's
+   budget counts; the screens show `TaskView.spent`, the ledger's figure for the task, so the row,
+   the drawer and Costs agree. Each model call's cost reaches the task and its Run row as the call
+   ends (the rest at the run's end, no double count), and a spend increment does not bump the
+   task's version, so a person's action during a run never fails on it.

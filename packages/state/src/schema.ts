@@ -227,7 +227,7 @@ export const ENTITIES: Record<string, EntityDef> = {
       money("est_cost_usd_micro", "Estimate before the run.", { default: 0 }),
       money(
         "actual_cost_usd_micro",
-        "Recorded after the runs: each run's cost, and the tail a stopped run reported later, each added in one statement (`task.addCost`).",
+        "The work's cost: each model call's as it ends (W15-21), the rest of a run's at its end, and the tail a stopped run reported later, each added in one statement (`task.addCost`, which does not bump `version`: a spend increment is no edit a person's action could conflict with). Reviews are not in it; `TaskView.spent` reads the ledger for the figure with them.",
         { default: 0 },
       ),
       text("owner_agent_id", "Agent responsible for the task.", nullableRef("agent")),
