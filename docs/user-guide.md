@@ -470,7 +470,7 @@ session: it runs those tasks, in that order, and later sessions go by priority.
 
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
-tabs you see where it stands: "Drafting the plan from your brief…", "Waiting for you: approve
+tabs you see where it stands: "Drafting the plan from your brief…" (it usually takes about a minute), "Waiting for you: approve
 the plan" with **Open**, "Planning failed" with what went wrong in words ("Claude did not
 answer (model call failed).", "Claude's plan could not be read. Forerunner asked Claude twice.",
 "Your Claude usage limit is reached. Try again once it resets.") and **Try again**, or "You

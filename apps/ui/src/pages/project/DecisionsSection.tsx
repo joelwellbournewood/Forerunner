@@ -9,9 +9,32 @@ import { useClient } from "../../store/context.tsx";
 /** How many decisions the Overview shows before "all" (design §3.4). */
 export const DECISIONS_SHOWN = 5;
 
+/**
+ * A question as short as its answer allows, without a model call (later #79): "Where should the
+ * page be published: GitHub Pages, Netlify, or only as a local file?" answered "Only as a local
+ * file for now" reads "Where should the page be published?", since the answer names one of the
+ * options listed after the colon. Kept whole when the answer names none of them.
+ */
+export function shortQuestion(question: string, answer: string): string {
+  const q = question.trim();
+  const m = /^(.+?):\s*(.+?)\?$/.exec(q);
+  if (!m?.[1] || !m[2]) return q;
+  const said = answer.toLowerCase();
+  const options = m[2]
+    .split(/,\s*|\s+or\s+/i)
+    .map((o) =>
+      o
+        .replace(/^(or|and)\s+/i, "")
+        .trim()
+        .toLowerCase(),
+    )
+    .filter((o) => o.length >= 3);
+  return options.some((o) => said.includes(o)) ? `${m[1].trim()}?` : q;
+}
+
 /** "Q? A." with the question's own end mark, or a colon where it has none. */
 function sentence(d: DecisionView): string {
-  const q = d.question.trim();
+  const q = shortQuestion(d.question, d.chosen);
   const a = d.chosen.trim();
   const joined = /[?.!:]$/.test(q) ? `${q} ${a}` : `${q}: ${a}`;
   return /[.!?]$/.test(joined) ? joined : `${joined}.`;

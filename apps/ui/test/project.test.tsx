@@ -229,8 +229,9 @@ describe("Project page", () => {
       await waitFor(() =>
         expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "drafting"),
       );
+      // later #30: and how long it usually takes.
       expect(screen.getByTestId("intake-banner")).toHaveTextContent(
-        "Drafting the plan from your brief…",
+        "Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.",
       );
       // The daemon files the plan: the page follows without a reload.
       harness.daemon.state.intake.proj_beacon = intake("pending");

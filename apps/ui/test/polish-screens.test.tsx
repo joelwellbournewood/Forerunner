@@ -4,8 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { formatClock, formatDateTime, formatTime } from "../src/lib/time.ts";
 import { usableNow } from "../src/pages/BillingOrderSection.tsx";
+import { shortQuestion } from "../src/pages/project/DecisionsSection.tsx";
 import { WebAccessInput } from "../src/pages/WebAccessInput.tsx";
-import { money } from "./fixtures.ts";
+import { DECISIONS, money } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -463,6 +464,33 @@ describe("setup opens on the step not done (later #28, P-welcome)", () => {
       }),
     );
     expect(await screen.findByTestId("setup-name")).toHaveValue("Robin");
+  });
+});
+
+describe("the Overview's decisions and plan banner (later #79, #30)", () => {
+  it("a decision reads as a short question with its answer when the answer names an option", async () => {
+    // Before: "Where should the page be published: GitHub Pages, Netlify, or only as a local
+    // file? Only as a local file for now; maybe GitHub Pages later."
+    const harness = createHarness();
+    const [first] = DECISIONS;
+    if (!first) throw new Error("fixture changed");
+    harness.client.decisions = async () => [
+      {
+        ...first,
+        question:
+          "Where should the page be published: GitHub Pages, Netlify, or only as a local file?",
+        chosen: "Only as a local file for now; maybe GitHub Pages later.",
+      },
+    ];
+    renderApp("/projects/proj_atlas/summary", harness);
+    const rows = await within(await screen.findByTestId("decisions")).findAllByTestId("decision");
+    expect(rows[0]).toHaveTextContent(
+      /^Where should the page be published\? Only as a local file for now; maybe GitHub Pages later\. \(Alice, /,
+    );
+    // An answer that names none of the options keeps the whole question.
+    expect(shortQuestion("Which host: A, B or C?", "Something else")).toBe(
+      "Which host: A, B or C?",
+    );
   });
 });
 
