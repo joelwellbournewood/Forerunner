@@ -1,0 +1,173 @@
+{
+  "summary": "Fix the Windows R-copystuck failure: the copy folder must read and write files as the daemon does; fix, adversarial review, fix-up",
+  "agentCount": 2,
+  "logs": [],
+  "result": {
+    "fix": {
+      "branch": "fix/copy-line-endings",
+      "head_sha": "29e0c81635d3cad0e4fcc47abdb9fb1c1b936610",
+      "commits": [
+        {
+          "sha": "29e0c81635d3cad0e4fcc47abdb9fb1c1b936610",
+          "subject": "githost, docs: the copy's own git config says our line endings, so a file the person puts back no longer stops it (R-copystuck)"
+        }
+      ],
+      "root_cause_confirmed": "The hypothesis is right. I checked it three ways.\n\n(1) Plain git, using a script at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/repro1.sh:\n- Setup: a bare host and a copy cloned with the daemon's `-c core.autocrlf=false -c core.safecrlf=false`. The person edits README.md and a merge changes README.md. The daemon's `checkout -B main origin/main` refuses, which is correct.\n- The person then runs `git checkout -- README.md` with GIT_CONFIG_GLOBAL pointing at a file that sets core.autocrlf=true. The file comes back as `# l7m2\\r\\n` (CRLF).\n- The daemon's git still refuses with \"Your local changes ... README.md\". Its `status` shows ` M README.md`, and two seconds later it still refuses: the racily clean entry was compared by content and git now stores it as modified.\n- With FIX=1 (the copy's own config set to core.autocrlf=false), the person's restore writes LF and the daemon's checkout goes through to \"# l7m2, merged\".\n\n(2) The real-daemon R-copystuck case, with its person-side `git checkout -- README.md` run through that global config, fails on Linux before the fix with the Windows assertion: `expected { reason: 'changed', files: ['README.md'], line: 'You changed README.md ...' } to be undefined`. It passes after the fix.\n\n(3) The new runtime, capabilities and preview assertions fail with the source fix reverted (`git checkout -- packages/*/src`) and pass with it re-applied.",
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts > \"the UI client against the real daemon: leftovers of wave 7, merge side, part 2 (leftovers7-merge2)\" > R-copystuck. The person's checkout now runs with `env: { ...process.env, GIT_CONFIG_GLOBAL: <work>/git-for-windows.gitconfig }`, a file holding `[core] autocrlf = true`, on every platform. Every assertion is kept.\n\nBefore the fix it failed at real-daemon.test.ts:10778 `expect(after.copy?.stopped).toBeUndefined()`, receiving `{ reason: 'changed', files: ['README.md'], line: 'You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.' }`. That is the Windows CI failure, reproduced on Linux.\n\nThese new tests also failed before the fix:\n- `loop-docs.test.ts` \"the copy's own git config says core.autocrlf=false after a refresh ...\": `expected '' to be 'false'`.\n- `git.test.ts` \"a clone and a new repository say our line endings ...\": `expected '' to be 'false'`.\n- `pr-executor.test.ts` \"in a project's folder, the person's own git with Git for Windows' default ...\": `expected '' to be 'false'`.\n- The new assertion in the real-daemon \"Open this version\" case: `expected 'export const f = \"cart.ts\";\\r\\n' to be 'export const f = \"cart.ts\";\\n'`.",
+      "how": "The fix is at the root, in GitOps (packages/capabilities/src/githost/git.ts): every folder our git makes now records our line-ending setting in its own .git/config. A repository's own config beats Git for Windows' system and global configs, so any other git used in that folder reads and writes files the way ours does.\n- `clone()` passes `--config core.autocrlf=false`, so the setting is there from the first checkout.\n- `init()` writes it.\n- A new method, `pinLineEndings()`, reads `git config --local --type=bool --get core.autocrlf`. It returns false and writes nothing when the value is already false. Otherwise it runs `config --local --replace-all core.autocrlf false` and returns true.\n\nWhere it is called (packages/runtime/src/loop/docs.ts):\n- `ProjectDocs.settle()` pins on every refresh, every watcher check of the head and every docs write. Copies cloned before the fix get the setting at their next one.\n- `previewPullRequest()` pins after its fetch. A preview is a working folder of the copy's clone and reads the same config.\n- A private wrapper logs a failed pin and lets the step go on.\n\nIn the PR executor (packages/capabilities/src/githost/pr-executor.ts), `inWorkspace` pins a project folder made before the fix at its next run; a failure is logged.\n\nOnly core.autocrlf is written. It is the one setting of ours that changes the bytes read from or written to files. core.safecrlf only warns or refuses on the person's own `git add`, so their setting for it stays.\n\nWhy this is better than a copy-only pin: the same cause applies to the project's folder. There a person's CRLF restore made a cancel's `git apply --index -R` read \"its files changed since\", and the next snapshot committed line endings as a change. It also applies to an agent's own git in its task worktree. The clone and init change covers all of them at creation.\n\nAlternatives I rejected:\n- Dropping `-c core.autocrlf=false` from our git: CRLF files on Windows everywhere the agents and diffs compare bytes.\n- `* -text` in .git/info/attributes: it would override the repository's own .gitattributes, which our git honours.\n- Treating a CRLF-only difference as no change: the copy would overwrite what the person's editor saved.\n\nDecision on line-ending-only differences: today's behaviour is kept. A file whose only difference is CRLF (an editor saved it that way) still counts as the person's change: the copy keeps it and the Files line names it. With the pin, the person's own `git status` now agrees; the runtime test asserts ` M README.md`. The fix did not need otherwise.\n\nOne consequence: a copy that already stopped because of a CRLF restore made before the update stays stopped until the person puts the file back once more. That restore now writes LF.\n\nNew tests:\n- packages/runtime/test/loop-docs.test.ts, at the copy's boundary. A copy cloned before the fix (setting unset), a CRLF-only edit, a merge, then: stopped with the line; the refresh writes the setting; the person's own status shows `M`; their restore under the Git for Windows default writes LF; the next refresh follows. Across a restart (a new ProjectDocs), the watcher's head check leaves .git/config untouched (same content and mtime) and a full refresh keeps the setting once. Content is compared there because the daemon's own `checkout -B` rewrites the branch tracking lines.\n- packages/capabilities/test/git.test.ts: a clone and an init say false; a restore with the Git for Windows default comes back as committed and our status is clean; pinLineEndings returns false with the config untouched, true once for an unset or `true` value, and leaves exactly one autocrlf line.\n- packages/capabilities/test/pr-executor.test.ts: the project folder, including one made before the fix that is pinned at its next run.\n\nDocs:\n- docs/maintainers/runtime.md: a new bullet in the docs.ts copy section.\n- docs/maintainers/capabilities.md: the GitOps line-ending settings, the inWorkspace pin and the git.test list.\n- docs/decisions/0113-...md: an amendment dated 2026-11-09 appended at its end, stating the folder config, why, the CRLF-only decision and the alternatives.\n\nThe fake daemon is unchanged: no route or response shape changed.",
+      "siblings": "Folders the daemon makes for the person from git:\n- **Copy** (`<worktrees>/docs/<project>`): fixed. It gets the setting at clone and is pinned on every settle.\n- **\"Open this version\" preview** (`git worktree add` from the copy's clone): it shares the copy's .git/config, and previewPullRequest also pins after its fetch. The real-daemon \"Open this version\" case now changes cart.ts in the preview and puts it back with the person's git under the Git for Windows default, asserting LF. That assertion failed before the fix (CRLF).\n- **Local only**: it sits inside the copy and is ignored there, so it is covered by the copy's config. Copying it into and out of task worktrees and the \"(yours)\" handling are plain file copies and byte comparisons (keepLocalOnlyFromCheckout, dropKeptSame), not git line endings, so nothing changed there.\n- **Project folder without a repository** (`<projects>/<id>/workspace`, git init by the daemon and shown as the Files folder): the same cause applies (setAside, applyCommitted and bringBack use `git apply` and `reset --hard`; `add -A` would commit CRLF). New folders get the setting from init(); older ones are pinned in inWorkspace at their next run. I did not add a pin to statusInFolder: its init path pins, and an old folder is pinned at its next run. Cancel and Undo on an old folder before any run after the update are not pinned.\n- **Task worktrees, take-out, intake, import and repo-create clones, and base-branch scratch**: covered at creation by clone/init, which also helps an agent's own git in its worktree. In-flight task worktrees cloned before the update are not re-pinned; they are agent folders and short-lived.\n- **Folder linked to the person's own repository** (absolute repos[0]): left alone on purpose. The daemon never runs git there and must not change the person's own repository config.\n\nTests whose person-side git runs in such a folder: I grepped apps/ui/test, packages/*/test, tests and testenv/test for `[\"git\", ...]` write commands (checkout --, restore, stash, reset, pull) and for spawn/exec git.\n- The only person-side git write in a daemon-made folder was the real-daemon R-copystuck case, which is now changed.\n- pr-answers.test.ts `reset --hard` runs in the person's own clone, a stand-in for their repository, so it was left.\n- merge-commits and pr-executor `pull`/`reset` run in seed clones.\n- loop-docs' original R-copystuck test moves files with writeFileSync, not git.\n- scripts/bench/journeys/resume.cjs only reads.\n- The desktop shell (apps/desktop/src-tauri) and the other scripts run no git in these folders.",
+      "validation": [
+        {
+          "command": "pnpm lint",
+          "result": "0 errors, 69 warnings, none of them in the touched files (biome check on the 7 changed source and test files is clean). The first run found a formatting error in my loop-docs test; fixed with biome format before committing."
+        },
+        {
+          "command": "pnpm typecheck",
+          "result": "exit 0, 0 TS errors"
+        },
+        {
+          "command": "pnpm test (FORCE_COLOR=1)",
+          "result": "477 files passed; 4907 tests passed, 6 skipped; exit 0"
+        },
+        {
+          "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts (FORCE_COLOR=1)",
+          "result": "85 files, 952 of 952 tests passed; exit 0"
+        },
+        {
+          "command": "pnpm test:integration (FORCE_COLOR=1)",
+          "result": "First run: 1 failure not caused by this change, in packages/capabilities/test/browser.integration.test.ts 'aborts subresources and redirects to hosts outside the allowlist' (Chromium page.goto 'Navigation ... is interrupted by another navigation'; a browser timing flake, not git). Re-run once: 5 files passed, 6 skipped; 30 tests passed, 75 skipped; exit 0. The skips are the Postgres-backed files (FORERUNNER_TEST_PG is unset here: memory and state postgres, migrations, state-api) and the Docker files (runtime sandbox, cloud-runner)."
+        },
+        {
+          "command": "pnpm test:e2e (FORCE_COLOR=1)",
+          "result": "13 files passed; 25 tests passed, 1 skipped; exit 0"
+        },
+        {
+          "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+          "result": "docs-check: ok (10 files)"
+        },
+        {
+          "command": "pnpm docs:links",
+          "result": "link-check: ok (206 files)"
+        },
+        {
+          "command": "pnpm secrets:scan",
+          "result": "secret-scan: clean (2072 files)"
+        },
+        {
+          "command": "targeted, before and after the fix: real-daemon R-copystuck and 'Open this version'; loop-docs, git.test and pr-executor R-copystuck cases",
+          "result": "All failed with the source fix reverted (assertions quoted in failing_test_before); all pass with it."
+        }
+      ],
+      "not_done": [
+        "Not run on real Windows. The Git for Windows default was simulated with a GIT_CONFIG_GLOBAL file. On Windows the value lives in the system config, which the copy's local config beats in the same way. The Desktop app workflow on Windows (and the owner's U-entry check) still has to confirm it.",
+        "No UPDATE-LOG, CHANGELOG, requirements or NEXT-SESSION edits, as instructed. The session lead should add the R-copystuck Windows note to the U-entry and changelog in phase G. One point to include: a copy already stopped by a CRLF restore before the update needs the file put back once more.",
+        "Not pinned: a project folder made before the fix when Cancel or Undo comes before any task run after the update, and agent task worktrees cloned before the update. Both get the setting at their next run or re-clone.",
+        "Postgres and Docker integration files were skipped here (FORERUNNER_TEST_PG unset, no Docker). They do not touch the changed code.",
+        "Not pushed, no pull request (as instructed). The commit is signed (gpgsig present)."
+      ],
+      "notes": "The commit touches only small, separate regions, so wave 13 should merge on top cleanly:\n- GitOps: `clone()` args, `init()`, and the new `pinLineEndings()` method. `base()` and the env block in `git()` are untouched, which leaves room for wave 13's message-language env option.\n- docs.ts: one call at the top of `settle()`, one in `previewPullRequest()` and a private `pinLineEndings` helper. `copyStoppedOf` and `copyStoppedLine` are untouched.\n- pr-executor `inWorkspace()`: one line.\n\nThe settle pin runs one extra `git config --get` per watcher check per repository project. It never rewrites .git/config when the setting is already there; the restart test asserts the file's mtime is unchanged after the head check. The repro script is at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/repro1.sh. The worktree is /home/user/Forerunner/.claude/worktrees/wf_86b5da49-f48-1 on branch fix/copy-line-endings."
+    },
+    "review": {
+      "verdict": "pass",
+      "blocking": [],
+      "non_blocking": [
+        "Copies that were already stuck stay stuck. If a person restored a file with CRLF before the update, the first refresh after it pins the setting, but the daemon still reads the CRLF file as changed. The Files line still says 'move your change out of the way', and the person has to restore the file once more (that restore now writes LF). The fixer documented this in ADR 0113 and runtime.md and flagged it for the session lead. It needs to go into the U-entry's 'Check in the app' steps and the changelog in phase G.",
+        "Some folders made before the fix are never pinned. (a) A task worktree that executeIn reuses through its fetch branch (pr-executor.ts around line 696) is not pinned; only new clones get the setting. (b) An import checkout (data/import.ts, fetch path) is not pinned. (c) A project workspace folder is not pinned when statusInFolder, Cancel or Undo runs before the first task run after the update. One `pinLineEndings().catch(log)` call on each fetch/existing-folder path would close these cheaply. None of them is the person path that failed on CI.",
+        "A sibling effect was not named. Two product readers run raw `git` with the machine's config, not GitOps's `-c core.autocrlf=false`: the critic's GitDiffPort (packages/runtime/src/loop/critic.ts:261) and scriptsBefore (packages/runtime/src/loop/project-checks.ts:188). In folders that now carry the local setting, on Windows they see raw bytes. The critic's `git diff HEAD` therefore shows CRLF-only changes that system autocrlf=true used to hide. This matches what the daemon commits, so it is an improvement rather than a regression, but runtime.md and capabilities.md do not mention it.",
+        "The ADR 0113 amendment is dated 2026-11-09. The commit date is 2026-11-08 22:41 UTC, and the other amendments made that day use 2026-11-08.",
+        "In docs/maintainers/capabilities.md, the inserted text leaves one unwrapped 147-character line ('written; `core.safecrlf` only warns ... Error output is redacted (...'). This is cosmetic.",
+        "The fixer's report says the real-daemon failure is at real-daemon.test.ts:10778. At the base the assertion `expect(after.copy?.stopped).toBeUndefined()` is at line 10788. Same assertion, wrong line number.",
+        "init() now throws if the pin fails. The settle and inWorkspace pins log a failure and go on, so a locked .git/config fails init() (for example ensureBaseBranch's scratch init) but not the other paths. This is unlikely to matter.",
+        "Every watcher check now runs one extra `git config --get` per repository project, inside the copy's lock. It costs one process start each time (tens of ms on Windows). Nothing is written once the setting is there; the restart test checks the mtime.",
+        "The user guide (docs/user-guide.md:139) says 'the next merge brings the copy up to date'. In fact the next poll does, within about a minute; this wording was already there. The guide also never says that an editor saving a file with CRLF counts as a change. Phase G could add both.",
+        "Nothing was run on real Windows; the Git for Windows default was simulated with GIT_CONFIG_GLOBAL. A repository's local config beats both the system and the global config, so the simulation is faithful. The Desktop app workflow on windows-latest still has to confirm it.",
+        "I ran neither `pnpm test:integration` nor `pnpm test:e2e`; the fixer reports both green."
+      ],
+      "claims_checked": [
+        "Root cause CONFIRMED with plain git in a throwaway repository inside the reviewer worktree. The copy was cloned with the daemon's `-c core.autocrlf=false` and no local setting. The person's `checkout -- README.md` under GIT_CONFIG_GLOBAL autocrlf=true wrote `# a\\r\\n`. The daemon's `status` then showed ` M README.md`, still there after 1 s (the racily clean entry was smudged), while the person's own git showed clean. With `clone --config core.autocrlf=false`, the person's restore wrote LF and the daemon saw clean.",
+        "The test fails at the base and passes with the fix. With packages/capabilities/src and packages/runtime/src checked out from claude/nifty-knuth-f9udt0, real-daemon R-copystuck failed at real-daemon.test.ts:10788 with `expected { reason: 'changed', …(2) } to be undefined`, the Windows CI assertion. 'Open this version' failed with `expected 'export const f = \"cart.ts\";\\r\\n' to be '...\\n'`. With the fix restored, both pass.",
+        "The new loop-docs, git.test and pr-executor R-copystuck cases all fail at the base source (`expected '' to be 'false'`) and pass with the fix.",
+        "No assertion is weakened. In the real-daemon R-copystuck case only the person's checkout gained `env: { GIT_CONFIG_GLOBAL: autocrlf=true file }`; every expect is kept. The other changes only add assertions or tests.",
+        "The test environment is faithful. testenv/src/ci-env.ts sets GIT_CONFIG_GLOBAL to an empty file and does not touch the system config. On Windows the system config's autocrlf=true and the test's global file both lose to the copy's local setting; before the fix both applied.",
+        "The fix covers the person's path. The copy is created by GitOps.clone, which now passes `--config core.autocrlf=false`. settle() pins on every refresh, including the watcher's fast path at the same head and the full path that reports stopped, so a copy made before the fix is pinned before any stopped line can appear. The preview is a linked worktree that reads the common config, and previewPullRequest also pins. IDEs that call the git binary (VS Code, JetBrains, GitHub Desktop's bundled git) read the same local config.",
+        "No bad interaction with .gitattributes. In a repository with `* text=auto` and `*.crlf.md eol=crlf`, the person's restore gives native endings for text=auto and CRLF for eol=crlf, and the daemon's status is clean both with and without the pin. On Windows, text=auto with local autocrlf=false gives native CRLF in both the daemon's git and the person's, as before.",
+        "The daemon's own commands are unchanged: base() still passes `-c core.autocrlf=false`, which beats the local setting. Specialists do not commit (executor.ts says 'do not commit'), so the pin in task worktrees changes no commit content.",
+        "Every GitOps.clone/init call site (docs.ts copy and checkout, pr-executor executeIn and take-out, intake, import, base-branch scratch init, inWorkspace, statusInFolder) targets a folder the daemon owns. No clone writes into the person's own folder-linked repository, and sandbox/worktree.ts's raw `git worktree add` (WorktreeManager) is unused in production.",
+        "Git 2.31+ is already required (capabilities.md), so `git config --type=bool` (2.18+) is safe. A value of `input` or `true` triggers one rewrite, and `--replace-all` leaves a single line (git.test asserts this).",
+        "Lint: pnpm lint exits 0 with the existing 69 warnings, and biome check on the 7 changed files is clean. Typecheck: pnpm typecheck exits 0.",
+        "Unit tests for the copy and GitOps (git.test, pr-executor, loop-docs, merged-copy, loop-critic, sources, testenv githost): 129 of 129 pass. Full unit project: 477 files, 4907 passed, 6 skipped, exit 0.",
+        "Whole UI vitest suite (apps/ui, FORCE_COLOR=1): 85 files, 952 of 952 passed.",
+        "docs-check against the base: ok (10 files). docs:links: ok (206 files).",
+        "The docs match the code: runtime.md (settle, the preview, the CRLF-only decision, the restart test), capabilities.md (clone --config, init, pinLineEndings, the inWorkspace pin, the test list) and the ADR 0113 amendment (folder config, why, CRLF-only decision, alternatives) all agree with the diff. The fake daemon needed no change because no route or response shape changed.",
+        "The commit message has the area prefix and the (R-copystuck) tag, a body naming the cause, the fix and the tests that failed before, and the required Co-Authored-By and Claude-Session trailers. It does not touch UPDATE-LOG, CHANGELOG, requirements or NEXT-SESSION.",
+        "The change is small and stays clear of wave 13's areas: GitOps.base() and the env block in git() are unchanged, and copyStoppedOf and copyStoppedLine in docs.ts are unchanged."
+      ]
+    },
+    "fixup": null
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Fixup"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "fix:copy-line-endings",
+      "phaseIndex": 1,
+      "phaseTitle": "Fix",
+      "agentId": "a76eb4e0099bf923d",
+      "isolation": "worktree",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794176604812,
+      "queuedAt": 1794176604407,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "fix/copy-line-endings",
+      "promptPreview": "Context: Forerunner (main checkout /home/user/Forerunner, branch claude/nifty-knuth-f9udt0) is a desktop app (React UI in apps/ui, local daemon in packages/runtime). Read AGENTS.md and docs/maintainers/validation.md (binding: failing test first at the person's boundary, then the fix, then the siblings; never weaken a test; persisted state across a restart). ADR 0113 (docs/decisions/) is the copy f…",
+      "promptFramed": true,
+      "lastProgressAt": 1794178694263,
+      "tokens": 351720,
+      "toolCalls": 140,
+      "durationMs": 2089451,
+      "resultPreview": "{\"branch\":\"fix/copy-line-endings\",\"head_sha\":\"29e0c81635d3cad0e4fcc47abdb9fb1c1b936610\",\"commits\":[{\"sha\":\"29e0c81635d3cad0e4fcc47abdb9fb1c1b936610\",\"subject\":\"githost, docs: the copy's own git config says our line endings, so a file the person puts back no longer stops it (R-copystuck)\"}],\"root_cause_confirmed\":\"The hypothesis is right. I checked it three ways.\\n\\n(1) Plain git, using a script at…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:copy-line-endings",
+      "phaseIndex": 2,
+      "phaseTitle": "Review",
+      "agentId": "a3d600894b45f58ba",
+      "isolation": "worktree",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794178696460,
+      "queuedAt": 1794178696123,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "pass",
+      "promptPreview": "Context: Forerunner (main checkout /home/user/Forerunner, branch claude/nifty-knuth-f9udt0) is a desktop app (React UI in apps/ui, local daemon in packages/runtime). Read AGENTS.md and docs/maintainers/validation.md (binding: failing test first at the person's boundary, then the fix, then the siblings; never weaken a test; persisted state across a restart). ADR 0113 (docs/decisions/) is the copy f…",
+      "promptFramed": true,
+      "lastProgressAt": 1794179778435,
+      "tokens": 214909,
+      "toolCalls": 68,
+      "durationMs": 1081975,
+      "resultPreview": "{\"verdict\":\"pass\",\"blocking\":[],\"non_blocking\":[\"Copies that were already stuck stay stuck. If a person restored a file with CRLF before the update, the first refresh after it pins the setting, but the daemon still reads the CRLF file as changed. The Files line still says 'move your change out of the way', and the person has to restore the file once more (that restore now writes LF). The fixer doc…"
+    }
+  ],
+  "totalTokens": 566629,
+  "totalToolCalls": 208
+}
