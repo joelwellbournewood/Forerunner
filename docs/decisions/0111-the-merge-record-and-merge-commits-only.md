@@ -465,3 +465,32 @@ after the review is never merged by Forerunner.
    withdrawn."), and its Undo puts the task back to done and the same card back in the Inbox,
    without the Redo's mark. Before, the Undo left the conflict notice withdrawn for good (it is
    said once, so no later poll brought it back) and the Redo's line did not mention the card.
+
+## Amendment: a Redo or a Try again holds for the person's commit too ('w15-tail', 2026-11-09)
+
+Point 3 of the wave 15 amendment held only the rebuild. A task's next run reset its branch with
+`checkout -B` at two places that never asked: the resume of a branch whose pull request is open
+(the branch as GitHub has it; a Tasks-row Redo of a done task, a Try again) and the redo from main
+while the pull request keeps the branch's name (a Redo that closed a merge card, "Drop the branch
+and retry from scratch"). A commit the person made in the task's folder was dropped without a
+word, and the run spent model calls on work the person had not asked to drop.
+
+1. **Hold, never reset and never bring the commit along unasked.** Before either reset, the run
+   reads whether it would drop a commit of the person's (the task's local branch, and the
+   folder's HEAD while it is on that branch or on no branch). Forerunner's own unpushed states
+   are not the person's: a base merge and work in progress (as the rebuild's rule), and its own
+   task commit whose push did not go through, named by `refs/forerunner/run-unpushed` from the
+   commit until the push went through. A commit nobody can tell holds the run (fails closed).
+2. **What the person sees.** The run ends before any model call: nothing reset, nothing pushed,
+   no spend. The task waits on the cannot-run card ('"X" could not run. Its task folder has a
+   commit that is not on GitHub: push it or undo it, then press Try again.'; for a redo from main:
+   '…, and doing the task again from main would drop it: undo it or keep it on another branch,
+   then press Try again.'), with Try again and Cancel task; the Tasks row reads "Needs your
+   decision: it could not run". The session goes on with its other tasks. Once the commit is
+   pushed (or undone), Try again goes on from the branch that holds it (a redo from main starts
+   from main again).
+3. **Not changed.** Changes nobody committed are still set aside under the failed-run ref at a
+   run's start (kept, not said). A Tasks-row action still starts no session, and the hold is said
+   at the run, not at the Redo itself (the owner's answer D6 of 2026-11-09 changes what Redo
+   does; run C). Bringing the person's commit into the run instead of holding is an open owner
+   question.

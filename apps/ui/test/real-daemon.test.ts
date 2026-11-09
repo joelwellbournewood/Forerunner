@@ -13648,3 +13648,163 @@ describe("w15-chat, wave 15", () => {
     }
   }, 120_000);
 });
+
+describe("w15-tail, wave 15 run B", () => {
+  /**
+   * A daemon on the stand-in model with the fake GitHub as its GitHub (one repository), composed
+   * again on the same home at will, as the W15-05 case does.
+   */
+  async function githubWorld(name: string) {
+    const work = mkdtempSync(join(tmpdir(), `fr-ui-real-w15-tail-${name}-`));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name,
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": `# ${name}\n` },
+    });
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          tryIt: false,
+          githostWatch: { enabled: true, pollMs: 86_400_000 },
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        },
+      );
+    };
+    return { host, token, compose, repo: `alice/${name}` };
+  }
+
+  /** git in a task's folder as the person (their own name, never Forerunner's). */
+  const asPerson = (dir: string, args: string[]) =>
+    run(["git", "-C", dir, "-c", "user.name=Pat", "-c", "user.email=pat@example.test", ...args]);
+
+  /** Starts a session on the project and waits until it ends (at least 60 s). */
+  async function sessionOn(client: DaemonClient, projectId: string, what: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const statuses = async () =>
+      (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await statuses()).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      `${what} (at least 60 s)`,
+      statuses,
+      60_000,
+    );
+  }
+
+  it("W15B-01: the Tasks row's Redo of a done task with a commit the person made in its folder holds it before any run: the commit stays, nothing is pushed, the row and the Inbox card say why with Try again; after a restart, pushed, the card's Try again goes on from the branch that holds it", async () => {
+    // Review of fix/w15-merge (non-blocking 6) and its fix-up: a resume of a branch whose pull
+    // request is open reset the task's folder to GitHub's branch, so a commit the person made
+    // there was dropped without a word (bench: four model calls spent on the redo, commit gone).
+    const world = await githubWorld("w15tailredo");
+    let { rt, client } = await world.compose();
+    try {
+      const me = (await client.me()).id;
+      const project = await client.createProject({
+        name: "Redo keeps my commit",
+        goal: "A page",
+        repos: [world.repo],
+      });
+      const t = await client.createTask(project.id, {
+        title: "Write the page in page.html",
+        outcome: "page.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await sessionOn(client, project.id, "the first session to end");
+      const done = await rt.store.task.mustGet(t.id);
+      expect(done.status).toBe("done");
+      expect(done.pr_url).toMatch(/\/pull\/\d+$/);
+      const branch = done.branch ?? "";
+      const folder = join(rt.dirs.worktrees, t.id);
+      writeFileSync(join(folder, "mine.txt"), "my own notes\n");
+      await asPerson(folder, ["add", "mine.txt"]);
+      await asPerson(folder, ["commit", "-q", "-m", "my own notes"]);
+      const mine = (await asPerson(folder, ["rev-parse", "HEAD"])).stdout.trim();
+      // The Tasks row's Redo, as the row sends it; another task waits for the same session.
+      const row = (await client.tasks(project.id)).find((x) => x.id === t.id);
+      const redo = await client.taskAction(t.id, { version: row?.version ?? 0, action: "redo" });
+      expect(redo.status).toBe("ready");
+      const other = await client.createTask(project.id, {
+        title: "Write the notes in notes.md",
+        outcome: "notes.md holds the notes",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const runsBefore = (await rt.store.run.list({ task_id: t.id } as never)).length;
+      await sessionOn(client, project.id, "the session after the Redo to end");
+      const sentence =
+        "Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.";
+      const tasks = await client.tasks(project.id);
+      const held = tasks.find((x) => x.id === t.id);
+      expect(held?.status).toBe("needs_human");
+      expect(held?.display?.label).toBe("Needs your decision: it could not run");
+      expect(tasks.find((x) => x.id === other.id)?.status).toBe("done");
+      expect((await rt.store.run.list({ task_id: t.id } as never)).length).toBe(runsBefore);
+      expect((await asPerson(folder, ["branch", "--contains", mine])).stdout).toContain(branch);
+      expect((await rt.store.task.mustGet(t.id)).reason).toBe(sentence);
+      const cardOf = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests.find((r) => r.taskId === t.id && r.status === "open");
+      const card = await cardOf(client);
+      expect(card?.title).toBe('"Write the page in page.html" could not run');
+      expect(card?.body).toContain(sentence);
+      expect(card?.options).toEqual(["Try again", "Cancel task"]);
+
+      // The daemon starts again on the same home; the person pushes the commit, then answers.
+      await rt.close();
+      ({ rt, client } = await world.compose());
+      const again = await cardOf(client);
+      expect(again?.id).toBe(card?.id);
+      await new GitOps({ cwd: folder, auth: { token: world.token } }).push(branch);
+      const before = (await client.sessions({ projectId: project.id })).length;
+      await client.answerRequest(again?.id ?? "", {
+        version: again?.version ?? 0,
+        answer: again?.options[0] ?? "",
+      });
+      await eventually(
+        async () => {
+          const all = await client.sessions({ projectId: project.id });
+          return all.length > before && all.every((s) => s.status !== "running");
+        },
+        "the session the Try again started to end (at least 60 s)",
+        async () =>
+          (await client.tasks(project.id)).map((x) => `${x.title}=${x.status}`).join(", "),
+        60_000,
+      );
+      expect((await rt.store.task.mustGet(t.id)).status).toBe("done");
+      const folderGit = new GitOps({ cwd: folder, auth: { token: world.token } });
+      await folderGit.fetch();
+      expect(await folderGit.isAncestor(mine, `origin/${branch}`)).toBe(true);
+    } finally {
+      await rt.close();
+      await world.host.stop();
+    }
+  }, 240_000);
+});

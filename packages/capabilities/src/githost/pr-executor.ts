@@ -304,6 +304,73 @@ export async function folderHold(
   return null;
 }
 
+/**
+ * W15B-01: Forerunner's own task commit whose push has not gone through yet (a refused push, the
+ * app stopped between the commit and the push) names its head here; cleared once the push went
+ * through. A reset of the branch at the task's next run drops that commit as it always did: the
+ * run makes it again. It is never the person's (`personsCommitAtRisk`).
+ */
+export const RUN_UNPUSHED_REF = "refs/forerunner/run-unpushed";
+
+/**
+ * W15B-01: the run's summary when a resume (the task's branch as GitHub has it) would drop a
+ * commit of the person's in the task's folder. The runner turns it into the task's reason and
+ * the cannot-run card ('"X" could not run. <this>', Try again / Cancel task).
+ */
+export const HELD_FOR_COMMIT_RESUME =
+  "Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.";
+
+/** W15B-01: the same for a redo from the base (the branch keeps its name while its PR is open). */
+export function heldForCommitRedo(base: string): string {
+  return `Its task folder has a commit that is not on GitHub, and doing the task again from ${base} would drop it: undo it or keep it on another branch, then press Try again.`;
+}
+
+/**
+ * W15B-01 (the sibling of W15-02 at a run's start): whether resetting the task's branch with
+ * `checkout -B` (a resume from GitHub's branch, a redo from the base while the pull request
+ * keeps the branch's name) would drop a commit of the person's. The commits at risk are those of
+ * the task's local branch, and of the folder's HEAD while it is on that branch or on no branch
+ * (a HEAD on another branch keeps its commits). What is not the person's, as `folderHold` reads
+ * it: what GitHub's branch has, Forerunner's own unpushed base merge and work in progress; and
+ * here also Forerunner's own task commit whose push did not go through (`RUN_UNPUSHED_REF`) and
+ * what the base already has. Anything else is held, never reset away (fails closed). Changes
+ * nobody committed are not read here: a run cut short sets them aside first (kept under
+ * `failedRef`, as before).
+ */
+export async function personsCommitAtRisk(
+  git: GitOps,
+  branch: string,
+  base: string,
+): Promise<boolean> {
+  const hostHead = await git.resolveRef(`origin/${branch}`);
+  if (!hostHead) return false;
+  const own = await git.resolveRef(RUN_UNPUSHED_REF);
+  const tips = new Set<string>();
+  const local = await git.resolveRef(`refs/heads/${branch}`);
+  if (local) tips.add(local);
+  const on = await git.currentBranch().catch(() => null);
+  if (on === "HEAD" || on === branch) {
+    const head = await git.resolveRef("HEAD");
+    if (head) tips.add(head);
+  }
+  for (const tip of tips) {
+    if (tip === own) continue;
+    if (await git.isAncestor(tip, hostHead)) continue;
+    if (await git.isAncestor(tip, `origin/${base}`)) continue;
+    const parents = await git.parentsOf(tip);
+    if (
+      parents.length === 2 &&
+      parents[0] === hostHead &&
+      (await git.isAncestor(parents[1] as string, `origin/${base}`))
+    )
+      continue;
+    const subjects = await git.subjectsBetween(hostHead, tip);
+    if (subjects.length && subjects.every((s) => s.startsWith(WIP_SUBJECT))) continue;
+    return true;
+  }
+  return false;
+}
+
 /** What became of a dependency a dependent branch holds (ADR 0111). */
 export type HeldState =
   /** Its pull request is open and still carries the work held: it stays in the base. */
@@ -1008,7 +1075,14 @@ export class PrTaskExecutor implements TaskExecutor {
               merging: true,
             });
         }
-      } else await git.createBranch(branch, `origin/${branch}`);
+      } else {
+        // W15B-01: the branch as GitHub has it, unless that drops a commit the person made in
+        // the folder (a Tasks-row Redo of a done task, a Try again): then nothing is reset, no
+        // model is called and the task waits with one sentence (W15-02's rule, at a run's start).
+        const held = await this.holdForPersonsCommit(git, branch, target, HELD_FOR_COMMIT_RESUME);
+        if (held) return held;
+        await git.createBranch(branch, `origin/${branch}`);
+      }
       await this.dropStaleMarker(git);
       // What it builds on went away since (merged by squash or rebase, closed, redone,
       // cancelled): the branch is rebuilt first, so the run works on a true branch (ADR 0111).
@@ -1071,6 +1145,18 @@ export class PrTaskExecutor implements TaskExecutor {
           });
       }
     } else {
+      // W15B-01: a redo from the base keeps the branch's name while its pull request is open, so
+      // the `checkout -B` below runs over the local branch: a commit the person made there holds
+      // the task first, before anything is reset or built (no model call, no spend).
+      if (existingPr) {
+        const hold = await this.holdForPersonsCommit(
+          git,
+          branch,
+          target,
+          heldForCommitRedo(target.base),
+        );
+        if (hold) return hold;
+      }
       let depsBase: string | null = null;
       let held: { taskId: string; sha: string }[] = [];
       if (unmerged.length > 0) {
@@ -1109,6 +1195,9 @@ export class PrTaskExecutor implements TaskExecutor {
     const commit = await git.commitAll(
       `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}\n\nTask ${task.id}.`,
     );
+    // W15B-01: Forerunner's own until its push goes through (a refused push, a stop before it):
+    // the task's next run never holds for it as for a commit of the person's.
+    if (commit.committed) await this.markOwnUnpushed(git);
     // TM-1 (leftovers7-tailmerge): whether the branch holds any change of the task's own, from
     // where its work starts (the base, with the work it builds on), not whether this run
     // committed: a redo from the base ("Drop the branch and retry from scratch", a card's Redo)
@@ -1196,6 +1285,8 @@ export class PrTaskExecutor implements TaskExecutor {
     // Forerunner's own branch with no pull request yet: a rebase onto the base replaces it.
     const pushedWip = !!wip && !existingPr && (await git.hasRef(`origin/${branch}`));
     try {
+      // W15B-01: brought up to date (a rebase gives new commits), still Forerunner's own.
+      await this.markOwnUnpushed(git);
       await git.push(branch, {
         force: !!existingPr || replace || pushedWip,
         defaultBranch: target.base,
@@ -1211,6 +1302,7 @@ export class PrTaskExecutor implements TaskExecutor {
         branch,
       };
     }
+    await git.setRef(RUN_UNPUSHED_REF, null);
     const prUrl = await this.openOrUpdatePr(
       ctx,
       target,
@@ -1460,6 +1552,28 @@ export class PrTaskExecutor implements TaskExecutor {
    * leftovers are set aside under the failed ref, as a failed run's are, so the run starts clean
    * and nothing is lost. A work-in-progress commit is untouched: it is committed, not leftovers.
    */
+  /**
+   * W15B-01: the run's result when resetting the task's branch would drop a commit of the
+   * person's (`personsCommitAtRisk`), else null. Forerunner's own rebuild that a stop cut short
+   * before its push is put back first (W15-02), so it never reads as the person's.
+   */
+  private async holdForPersonsCommit(
+    git: GitOps,
+    branch: string,
+    target: Target,
+    summary: string,
+  ): Promise<TaskExecutionResult | null> {
+    await this.undoUnpushedRebuild(git, branch);
+    if (!(await personsCommitAtRisk(git, branch, target.base))) return null;
+    this.logger.warn("task not run: its folder has a commit GitHub does not have", { branch });
+    return { outcome: "needs_human", summary, costUsdMicro: 0, branch };
+  }
+
+  /** W15B-01: the branch's head is Forerunner's own until its push goes through. */
+  private async markOwnUnpushed(git: GitOps): Promise<void> {
+    await git.setRef(RUN_UNPUSHED_REF, await git.headSha());
+  }
+
   private async cleanAfterCutShortRun(git: GitOps, task: TaskRow): Promise<void> {
     try {
       const ended = await git.abortUnfinished();
@@ -2749,6 +2863,8 @@ export class PrTaskExecutor implements TaskExecutor {
           ? `Bringing ${target.base} and the work ${named} builds on into it conflicts`
           : `${named} conflicts with ${target.base}`;
     let pushed = true;
+    // W15B-01: the branch as the run left it is Forerunner's own until it reaches GitHub.
+    await this.markOwnUnpushed(c.git);
     try {
       await c.git.push(branch, { force: c.force, defaultBranch: target.base });
     } catch (e) {
@@ -2758,6 +2874,7 @@ export class PrTaskExecutor implements TaskExecutor {
         error: errorMessage(e),
       });
     }
+    if (pushed) await c.git.setRef(RUN_UNPUSHED_REF, null);
     if (c.superseded) await this.consume(c.superseded);
     const files = conflicts.length ? conflicts.join(", ") : "the conflicting files";
     // W15-06: with a pull request open on the branch, the last step updates it (before, it

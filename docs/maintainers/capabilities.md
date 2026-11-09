@@ -316,7 +316,24 @@ with their milestone.
   stop of the app cut short is put back at the next try (`REBUILD_PENDING_REF` names its head
   until the push went through, `REBUILD_BEFORE_PREFIX` keeps what to put back,
   `undoUnpushedRebuild`); before, the local marker already named the new base, so the next try
-  found nothing to rebuild and the pull request kept the work that went away. **One lock per task folder** (`githost/worktree-lock.ts`, exported:
+  found nothing to rebuild and the pull request kept the work that went away. The same rule
+  holds at a run's start (W15B-01): `executeIn` resets the task's branch with `checkout -B` at
+  two places, the resume of a branch whose pull request is open (no work in progress: the
+  branch as GitHub has it) and the redo from the base while the pull request keeps the branch's
+  name (a Redo that closed a merge card, "Drop the branch and retry from scratch"). Before each,
+  `personsCommitAtRisk(git, branch, base)` reads whether the reset would drop a commit of the
+  person's: the task's local branch, and the folder's HEAD while it is on that branch or on no
+  branch (a HEAD on another branch keeps its commits); not the person's are what GitHub's branch
+  or the base has, Forerunner's own unpushed base merge and work in progress (as `folderHold`),
+  and Forerunner's own task commit whose push did not go through (`RUN_UNPUSHED_REF`, set from
+  the commit until the push, in `executeIn` and `conflict`, cleared once pushed). A commit it
+  cannot tell holds the run (fails closed): nothing is reset, no model is called, and the run
+  returns `needs_human` with `HELD_FOR_COMMIT_RESUME` ("Its task folder has a commit that is not
+  on GitHub: push it or undo it, then press Try again.") or `heldForCommitRedo(base)` ("…, and
+  doing the task again from main would drop it: undo it or keep it on another branch, then
+  press Try again."); the runner files the cannot-run card from it. An unpushed rebuild is put
+  back first (`undoUnpushedRebuild`). Changes nobody committed are set aside under `failedRef`
+  before, as for any run cut short (kept, not said). **One lock per task folder** (`githost/worktree-lock.ts`, exported:
   `inWorktree` waits, `tryWorktree` skips a busy folder, `worktreeBusy`; keyed by the resolved
   path, in this process): every git step in a task's worktree takes it, the PR executor's run,
   a resolved conflict, a rebuild, setting work aside, and since leftovers7-merge2 (R-lock) the

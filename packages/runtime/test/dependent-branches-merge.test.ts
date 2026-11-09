@@ -32,7 +32,9 @@ import {
   ReviewedPrMerge,
 } from "../src/loop/merge.ts";
 import { MERGE_CARD_KEY, type MergeMode, REDO_FROM_BASE } from "../src/loop/merge-mode.ts";
+import { syncCannotRunAnswers } from "../src/session/cannot-run-card.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
+import { syncSignoffAnswers } from "../src/session/findings.ts";
 import { GitHostWatcher } from "../src/session/githost-watcher.ts";
 import { syncPrAnswers } from "../src/session/pr-answers.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
@@ -2076,5 +2078,209 @@ describe("w15-merge, wave 15: GitHub works out mergeability lazily (W15-07)", {
     await m.hostGit("update-ref", "refs/heads/main", "HEAD~1");
     await m.poll();
     expect(await m.cards(b.id)).toEqual([]);
+  });
+});
+
+describe("w15-tail, wave 15 run B: a Redo or a Try again never drops a commit made in the task's folder (W15B-01)", {
+  timeout: 240_000,
+}, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  /** git in a task's folder as the person (their own name, not Forerunner's). */
+  const asPerson = (dir: string) => (args: string[]) =>
+    run(["git", "-C", dir, "-c", "user.name=Pat", "-c", "user.email=pat@example.test", ...args], {
+      allowFailure: true,
+    });
+  /** The Tasks tab's Redo: `task.reopen` with source "ui", as the row's button sends it. */
+  const tasksRowRedo = async (m: ChainWorld, taskId: string) =>
+    (await taskReopen.run(
+      { task: taskId } as never,
+      {
+        store: m.w.store,
+        clock: m.w.clock,
+        humanId: m.w.human,
+        actor: { kind: "human", id: m.w.human },
+        source: "ui",
+        ports: {},
+      } as never,
+    )) as { sentence: string };
+  /** The Tasks row and the open cards of a task, as the person reads them. */
+  const screens = async (m: ChainWorld, taskId: string) => {
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    const rows = await m.w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
+    return {
+      row: taskDisplay(await m.w.store.task.mustGet(taskId), ctx),
+      rows,
+      cards: await requestViews(m.w.store, rows),
+    };
+  };
+  /** The card's own option, answered as the Inbox sends it; the answer applied as the daemon does. */
+  const answerWith = async (
+    m: ChainWorld,
+    row: { id: string; version: number },
+    option: string,
+  ) => {
+    await m.w.store.humanRequest.answer(row.id, row.version, option, m.w.human);
+    return syncCannotRunAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+    });
+  };
+  const runsOf = async (m: ChainWorld, taskId: string) =>
+    (await m.w.store.run.list({ task_id: taskId } as never)).length;
+  /** The next run of a task gets a run row of its own (`doneExecutor` names it by attempt). */
+  const nextAttempt = async (m: ChainWorld, taskId: string) => {
+    const t = await m.w.store.task.mustGet(taskId);
+    await m.w.store.task.patch(taskId, { attempt: t.attempt + 1 });
+  };
+  const RESUME_HOLD =
+    "Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.";
+  const REDO_HOLD =
+    "Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.";
+
+  it("(a) the Tasks row's Redo of a done task with an open pull request, no merge card: the session holds the task before any run, the commit stays on its branch, nothing is pushed, the card and the row say why with Try again; the session runs its other tasks; pushed, Try again goes on from the branch that holds the commit", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Write the page");
+    const pr = await m.prNumber(a.id);
+    const dir = join(m.worktreeRoot, safeSegment(a.id));
+    const branch = (await m.w.store.task.mustGet(a.id)).branch ?? "";
+    const g = asPerson(dir);
+    writeFileSync(join(dir, "mine.txt"), "my own notes\n");
+    await g(["add", "mine.txt"]);
+    await g(["commit", "-q", "-m", "my own notes"]);
+    const mine = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    expect((await tasksRowRedo(m, a.id)).sentence).toBeTruthy();
+    expect((await m.w.store.task.mustGet(a.id)).status).toBe("ready");
+    const other = await m.w.addTask("Write the footer");
+    const runsBefore = await runsOf(m, a.id);
+    const hostBefore = await m.hostGit("rev-parse", `refs/heads/${branch}`);
+    await m.session();
+    // Before: the resume reset the branch to GitHub's (`checkout -B`), the commit was on no
+    // branch, mine.txt was gone, and the run spent on work the person had not asked to drop.
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect(existsSync(join(dir, "mine.txt"))).toBe(true);
+    expect(await m.hostGit("rev-parse", `refs/heads/${branch}`)).toBe(hostBefore);
+    expect(await runsOf(m, a.id)).toBe(runsBefore);
+    const held = await m.w.store.task.mustGet(a.id);
+    expect(held.status).toBe("needs_human");
+    expect(held.reason).toBe(RESUME_HOLD);
+    expect((await m.w.store.task.mustGet(other.id)).status).toBe("done");
+    const { row, rows, cards } = await screens(m, a.id);
+    expect(row.label).toBe("Needs your decision: it could not run");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.title).toBe('"Write the page" could not run');
+    expect(cards[0]?.body).toContain(RESUME_HOLD);
+    expect(cards[0]?.options).toEqual(["Try again", "Cancel task"]);
+    // The person pushes the commit to GitHub, as the sentence offers, and presses Try again.
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    const applied = await answerWith(m, rows[0] as never, cards[0]?.options[0] ?? "");
+    expect(applied.retried).toBe(1);
+    await nextAttempt(m, a.id);
+    await m.session();
+    expect((await m.w.store.task.mustGet(a.id)).status).toBe("done");
+    expect(await m.prNumber(a.id)).toBe(pr);
+    const head = (await m.pr(a.id)).head.sha;
+    expect(await new GitOps({ cwd: dir }).isAncestor(mine, head)).toBe(true);
+    expect(await m.prFiles(pr)).toContain("mine.txt");
+  });
+
+  it("(b) the Tasks row's Redo of a done task whose conflict notice is open (a redo from main): held with its own sentence before any run, nothing reset or pushed; undone, Try again does the task again from main", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    await m.poll();
+    expect(await m.cards(b.id)).toHaveLength(1);
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    const g = asPerson(dir);
+    writeFileSync(join(dir, "mine.txt"), "my own notes\n");
+    await g(["add", "mine.txt"]);
+    await g(["commit", "-q", "-m", "my own notes"]);
+    const mine = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    expect((await tasksRowRedo(m, b.id)).sentence).toContain("to redo it from main");
+    const runsBefore = await runsOf(m, b.id);
+    const hostBefore = await m.hostGit("rev-parse", `refs/heads/${branch}`);
+    await m.session();
+    // Before: the redo from main ran `checkout -B` over the branch, which kept its name while
+    // its pull request was open, and the commit was gone.
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect(await m.hostGit("rev-parse", `refs/heads/${branch}`)).toBe(hostBefore);
+    expect(await runsOf(m, b.id)).toBe(runsBefore);
+    const held = await m.w.store.task.mustGet(b.id);
+    expect(held.status).toBe("needs_human");
+    expect(held.reason).toBe(REDO_HOLD);
+    const { row, rows, cards } = await screens(m, b.id);
+    expect(row.label).toBe("Needs your decision: it could not run");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.body).toContain(REDO_HOLD);
+    expect(cards[0]?.options).toEqual(["Try again", "Cancel task"]);
+    // The person undoes the commit; Try again does the task again from main.
+    await g(["reset", "-q", "--hard", `origin/${branch}`]);
+    expect((await answerWith(m, rows[0] as never, cards[0]?.options[0] ?? "")).retried).toBe(1);
+    await nextAttempt(m, b.id);
+    await m.session();
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("done");
+    expect(await m.prNumber(b.id)).toBe(prB);
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    expect(await m.prCommits(prB)).toEqual(["Write the other page"]);
+    expect(
+      (await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never)).filter(
+        (r) => (r.change_card as { key?: string } | null)?.key === REBASE_CONFLICT_KEY,
+      ),
+    ).toEqual([]);
+  });
+
+  it("Forerunner's own task commit whose push failed is not the person's: the next try runs again, as before (sibling of W15B-01)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Write the page");
+    const branch = (await m.w.store.task.mustGet(a.id)).branch ?? "";
+    expect((await tasksRowRedo(m, a.id)).sentence).toBeTruthy();
+    // GitHub refuses every push while the hook is there.
+    const hook = join(m.hostDir, "hooks", "pre-receive");
+    await mkdir(join(m.hostDir, "hooks"), { recursive: true });
+    writeFileSync(hook, "#!/bin/sh\necho 'pushes are refused for now' >&2\nexit 1\n", {
+      mode: 0o755,
+    });
+    await nextAttempt(m, a.id);
+    m.writes.set("Write the page", { "page.html": "<h1>again</h1>\n" });
+    const runsBefore = await runsOf(m, a.id);
+    await m.session();
+    const dir = join(m.worktreeRoot, safeSegment(a.id));
+    // Its own commit is on the branch here only: the push was refused.
+    expect(
+      await new GitOps({ cwd: dir }).isAncestor(`refs/heads/${branch}`, `origin/${branch}`),
+    ).toBe(false);
+    expect(await runsOf(m, a.id)).toBe(runsBefore + 1);
+    rmSync(hook, { force: true });
+    // The failed task's card (its push was refused): Try again, as the Inbox sends it.
+    const failed = await m.w.store.task.mustGet(a.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.reason).toContain("could not push the work");
+    const { rows, cards } = await screens(m, a.id);
+    expect(cards).toHaveLength(1);
+    const tryAgain = cards[0]?.options.find((o) => o === "Try again") ?? "";
+    expect(tryAgain).toBe("Try again");
+    const row = rows[0] as { id: string; version: number };
+    await m.w.store.humanRequest.answer(row.id, row.version, tryAgain, m.w.human);
+    await syncSignoffAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+    });
+    expect((await m.w.store.task.mustGet(a.id)).status).toBe("ready");
+    // The commit Forerunner could not push is its own: never held as the person's.
+    await nextAttempt(m, a.id);
+    await m.session();
+    const after = await m.w.store.task.mustGet(a.id);
+    expect(after.reason ?? "").not.toContain("commit that is not on GitHub");
+    expect(await runsOf(m, a.id)).toBeGreaterThan(runsBefore + 1);
+    expect(after.status).toBe("done");
   });
 });
