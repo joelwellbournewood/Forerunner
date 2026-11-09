@@ -118,6 +118,27 @@ describe("d1109-oversize-start, run C: the Start dialog warns and starts a task 
     expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled();
   });
 
+  it("OS-6: the chat's Yes/No card for 'start a session' reads the warning; Yes starts the session", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const big = readyTask(harness);
+    big.title = "Build the shop";
+    big.estimate = money(7_500_000);
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "start a session");
+    await user.click(screen.getByTestId("chat-send"));
+    const confirmation = await screen.findByTestId("pending-confirmation");
+    expect(confirmation).toHaveTextContent(
+      '"Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
+    );
+    expect(confirmation).not.toHaveTextContent("Nothing can run");
+    const before = harness.daemon.state.sessions.length;
+    await user.click(within(confirmation).getByTestId("confirm-yes"));
+    await waitFor(() => expect(harness.daemon.state.sessions.length).toBe(before + 1));
+  });
+
   // Sibling (validation rule 8): "Continue where it stopped" read "no task fits" as nothing to
   // run (`!check.runnable.length`), so the project Stop all stopped got no session back when its
   // only ready task was larger than the work budget.

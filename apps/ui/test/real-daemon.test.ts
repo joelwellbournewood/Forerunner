@@ -15209,4 +15209,44 @@ describe("d1109-oversize-start, run C", () => {
       await rt.close();
     }
   }, 60_000);
+
+  it("OS-6: 'start a session' in the chat reads the warning back with its question, and Yes starts the session (never refused)", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop chat", goal: "A shop page" });
+      // USD 8.00 against the default session's work budget of USD 5.00 (CHF 4.00).
+      await task(rt, client, project.id, "Build the shop", 8);
+      const me = await client.me();
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId: rt.agent.id,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const asked = await say("start a session");
+      // Before: refused with "Nothing can run within this budget: "Build the shop" needs ...".
+      expect(asked.reply).not.toMatch(/Nothing can run/);
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Start a session on Shop chat (up to CHF 5)? "Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
+      );
+      const yes = await say("yes");
+      expect(yes.reply).toMatch(/^Started a session on Shop chat/);
+      const started = (await client.sessions({ projectId: project.id }))[0];
+      expect(started).toBeDefined();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes(
+            (await client.session(started?.id ?? "")).status,
+          ),
+        "the started session to end (at least 10 s of real time)",
+        async () => (await client.session(started?.id ?? "")).status,
+        30_000,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
 });

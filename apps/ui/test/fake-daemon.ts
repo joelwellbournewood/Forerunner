@@ -85,7 +85,11 @@ import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
-import { leftOutSentence, oversizedSentence } from "@forerunner/runtime/daemon/oversize-words";
+import {
+  leftOutSentence,
+  oversizedAsk,
+  oversizedSentence,
+} from "@forerunner/runtime/daemon/oversize-words";
 import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
 import {
   blockedTaskIds,
@@ -3295,7 +3299,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     if (lower.includes("start a session")) {
       const id = nextId("confirm");
-      const readback = "You want to start a session with a budget of CHF 4.00.";
+      // D4 (d1109-oversize-start), as the daemon's startWarning: a session that would take a
+      // task larger than its work budget reads the warning back after its question.
+      const big = turnProject
+        ? fakeStartCheck(state.tasks, turnProject, null, state.sandbox)
+        : null;
+      const warning = big?.oversized
+        ? ` ${oversizedAsk(big.oversized.title, {
+            chfMicro: big.workBudget.chfMicro,
+            text: formatChf(big.workBudget.chfMicro),
+          })}`
+        : "";
+      const readback = `You want to start a session with a budget of CHF 4.00.${warning}`;
       state.pendingConfirmation = { id, readback };
       return {
         ...base,
