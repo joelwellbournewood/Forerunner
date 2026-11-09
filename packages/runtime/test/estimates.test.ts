@@ -550,7 +550,8 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     };
     const cut = cutPlanToBudget(plan, 4_000_000);
     expect(cut.items).toHaveLength(1);
-    expect(cut.summary).toContain("1 item(s) cut");
+    // W15-60 (w15-words): the count in words, never "item(s)".
+    expect(cut.summary).toContain("(1 item cut to fit the budget)");
   });
 });
 
