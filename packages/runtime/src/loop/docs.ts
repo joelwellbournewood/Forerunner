@@ -605,6 +605,7 @@ export class ProjectDocs implements ProjectDocsPort {
       if ((await git.hasRef(base)) && !(await git.isAncestor(base, pr.headSha))) {
         const there = new GitOps({
           cwd: folder,
+          untranslated: true,
           identity: this.deps.identity ?? WORKSPACE_IDENTITY,
         });
         const merged = await there.mergeFrom(
@@ -961,7 +962,11 @@ export class ProjectDocs implements ProjectDocsPort {
     const res = await writeStatusUpdate(dir, update);
     let commit: string | null = null;
     try {
-      const git = new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
+      const git = new GitOps({
+        cwd: dir,
+        identity: this.deps.identity ?? WORKSPACE_IDENTITY,
+        untranslated: true,
+      });
       if (!existsSync(join(dir, ".git"))) await git.init("main");
       ensureWorkspaceGitignore(dir);
       // W6-26: a review's try folder a dead daemon left is never committed with the session.

@@ -178,8 +178,10 @@ with their milestone.
   task's reason at 200 characters, so these stay under it for a usual name. Their git runs
   with `GitOpsOptions.untranslated` (the PR executor's `gitFor`, `ensureBaseBranch`'s scratch;
   TM-6, leftovers7-tailmerge: `UNTRANSLATED_ENV`, `LC_ALL=C` and an empty `LANGUAGE`), so
-  git's words are read in English whatever the person's language; other GitOps keep the
-  process's language. `GitOps` reports a
+  git's words are read in English whatever the person's language; since W15-10 so does every
+  GitOps of the runtime's merge step and docs copy (`loop/merge.ts`, `loop/docs.ts`; guard test
+  `packages/runtime/test/git-untranslated-sites.test.ts`), whose words `must()` reads for a
+  credential prompt; other GitOps keep the process's language. `GitOps` reports a
   failed command as `git push <branch> failed: <git's stderr>`, so git's first line shares a line
   with that header: `pushFailure` takes the header off before reading the lines. With git's
   default configuration the host's `remote:` line is git's first line; before (CI on 193e579), it

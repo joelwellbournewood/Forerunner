@@ -416,6 +416,8 @@ async function mergeChecked(
         cwd: worktree,
         ...(auth ? { auth } : {}),
         ...(deps.identity ? { identity: deps.identity } : {}),
+        // W15-10: git's words are read (must()'s credential prompt): English in any locale.
+        untranslated: true,
         // merged-copy (ADR 0113): bringing the base in never uploads Local only or a try folder.
         neverPush: NEVER_PUSHED,
       });
@@ -591,7 +593,7 @@ async function conflictsIn(
   try {
     const token = await resolveGitToken(deps.token);
     const auth = token ? gitAuthFor(token, (await deps.host.getRepo(repo)).cloneUrl) : undefined;
-    const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+    const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}), untranslated: true });
     // R-lock: never in the middle of a rebuild of the same folder.
     return await inWorktree(worktree, async () => {
       await git.fetch();
@@ -925,7 +927,7 @@ export class ReviewedPrMerge implements MergePort {
       let reviewedBase: string | null = null;
       let ownChange: string | null = null;
       if (worktree) {
-        const git = new GitOps({ cwd: worktree });
+        const git = new GitOps({ cwd: worktree, untranslated: true });
         try {
           // R-lock: read between steps in the folder, never in the middle of a rebuild there.
           await inWorktree(worktree, async () => {
@@ -1630,7 +1632,7 @@ export class ReviewedPrMerge implements MergePort {
           const token = await resolveGitToken(this.deps.token);
           const repo = await host.getRepo(ref.repo);
           const auth = token ? gitAuthFor(token, repo.cloneUrl) : undefined;
-          const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+          const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}), untranslated: true });
           const reviewed = record.reviewed_head_sha;
           // R-lock: never in the middle of a rebuild of the same folder.
           return await inWorktree(worktree, async () => {
@@ -1700,7 +1702,7 @@ export class ReviewedPrMerge implements MergePort {
       const ref = parsePullUrl(record.pr_url);
       const repo = ref ? await this.deps.host.getRepo(ref.repo) : null;
       const auth = token && repo ? gitAuthFor(token, repo.cloneUrl) : undefined;
-      const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+      const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}), untranslated: true });
       // R-lock: never in the middle of a rebuild of the same folder.
       return await inWorktree(worktree, async () => {
         await git.fetch();
