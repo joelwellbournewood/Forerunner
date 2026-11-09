@@ -2092,7 +2092,9 @@ export class SessionRunner {
               // names the limit (Continue where a bigger budget helps; at the project's budget,
               // the month's cap or the subscription's share the task goes on by itself once that
               // limit changed), and a stop at an outer limit or the session's own ends the
-              // session. The next session runs the task again and the critic reviews it once.
+              // session. The next session reviews the kept result without running the specialist
+              // again when the attempt and the changed files are unchanged (W15-27,
+              // `keepForReview` / `reviewOnlyResult`), else it runs the task again first.
               const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
               const source = reviewStopSource(refusal.level);
               const stop: BudgetStop = {
