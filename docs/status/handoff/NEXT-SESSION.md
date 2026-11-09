@@ -15,7 +15,13 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-09 18:00 UTC (wave 15 run A merged; run B running; run C planned)
+## Status at 2026-11-09 20:20 UTC (wave 15 merged; run C step 1 running; paused until 2026-11-15)
+
+**Paused by the owner's request** ("let some things finish if they are ongoing, but then stop
+and schedule to continue next weekly reset on sunday morning"): run C's first sub-run (C1) and
+the spec revision for the owner's latest answers finish tonight; nothing new starts. A
+scheduled message resumes this session on Sunday 2026-11-15 at 05:30 UTC (after the weekly
+reset), with the steps in "Roadmap from 2026-11-15" below.
 
 The weekly limit reset on 2026-11-08 at 05:00 UTC and the work resumed then, on the included
 plan (no paid extra usage). Session `claude/nifty-knuth-f9udt0` carries on; its scheduled
@@ -151,15 +157,19 @@ check-ins pick the work up if a run stops.
     paused; web search keeps the prompt cache; a paused review runs without the specialist
     again (TR-15); chat can change the site rule and treats card words as data. Reports:
     `wave15a-*.json`.
-  - **Running now: run B** (run `wf_2d03ff9e-2a4`, started 15:05 UTC on 3600089): w15-tail (6
-    items from run A's reports, first a data-loss case: a Redo of a task whose pull request is
-    open dropped the person's commit; and a removed project that could still start sessions)
-    and w15-words (25, re-checked at 3600089). Spec: `wave15b-triage.json`,
-    `wave15b-areas.json`.
-  - **Then live check 3** on run B's merged head (cap USD 3, steps in `wave15-areas.json`
-    live_check_3 and `wave15b-areas.json`), before run C: after run C its GitHub steps would
-    meet D1's offer. Its GitHub part needs a session started after the owner's token update
-    (below); the run and research journeys can run here.
+  - **Run B merged and pushed at 7d6b34a** (run `wf_2d03ff9e-2a4`, 4.2 hours): w15-tail (6:
+    a Redo or Try again never drops a commit the person made in a task's folder, the task
+    holds and says so; a removed project starts nothing from any path; the conflict re-read's
+    timer stops; the plan card names an empty site list; run A's owed tests) and w15-words (22
+    of 25 wording items; 3 small ones left). Both reviewed and fixed up; 38 signed commits;
+    unit 5,159, UI 1,092, integration, e2e, the live harness, injection, Playwright 35 and the
+    bench smoke 25 of 25 green; CI and the Desktop app workflow green on Windows and Linux.
+    Reports: `wave15b-*.json`.
+  - **Live check 3** (wave 15 with the real model, cap USD 3) runs on 7d6b34a in its own session
+    (`session_01RnhAjgpiRyyCw2BQVPP536`, "Live check 3 (real model, forerunner-sandbox)"), which
+    sees the renewed token; it waits for the owner's yes there. Brief and inputs:
+    `live3/BRIEF.md` and `live3/steps.json` in the plan files. If it has not run by the resume,
+    the resumed session runs it (a fresh container sees the token).
 - **The owner's decisions of 2026-11-09** (verbatim with the session lead's reading:
   `owner-decisions-2026-11-09.md` in the plan files): the GitHub test token is renewed (a
   session started after the update sees it; this container still has the old value);
@@ -184,9 +194,22 @@ check-ins pick the work up if a run stops.
   ones: C1 chat-guard, oversize-start, sessions; C2 onerepo-link, chat-recall, oversize-pause;
   C3 starts-engine, chat-depth; C4 onerepo-join, selftasks-run; C5 cred-engine, run-visible;
   C6 cred-screens, selftasks-chat (waves 17 to 22 for ports). ADRs 0114 to 0120, U-089 to
-  U-096. About 30 to 42 hours of agent work, then live check 4 (cap USD 6). Before C1 the
-  areas and rules go into `phaseE.json`. 21 owner questions stay open with safe defaults; the
-  ten that matter most were sent on 2026-11-09.
+  U-096. About 30 to 42 hours of agent work, then live check 4 (cap USD 6). The areas and rules
+  are in `phaseE.json`. **C1 is running** (run `wf_15a781ce-056`, started 19:00 UTC on
+  7d6b34a: chat-guard, oversize-start, sessions).
+- **The owner's answers to the ten questions (2026-11-09 evening)**, recorded in
+  `owner-decisions-2026-11-09.md`: (1) every person runs their own Forerunner with their own
+  API key and subscription, and two people on one repository work in ONE project through
+  GitHub (D9: no shared database required; wave 8 is re-planned around it); (2) chat thinks
+  longer as needed but asks first before a stronger model or an answer over CHF 0.10, the model
+  chosen by the need; (3) a yes to the API key covers all work until the stop ends; (4) one order
+  for every call, the person's, in one clean options menu; (5) a task too big for its session
+  runs in its normal turn and wraps up to continue (C2 removes C1's "after the work that fits"
+  hold); (6) the monthly critic calibration stays and shows on the run bar; (7) the agent only
+  suggests changes to tasks the person wrote; (8) one credential setting for all projects; (9)
+  with "start by itself" on, pull request comments and CI results start nothing; (10) the five
+  old sandbox pull requests were closed. A revision of run C's C2 to C6 specs and a wave 8
+  re-plan brief (`wave8-replan-brief.md`) are being made from them (run `wf_bcf2e096-ae5`).
 - **The plan files are on GitHub:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`
   (refreshed after wave 13 merged). It holds the wave 7 and 8 specs, the owner's decisions,
   the leftovers and their triage, each wave's results, the collaboration audit, the workflow
@@ -198,13 +221,24 @@ check-ins pick the work up if a run stops.
   deletion, and a new session would not act on a permission relayed to it: the owner deletes
   them on GitHub's Branches page, or confirms in the session "Delete four merged backup
   branches".
-- **Next, in order:**
-  1. wave 15 run B (running), CI and the Desktop app workflow green;
-  2. live check 3 with the real model on run B's head (cap USD 3), beside C1;
-  3. run C, sub-runs C1 to C6, then live check 4 (cap USD 6);
-  4. wave 8: 16 areas in 8 groups (collaboration, the status issue, the repository guide),
-     with the amendments run C's plan lists (`wave8_amendments`);
-  5. then F, G, G2 and H, as below.
+- **Roadmap from 2026-11-15** (in order; each step merged with CI and the Desktop app workflow
+  green on Windows and Linux before the next):
+  1. Check tonight's results: C1's merge, the answers revision (put its C2 to C6 areas into
+     `phaseE.json`), live check 3 if it ran (triage its findings into run C's later sub-runs or
+     a small fix wave).
+  2. Live check 3 on 7d6b34a if it has not run (cap USD 3).
+  3. Run C, C2 to C6 (about 5 to 7 hours each): C2 onerepo-link, chat-recall, oversize-pause
+     (with the hold removed); C3 starts-engine, chat-depth; C4 onerepo-join, selftasks-run;
+     C5 cred-engine, run-visible; C6 cred-screens, selftasks-chat. Args from
+     `workflow-scripts/build-runC-args.cjs`.
+  4. Live check 4 with the real model (cap USD 6), then its fix-ups.
+  5. Wave 8 re-planned from `wave8-replan-brief.md` (collaboration through GitHub: one project
+     per repository across people, the status issue as the noticeboard, claims, the repository
+     guide), then built.
+  6. F (an independent final check, one fresh agent per journey, the real model where it
+     matters), G (the hand-over: the ADRs, UPDATE-LOG, CHANGELOG, requirements J.9 and J.10,
+     validation.md, the installer, the owner's checklist; remove the CLAUDE.md paragraph), G2
+     (the owner installs on Windows and walks the checklist; fix what it finds), H (the phone).
 - **Session-lead write-ups left for phase G** (the area agents may not edit them): the
   UPDATE-LOG entries (U-028, U-037, U-078, L-15, L-22 from group 3; U-042, C-36, W6-7, W6-23,
   C-30, C-37 from group 4's budget resume; group 4's web search entries; Q7 from group 1;
@@ -213,10 +247,11 @@ check-ins pick the work up if a run stops.
   area's suggested words are in its result file.
 - **Cost estimate for waves 7 and 8,** from what earlier rounds used: about USD 2,200 at API
   prices (1,800 to 2,700), about three quarters of one week's included limit. Used so far
-  since the estimate: about USD 1,350 (group 3's remaining work about 115, group 4 about 160,
+  since the estimate (group 3's remaining work about 115, group 4 about 160,
   group 5 about 160, the group 6 triage about 90, wave 12 about 80, wave 14 about 130, wave 13
   about 160, the copy fix about 15, live check 2's agents about 60, the wave 15 triage about
-  40, run A about 170, run B's triage about 40, the run C designs about 130, rough). The
+  40, run A about 170, run B's triage about 40, the run C designs about 130, run B about 120,
+  rough: about USD 1,470). The
   owner's decisions of 2026-11-09 add run C: waves 7 and 8 now come to about USD 2,800 to
   3,000 in all, roughly 30% over the estimate (told to the owner on 2026-11-09).
 - **API spend for live checks:** about USD 10 of the owner's USD 40 (USD 4.03 of it live
