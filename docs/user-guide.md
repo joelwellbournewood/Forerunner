@@ -716,7 +716,7 @@ Escape or Cancel) answers it "no", so no confirmation is left waiting in the Inb
 On a Claude subscription, Settings → **Claude subscription allowance** says how much
 API-equivalent use your plan covers a month, in CHF. Forerunner cannot see your plan's real
 usage, so it estimates against this amount and stops subscription work at 95% of it; an API
-key takes over when you have one. The default (USD 50, about CHF 40) is low on purpose: enter
+key takes over when you have one. The default (about CHF 40) is low on purpose: enter
 what your plan covers, or a Max plan's work stops early.
 
 ### Which Claude credential is used first
@@ -1073,7 +1073,8 @@ your agents may reach beyond their built-in tools.
   GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
   mailbox and mode, on the Email page) and the other settings, each project's autonomy among
   them. Only settings you can change are listed; autonomy is always chosen by its name. Money is
-  in CHF everywhere, with a point or a comma. A project's budget can be 0, which means no budget
+  in CHF, with a point or a comma; only Opus fast mode still quotes Anthropic's price per
+  million tokens in USD. A project's budget can be 0, which means no budget
   (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
   stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
   change card shows the new value in words, with what it changes as the sentence under it.

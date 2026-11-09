@@ -21,8 +21,10 @@ describe("Settings -> Claude subscription allowance (U-052)", () => {
       within(section).getByRole("heading", { name: "Claude subscription allowance" }),
     ).toBeInTheDocument();
     expect(await within(section).findByTestId("plan-allowance-current")).toHaveTextContent(
-      "Now: CHF 40.00 a month (the default), stored as USD 50.00 at today's rate.",
+      "Now: CHF 40.00 a month (the default).",
     );
+    // CHF only (design §5 rule 7): the daemon stores USD, the person never reads it.
+    expect(section).not.toHaveTextContent("USD");
     const input = within(section).getByTestId("plan-allowance-input");
     expect(input).toHaveValue("40");
 
@@ -33,8 +35,9 @@ describe("Settings -> Claude subscription allowance (U-052)", () => {
       "Saved. Subscription work stops at 95% of CHF 160.00 a month, from the next task on.",
     );
     expect(within(section).getByTestId("plan-allowance-current")).toHaveTextContent(
-      "Now: CHF 160.00 a month, stored as USD 200.00 at today's rate.",
+      "Now: CHF 160.00 a month.",
     );
+    expect(section).not.toHaveTextContent("USD");
     expect(postedCalls(harness, "/settings/plan-allowance").map((c) => c.body)).toEqual([
       { chfMonthly: 160 },
     ]);

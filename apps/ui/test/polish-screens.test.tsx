@@ -426,6 +426,38 @@ describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
       wordsUsed: "Settings: Project budget to no budget",
     });
   });
+
+  it("no USD in Settings with Advanced open, the subscription allowance included; fast mode's price table aside", async () => {
+    // Review of later #43: the allowance read "the default (USD 50) is set low on purpose" and
+    // "Now: CHF 40.00 a month (the default), stored as USD 50.00 at today's rate." Design §5
+    // rule 7: CHF everywhere, never USD. Fast mode quotes the provider's price table (not_done).
+    const user = userEvent.setup();
+    const harness = createHarness({
+      setup: { credentials: { github: true, anthropicApiKey: true, subscription: true } },
+    });
+    // As the daemon: a fast-mode row for the project, with its price table.
+    harness.daemon.state.fastMode = { proj_atlas: false };
+    renderApp("/settings", harness);
+    await screen.findAllByTestId("setting-row");
+    await user.click(screen.getByTestId("settings-advanced-summary"));
+    expect(screen.getByTestId("fast-mode-card")).toHaveTextContent("USD");
+    const allowance = screen.getByTestId("plan-allowance-section");
+    expect(await within(allowance).findByTestId("plan-allowance-current")).toHaveTextContent(
+      /^Now: CHF 40\.00 a month \(the default\)\.$/,
+    );
+    expect(allowance).toHaveTextContent("the default is set low on purpose");
+    await screen.findAllByTestId("model-settings-row");
+    await within(screen.getByTestId("billing-order-section")).findAllByTestId(
+      "billing-order-status",
+    );
+    const page = screen.getByRole("heading", { name: "Settings", level: 1 })
+      .parentElement as HTMLElement;
+    const copy = page.cloneNode(true) as HTMLElement;
+    for (const fast of copy.querySelectorAll('[data-testid="fast-mode-card"]')) fast.remove();
+    for (const row of copy.querySelectorAll('[data-key="project.fast_mode"]')) row.remove();
+    const usd = (copy.textContent ?? "").match(/.{0,60}\bUSD\b.{0,40}/g) ?? [];
+    expect(usd).toEqual([]);
+  });
 });
 
 describe("setup opens on the step not done (later #28, P-welcome)", () => {

@@ -735,7 +735,7 @@ const BASIC_EXPLAIN: Partial<Record<string, string>> = {
 function SettingValue({ setting }: { setting: SettingView }) {
   // later #43: a project's budget of 0 reads "no budget", never "CHF 0.00".
   const words = describeSetting(setting);
-  if (isMoney(setting.value)) return words ? <>{words}</> : <Money value={setting.value} />;
+  if (isMoney(setting.value)) return <>{words || <Money value={setting.value} />}</>;
   if (isSlider(setting.key)) return <>{speedQualityLabel(setting.value)}</>;
   return <>{describeSetting(setting) ?? renderValue(setting.value)}</>;
 }

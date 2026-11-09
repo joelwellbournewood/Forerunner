@@ -12,7 +12,7 @@ const chf = (n: number) => `CHF ${formatAmount(Math.round(n * 1_000_000))}`;
  * Forerunner used, so the daemon estimates it against this monthly amount and stops
  * subscription work near it (ADR 0044). 1.0.4 fixed it at the USD 50 default in the installed
  * app. The person enters CHF a month; the daemon converts at its rate of the day and stores USD
- * (`POST /settings/plan-allowance`), in force from the next task.
+ * (`POST /settings/plan-allowance`), in force from the next task. The section says CHF only.
  */
 export function PlanAllowanceSection() {
   const client = useClient();
@@ -73,7 +73,7 @@ export function PlanAllowanceSection() {
         Claude does not tell Forerunner how much of your plan it has used, so Forerunner estimates
         it: what its work would cost at API prices, against this amount a month. Subscription work
         stops near it; an API key takes over when one is saved. Enter what your plan covers: the
-        default (USD 50) is set low on purpose, and a Max plan covers much more.
+        default is set low on purpose, and a Max plan covers much more.
       </p>
       {missing === "planAllowance" ? (
         <RouteMissing route="planAllowance" what="the subscription allowance" />
@@ -85,10 +85,10 @@ export function PlanAllowanceSection() {
               Accounts and keys.
             </p>
           ) : null}
+          {/* In CHF only (design §5 rule 7; review of later #43: it said "stored as USD 50.00
+              at today's rate", and the line above named the default as "USD 50"). */}
           <p className="text-sm" data-testid="plan-allowance-current">
-            Now: {chf(view.chfMonthly)} a month
-            {view.origin === "default" ? " (the default)" : ""}, stored as USD{" "}
-            {formatAmount(Math.round(view.usdMonthly * 1_000_000))} at today's rate.
+            Now: {chf(view.chfMonthly)} a month{view.origin === "default" ? " (the default)" : ""}.
           </p>
           {view.overridden ? (
             <p
