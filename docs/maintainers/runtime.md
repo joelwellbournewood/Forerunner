@@ -1209,6 +1209,59 @@ ones; tasks waiting on a cancelled and a failed one; the routes' refusals with t
 the start check), `packages/state/test/suite.ts` (`waitingTasks`, `checkDependencies`) and
 `apps/ui/test/real-daemon.test.ts` ("dependencies").
 
+**A task larger than one session runs anyway (d1109-oversize-start, ADR 0115, the owner's D4
+of 2026-11-09).** Before, a ready task whose figure alone was more than the session's work
+budget (its cap less `DEFAULT_RESERVE_SHARE`) was left out of every plan: alone it emptied the
+session ("Nothing could run: ... Start a session with a larger budget.", W6-23), the Start
+check's blocker turned Start off and `POST /sessions` refused it. Now `cutPlanToBudget(plan,
+roomUsdMicro, workBudgetUsdMicro = roomUsdMicro)` returns the first such task apart
+(`plan.oversized`, its whole figure) and each left-out item with its `reason`
+(`LeftOutReason`: `after_others`, it fits the work budget but not after the others;
+`one_large`, a second larger task, one a session; `no_room`, the tasks that fit leave less than
+`oversizedMinRoomUsdMicro(work)`, a fifth: `OVERSIZED_MIN_ROOM_SHARE` = 0.2, beside
+`WRAP_UP_SHARE`). The runner holds it out of the queue and the re-plans (`held`) and takes it
+(`takeHeld`) once the queue is empty and a re-plan adds nothing, so tasks that become ready
+meanwhile run first; with what is left of the work budget (`budget.workRemainingUsdMicro()`)
+when that is at least the fifth and no-new-work is not set, else it is left out `no_room`.
+Taken, it joins the plan row (a versioned change, reason 'took "X", larger than this session's
+work budget, with what is left') with its planned figure set to that room (the session review
+measures what it was allowed to spend; `plan.oversized.roomUsdMicro`), the log says it once
+(`TOOK_LARGER_EVENT` = `session.took_larger`, a person line: 'Took "X", larger than this
+session's work budget, with about CHF 2.80 left.') and `session.planned` carries `oversized`.
+A larger task that becomes ready during the session is held the same way when none is held or
+taken (the one it took, back ready, is held again); any other waits (`one_large`). At autonomy 0
+and 1 the plan the person approves names it (`approvalItems`: the plan id, the card's steps,
+`onlyThese`). Its run is capped as every run is (`runCapOf`, the session's work budget left,
+the hooks): no limit and no review reserve is passed. What pausing does at that budget is
+ADR 0112's (d1109-oversize-pause builds the rest). The Start check holds the same task
+(`StartCheck.oversized`: estimate, the room the tasks before it leave, the ready ones and those
+that follow as they become ready, `after`, `spentUsdMicro`) and keeps it in `overBudget` with
+the reason `oversized`; `start-blocked.ts`'s `runsWork` counts it as work, so nothing refuses it
+(the over-budget blocker is gone). Every sentence about such a task is in
+`daemon/oversize-words.ts` (no Node-only import: the UI's dialog takes `oversizedPlanClause`):
+`oversizedSentence` (the Start dialog's warning), `leftOutSentence` (`no_room`, `one_large`,
+`after_others`), `oversizedPlanNote` (the plan card), `oversizedPlanClause`, `oversizedAsk`
+(the chat's read-back) and `takenLine`; `daemon/oversize-view.ts` builds the route's
+`oversized` and `overBudget[].why/.sentence` and the chat's `oversizedWarning`. The result says
+a `one_large` or `no_room` task's own sentence instead of "Left for next time" (result.ts).
+Tests: `task-dependencies.test.ts` ("d1109-oversize-start, run C": the cut's shapes, the
+runner's hold and take, the Start check), `oversized-task.test.ts` (composed: POST /sessions
+not refused, the pause with one card, the plan row, fitting tasks first, autonomy 1, the same
+after a restart), `oversize-words.test.ts`, `where-last-run-stopped.test.ts` (the result) and
+`apps/ui/test/real-daemon.test.ts` ("d1109-oversize-start, run C").
+
+**The figure for kept work (OS-1).** `planEstimateUsdMicro(port, task, kept?)` prices a task
+that resumes from the work its paused runs kept at what is left of its estimate:
+`keptWorkOf(runs)` / `keptWorkFor(store, task)` (estimates/model.ts) sum the cost of the
+consecutive work runs ending with its latest whose outcome is `paused` or `budget_exceeded`
+(`KEPT_WORK_OUTCOMES`: the same condition under which its next brief starts with "## Where the
+last run stopped"), and `estimateLeftUsdMicro(estimate, kept)` gives the estimate less that cost,
+or a fifth of it (`ESTIMATE_PASSED_SHARE`) with `estimatePassed` once the kept work reached it;
+`withinTaskBudget` still caps it. A Redo from main, a review that sent it back and a Try again
+after a failure start over (their latest run did not pause), so they keep the whole estimate.
+The runner's planner context carries `keptWork`; the StaticPlanner and the Start check price
+with it (the chat reads the Start check). The learner still takes no sample from a paused task.
+
 **Full-review tasks wait for the Docker sandbox (U-079, ADR 0101).** The runner's
 `sandboxGate` (`SessionRunnerDeps.sandboxGate`, `session/sandbox-gate.ts`) is asked before
 every plan when a ready task is at risk tier 2 or above: it re-checks Docker and, while the
