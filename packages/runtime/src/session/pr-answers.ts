@@ -17,6 +17,7 @@ import {
   MERGE_LEFT_OPEN_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
+import { redoneMergeCard } from "../loop/merge-mode.ts";
 import { resumeWork, type StartPort } from "./resume-work.ts";
 
 /**
@@ -164,7 +165,12 @@ async function unappliedPrAnswers(store: StateStore, humanId: string): Promise<H
   }
 }
 
-function markOf(row: HumanRequestRow, key: string, clock: Clock, outcome: string): JsonObject {
+function markOf(
+  row: Pick<HumanRequestRow, "change_card">,
+  key: string,
+  clock: Pick<Clock, "nowIso">,
+  outcome: string,
+): JsonObject {
   return {
     ...((row.change_card ?? {}) as JsonObject),
     key,
@@ -333,10 +339,7 @@ async function applyRedo(
       actor,
     );
     await tx.humanRequest.patch(row.id, {
-      change_card: {
-        ...markOf(row, MERGE_LEFT_OPEN_KEY, deps.clock, "redone"),
-        [REDO_FROM_BASE_FIELD]: true,
-      },
+      change_card: redoneMergeCard(row.change_card, deps.clock.nowIso()) as JsonObject,
     });
   });
   await resumeWork(store, deps.start, {

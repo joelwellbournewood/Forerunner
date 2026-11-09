@@ -287,7 +287,11 @@ export class DependentBranches {
     if (!record || record.pr_number !== info.number) return false;
     const ref = { number: info.number, url: info.htmlUrl || pr.url };
     if (info.mergeable === true) {
-      if (record.state !== "left_to_you" || record.last_outcome !== "conflict") return false;
+      // W15-04: a notice whose record moved on (the task was redone and accepted again, its
+      // record says something new) is closed once the pull request merges cleanly: before, it
+      // stayed open for good beside what the record says now (live check 2, F3).
+      if (record.state !== "left_to_you" || record.last_outcome !== "conflict")
+        return this.closeStaleNotice(task);
       // TM-7 (leftovers7-tailmerge): what the record said before the notice, and the head it
       // was given on (kept on the notice's card, `before_conflict`).
       const before = await this.beforeConflict(task.id);
@@ -376,6 +380,18 @@ export class DependentBranches {
     };
     if (open) {
       const card = (open.change_card ?? {}) as JsonObject;
+      // W15-04: an open card that is itself an earlier notice keeps its own words from before
+      // that notice (none, when that notice filed it): it is never restored as notice words.
+      const earlier =
+        card.notice === "conflict"
+          ? ((card.before_conflict as JsonObject | undefined)?.card ?? null)
+          : {
+              why: open.why,
+              options: [...open.options],
+              steps: [...open.steps],
+              status: typeof card.status === "string" ? card.status : null,
+              sentence: typeof card.sentence === "string" ? card.sentence : null,
+            };
       await store.humanRequest.patch(open.id, {
         why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
         options,
@@ -387,16 +403,7 @@ export class DependentBranches {
           status: "conflict",
           notice: "conflict",
           base,
-          before_conflict: {
-            ...kept,
-            card: {
-              why: open.why,
-              options: [...open.options],
-              steps: [...open.steps],
-              status: typeof card.status === "string" ? card.status : null,
-              sentence: typeof card.sentence === "string" ? card.sentence : null,
-            },
-          },
+          before_conflict: { ...kept, ...(earlier ? { card: earlier } : {}) },
         },
       });
       return;
@@ -510,6 +517,19 @@ export class DependentBranches {
     const card = (open?.change_card ?? {}) as JsonObject;
     if (open && card.rebuild === "conflict")
       await this.deps.store.humanRequest.withdraw(open.id, open.version);
+  }
+
+  /**
+   * W15-04: an open conflict notice card whose record no longer says the conflict, withdrawn
+   * once the pull request merges cleanly. True when one was.
+   */
+  private async closeStaleNotice(task: TaskRow): Promise<boolean> {
+    const open = await this.openMergeCard(task.id);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (!open || card.notice !== "conflict") return false;
+    await this.deps.store.humanRequest.withdraw(open.id, open.version);
+    this.logger.info("an earlier conflict notice was closed", { taskId: task.id });
+    return true;
   }
 
   /** The open card of the task's merge that said a conflict, closed: it no longer needs the person. */

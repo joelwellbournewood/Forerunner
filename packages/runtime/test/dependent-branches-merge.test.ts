@@ -1,7 +1,14 @@
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { GitHubHost, GitOps, PrTaskExecutor } from "@forerunner/capabilities";
+import {
+  GitHubHost,
+  GitOps,
+  PrTaskExecutor,
+  REBASE_CONFLICT_KEY,
+  REDO_FROM_BASE_FIELD,
+} from "@forerunner/capabilities";
+import { taskReopen } from "@forerunner/commands";
 import { join, Logger, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
@@ -19,11 +26,12 @@ import {
 } from "../src/enforcement/ports.ts";
 import {
   fileLeftOpenRequest,
+  MERGE_LEFT_OPEN_KEY,
   MERGE_PR_TOOL,
   REBUILD_CARD_OPTIONS,
   ReviewedPrMerge,
 } from "../src/loop/merge.ts";
-import type { MergeMode } from "../src/loop/merge-mode.ts";
+import { MERGE_CARD_KEY, type MergeMode, REDO_FROM_BASE } from "../src/loop/merge-mode.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
 import { GitHostWatcher } from "../src/session/githost-watcher.ts";
 import { syncPrAnswers } from "../src/session/pr-answers.ts";
@@ -1728,5 +1736,92 @@ describe("w15-merge, wave 15: a chain with a busy middle (W15-03)", { timeout: 2
     const { waiting } = await screens(m, b.id);
     expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({ canMerge: true });
     expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+  });
+});
+
+describe("w15-merge, wave 15: the Tasks tab's Redo on a task with a conflict notice (W15-04)", {
+  timeout: 240_000,
+}, () => {
+  /** A runs and its pull request merges; B, on the same lines, then conflicts with main. */
+  async function conflictingPair() {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    return { m, a, b, prB: await m.prNumber(b.id) };
+  }
+  /** The Tasks tab's Redo: `task.reopen` with source "ui", as the row's button sends it. */
+  const tasksRowRedo = async (m: Awaited<ReturnType<typeof chainWorld>>, taskId: string) =>
+    taskReopen.run(
+      { task: taskId } as never,
+      {
+        store: m.w.store,
+        clock: m.w.clock,
+        humanId: m.w.human,
+        actor: { kind: "human", id: m.w.human },
+        source: "ui",
+        ports: {},
+      } as never,
+    );
+  const openCards = async (m: Awaited<ReturnType<typeof chainWorld>>, taskId: string) =>
+    m.w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
+
+  it("Redo on the Tasks row answers the open conflict card as its own Redo does: one card at most at every step, the run starts from main (no rebase-conflict card), and once the task is done again with its PR mergeable, two polls leave no conflict card open (live check 2, F3)", async () => {
+    const { m, b, prB } = await conflictingPair();
+    await m.poll();
+    expect(await openCards(m, b.id)).toHaveLength(1);
+    const sessionsBefore = (await m.w.store.session.list({} as never)).length;
+    const moved = (await tasksRowRedo(m, b.id)) as { sentence: string };
+    expect(moved.sentence).toBeTruthy();
+    // The card is answered "redone" now; nothing more is open, and no session started.
+    expect(await openCards(m, b.id)).toEqual([]);
+    expect((await m.w.store.session.list({} as never)).length).toBe(sessionsBefore);
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("ready");
+    // The next session does the task again from main: no rebase conflict, one PR, done.
+    const ready = await m.w.store.task.mustGet(b.id);
+    await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
+    await m.session();
+    const again = await m.w.store.task.mustGet(b.id);
+    expect(again.status).toBe("done");
+    const cards = await openCards(m, b.id);
+    expect(
+      cards.filter((r) => (r.change_card as { key?: string } | null)?.key === REBASE_CONFLICT_KEY),
+    ).toEqual([]);
+    expect(cards.length).toBeLessThanOrEqual(1);
+    expect(await m.prNumber(b.id)).toBe(prB);
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    await m.poll();
+    await m.poll();
+    expect(
+      (await openCards(m, b.id)).filter(
+        (r) => (r.change_card as { notice?: string } | null)?.notice === "conflict",
+      ),
+    ).toEqual([]);
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+  });
+
+  it("the command registry spells a merge card's key and its Redo's mark as the merge step does (W15-04)", () => {
+    expect(MERGE_CARD_KEY).toBe(MERGE_LEFT_OPEN_KEY);
+    expect(REDO_FROM_BASE).toBe(REDO_FROM_BASE_FIELD);
+  });
+
+  it("a conflict notice whose record moved on (a new review of the task) is withdrawn once the pull request merges cleanly again (W15-04)", async () => {
+    const { m, b } = await conflictingPair();
+    await m.poll();
+    const [notice] = await openCards(m, b.id);
+    expect((notice?.change_card as { notice?: string } | null)?.notice).toBe("conflict");
+    // The record moved on without the notice being answered (a new accept of the task).
+    const record = await m.record(b.id);
+    await m.w.store.mergeRecord.move(record.id, "left_to_you", {
+      last_outcome: "not_allowed",
+      sentence: `#${record.pr_number} waits for you to merge it: press Merge on the Overview.`,
+    });
+    // main put back as it was: the pull request merges cleanly again.
+    await m.hostGit("update-ref", "refs/heads/main", "HEAD~1");
+    await m.poll();
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    expect(await openCards(m, b.id)).toEqual([]);
   });
 });

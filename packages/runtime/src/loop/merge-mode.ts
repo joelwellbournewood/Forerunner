@@ -39,6 +39,32 @@ export function mergeModeEffect(mode: MergeMode): string {
     : "each accepted task's pull request waits for you to press Merge on the Overview";
 }
 
+/**
+ * The key of a merge card (`MERGE_LEFT_OPEN_KEY` in `loop/merge.ts`) and the field its Redo sets
+ * (`REDO_FROM_BASE_FIELD` in `@forerunner/capabilities`), spelled here so the command registry
+ * can answer a card without importing the merge step (a test keeps them equal).
+ */
+export const MERGE_CARD_KEY = "merge:left_open";
+export const REDO_FROM_BASE = "redo_from_base";
+
+/**
+ * A merge card answered with a redo from main (its own Redo in `session/pr-answers.ts`, or
+ * W15-04 the Tasks tab's Redo of its done task in `task.reopen`): applied as "redone", with
+ * `REDO_FROM_BASE`, which the task's next run reads as "Drop the branch and retry from
+ * scratch" (the branch starts again from main, the open pull request gets the new work, and the
+ * old branch's conflict never comes back as a rebase-conflict card).
+ */
+export function redoneMergeCard(card: unknown, nowIso: string): Record<string, unknown> {
+  const was = card && typeof card === "object" && !Array.isArray(card) ? card : {};
+  return {
+    ...(was as Record<string, unknown>),
+    key: MERGE_CARD_KEY,
+    applied_at: nowIso,
+    outcome: "redone",
+    [REDO_FROM_BASE]: true,
+  };
+}
+
 /** "#5", "#5 and #6", "#5, #6 and #7". */
 function prsWords(numbers: readonly number[]): string {
   const names = numbers.map((n) => `#${n}`);

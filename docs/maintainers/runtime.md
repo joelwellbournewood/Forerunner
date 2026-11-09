@@ -3363,7 +3363,10 @@ folder with the same `folderHold`. **The press on such a row** (W15-05, live che
 `waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
 and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the
 sentence). Before, the row read "Merging…" and the Tasks row "Accepted · merging" with no
-reason. The merge still waits (R-lock holds). **The conflict notice** (R-conflict):
+reason. The merge still waits (R-lock holds). W15-04: a notice card whose record moved on (the
+task was redone and accepted again) is withdrawn by the conflict notice once the pull request
+merges cleanly (`closeStaleNotice`), and a notice that takes over an open card that is itself an
+earlier notice keeps that card's own earlier words, never notice words to restore. **The conflict notice** (R-conflict):
 `pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
 poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
 the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no
