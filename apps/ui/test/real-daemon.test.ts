@@ -7508,6 +7508,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
           // carries the figure the Start dialog will show; none here).
           estimateUsdMicro: null,
           runsOn: null,
+          // W15B-07: no limit of the project's to say.
+          note: null,
         },
         // The plan's "Coder" is the registry's coder; on the API key alone nothing is said.
         {
@@ -7517,6 +7519,7 @@ describe("the UI client against the real daemon: the credential chooser says whe
           unknown: null,
           estimateUsdMicro: null,
           runsOn: { kind: "api_key", line: null },
+          note: null,
         },
       ]);
     } finally {
