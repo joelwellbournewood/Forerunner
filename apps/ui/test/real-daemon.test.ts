@@ -15687,6 +15687,26 @@ describe("d1109-sessions, run C", () => {
       const own = (await client.projectSessions(project.id)).rows.find((r) => r.id === started);
       expect(own?.startedBy).toBeNull();
       expect(own?.endedWords).toBe("Done");
+      // Chat about the project is one line under the list, never a session row (design §3.9).
+      expect((await client.projectSessions(project.id)).chat).toBeNull();
+      const before = (await client.projectSessions(project.id)).count;
+      const me = await client.me();
+      await client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what is left to do?",
+        source: "text",
+      });
+      const after = await client.projectSessions(project.id);
+      expect(after.count).toBe(before);
+      const booked = await rt.store.costLedger.chatSpendForProject(project.id);
+      expect(booked.entries).toBeGreaterThan(0);
+      expect(after.chat?.spent.chfMicro).toBe(booked.chf_micro);
+      expect(after.chat?.words).toMatch(
+        /^Chat about this project: (CHF \d+\.\d{2}|less than CHF 0\.01)\.$/,
+      );
     } finally {
       await rt.close();
     }
