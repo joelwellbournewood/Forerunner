@@ -148,8 +148,10 @@ left them; an open file or task stays on its own tab.
   file in the copy that a merge changes too, or left a file where a merge brings one, Forerunner
   never overwrites it: the copy stops following and the line says so and why ("This computer's
   copy of o/r has not followed merges since 14:05. You changed README.md in this copy, and a merge
-  changed it too: move your change out of the way and the copy follows again."). Move your change away and
-  the next merge brings the copy up to date again.
+  changed it too: move your change out of the way and the copy follows again."). A file an editor
+  saved with Windows line endings (CRLF) counts as your own change, even when its text looks the
+  same. Move your change away and the copy follows again within about a minute, as it does after
+  a merge.
 - **Local only** (on Files, for a repository project): a folder inside this computer's copy,
   "Never uploaded. Agents can read and change it." Put files there that the work may use but
   that must stay out of the repository (notes, data, drafts). An agent reads what its task needs
