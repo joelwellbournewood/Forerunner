@@ -3376,7 +3376,11 @@ reason. The merge still waits (R-lock holds). W15-04: a notice card whose record
 task was redone and accepted again) is withdrawn by the conflict notice once the pull request
 merges cleanly (`closeStaleNotice`), and a notice that takes over an open card that is itself an
 earlier notice keeps that card's own earlier words, never notice words to restore. **The conflict notice** (R-conflict):
-`pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
+`pullRequestState` keeps what the poll read of each open task pull request (W15-07: the watcher
+reads an open pull request whose `mergeable` is still null again after 1, 2, 4 and 8 s of real
+time, `MERGEABLE_REREAD_MS`, `mergeableRereadMs`, about 15 s at most, since GitHub works it out
+after the first read that follows a change; before, the null was dropped and a notice came and
+went one poll late, about two minutes live); `sweep`, after the
 poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
 the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no
 approval) and whose pull request GitHub says does not merge (`mergeable === false`): the record

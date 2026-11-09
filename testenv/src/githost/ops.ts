@@ -29,6 +29,16 @@ export function isPull(issue: IssueRecord): issue is IssueRecord & { pull: PullD
 }
 
 export class RepoOps {
+  /**
+   * W15-07: GitHub works out a pull request's mergeability lazily: after its head or base moved,
+   * the first read answers `mergeable: null` and starts the work; a later read has the answer.
+   * Off by default (the fake answers at once); a test or the bench turns it on to see the null
+   * the app meets live (`FakeGitHost.setLazyMergeability`).
+   */
+  lazyMergeability = false;
+  /** The base..head pair each pull request's read already started working out (lazy mode). */
+  private readonly lazyStarted = new WeakMap<object, string>();
+
   constructor(
     private readonly store: HostStore,
     private readonly clock: Clock,
@@ -347,10 +357,15 @@ export class RepoOps {
     return { number: issue.number, pull_request: this.store.pullJson(repo, issue) };
   }
 
-  /** Refresh head/base shas from the branches and recompute mergeability. */
+  /**
+   * Refresh head/base shas from the branches and recompute mergeability. Lazy (above): `read`
+   * is a read of the pull request (the first after a change answers null), `force` a merge,
+   * which GitHub always works out first.
+   */
   async computeMergeability(
     repo: RepoRecord,
     issue: IssueRecord & { pull: PullData },
+    opts: { read?: boolean; force?: boolean } = {},
   ): Promise<void> {
     const p = issue.pull;
     if (issue.state !== "open") {
@@ -366,6 +381,15 @@ export class RepoOps {
       p.mergeable = null;
       p.mergeableState = "unknown";
       return;
+    }
+    if (this.lazyMergeability && !opts.force) {
+      const pair = `${base}..${head}`;
+      if (this.lazyStarted.get(issue) !== pair) {
+        if (opts.read) this.lazyStarted.set(issue, pair);
+        p.mergeable = null;
+        p.mergeableState = "unknown";
+        return;
+      }
     }
     const res = await repo.git.mergeTree(base, head);
     p.mergeable = res.ok;
@@ -495,7 +519,7 @@ export class RepoOps {
     const p = issue.pull;
     if (issue.state !== "open" || p.merged)
       throw new HttpError(405, "Pull Request is not mergeable");
-    await this.computeMergeability(repo, issue);
+    await this.computeMergeability(repo, issue, { force: true });
     if (input.sha && input.sha !== p.headSha) {
       throw new HttpError(409, "Head branch was modified. Review and try the merge again.");
     }

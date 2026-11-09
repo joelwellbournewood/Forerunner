@@ -361,7 +361,19 @@ export interface GitHostWatcherDeps {
     sha: string,
   ) => unknown;
   pollMs?: number;
+  /**
+   * W15-07: the waits before reading an open pull request again whose `mergeable` GitHub has
+   * not worked out yet (null: GitHub computes it after a change, and the first read starts it).
+   * Default 1, 2, 4 and 8 s (15 s in all, real time); `[]` reads once.
+   */
+  mergeableRereadMs?: readonly number[];
 }
+
+/** W15-07: how long the watcher waits before each re-read of a null `mergeable` (15 s in all). */
+export const MERGEABLE_REREAD_MS: readonly number[] = [1000, 2000, 4000, 8000];
+
+/** A wait in real time (the watcher's re-read follows GitHub, not the app's clock). */
+const realDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export class GitHostWatcher {
   private readonly logger = log("githost-watcher");
@@ -547,7 +559,16 @@ export class GitHostWatcher {
   ): Promise<GitHostEvent[]> {
     const key = prKey(pr.repo, pr.number);
     const pc: PrCursor = { ...emptyPrCursor(), ...cursor.prs[key] };
-    const info = await this.deps.host.getPullRequest(pr.repo, pr.number);
+    let info = await this.deps.host.getPullRequest(pr.repo, pr.number);
+    // W15-07: GitHub answers `mergeable: null` while it works it out after a change (the first
+    // read starts it); read again a few seconds apart, at most about 15 s in all, so a conflict
+    // (or its end) is said in this poll. Before, it waited for the next poll, and with a 60 s poll
+    // a notice came and went about two minutes late (live check 2, F5).
+    for (const ms of this.deps.mergeableRereadMs ?? MERGEABLE_REREAD_MS) {
+      if (info.state !== "open" || info.mergeable !== null) break;
+      await realDelay(ms);
+      info = await this.deps.host.getPullRequest(pr.repo, pr.number);
+    }
     // What it read, reported before a PR is marked closed (dependent-branches, ADR 0111): a
     // merge on GitHub by any method, a close, an open PR's mergeable.
     if (this.deps.onPullRequestState) {

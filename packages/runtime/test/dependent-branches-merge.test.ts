@@ -1856,3 +1856,37 @@ describe("w15-merge, wave 15: a merge GitHub does not answer (W15-68)", {
     });
   });
 });
+
+describe("w15-merge, wave 15: GitHub works out mergeability lazily (W15-07)", {
+  timeout: 240_000,
+}, () => {
+  it("with GitHub answering null at the first read after a change, one poll after another merge says the conflict (one card, no Merge, the Tasks row too), and one poll after main is put back takes it away; the re-read stays within about 15 s", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    await m.poll();
+    // As GitHub does: the first read after a change answers mergeable null.
+    m.host.ops.lazyMergeability = true;
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    const started = Date.now();
+    await m.poll();
+    expect(Date.now() - started).toBeLessThan(20_000);
+    // Before: the poll read null and dropped it; the notice came one poll (a minute) later.
+    expect(await m.cards(b.id)).toHaveLength(1);
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    expect(view.waiting.find((w) => w.number === prB)?.merge?.canMerge).toBe(false);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    expect(taskDisplay(await m.w.store.task.mustGet(b.id), ctx).label).toBe(
+      "Accepted · conflicts with main",
+    );
+    // main put back as it was: the next poll takes the notice back.
+    await m.hostGit("update-ref", "refs/heads/main", "HEAD~1");
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
+  });
+});

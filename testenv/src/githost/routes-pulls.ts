@@ -88,7 +88,7 @@ export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
   app.get("/repos/:owner/:repo/pulls/:number", async (c) => {
     const repo = requireRepo(c, store, "pull_requests", "read");
     const issue = pullOf(c, repo);
-    await ops.computeMergeability(repo, issue);
+    await ops.computeMergeability(repo, issue, { read: true });
     const stats = await ops.pullStats(repo, issue);
     return c.json(store.pullJson(repo, issue, stats));
   });
