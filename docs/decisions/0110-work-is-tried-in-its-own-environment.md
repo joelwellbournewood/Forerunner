@@ -195,12 +195,22 @@ usage message to stderr and exits with code 1"), the try called its exit 1 a pro
 measured-problem rule (ADR 0104) sent correct work back three times and on to the person (live
 check 2, research F1: CHF 0.24 for a CHF 0.03 task). The rule stays; what is tried changes:
 
-1. **Verbs and connectors are two lists.** A sentence's command still ends at a word that goes on
-   with what it does ("prints", "exits", "and"). A connector ("on", "in", "for", "with", "from",
-   "at", "by", "to", "against", "using", …) after a command with no argument written means its
-   arguments are described in words: a command line tool is not run from that sentence
-   (`commandsIn` leaves it out), and a script that listens is still started, since a server needs
-   no argument. "with no arguments" and "without a file" are a bare run, as said.
+1. **What a command is given, said in words, is not run.** A sentence's command still ends at a
+   word that goes on with what it does ("prints", "exits", "and") or says where or how it runs
+   ("in a terminal", "from the command line", "to print", "at the prompt", "by itself", "alone"):
+   that is the command as written, run as before. Only a word that may introduce an input ("on",
+   "with", "for", "against", "using", "given", "passing"), after a command with no argument
+   written and followed within a few words by the name of an input ("a file containing …", "a
+   file path", "any text file", "your name"), means its arguments are described in words: a
+   command line tool is not run from that sentence (`commandsIn` leaves it out), and a script
+   that listens is still started, since a server needs no argument. The same words followed by
+   anything else ("on its own", "on the command line", "with Node 22") end the command, and "with
+   no arguments" and "without a file" are a bare run, as said. A tool whose input is only
+   described and that no written command runs is told in "See what was checked" ("wc.js was not
+   tried: an acceptance criterion says in words what it is given, not the command to run"),
+   never left out without a word. (The fix-up of 2026-11-09: the first version took every
+   connector as a description, so commands of tools that take no argument and bare runs said in
+   words stopped being tried.)
 2. **A bare run another sentence expects to fail expects the error.** A command with no argument
    and no standard input `expectsError` when any sentence of the brief, the criteria or the
    README says a run with no argument fails ("Running with no argument … exits with code 1"). A

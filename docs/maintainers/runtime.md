@@ -2624,15 +2624,21 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   `node`, `python3` or `python` and whose script is in the folder is a `CommandTry` (placeholders
   become samples under `TRY_FOLDER`, `.forerunner-try/`; a full stop or comma after a
   placeholder is the sentence's, so "Usage: node wc.js <file>." runs `node wc.js <sample>`, and
-  `./wc.js` is `wc.js`; a command with no argument written whose next word says what it is
-  given, a connector such as "on", "with", "for" ("node wc.js on a file containing …"), has
-  its arguments described in words and is not run (`described`; a script that listens is still
-  started), while "with no arguments" and "without a file" are a bare run; `expectsError` when
-  its sentence expects an error, or, for a bare run, when any sentence of the brief, the
-  criteria or the README says a run with no argument fails, W15-24; `keepsRunning` when
-  it says the tool keeps running, "watches" or runs "until you stop it": it is stopped after
-  `COMMAND_KEEPS_RUNNING_MS`, 5 s, and that is no problem); a script that listens, or a file the
-  task wrote that listens, is a `ServerTry` (the ports its code or the brief names, the GET
+  `./wc.js` is `wc.js`; a command with no argument written whose next word may introduce an
+  input (`INTRODUCES_INPUT`: "on", "with", "for", "against", "using", "given", "passing") and is
+  followed within six words by the name of one (`INPUT_NOUN`: "a file containing …", "your
+  name") has its arguments described in words and is not run (`described`; a script that
+  listens is still started; a tool no written command runs gets the not-tried line "wc.js was
+  not tried: an acceptance criterion says in words what it is given, not the command to run"),
+  while words of where or how it runs end the command as written (`GOES_ON`: "in a terminal",
+  "from the command line", "by itself", "alone"; or an input word followed by no input: "on its
+  own", "with Node 22"), and "with no arguments" and "without a file" are a bare run;
+  `expectsError` when its sentence expects an error, or, for a bare run, when any sentence of
+  the brief, the criteria or the README says a run with no argument fails, W15-24;
+  `keepsRunning` when it says the tool keeps running, "watches" or runs "until you stop it": it
+  is stopped after `COMMAND_KEEPS_RUNNING_MS`, 5 s, and that is no problem); a script that
+  listens, or a file the task wrote that listens, is a `ServerTry` (the ports its code or the
+  brief names, the GET
   routes the brief names then the ones its code handles, else `/`; a named route carries what
   its sentence says it answers, `ServerRoute.expect`: a status, "GET /admin answers 401
   without a token", or an error, "refuses", "not found"; `withCredentials` when the
