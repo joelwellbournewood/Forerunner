@@ -96,6 +96,28 @@ function TaskCap({ task, specialist }: { task: TaskView; specialist: string | nu
   return null;
 }
 
+/**
+ * The Critic column of a task with no "Reviewed" check (W15-42, design §5 rule 6): what is true
+ * of the task, never a raw verdict. A task marked done without a review is "Not reviewed"; a
+ * failed task the critic sent back "Failed review", any other failed or cancelled task nothing;
+ * otherwise the critic's last call in words.
+ */
+export function criticColumn(
+  task: { status: string },
+  verdict: string | null | undefined,
+): { label: string; tone: "good" | "warn" | "neutral" } | null {
+  if (task.status === "done") return { label: "Not reviewed", tone: "neutral" };
+  if (task.status === "failed")
+    return verdict === "revise" || verdict === "escalate"
+      ? { label: "Failed review", tone: "warn" }
+      : null;
+  if (task.status === "cancelled" || !verdict) return null;
+  return {
+    label: verdictLabel(verdict),
+    tone: verdict === "accept" || verdict === "pass" ? "good" : "warn",
+  };
+}
+
 /** The filters over what the rows show: the status in words, who does it, the title or outcome. */
 export function filterTasks(tasks: TaskView[], filter: TaskFilter): TaskView[] {
   const text = filter.text.trim().toLowerCase();
@@ -487,22 +509,17 @@ export function TasksTab({
                         <TaskCap task={t} specialist={who} />
                       )}
                     </td>
-                    <td className="py-1.5 pr-2">
+                    <td className="py-1.5 pr-2" data-testid="task-critic">
                       {t.check ? (
                         // ADR 0104: a done task says how it was checked.
                         <Badge tone="good" testId="task-check">
                           {t.check.label}
                         </Badge>
-                      ) : run?.verdict ? (
-                        <Badge
-                          tone={
-                            run.verdict === "accept" || run.verdict === "pass" ? "good" : "warn"
-                          }
-                        >
-                          {verdictLabel(run.verdict)}
-                        </Badge>
                       ) : (
-                        "—"
+                        (() => {
+                          const said = criticColumn(t, run?.verdict);
+                          return said ? <Badge tone={said.tone}>{said.label}</Badge> : "—";
+                        })()
                       )}
                     </td>
                     <td className="py-1.5">
