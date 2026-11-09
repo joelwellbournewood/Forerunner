@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { describeError, type EventView, type SessionView } from "../api/client.ts";
+import {
+  describeError,
+  type EventView,
+  type SessionTasksView,
+  type SessionView,
+} from "../api/client.ts";
 import { type StreamMode, subscribeSessionEvents } from "../api/sse.ts";
 import { ExternalLink } from "../components/ExternalLink.tsx";
 import { ReadAloud } from "../components/ReadAloud.tsx";
@@ -133,6 +138,8 @@ export function SessionPage() {
   const [confirmStopNow, setConfirmStopNow] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const seenSeq = useRef(new Set<number>());
+  /** "Tasks in this session" (d1109-sessions, U-086): each task it worked on, opening its drawer. */
+  const [tasks, setTasks] = useState<SessionTasksView | null>(null);
 
   const appendEvents = useCallback((incoming: EventView[]) => {
     const fresh = incoming.filter((e) => !seenSeq.current.has(e.seq));
@@ -224,6 +231,26 @@ export function SessionPage() {
     };
   }, [client, id, appendEvents, streamOptions]);
 
+  // The session's tasks, read again when a task starts or ends here and when the session ends.
+  const taskMoves = events.filter(
+    (e) => e.type === "task.started" || e.type === "task.finished",
+  ).length;
+  const sessionStatus = session?.status ?? null;
+  useEffect(() => {
+    if (!sessionStatus) return;
+    const controller = new AbortController();
+    void client
+      .sessionTasks(id, controller.signal)
+      .then((t) => {
+        if (!controller.signal.aborted) setTasks(t);
+      })
+      .catch(() => {
+        // the section stays as it was; the log and the header still say what happened
+      });
+    void taskMoves;
+    return () => controller.abort();
+  }, [client, id, sessionStatus, taskMoves]);
+
   const shown = useMemo(
     () => (details ? events : events.filter((e) => e.audience === "person")),
     [events, details],
@@ -287,8 +314,10 @@ export function SessionPage() {
   const ended = ENDED.has(session.status);
   const stream = streamWords(mode, ended);
   const at = startedAtWords(session.startedAt);
-  // Design §3.7: "Quote page · session at 14:05", never the session's id.
-  const title = `${projectName ?? "Session"}${at ? `${projectName ? " · session" : ""} at ${at}` : ""}`;
+  // Design §3.7: "Quote page · session at 14:05", never the session's id; a planning call's
+  // page "Quote page · planning at 14:05" (d1109-sessions).
+  const kind = session.planning ? "planning" : "session";
+  const title = `${projectName ?? (session.planning ? "Planning" : "Session")}${at ? `${projectName ? ` · ${kind}` : ""} at ${at}` : ""}`;
   const live = ended ? null : currentFromLog(events);
   const pullRequests = pullRequestsFromLog(events);
   const current =
@@ -316,6 +345,16 @@ export function SessionPage() {
               className="text-sm text-blue-700 hover:underline dark:text-blue-300"
             >
               Open the project
+            </Link>
+          ) : null}
+          {session.projectId ? (
+            // d1109-sessions: the project's other sessions (ADR 0116).
+            <Link
+              to={`/projects/${encodeURIComponent(session.projectId)}/sessions`}
+              className="text-sm text-blue-700 hover:underline dark:text-blue-300"
+              data-testid="all-sessions"
+            >
+              All sessions
             </Link>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
@@ -433,6 +472,47 @@ export function SessionPage() {
               ))}
             </ul>
           </div>
+        ) : null}
+        {tasks && tasks.tasks.length > 0 ? (
+          <section
+            className="text-sm"
+            data-testid="session-tasks"
+            aria-labelledby="session-tasks-title"
+          >
+            <h2 id="session-tasks-title" className="text-xs text-neutral-500">
+              Tasks in this session
+            </h2>
+            <ul className="space-y-0.5">
+              {tasks.tasks.map((t) => (
+                <li
+                  key={t.id}
+                  className="flex flex-wrap items-baseline gap-2"
+                  data-testid="session-task"
+                >
+                  <Link
+                    to={`/projects/${encodeURIComponent(t.projectId)}/tasks?task=${encodeURIComponent(t.id)}`}
+                    className="text-blue-700 hover:underline dark:text-blue-300"
+                    data-testid="session-task-open"
+                    title="Opens the task with its runs."
+                  >
+                    "{t.title}"
+                  </Link>
+                  <span data-testid="session-task-here">{t.here}</span>
+                  {t.now ? (
+                    <span
+                      className="text-neutral-600 dark:text-neutral-400"
+                      data-testid="session-task-now"
+                    >
+                      now: {t.now}
+                    </span>
+                  ) : null}
+                  <span className="ml-auto text-neutral-500" data-testid="session-task-spent">
+                    {t.spentWords}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
         {session.summary && session.summary !== "conversation" ? (
           <div className="flex flex-wrap items-start gap-2">

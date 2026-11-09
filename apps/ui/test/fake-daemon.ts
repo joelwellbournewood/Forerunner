@@ -2613,7 +2613,37 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ? []
       : state.sessions
           .filter((s) => s.projectId === id && ["running", "paused", "planned"].includes(s.status))
-          .map((s) => fakeWorkingRow(s, projectCardOf(project)));
+          .map((s) => {
+            // As the daemon's `workingWords`: the project status's own working sentence.
+            const tasks = projectTaskViews(
+              state.tasks,
+              id,
+              state.requests,
+              state.sandbox.ready,
+              state.taskMeta,
+            );
+            const gist = projectStatusLine({
+              projectId: id,
+              tasks: tasks.map((t) => ({
+                id: t.id,
+                title: t.title,
+                status: t.status as never,
+                depends_on: t.dependsOn,
+              })),
+              displays: new Map(),
+              cards: [],
+              plan: "none",
+              working: {
+                sessionId: s.id,
+                agentName: s.agentName,
+                taskId: s.currentTask?.id ?? null,
+                taskTitle: s.currentTask?.title ?? null,
+                since: s.startedAt ?? new Date().toISOString(),
+              },
+              folder: null,
+            }).text;
+            return fakeWorkingRow(s, gist);
+          });
     const rows = ended.slice(from, from + limit);
     const last = rows[rows.length - 1];
     const next = from + limit < ended.length && last ? fakeSessionsCursor(last) : null;
@@ -7615,9 +7645,8 @@ function fakeSessionsCursorId(cursor: string): string | null {
  * A working session's row, as the daemon writes it (`workingWords`): the project's own working
  * sentence ('Working on "X" (2 of 4 done)'), "CHF … so far", no length while it works.
  */
-function fakeWorkingRow(s: SessionView, project: ProjectCard): ProjectSessionRowView {
-  const text =
-    project.statusLine?.kind === "working" ? project.statusLine.text : "Working on the next task";
+function fakeWorkingRow(s: SessionView, gist: string): ProjectSessionRowView {
+  const text = gist;
   const chf = (s.spent.chfMicro / 1_000_000).toFixed(2);
   return {
     id: s.id,

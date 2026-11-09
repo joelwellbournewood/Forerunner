@@ -62,7 +62,7 @@ describe("Project page", () => {
       within(screen.getByTestId("tab-more"))
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Plan", "Docs", "Reviews", "Costs", "Data"]);
+    ).toEqual(["Sessions", "Plan", "Docs", "Reviews", "Costs", "Data"]);
     // The Overview's own cards: this project's open ones, each with Answer.
     expect(await screen.findAllByTestId("overview-card")).toHaveLength(2);
     expect(screen.getByTestId("read-aloud")).toBeEnabled();
