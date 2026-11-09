@@ -4135,8 +4135,9 @@ after one is read back" below). The system prompt
   keeps only the projects
   by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone),
   and only this person's (`scopeOf`, d1109-chat-guard: before, every active project on the
-  store). `docs/status.md` is left out of the doc search: its sections go stale and come in
-  any order.
+  store); a turn sent with another person's project (POST /chat does not check it) gets no
+  facts or doc excerpts of it and reads "active_project: none". `docs/status.md` is left out
+  of the doc search: its sections go stale and come in any order.
 - **The plan from the brief** (`planBlock`, from `ConversationDeps.intakeStatus`, which compose
   wires to `IntakeService.status`): `# Plan from the brief`, before the task list it explains:
   drafting "The plan from your brief is being drafted."; waiting "The plan from your brief waits
