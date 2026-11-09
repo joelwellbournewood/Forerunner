@@ -1,0 +1,115 @@
+{
+ "merged": [
+  "fix/w15-tail (c2433dd: 7 fixer commits and 2 fixup commits) as merge commit 461ab81: no conflicts",
+  "fix/w15-words (4fed638: 25 fixer commits and 2 fixup commits) as merge commit 7d6b34a: conflicts in 4 files, all resolved"
+ ],
+ "head_sha": "7d6b34af9de7a053042f1315bcda623706ac9048",
+ "pushed": true,
+ "conflicts_resolved": [
+  "packages/capabilities/test/pr-executor.test.ts (an append-only test file). Both areas appended at the end of the file and git interleaved the two blocks. I rebuilt the end so it holds the base, then the 'w15-tail, wave 15 run B: what resetting a task's branch would drop' describe, then the 'w15-words, wave 15 run B' describe, both whole. The import list keeps both names (WIP_SUBJECT from the tail, workInProgressMessage from words). biome format then removed two blank lines my rebuild had added, and I amended that into the merge commit. Checked: the diff against each side equals the other side's own diff against the base.",
+  "apps/ui/test/real-daemon.test.ts (append-only). Both areas appended at the end. It now holds the base, then the tail's four describes ('w15-tail, wave 15 run B', '... a removed project starts nothing (W15B-02)', '... the plan card says a research task can read no website (W15B-07)', \"... run A's owed route cases (W15B-08)\"), then 'w15-words, wave 15 run B'. Checked: the merge against the words branch shows exactly the tail's diff against the base (781 lines added, 1 removed), and the merge against the tail branch shows exactly words' diff (683 added, 20 removed).",
+  "docs/decisions/0111-the-merge-record-and-merge-commits-only.md. Both appended an amendment dated 2026-11-09. I kept both in merge order: the w15-tail amendment ('a Redo or a Try again holds for the person's commit too'), then the w15-words amendment (W15B-11, the head-moved card). Words' cross-reference 'point 5 and amendment 2 above' would have pointed at the wrong section once the tail's amendment sat between them, so it now reads 'point 5, and point 2 of the review's fix-up of the merge side above'.",
+  "docs/maintainers/apps.md. Three single-line table rows (/projects/:id/:tab?, /sessions/:id, /inbox) were each edited by both areas. I merged each row word by word against the base and both sides' additions went in with no overlap: the tail's removed-project sentence and plan-task note, and words' W15-38/39, W15-43/72/86 and W15B-17 text."
+ ],
+ "integration_fixes": [
+  "None beyond the conflict resolution. The merge needed no product or test change. The one fix was biome formatting: two extra blank lines between the appended describe blocks in pr-executor.test.ts, amended into the merge commit 7d6b34a. The tail's plan-task note (`note: planTaskNote(known, deps)` in planTaskViews and the InboxPage render) survived next to words' onceForThePlan rewrite, as the tail's notes asked.",
+  "Merge-step walk (shared_files rule, wave 15 run B), using the tail fixer's walk script plus a session-log read (/tmp/frbench/merge-w16-hold/hold-walk.cjs). Bench merge-w16-hold: --provider bench, GitHub stand-in on 48579, daemon 48571, UI 2171. Path (a) passed 10/10: the person's commit stays on the branch, no specialist call ran, the task waits as needs_human, and the cannot-run card reads 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' with Try again / Cancel task. The session log's line for the held task now reads '\"Write the page in page.html\" could not run: its task folder has a commit that is not on GitHub: push it or undo it, then press Try again (Inbox).' (W15B-79), not 'has questions for you'. Screenshots and texts are in /tmp/frbench/merge-w16-hold/steps/; results in merge-w15-tail.json."
+ ],
+ "validation": [
+  {
+   "command": "git grep -n \"^<<<<<<< \" (and >>>>>>> and ======= outside .md)",
+   "result": "empty"
+  },
+  {
+   "command": "pnpm test (unit), after the w15-tail merge only",
+   "result": "exit 0: 484 files, 5118 passed, 7 skipped"
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "pnpm lint (biome check .) && pnpm lint:paths && pnpm typecheck",
+   "result": "First run: 1 formatting error from my rebuild of pr-executor.test.ts (two extra blank lines), fixed with biome format and amended into the merge. Then exit 0, 39 warnings (the baseline's count, none in merged hunks)."
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "exit 0: 487 files, 5159 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (96 files)"
+  },
+  {
+   "command": "pnpm docs:check (no base)",
+   "result": "exit 0 (it has no default base here: nothing to check)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (206 files)"
+  },
+  {
+   "command": "pnpm secrets:scan; pnpm secrets:scan --logs",
+   "result": "clean (2090 files); clean (0 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped (Postgres cases skip without FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test (live harness dry run)",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0: Failures: None"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm test:unit (as CI runs it)",
+   "result": "exit 0: 487 files, 5159 passed, 7 skipped"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm --filter @forerunner/ui test && pnpm --filter @forerunner/approvals-web test (as CI runs them)",
+   "result": "exit 0: UI 89 files, 1092 passed; approvals-web 11 files, 59 passed"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 89 files, 1092 passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local config, not committed, git-ignored)",
+   "result": "exit 0: 35 passed"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test (apps/desktop/src-tauri)",
+   "result": "not run: neither area touched apps/desktop (empty diff 408380d..HEAD)"
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name merge-w16 --daemon-port 48570 --ui-port 2170 --fresh && node scripts/bench/journeys/smoke.cjs merge-w16; node scripts/bench/stop.mjs --name merge-w16",
+   "result": "25/25 checks passed, 0 findings, 0 recorded problems; model calls intake 1, specialist 9, critic 6, chat 1. Bench stopped; home and browser profile deleted."
+  },
+  {
+   "command": "W15B-01 hold walk on bench merge-w16-hold (GitHub stand-in) with /tmp/frbench/merge-w16-hold/hold-walk.cjs",
+   "result": "10/10 checks passed (commit kept, 0 specialist calls, needs_human, card sentence, session-log line in the hold's words). Bench stopped; home, browser profile and fake GitHub repos deleted."
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 38 commits signed (9 tail, 27 words, 2 merges)"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "408380d..7d6b34a pushed on the first try (not forced)"
+  }
+ ],
+ "smoke": "The bench smoke on the merged result passed 25/25 (merge-w16, --provider bench, daemon 48570, UI 2170). Approve and start wrote 2 tasks and ran one session to completed, with 2 of 2 done. The page and its linked files were written, the Overview and Files tab show them, the chat answered, and the critic reviewed the work. The journey script was not changed. Results are in /tmp/frbench/merge-w16/steps/smoke-result.json and the log in /tmp/frbench/merge-w16/smoke.log.",
+ "problems_left": [
+  "The merge commit 7d6b34a's message still has git's commented '# Conflicts:' list (4 files) at the end: the --no-edit commit kept the comment lines. This is cosmetic and already pushed, so it stays (no force-push).",
+  "Bisect gap, as the tail reviewer noted and the fixup left: the tail's commit 68e52b6 does not pass alone until 4b21c35 (the C-68 planTasks toEqual gained note: null). I merged the fix branch as it is and did not rewrite its history.",
+  "Seen in the merge-step walk, known to both reviews and not fixed (each is a later item): the session log of a held task still says 'The coder started \"X\" (about CHF 0.01).' although no model call ran, and the session result says '\"X\" needs your decision (Inbox). CHF 0.00.'. The cannot-run card's Try again explanation still mentions Edit under the hold.",
+  "Each area's not_done and new_problems are still open, for the session lead. From w15-tail:\n- the hold is said at the run, not at the Redo (run C, D6);\n- uncommitted changes are set aside without a word;\n- other commands still act on a removed project (resolveProject);\n- folderHold and personsCommitAtRisk use different rules;\n- W15B-07's live step S5 cannot be done through Settings or the chat, because both refuse an empty 'only' list.\nFrom w15-words:\n- the session result's 'need your decision' wording for a questions card;\n- the UNTRUSTED_CONTENT markers in commit bodies (needs a security decision);\n- 'from unset to N' for number settings;\n- the fake daemon's generic settings sentence uses the key;\n- VOICE_ALERTS_OFF names the key;\n- the regex in journeys/budget.cjs:238 is out of date (fails before and after)."
+ ]
+}

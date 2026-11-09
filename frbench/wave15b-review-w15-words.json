@@ -1,0 +1,120 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Worktree detached at fix/w15-words (ba7288b), pnpm install, local Playwright config. Bench \"review-w15-words\" (daemon 48551, UI 2151, --provider bench, --githost 48553, FORERUNNER_BENCH_LONG=Write the, FORERUNNER_BENCH_ASK, FORERUNNER_BENCH_MISSING), started from the worktree; stopped with scripts/bench/stop.mjs and its home deleted at the end. Steps are in /tmp/frbench/review-w15-words/steps/.\n\n1. Budget journey (journeys/budget.cjs rv --below-chf 0.0005), result rv-budget.json.\n   - Inbox (05-rv-inbox.png): \"Write the notes\" and \"Write the summary\" read 'paused at its budget of less than CHF 0.01', then 'It stopped before it wrote anything.', with Cancel task 'Drops it.'. \"Write the guide\" (it wrote guide.md) reads 'Done: guide.md has 19 parts; left: write the rest of guide.md, check guide.md against the criteria.' with no backticks and no cut words, and Cancel says 'Drops it; its work is set aside unless a later task built on it.'.\n   - Drawers (02/03): \"Write the notes\" says Cancel 'Drops it.'; the guide keeps the set-aside line.\n   - Session log (06): '(less than CHF 0.01)' and 'Session over: 3 paused.'. The chip reads 'Ended: 3 paused', and after restart-daemon.mjs GET /sessions still says 'Ended: 3 paused' (also 08).\n   - Details (07): 'Plan: 3 tasks, about CHF 0.04. 3 ready tasks in priority order.' and 'Session review measured: 0 of 3 planned tasks done; the work cost CHF 0.07 against an estimate of CHF 0.04.'\n   - The journey's 'tiny task's log line' check FAILs, and it failed the same way before the fix (/tmp/frbench/fix-w15-words-before-steps/before-budget.json), so it is the journey's wording, not this area.\n\n2. Settings (09/10): Budget per session set to 0 reads 'The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.'; -3 reads 'The amount must be CHF 0.00 or more.'.\n\n3. Start dialog on a project with 5 ready tasks of about CHF 0.03 (12-15):\n   - Budget 0: 'The budget must be more than CHF 0.00.'\n   - 0.04: one line names three tasks, then 'and 1 more may be left for next time ... Give the session a larger budget to be sure they run.'\n   - 0.08: three tasks named, no 'and N more'.\n\n4. Docs tab (16): '8 of 8 present' and no '0 drifted'.\n\n5. Changes (17): after the monthly cap was lowered to 100, Undo reads 'Put the monthly cap back to CHF 150.00? Confirm on this device.'\n\n6. A session with a questions task whose title holds `ticks` and **bold**, plus a writer-marketing task (21-23):\n   - Log: 'The coder has questions for you about ...' and 'The writer started/finished ...'. Escalation lines carry a red dot named 'Needs you', with no level word.\n   - Tasks tab: Who column and filter say 'writer'.\n   - Questions card: its fields read without marks ('For \"Choose the colours for the club in colours.md\": which option ...').\n\n7. Plan card from a brief (24): rows are 0.09+0.07+0.10+0.10+0.07, and the total reads 'About CHF 0.43 for the 5 tasks.' (it adds up); 'writer' is named. A second brief while the card is open gets 409 'A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.' (no id).\n\n8. Repository project on bench/seeded: the intake commit body reads 'Drafted by Forerunner from the project's brief: 3 docs drafted, 5 from the templates, 1 kept as it was.', and no task commit body holds 'Task <uuid>' (git --git-dir on the bare repo).\n\nTests:\n- The fixer's named tests pass now: runtime, commands and capabilities w15-words, budget-pause, intake, pr-executor (146 tests), UI w15-words, and the real-daemon 'w15-words, wave 15 run B' block (28 tests).\n- I put the base's packages/*/src and apps/ui/src into the worktree (git checkout claude/nifty-knuth-f9udt0 -- \u2026): all 7 real-daemon cases fail (W15B-10 'Ended: 2 tasks need you', W15-56 cancelWork defined, W15B-12, W15B-11 old title, W15-66 '... and starts by itself.', W15B-16 'CHF 0' and 'unset'), and 33 unit cases fail. Sources restored afterwards.\n\nFull validation at ba7288b: pnpm check exit 0 (5140 unit tests passed). docs-check against the base: ok (86 files). pnpm test:integration 30 passed / 75 skipped. pnpm test:e2e 25 passed / 1 skipped. UI vitest 1078 passed. Playwright 35 passed. No conflict markers.\n\nRegression probe (temporary edit to budget-pause.test.ts W15B-14, then restored): the review-only session's events are [..., task.started(reviewOnly), critic.review_started, critic.review, critic.verdict, docs.status_written, critic.session_review_metrics, critic.session_review, session.ended]. The last task.started/task.finished before session.ended is the review-only task.started. See the blocking item.",
+ "blocking": [
+  {
+   "issue": "W15B-14's review-only line is a task.started event that never gets a task.finished. Four readers treat 'last task.started' as the task in flight, so after the critic's verdict the session page, the project header and the chat context keep saying the reviewed task is running until the session ends (design \u00a75 rule 4, true now). This is a regression in neighbouring behaviour: at the base nothing claimed a task in flight there.",
+   "where": "packages/runtime/src/session/runner.ts:1584 (emit task.started {specialist:'critic', reviewOnly:true}); readers: packages/runtime/src/daemon/server.ts:1610-1621 (liveSessionView currentTask), packages/runtime/src/daemon/project-status.ts:515-524 (workingOn), packages/runtime/src/conversation/project-facts.ts:189-201 (chat '# Working now'), apps/ui/src/lib/session-steps.ts:37-49 (currentFromLog, the session page's Current task card and the drawer's steps)",
+   "evidence": "runner.ts:1844 emits task.finished only `if (!result.reviewOnly)`, and docs/maintainers/runtime.md:2877-2880 says the review-only pass has 'no task.finished' and 'Its only start is a task.started'. A temporary probe in budget-pause.test.ts 'W15B-14: the waiting review's session ...' printed the second session's events: [..., 'task.started(reviewOnly)', 'critic.review_started', 'critic.review', 'critic.verdict', 'docs.status_written', 'critic.session_review_metrics', 'critic.session_review', 'session.ended']. The last task.started/finished before session.ended is {type:'task.started', payload:{title:'Index page', specialist:'critic', reviewOnly:true}}. So after the verdict, while the status doc is written and the session review (a critic model call, seconds to a minute with the real model) runs: GET /sessions/:id returns currentTask 'Index page' (critic), the session page shows Current task '\"Index page\" \u00b7 critic' next to 'Stop now' ('Stops the current task at once'), the project header says 'Alice is working on \"Index page\"', and the chat context says 'A session on X is running: \"Index page\" (the critic)'. By then the task is done (accepted) or its card is already in the Inbox. At the base the review-only pass emitted no task.started, so these readers said 'Choosing the next task\u2026' / between tasks.",
+   "expected": "The review-only line must not leave a task 'in flight' after its verdict. Either end it (for example a closing event the four readers treat as an end, or end at critic.verdict when the start was reviewOnly), or write the line as an event those readers do not count as a start. Add a test at the boundary the person reads: GET /sessions/:id currentTask and project workingOn are null after the verdict while the session still runs (e.g. hold the session review), plus currentFromLog over the same event sequence."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W15-56: a task paused before it wrote anything says 'It stopped before it wrote anything.' and Cancel 'Drops it.' on row, drawer, dialog and card; one that wrote files keeps the set-aside line",
+   "holds": true,
+   "note": "Seen on the bench (Inbox and drawers). The real-daemon case fails at base and passes now. I checked the folder and worktree executors: a continued run's changedFiles include the earlier work in progress, so taskHeldWork is right in that case too."
+  },
+  {
+   "claim": "W15-74/W15B-18/W15B-77: under a centime every budget, estimate and spend reads 'less than CHF 0.01'; 0 stays CHF 0.00; the wrap-up note says it once",
+   "holds": true,
+   "note": "Bench Inbox titles, log start lines and the Tasks column; UI unit tests; the budget-pause wrap-up test was updated in the same commit."
+  },
+  {
+   "claim": "W15B-12: the Done line counts the folder wait, conflicts and LEFT_TO_YOU outcomes as 'need you on the Overview', never as waiting to be merged",
+   "holds": true,
+   "note": "Real-daemon case fails at base and passes now. The polish-words case changed to '... and 2 need you on the Overview.' Walk 6 (5 plain waits) still reads 'Done: all 5 tasks. 5 pull requests wait for you to merge.'"
+  },
+  {
+   "claim": "W15-66/W15-65/W15-78/W15-67: credential-wait sentences promise only what is kept; the project line names the wait now; true across a restart",
+   "holds": true,
+   "note": "Real-daemon case composes twice on one home. Fails at base ('... and starts by itself.'). Not walked on bench-api; left for live check 3."
+  },
+  {
+   "claim": "W15B-13: no UUID in commit bodies, intake commit, PR comment, PR body or the refusal",
+   "holds": true,
+   "note": "Bench bare repo commit bodies and the 409 message checked; intake unit asserts the PR body and comment. Nothing parses the dropped 'Task <id>.' line (openedForAnotherTask reads PR bodies)."
+  },
+  {
+   "claim": "W15B-11: head-moved card titled by what happened, sentence and Details name GitHub and the row's Redo; Redo withdraws it",
+   "holds": true,
+   "note": "Real-daemon case; ADR 0111 amendment dated 2026-11-09."
+  },
+  {
+   "claim": "W15B-14/W15B-79: log names the card kind; needs_human says 'has questions' only when it asked; the review-only pass gets one line",
+   "holds": false,
+   "note": "The words are right (bench and units). The review-only line's event leaves a stale task in flight after the verdict (blocking)."
+  },
+  {
+   "claim": "W15-57: budget card items plain and cut at a word",
+   "holds": true,
+   "note": "Bench guide card has no backticks or cut words."
+  },
+  {
+   "claim": "W15-60/W15B-19: Details lines in a person's words; session review sets work against the estimate, reviews apart",
+   "holds": true,
+   "note": "Bench Details: 'Plan: 3 tasks, about CHF 0.04. 3 ready tasks...' and the metrics line. tsx evaluation: killed reads 'Stopped by you during \"X\" (CHF 0.01).'"
+  },
+  {
+   "claim": "W15B-10: chip says 'Ended: N paused', also after a restart",
+   "holds": true,
+   "note": "Bench before and after restart-daemon; real-daemon case with recompose."
+  },
+  {
+   "claim": "W15B-15: no raw level word; a coloured dot with an accessible name",
+   "holds": true,
+   "note": "Bench walk 4: dots labelled 'Needs you', no text. Playwright session.spec updated for the design change."
+  },
+  {
+   "claim": "W15-86: the plan card's merged subscription line names its tasks (up to three, then 'and N more'); one subject per clause",
+   "holds": true,
+   "note": "The writing-rules 100-character bound was removed (see non_blocking)."
+  },
+  {
+   "claim": "W15-43/W15B-78: specialist named in words",
+   "holds": true,
+   "note": "Bench Who column and filter say 'writer'; log says 'The writer started'; plan card says 'writer'."
+  },
+  {
+   "claim": "W15B-17: questions card plain; answer sent as asked",
+   "holds": true,
+   "note": "Bench card with ticks and bold in the question reads plain; the UI test asserts the posted body."
+  },
+  {
+   "claim": "W15B-16: yes/no settings read on/off; session 0 refusal says CHF 0.00 and what to do; the fake equals the daemon",
+   "holds": true,
+   "note": "Bench Settings dialog; commands and real-daemon cases. All boolean specs without display (fast_mode, small_project_mode, voice_alerts) default off."
+  },
+  {
+   "claim": "W15-38/W15-39/W15-72/W15-40/W15B-24",
+   "holds": true,
+   "note": "Bench Start dialog at 0.04, 0.06 and 0.08; plan card totals add up; Docs tab; Changes read-back 'Confirm on this device.'"
+  },
+  {
+   "claim": "W15-52: an empty-change card is two sentences; the failed line never ends in '\u2026.'",
+   "holds": true,
+   "note": "Unit tests only (capabilities and runtime w15-words)."
+  },
+  {
+   "claim": "W15-53: the guide says the copy follows again within about a minute and that a CRLF save counts as your own change",
+   "holds": true,
+   "note": "True: compose.ts:4345-4352 refreshes the copy at each watcher poll (DEFAULT_GITHOST_POLL_MS 60 s), and ProjectDocs.refreshCopy fetches a copy that is not at the head."
+  },
+  {
+   "claim": "Validation: pnpm check, integration, e2e, UI vitest, Playwright and docs-check all green",
+   "holds": true,
+   "note": "Reproduced: check exit 0, 5140 unit; integration 30; e2e 25; UI 1078; Playwright 35; docs-check ok against the base."
+  }
+ ],
+ "non_blocking": [
+  "packages/runtime/test/writing-rules.test.ts:718 dropped the assertion that the plan card's runs-on line is at most 100 characters (design \u00a75 rule 1). Naming up to three titles cut at 40 characters can make the line about 190 characters, and the test now has no bound at all. A wider bound would keep the protection, for example \u2264 100 plus the three quoted titles.",
+  "Sibling of W15B-14, neither fixed nor logged: the session result (summary and chip) still says '\"X\" ... need your decision (Inbox).' for a task whose card is a specialist's questions card. Bench walk 4: '\"Choose the `colours` for the **club** in colours.md\" and \"Draft the poster text in poster.md\" need your decision (Inbox).', while the card says ': the specialist asks you'.",
+  "W15B-79's new fallback applies to a person task that reaches a session. executor.ts:854's summary now gives the log line '\"Confirm the colours with the human\" could not run: Waiting for your answers in the Inbox (2 questions); no specialist ran (Inbox).': a capital mid-sentence, and 'could not run' for a question task. Evaluated with tsx. The path is rare, because server.ts:1142 files person questions at creation. lowerArticle could lower 'Waiting', or the line could name the questions.",
+  "event-lines.ts:99 reads `p.asked === true`, but nothing emits an `asked` field on task.finished, so only the ASKED_YOU regex on the executor's summary decides. That couples the log line to executor.ts:1807's exact wording; an `asked` flag emitted by runner.ts would be sturdier.",
+  "Not in the fixer's new_problems: task commit bodies written to GitHub contain the internal marker '<<<UNTRUSTED_CONTENT source=tool_output origi...' (bench bare repo, commit 7c57ca6 'Check that index.html ...'). This is pre-existing in plainReport and is a sibling of W15B-13 (internals in text written on GitHub).",
+  "The Tasks row for a paused task that spent nothing reads 'CHF 0.00 / of less than CHF 0.01 budget', and the log reads 'it spent CHF 0.00' (the fixer logged the log line). Both are true but awkward.",
+  "real-daemon.test.ts (credential chooser, W15-86) changed an exact toEqual on the merged line to a regex plus title prefixes. It still checks the names, and it is acceptable because the planner chooses the titles.",
+  "The fixer's other new_problems were confirmed or plausible and are left to later areas: number settings still read 'from unset to N'; the fake's generic settings sentence uses the key; voice.ts VOICE_ALERTS_OFF names the key and 'true'; journeys/budget.cjs:238 regex.",
+  "For run C: W15-66's runs-on line 'Press Start and the work starts then.' is shown on New task and Settings, which have no Start button. True for today's behaviour, and D5/D6 rewrite it anyway."
+ ]
+}

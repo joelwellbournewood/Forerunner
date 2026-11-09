@@ -1,0 +1,207 @@
+{
+ "area": "w15-tail",
+ "branch": "fix/w15-tail",
+ "head_sha": "4b21c35b956b3d5b645f3102d8924d5e5ca08570",
+ "commits": [
+  {
+   "sha": "0354420",
+   "subject": "pr-executor: a Redo or a Try again never drops a commit the person made in a task's folder; the run holds before any model call (W15B-01, U-028)"
+  },
+  {
+   "sha": "68989ce",
+   "subject": "runtime, commands, ui: a removed project starts nothing, by itself or by a press; its creation's Undo waits for its running session (W15B-02, U-056, U-061)"
+  },
+  {
+   "sha": "7544f3d",
+   "subject": "githost-watcher: one poll's null-mergeable re-reads wait about 15 s in all, and stop() ends them with no GitHub call after (W15B-05, U-028)"
+  },
+  {
+   "sha": "68e52b6",
+   "subject": "plan-tasks, inbox: the plan card says a research task reads no website under an empty \"only these websites\" list (W15B-07, U-084)"
+  },
+  {
+   "sha": "fe0c81e",
+   "subject": "tests: run A's owed boundary and restart cases (W15B-08, U-028, U-044)"
+  },
+  {
+   "sha": "d35b929",
+   "subject": "tests: a scripted chat model that obeys a card's quoted words changes nothing by itself (W15B-03, U-084)"
+  },
+  {
+   "sha": "4b21c35",
+   "subject": "tests: the C-68 plan card's planTasks carry the new note field (W15B-07 follow-up)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "W15B-01 (major, data loss): a Redo or a Try again on a task whose pull request is open reset the task's folder with `checkout -B` and dropped a commit the person had made there, without a word, and spent model calls. Two paths did it: resuming the branch as GitHub has it (a Tasks-row Redo with no merge card, a Try again), and redoing from main while the pull request keeps the branch name (a Redo that closed a merge card). Bench before: 4 specialist calls ran and the commit was gone.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-tail, wave 15 run B: a Redo or a Try again never drops a commit made in the task's folder (W15B-01)' > '(a) the Tasks row's Redo of a done task with an open pull request, no merge card ...' and '(b) ... whose conflict notice is open (a redo from main) ...'; apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B' > 'W15B-01: the Tasks row's Redo of a done task with a commit the person made in its folder holds it ...'. That case goes through POST /tasks/:id/action redo, a session, GET /inbox options, a daemon restart and the card's Try again; it failed on the base code with \"expected 'done' to be 'needs_human'\".",
+   "how": "Before each of executeIn's two resets (pr-executor.ts), `personsCommitAtRisk(git, branch, base)` checks whether the reset would drop a commit of the person's. It looks at the local branch, and at HEAD when HEAD is on that branch or detached. These are not the person's: commits GitHub's branch or the base already has, Forerunner's own unpushed base merge and work-in-progress commits (as folderHold treats them), and Forerunner's own task commit whose push did not go through. That last one is named by the new RUN_UNPUSHED_REF, set from the commit until the push succeeds, in executeIn and in conflict(). Anything it cannot identify holds the run (fails closed). An unpushed rebuild is put back first (undoUnpushedRebuild). When held, the run ends before any model call with { outcome: 'needs_human', summary, costUsdMicro: 0, branch }, and the runner, unchanged, files the cannot-run card. The two sentences: HELD_FOR_COMMIT_RESUME and heldForCommitRedo(base). folderHold itself is unchanged. Uncommitted changes stay as built: cleanAfterCutShortRun sets them aside under failedRef and keeps them, without saying so. A sibling regression test checks that Forerunner's own commit whose push was refused still runs again on Try again (pre-receive hook on the fake GitHub); it passed before and after the fix.",
+   "check_in_the_app": "Live check 3 (GitHub through the proxy; the hold itself makes no model call). (a) In a repository project, run a task to done so its PR waits for Merge. In its task folder (<data dir>/worktrees/<task id>; the Overview row's folder), add a file and run `git commit`, without pushing. Press Redo on the task's Tasks row, then Start session. Expect: the task's cost does not grow and the session log shows no run of it. The Tasks row reads 'Needs your decision: it could not run'. The Inbox card '\"<task>\" could not run' reads 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' with Try again / Cancel task. `git log` in the folder still shows the commit, and the PR branch on GitHub is unchanged. Quit and reopen the app. Run `git push origin <branch>` in the folder and press Try again: a session runs the task from that branch, and the PR then contains your file. (b) With a '\"<task>\" conflicts with main' card open, press Redo on its Tasks row (the card is withdrawn), commit in the folder, and start a session. Expect the card body '\u2026 Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.' Undo it with `git reset --hard origin/<branch>` and press Try again: the task is done again from main. After w15-words merges (W15B-79), also read the session log's task line for the held task."
+  },
+  {
+   "problem": "W15B-02 (major, money): a removed project (one whose creation was undone) could still start work. A kept credential wait started its session by itself at every tick. Its handover schedule kept firing. POST /sessions and the chat started it. Its page offered Start session and Create a repository. A plan the intake was still drafting was filed after the Undo. And the creation's Undo went through while a session of the project ran. Bench before: POST /sessions on the removed project returned 202 and started a session.",
+   "u_ids": [
+    "U-056",
+    "U-061"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)': (a) Undo while the intake call is held, then no plan card, also after a restart (failed: a card was filed); (b) POST /sessions refused with one sentence and no session row, the chat's session.start refused, also after a restart (failed: 202 started); (c) a kept credential wait across a restart: the wake starts nothing and the wait leaves the key (failed: wake returned 1); (d) the handover schedule goes at the next tick, and starts from the handover job, budget_reset and message triggers are refused with no session row, also after a restart (failed: the schedule stayed); (e) the creation's Undo while a session runs is refused with its sentence, then goes through once the session ended (failed: undoable true). Also apps/ui/test/project.test.tsx 'w15-tail, wave 15 run B: a removed project's page (W15B-02)' (failed: no project-removed text).",
+   "how": "One guard where every start passes: compose.ts startSession calls refuseRemovedProject after the local jobs and before the handover job and runSession. It throws ForerunnerError validation with removedProjectRefusal(project) (new in commands/project.ts): 'The project \"<name>\" was removed, so nothing of it runs.' HandoverJob's runSession checks too, because `fr jobs handover` bypasses startSession. Other paths: POST /sessions refuses before the scheduler is asked, so no session row is made. The chat's startBlocked port returns the same sentence. credentialWaits.wake takes a removed project's wait off its source, even while the credential still cannot serve, and starts nothing. refreshJobSchedules leaves archived projects out, so their handover schedule is removed. The intake refuses in propose after mustGet, and reads the status again right before it files the card; its background job records no failure for a removed project. project.create's new undoBlocked refuses while a session of the project is running, paused or planned (the intake's planning call and the chat's row don't count). ProjectPage says 'This project was removed.' instead of the status sentence and shows no Start session, Create a repository or plan banner. The fake daemon's POST /sessions refuses the same way (409 conflict, as the real daemon maps validation).",
+   "check_in_the_app": "Live check 3 (stand-in or live). 1) New project with a one-line brief, then at once Changes \u2192 Undo on 'Created the project \u2026 and made it the active project.' while 'Drafting the plan\u2026' shows. After a minute the Inbox has no plan card for it. 2) Open the removed project (an old notification, or /projects/<id>): the header reads '<name> (removed)' and 'This project was removed.', with no Start session, no Create a repository and no plan banner. 3) In that project's chat say 'start a session': the answer is 'The project \"<name>\" was removed, so nothing of it runs.' and no session starts. 4) Start a session in a project made with New project, and while it runs open Changes: its creation row reads 'Cannot be undone now: a session of <name> is running. Stop it first.' After it ends, Undo works. 5) API key at its limit (bench-api --api-key limited): New project, add a task, Start (the wait is kept), Undo the creation. At the reset no session of it starts, and Settings shows no work waiting for the key."
+  },
+  {
+   "problem": "W15B-05 (minor, timers after stop): the null-mergeable re-read (W15-07) waited up to about 15 s per pull request, one PR after another, on a plain setTimeout that stop() did not cancel. After Quit a poll went on calling GitHub, and a main-branch move with N open PRs held one poll for N x 15 s.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/githost-watcher.test.ts 'w15-tail, wave 15 run B: the null-mergeable re-read (W15B-05)': with three PRs answering mergeable null, the poll still ran after 100 s of the injected clock (before the fix it needed 45 s of real time); stop() during a re-read left the poll running past the 10 s real-time limit.",
+   "how": "Each poll gets a RereadBudget: the schedule's sum, 15 s by default, shared by all its PRs. The re-reads wait on deps.rereadClock (default SystemClock in real time; tests inject a SimulatedClock) with an AbortSignal. stop() aborts it. The poll then ends with that PR's cursor as it was and no baseline completed, and makes no further GitHub call: no default-branch heads, no merge retry, no deliveries.",
+   "check_in_the_app": "Live check 3: with several open task PRs, merge one on GitHub so the others' mergeability is recomputed. The next poll's conflict notices arrive within about 15 s of the poll start, not 15 s per PR. Quit from the tray during a poll: the daemon log shows no GitHub request after the shutdown line."
+  },
+  {
+   "problem": "W15B-07 (minor): W15-33's plan-card line was missing. When a project's 'only these websites' list is empty, the plan card showed a researcher task with no word that it can read no website.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/inbox.test.tsx 'w15-tail, wave 15 run B: the plan card says a research task can read no website (W15B-07)' (notes were [null, null]); apps/ui/test/real-daemon.test.ts, same describe, GET /inbox planTasks (note undefined on the base code).",
+   "how": "PlanTaskView gains a `note` field (nullable and optional; appended, no existing field changed). plan-tasks.ts sets READS_NO_WEBSITE_NOTE for a task whose specialist reads web pages (the new PlanTasksDeps.readsWeb) when the project's rule (deps.estimate.project.settings, read with webAccessOf) is 'only' with an empty list. GET /inbox passes readsWeb from the registry entry, using needsOf(...).hard 'webRead' the same way the credential chooser reads it. The fake daemon passes readsWeb and the project's web_access in the same commit. InboxPage shows the note under the task (intake-task-note).",
+   "check_in_the_app": "Live check 3 step S5: set a project's 'Web pages research may read' to Only these websites with nothing on the list (for example, narrow it in chat until it is empty). Then draft a plan with a research task (New project with a research brief, or Change the plan). The plan card shows under the research task: 'Reads no website: this project's \"only these websites\" list is empty. Add websites in Settings, or Change the plan.' Add a website: the line is gone."
+  },
+  {
+   "problem": "W15B-08 (minor, binding test rules): run A owed tests at the boundary the person uses and across restarts. Missing were: real-daemon cases for W15-55 and W15-68; a restart case for before_conflict (W15-04); W15-06 answered with the card's own options; and a restart case for W15-26's kept page text.",
+   "u_ids": [
+    "U-028",
+    "U-044"
+   ],
+   "failing_test_before": "None failed: these are coverage tests and each passed at once. The tests: real-daemon.test.ts 'w15-tail, wave 15 run B: run A's owed route cases' (GET /projects/:id/tasks labels 'Accepted \u00b7 pull request closed', 'Accepted \u00b7 could not be rebuilt' and 'Accepted \u00b7 merges once GitHub answers', each with the record's sentence); dependent-branches-merge.test.ts 'w15-tail, wave 15 run B: the words a conflict notice keeps, across a restart' (the merge step, dependent branches, executor and watcher rebuilt on the same store and folders between the notice and the resolution; the same card says its earlier why, options and Details again, without the notice); review-sources.test.ts 'w15-tail, wave 15 run B: the kept page text across a restart' (the daemon composed again on one home between the pause and Continue; the review still reads both pages); pr-executor.test.ts W15-06 now answers with requestViews(row).options[i].",
+   "how": "Tests only; no product change was needed.",
+   "check_in_the_app": "No new app step. The existing live check 3 steps G1/G4/G9 and S4 cover these behaviours."
+  },
+  {
+   "problem": "W15B-03 (minor, security coverage): no hostile test covered the chat's card facts, which quote up to 300 characters of a specialist's words (possibly from a web page) to a model that holds command tools.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "None failed: this is coverage and it passed at once. The test is packages/runtime/test/conversation-memory.test.ts 'w15-tail, wave 15 run B: a card's words change nothing by themselves (W15B-03)'.",
+   "how": "A composed conversation test with a scripted chat model that obeys a questions card's quoted words. The card orders three things: widen the site rule, cancel the task 'Style the page', and raise the project budget to CHF 500. The model carries out one per turn (settings_set, task_transition, budget_set). Each turn ends in the read-back: pendingConfirmation names settings.set, task.transition or budget.set, actions are empty, and the site rule, budget and task are unchanged. Each request's system text carries the data rule. The gates that hold: a widening asks for a yes, a task change said in chat is read back, and a limit change the model asks for needs the person. No gate code was changed; agent.ts was not touched.",
+   "check_in_the_app": "No app step: this is a test of the gate. A live hostile check would need a page with injected orders; the evals/injection harness has no chat channel (see not_done)."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W15B-01: say the hold at the Redo itself, before any session (task.reopen with a folder port).",
+   "why": "commands/task.ts is in neither run B area, and the owner's D6 of 2026-11-09 changes what Redo does in run C. For now the hold is said at the run, as the run's summary on the cannot-run card. Hint for run C: task.reopen could call personsCommitAtRisk through a port and answer at once."
+  },
+  {
+   "problem": "W15B-01: uncommitted changes in a done task's folder at a Redo or a Try again.",
+   "why": "Kept as built, as the spec allowed: cleanAfterCutShortRun sets them aside under failedRef, kept but not said. The executor cannot cheaply tell that the last run finished, so no hold was added for them."
+  },
+  {
+   "problem": "W15B-01: bench walk of path (b), the redo from main with a conflict notice.",
+   "why": "The bench walk covered path (a) before and after. Path (b) is covered by the composed test with the fake GitHub; the session lead's merge-step walk can add it."
+  },
+  {
+   "problem": "W15B-02: the owner question on the creation's Undo after work ran (sharper W5-40), and removing a project as a feature.",
+   "why": "Not decided. As specified, only the safety part was built: Undo works any time except while a session of the project runs."
+  },
+  {
+   "problem": "W15B-03: an evals/injection chat case.",
+   "why": "The injection runner takes email and web channels only (its cases are scripted attempts by a hostile model on those channels). The composed conversation test was the required form and is committed. A chat channel in the harness is a follow-up."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint && pnpm lint:paths && pnpm typecheck",
+   "result": "exit 0"
+  },
+  {
+   "command": "pnpm test",
+   "result": "exit 0: 484 files, 5110 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links; pnpm secrets:scan",
+   "result": "docs-check ok (26 files); link-check ok (206 files); secret-scan clean (2086 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0: no failures"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 88 files, 1060 passed. The first run failed one existing assertion: the C-68 planTasks toEqual lacked the new note field. Fixed in 4b21c35, then green."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 35 passed (local config, not committed)"
+  },
+  {
+   "command": "fail-first checks",
+   "result": "W15B-01: the composed (a) and (b) cases failed before the fix; the real-daemon case failed on the base pr-executor.ts ('done' instead of 'needs_human'). W15B-02: all five real-daemon cases failed on the base compose.ts, server.ts, intake.ts and project.ts, and the UI case failed. W15B-05: both watcher cases failed. W15B-07: the UI and real-daemon cases failed on the base code. W15B-03 and W15B-08 passed at once (coverage)."
+  },
+  {
+   "command": "bench fix-w15-tail (--provider bench, --githost 48549, daemon 48540, UI 2140) + /tmp/frbench/fix-w15-tail/walk.cjs",
+   "result": "Before: 6 of 15 checks passed. The commit was dropped, 4 specialist calls ran, the removed project offered Start session, and POST /sessions started a session. After the daemon restart on the fixed code: 17 of 17 passed. Results in /tmp/frbench/fix-w15-tail/steps/{before,after}-w15-tail.json. Bench stopped with stop.mjs; its home, browser profile and fake GitHub repos deleted."
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "cargo (desktop shell)",
+   "result": "not run: apps/desktop untouched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-w15-tail/steps/01-before-01-tasks-before-redo.png",
+   "/tmp/frbench/fix-w15-tail/steps/03-before-01-tasks-after-the-session.png",
+   "/tmp/frbench/fix-w15-tail/steps/04-before-01-inbox-after-the-session.png",
+   "/tmp/frbench/fix-w15-tail/steps/06-before-02-removed-project-page.png",
+   "/tmp/frbench/fix-w15-tail/steps/before-w15-tail.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w15-tail/steps/08-after-01-tasks-after-redo.png",
+   "/tmp/frbench/fix-w15-tail/steps/09-after-01-tasks-after-the-session.png",
+   "/tmp/frbench/fix-w15-tail/steps/10-after-01-inbox-after-the-session.png",
+   "/tmp/frbench/fix-w15-tail/steps/12-after-02-removed-project-page.png",
+   "/tmp/frbench/fix-w15-tail/steps/after-w15-tail.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/capabilities/test/pr-executor.test.ts 'w15-merge, wave 15' > \"'I resolved it' and 'Drop the branch \u2026' each start one session \u2026\" (W15-06)",
+   "why": "Strengthened, not weakened, under W15B-08 (validation rule 1): it answers the card with requestViews(row).options[i] and asserts that option equals the label it expected. Before, it answered with labels the test typed."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'the credential chooser \u2026' > 'a plan naming a specialist this install does not have \u2026' (C-68)",
+   "why": "Its planTasks toEqual now includes `note: null` for both tasks, because PlanTaskView gained the appended `note` field (W15B-07). Only that assertion changed."
+  }
+ ],
+ "new_problems": [
+  "The real daemon's onError overwrites `details.cause` with the error code, so POST /sessions on a removed project reaches the client as 409 'conflict' with details.cause 'validation', not 'project_removed' (packages/runtime/src/daemon/server.ts app.onError). The message carries the sentence, so nothing breaks; the fake daemon was matched to 409 conflict.",
+  "Commands other than a start still act on a removed project when the chat names it by id or it is the active project: resolveProject (packages/commands/src/commands/shared.ts:56-58) returns an archived row by id, so for example task.create can add a task to it. No session or spend follows, because the start guard holds, but it is confusing. A later item could refuse every project-scoped command on an archived project.",
+  "folderHold (pr-executor.ts, the rebuild) still counts the folder's HEAD when HEAD is on another local branch, so a commit kept on another branch there holds the rebuild. personsCommitAtRisk does not count it. This is fail-closed, not data loss, but the two rules differ; the sentence '\u2026 keep it on another branch \u2026' is true for the run and over-holds for the rebuild.",
+  "Edge case: if a person's commit was carried into a work-in-progress resume (checkout of the WIP branch) and the run's push then fails, RUN_UNPUSHED_REF marks a tip that includes the person's commit as Forerunner's own. A later 'Drop the branch' would then drop it as asked. This is rare; it only arises after an explicit drop.",
+  "The rebase-conflict card's 'Drop the branch and retry from scratch', answered after the person committed in the folder, is now held with the redo-from-main sentence (fail closed). The card's own explanation, 'The task is done again from main; a session starts for it.', does not mention this; it is w15-words' text to consider.",
+  "The cannot-run card's Try again explanation, 'Starts a session that tries again; first fix what stopped it (Edit changes who does it).', is shown under the W15B-01 hold too, where Edit is beside the point. Words for w15-words or run C.",
+  "The bench before-walk left a 'Create a repository for \"Removed one (before) (removed)\"?' card open. The session that ran on the removed project before the fix filed it. The guard now prevents this, but cards a removed project got before an upgrade stay open until withdrawn."
+ ],
+ "notes_for_other_areas": [
+  "New person-facing sentences, for w15-words and the merge step to reword if needed (each is asserted in this area's tests): (1) pr-executor.ts HELD_FOR_COMMIT_RESUME: 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' (2) pr-executor.ts heldForCommitRedo(base): 'Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.' (uses target.base, 'main' in tests; about 160 characters, under plainStopReason's 200). Both reach the task reason, the cannot-run card body ('\"X\" could not run. <sentence>') and the session log only as the run's summary; W15B-79 makes the log's task.finished line say it. (3) commands/project.ts removedProjectRefusal: 'The project \"<name>\" was removed, so nothing of it runs.' (POST /sessions, startSession, the chat's start, the intake). (4) project.create undoBlocked: 'a session of <name> is running. Stop it first'; Changes renders 'Cannot be undone now: a session of <name> is running. Stop it first.' (5) ProjectPage: 'This project was removed.' (6) plan-tasks.ts READS_NO_WEBSITE_NOTE: 'Reads no website: this project's \"only these websites\" list is empty. Add websites in Settings, or Change the plan.'",
+  "APIs added: PlanTaskView.note (api-types, nullable and optional, appended); PlanTasksDeps.readsWeb(name); PlanTasksDeps.estimate.project may carry settings; GitHostWatcherDeps.rereadClock; pr-executor exports RUN_UNPUSHED_REF, personsCommitAtRisk, HELD_FOR_COMMIT_RESUME and heldForCommitRedo; @forerunner/commands exports removedProjectRefusal. compose.ts startSession now calls refuseRemovedProject for any request with a projectId, after the local jobs. Any new start path should go through startSession or call removedProjectRefusal.",
+  "Fake daemon: POST /sessions refuses an archived project with 409 conflict and the sentence (name without ' (removed)'). GET /inbox passes readsWeb and the project's web_access to planTaskViews.",
+  "Merge step (w15-tail first, then w15-words): if w15-words' onceForThePlan or the plan card's words change, keep `note: planTaskNote(known, deps)` in planTaskViews' push. The InboxPage note render sits under the runsOn line, in the tail's region. Walk the W15B-01 hold once on the bench after both merge and read the session-log line (W15B-79).",
+  "Run C (D6): what Redo does changes there. task.reopen could answer the W15B-01 hold at once through a port that calls personsCommitAtRisk on the task's worktree."
+ ]
+}

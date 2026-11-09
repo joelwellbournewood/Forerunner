@@ -1,0 +1,136 @@
+{
+ "area": "w15-tail",
+ "branch": "fix/w15-tail",
+ "head_sha": "c2433dd402da0cb19871a3f1bb497f51724360b5",
+ "commits": [
+  {
+   "sha": "9f49cd6",
+   "subject": "pr-executor: a Try again of a task whose run opened no pull request holds for the person's commit too (W15B-01, U-028)"
+  },
+  {
+   "sha": "c2433dd",
+   "subject": "commands: the creation's Undo says in true words what the project's session is doing (W15B-02, U-056)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (W15B-01 sibling, data loss). A Try again of a task whose earlier run opened no pull request still reset the task's branch with `checkout -B` from origin/main. The run may have failed, timed out, changed nothing or had its push refused. The branch keeps its name when no pull request was ever opened, so a commit the person made in the task's folder was dropped without a word and a run was spent. The reviewer's bench walk 3 showed it: 'My FAQ by hand' ended on no branch. Two things caused it. executeIn only asked personsCommitAtRisk before the start from the base when a pull request was open. And personsCommitAtRisk returned false whenever GitHub had no branch of the task, so it failed open.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-tail, wave 15 run B: a Redo or a Try again never drops a commit made in the task's folder (W15B-01)' > '(c) a Try again of a task whose earlier run opened no pull request ...' failed with \"expected '' to contain 'fr/8c0aa3c1-write-the-faq'\". apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B' > 'W15B-01 (review of fix/w15-tail): the failed card's Try again ...' failed on fix/w15-tail with \"expected 'done' to be 'needs_human'\"; that case goes through the failed card's Try again, the hold, a daemon restart, keeping the commit on another branch, and the cannot-run card's Try again. packages/capabilities/test/pr-executor.test.ts '... what resetting a task's branch would drop' > 'a commit of the person's on no branch past Forerunner's rebuild ...' failed with \"expected 'in_review' to be 'needs_human'\" (the reviewer's undoUnpushedRebuild point).",
+   "how": "Every start from the base in executeIn now asks, whatever the pull request. The resume path is unchanged and still asks. personsCommitAtRisk(git, branch) was rewritten: it lists the commits of the task's local branch, and of HEAD when HEAD is on that branch or on no branch, that nothing else keeps (new GitOps.commitsOnlyIn). Kept, so not at risk:\n- every branch on GitHub;\n- the task branch's former tips on GitHub (new GitOps.formerTips, its remote-tracking reflog). This also ends a false hold the fixer's version had when the person rewrote the branch on GitHub;\n- the folder's other local branches, so the card's 'keep it on another branch' now works with `git branch x` alone;\n- RUN_UNPUSHED_REF, REBUILD_PENDING_REF, DEPS_BASE_REF and the held dependencies.\nOf the commits left, two kinds are not the person's: work in progress, and a merge that holds nothing of its own. The second uses new GitOps.mergeAddsNothing: the merge's tree equals a clean merge-tree of its parents. Where git is older than 2.38, Forerunner's merge subjects decide instead. Anything else, or more than 200 commits, holds the run with heldForCommitRedo(base). That is fail closed: no model call, CHF 0, nothing reset or pushed. Sibling (review non-blocking): undoUnpushedRebuild no longer runs `checkout -B` while HEAD is on no branch past the pending rebuild; the hold then reads that commit. Also from the review: the R-dirtyworktree JSDoc is back above cleanAfterCutShortRun. ADR 0111's w15-tail amendment, capabilities.md and the user guide now cover the third reset, what counts as kept and what the person does. Sibling tests passed before and after: Forerunner's own commit whose first push was refused (no pull request) runs again on Try again, and a dependent task whose first run changed nothing (Forerunner's dependency merge on its branch) runs again. Unit cases of personsCommitAtRisk cover a fresh folder, the person's commit kept or not, Forerunner's own and work-in-progress commits, clean and hand-made merges, a branch rewritten on GitHub, and HEAD on another branch.",
+   "check_in_the_app": "Live check 3 (GitHub through the proxy; the hold itself makes no model call).\n1. In a repository project, add a task with one line and make its run fail before any pull request. Easiest is to stop it with Stop now during its first run, or let the critic fail it so no PR opens. Check on GitHub that the branch fr/<id>-... does not exist.\n2. In <data dir>/worktrees/<task id>, add a file and run `git commit` without pushing.\n3. Press Try again on its Inbox card. Expect: the task's cost does not grow and the session log has no run of it. The row reads 'Needs your decision: it could not run'. The card '\"<task>\" could not run' reads 'Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.' with Try again and Cancel task. `git log` in the folder still shows the commit.\n4. Quit and reopen the app; the card is still there.\n5. Run `git branch my-copy` in the folder, then press Try again. The task runs from main and opens its PR without your commit, and `git log my-copy` still has it.\nAlso re-run the fixer's steps (a) and (b), which use the same check."
+  },
+  {
+   "problem": "Review non-blocking (W15B-02, design \u00a75 rule 9). The creation's Undo is refused while a session of the project is running, paused or about to start, but it said 'a session of X is running. Stop it first' for all three. A paused session is one told 'Stop after this task' (the session page's 'Stopping after this task'), so the line was not true for it.",
+   "u_ids": [
+    "U-056"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)' > '(e, stopping after its task) ...' failed on fix/w15-tail's project.ts with \"expected 'a session of Garden club is running. \u2026' to be '\u2026 is stopping after its task \u2026'\". The case checks GET /changes undoBlockedReason, then that POST undo is refused with it, then Stop now, then that the Undo goes through.",
+   "how": "runningSessionOf now returns the state, running first. undoBlocked says 'is running. Stop it first' (unchanged), 'is stopping after its task. Stop it now, or wait for it to end' or 'is starting. Stop it first'. commands.md was updated. There is no restart case: session recovery ends the sessions a previous daemon left, so this state does not outlive a restart.",
+   "check_in_the_app": "Live check 3: start a session in a project made with New project. While it runs, open Changes: the creation row reads 'Cannot be undone now: a session of <name> is running. Stop it first.'. Press 'Stop after this task' on the session, open Changes again before its task ends, and expect '... is stopping after its task. Stop it now, or wait for it to end.' with no Undo button. Press Stop now, then Undo goes through."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Review non-blocking items left as they are: the session log's 'The coder started \"X\"' line for a held task, and the cannot-run card's Try again explanation '(Edit changes who does it)'. The bench screenshot f04 shows that explanation under the hold.",
+   "why": "Both are w15-words' text (runner/event-lines, card option explanations). Run B's rules keep this area out of those files."
+  },
+  {
+   "problem": "Review non-blocking: the W15B-08 before_conflict restart case rebuilds the services on the same store object instead of composing the daemon twice on one home.",
+   "why": "It is not a defect: the card rows carry the state, and the reviewer called it likely sufficient. Rewriting it as a two-composition real-daemon case is outside the blocking fix; it is left for the merge step or a later pass."
+  },
+  {
+   "problem": "Review non-blocking: commit 68e52b6 does not pass on its own until 4b21c35 (the C-68 toEqual), which breaks bisect.",
+   "why": "The fixer's commits were not rewritten, since history should not change under review. The session lead can squash 4b21c35 into 68e52b6 at merge."
+  },
+  {
+   "problem": "Review non-blocking: a removed project's page still offers New task, Save note, the chat and 'Research reads \u00b7 Change'.",
+   "why": "Nothing on it spends money, because the start guard holds. Refusing every project-scoped command on an archived project is the fixer's new_problems[1], and is a later item."
+  },
+  {
+   "problem": "Review non-blocking: work in progress resumed with a person's commit on top carries that commit into the run's push. This happens on the checkout of the local branch, not a reset.",
+   "why": "Nothing is dropped, so the data-loss rule is met. Holding instead of carrying it along is the open owner question 'hold or bring along'. Left as built."
+  },
+  {
+   "problem": "Review blocking item path (b), the redo from main with a conflict notice, was not walked again on this bench.",
+   "why": "The reviewer walked (b) on fix/w15-tail. The composed test (b) still passes, and (b) goes through the same holdForPersonsCommit as the walked paths (a) and (c)."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+   "result": "exit 0: 484 files, 5118 passed, 7 skipped (8 more than the fixer's 5110: 3 composed and 5 pr-executor cases). Lint's 39 warnings are not in changed files. docs:check could not diff against origin/main here."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links",
+   "result": "docs-check ok (27 files); link-check ok (206 files)"
+  },
+  {
+   "command": "pnpm lint && pnpm typecheck; vitest packages/commands (after the final commit)",
+   "result": "exit 0; commands 18 files, 241 passed"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0: no failures"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "exit 0: 88 files, 1062 passed (2 new real-daemon cases)"
+  },
+  {
+   "command": "Playwright (apps/ui)",
+   "result": "not run: no UI source changed, only apps/ui/test/real-daemon.test.ts"
+  },
+  {
+   "command": "fail-first checks",
+   "result": "With fix/w15-tail's pr-executor.ts and git.ts restored, composed (c) failed (\"expected '' to contain 'fr/\u2026'\") and the real-daemon failed-card case failed (\"expected 'done' to be 'needs_human'\"). The rebuild-undo case failed with the guard switched off (\"expected 'in_review' to be 'needs_human'\"). The paused-words case failed on fix/w15-tail's project.ts. The two composed siblings passed before and after."
+  },
+  {
+   "command": "bench fixup-w15-tail (--provider bench, --githost 48569, daemon 48560, UI 2160) + /tmp/frbench/fixup-w15-tail-evidence/walk.cjs",
+   "result": "After the fix, through the UI: failed-first 3/3, failed-again 9/9 (held with the redo sentence, no specialist call, commit kept, GitHub has no branch), restart, failed-keep 6/6 (git branch my-faq, Try again, done from main, PR without the person's commit, my-faq intact), redo (a) 8/8, restart, redo-after 3/3. The first redo-after try pushed nothing because the walk had no token; Try again then held again with no spend, which is correct. undo-running 5/5, undo-paused 5/5. Before evidence for the blocking item is the reviewer's walk 3 (/tmp/frbench/review-w15-tail-steps-walk3/). Bench stopped with stop.mjs and its home deleted; steps and script kept in /tmp/frbench/fixup-w15-tail-evidence/."
+  },
+  {
+   "command": "cargo (desktop shell)",
+   "result": "not run: apps/desktop untouched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-w15-tail-steps-walk3/01-f01-inbox-with-the-failed-card.png",
+   "/tmp/frbench/review-w15-tail-steps-walk3/02-f02-tasks-after-try-again.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/04-f04-inbox-after-the-hold.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/05-f05-tasks-after-the-hold.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/06-f06-inbox-after-the-restart.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/08-f08-tasks-after-try-again.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/11-r03-inbox-after-the-hold.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/17-u02-changes-while-running.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/20-p02-changes-while-paused.png",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/failed-again-after.json",
+   "/tmp/frbench/fixup-w15-tail-evidence/steps/failed-keep-after.json"
+  ]
+ },
+ "tests_changed_for_design": [],
+ "new_problems": [
+  "Pre-existing trap, not data loss: a task branch that exists on GitHub with no pull request and no work in progress (e.g. the person pushed it by hand) is reset locally from main and then pushed without force. GitHub refuses that push as non-fast-forward, so each Try again fails with the push words. This is why the redo sentence does not offer 'push it'. See pr-executor.ts executeIn, the non-resume branch and its `force: !!existingPr || replace || pushedWip`.",
+  "folderHold (the rebuild, W15-02) still treats the folder's other local branches and the task branch's former GitHub tips as at risk, while personsCommitAtRisk does not. The rebuild therefore over-holds in those cases (fail closed). Moving folderHold onto commitsOnlyIn would make the two rules one.",
+  "A Forerunner run whose specialist commits by itself despite the brief ('do not commit') and then fails leaves commits that are not marked own. The next Try again then holds with 'a commit that is not on GitHub' (fail closed, a false hold). It could be closed by marking RUN_UNPUSHED_REF after a failed run, which needs care with the work-in-progress carry case.",
+  "W15B-07's check_in_the_app step S5 ('narrow it in chat until it is empty') cannot be done: Settings and the chat's settings_set both refuse an empty 'only' list (commands/settings.ts:229). The live check needs a stored older value, or should check it by test only."
+ ],
+ "notes_for_other_areas": [
+  "New and changed person-facing sentences, for w15-words and the merge step (each is asserted in this area's tests). (1) Unchanged text, wider use: heldForCommitRedo(base) ('Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.') is now also the hold of a Try again or Redo of a task whose earlier run opened no pull request. (2) commands/project.ts creation undoBlocked: old text 'a session of X is running. Stop it first' for every state. New text: unchanged for running; 'a session of X is stopping after its task. Stop it now, or wait for it to end' for status paused; 'a session of X is starting. Stop it first' for planned. Changes renders each as 'Cannot be undone now: <reason>.'.",
+  "APIs added or changed: GitOps.commitsOnlyIn(rev, keep, max?), GitOps.mergeAddsNothing(rev), GitOps.formerTips(ref). personsCommitAtRisk is now (git, branch); the base argument was dropped. executeIn asks it before every reset, including every start from the base.",
+  "Merge step: the reviewer suggested squashing 4b21c35 into 68e52b6 for bisect. In apps/ui/test/real-daemon.test.ts this area added two `it`s, both inside its own describe blocks ('w15-tail, wave 15 run B' and '... a removed project starts nothing (W15B-02)')."
+ ]
+}

@@ -1,0 +1,1252 @@
+{
+ "wave": 16,
+ "areas": [
+  {
+   "key": "w15-tail",
+   "fix": {
+    "area": "w15-tail",
+    "branch": "fix/w15-tail",
+    "head_sha": "4b21c35b956b3d5b645f3102d8924d5e5ca08570",
+    "commits": [
+     {
+      "sha": "0354420",
+      "subject": "pr-executor: a Redo or a Try again never drops a commit the person made in a task's folder; the run holds before any model call (W15B-01, U-028)"
+     },
+     {
+      "sha": "68989ce",
+      "subject": "runtime, commands, ui: a removed project starts nothing, by itself or by a press; its creation's Undo waits for its running session (W15B-02, U-056, U-061)"
+     },
+     {
+      "sha": "7544f3d",
+      "subject": "githost-watcher: one poll's null-mergeable re-reads wait about 15 s in all, and stop() ends them with no GitHub call after (W15B-05, U-028)"
+     },
+     {
+      "sha": "68e52b6",
+      "subject": "plan-tasks, inbox: the plan card says a research task reads no website under an empty \"only these websites\" list (W15B-07, U-084)"
+     },
+     {
+      "sha": "fe0c81e",
+      "subject": "tests: run A's owed boundary and restart cases (W15B-08, U-028, U-044)"
+     },
+     {
+      "sha": "d35b929",
+      "subject": "tests: a scripted chat model that obeys a card's quoted words changes nothing by itself (W15B-03, U-084)"
+     },
+     {
+      "sha": "4b21c35",
+      "subject": "tests: the C-68 plan card's planTasks carry the new note field (W15B-07 follow-up)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "W15B-01 (major, data loss): a Redo or a Try again on a task whose pull request is open reset the task's folder with `checkout -B` and dropped a commit the person had made there, without a word, and spent model calls. Two paths did it: resuming the branch as GitHub has it (a Tasks-row Redo with no merge card, a Try again), and redoing from main while the pull request keeps the branch name (a Redo that closed a merge card). Bench before: 4 specialist calls ran and the commit was gone.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-tail, wave 15 run B: a Redo or a Try again never drops a commit made in the task's folder (W15B-01)' > '(a) the Tasks row's Redo of a done task with an open pull request, no merge card ...' and '(b) ... whose conflict notice is open (a redo from main) ...'; apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B' > 'W15B-01: the Tasks row's Redo of a done task with a commit the person made in its folder holds it ...'. That case goes through POST /tasks/:id/action redo, a session, GET /inbox options, a daemon restart and the card's Try again; it failed on the base code with \"expected 'done' to be 'needs_human'\".",
+      "how": "Before each of executeIn's two resets (pr-executor.ts), `personsCommitAtRisk(git, branch, base)` checks whether the reset would drop a commit of the person's. It looks at the local branch, and at HEAD when HEAD is on that branch or detached. These are not the person's: commits GitHub's branch or the base already has, Forerunner's own unpushed base merge and work-in-progress commits (as folderHold treats them), and Forerunner's own task commit whose push did not go through. That last one is named by the new RUN_UNPUSHED_REF, set from the commit until the push succeeds, in executeIn and in conflict(). Anything it cannot identify holds the run (fails closed). An unpushed rebuild is put back first (undoUnpushedRebuild). When held, the run ends before any model call with { outcome: 'needs_human', summary, costUsdMicro: 0, branch }, and the runner, unchanged, files the cannot-run card. The two sentences: HELD_FOR_COMMIT_RESUME and heldForCommitRedo(base). folderHold itself is unchanged. Uncommitted changes stay as built: cleanAfterCutShortRun sets them aside under failedRef and keeps them, without saying so. A sibling regression test checks that Forerunner's own commit whose push was refused still runs again on Try again (pre-receive hook on the fake GitHub); it passed before and after the fix.",
+      "check_in_the_app": "Live check 3 (GitHub through the proxy; the hold itself makes no model call). (a) In a repository project, run a task to done so its PR waits for Merge. In its task folder (<data dir>/worktrees/<task id>; the Overview row's folder), add a file and run `git commit`, without pushing. Press Redo on the task's Tasks row, then Start session. Expect: the task's cost does not grow and the session log shows no run of it. The Tasks row reads 'Needs your decision: it could not run'. The Inbox card '\"<task>\" could not run' reads 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' with Try again / Cancel task. `git log` in the folder still shows the commit, and the PR branch on GitHub is unchanged. Quit and reopen the app. Run `git push origin <branch>` in the folder and press Try again: a session runs the task from that branch, and the PR then contains your file. (b) With a '\"<task>\" conflicts with main' card open, press Redo on its Tasks row (the card is withdrawn), commit in the folder, and start a session. Expect the card body '\u2026 Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.' Undo it with `git reset --hard origin/<branch>` and press Try again: the task is done again from main. After w15-words merges (W15B-79), also read the session log's task line for the held task."
+     },
+     {
+      "problem": "W15B-02 (major, money): a removed project (one whose creation was undone) could still start work. A kept credential wait started its session by itself at every tick. Its handover schedule kept firing. POST /sessions and the chat started it. Its page offered Start session and Create a repository. A plan the intake was still drafting was filed after the Undo. And the creation's Undo went through while a session of the project ran. Bench before: POST /sessions on the removed project returned 202 and started a session.",
+      "u_ids": [
+       "U-056",
+       "U-061"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)': (a) Undo while the intake call is held, then no plan card, also after a restart (failed: a card was filed); (b) POST /sessions refused with one sentence and no session row, the chat's session.start refused, also after a restart (failed: 202 started); (c) a kept credential wait across a restart: the wake starts nothing and the wait leaves the key (failed: wake returned 1); (d) the handover schedule goes at the next tick, and starts from the handover job, budget_reset and message triggers are refused with no session row, also after a restart (failed: the schedule stayed); (e) the creation's Undo while a session runs is refused with its sentence, then goes through once the session ended (failed: undoable true). Also apps/ui/test/project.test.tsx 'w15-tail, wave 15 run B: a removed project's page (W15B-02)' (failed: no project-removed text).",
+      "how": "One guard where every start passes: compose.ts startSession calls refuseRemovedProject after the local jobs and before the handover job and runSession. It throws ForerunnerError validation with removedProjectRefusal(project) (new in commands/project.ts): 'The project \"<name>\" was removed, so nothing of it runs.' HandoverJob's runSession checks too, because `fr jobs handover` bypasses startSession. Other paths: POST /sessions refuses before the scheduler is asked, so no session row is made. The chat's startBlocked port returns the same sentence. credentialWaits.wake takes a removed project's wait off its source, even while the credential still cannot serve, and starts nothing. refreshJobSchedules leaves archived projects out, so their handover schedule is removed. The intake refuses in propose after mustGet, and reads the status again right before it files the card; its background job records no failure for a removed project. project.create's new undoBlocked refuses while a session of the project is running, paused or planned (the intake's planning call and the chat's row don't count). ProjectPage says 'This project was removed.' instead of the status sentence and shows no Start session, Create a repository or plan banner. The fake daemon's POST /sessions refuses the same way (409 conflict, as the real daemon maps validation).",
+      "check_in_the_app": "Live check 3 (stand-in or live). 1) New project with a one-line brief, then at once Changes \u2192 Undo on 'Created the project \u2026 and made it the active project.' while 'Drafting the plan\u2026' shows. After a minute the Inbox has no plan card for it. 2) Open the removed project (an old notification, or /projects/<id>): the header reads '<name> (removed)' and 'This project was removed.', with no Start session, no Create a repository and no plan banner. 3) In that project's chat say 'start a session': the answer is 'The project \"<name>\" was removed, so nothing of it runs.' and no session starts. 4) Start a session in a project made with New project, and while it runs open Changes: its creation row reads 'Cannot be undone now: a session of <name> is running. Stop it first.' After it ends, Undo works. 5) API key at its limit (bench-api --api-key limited): New project, add a task, Start (the wait is kept), Undo the creation. At the reset no session of it starts, and Settings shows no work waiting for the key."
+     },
+     {
+      "problem": "W15B-05 (minor, timers after stop): the null-mergeable re-read (W15-07) waited up to about 15 s per pull request, one PR after another, on a plain setTimeout that stop() did not cancel. After Quit a poll went on calling GitHub, and a main-branch move with N open PRs held one poll for N x 15 s.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/githost-watcher.test.ts 'w15-tail, wave 15 run B: the null-mergeable re-read (W15B-05)': with three PRs answering mergeable null, the poll still ran after 100 s of the injected clock (before the fix it needed 45 s of real time); stop() during a re-read left the poll running past the 10 s real-time limit.",
+      "how": "Each poll gets a RereadBudget: the schedule's sum, 15 s by default, shared by all its PRs. The re-reads wait on deps.rereadClock (default SystemClock in real time; tests inject a SimulatedClock) with an AbortSignal. stop() aborts it. The poll then ends with that PR's cursor as it was and no baseline completed, and makes no further GitHub call: no default-branch heads, no merge retry, no deliveries.",
+      "check_in_the_app": "Live check 3: with several open task PRs, merge one on GitHub so the others' mergeability is recomputed. The next poll's conflict notices arrive within about 15 s of the poll start, not 15 s per PR. Quit from the tray during a poll: the daemon log shows no GitHub request after the shutdown line."
+     },
+     {
+      "problem": "W15B-07 (minor): W15-33's plan-card line was missing. When a project's 'only these websites' list is empty, the plan card showed a researcher task with no word that it can read no website.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/inbox.test.tsx 'w15-tail, wave 15 run B: the plan card says a research task can read no website (W15B-07)' (notes were [null, null]); apps/ui/test/real-daemon.test.ts, same describe, GET /inbox planTasks (note undefined on the base code).",
+      "how": "PlanTaskView gains a `note` field (nullable and optional; appended, no existing field changed). plan-tasks.ts sets READS_NO_WEBSITE_NOTE for a task whose specialist reads web pages (the new PlanTasksDeps.readsWeb) when the project's rule (deps.estimate.project.settings, read with webAccessOf) is 'only' with an empty list. GET /inbox passes readsWeb from the registry entry, using needsOf(...).hard 'webRead' the same way the credential chooser reads it. The fake daemon passes readsWeb and the project's web_access in the same commit. InboxPage shows the note under the task (intake-task-note).",
+      "check_in_the_app": "Live check 3 step S5: set a project's 'Web pages research may read' to Only these websites with nothing on the list (for example, narrow it in chat until it is empty). Then draft a plan with a research task (New project with a research brief, or Change the plan). The plan card shows under the research task: 'Reads no website: this project's \"only these websites\" list is empty. Add websites in Settings, or Change the plan.' Add a website: the line is gone."
+     },
+     {
+      "problem": "W15B-08 (minor, binding test rules): run A owed tests at the boundary the person uses and across restarts. Missing were: real-daemon cases for W15-55 and W15-68; a restart case for before_conflict (W15-04); W15-06 answered with the card's own options; and a restart case for W15-26's kept page text.",
+      "u_ids": [
+       "U-028",
+       "U-044"
+      ],
+      "failing_test_before": "None failed: these are coverage tests and each passed at once. The tests: real-daemon.test.ts 'w15-tail, wave 15 run B: run A's owed route cases' (GET /projects/:id/tasks labels 'Accepted \u00b7 pull request closed', 'Accepted \u00b7 could not be rebuilt' and 'Accepted \u00b7 merges once GitHub answers', each with the record's sentence); dependent-branches-merge.test.ts 'w15-tail, wave 15 run B: the words a conflict notice keeps, across a restart' (the merge step, dependent branches, executor and watcher rebuilt on the same store and folders between the notice and the resolution; the same card says its earlier why, options and Details again, without the notice); review-sources.test.ts 'w15-tail, wave 15 run B: the kept page text across a restart' (the daemon composed again on one home between the pause and Continue; the review still reads both pages); pr-executor.test.ts W15-06 now answers with requestViews(row).options[i].",
+      "how": "Tests only; no product change was needed.",
+      "check_in_the_app": "No new app step. The existing live check 3 steps G1/G4/G9 and S4 cover these behaviours."
+     },
+     {
+      "problem": "W15B-03 (minor, security coverage): no hostile test covered the chat's card facts, which quote up to 300 characters of a specialist's words (possibly from a web page) to a model that holds command tools.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "None failed: this is coverage and it passed at once. The test is packages/runtime/test/conversation-memory.test.ts 'w15-tail, wave 15 run B: a card's words change nothing by themselves (W15B-03)'.",
+      "how": "A composed conversation test with a scripted chat model that obeys a questions card's quoted words. The card orders three things: widen the site rule, cancel the task 'Style the page', and raise the project budget to CHF 500. The model carries out one per turn (settings_set, task_transition, budget_set). Each turn ends in the read-back: pendingConfirmation names settings.set, task.transition or budget.set, actions are empty, and the site rule, budget and task are unchanged. Each request's system text carries the data rule. The gates that hold: a widening asks for a yes, a task change said in chat is read back, and a limit change the model asks for needs the person. No gate code was changed; agent.ts was not touched.",
+      "check_in_the_app": "No app step: this is a test of the gate. A live hostile check would need a page with injected orders; the evals/injection harness has no chat channel (see not_done)."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "W15B-01: say the hold at the Redo itself, before any session (task.reopen with a folder port).",
+      "why": "commands/task.ts is in neither run B area, and the owner's D6 of 2026-11-09 changes what Redo does in run C. For now the hold is said at the run, as the run's summary on the cannot-run card. Hint for run C: task.reopen could call personsCommitAtRisk through a port and answer at once."
+     },
+     {
+      "problem": "W15B-01: uncommitted changes in a done task's folder at a Redo or a Try again.",
+      "why": "Kept as built, as the spec allowed: cleanAfterCutShortRun sets them aside under failedRef, kept but not said. The executor cannot cheaply tell that the last run finished, so no hold was added for them."
+     },
+     {
+      "problem": "W15B-01: bench walk of path (b), the redo from main with a conflict notice.",
+      "why": "The bench walk covered path (a) before and after. Path (b) is covered by the composed test with the fake GitHub; the session lead's merge-step walk can add it."
+     },
+     {
+      "problem": "W15B-02: the owner question on the creation's Undo after work ran (sharper W5-40), and removing a project as a feature.",
+      "why": "Not decided. As specified, only the safety part was built: Undo works any time except while a session of the project runs."
+     },
+     {
+      "problem": "W15B-03: an evals/injection chat case.",
+      "why": "The injection runner takes email and web channels only (its cases are scripted attempts by a hostile model on those channels). The composed conversation test was the required form and is committed. A chat channel in the harness is a follow-up."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm lint && pnpm lint:paths && pnpm typecheck",
+      "result": "exit 0"
+     },
+     {
+      "command": "pnpm test",
+      "result": "exit 0: 484 files, 5110 passed, 7 skipped"
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links; pnpm secrets:scan",
+      "result": "docs-check ok (26 files); link-check ok (206 files); secret-scan clean (2086 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "pnpm test:injection",
+      "result": "exit 0: no failures"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 88 files, 1060 passed. The first run failed one existing assertion: the C-68 planTasks toEqual lacked the new note field. Fixed in 4b21c35, then green."
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 35 passed (local config, not committed)"
+     },
+     {
+      "command": "fail-first checks",
+      "result": "W15B-01: the composed (a) and (b) cases failed before the fix; the real-daemon case failed on the base pr-executor.ts ('done' instead of 'needs_human'). W15B-02: all five real-daemon cases failed on the base compose.ts, server.ts, intake.ts and project.ts, and the UI case failed. W15B-05: both watcher cases failed. W15B-07: the UI and real-daemon cases failed on the base code. W15B-03 and W15B-08 passed at once (coverage)."
+     },
+     {
+      "command": "bench fix-w15-tail (--provider bench, --githost 48549, daemon 48540, UI 2140) + /tmp/frbench/fix-w15-tail/walk.cjs",
+      "result": "Before: 6 of 15 checks passed. The commit was dropped, 4 specialist calls ran, the removed project offered Start session, and POST /sessions started a session. After the daemon restart on the fixed code: 17 of 17 passed. Results in /tmp/frbench/fix-w15-tail/steps/{before,after}-w15-tail.json. Bench stopped with stop.mjs; its home, browser profile and fake GitHub repos deleted."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+     },
+     {
+      "command": "cargo (desktop shell)",
+      "result": "not run: apps/desktop untouched"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-w15-tail/steps/01-before-01-tasks-before-redo.png",
+      "/tmp/frbench/fix-w15-tail/steps/03-before-01-tasks-after-the-session.png",
+      "/tmp/frbench/fix-w15-tail/steps/04-before-01-inbox-after-the-session.png",
+      "/tmp/frbench/fix-w15-tail/steps/06-before-02-removed-project-page.png",
+      "/tmp/frbench/fix-w15-tail/steps/before-w15-tail.json"
+     ],
+     "after": [
+      "/tmp/frbench/fix-w15-tail/steps/08-after-01-tasks-after-redo.png",
+      "/tmp/frbench/fix-w15-tail/steps/09-after-01-tasks-after-the-session.png",
+      "/tmp/frbench/fix-w15-tail/steps/10-after-01-inbox-after-the-session.png",
+      "/tmp/frbench/fix-w15-tail/steps/12-after-02-removed-project-page.png",
+      "/tmp/frbench/fix-w15-tail/steps/after-w15-tail.json"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "packages/capabilities/test/pr-executor.test.ts 'w15-merge, wave 15' > \"'I resolved it' and 'Drop the branch \u2026' each start one session \u2026\" (W15-06)",
+      "why": "Strengthened, not weakened, under W15B-08 (validation rule 1): it answers the card with requestViews(row).options[i] and asserts that option equals the label it expected. Before, it answered with labels the test typed."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts 'the credential chooser \u2026' > 'a plan naming a specialist this install does not have \u2026' (C-68)",
+      "why": "Its planTasks toEqual now includes `note: null` for both tasks, because PlanTaskView gained the appended `note` field (W15B-07). Only that assertion changed."
+     }
+    ],
+    "new_problems": [
+     "The real daemon's onError overwrites `details.cause` with the error code, so POST /sessions on a removed project reaches the client as 409 'conflict' with details.cause 'validation', not 'project_removed' (packages/runtime/src/daemon/server.ts app.onError). The message carries the sentence, so nothing breaks; the fake daemon was matched to 409 conflict.",
+     "Commands other than a start still act on a removed project when the chat names it by id or it is the active project: resolveProject (packages/commands/src/commands/shared.ts:56-58) returns an archived row by id, so for example task.create can add a task to it. No session or spend follows, because the start guard holds, but it is confusing. A later item could refuse every project-scoped command on an archived project.",
+     "folderHold (pr-executor.ts, the rebuild) still counts the folder's HEAD when HEAD is on another local branch, so a commit kept on another branch there holds the rebuild. personsCommitAtRisk does not count it. This is fail-closed, not data loss, but the two rules differ; the sentence '\u2026 keep it on another branch \u2026' is true for the run and over-holds for the rebuild.",
+     "Edge case: if a person's commit was carried into a work-in-progress resume (checkout of the WIP branch) and the run's push then fails, RUN_UNPUSHED_REF marks a tip that includes the person's commit as Forerunner's own. A later 'Drop the branch' would then drop it as asked. This is rare; it only arises after an explicit drop.",
+     "The rebase-conflict card's 'Drop the branch and retry from scratch', answered after the person committed in the folder, is now held with the redo-from-main sentence (fail closed). The card's own explanation, 'The task is done again from main; a session starts for it.', does not mention this; it is w15-words' text to consider.",
+     "The cannot-run card's Try again explanation, 'Starts a session that tries again; first fix what stopped it (Edit changes who does it).', is shown under the W15B-01 hold too, where Edit is beside the point. Words for w15-words or run C.",
+     "The bench before-walk left a 'Create a repository for \"Removed one (before) (removed)\"?' card open. The session that ran on the removed project before the fix filed it. The guard now prevents this, but cards a removed project got before an upgrade stay open until withdrawn."
+    ],
+    "notes_for_other_areas": [
+     "New person-facing sentences, for w15-words and the merge step to reword if needed (each is asserted in this area's tests): (1) pr-executor.ts HELD_FOR_COMMIT_RESUME: 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' (2) pr-executor.ts heldForCommitRedo(base): 'Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.' (uses target.base, 'main' in tests; about 160 characters, under plainStopReason's 200). Both reach the task reason, the cannot-run card body ('\"X\" could not run. <sentence>') and the session log only as the run's summary; W15B-79 makes the log's task.finished line say it. (3) commands/project.ts removedProjectRefusal: 'The project \"<name>\" was removed, so nothing of it runs.' (POST /sessions, startSession, the chat's start, the intake). (4) project.create undoBlocked: 'a session of <name> is running. Stop it first'; Changes renders 'Cannot be undone now: a session of <name> is running. Stop it first.' (5) ProjectPage: 'This project was removed.' (6) plan-tasks.ts READS_NO_WEBSITE_NOTE: 'Reads no website: this project's \"only these websites\" list is empty. Add websites in Settings, or Change the plan.'",
+     "APIs added: PlanTaskView.note (api-types, nullable and optional, appended); PlanTasksDeps.readsWeb(name); PlanTasksDeps.estimate.project may carry settings; GitHostWatcherDeps.rereadClock; pr-executor exports RUN_UNPUSHED_REF, personsCommitAtRisk, HELD_FOR_COMMIT_RESUME and heldForCommitRedo; @forerunner/commands exports removedProjectRefusal. compose.ts startSession now calls refuseRemovedProject for any request with a projectId, after the local jobs. Any new start path should go through startSession or call removedProjectRefusal.",
+     "Fake daemon: POST /sessions refuses an archived project with 409 conflict and the sentence (name without ' (removed)'). GET /inbox passes readsWeb and the project's web_access to planTaskViews.",
+     "Merge step (w15-tail first, then w15-words): if w15-words' onceForThePlan or the plan card's words change, keep `note: planTaskNote(known, deps)` in planTaskViews' push. The InboxPage note render sits under the runsOn line, in the tail's region. Walk the W15B-01 hold once on the bench after both merge and read the session-log line (W15B-79).",
+     "Run C (D6): what Redo does changes there. task.reopen could answer the W15B-01 hold at once through a port that calls personsCommitAtRisk on the task's worktree."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Setup: worktree detached at fix/w15-tail (4b21c35), pnpm install --frozen-lockfile, Playwright local config copied. Bench \"review-w15-tail\" (daemon 48550, UI 2150) started from the worktree: --provider bench with the fake GitHub on 48559 (bench/seeded) and FORERUNNER_BENCH_PLAN=research. Later restarts used FORERUNNER_BENCH_DELAY_MS=6000 to slow the stand-in, then bench-api --api-key limited with FORERUNNER_BENCH_API_LIMIT_MIN=2, then FORERUNNER_BENCH_FAIL for a sibling check. Walk scripts: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/{walk,wake,failed,home}.cjs. Screenshots and texts: /tmp/frbench/review-w15-tail-steps-walk1/, -walk2/, -walk3/. Bench stopped with stop.mjs; its home, fake GitHub repos and browser profile are deleted.\n\nW15B-01 (a) [walk1 01-11]: project on bench/seeded, task \"Write the page in page.html\". Pressed Start session, then the dialog's Start, and the task finished done with PR #2. As the person I committed my-notes.txt in <home>/worktrees/<task>. On the Tasks row I pressed Redo, then the dialog's Redo. I added a second task and started a session from the UI. Results:\n- The commit is still on the task branch and GitHub's branch is unchanged.\n- No specialist call was made for the held task.\n- The row reads 'Needs your decision: it could not run' with Answer and Cancel.\n- The other task was done in the same session.\n- The Inbox card '\"Write the page in page.html\" could not run' reads 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' with Try again and Cancel task.\nI restarted the daemon (restart-daemon.mjs) and the card was still there. I pushed the branch as the person and pressed Try again in the Inbox: the task ran to done, and GitHub's branch holds my commit and my-notes.txt.\n\nW15B-01 (b) [walk1 12-20]: two tasks writing index.html, then Merge pressed on the Overview for #4. Sam pushed an index.html change to main on the fake GitHub, and the watcher's poll filed '\"Write the welcome page in index.html\" conflicts with main'. I pressed Redo on the Tasks row, committed mine.txt in the folder and started a session. The task was held with the redo-from-main sentence: commit kept, GitHub's branch unchanged, no specialist call. After `reset --hard origin/<branch>` and Try again, the task was done again from main.\n\nW15B-02 [walk1 21-44, walk2]:\n- New project dialog with a brief, then Undo in Changes. At 400 ms per reply the plan was filed before the Undo, and the Undo withdrew it. With replies slowed to 6 s, the Undo landed during drafting: the daemon log says 'no plan filed: its project was removed' and no card appeared.\n- The removed project's page reads '<name> (removed)' and 'This project was removed.', with no Start session, no Create a repository and no plan banner (screenshot 25).\n- POST /sessions on it returned 409 with the sentence and made no session row.\n- In its chat, `tool: session_start {}` was refused with the same sentence and made no session row.\n- While a session of a new project ran, its creation row in Changes read 'Cannot be undone now: a session of Review busy one is running. Stop it first.' with no Undo button (screenshot 42). After the session ended, Undo worked.\n- Home lists no removed project.\n- On bench-api with a limited key, a session met the wait ('Waits until 16:27, your API key's limit'), then I pressed Undo on the creation. Over 200 s past the reset no session started and no model request was made (3 before, 3 after). The key's stored limits no longer list the wait.\n\nW15B-07 [walk1 45-52]: research plan on the bench. Settings and the chat both refuse an empty 'only' list ('Only these websites needs at least one website, or research would be stuck.'), so I wrote the stored setting into the bench database. The plan card then shows the note under the researcher task only (screenshot 52). After 'only example.com' was confirmed through the chat's Yes, the note is gone.\n\nSibling check [walk3]: a task whose runs all failed (FORERUNNER_BENCH_FAIL; no PR, branch never pushed). I committed faq.md in its folder, restarted without the failure and pressed Try again on the failed card. The commit was dropped: reflog shows 'branch: Reset to origin/main' right after 'commit: My FAQ by hand', no branch contains it, and the PR branch lacks it. See blocking[0].\n\nScreens match core-experience for this area (one sentence, Try again and Cancel task with explanations, CHF only, no ids). Work continues by itself where the design says: the session goes on with other tasks, and after Try again the task runs on.",
+    "blocking": [
+     {
+      "issue": "W15B-01 sibling not covered: a Try again on a task whose earlier run opened no pull request (failed, timed out, empty, push refused) still resets the task's branch with `checkout -B` from origin/main. It drops a commit the person made in the task folder without a word and spends a run. This is the same data-loss class as the item. The branch's own user guide and ADR 0111 amendment promise 'A Redo or a Try again never drops your commit' (design section 5 rule 9). Validation rule 8 (siblings: fix them or log them) was not met: neither not_done nor new_problems mentions this path.",
+      "where": "packages/capabilities/src/githost/pr-executor.ts:1148-1173 (the non-resume branch holds only `if (existingPr)` before `git.createBranch(branch, depsBase ?? origin/<base>)`); :1741-1749 freshBranch keeps the same name when no pull request was ever opened on it; :345 personsCommitAtRisk `if (!hostHead) return false;` (fails open when GitHub has no branch, so calling it at that site would not hold either)",
+      "evidence": "Bench walk, /tmp/frbench/review-w15-tail-steps-walk3/ and scratchpad/walk/failed.cjs.\n1. Project on bench/seeded with task 'Write the faq in faq.md', run with FORERUNNER_BENCH_FAIL. The task failed: no PR, branch fr/5550049e-write-the-faq-in-faq.md not on the fake GitHub, and the failed card offers Try again.\n2. As the person, wrote faq.md in <home>/worktrees/<task> and committed it (ee60aa7, 'My FAQ by hand').\n3. Restarted the daemon without the failure and pressed Try again in the Inbox. The task ran to done.\n4. Results: `branch --contains ee60aa7` is empty, the host branch head 5c2761c does not contain it, and faq.md now holds the run's text. Reflog: 'ee60aa7 commit: My FAQ by hand' then 'b58d477 branch: Reset to origin/main'.\nThe fix's tests cover only the open-PR resume and the redo from main.",
+      "expected": "Hold the run before any model call whenever the `checkout -B` in the non-resume branch would move an existing local branch of the same name, not only when a PR is open. In personsCommitAtRisk, when origin/<branch> does not exist, read against origin/<base> together with RUN_UNPUSHED_REF and work in progress, and hold what it cannot identify (fail closed). The redo-from-main sentence fits that path. Add a failing-first composed test, and a real-daemon case: failed task (no PR), the person commits in its folder, Try again holds with the sentence and keeps the commit, then after undo or keep (and a daemon restart) the run goes on. The user guide and ADR text should only promise what is built."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "W15B-01: the composed (a) and (b) cases fail on the base code and pass with the fix",
+      "holds": true,
+      "note": "With base pr-executor.ts, (a) gave \"expected '' to contain 'fr/750d25bb-write-the-page'\" and (b) failed the same way; both pass on fix/w15-tail."
+     },
+     {
+      "claim": "W15B-01: the real-daemon case fails on base with \"expected 'done' to be 'needs_human'\" and passes with the fix (route, Inbox options, restart, Try again)",
+      "holds": true,
+      "note": "Reproduced exactly; walked on the bench through the UI, including the restart, the person's push and Try again."
+     },
+     {
+      "claim": "W15B-01: path (b), the redo from main with an open conflict notice, holds with its own sentence",
+      "holds": true,
+      "note": "Walked on the bench (the fixer had not walked it): held, commit kept, no call; undo then Try again redid it from main."
+     },
+     {
+      "claim": "W15B-01: a Redo or a Try again never drops a commit the person made in a task's folder (commit subject, user guide, ADR 0111 amendment)",
+      "holds": false,
+      "note": "A Try again of a task whose earlier run opened no PR still drops it (blocking[0])."
+     },
+     {
+      "claim": "W15B-01: Forerunner's own unpushed task commit is not held (sibling test with a pre-receive hook)",
+      "holds": true,
+      "note": "Passes before and after, as reported."
+     },
+     {
+      "claim": "W15B-02: all five real-daemon cases (a) to (e) and the ProjectPage UI case fail on base and pass with the fix",
+      "holds": true,
+      "note": "Reverting compose.ts, server.ts, intake.ts, project.ts and ProjectPage.tsx to base gave the reported failures (a card filed, 202 started, wake 1, schedule kept, undoable true, no project-removed)."
+     },
+     {
+      "claim": "W15B-02: a removed project starts nothing from a press, the chat, a credential wake, the handover schedule or a plan drafted during the Undo, and its creation's Undo waits for a running session",
+      "holds": true,
+      "note": "Bench: race with 6 s replies ('no plan filed'), page, POST /sessions 409, chat tool refusal, Changes blocked line, and on bench-api no session or model call after the reset."
+     },
+     {
+      "claim": "W15B-05: the re-reads share about 15 s per poll on the watcher's clock, and stop() ends a poll with no GitHub call after",
+      "holds": true,
+      "note": "Both watcher cases fail on base (100 s of the clock; still running after 10 s of real time) and pass now."
+     },
+     {
+      "claim": "W15B-07: PlanTaskView.note under an empty 'only' list for a web-reading specialist, rendered under the task",
+      "holds": true,
+      "note": "Real-daemon and UI cases fail on base; bench card shows the note and drops it with a website listed."
+     },
+     {
+      "claim": "W15B-07 check_in_the_app: 'narrow it in chat until it is empty'",
+      "holds": false,
+      "note": "Both the chat's settings_set and Settings refuse an empty list (commands/settings.ts:229); the state is reachable only from a stored setting."
+     },
+     {
+      "claim": "W15B-03 and W15B-08 are coverage that passed at once; W15-06 now answers with requestViews(row).options",
+      "holds": true,
+      "note": "Ran them; the W15-06 change strengthens the test (asserts the option equals its label)."
+     },
+     {
+      "claim": "Validation: lint, typecheck, unit 5110/7 skipped, UI vitest 1060, Playwright 35, integration, e2e, injection, docs, links and secret scan all green",
+      "holds": true,
+      "note": "Re-run here: all exit 0, same counts. Lint's 39 warnings are not in changed files (biome on the 17 changed files is clean)."
+     },
+     {
+      "claim": "No test weakened; only the C-68 planTasks assertion gained note: null",
+      "holds": true,
+      "note": "Every removed or changed assertion checked: only C-68 (shape) and W15-06 (strengthened)."
+     }
+    ],
+    "non_blocking": [
+     "The session log of a held task says 'The coder started \"X\" (about CHF 0.01).' and 'The coder has questions for you about \"X\" (Inbox).', although no model call ran and nothing was asked. W15B-79 (w15-words) covers only the second line; the 'started' line is also untrue for a hold (runner/event-lines, w15-words' files). Seen on the bench, steps/08-r08-session-after-the-hold.txt.",
+     "The cannot-run card's Try again explanation 'Starts a session that tries again; first fix what stopped it (Edit changes who does it).' is shown under the hold, while the row offers only Answer and Cancel (no Edit). The fixer already noted this; it is a word for w15-words or run C.",
+     "W15B-07 live check step S5 as written cannot be done: Settings (WebAccessInput `ok` needs a website) and the chat's settings_set both refuse an empty 'only' list. The session lead needs a stored older value (I wrote the setting into the bench database), or should check it by test only.",
+     "The W15B-08 before_conflict 'restart' case rebuilds the merge step, dependent branches, executor and watcher on the same in-process store object, rather than composing the daemon twice on one home as the acceptance line asked. The card rows carry the state, so it likely proves the point, but it is a lighter restart.",
+     "Commit 68e52b6 added PlanTaskView.note without updating the C-68 toEqual in real-daemon.test.ts. That case fails at 68e52b6 until 4b21c35. The shared_files rule asks for the assertion change in the same commit; a squash at merge fixes bisectability.",
+     "pr-executor.ts:1546-1559: the R-dirtyworktree JSDoc of cleanAfterCutShortRun now sits detached above holdForPersonsCommit's JSDoc, so cleanAfterCutShortRun lost its comment.",
+     "project.create undoBlocked counts paused and planned sessions, but the line says 'a session of X is running. Stop it first.' For a paused session that is not quite true (section 5 rule 9).",
+     "A removed project's page still offers New task, Save note, the chat and 'Research reads \u00b7 Change'. Nothing spends, because the start guard holds. This matches the fixer's new_problems[1].",
+     "holdForPersonsCommit calls undoUnpushedRebuild first. That function runs `checkout -B <branch> origin/<branch>` when the local branch equals the pending rebuild, which would drop a person's commit on a detached HEAD at that moment. It is an edge case, but W15-02's code is now also on the run-start path.",
+     "The work-in-progress resume path (checkout of the local branch) still carries a person's commit made on top of the WIP into the run's push. That is 'brought along unasked' rather than held: pre-existing, not a drop, and partly noted by the fixer.",
+     "After the creation's Undo, a removed project's earlier session summary still reads 'Waits until 16:27 (your API key's limit) and starts by itself.' It is now untrue; this is historical text.",
+     "On the bench, a 400 ms stand-in filed the plan before a quick Undo, and the Undo then withdrew it (W15-36). The new guard needs the Undo to land during drafting. The live check should Undo at once while 'Drafting the plan\u2026' shows, as the fixer wrote."
+    ]
+   },
+   "fixup": {
+    "area": "w15-tail",
+    "branch": "fix/w15-tail",
+    "head_sha": "c2433dd402da0cb19871a3f1bb497f51724360b5",
+    "commits": [
+     {
+      "sha": "9f49cd6",
+      "subject": "pr-executor: a Try again of a task whose run opened no pull request holds for the person's commit too (W15B-01, U-028)"
+     },
+     {
+      "sha": "c2433dd",
+      "subject": "commands: the creation's Undo says in true words what the project's session is doing (W15B-02, U-056)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Review blocking 1 (W15B-01 sibling, data loss). A Try again of a task whose earlier run opened no pull request still reset the task's branch with `checkout -B` from origin/main. The run may have failed, timed out, changed nothing or had its push refused. The branch keeps its name when no pull request was ever opened, so a commit the person made in the task's folder was dropped without a word and a run was spent. The reviewer's bench walk 3 showed it: 'My FAQ by hand' ended on no branch. Two things caused it. executeIn only asked personsCommitAtRisk before the start from the base when a pull request was open. And personsCommitAtRisk returned false whenever GitHub had no branch of the task, so it failed open.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-tail, wave 15 run B: a Redo or a Try again never drops a commit made in the task's folder (W15B-01)' > '(c) a Try again of a task whose earlier run opened no pull request ...' failed with \"expected '' to contain 'fr/8c0aa3c1-write-the-faq'\". apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B' > 'W15B-01 (review of fix/w15-tail): the failed card's Try again ...' failed on fix/w15-tail with \"expected 'done' to be 'needs_human'\"; that case goes through the failed card's Try again, the hold, a daemon restart, keeping the commit on another branch, and the cannot-run card's Try again. packages/capabilities/test/pr-executor.test.ts '... what resetting a task's branch would drop' > 'a commit of the person's on no branch past Forerunner's rebuild ...' failed with \"expected 'in_review' to be 'needs_human'\" (the reviewer's undoUnpushedRebuild point).",
+      "how": "Every start from the base in executeIn now asks, whatever the pull request. The resume path is unchanged and still asks. personsCommitAtRisk(git, branch) was rewritten: it lists the commits of the task's local branch, and of HEAD when HEAD is on that branch or on no branch, that nothing else keeps (new GitOps.commitsOnlyIn). Kept, so not at risk:\n- every branch on GitHub;\n- the task branch's former tips on GitHub (new GitOps.formerTips, its remote-tracking reflog). This also ends a false hold the fixer's version had when the person rewrote the branch on GitHub;\n- the folder's other local branches, so the card's 'keep it on another branch' now works with `git branch x` alone;\n- RUN_UNPUSHED_REF, REBUILD_PENDING_REF, DEPS_BASE_REF and the held dependencies.\nOf the commits left, two kinds are not the person's: work in progress, and a merge that holds nothing of its own. The second uses new GitOps.mergeAddsNothing: the merge's tree equals a clean merge-tree of its parents. Where git is older than 2.38, Forerunner's merge subjects decide instead. Anything else, or more than 200 commits, holds the run with heldForCommitRedo(base). That is fail closed: no model call, CHF 0, nothing reset or pushed. Sibling (review non-blocking): undoUnpushedRebuild no longer runs `checkout -B` while HEAD is on no branch past the pending rebuild; the hold then reads that commit. Also from the review: the R-dirtyworktree JSDoc is back above cleanAfterCutShortRun. ADR 0111's w15-tail amendment, capabilities.md and the user guide now cover the third reset, what counts as kept and what the person does. Sibling tests passed before and after: Forerunner's own commit whose first push was refused (no pull request) runs again on Try again, and a dependent task whose first run changed nothing (Forerunner's dependency merge on its branch) runs again. Unit cases of personsCommitAtRisk cover a fresh folder, the person's commit kept or not, Forerunner's own and work-in-progress commits, clean and hand-made merges, a branch rewritten on GitHub, and HEAD on another branch.",
+      "check_in_the_app": "Live check 3 (GitHub through the proxy; the hold itself makes no model call).\n1. In a repository project, add a task with one line and make its run fail before any pull request. Easiest is to stop it with Stop now during its first run, or let the critic fail it so no PR opens. Check on GitHub that the branch fr/<id>-... does not exist.\n2. In <data dir>/worktrees/<task id>, add a file and run `git commit` without pushing.\n3. Press Try again on its Inbox card. Expect: the task's cost does not grow and the session log has no run of it. The row reads 'Needs your decision: it could not run'. The card '\"<task>\" could not run' reads 'Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.' with Try again and Cancel task. `git log` in the folder still shows the commit.\n4. Quit and reopen the app; the card is still there.\n5. Run `git branch my-copy` in the folder, then press Try again. The task runs from main and opens its PR without your commit, and `git log my-copy` still has it.\nAlso re-run the fixer's steps (a) and (b), which use the same check."
+     },
+     {
+      "problem": "Review non-blocking (W15B-02, design \u00a75 rule 9). The creation's Undo is refused while a session of the project is running, paused or about to start, but it said 'a session of X is running. Stop it first' for all three. A paused session is one told 'Stop after this task' (the session page's 'Stopping after this task'), so the line was not true for it.",
+      "u_ids": [
+       "U-056"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)' > '(e, stopping after its task) ...' failed on fix/w15-tail's project.ts with \"expected 'a session of Garden club is running. \u2026' to be '\u2026 is stopping after its task \u2026'\". The case checks GET /changes undoBlockedReason, then that POST undo is refused with it, then Stop now, then that the Undo goes through.",
+      "how": "runningSessionOf now returns the state, running first. undoBlocked says 'is running. Stop it first' (unchanged), 'is stopping after its task. Stop it now, or wait for it to end' or 'is starting. Stop it first'. commands.md was updated. There is no restart case: session recovery ends the sessions a previous daemon left, so this state does not outlive a restart.",
+      "check_in_the_app": "Live check 3: start a session in a project made with New project. While it runs, open Changes: the creation row reads 'Cannot be undone now: a session of <name> is running. Stop it first.'. Press 'Stop after this task' on the session, open Changes again before its task ends, and expect '... is stopping after its task. Stop it now, or wait for it to end.' with no Undo button. Press Stop now, then Undo goes through."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Review non-blocking items left as they are: the session log's 'The coder started \"X\"' line for a held task, and the cannot-run card's Try again explanation '(Edit changes who does it)'. The bench screenshot f04 shows that explanation under the hold.",
+      "why": "Both are w15-words' text (runner/event-lines, card option explanations). Run B's rules keep this area out of those files."
+     },
+     {
+      "problem": "Review non-blocking: the W15B-08 before_conflict restart case rebuilds the services on the same store object instead of composing the daemon twice on one home.",
+      "why": "It is not a defect: the card rows carry the state, and the reviewer called it likely sufficient. Rewriting it as a two-composition real-daemon case is outside the blocking fix; it is left for the merge step or a later pass."
+     },
+     {
+      "problem": "Review non-blocking: commit 68e52b6 does not pass on its own until 4b21c35 (the C-68 toEqual), which breaks bisect.",
+      "why": "The fixer's commits were not rewritten, since history should not change under review. The session lead can squash 4b21c35 into 68e52b6 at merge."
+     },
+     {
+      "problem": "Review non-blocking: a removed project's page still offers New task, Save note, the chat and 'Research reads \u00b7 Change'.",
+      "why": "Nothing on it spends money, because the start guard holds. Refusing every project-scoped command on an archived project is the fixer's new_problems[1], and is a later item."
+     },
+     {
+      "problem": "Review non-blocking: work in progress resumed with a person's commit on top carries that commit into the run's push. This happens on the checkout of the local branch, not a reset.",
+      "why": "Nothing is dropped, so the data-loss rule is met. Holding instead of carrying it along is the open owner question 'hold or bring along'. Left as built."
+     },
+     {
+      "problem": "Review blocking item path (b), the redo from main with a conflict notice, was not walked again on this bench.",
+      "why": "The reviewer walked (b) on fix/w15-tail. The composed test (b) still passes, and (b) goes through the same holdForPersonsCommit as the walked paths (a) and (c)."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0: 484 files, 5118 passed, 7 skipped (8 more than the fixer's 5110: 3 composed and 5 pr-executor cases). Lint's 39 warnings are not in changed files. docs:check could not diff against origin/main here."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links",
+      "result": "docs-check ok (27 files); link-check ok (206 files)"
+     },
+     {
+      "command": "pnpm lint && pnpm typecheck; vitest packages/commands (after the final commit)",
+      "result": "exit 0; commands 18 files, 241 passed"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "pnpm test:injection",
+      "result": "exit 0: no failures"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "exit 0: 88 files, 1062 passed (2 new real-daemon cases)"
+     },
+     {
+      "command": "Playwright (apps/ui)",
+      "result": "not run: no UI source changed, only apps/ui/test/real-daemon.test.ts"
+     },
+     {
+      "command": "fail-first checks",
+      "result": "With fix/w15-tail's pr-executor.ts and git.ts restored, composed (c) failed (\"expected '' to contain 'fr/\u2026'\") and the real-daemon failed-card case failed (\"expected 'done' to be 'needs_human'\"). The rebuild-undo case failed with the guard switched off (\"expected 'in_review' to be 'needs_human'\"). The paused-words case failed on fix/w15-tail's project.ts. The two composed siblings passed before and after."
+     },
+     {
+      "command": "bench fixup-w15-tail (--provider bench, --githost 48569, daemon 48560, UI 2160) + /tmp/frbench/fixup-w15-tail-evidence/walk.cjs",
+      "result": "After the fix, through the UI: failed-first 3/3, failed-again 9/9 (held with the redo sentence, no specialist call, commit kept, GitHub has no branch), restart, failed-keep 6/6 (git branch my-faq, Try again, done from main, PR without the person's commit, my-faq intact), redo (a) 8/8, restart, redo-after 3/3. The first redo-after try pushed nothing because the walk had no token; Try again then held again with no spend, which is correct. undo-running 5/5, undo-paused 5/5. Before evidence for the blocking item is the reviewer's walk 3 (/tmp/frbench/review-w15-tail-steps-walk3/). Bench stopped with stop.mjs and its home deleted; steps and script kept in /tmp/frbench/fixup-w15-tail-evidence/."
+     },
+     {
+      "command": "cargo (desktop shell)",
+      "result": "not run: apps/desktop untouched"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-w15-tail-steps-walk3/01-f01-inbox-with-the-failed-card.png",
+      "/tmp/frbench/review-w15-tail-steps-walk3/02-f02-tasks-after-try-again.png"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/04-f04-inbox-after-the-hold.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/05-f05-tasks-after-the-hold.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/06-f06-inbox-after-the-restart.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/08-f08-tasks-after-try-again.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/11-r03-inbox-after-the-hold.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/17-u02-changes-while-running.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/20-p02-changes-while-paused.png",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/failed-again-after.json",
+      "/tmp/frbench/fixup-w15-tail-evidence/steps/failed-keep-after.json"
+     ]
+    },
+    "tests_changed_for_design": [],
+    "new_problems": [
+     "Pre-existing trap, not data loss: a task branch that exists on GitHub with no pull request and no work in progress (e.g. the person pushed it by hand) is reset locally from main and then pushed without force. GitHub refuses that push as non-fast-forward, so each Try again fails with the push words. This is why the redo sentence does not offer 'push it'. See pr-executor.ts executeIn, the non-resume branch and its `force: !!existingPr || replace || pushedWip`.",
+     "folderHold (the rebuild, W15-02) still treats the folder's other local branches and the task branch's former GitHub tips as at risk, while personsCommitAtRisk does not. The rebuild therefore over-holds in those cases (fail closed). Moving folderHold onto commitsOnlyIn would make the two rules one.",
+     "A Forerunner run whose specialist commits by itself despite the brief ('do not commit') and then fails leaves commits that are not marked own. The next Try again then holds with 'a commit that is not on GitHub' (fail closed, a false hold). It could be closed by marking RUN_UNPUSHED_REF after a failed run, which needs care with the work-in-progress carry case.",
+     "W15B-07's check_in_the_app step S5 ('narrow it in chat until it is empty') cannot be done: Settings and the chat's settings_set both refuse an empty 'only' list (commands/settings.ts:229). The live check needs a stored older value, or should check it by test only."
+    ],
+    "notes_for_other_areas": [
+     "New and changed person-facing sentences, for w15-words and the merge step (each is asserted in this area's tests). (1) Unchanged text, wider use: heldForCommitRedo(base) ('Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.') is now also the hold of a Try again or Redo of a task whose earlier run opened no pull request. (2) commands/project.ts creation undoBlocked: old text 'a session of X is running. Stop it first' for every state. New text: unchanged for running; 'a session of X is stopping after its task. Stop it now, or wait for it to end' for status paused; 'a session of X is starting. Stop it first' for planned. Changes renders each as 'Cannot be undone now: <reason>.'.",
+     "APIs added or changed: GitOps.commitsOnlyIn(rev, keep, max?), GitOps.mergeAddsNothing(rev), GitOps.formerTips(ref). personsCommitAtRisk is now (git, branch); the base argument was dropped. executeIn asks it before every reset, including every start from the base.",
+     "Merge step: the reviewer suggested squashing 4b21c35 into 68e52b6 for bisect. In apps/ui/test/real-daemon.test.ts this area added two `it`s, both inside its own describe blocks ('w15-tail, wave 15 run B' and '... a removed project starts nothing (W15B-02)')."
+    ]
+   }
+  },
+  {
+   "key": "w15-words",
+   "fix": {
+    "area": "w15-words",
+    "branch": "fix/w15-words",
+    "head_sha": "ba7288b3eef31d69febb8df7eb123d98da280298",
+    "commits": [
+     {
+      "sha": "d7b0834ae2986b8be0b460bd3959f55e8b313072",
+      "subject": "words: a task paused before it wrote anything promises no set-aside (W15-56, U-074)"
+     },
+     {
+      "sha": "b4e7dc4e23c8640bff30ea1da4d88e33929bb04b",
+      "subject": "words: money under a centime and the Done line in true words (W15-74, W15B-18, W15B-77, W15B-12, U-074, U-072)"
+     },
+     {
+      "sha": "1b631e822823fcbd9e99e347d2db800c0c9649bf",
+      "subject": "words: a credential wait promises only what is kept (W15-66, W15-65, W15-78, W15-67, U-078)"
+     },
+     {
+      "sha": "ceb16759e82f7e995a2e3b2d3348f79d6029cb1d",
+      "subject": "words: no ids in what Forerunner writes on GitHub or in the plan refusal (W15B-13, U-074)"
+     },
+     {
+      "sha": "5b28ef712f1cfa5df65fc69f927bd715d1891629",
+      "subject": "words: the head-moved card says what happened and where each way out is (W15B-11, U-028)"
+     },
+     {
+      "sha": "ba66e20d81ed4d8e29f7cc8990877cfddbebcde0",
+      "subject": "words: the session log names the right card and says the waiting review goes on (W15B-14, W15B-79, U-072)"
+     },
+     {
+      "sha": "df75b4b796861b512fdf388079500746d5a6ab39",
+      "subject": "words: the budget card quotes the run's note in plain words, each item ending at a word (W15-57, U-074)"
+     },
+     {
+      "sha": "dbd0efcd9a045905adb2cc49abd2593f64be7f2b",
+      "subject": "words: the session log's Details lines read as a person's (W15-60, W15B-19, U-072)"
+     },
+     {
+      "sha": "169425bbf57278727f29fff463de4cc6b8f3f90a",
+      "subject": "words: the session chip says paused tasks as paused, as the log's end line (W15B-10, U-072)"
+     },
+     {
+      "sha": "9d0db32646218870b6e0eb3b8995cdd4c8484638",
+      "subject": "words: the session log shows no raw level word (W15B-15, U-072)"
+     },
+     {
+      "sha": "1dae701974678ca243109ba6bbbed9cf87441276",
+      "subject": "words: the plan card's subscription line names its tasks, one subject per clause (W15-86, U-078)"
+     },
+     {
+      "sha": "b203f24dae34686ef1298c7e9f5b7b2284e4f083",
+      "subject": "words: the empty-list refusal's composed test reads its new sentence (W15-78, U-078)"
+     },
+     {
+      "sha": "fa5db5620a11e48dc357ccd2b1eed55aca67b8ce",
+      "subject": "words: the plan cut's unit test reads its count in words (W15-60, U-072)"
+     },
+     {
+      "sha": "bc41256e807f55b0144c8c305cfc1a223e8f7bc7",
+      "subject": "words: a specialist is named in words everywhere a person reads (W15-43, W15B-78, U-074)"
+     },
+     {
+      "sha": "dc9ac0a5bc47b7e0a9faddeb557118acf646cc7f",
+      "subject": "words: a questions card reads without the specialist's markdown (W15B-17, U-022, U-074)"
+     },
+     {
+      "sha": "39bd8a086bb992d0d5838e678cb318df48ab99ab",
+      "subject": "words: a yes/no setting says on or off; a session budget's 0 says CHF 0.00 (W15B-16, U-074, U-077)"
+     },
+     {
+      "sha": "ec53c31d50518fa68c84959bc4f6fe891eb28849",
+      "subject": "words: the Start dialog names the tasks left out once, at most three (W15-38, U-040)"
+     },
+     {
+      "sha": "d7a7dac78967c7501ce1ec25a033ac44e7715b88",
+      "subject": "words: the Start dialog's planning lines name the plan (W15-39, U-003)"
+     },
+     {
+      "sha": "298e67379f075c0576cecf170fd847e6eb7f6b8d",
+      "subject": "words: the plan card's figures add up to its total as shown (W15-72, U-074)"
+     },
+     {
+      "sha": "812ff48d217f747447329f74777475a2b99acba2",
+      "subject": "words: the Docs tab says no zero count (W15-40, U-074)"
+     },
+     {
+      "sha": "250e32954a29e356032654dcee47d6c38021def7",
+      "subject": "words: an empty change reads two sentences; the Overview's failed line ends once (W15-52, U-074)"
+     },
+     {
+      "sha": "f937d4cbbc5e1d7cf433bac7064d047d494d12f6",
+      "subject": "docs: the Files copy paragraph says what the copy does (W15-53, U-074)"
+     },
+     {
+      "sha": "ea555108eeed670e05278885353083816ca84855",
+      "subject": "words: a needs-device read-back says \"Confirm on this device.\" in the app (W15B-24, U-074)"
+     },
+     {
+      "sha": "74250c56c40d4f66a859e30b9e5a0a1aafdab100",
+      "subject": "words: fast mode's composed card test reads \"on\" (W15B-16, U-074)"
+     },
+     {
+      "sha": "ba7288b3eef31d69febb8df7eb123d98da280298",
+      "subject": "words: the Playwright session walk reads the level dot by its name (W15B-15, U-072)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "W15-56: a task paused at its budget before any step wrote a file said \"its work so far is kept\" on its card, and Cancel (row, drawer, dialog, card) promised \"Its work so far is set aside ...\" although nothing was written and nothing is set aside.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" > W15-56 (display.cancelWork of the empty task); packages/runtime/test/w15-words.test.ts W15-56; apps/ui/test/w15-words.test.tsx W15-56",
+      "how": "task-display.ts taskHeldWork reads the last work run's files for ready and paused tasks; the budget row sends cancelWork only when work is held; views.ts requestContexts passes RequestWordsContext.heldWork for an open budget card, so the card body reads \"It stopped before it wrote anything.\" and Cancel task \"Drops it.\" (or 'Drops it; \"X\" will be stuck.'); the UI's cancelWorkLine trusts the daemon's display. Fake daemon follows (taskMeta.heldWork).",
+      "check_in_the_app": "Bench with --env \"FORERUNNER_BENCH_LONG=Write the\"; run scripts/bench/journeys/budget.cjs <bench> live --below-chf 0.0005. Open Inbox: the cards of \"Write the notes\" and \"Write the summary\" read 'paused at its budget of less than CHF 0.01', body 'It stopped before it wrote anything.', and next to Cancel task 'Drops it.'; \"Write the guide\" (which wrote guide.md) still says 'Drops it; its work is set aside unless a later task built on it.'. Tasks tab: open the drawer of \"Write the notes\", press Cancel: the dialog promises no set-aside."
+     },
+     {
+      "problem": "W15-74 (+W15B-18, W15B-77): budgets and estimates under a centime read \"CHF 0.00\" (\"paused at its budget of CHF 0.00\", \"about CHF 0.00\", session meter \"CHF 0.00 of CHF 5.00\"); the wrap-up note said \"less than CHF 0.01\" up to three times.",
+      "u_ids": [
+       "U-074",
+       "U-072"
+      ],
+      "failing_test_before": "packages/runtime/test/w15-words.test.ts W15-74 block; apps/ui/test/w15-words.test.tsx W15-74",
+      "how": "session/money-words.ts aboutWords and the UI's chfWords/aboutChf/AboutMoney: above zero and under a centime it is \"less than CHF 0.01\" (never \"about less than\"); exactly zero stays CHF 0.00. Applied in budget-card chfText, request-words chfAt, the log's start/plan lines, result.ts (needs, work budget, Left for next time, session cap), stopLimitWords, start-blocked's estimate, the Start dialog, the plan card. wrapUpSentWords collapses: \"Told the coder to wrap up: it may spend less than CHF 0.01, and its next step could leave too little to finish.\"",
+      "check_in_the_app": "Same budget walk: Inbox titles read 'paused at its budget of less than CHF 0.01' (before: CHF 0.00); session page log reads 'The coder started \"Write the notes\" (less than CHF 0.01).' (before: '(about CHF 0.00)')."
+     },
+     {
+      "problem": "W15B-12: the Done line read \"Done: all 2 tasks.\" while a done task waited for a commit in its folder (only waiting-to-merge was counted).",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" > words read from the store > W15B-12; packages/runtime/test/w15-words.test.ts W15B-12",
+      "how": "task-words.ts needsYouAfterAccept counts the folder wait, a conflict and every LEFT_TO_YOU label as needing the person on the Overview, never as waiting to be merged: \"Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.\" / \"Done: all 2 tasks. 1 task needs you on the Overview.\" with Open Overview. W15-108's taken-out count unchanged.",
+      "check_in_the_app": "Repository project (bench --githost) with merge mode 'you' where one accepted PR is merged and another task waits for a commit in its folder: the project status line on Home says 'Done: all N tasks. 1 task needs you on the Overview.', never counts it among PRs waiting to merge."
+     },
+     {
+      "problem": "W15-66, W15-65, W15-78, W15-67: credential-wait sentences promised what is not kept (\"... and starts by itself\" on New task/plan card/Settings though no wait is recorded; \"Press Start and it runs then.\" without referent; \"Nothing can run yet. Waits ...\" with no subject; \"Ready to continue: 1 task ready\" while the only key rested; a refused run read only 'Stopped'; the reader's empty-list refusal said 'not on this list').",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" > the only API key rests and no Start kept its wait (also after a restart); packages/runtime/test/w15-words.test.ts; packages/capabilities/test/w15-words.test.ts W15-78",
+      "how": "credential-wait.ts waitThenStartSentence, nothingRunsYetSentence, waitHeadWords, refusedCredentialWords; startKeepsWaitSentence fixed; compose.ts chooser line; start-blocked.ts; project-status.ts reads ProjectCardFacts.credentialWaitNow (rt.billing.waits.now via server.ts projectCardOf, only while a task is ready); runOutcomeWords credential_refused from the run's billing source; policy.ts empty-list refusal. Fake daemon follows.",
+      "check_in_the_app": "Bench --provider bench-api --api-key limited (FORERUNNER_BENCH_API_LIMIT_MIN=5): run one task so the key rests, then: New task dialog's runs-on line reads 'Waits until HH:MM (your API key's limit). Press Start and the work starts then.'; Home's project line reads 'Ready: 1 task; nothing runs until HH:MM (your API key's limit)' with Continue; the Start dialog says 'Nothing can run until HH:MM (your API key's limit); it starts by itself then.' after a Start kept the wait. With --api-key refused: Start dialog 'Nothing can run until you save a new API key in Settings.'; a refused run row reads 'Stopped: Anthropic refused your API key'."
+     },
+     {
+      "problem": "W15B-13: ids in what Forerunner writes on GitHub (\"Task <uuid>.\" in commit bodies, \"intake request <uuid>\" in the intake commit/PR body/comment) and \"(request <id>)\" in the refusal of a new brief.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "packages/capabilities/test/pr-executor.test.ts and packages/runtime/test/intake.test.ts \"w15-words, wave 15 run B\"",
+      "how": "pr-executor.ts drops the Task line from the WIP, task and brought-back commit bodies (subjects and the (task <id>) refs read by code unchanged); intake.ts docSetWords: \"Drafted by Forerunner from the project's brief: 3 docs drafted, 2 from the templates.\"; refusal \"A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.\" (id kept in details.requestId).",
+      "check_in_the_app": "Bench --githost: New project on bench/seeded with a brief, approve; read the PR body and the first commit with git --git-dir on the bench's bare repo: no uuid in body text. In chat, ask to draft a plan from a new brief while the plan card is open: the refusal names no id."
+     },
+     {
+      "problem": "W15B-11: the head-moved card was titled 'The critic accepted \"X\", but pull request #3 was not merged' and said '... merge it yourself or redo the task.' with no place for either; its Details offered 'ask for a new review', which nothing offers.",
+      "u_ids": [
+       "U-028"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" W15B-11; packages/runtime/test/w15-words.test.ts W15B-11",
+      "how": "leftOpenCardTitle: conflict notice, then rebuild, then change_card.status head_moved -> '\"X\" changed after the review'; merge.ts headMovedWords '#3 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.'; STEPS.head_moved 'Merge it yourself on GitHub, or redo the task from its row in Tasks'. ADR 0111 amendment 2026-11-09.",
+      "check_in_the_app": "Bench --githost, merge mode after_review: let a task be accepted, push a commit to its PR branch on the stand-in host before the merge; the Inbox card reads '\"X\" changed after the review' with the sentence above; Redo on the task's row withdraws the card."
+     },
+     {
+      "problem": "W15B-14 (+W15B-79): the session log said '\"X\" needs your decision (Inbox).' for a specialist's questions card, wrote nothing for a review-only pass, and said 'The coder has questions for you about \"X\"' for any needs_human run, also one that asked nothing.",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"w15-words, wave 15 run B\" (composed review-only pass); packages/runtime/test/w15-words.test.ts W15B-14/W15B-79",
+      "how": "runner.ts emits task.started {specialist:\"critic\", reviewOnly:true} ('The critic reviews \"X\": its work was done in an earlier session.') and critic.verdict carries card (cardKindOf); event-lines reads '\"X\": the specialist asks you (Inbox).', '\"X\" needs your sign-off (Inbox).' or the decision line; a needs_human run says 'has questions for you' only when it asked, else '\"X\" could not run: <first sentence> (Inbox).'.",
+      "check_in_the_app": "Bench with --env FORERUNNER_BENCH_ASK=<task title>: run the session; the session log line for that task reads 'The coder has questions for you about \"X\" (Inbox).'; resume a paused-at-review task (budget walk + Continue on a task whose work finished): the log shows 'The critic reviews \"X\": its work was done in an earlier session.'"
+     },
+     {
+      "problem": "W15-57: the budget card quoted the run's note with markdown and items cut mid-word (\"Write `src/swiss.js`:,\", \"rounds(players\u2026\").",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/w15-words.test.ts W15-57 (the live handoff of live check 2)",
+      "how": "request-words.ts cardItem: withoutMarkdown (shared, exported), drops a list item's heading colon and the word a stored cut fell in, shortens at a word (70 per item, 140 for what it did).",
+      "check_in_the_app": "Budget walk: the \"Write the guide\" card reads 'Done: guide.md has 19 parts; left: write the rest of guide.md, check guide.md against the criteria.' with no backticks or cut words."
+     },
+     {
+      "problem": "W15-60 (+W15B-19): Details lines read raw ('Finished \"X\": killed (CHF 0.01). run stopped by its caller', 'Started \"X\" with coder', 'Plan: 1 task(s) ...'), and the session review set spend with reviews against a work-only estimate.",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "packages/runtime/test/w15-words.test.ts W15-60 (+W15B-19)",
+      "how": "views.ts lineOf uses the person's lines for a retry's start and a finished run; killed reads 'Stopped by you during \"X\" (CHF 0.01).'; runner plan summary as a sentence with plurals ('1 task', '1 item cut to fit the budget'); review metrics 'the work cost CHF 0.05 against an estimate of CHF 0.23, and the reviews CHF 0.05.'",
+      "check_in_the_app": "Run a session, Stop a running task, tick Details on the session page: the line reads 'Stopped by you during \"X\" (CHF ...).'; the Plan line reads 'Plan: 2 tasks, about CHF ...'."
+     },
+     {
+      "problem": "W15B-10: the session chip read 'Ended: 3 tasks need you' while the log's end line said 'Session over: 3 paused.'",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" W15B-10 (also after a restart); packages/runtime/test/w15-words.test.ts",
+      "how": "stop-words.ts blockedOfHandoff and views.ts stillBlocked return {needYou, paused}; endedStatusText says 'Ended: 2 paused' / 'Ended: 1 task needs you, 2 paused'.",
+      "check_in_the_app": "Budget walk: the session page chip reads 'Ended: 3 paused' (before: 'Ended: 3 tasks need you'); restart the daemon (scripts/bench/restart-daemon.mjs) and reload: same."
+     },
+     {
+      "problem": "W15B-15: the session log showed raw 'warning'/'escalation'/'error' badges on person lines.",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx W15B-15",
+      "how": "SessionPage renders a coloured dot with role=img and aria-label 'Worth a look' / 'Needs you' / 'Something went wrong'; no level word on the line.",
+      "check_in_the_app": "Open a session whose log has a 'needs you' line (FORERUNNER_BENCH_ASK walk): a red dot, no word 'escalation'; hover shows 'Needs you'."
+     },
+     {
+      "problem": "W15-86: the plan card's merged subscription line named no task ('the tests of 2 tasks will not run') and the single line had two subjects ('its tests will not run: it cannot run commands there').",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/w15-words.test.ts W15-86",
+      "how": "credential-choice.ts 'On your subscription this task's tests will not run: commands cannot run there.'; plan-tasks.ts onceForThePlan names up to three titles then 'and N more'.",
+      "check_in_the_app": "Bench --provider bench-api --subscription: New project with a web brief; the plan card's line reads 'On your subscription the tests of \"A\" and \"B\" will not run: commands cannot run there.'"
+     },
+     {
+      "problem": "W15-43 (+W15B-78): 'writer-marketing' (the registry key) on the Tasks tab's Who column, filter and drawer, the plan card, the budget card title, the wrap-up and limit sentences and the flagged-search note.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/w15-words.test.ts \"W15-43 (+W15B-78)\"; apps/ui/test/w15-words.test.tsx W15-43",
+      "how": "whoName returns specialistName's words; plan card uses specialistName; budget-card.ts, budget-pause.ts limitWords/wrapUpSentWords and new executor.ts flaggedSearchNote use saidByName.",
+      "check_in_the_app": "Create a task with specialist writer-marketing (New task, Who: Writer) with a small budget and FORERUNNER_BENCH_LONG matching its title; run: the row says 'writer', the budget card 'paused at the writer's limit ...', the log 'Told the writer to wrap up ...'."
+     },
+     {
+      "problem": "W15B-17: the questions card's answer fields and context showed the specialist's markdown ('Can `developer.mozilla.org` be added\u2026').",
+      "u_ids": [
+       "U-022",
+       "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx \"W15B-17: the labels and the context are plain; Send answers sends the questions as asked\"",
+      "how": "apps/ui/src/lib/plain-words.ts withoutMarks; PersonQuestionsForm shows each label and the context through it; the answer sent keeps the question as asked.",
+      "check_in_the_app": "Bench with --env FORERUNNER_BENCH_ASK=<title> on a task whose questions hold backticks (or live): the Inbox questions read without backticks or stars; Send answers works."
+     },
+     {
+      "problem": "W15B-16: settings sentences said 'from unset to true' and undo asked 'back to true?'; the session budget's 0 refusal said 'more than CHF 0' with no way forward; siblings said 'CHF 0'; the fake daemon's budget sentences drifted ('the monthly hard ceiling from CHF 150 to CHF 3', always 'Raised').",
+      "u_ids": [
+       "U-074",
+       "U-077"
+      ],
+      "failing_test_before": "packages/commands/test/w15-words.test.ts (3); apps/ui/test/w15-words.test.tsx W15B-16 (3); real-daemon.test.ts \"w15-words, wave 15 run B\" W15B-16",
+      "how": "settings.ts showFor: a z.boolean() key without display reads 'on'/'off' (off until set) in card values, sentence, read-back and undo question; budget.ts ZERO_REFUSED.session and SettingsFields session_cap: 'The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.'; moneyProblem and budgetProblem say CHF 0.00; fake daemon budget.set sentences equal the daemon's.",
+      "check_in_the_app": "Settings > Basics > Budget per session > Change, type 0: the refusal above; type -3: 'The amount must be CHF 0.00 or more.'. Settings > Advanced > Opus fast mode > Turn on, Yes: 'Set Opus fast mode for <project> from off to on: ...'. Start dialog, budget 0: 'The budget must be more than CHF 0.00.'"
+     },
+     {
+      "problem": "W15-38: the Start dialog repeated the long 'may be left for next time' sentence per task, and 'each need more than' named every task.",
+      "u_ids": [
+       "U-040"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx W15-38 (CHF 0.04 with three and four tasks; tasks each larger than the work budget)",
+      "how": "BlockerLines: the tasks left out are one line ('\"A\" (...), \"B\" (...), \"C\" (...) and 1 more may be left for next time: ... to be sure they run.'); namesWithEstimates names at most three then 'and N more'. What the lines promise unchanged (D4 is run C's).",
+      "check_in_the_app": "A project with 5 ready tasks of about CHF 0.02: Start, type 0.04 as Session budget: one line names three tasks and 'and 1 more'."
+     },
+     {
+      "problem": "W15-39: 'this session starts once it is ready' (it?); a Start with another waiting fell back to 'your agent is in another session' while a plan was drafted; startNotice's JSDoc orphaned.",
+      "u_ids": [
+       "U-003"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx W15-39",
+      "how": "PLANNING_WAIT_LINE '... this session starts once the plan is ready.'; startNotice planning words also with starts ahead ('Queued: your agent is drafting a plan, and 1 other start waits before this one; they run one after the other, in order. This one starts after them, once the plan is ready.'); JSDocs moved.",
+      "check_in_the_app": "New project with a brief; while 'Drafting the plan' shows, open another project's... or the same project's Start dialog twice and press Start each time: the second notice names the plan, never 'another session'."
+     },
+     {
+      "problem": "W15-72: the plan card's per-task figures did not add up to its total (sum of unrounded estimates).",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx \"W15-72: three tasks of about CHF 0.44 each read About CHF 1.32, never CHF 1.33\"",
+      "how": "InboxPage IntakeCard total is the sum of the shown, centime-rounded figures; 'Less than CHF 0.01' when every row is under a centime.",
+      "check_in_the_app": "New project, open the plan card in the Inbox: add the rows' 'about CHF x.xx' figures; they equal the 'About CHF ...' total."
+     },
+     {
+      "problem": "W15-40: the Docs tab showed '0 drifted'.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx W15-40",
+      "how": "DocsTab shows the drift badge only when a doc drifted.",
+      "check_in_the_app": "Project > Docs: '8 of 8 present' and no '0 drifted' (bench before/after step 06)."
+     },
+     {
+      "problem": "W15-52: an empty-change failed card's body was the whole report (six sentences) and the Overview's Last result ended 'any\u2026.'.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "packages/capabilities/test/w15-words.test.ts W15-52; packages/runtime/test/w15-words.test.ts W15-52 (failed card through requestWords+signoffCard; result failed line)",
+      "how": "pr-executor.ts emptyChangeSummary keeps the report's first sentence, cut at a word past 160 ('The run changed no file. It reported: Result: the check fails.'); result.ts failed line ends in its '\u2026' without a '.'. Only emptyChangeSummary's text changed in pr-executor.ts.",
+      "check_in_the_app": "Bench --githost with --env FORERUNNER_BENCH_FAIL=<title> is not this path; use a task whose specialist writes nothing (FORERUNNER_BENCH_MISSING on a repository project): the failed card reads two sentences and the Overview's Last result has no '\u2026.'."
+     },
+     {
+      "problem": "W15-53: the user guide said 'the next merge brings the copy up to date again' and never said a CRLF save counts as the person's change.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "none (guide text, read by the reviewer)",
+      "how": "docs/user-guide.md Files paragraph. Before: '... move your change out of the way and the copy follows again.\"). Move your change away and the next merge brings the copy up to date again.' After: '... move your change out of the way and the copy follows again.\"). A file an editor saved with Windows line endings (CRLF) counts as your own change, even when its text looks the same. Move your change away and the copy follows again within about a minute, as it does after a merge.' (true: the watcher reads the head every poll and ProjectDocs.refreshCopy refreshes a copy not at it).",
+      "check_in_the_app": "Read docs/user-guide.md 'Files' bullet; on a repository project change README.md in the copy, merge a PR that changes it: Files says the copy stopped; move the change away: within about a minute the line returns to 'As merged on GitHub, updated HH:MM.'"
+     },
+     {
+      "problem": "W15B-24: the in-app read-back of a one-question high-risk change ended 'Confirm in the app on a paired device.'",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/w15-words.test.tsx W15B-24 (inAppText both forms; Changes undo of a lowered monthly cap)",
+      "how": "plain-words.ts IN_APP maps the short form to 'Confirm on this device.' as the long form; voice and phone keep the daemon's text.",
+      "check_in_the_app": "Settings: lower the monthly cap (e.g. 150 -> 100); Changes > Undo on that row: 'Put the monthly cap back to CHF 150.00? Confirm on this device.' (bench before/after step 03)."
+     }
+    ],
+    "not_done": [],
+    "validation": [
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit)",
+      "result": "lint/lint:paths/typecheck ok (39 biome warnings, none in changed lines); unit 5139 passed, 1 failed (fast-mode-wiring newValue 'true'), fixed in 74250c5 and re-run: 2/2 passed"
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links; pnpm secrets:scan",
+      "result": "docs-check ok (85 files); link-check ok (206 files); secret-scan clean (2090 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 tests passed, 75 skipped; exit 0"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed; 25 tests passed, 1 skipped; exit 0"
+     },
+     {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "89 files, 1078 tests passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "34 passed, 1 failed (session.spec asserted badge text 'escalation', W15B-15 design change); updated in ba7288b, re-run e2e/session.spec.ts: 2/2 passed"
+     },
+     {
+      "command": "bench fix-w15-words (ports 48541/2141, --provider bench, FORERUNNER_BENCH_LONG=Write the): walk15.cjs + journeys/budget.cjs --below-chf 0.0005, BEFORE from a git-archive export of 3600089, AFTER from the worktree",
+      "result": "AFTER: session 0 refusal, 'CHF 0.00 or more', 'from off to on', 'Confirm on this device.', 'The budget must be more than CHF 0.00.', no '0 drifted', Inbox 'less than CHF 0.01' + 'It stopped before it wrote anything.' + 'Drops it.', chip 'Ended: 3 paused'; budget journey's 'tiny task's log line' check fails before and after (pre-existing journey wording, see new_problems). Bench stopped, home deleted."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-w15-words-before-steps/01-before-settings-session-zero.png",
+      "/tmp/frbench/fix-w15-words-before-steps/02-before-settings-session-negative.png",
+      "/tmp/frbench/fix-w15-words-before-steps/03-before-changes-undo-device.png",
+      "/tmp/frbench/fix-w15-words-before-steps/05-before-start-dialog-zero.png",
+      "/tmp/frbench/fix-w15-words-before-steps/06-before-docs-tab.png",
+      "/tmp/frbench/fix-w15-words-before-steps/12-before-inbox.png",
+      "/tmp/frbench/fix-w15-words-before-steps/13-before-session.png",
+      "/tmp/frbench/fix-w15-words-before-steps/before-budget.json"
+     ],
+     "after": [
+      "/tmp/frbench/fix-w15-words/steps/01-after-settings-session-zero.png",
+      "/tmp/frbench/fix-w15-words/steps/02-after-settings-session-negative.png",
+      "/tmp/frbench/fix-w15-words/steps/03-after-changes-undo-device.png",
+      "/tmp/frbench/fix-w15-words/steps/05-after-start-dialog-zero.png",
+      "/tmp/frbench/fix-w15-words/steps/06-after-docs-tab.png",
+      "/tmp/frbench/fix-w15-words/steps/12-after-inbox.png",
+      "/tmp/frbench/fix-w15-words/steps/13-after-session.png",
+      "/tmp/frbench/fix-w15-words/steps/after-budget.json"
+     ]
+    },
+    "new_problems": [
+     "scripts/bench/journeys/budget.cjs:238 check 'the tiny task's log line says it pauses and keeps its work' expects 'too little to wrap up (two steps may cost CHF ...): it pauses at its budget and keeps its work'; the runtime says 'This run may spend less than its first step may cost ...' since an earlier wave. FAILs on 3600089 and on this branch (before-budget.json / after-budget.json); the journey needs its regex updated.",
+     "Session log: a run that made no call reads '\"Write the notes\" stopped at its budget of less than CHF 0.01: it spent CHF 0.00, and its next step would have gone over.' (budget-pause stopped line). True, but 'it spent nothing' would read better; left as is (not a sub-centime amount).",
+     "packages/runtime/src/notifications/channels/voice.ts:86 VOICE_ALERTS_OFF 'voice alerts are off (set voice_alerts to true)' names the key and 'true' in a reason that can reach a person (notifications status).",
+     "settings.set for a number key with no value still says 'from unset to N' (speed_quality_offset, packages/commands/src/commands/settings.ts show()); W15B-16 covers only yes/no keys.",
+     "Fake daemon's generic settings.set sentence uses the key ('Set voice_alerts ...') where the daemon uses the label ('Set voice alerts ...') (apps/ui/test/fake-daemon.ts generic path ~:5493); apps/ui/test/fake-state-service.ts:315 still says 'Raise the monthly hard ceiling from CHF 150 to CHF 250?'.",
+     "Start dialog's multi-task 'may be left for next time' line quotes the first left-out task's 'ahead'; run C's D4 rewrites what these lines promise."
+    ],
+    "notes_for_other_areas": [
+     "New/changed APIs: task-display.ts taskHeldWork(store, task) and runOutcomeWords(outcome, sourceKind?); request-words.ts RequestWordsContext.heldWork, exported withoutMarkdown, leftOpenCardTitle head_moved case; task-words.ts LEFT_TO_YOU_LABELS (exported) and needsYouAfterAccept(label); views.ts ProjectCardFacts.credentialWaitNow and stillBlocked -> EndedWaits {needYou, paused}; stop-words.ts blockedOfHandoff -> EndedWaits, endedStatusText(status, stopReason, number|EndedWaits); session/money-words.ts aboutWords; credential-wait.ts waitThenStartSentence, nothingRunsYetSentence, waitHeadWords, refusedCredentialWords; executor.ts flaggedSearchNote; intake.ts docSetWords; events: task.started {specialist:'critic', reviewOnly:true}, critic.verdict gains `card` (cardKindOf); UI: lib/money.ts chfWords/aboutChf, components/ui.tsx AboutMoney, lib/plain-words.ts withoutMarks.",
+     "server.ts: only projectCardOf gains credentialWaitNow: (projectId) => rt.billing.waits.now(projectId) (w15-tail's POST /sessions and GET /inbox regions untouched). pr-executor.ts: only emptyChangeSummary's text and the 'Task <id>.' body lines (WIP, task, brought-back commit bodies) changed; w15-merge/w15-tail logic untouched.",
+     "W15-56 card body: 'It stopped before it could say where it stood; its work so far is kept.' -> 'It stopped before it wrote anything.' (no work held); Cancel: 'Drops it; its work is set aside unless a later task built on it.' -> 'Drops it.' / 'Drops it; \"X\" will be stuck.' / 'Drops it; the N tasks after it will be stuck.'",
+     "W15-74: 'paused at its budget of CHF 0.00' -> 'paused at its budget of less than CHF 0.01'; '(about CHF 0.00)' -> '(less than CHF 0.01)'; UI 'CHF 0.00' for 0<x<0.005 -> 'less than CHF 0.01'; wrap-up 'it may spend less than CHF 0.01, and its next step could take it past less than CHF 0.01' -> 'Told the coder to wrap up: it may spend less than CHF 0.01, and its next step could leave too little to finish.'",
+     "W15B-12 Done line: 'Done: all 2 tasks.' (folder wait uncounted) -> 'Done: all 2 tasks. 1 task needs you on the Overview.' / 'Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.'",
+     "Run C (D5/D6 rewrite these): runs-on 'Waits until 15:40 (your API key's limit) and starts by itself.' -> 'Waits until 15:40 (your API key's limit). Press Start and the work starts then.'; startKeepsWait '... Press Start and it runs then.' -> '... Press Start and the work starts then.'; Start check 'Nothing can run yet. Waits until 09:30 (...) and starts by itself.' -> 'Nothing can run until 09:30 (your API key's limit); it starts by itself then.' / 'Nothing can run until you save a new API key in Settings.'; project line 'Ready to continue: 1 task ready' -> 'Ready: 1 task; nothing runs until 09:30 (your API key's limit)'; run row 'Stopped' -> 'Stopped: Anthropic refused your API key' / 'your subscription sign-in' / 'your key or sign-in'; reader '<host> is not on this project's \"only these websites\" list, which names no website' -> '<host> was not read: this project's \"only these websites\" list is empty'.",
+     "W15B-13: refusal '... (request <id>) ...' -> 'A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.'; intake commit/PR '... intake request <uuid> ...' -> 'Drafted by Forerunner from the project's brief: 3 docs drafted, 2 from the templates.' / 'Updated by Forerunner from the project's brief: ...' / PR body 'The standard doc set drafted from the project brief by Forerunner.'; commit bodies lose 'Task <uuid>.'",
+     "W15B-11: title 'The critic accepted \"X\", but pull request #3 was not merged' -> '\"X\" changed after the review'; sentence '... merge it yourself or redo the task.' -> '#3 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.'; Details 'Merge it yourself or ask for a new review' -> 'Merge it yourself on GitHub, or redo the task from its row in Tasks'. ADR 0111 amended 2026-11-09.",
+     "W15B-14/W15B-79 log lines: new 'The critic reviews \"X\": its work was done in an earlier session.'; '\"X\" needs your decision (Inbox).' -> '\"X\": the specialist asks you (Inbox).' / '\"X\" needs your sign-off (Inbox).' (by card kind); 'The coder has questions for you about \"X\" (Inbox).' kept only when it asked, else '\"X\" could not run: <first sentence> (Inbox).'",
+     "W15-60: 'Finished \"X\": killed (CHF 0.01). run stopped by its caller' -> 'Stopped by you during \"X\" (CHF 0.01).'; 'Started \"X\" with coder' -> the person line; 'N ready task(s) in priority order' -> 'N ready task(s)' with real plurals; '(N item(s) cut to fit the budget)' -> '(1 item cut to fit the budget)'; review metrics -> '... the work cost CHF 0.05 against an estimate of CHF 0.23, and the reviews CHF 0.05.'",
+     "W15B-10 chip: 'Ended: 3 tasks need you' -> 'Ended: 3 paused' / 'Ended: 1 task needs you, 2 paused'. W15B-15: badge text 'escalation' -> red dot named 'Needs you' ('Worth a look', 'Something went wrong').",
+     "W15-86: 'On your subscription its tests will not run: it cannot run commands there.' -> 'On your subscription this task's tests will not run: commands cannot run there.'; merged 'the tests of 2 tasks will not run' -> 'the tests of \"A\" and \"B\" will not run' (up to three, then 'and N more').",
+     "W15-43: 'writer-marketing' -> 'writer' in Who column/filter/drawer/plan card; 'the writer-marketing's limit' -> 'the writer's limit'; 'Told the writer-marketing to wrap up' -> 'Told the writer to wrap up'; flagged-search 'the writer-marketing and the critic' -> 'the writer and the critic'; ops-deploy -> 'deployment specialist' on the plan card.",
+     "W15B-16: 'Set Opus fast mode for X from unset to true' -> 'from off to on'; undo 'Put ... back to true?' -> 'back to on?'; 'The budget per session must be more than CHF 0: a session plans its work within it.' -> 'The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.'; 'The amount must be CHF 0 or more.' -> 'CHF 0.00 or more.'; 'The amount must be more than CHF 0.' -> 'CHF 0.00.'; Start 'The budget must be more than CHF 0.' -> 'CHF 0.00.'",
+     "W15-38: one line per left-out task -> one line '\"A\" (about CHF 0.02), \"B\" (...), \"C\" (...) and 1 more may be left for next time: the tasks that run first take about CHF 0.02 of this session's work budget of CHF 0.03 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure they run.'; 'each need more than' list capped at three + 'and N more'.",
+     "W15-39: 'Your agent is drafting a plan; this session starts once it is ready.' -> '... once the plan is ready.'; with starts ahead 'Queued: your agent is in another session, and 1 other start ...' -> 'Queued: your agent is drafting a plan, and 1 other start waits before this one; they run one after the other, in order. This one starts after them, once the plan is ready.'",
+     "W15-72: plan card total = sum of shown rounded figures (CHF 1.33 -> 1.32 for 3 x 0.444). W15-40: '0 drifted' badge removed when none drifted. W15-52: 'The run changed no file. It reported: <whole report>' -> '... It reported: <first sentence, cut at a word past 160>'; Overview failed line no longer ends '\u2026.'. W15B-24 (app only): 'Confirm in the app on a paired device.' -> 'Confirm on this device.'",
+     "W15B-17: questions card labels and context shown via withoutMarks (no backticks/stars); answer payload keeps the question as asked. W15-57: budget card items plain, cut at a word ('Write `src/swiss.js`:,' -> 'Write src/swiss.js').",
+     "Proposal for docs/design/core-experience.md (not edited): \u00a75 could state the sub-centime rule ('less than CHF 0.01', never 'about less than', exactly zero CHF 0.00) and that a yes/no setting reads on/off."
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "apps/ui/test/real-daemon.test.ts (budget-resume body/Cancel, P7-18 Cancel, R-startcred, TR-2, head-moved title/sentence/Details, W14-5 Done line, 'both credentials' runsOn)",
+      "why": "W15-56, W15-66/78, W15B-11, W15B-12, W15-86 changed those sentences"
+     },
+     {
+      "test": "packages/runtime/test/session-budget-card.test.ts (3 assertions), budget-pause.test.ts wrap-up sub-centime, credential-limits.test.ts, credential-wait-session.test.ts",
+      "why": "W15-56 card words for a task that wrote nothing; W15-74/W15B-77 collapsed wrap-up; W15-65/78 wait sentences"
+     },
+     {
+      "test": "packages/runtime/test/web-access.test.ts 'the project page's line and the page reader keep to it'",
+      "why": "W15-78 empty-list refusal sentence (still refused)"
+     },
+     {
+      "test": "packages/runtime/test/estimates.test.ts, session.test.ts, closeout-sessions, task-dependencies, session-status-words",
+      "why": "W15-60 plurals; W15B-10 blockedOfHandoff returns {needYou, paused}"
+     },
+     {
+      "test": "packages/runtime/test/writing-rules.test.ts, credential-chooser.test.ts",
+      "why": "W15-86 one subject per clause; the merged line names tasks (its 100-char bound gives way to names)"
+     },
+     {
+      "test": "packages/runtime/test/dependent-branches-merge (3), merge-record (1), task-words-merge (1)",
+      "why": "W15B-11 head-moved sentence and Details"
+     },
+     {
+      "test": "packages/runtime/test/fast-mode-wiring.test.ts; packages/commands/test/commands.test.ts, fast-mode.test.ts, small-project.test.ts, intent.test.ts, w15-chat.test.ts",
+      "why": "W15B-16 on/off values and the session budget's 0 refusal"
+     },
+     {
+      "test": "tests phase2-gate.integration.test.ts",
+      "why": "W15B-13: asserts the commit body has no task id"
+     },
+     {
+      "test": "apps/ui/test inbox.test.tsx (heldWork setup, runsOn line, ops-deploy -> 'deployment specialist'), polish-words.test.tsx (heldWork), tasks.test.tsx (runsOn), project.test.tsx (credential lines, 0 refusal, planning line), shell-live.test.tsx seed, session.test.tsx (level dot name), fast-mode.test.tsx, settings-basics, settings-money, settings, undo-confirm, w15-chat (monthly cap words, Confirm on this device)",
+      "why": "W15-56, W15-86, W15-43, W15-66/78, W15B-15, W15B-16, W15-39, W15B-24 design changes; fake daemon now says the daemon's budget sentences"
+     },
+     {
+      "test": "apps/ui/e2e/session.spec.ts",
+      "why": "W15B-15: badge text 'escalation' replaced by the dot's accessible name 'Needs you'"
+     }
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Worktree detached at fix/w15-words (ba7288b), pnpm install, local Playwright config. Bench \"review-w15-words\" (daemon 48551, UI 2151, --provider bench, --githost 48553, FORERUNNER_BENCH_LONG=Write the, FORERUNNER_BENCH_ASK, FORERUNNER_BENCH_MISSING), started from the worktree; stopped with scripts/bench/stop.mjs and its home deleted at the end. Steps are in /tmp/frbench/review-w15-words/steps/.\n\n1. Budget journey (journeys/budget.cjs rv --below-chf 0.0005), result rv-budget.json.\n   - Inbox (05-rv-inbox.png): \"Write the notes\" and \"Write the summary\" read 'paused at its budget of less than CHF 0.01', then 'It stopped before it wrote anything.', with Cancel task 'Drops it.'. \"Write the guide\" (it wrote guide.md) reads 'Done: guide.md has 19 parts; left: write the rest of guide.md, check guide.md against the criteria.' with no backticks and no cut words, and Cancel says 'Drops it; its work is set aside unless a later task built on it.'.\n   - Drawers (02/03): \"Write the notes\" says Cancel 'Drops it.'; the guide keeps the set-aside line.\n   - Session log (06): '(less than CHF 0.01)' and 'Session over: 3 paused.'. The chip reads 'Ended: 3 paused', and after restart-daemon.mjs GET /sessions still says 'Ended: 3 paused' (also 08).\n   - Details (07): 'Plan: 3 tasks, about CHF 0.04. 3 ready tasks in priority order.' and 'Session review measured: 0 of 3 planned tasks done; the work cost CHF 0.07 against an estimate of CHF 0.04.'\n   - The journey's 'tiny task's log line' check FAILs, and it failed the same way before the fix (/tmp/frbench/fix-w15-words-before-steps/before-budget.json), so it is the journey's wording, not this area.\n\n2. Settings (09/10): Budget per session set to 0 reads 'The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.'; -3 reads 'The amount must be CHF 0.00 or more.'.\n\n3. Start dialog on a project with 5 ready tasks of about CHF 0.03 (12-15):\n   - Budget 0: 'The budget must be more than CHF 0.00.'\n   - 0.04: one line names three tasks, then 'and 1 more may be left for next time ... Give the session a larger budget to be sure they run.'\n   - 0.08: three tasks named, no 'and N more'.\n\n4. Docs tab (16): '8 of 8 present' and no '0 drifted'.\n\n5. Changes (17): after the monthly cap was lowered to 100, Undo reads 'Put the monthly cap back to CHF 150.00? Confirm on this device.'\n\n6. A session with a questions task whose title holds `ticks` and **bold**, plus a writer-marketing task (21-23):\n   - Log: 'The coder has questions for you about ...' and 'The writer started/finished ...'. Escalation lines carry a red dot named 'Needs you', with no level word.\n   - Tasks tab: Who column and filter say 'writer'.\n   - Questions card: its fields read without marks ('For \"Choose the colours for the club in colours.md\": which option ...').\n\n7. Plan card from a brief (24): rows are 0.09+0.07+0.10+0.10+0.07, and the total reads 'About CHF 0.43 for the 5 tasks.' (it adds up); 'writer' is named. A second brief while the card is open gets 409 'A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.' (no id).\n\n8. Repository project on bench/seeded: the intake commit body reads 'Drafted by Forerunner from the project's brief: 3 docs drafted, 5 from the templates, 1 kept as it was.', and no task commit body holds 'Task <uuid>' (git --git-dir on the bare repo).\n\nTests:\n- The fixer's named tests pass now: runtime, commands and capabilities w15-words, budget-pause, intake, pr-executor (146 tests), UI w15-words, and the real-daemon 'w15-words, wave 15 run B' block (28 tests).\n- I put the base's packages/*/src and apps/ui/src into the worktree (git checkout claude/nifty-knuth-f9udt0 -- \u2026): all 7 real-daemon cases fail (W15B-10 'Ended: 2 tasks need you', W15-56 cancelWork defined, W15B-12, W15B-11 old title, W15-66 '... and starts by itself.', W15B-16 'CHF 0' and 'unset'), and 33 unit cases fail. Sources restored afterwards.\n\nFull validation at ba7288b: pnpm check exit 0 (5140 unit tests passed). docs-check against the base: ok (86 files). pnpm test:integration 30 passed / 75 skipped. pnpm test:e2e 25 passed / 1 skipped. UI vitest 1078 passed. Playwright 35 passed. No conflict markers.\n\nRegression probe (temporary edit to budget-pause.test.ts W15B-14, then restored): the review-only session's events are [..., task.started(reviewOnly), critic.review_started, critic.review, critic.verdict, docs.status_written, critic.session_review_metrics, critic.session_review, session.ended]. The last task.started/task.finished before session.ended is the review-only task.started. See the blocking item.",
+    "blocking": [
+     {
+      "issue": "W15B-14's review-only line is a task.started event that never gets a task.finished. Four readers treat 'last task.started' as the task in flight, so after the critic's verdict the session page, the project header and the chat context keep saying the reviewed task is running until the session ends (design \u00a75 rule 4, true now). This is a regression in neighbouring behaviour: at the base nothing claimed a task in flight there.",
+      "where": "packages/runtime/src/session/runner.ts:1584 (emit task.started {specialist:'critic', reviewOnly:true}); readers: packages/runtime/src/daemon/server.ts:1610-1621 (liveSessionView currentTask), packages/runtime/src/daemon/project-status.ts:515-524 (workingOn), packages/runtime/src/conversation/project-facts.ts:189-201 (chat '# Working now'), apps/ui/src/lib/session-steps.ts:37-49 (currentFromLog, the session page's Current task card and the drawer's steps)",
+      "evidence": "runner.ts:1844 emits task.finished only `if (!result.reviewOnly)`, and docs/maintainers/runtime.md:2877-2880 says the review-only pass has 'no task.finished' and 'Its only start is a task.started'. A temporary probe in budget-pause.test.ts 'W15B-14: the waiting review's session ...' printed the second session's events: [..., 'task.started(reviewOnly)', 'critic.review_started', 'critic.review', 'critic.verdict', 'docs.status_written', 'critic.session_review_metrics', 'critic.session_review', 'session.ended']. The last task.started/finished before session.ended is {type:'task.started', payload:{title:'Index page', specialist:'critic', reviewOnly:true}}. So after the verdict, while the status doc is written and the session review (a critic model call, seconds to a minute with the real model) runs: GET /sessions/:id returns currentTask 'Index page' (critic), the session page shows Current task '\"Index page\" \u00b7 critic' next to 'Stop now' ('Stops the current task at once'), the project header says 'Alice is working on \"Index page\"', and the chat context says 'A session on X is running: \"Index page\" (the critic)'. By then the task is done (accepted) or its card is already in the Inbox. At the base the review-only pass emitted no task.started, so these readers said 'Choosing the next task\u2026' / between tasks.",
+      "expected": "The review-only line must not leave a task 'in flight' after its verdict. Either end it (for example a closing event the four readers treat as an end, or end at critic.verdict when the start was reviewOnly), or write the line as an event those readers do not count as a start. Add a test at the boundary the person reads: GET /sessions/:id currentTask and project workingOn are null after the verdict while the session still runs (e.g. hold the session review), plus currentFromLog over the same event sequence."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "W15-56: a task paused before it wrote anything says 'It stopped before it wrote anything.' and Cancel 'Drops it.' on row, drawer, dialog and card; one that wrote files keeps the set-aside line",
+      "holds": true,
+      "note": "Seen on the bench (Inbox and drawers). The real-daemon case fails at base and passes now. I checked the folder and worktree executors: a continued run's changedFiles include the earlier work in progress, so taskHeldWork is right in that case too."
+     },
+     {
+      "claim": "W15-74/W15B-18/W15B-77: under a centime every budget, estimate and spend reads 'less than CHF 0.01'; 0 stays CHF 0.00; the wrap-up note says it once",
+      "holds": true,
+      "note": "Bench Inbox titles, log start lines and the Tasks column; UI unit tests; the budget-pause wrap-up test was updated in the same commit."
+     },
+     {
+      "claim": "W15B-12: the Done line counts the folder wait, conflicts and LEFT_TO_YOU outcomes as 'need you on the Overview', never as waiting to be merged",
+      "holds": true,
+      "note": "Real-daemon case fails at base and passes now. The polish-words case changed to '... and 2 need you on the Overview.' Walk 6 (5 plain waits) still reads 'Done: all 5 tasks. 5 pull requests wait for you to merge.'"
+     },
+     {
+      "claim": "W15-66/W15-65/W15-78/W15-67: credential-wait sentences promise only what is kept; the project line names the wait now; true across a restart",
+      "holds": true,
+      "note": "Real-daemon case composes twice on one home. Fails at base ('... and starts by itself.'). Not walked on bench-api; left for live check 3."
+     },
+     {
+      "claim": "W15B-13: no UUID in commit bodies, intake commit, PR comment, PR body or the refusal",
+      "holds": true,
+      "note": "Bench bare repo commit bodies and the 409 message checked; intake unit asserts the PR body and comment. Nothing parses the dropped 'Task <id>.' line (openedForAnotherTask reads PR bodies)."
+     },
+     {
+      "claim": "W15B-11: head-moved card titled by what happened, sentence and Details name GitHub and the row's Redo; Redo withdraws it",
+      "holds": true,
+      "note": "Real-daemon case; ADR 0111 amendment dated 2026-11-09."
+     },
+     {
+      "claim": "W15B-14/W15B-79: log names the card kind; needs_human says 'has questions' only when it asked; the review-only pass gets one line",
+      "holds": false,
+      "note": "The words are right (bench and units). The review-only line's event leaves a stale task in flight after the verdict (blocking)."
+     },
+     {
+      "claim": "W15-57: budget card items plain and cut at a word",
+      "holds": true,
+      "note": "Bench guide card has no backticks or cut words."
+     },
+     {
+      "claim": "W15-60/W15B-19: Details lines in a person's words; session review sets work against the estimate, reviews apart",
+      "holds": true,
+      "note": "Bench Details: 'Plan: 3 tasks, about CHF 0.04. 3 ready tasks...' and the metrics line. tsx evaluation: killed reads 'Stopped by you during \"X\" (CHF 0.01).'"
+     },
+     {
+      "claim": "W15B-10: chip says 'Ended: N paused', also after a restart",
+      "holds": true,
+      "note": "Bench before and after restart-daemon; real-daemon case with recompose."
+     },
+     {
+      "claim": "W15B-15: no raw level word; a coloured dot with an accessible name",
+      "holds": true,
+      "note": "Bench walk 4: dots labelled 'Needs you', no text. Playwright session.spec updated for the design change."
+     },
+     {
+      "claim": "W15-86: the plan card's merged subscription line names its tasks (up to three, then 'and N more'); one subject per clause",
+      "holds": true,
+      "note": "The writing-rules 100-character bound was removed (see non_blocking)."
+     },
+     {
+      "claim": "W15-43/W15B-78: specialist named in words",
+      "holds": true,
+      "note": "Bench Who column and filter say 'writer'; log says 'The writer started'; plan card says 'writer'."
+     },
+     {
+      "claim": "W15B-17: questions card plain; answer sent as asked",
+      "holds": true,
+      "note": "Bench card with ticks and bold in the question reads plain; the UI test asserts the posted body."
+     },
+     {
+      "claim": "W15B-16: yes/no settings read on/off; session 0 refusal says CHF 0.00 and what to do; the fake equals the daemon",
+      "holds": true,
+      "note": "Bench Settings dialog; commands and real-daemon cases. All boolean specs without display (fast_mode, small_project_mode, voice_alerts) default off."
+     },
+     {
+      "claim": "W15-38/W15-39/W15-72/W15-40/W15B-24",
+      "holds": true,
+      "note": "Bench Start dialog at 0.04, 0.06 and 0.08; plan card totals add up; Docs tab; Changes read-back 'Confirm on this device.'"
+     },
+     {
+      "claim": "W15-52: an empty-change card is two sentences; the failed line never ends in '\u2026.'",
+      "holds": true,
+      "note": "Unit tests only (capabilities and runtime w15-words)."
+     },
+     {
+      "claim": "W15-53: the guide says the copy follows again within about a minute and that a CRLF save counts as your own change",
+      "holds": true,
+      "note": "True: compose.ts:4345-4352 refreshes the copy at each watcher poll (DEFAULT_GITHOST_POLL_MS 60 s), and ProjectDocs.refreshCopy fetches a copy that is not at the head."
+     },
+     {
+      "claim": "Validation: pnpm check, integration, e2e, UI vitest, Playwright and docs-check all green",
+      "holds": true,
+      "note": "Reproduced: check exit 0, 5140 unit; integration 30; e2e 25; UI 1078; Playwright 35; docs-check ok against the base."
+     }
+    ],
+    "non_blocking": [
+     "packages/runtime/test/writing-rules.test.ts:718 dropped the assertion that the plan card's runs-on line is at most 100 characters (design \u00a75 rule 1). Naming up to three titles cut at 40 characters can make the line about 190 characters, and the test now has no bound at all. A wider bound would keep the protection, for example \u2264 100 plus the three quoted titles.",
+     "Sibling of W15B-14, neither fixed nor logged: the session result (summary and chip) still says '\"X\" ... need your decision (Inbox).' for a task whose card is a specialist's questions card. Bench walk 4: '\"Choose the `colours` for the **club** in colours.md\" and \"Draft the poster text in poster.md\" need your decision (Inbox).', while the card says ': the specialist asks you'.",
+     "W15B-79's new fallback applies to a person task that reaches a session. executor.ts:854's summary now gives the log line '\"Confirm the colours with the human\" could not run: Waiting for your answers in the Inbox (2 questions); no specialist ran (Inbox).': a capital mid-sentence, and 'could not run' for a question task. Evaluated with tsx. The path is rare, because server.ts:1142 files person questions at creation. lowerArticle could lower 'Waiting', or the line could name the questions.",
+     "event-lines.ts:99 reads `p.asked === true`, but nothing emits an `asked` field on task.finished, so only the ASKED_YOU regex on the executor's summary decides. That couples the log line to executor.ts:1807's exact wording; an `asked` flag emitted by runner.ts would be sturdier.",
+     "Not in the fixer's new_problems: task commit bodies written to GitHub contain the internal marker '<<<UNTRUSTED_CONTENT source=tool_output origi...' (bench bare repo, commit 7c57ca6 'Check that index.html ...'). This is pre-existing in plainReport and is a sibling of W15B-13 (internals in text written on GitHub).",
+     "The Tasks row for a paused task that spent nothing reads 'CHF 0.00 / of less than CHF 0.01 budget', and the log reads 'it spent CHF 0.00' (the fixer logged the log line). Both are true but awkward.",
+     "real-daemon.test.ts (credential chooser, W15-86) changed an exact toEqual on the merged line to a regex plus title prefixes. It still checks the names, and it is acceptable because the planner chooses the titles.",
+     "The fixer's other new_problems were confirmed or plausible and are left to later areas: number settings still read 'from unset to N'; the fake's generic settings sentence uses the key; voice.ts VOICE_ALERTS_OFF names the key and 'true'; journeys/budget.cjs:238 regex.",
+     "For run C: W15-66's runs-on line 'Press Start and the work starts then.' is shown on New task and Settings, which have no Start button. True for today's behaviour, and D5/D6 rewrite it anyway."
+    ]
+   },
+   "fixup": {
+    "area": "w15-words",
+    "branch": "fix/w15-words",
+    "head_sha": "4fed63822065b6ee17c6f32d2071b45d9f73ce50",
+    "commits": [
+     {
+      "sha": "557c9ea720ed01612c1b045b2dd3eb27c3bf91ed",
+      "subject": "words: the waiting review's line is no task start, so nothing says the reviewed task runs after its verdict (W15B-14, U-072)"
+     },
+     {
+      "sha": "4fed63822065b6ee17c6f32d2071b45d9f73ce50",
+      "subject": "words: a task only you can do waits for your answers in the log; the asked line and the plan card's merged line keep their bounds (W15B-79, W15-86, U-072, U-078)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Blocking (review of w15-words, W15B-14): the review-only pass's log line was written as a task.started {specialist:'critic', reviewOnly:true} that no task.finished ever ends. Four readers take the last task.started with no task.finished after it as the task in flight: server.ts liveSessionView (currentTask), project-status.ts workingOn (the project card's working and its 'Working on \"X\"' line), project-facts.ts workingNowBlock (the chat's '# Working now') and the UI's session-steps.ts currentFromLog (the session page's Current task and the drawer's steps). So after the critic's verdict, until the next task started or the session's last status change, the session page showed '\"X\" \u00b7 critic' next to Stop now, the header said 'Working on \"X\"', and the chat was told the critic was working on X. At the base nothing claimed a task in flight there.",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"w15-words, wave 15 run B\" > \"W15B-14: after the waiting review's verdict, while its session ends, no screen and no chat says the task runs\" (at ba7288b GET /sessions/:id currentTask was {title:'Rules index', specialist:'critic'}); apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" > \"W15B-14: after the waiting review's verdict, while its session ends, the session page, the drawer and the header say no task runs\" (same failure through the UI's client)",
+      "how": "Root cause: runner.ts wrote a task.started for a pass that has no run, so nothing ends it. The runner now writes the line as its own event type, critic.review_resumed (REVIEW_RESUMED_EVENT, exported from daemon/event-audience.ts). It is in PERSON_EVENT_TYPES, and personLine reads it with reviewResumedLine, so the words are unchanged. No task.started is written for the pass, the coder's or the critic's, so none of the four readers counts it and none of them needed a change. The reviewOnly branches in event-lines.ts and views.ts lineOf are gone. Both tests hold the session's last status change (store.session.setStatus to a terminal status) after the verdict and the status doc are written, then read four things: GET /sessions/:id (status running, currentTask null), GET /projects/:id (working.taskTitle null, and the status line without the quoted title), workingNowBlock (': between tasks;') and, in real-daemon, currentFromLog and taskStepsFromLog over client.sessionEvents (both null). The w15-words unit test reads the new type. The runtime.md sections on the review-only pass, the person-level types and the critic's events are updated.",
+      "check_in_the_app": "Bench (--provider bench, optionally --env FORERUNNER_BENCH_CRITIC_DELAY_MS=1500 so the review can be seen): 1. Make a project and set its budget to CHF 0.01 in Settings. 2. Add one coder task, 'Make the rules page in rules.html', and press Start. The Inbox card reads 'The work is done; its review waits for room in the budget.' 3. Add a second ready task, 'Make the members page in members.html'. 4. Raise the project budget to CHF 5 in Settings and open the new session's page. The log reads 'The critic reviews \"Make the rules page in rules.html\": its work was done in an earlier session.', then 'The critic accepted ...', then 'The coder started \"Make the members page ...\"'. Current task reads 'Choosing the next task\u2026' during the review and after its verdict, and only ever names the members page. The project's header never says 'Working on' the rules page. Live check 3 (step R3 of w15-review: project budget CHF 0.06, one writer task, the review pauses, then raise the budget): on the second session's page, during the critic's review and after its verdict, Current task never names the reviewed task. The project header never says 'Alice is working on' it. Asked in chat 'what are you working on?' while that session runs, the agent does not name the reviewed task as running."
+     },
+     {
+      "problem": "Non-blocking, in this area's own new sentence (W15B-79): the new needs_human fallback '\"X\" could not run: <first sentence> (Inbox).' also caught a task only the person can do (U-022). That task's executor summary 'Waiting for your answers in the Inbox (2 question(s)); no specialist ran.' read '\"Confirm the colours with the human\" could not run: Waiting for your answers ... (Inbox).': a capital in mid-sentence, and 'could not run' for a task that asks the person.",
+      "u_ids": [
+       "U-072"
+      ],
+      "failing_test_before": "packages/runtime/test/w15-words.test.ts \"w15-words, wave 15 run B\" > \"a task only you can do waits for your answers; it never 'could not run' (fixup)\" (at 557c9ea it received '\"Confirm the colours with the human\" could not run: Waiting for your answers in the Inbox (2 question(s)); no specialist ran (Inbox).')",
+      "how": "event-lines.ts: PERSON_TASK_WAITS (/^Waiting for your answers in the Inbox\\b/) gives '\"X\" waits for your answers (Inbox).'. The read of p.asked is removed: nothing writes that field, so it was dead code. The executor's summary alone decides, through ASKED_YOU. A new real-daemon case runs a stand-in specialist that asks (FORERUNNER_BENCH_ASK) and reads the session log's person line, so a change to the executor's asked-you sentence fails a test instead of falling through to 'could not run'.",
+      "check_in_the_app": "Bench with --env \"FORERUNNER_BENCH_ASK=Choose the colours\": add the coder task 'Choose the colours in colours.md' and press Start. The session log reads 'The coder has questions for you about \"Choose the colours in colours.md\" (Inbox).', the row reads 'Needs your answer', and the session reads 'Ended: 1 task needs you'. A person task reaching a session (a plan's 'Confirm ... with the human') reads '\"Confirm ... with the human\" waits for your answers (Inbox).'. This path is rare, because tasks created for the person file their questions at creation."
+     },
+     {
+      "problem": "Non-blocking (W15-86): writing-rules.test.ts dropped the plan card's 100-character bound on the runs-on line when the merged line started to name its tasks, so nothing bounded that line any more. Also, onceForThePlan's JSDoc sat above namedTasks in plan-tasks.ts.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "none (a guard: packages/runtime/test/writing-rules.test.ts 'polish-words, wave 13: the plan card's runs-on lines' bound, and the new 'the merged line names three tasks at most, each cut at a word, within 100 characters beside the names (fixup-w15-words)' pass on the fixer's code)",
+      "how": "The existing case again asserts that the line's own words stay within 100 characters with the quoted titles taken out. A new case with four long titles checks: three names, each at most 40 characters inside its quotes; 'and 1 more'; the line's own words within 100 characters; at most 100 + 3*40 in all. The JSDoc is moved back onto onceForThePlan, inside the w15-words region of plan-tasks.ts.",
+      "check_in_the_app": "Bench --provider bench-api --subscription: start a new project from a web brief whose plan has four or more code tasks. The plan card's subscription line names at most three tasks, each cut at a word, then 'and N more', for example 'On your subscription the tests of \"A\", \"B\", \"C\" and 1 more will not run: commands cannot run there.'"
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Reviewer non-blocking: the session result and its chip still say '\"X\" ... need your decision (Inbox).' for a task whose card is a specialist's questions card (sibling of W15B-14).",
+      "why": "Logged, not fixed. session/result.ts needsYouSentence takes only titles. Giving the card kind needs it plumbed from the runner's needsYouNow through SessionOutcome.needsYou, and sessionUpdateLine's exact-sentence removal, so a fix touches every result and Update assertion that reads 'need your decision (Inbox)'. That is too large for a fixup. Evidence: the reviewer's bench walk 4, where the result read '\"Choose the `colours` ...\" and \"Draft the poster text in poster.md\" need your decision (Inbox).' while the card says ': the specialist asks you'."
+     },
+     {
+      "problem": "Reviewer non-blocking: task commit bodies written to GitHub contain the internal marker '<<<UNTRUSTED_CONTENT source=tool_output ...' (from plainReport).",
+      "why": "Not changed. Those markers are the spotlighting wrapper around tool output. Stripping them from text that a later model may read (the critic reads the git log) could weaken the rule that file and tool text never becomes instructions, and the commit-body logic is w15-tail's in pr-executor.ts. A later area should decide how a commit body shows untrusted text."
+     },
+     {
+      "problem": "Reviewer non-blocking: a paused task that spent nothing reads 'CHF 0.00 / of less than CHF 0.01 budget' on its Tasks row, and the log reads 'it spent CHF 0.00'.",
+      "why": "Not changed. The log line is budget-pause.ts's stopped sentence (pauseSentence), and w15-words owns only the texts of limitWords and wrapUpSentWords there. Both readings are true, so they are left for a polish area."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm -w exec vitest run --project unit packages/runtime/test/budget-pause.test.ts packages/runtime/test/w15-words.test.ts packages/runtime/test/event-lines.test.ts packages/runtime/test/writing-rules.test.ts",
+      "result": "Before the fix, the new W15B-14 composed case failed (currentTask {title:'Rules index', specialist:'critic'}). After it: all pass (124 tests in the first three files, 59 in w15-words + writing-rules)."
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts test/real-daemon.test.ts -t \"w15-words\"",
+      "result": "Before the fix, the new W15B-14 case failed (currentTask named the reviewed task). After it, the block passes (9 tests, including the new W15B-79 asked-you case)."
+     },
+     {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit, docs check, secret scan)",
+      "result": "Exit 0: 487 files, 5143 unit tests passed, 7 skipped. Lint: 39 biome warnings, none in changed lines. Secret scan clean (2090 files). The first run caught a TS2345 (a missing project_id in the new writing-rules case), fixed before commit and re-run green."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links",
+      "result": "docs-check ok (87 files); link-check ok (206 files)"
+     },
+     {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 tests passed, 75 skipped; exit 0"
+     },
+     {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed; 25 tests passed, 1 skipped; exit 0"
+     },
+     {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "89 files, 1080 tests passed"
+     },
+     {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "35 passed"
+     },
+     {
+      "command": "Bench fixup-w15-words (daemon 48561, UI 2161, --provider bench, FORERUNNER_BENCH_LONG='Write the', FORERUNNER_BENCH_CRITIC_DELAY_MS=1500, FORERUNNER_BENCH_ASK='Choose the colours'): a review-only walk script (scratchpad review-only-walk.cjs), journeys/budget.cjs fx live --below-chf 0.0005, and an asked-you walk (ask-walk.cjs)",
+      "result": "Review-only walk (/tmp/frbench/fixup-w15-words/steps/after-review-only.json, screenshots 01-04). The Inbox card read 'The work is done; its review waits for room in the budget.' The walk script's first check FAILed only because its regex read the row's label ('Paused at the project's budget') instead of the card. The session log read 'The critic reviews \"Make the rules page in rules.html\": its work was done in an earlier session.', then 'The critic accepted ...', with no start line for that task, then the members page ran. In 89 polls while the session ran (51 of them after the verdict), GET /sessions/:id never named the reviewed task, the project line never did (values: 'Working (0 of 2 done)', 'Working on \"Make the members page ...\"', ...), and the page's Current task read only 'Choosing the next task\u2026' or the members page. Budget journey: Inbox 'It stopped before it wrote anything.' (x2) and 'Drops it.'; session 'Ended: 3 paused'. Its 'tiny task's log line' check fails as it did before the fix (pre-existing). Asked walk: 'The coder has questions for you about \"Choose the colours in colours.md\" (Inbox).', row 'Needs your answer'. Bench stopped with stop.mjs; its home and browser profile deleted."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+     }
+    ],
+    "screenshots": {
+     "before": [],
+     "after": [
+      "/tmp/frbench/fixup-w15-words/steps/01-after-inbox-review-waits.png",
+      "/tmp/frbench/fixup-w15-words/steps/02-after-session-during-the-review.png",
+      "/tmp/frbench/fixup-w15-words/steps/03-after-session-ended.png",
+      "/tmp/frbench/fixup-w15-words/steps/04-after-tasks-after.png",
+      "/tmp/frbench/fixup-w15-words/steps/after-review-only.json",
+      "/tmp/frbench/fixup-w15-words/steps/09-fx-inbox.png",
+      "/tmp/frbench/fixup-w15-words/steps/10-fx-session.png",
+      "/tmp/frbench/fixup-w15-words/steps/fx-budget.json",
+      "/tmp/frbench/fixup-w15-words/steps/after-asked.json"
+     ]
+    },
+    "new_problems": [
+     "The session view's Current task reads 'Choosing the next task\u2026' while the critic reviews a task (any task, not only a review-only pass): the critic's review of a normal run comes after its task.finished. This is the base behaviour and unchanged here. The log's line says what happens, but a reviewer may want the page to say the critic is reviewing \"X\" (packages/runtime/src/daemon/server.ts liveSessionView, apps/ui/src/lib/session-steps.ts currentFromLog). Bench: after-review-only.json shows the polls during the critic's delayed review with currentTask null.",
+     "session/result.ts needsYouSentence: '\"X\" needs your decision (Inbox).' for a task whose card is a questions card (sibling of W15B-14, from the reviewer's walk 4). It needs card kinds carried in SessionOutcome.needsYou.",
+     "Commit bodies written to GitHub carry '<<<UNTRUSTED_CONTENT source=tool_output ...' markers from plainReport (the reviewer's bench, commit 7c57ca6). Removing them needs a security decision, because the markers keep tool text from being read as instructions.",
+     "The executor's person-task summary itself says '(2 question(s))' (packages/runtime/src/session/executor.ts:854). The log no longer shows it, but describeEvent-less readers (the Tasks row reason, the run summary) may."
+    ],
+    "notes_for_other_areas": [
+     "New event type: critic.review_resumed (REVIEW_RESUMED_EVENT, exported from packages/runtime/src/daemon/event-audience.ts, in PERSON_EVENT_TYPES), payload {taskId, title, specialist: 'critic'}. The runner writes it once per review-only pass (W15-27) in place of the fixer's task.started {reviewOnly:true}, which no longer exists. Its person line is unchanged: 'The critic reviews \"X\": its work was done in an earlier session.' (reviewResumedLine). Readers of the task in flight (liveSessionView, workingOn, workingNowBlock, currentFromLog) must keep treating only task.started as a start. Run C's D8 ('a running session visible everywhere') should read it the same way and never take the review-only line for a task in flight.",
+     "Changed sentence (session log): '\"X\" could not run: Waiting for your answers in the Inbox (2 question(s)); no specialist ran (Inbox).' -> '\"X\" waits for your answers (Inbox).' for a task only the person can do (event-lines.ts PERSON_TASK_WAITS). 'has questions for you' is decided by the executor's summary alone (ASKED_YOU). The unused p.asked read is gone. Merge with w15-tail: W15B-01's folder-hold summary still reads '\"X\" could not run: its folder holds a commit ... (Inbox).' as before.",
+     "Test-only guards: writing-rules.test.ts bounds the plan card's merged runs-on line again (its own words within 100 characters, at most three names of at most 40 characters each). The real-daemon 'w15-words, wave 15 run B' block gains two cases, W15B-14 (held session end) and W15B-79 (asked-you line from the stand-in's real executor summary). budget-pause.test.ts's w15-words block gains the held-session-end case. Its fixture's coder replies now also serve the title 'Rules index'."
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/w15-words.test.ts 'the review-only pass has one line of its own' (renamed '..., a person's line that is no task start')",
+      "why": "The line is now the critic.review_resumed event's, not a task.started with reviewOnly. It asserts the type is not task.started, its audience is person, and the words are unchanged."
+     }
+    ]
+   }
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "fix/w15-tail (c2433dd: 7 fixer commits and 2 fixup commits) as merge commit 461ab81: no conflicts",
+   "fix/w15-words (4fed638: 25 fixer commits and 2 fixup commits) as merge commit 7d6b34a: conflicts in 4 files, all resolved"
+  ],
+  "head_sha": "7d6b34af9de7a053042f1315bcda623706ac9048",
+  "pushed": true,
+  "conflicts_resolved": [
+   "packages/capabilities/test/pr-executor.test.ts (an append-only test file). Both areas appended at the end of the file and git interleaved the two blocks. I rebuilt the end so it holds the base, then the 'w15-tail, wave 15 run B: what resetting a task's branch would drop' describe, then the 'w15-words, wave 15 run B' describe, both whole. The import list keeps both names (WIP_SUBJECT from the tail, workInProgressMessage from words). biome format then removed two blank lines my rebuild had added, and I amended that into the merge commit. Checked: the diff against each side equals the other side's own diff against the base.",
+   "apps/ui/test/real-daemon.test.ts (append-only). Both areas appended at the end. It now holds the base, then the tail's four describes ('w15-tail, wave 15 run B', '... a removed project starts nothing (W15B-02)', '... the plan card says a research task can read no website (W15B-07)', \"... run A's owed route cases (W15B-08)\"), then 'w15-words, wave 15 run B'. Checked: the merge against the words branch shows exactly the tail's diff against the base (781 lines added, 1 removed), and the merge against the tail branch shows exactly words' diff (683 added, 20 removed).",
+   "docs/decisions/0111-the-merge-record-and-merge-commits-only.md. Both appended an amendment dated 2026-11-09. I kept both in merge order: the w15-tail amendment ('a Redo or a Try again holds for the person's commit too'), then the w15-words amendment (W15B-11, the head-moved card). Words' cross-reference 'point 5 and amendment 2 above' would have pointed at the wrong section once the tail's amendment sat between them, so it now reads 'point 5, and point 2 of the review's fix-up of the merge side above'.",
+   "docs/maintainers/apps.md. Three single-line table rows (/projects/:id/:tab?, /sessions/:id, /inbox) were each edited by both areas. I merged each row word by word against the base and both sides' additions went in with no overlap: the tail's removed-project sentence and plan-task note, and words' W15-38/39, W15-43/72/86 and W15B-17 text."
+  ],
+  "integration_fixes": [
+   "None beyond the conflict resolution. The merge needed no product or test change. The one fix was biome formatting: two extra blank lines between the appended describe blocks in pr-executor.test.ts, amended into the merge commit 7d6b34a. The tail's plan-task note (`note: planTaskNote(known, deps)` in planTaskViews and the InboxPage render) survived next to words' onceForThePlan rewrite, as the tail's notes asked.",
+   "Merge-step walk (shared_files rule, wave 15 run B), using the tail fixer's walk script plus a session-log read (/tmp/frbench/merge-w16-hold/hold-walk.cjs). Bench merge-w16-hold: --provider bench, GitHub stand-in on 48579, daemon 48571, UI 2171. Path (a) passed 10/10: the person's commit stays on the branch, no specialist call ran, the task waits as needs_human, and the cannot-run card reads 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' with Try again / Cancel task. The session log's line for the held task now reads '\"Write the page in page.html\" could not run: its task folder has a commit that is not on GitHub: push it or undo it, then press Try again (Inbox).' (W15B-79), not 'has questions for you'. Screenshots and texts are in /tmp/frbench/merge-w16-hold/steps/; results in merge-w15-tail.json."
+  ],
+  "validation": [
+   {
+    "command": "git grep -n \"^<<<<<<< \" (and >>>>>>> and ======= outside .md)",
+    "result": "empty"
+   },
+   {
+    "command": "pnpm test (unit), after the w15-tail merge only",
+    "result": "exit 0: 484 files, 5118 passed, 7 skipped"
+   },
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "ok"
+   },
+   {
+    "command": "pnpm lint (biome check .) && pnpm lint:paths && pnpm typecheck",
+    "result": "First run: 1 formatting error from my rebuild of pr-executor.test.ts (two extra blank lines), fixed with biome format and amended into the merge. Then exit 0, 39 warnings (the baseline's count, none in merged hunks)."
+   },
+   {
+    "command": "pnpm test (unit)",
+    "result": "exit 0: 487 files, 5159 passed, 7 skipped"
+   },
+   {
+    "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+    "result": "docs-check: ok (96 files)"
+   },
+   {
+    "command": "pnpm docs:check (no base)",
+    "result": "exit 0 (it has no default base here: nothing to check)"
+   },
+   {
+    "command": "pnpm docs:links",
+    "result": "link-check: ok (206 files)"
+   },
+   {
+    "command": "pnpm secrets:scan; pnpm secrets:scan --logs",
+    "result": "clean (2090 files); clean (0 files)"
+   },
+   {
+    "command": "pnpm test:integration",
+    "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped (Postgres cases skip without FORERUNNER_TEST_PG)"
+   },
+   {
+    "command": "pnpm test:e2e",
+    "result": "exit 0: 13 files; 25 passed, 1 skipped"
+   },
+   {
+    "command": "pnpm --filter @forerunner/live test (live harness dry run)",
+    "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+   },
+   {
+    "command": "pnpm test:injection",
+    "result": "exit 0: Failures: None"
+   },
+   {
+    "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm test:unit (as CI runs it)",
+    "result": "exit 0: 487 files, 5159 passed, 7 skipped"
+   },
+   {
+    "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm --filter @forerunner/ui test && pnpm --filter @forerunner/approvals-web test (as CI runs them)",
+    "result": "exit 0: UI 89 files, 1092 passed; approvals-web 11 files, 59 passed"
+   },
+   {
+    "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+    "result": "exit 0: 89 files, 1092 passed"
+   },
+   {
+    "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local config, not committed, git-ignored)",
+    "result": "exit 0: 35 passed"
+   },
+   {
+    "command": "cargo fmt --check / clippy / test (apps/desktop/src-tauri)",
+    "result": "not run: neither area touched apps/desktop (empty diff 408380d..HEAD)"
+   },
+   {
+    "command": "node scripts/bench/start.mjs --name merge-w16 --daemon-port 48570 --ui-port 2170 --fresh && node scripts/bench/journeys/smoke.cjs merge-w16; node scripts/bench/stop.mjs --name merge-w16",
+    "result": "25/25 checks passed, 0 findings, 0 recorded problems; model calls intake 1, specialist 9, critic 6, chat 1. Bench stopped; home and browser profile deleted."
+   },
+   {
+    "command": "W15B-01 hold walk on bench merge-w16-hold (GitHub stand-in) with /tmp/frbench/merge-w16-hold/hold-walk.cjs",
+    "result": "10/10 checks passed (commit kept, 0 specialist calls, needs_human, card sentence, session-log line in the hold's words). Bench stopped; home, browser profile and fake GitHub repos deleted."
+   },
+   {
+    "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+    "result": "printed nothing: all 38 commits signed (9 tail, 27 words, 2 merges)"
+   },
+   {
+    "command": "git push -u origin claude/nifty-knuth-f9udt0",
+    "result": "408380d..7d6b34a pushed on the first try (not forced)"
+   }
+  ],
+  "smoke": "The bench smoke on the merged result passed 25/25 (merge-w16, --provider bench, daemon 48570, UI 2170). Approve and start wrote 2 tasks and ran one session to completed, with 2 of 2 done. The page and its linked files were written, the Overview and Files tab show them, the chat answered, and the critic reviewed the work. The journey script was not changed. Results are in /tmp/frbench/merge-w16/steps/smoke-result.json and the log in /tmp/frbench/merge-w16/smoke.log.",
+  "problems_left": [
+   "The merge commit 7d6b34a's message still has git's commented '# Conflicts:' list (4 files) at the end: the --no-edit commit kept the comment lines. This is cosmetic and already pushed, so it stays (no force-push).",
+   "Bisect gap, as the tail reviewer noted and the fixup left: the tail's commit 68e52b6 does not pass alone until 4b21c35 (the C-68 planTasks toEqual gained note: null). I merged the fix branch as it is and did not rewrite its history.",
+   "Seen in the merge-step walk, known to both reviews and not fixed (each is a later item): the session log of a held task still says 'The coder started \"X\" (about CHF 0.01).' although no model call ran, and the session result says '\"X\" needs your decision (Inbox). CHF 0.00.'. The cannot-run card's Try again explanation still mentions Edit under the hold.",
+   "Each area's not_done and new_problems are still open, for the session lead. From w15-tail:\n- the hold is said at the run, not at the Redo (run C, D6);\n- uncommitted changes are set aside without a word;\n- other commands still act on a removed project (resolveProject);\n- folderHold and personsCommitAtRisk use different rules;\n- W15B-07's live step S5 cannot be done through Settings or the chat, because both refuse an empty 'only' list.\nFrom w15-words:\n- the session result's 'need your decision' wording for a questions card;\n- the UNTRUSTED_CONTENT markers in commit bodies (needs a security decision);\n- 'from unset to N' for number settings;\n- the fake daemon's generic settings sentence uses the key;\n- VOICE_ALERTS_OFF names the key;\n- the regex in journeys/budget.cjs:238 is out of date (fails before and after)."
+  ]
+ }
+}

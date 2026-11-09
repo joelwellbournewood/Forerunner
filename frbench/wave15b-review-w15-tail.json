@@ -1,0 +1,93 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Setup: worktree detached at fix/w15-tail (4b21c35), pnpm install --frozen-lockfile, Playwright local config copied. Bench \"review-w15-tail\" (daemon 48550, UI 2150) started from the worktree: --provider bench with the fake GitHub on 48559 (bench/seeded) and FORERUNNER_BENCH_PLAN=research. Later restarts used FORERUNNER_BENCH_DELAY_MS=6000 to slow the stand-in, then bench-api --api-key limited with FORERUNNER_BENCH_API_LIMIT_MIN=2, then FORERUNNER_BENCH_FAIL for a sibling check. Walk scripts: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/{walk,wake,failed,home}.cjs. Screenshots and texts: /tmp/frbench/review-w15-tail-steps-walk1/, -walk2/, -walk3/. Bench stopped with stop.mjs; its home, fake GitHub repos and browser profile are deleted.\n\nW15B-01 (a) [walk1 01-11]: project on bench/seeded, task \"Write the page in page.html\". Pressed Start session, then the dialog's Start, and the task finished done with PR #2. As the person I committed my-notes.txt in <home>/worktrees/<task>. On the Tasks row I pressed Redo, then the dialog's Redo. I added a second task and started a session from the UI. Results:\n- The commit is still on the task branch and GitHub's branch is unchanged.\n- No specialist call was made for the held task.\n- The row reads 'Needs your decision: it could not run' with Answer and Cancel.\n- The other task was done in the same session.\n- The Inbox card '\"Write the page in page.html\" could not run' reads 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.' with Try again and Cancel task.\nI restarted the daemon (restart-daemon.mjs) and the card was still there. I pushed the branch as the person and pressed Try again in the Inbox: the task ran to done, and GitHub's branch holds my commit and my-notes.txt.\n\nW15B-01 (b) [walk1 12-20]: two tasks writing index.html, then Merge pressed on the Overview for #4. Sam pushed an index.html change to main on the fake GitHub, and the watcher's poll filed '\"Write the welcome page in index.html\" conflicts with main'. I pressed Redo on the Tasks row, committed mine.txt in the folder and started a session. The task was held with the redo-from-main sentence: commit kept, GitHub's branch unchanged, no specialist call. After `reset --hard origin/<branch>` and Try again, the task was done again from main.\n\nW15B-02 [walk1 21-44, walk2]:\n- New project dialog with a brief, then Undo in Changes. At 400 ms per reply the plan was filed before the Undo, and the Undo withdrew it. With replies slowed to 6 s, the Undo landed during drafting: the daemon log says 'no plan filed: its project was removed' and no card appeared.\n- The removed project's page reads '<name> (removed)' and 'This project was removed.', with no Start session, no Create a repository and no plan banner (screenshot 25).\n- POST /sessions on it returned 409 with the sentence and made no session row.\n- In its chat, `tool: session_start {}` was refused with the same sentence and made no session row.\n- While a session of a new project ran, its creation row in Changes read 'Cannot be undone now: a session of Review busy one is running. Stop it first.' with no Undo button (screenshot 42). After the session ended, Undo worked.\n- Home lists no removed project.\n- On bench-api with a limited key, a session met the wait ('Waits until 16:27, your API key's limit'), then I pressed Undo on the creation. Over 200 s past the reset no session started and no model request was made (3 before, 3 after). The key's stored limits no longer list the wait.\n\nW15B-07 [walk1 45-52]: research plan on the bench. Settings and the chat both refuse an empty 'only' list ('Only these websites needs at least one website, or research would be stuck.'), so I wrote the stored setting into the bench database. The plan card then shows the note under the researcher task only (screenshot 52). After 'only example.com' was confirmed through the chat's Yes, the note is gone.\n\nSibling check [walk3]: a task whose runs all failed (FORERUNNER_BENCH_FAIL; no PR, branch never pushed). I committed faq.md in its folder, restarted without the failure and pressed Try again on the failed card. The commit was dropped: reflog shows 'branch: Reset to origin/main' right after 'commit: My FAQ by hand', no branch contains it, and the PR branch lacks it. See blocking[0].\n\nScreens match core-experience for this area (one sentence, Try again and Cancel task with explanations, CHF only, no ids). Work continues by itself where the design says: the session goes on with other tasks, and after Try again the task runs on.",
+ "blocking": [
+  {
+   "issue": "W15B-01 sibling not covered: a Try again on a task whose earlier run opened no pull request (failed, timed out, empty, push refused) still resets the task's branch with `checkout -B` from origin/main. It drops a commit the person made in the task folder without a word and spends a run. This is the same data-loss class as the item. The branch's own user guide and ADR 0111 amendment promise 'A Redo or a Try again never drops your commit' (design section 5 rule 9). Validation rule 8 (siblings: fix them or log them) was not met: neither not_done nor new_problems mentions this path.",
+   "where": "packages/capabilities/src/githost/pr-executor.ts:1148-1173 (the non-resume branch holds only `if (existingPr)` before `git.createBranch(branch, depsBase ?? origin/<base>)`); :1741-1749 freshBranch keeps the same name when no pull request was ever opened on it; :345 personsCommitAtRisk `if (!hostHead) return false;` (fails open when GitHub has no branch, so calling it at that site would not hold either)",
+   "evidence": "Bench walk, /tmp/frbench/review-w15-tail-steps-walk3/ and scratchpad/walk/failed.cjs.\n1. Project on bench/seeded with task 'Write the faq in faq.md', run with FORERUNNER_BENCH_FAIL. The task failed: no PR, branch fr/5550049e-write-the-faq-in-faq.md not on the fake GitHub, and the failed card offers Try again.\n2. As the person, wrote faq.md in <home>/worktrees/<task> and committed it (ee60aa7, 'My FAQ by hand').\n3. Restarted the daemon without the failure and pressed Try again in the Inbox. The task ran to done.\n4. Results: `branch --contains ee60aa7` is empty, the host branch head 5c2761c does not contain it, and faq.md now holds the run's text. Reflog: 'ee60aa7 commit: My FAQ by hand' then 'b58d477 branch: Reset to origin/main'.\nThe fix's tests cover only the open-PR resume and the redo from main.",
+   "expected": "Hold the run before any model call whenever the `checkout -B` in the non-resume branch would move an existing local branch of the same name, not only when a PR is open. In personsCommitAtRisk, when origin/<branch> does not exist, read against origin/<base> together with RUN_UNPUSHED_REF and work in progress, and hold what it cannot identify (fail closed). The redo-from-main sentence fits that path. Add a failing-first composed test, and a real-daemon case: failed task (no PR), the person commits in its folder, Try again holds with the sentence and keeps the commit, then after undo or keep (and a daemon restart) the run goes on. The user guide and ADR text should only promise what is built."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W15B-01: the composed (a) and (b) cases fail on the base code and pass with the fix",
+   "holds": true,
+   "note": "With base pr-executor.ts, (a) gave \"expected '' to contain 'fr/750d25bb-write-the-page'\" and (b) failed the same way; both pass on fix/w15-tail."
+  },
+  {
+   "claim": "W15B-01: the real-daemon case fails on base with \"expected 'done' to be 'needs_human'\" and passes with the fix (route, Inbox options, restart, Try again)",
+   "holds": true,
+   "note": "Reproduced exactly; walked on the bench through the UI, including the restart, the person's push and Try again."
+  },
+  {
+   "claim": "W15B-01: path (b), the redo from main with an open conflict notice, holds with its own sentence",
+   "holds": true,
+   "note": "Walked on the bench (the fixer had not walked it): held, commit kept, no call; undo then Try again redid it from main."
+  },
+  {
+   "claim": "W15B-01: a Redo or a Try again never drops a commit the person made in a task's folder (commit subject, user guide, ADR 0111 amendment)",
+   "holds": false,
+   "note": "A Try again of a task whose earlier run opened no PR still drops it (blocking[0])."
+  },
+  {
+   "claim": "W15B-01: Forerunner's own unpushed task commit is not held (sibling test with a pre-receive hook)",
+   "holds": true,
+   "note": "Passes before and after, as reported."
+  },
+  {
+   "claim": "W15B-02: all five real-daemon cases (a) to (e) and the ProjectPage UI case fail on base and pass with the fix",
+   "holds": true,
+   "note": "Reverting compose.ts, server.ts, intake.ts, project.ts and ProjectPage.tsx to base gave the reported failures (a card filed, 202 started, wake 1, schedule kept, undoable true, no project-removed)."
+  },
+  {
+   "claim": "W15B-02: a removed project starts nothing from a press, the chat, a credential wake, the handover schedule or a plan drafted during the Undo, and its creation's Undo waits for a running session",
+   "holds": true,
+   "note": "Bench: race with 6 s replies ('no plan filed'), page, POST /sessions 409, chat tool refusal, Changes blocked line, and on bench-api no session or model call after the reset."
+  },
+  {
+   "claim": "W15B-05: the re-reads share about 15 s per poll on the watcher's clock, and stop() ends a poll with no GitHub call after",
+   "holds": true,
+   "note": "Both watcher cases fail on base (100 s of the clock; still running after 10 s of real time) and pass now."
+  },
+  {
+   "claim": "W15B-07: PlanTaskView.note under an empty 'only' list for a web-reading specialist, rendered under the task",
+   "holds": true,
+   "note": "Real-daemon and UI cases fail on base; bench card shows the note and drops it with a website listed."
+  },
+  {
+   "claim": "W15B-07 check_in_the_app: 'narrow it in chat until it is empty'",
+   "holds": false,
+   "note": "Both the chat's settings_set and Settings refuse an empty list (commands/settings.ts:229); the state is reachable only from a stored setting."
+  },
+  {
+   "claim": "W15B-03 and W15B-08 are coverage that passed at once; W15-06 now answers with requestViews(row).options",
+   "holds": true,
+   "note": "Ran them; the W15-06 change strengthens the test (asserts the option equals its label)."
+  },
+  {
+   "claim": "Validation: lint, typecheck, unit 5110/7 skipped, UI vitest 1060, Playwright 35, integration, e2e, injection, docs, links and secret scan all green",
+   "holds": true,
+   "note": "Re-run here: all exit 0, same counts. Lint's 39 warnings are not in changed files (biome on the 17 changed files is clean)."
+  },
+  {
+   "claim": "No test weakened; only the C-68 planTasks assertion gained note: null",
+   "holds": true,
+   "note": "Every removed or changed assertion checked: only C-68 (shape) and W15-06 (strengthened)."
+  }
+ ],
+ "non_blocking": [
+  "The session log of a held task says 'The coder started \"X\" (about CHF 0.01).' and 'The coder has questions for you about \"X\" (Inbox).', although no model call ran and nothing was asked. W15B-79 (w15-words) covers only the second line; the 'started' line is also untrue for a hold (runner/event-lines, w15-words' files). Seen on the bench, steps/08-r08-session-after-the-hold.txt.",
+  "The cannot-run card's Try again explanation 'Starts a session that tries again; first fix what stopped it (Edit changes who does it).' is shown under the hold, while the row offers only Answer and Cancel (no Edit). The fixer already noted this; it is a word for w15-words or run C.",
+  "W15B-07 live check step S5 as written cannot be done: Settings (WebAccessInput `ok` needs a website) and the chat's settings_set both refuse an empty 'only' list. The session lead needs a stored older value (I wrote the setting into the bench database), or should check it by test only.",
+  "The W15B-08 before_conflict 'restart' case rebuilds the merge step, dependent branches, executor and watcher on the same in-process store object, rather than composing the daemon twice on one home as the acceptance line asked. The card rows carry the state, so it likely proves the point, but it is a lighter restart.",
+  "Commit 68e52b6 added PlanTaskView.note without updating the C-68 toEqual in real-daemon.test.ts. That case fails at 68e52b6 until 4b21c35. The shared_files rule asks for the assertion change in the same commit; a squash at merge fixes bisectability.",
+  "pr-executor.ts:1546-1559: the R-dirtyworktree JSDoc of cleanAfterCutShortRun now sits detached above holdForPersonsCommit's JSDoc, so cleanAfterCutShortRun lost its comment.",
+  "project.create undoBlocked counts paused and planned sessions, but the line says 'a session of X is running. Stop it first.' For a paused session that is not quite true (section 5 rule 9).",
+  "A removed project's page still offers New task, Save note, the chat and 'Research reads \u00b7 Change'. Nothing spends, because the start guard holds. This matches the fixer's new_problems[1].",
+  "holdForPersonsCommit calls undoUnpushedRebuild first. That function runs `checkout -B <branch> origin/<branch>` when the local branch equals the pending rebuild, which would drop a person's commit on a detached HEAD at that moment. It is an edge case, but W15-02's code is now also on the run-start path.",
+  "The work-in-progress resume path (checkout of the local branch) still carries a person's commit made on top of the WIP into the run's push. That is 'brought along unasked' rather than held: pre-existing, not a drop, and partly noted by the fixer.",
+  "After the creation's Undo, a removed project's earlier session summary still reads 'Waits until 16:27 (your API key's limit) and starts by itself.' It is now untrue; this is historical text.",
+  "On the bench, a 400 ms stand-in filed the plan before a quick Undo, and the Undo then withdrew it (W15-36). The new guard needs the Undo to land during drafting. The live check should Undo at once while 'Drafting the plan\u2026' shows, as the fixer wrote."
+ ]
+}

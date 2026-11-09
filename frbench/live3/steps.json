@@ -1,0 +1,414 @@
+{
+ "base": "7d6b34a",
+ "cap_usd": 3.0,
+ "drop_line": "Run in priority order; start no new step once the spend reaches USD 2.60 (about USD 0.40 kept to retry a failed priority-1 step). Dropped first to last: X5, X6, X7, X8, B1, X9, X4, X3, X2, G7, X1, R4. A dropped step goes to live check 4.",
+ "owner_checklist": [
+  "GitHub token in the setup assistant with your own fine-grained token (github_pat_): 'GitHub is connected', the repositories it reaches listed (not possible in the cloud sandbox: the test token is expired and the proxy blocks GET /user/repos).",
+  "A repository with a CI check (add a tiny workflow to forerunner-sandbox or use one of yours): (1) Merge while the check runs: exactly one desktop notification '<project>: merged #N' when the retry pass merges it, none for a plain Merge; (2) 'Merge automatically after review' with a task accepted while its checks run: Tasks row and Overview both 'Accepted \u00b7 merging', back to 'waiting for you to merge' after switching to 'You press Merge'; (3) TM-5: Redo a done task while its merge waits on checks: the retry pass leaves it alone.",
+  "R-2 with a read-only fine-grained token on a repository: a task whose push GitHub refuses fails with GitHub's own sentence and names no fr/<id> branch.",
+  "Both credentials saved (subscription and API key): the research plan card's runs-on line (\u00a72.3); New task's runs-on line changes with the typed outcome (TR-11); a task whose questions you answered runs on the subscription while the API key rests (TR-3).",
+  "API key at its spend limit: opening and closing the Start dialog on a second project records no wait; Start there runs at the reset (TR-2).",
+  "Subscription at its limit with 'Wait': the research task still runs and only the code task waits (R-waitqueue).",
+  "Subscription budget stop (phaseE7-live step 6): Claude Code really stops and the usage is counted once.",
+  "Subscription security and research: a resolved secret's value in a repository file never reaches the model (TR-1); a coder task in a repository whose README holds an injection line: no hook_error for Read/Grep and the Inbox gets the injection-flagged notification (R-readhook); \u00a74 on the subscription: the page reader, Claude Code's WebSearch allowed/blocked lists and the information wrapper.",
+  "Subscription token pasted in setup after the API key was revoked: the refused-key card closes and no restart is asked (TR-10); Stop all during a subscription run: the task's spent equals Costs (TR-13).",
+  "Windows: a page task's checks never say 'the browser ran without its own sandbox' (C-17); daemon.log has no 'agent browser runs without Chromium's own sandbox' line (R-sandbox / W6-30), also for a task that uses the agent browser if a specialist reaches it (W15-124); 'python3 x.py' with only the Microsoft Store alias reads 'not installed' (C-1, exit 9009).",
+  "Windows, R-copystuck (29e0c81): put a file back with your own git (CRLF) in a project's copy: Files says 'As merged on GitHub, updated HH:MM' again within a minute; a copy that was stuck before this update needs the file put back once more.",
+  "A git that speaks another language (e.g. Git for Windows with German): a merge blocked by the copy and a push without a token still read in Forerunner's words (TM-6).",
+  "Docker Desktop: a deploy task the critic accepts reads 'Needs your sign-off' with Answer and Cancel only; a full-review task runs in the Docker sandbox.",
+  "Anthropic console: after a day with a Stop now and a Cancel, the console's usage matches Costs within a few centimes (aborted calls are booked at CHF 0 today).",
+  "Install the Desktop app workflow's build and walk each U-entry's 'Check in the app' steps and the core path (open, start a session, answer an Inbox card, close the window, Quit from the tray, nothing of Forerunner left in Task Manager).",
+  "Subscription, W15-12 (known shape; W15B-41): run a task whose granted secret sits in a config file it reads with Read (for example a .env the task needs). Expect the run to go on, the model to see [REDACTED] in place of the value, and the session log to show no refusal. If the run stops with \"Claude Code's <tool> tool ...\", note the tool's name and what the task was doing: CC_TOOL_OUTPUT_SHAPES (packages/runtime/src/agent/cc-tool-outputs.ts) needs that output key, and the refusal's words (W15B-22) get reworded from what you saw.",
+  "Windows, with item 10 (R-copystuck) after run B: the user guide's paragraph on this computer's copy (W15-53) says the copy follows within about a minute of a merge and that a file an editor saved with Windows line endings counts as your own change; check it matches what Files shows."
+ ],
+ "environment_notes": [
+  "The GitHub test token (FORERUNNER_TEST_GITHUB_TOKEN) is expired: GitHub answers 401 Bad credentials when called directly.",
+  "Live check 2's github journey ran through the agent proxy: the daemon was started with --env NODE_USE_ENV_PROXY=1 (without it Node's fetch bypasses the proxy and gets 401), and the proxy replaced every GitHub credential with this session's GitHub App identity (joelwellbournewood). Repository-unscoped paths such as GET /user/repos are blocked ('sessions are bound to their configured repositories'), so the setup assistant's GitHub check cannot pass; the token was written straight into the bench vault (/tmp/frbench/live2/github/scripts/vault-gh.mts, value never printed). The proxy also appends '_Generated by Claude Code_' to PR bodies and comments.",
+  "Live check 3's github steps need: this session (or the one running live check 3) bound to joelwellbournewood/forerunner-sandbox; the daemon started with NODE_USE_ENV_PROXY=1; any token-shaped value in the bench vault via vault-gh.mts (the proxy substitutes the App identity); the setup assistant step stays on the owner's checklist; branches cannot be deleted from the session (GitHub answers 403), so close the PRs it opens and leave fr/* branches; when judging W15-08 (no ids in GitHub text) ignore the proxy's appended line. A renewed fine-grained token from the owner (FORERUNNER_TEST_GITHUB_TOKEN) would let the setup assistant step and R-2's read-only token check run here too, but only outside the proxy. G2 part (2) needs live check 2's legacy PR #5 on fr/status closed first, with the session lead's OK; part (1) runs with #5 open and proves no project writes to a PR without its marker.",
+  "forerunner-sandbox has no CI checks: R-queuedwords, the later-merge notification and TM-5 cannot run there unless the owner allows a tiny check workflow to be added; they are on the owner's checklist.",
+  "State left on forerunner-sandbox by live check 2: PR #5 on fr/status (an earlier project's) got commit 152f5ac and a comment from Kite shop (F2), previous head 6759c4b; it was left as is for the session lead. Live check 2 closed the PRs it opened (#12, #15, #18, #19, #22, #24, #26-#29); fr/* branches remain.",
+  "Bench harness before live check 3 (W15-143): scripts/bench restart-daemon.mjs on a bench-live bench needs ANTHROPIC_API_KEY as a prefix like start.mjs (live check 2's first graceful restart failed for that); recorder.cjs redacts the daemon token in failed-request URLs but not in console 'location.url' (problems.jsonl).",
+  "The chat model on the bench is claude-haiku-5-5 at low effort (F2's failure was partly that model guessing a value shape nothing documented); specialists and the critic ran claude-sonnet-5-5.",
+  "Aborted calls (Stop now, cancel) are logged with no usage at USD 0; the bench cannot see whether Anthropic bills their input (owner's checklist).",
+  "Live check 2 spent USD 4.03 of its USD 7.25 cap (github 1.10, run 1.37, research 1.56; the critic was about 57% of specialist spend, and the \u00a74 research brief alone cost USD 0.58 with a USD 0.12 cache rewrite); the owner's API budget for live checks was USD 40 with about USD 6 used before live check 2. Live check 3's steps total about USD 3.44 at live check 2's measured costs, more than the USD 3 cap: run them in priority order (1, then 2, then 3); start no new step once the spend reaches USD 2.60, keeping about USD 0.40 to retry a failed priority-1 step. Planned above the drop line: priorities 1 and 2 (USD 2.38) and G6 (USD 2.58 in all). Below it, dropped first to last: X5 to X8, B1, X9, X4, X3, X2, G7, X1, R4; a dropped step goes to live check 4.",
+  "Secrets: neither the API key nor the GitHub token may appear in evidence, logs or screenshots; type them from the environment with Playwright and take no screenshot while a field holds one (as live check 2 did)."
+ ],
+ "steps": [
+  {
+   "id": "G2",
+   "step": "G2 (W15-01, C-57): two projects linked to forerunner-sandbox, Status pull request on for both. (1) With live check 2's legacy PR #5 still open on fr/status (no marker, two projects linked): one small session each; neither pushes to or comments on #5 and each daemon log says why. (2) After the session lead closes #5: A's session opens A's status PR (marker in its body); B's session while A's PR is open pushes no commit, adds no comment, opens no PR, and B's status stays in the app; each Overview lists only its own status PR. Close A's PR afterwards.",
+   "source": "live2:github F2; step 'C-57 (setting on)' (fail)",
+   "needs": "real model (3 one-task sessions); GitHub via the proxy; the session lead's OK to close #5",
+   "est_usd": 0.15,
+   "priority": 1,
+   "journey": "github"
+  },
+  {
+   "id": "R1",
+   "step": "R1 (W15-13, W15-18, W15-20, W15-21): folder project, coder task 'Write the Swiss pairing tool with tests' (four files + README) at CHF 0.20. Expect: the Start dialog estimates it above a one-line task (at least CHF 0.06); the run writes its files with no early wrap-up and no cut-and-retry at 16,384; the drawer's spent and run cost move during the run; afterwards the Tasks row, drawer and Costs > By task show the same figure.",
+   "source": "live2:run RUN-1, RUN-16, RUN-3, RUN-4; step '\u00a73.1 wrap-up' (fail)",
+   "needs": "real model (API key)",
+   "est_usd": 0.4,
+   "priority": 1,
+   "journey": "run"
+  },
+  {
+   "id": "S2",
+   "step": "S2 (W15-15, W15-31, W15-32, extra \u00a72.2): researcher task whose criteria ask for a web search and an access date for each source (budget about CHF 0.40), outcome naming one file. Expect: one constant web_search definition in the model-call log (dropped at most once), cache_read growing call by call otherwise, no search after the wrap-up line; the brief carries today's date and each page its read time; only the named file is written (no answer.md); the drawer's 'What research read' lists each page once.",
+   "source": "live2:research F3, F10, F9, F15 (Read list); run step 'extra \u00a72.2' (skipped_cap)",
+   "needs": "real model (API key, web search and web fetch)",
+   "est_usd": 0.45,
+   "priority": 1,
+   "journey": "research"
+  },
+  {
+   "id": "S1",
+   "step": "S1 (W15-14, W15-16, W15-17): researcher task 'Search MDN for pages that mention popover hint' at Budget CHF 0.15 under 'only developer.mozilla.org'. Expect: the brief says web search is not available on this run when none can be offered; a run that ends 'Nothing for the criteria' is reviewed and Done (no Continue card); the wrap-up lines agree with each other and read no 'CHF 0.00'.",
+   "source": "live2:research F4, F5",
+   "needs": "real model (API key)",
+   "est_usd": 0.2,
+   "priority": 1,
+   "journey": "research"
+  },
+  {
+   "id": "G1",
+   "step": "G1 (W15-03, R-chain live): chain of three on forerunner-sandbox (A writes kite/events.html, B adds to it, C links it from index.html); scratch file in B's folder; squash-merge A on GitHub; poll; remove the file; poll. Expect: C never gets a conflict card or sentence, C waits as owed while B's folder is busy, then both are rebuilt and offer Merge; Tasks and Overview agree.",
+   "source": "live2:github F1; step 'phaseE7-live \u00a71 second chain + w14 R-chain' (fail)",
+   "needs": "real model (3 small tasks + reviews); GitHub via the agent proxy (NODE_USE_ENV_PROXY=1)",
+   "est_usd": 0.2,
+   "priority": 1,
+   "journey": "github"
+  },
+  {
+   "id": "S3",
+   "step": "S3 (W15-26): a research task that reads pages and pauses at its budget, then Continue; the continued run fetches nothing. Expect the critic's request (model-call log) to carry the paused run's pages, or list them under 'Evidence not available'.",
+   "source": "live2:research F6; step '\u00a74.3 review sources' (partial)",
+   "needs": "real model",
+   "est_usd": 0.2,
+   "priority": 1,
+   "journey": "research"
+  },
+  {
+   "id": "S6",
+   "step": "S6 (W15-24, C-1): brief 'A command line tool that counts the words in a file. Usage: node wc.js <file>.', Approve and start. Expect Done \u00b7 Reviewed and tried after one run, no bare 'node wc.js' problem, the dependent test task runs.",
+   "source": "live2:research F1; step '\u00a77.1 (C-1)' (fail)",
+   "needs": "real model",
+   "est_usd": 0.15,
+   "priority": 1,
+   "journey": "research"
+  },
+  {
+   "id": "S4",
+   "step": "S4 (W15-25): web_access only ['10.1.2.3'] (written in the state DB), researcher task naming an MDN page. Expect the critic's request to state the rule, no 'probably wrong', no required fetch of a refused page; the next brief has no such order.",
+   "source": "live2:research F7; step 'R-failopen' (partial)",
+   "needs": "real model",
+   "est_usd": 0.1,
+   "priority": 1,
+   "journey": "research"
+  },
+  {
+   "id": "R3",
+   "step": "R3 (W15-27, TR-15): project budget CHF 0.06, one writer task; Start (the review pauses); raise the budget: only the critic runs (no second 'The writer started'), across a daemon restart between pause and raise.",
+   "source": "live2:run RUN-6; tailrun TR-15",
+   "needs": "real model",
+   "est_usd": 0.06,
+   "priority": 1,
+   "journey": "run"
+  },
+  {
+   "id": "G3",
+   "step": "G3 (W15-04, W15-07, R-conflict timing): three tasks changing kite/motto.txt; squash-merge one on GitHub; time how long until the others' rows show the conflict sentence (expect about one poll); press Redo on one task's Tasks row. Expect one card at every step, the redo from main, no rebase card, and the notice gone once its PR is mergeable.",
+   "source": "live2:github F3, F5; step 'w14 R-conflict'",
+   "needs": "real model (3 tiny tasks + one redo); GitHub via the proxy",
+   "est_usd": 0.18,
+   "priority": 2,
+   "journey": "github"
+  },
+  {
+   "id": "G4",
+   "step": "G4 (W15-05, W15-06, W15-55, TM-2): a file left in a task's folder with its dependency's PR closed: the row says the folder wait with the folder before Merge, Merge answers the same sentence, and the Tasks label agrees with the Overview; then a rebase conflict answered 'I resolved it': a session starts by itself, the card's title is whole, its step says it updates the open PR.",
+   "source": "live2:github F4, F11, F6, F1 (labels); steps 'tailmerge TM-4', 'tailmerge TM-2'",
+   "needs": "real model (reuses G1/G3 tasks; one rework run); GitHub via the proxy",
+   "est_usd": 0.1,
+   "priority": 2,
+   "journey": "github"
+  },
+  {
+   "id": "S7",
+   "step": "S7 (W15-28, polish-words live 3): a reviewer task whose file is missing so the critic answers 'needs you' and the specialist asks. Expect exactly one notification ('...: the specialist asks you'), no 'needs your sign-off'; the Reviews tab wording of an asks-person accept.",
+   "source": "live2:run RUN-7; research F14; polish-words review live check (3)",
+   "needs": "real model",
+   "est_usd": 0.06,
+   "priority": 2,
+   "journey": "research"
+  },
+  {
+   "id": "R2",
+   "step": "R2 (W15-19): a two-task plan (reviewer + tester); note the plan card's figures; Approve and start; Stop now during the first call; open Start: the same figures; restart the daemon: still the same.",
+   "source": "live2:run RUN-2; step 'R-estimates' (fail)",
+   "needs": "real model (one aborted call)",
+   "est_usd": 0.06,
+   "priority": 2,
+   "journey": "run"
+  },
+  {
+   "id": "S5",
+   "step": "S5 (W15-33): web_access only [] then intake 'Compare the free tiers of three static site hosts, with sources'. Expect a person task asking for websites or sources (no research from memory) and the plan card's 'reads no website' line. Do not approve.",
+   "source": "live2:research F11; step 'TR-5' (partial)",
+   "needs": "real model (intake only)",
+   "est_usd": 0.03,
+   "priority": 2,
+   "journey": "research"
+  },
+  {
+   "id": "C1",
+   "step": "C1 (W15-29, W15-30, W15-37, TR-9): in Talk on a project with 'any, never facebook.com': 'only read developer.mozilla.org for research' (the Overview line follows without a reload, no card), then 'research may read any public website again' (Yes/No card, then the line follows); in another project's chat ask about research sites while project A has an open questions card (A's card is not offered as this project's); 'redo Write the guide' with two same-titled tasks.",
+   "source": "live2:research F2, F12; step 'R-researchreads' (fail); W14-7",
+   "needs": "real chat model (Haiku)",
+   "est_usd": 0.02,
+   "priority": 2,
+   "journey": "run"
+  },
+  {
+   "id": "G5",
+   "step": "G5 (W15-08, extra \u00a74.6): read one new PR body and comment on GitHub: no UUID in visible text (ignore the proxy's '_Generated by Claude Code_'); in chat ask about the open PR (PR read-back).",
+   "source": "live2:github F9; run step 'phaseE7-live-extra.md \u00a74.6' (not_possible_here)",
+   "needs": "GitHub via the proxy; chat model",
+   "est_usd": 0.02,
+   "priority": 2,
+   "journey": "github"
+  },
+  {
+   "id": "G8",
+   "step": "G8 (W15-145, TM-9): make the copy stop (edit README.md in the project's copy, then merge a G-step PR that changes README.md), restart the daemon (restart-daemon.mjs with ANTHROPIC_API_KEY as a prefix): Files still says the copy stopped, README.md named; put README.md back: within a minute 'As merged on GitHub, updated HH:MM'.",
+   "source": "wave7g6d-merge problems_left[5] (TM-9); tailmerge TM-9 check_in_the_app",
+   "needs": "no model (reuses a G-step PR); GitHub via the proxy",
+   "est_usd": 0.0,
+   "priority": 2,
+   "journey": "github"
+  },
+  {
+   "id": "U1",
+   "step": "U1 (polish-screens live steps, no model): on a forerunner-sandbox project, the Overview's 'Merging: ... \u00b7 Change' lands on Other settings at the top; 'Who merges' card value and body; the palette's Start session names the project on screen; Settings shows no USD (after W15-47); a real plan's decision card answered with one option shows the short question; the drafting banner says 'about a minute'.",
+   "source": "wave7g6d-fix/fixup-polish-screens notes (live checks)",
+   "needs": "the bench UI; GitHub via the proxy for the merge-mode link; the plan card from S5",
+   "est_usd": 0.0,
+   "priority": 2,
+   "journey": "github"
+  },
+  {
+   "id": "G6",
+   "step": "G6 (\u00a73 case 2 wrap-up path, TM-3): a coder task on forerunner-sandbox with a budget that reaches its wrap-up line (about CHF 0.12) and a redo paused at its budget: the paused run keeps a work-in-progress commit on the PC, nothing pushed, Continue finishes and opens or updates the PR; a paused redo keeps its work.",
+   "source": "live2:github step '\u00a73 case 2 (wrap-up path)' (partial); tailmerge TM-3 not_done",
+   "needs": "real model; GitHub via the proxy",
+   "est_usd": 0.2,
+   "priority": 3,
+   "journey": "github"
+  },
+  {
+   "id": "R4",
+   "step": "R4 (extra \u00a74.4 L-6 rest): cancel a running print task, let the next task change the same file, Undo: the 'could not come back' sentence; then a later Start finishes the task.",
+   "source": "live2:run step 'phaseE7-live-extra.md \u00a74.4 L-6' (partial)",
+   "needs": "real model",
+   "est_usd": 0.1,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X1",
+   "step": "X1 (L-2 report path): a coder task whose report ends with 'Questions for the person:' (a brief that lacks a needed fact). Expect the critic's request to carry the questions and one questions card, no sign-off.",
+   "source": "live2:research step '\u00a75.1 (L-2)' (partial)",
+   "needs": "real model",
+   "est_usd": 0.06,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "G7",
+   "step": "G7 (github steps not run in live check 2): R-lock live (Merge while a rebuild runs), R-takeoutdep, R-pin chat refusal, L-17, the optional revert-on-main after a GitHub-side resolution.",
+   "source": "live2:github live.notes ('Not run: ...')",
+   "needs": "GitHub via the proxy; mostly no model (reuses earlier tasks)",
+   "est_usd": 0.05,
+   "priority": 3,
+   "journey": "github"
+  },
+  {
+   "id": "X2",
+   "step": "X2 (L-12): Contact page brief: the questions card quotes why the specialist asks.",
+   "source": "live2:research step '\u00a75.2 (L-12)' (skipped_cap)",
+   "needs": "real model",
+   "est_usd": 0.06,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X3",
+   "step": "X3 (L-3): Members chart: Go ahead without; the next brief says the person chose to go ahead without answering, and the work says what it assumed.",
+   "source": "live2:research step '\u00a75.3 (L-3)' (skipped_cap)",
+   "needs": "real model",
+   "est_usd": 0.1,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X4",
+   "step": "X4 (L-11): newsletter, bakery and cafe briefs (intake only): a brief that promises the owner's content gets a person task.",
+   "source": "live2:research step '\u00a75.4 (L-11)' (skipped_cap)",
+   "needs": "real model (3 intakes)",
+   "est_usd": 0.06,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X9",
+   "step": "X9 (Docker full review): one full-review task in a private dockerd started for the bench (rootful, in its own data root; stopped and removed afterwards). If dockerd cannot start here, record it and leave the step to CI's sandbox-full-review job and the owner's Docker Desktop step.",
+   "source": "live2:research step 'task step 4 (Docker)' (skipped_cap)",
+   "needs": "real model; a private dockerd on this machine",
+   "est_usd": 0.1,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "B1",
+   "step": "B1 (W15-124, R-sandbox agent browser on Linux): opportunistic: if the browser extension can be turned on for the bench and a specialist reaches browser_navigate, one page task as root: daemon.log has 'the agent browser runs without Chromium's own sandbox' only after a sandbox error, and the task's evidence says so. If no specialist reaches it, record that it is not reachable from the product and that packages/capabilities/test/browser-profile.test.ts covers the fallback.",
+   "source": "live2:run step 'wave 14 R-sandbox' (partial); run owner_checklist_items[6]",
+   "needs": "real model; the browser extension on",
+   "est_usd": 0.05,
+   "priority": 3,
+   "journey": "research"
+  },
+  {
+   "id": "X5",
+   "step": "X5 (C-1 API): Members API task: the API is called in the try and the work is Done \u00b7 Reviewed and tried.",
+   "source": "live2:research step '\u00a77.2 (C-1 API)' (skipped_cap)",
+   "needs": "real model",
+   "est_usd": 0.1,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X6",
+   "step": "X6 (C-3): Python project: unittest passed in the checks.",
+   "source": "live2:research step '\u00a77.3 (C-3)' (skipped_cap)",
+   "needs": "real model; python3 on this machine",
+   "est_usd": 0.06,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X7",
+   "step": "X7 (L-5): a rewritten test script is caught by the checks.",
+   "source": "live2:research step '\u00a77.5 (L-5)' (skipped_cap)",
+   "needs": "real model",
+   "est_usd": 0.06,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X8",
+   "step": "X8 (L-4): clamp library notes are not orders.",
+   "source": "live2:research step '\u00a77.6 (L-4)' (skipped_cap)",
+   "needs": "real model",
+   "est_usd": 0.06,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "X10",
+   "step": "X10 (hand-over after two failures): opportunistic only: if any task above fails twice, record that it went to another specialist with the full review kept; do not spend to provoke it.",
+   "source": "live2:run step 'extra \u00a72.3' (not_seen)",
+   "needs": "nothing extra",
+   "est_usd": 0.0,
+   "priority": 3,
+   "journey": "run"
+  },
+  {
+   "id": "G9",
+   "addition": true,
+   "step": "G9 (W15-02 with W15-05, the merge review's blocking 1, fixed in 7a38796; after G1, reusing its chain): commit a one-line change in C's task folder without pushing; squash-merge B on GitHub; poll. Expect C's Overview row and Tasks label to say '#N waits for a commit made in its task's folder: push it to GitHub or undo it.' and Merge to answer the same, nothing merged. Push the commit from the folder; poll. Expect 'Accepted \u00b7 changed after the review', no plain Merge under 'Reviewed by the critic', and #N never merged by Forerunner.",
+   "source": "wave15a-review-w15-merge:blocking[0]; wave15a-fixup-w15-merge fixed[0]",
+   "needs": "GitHub via the proxy (NODE_USE_ENV_PROXY=1); no model (rebuilds are git only)",
+   "est_usd": 0.0,
+   "priority": 2,
+   "displaces": "none: no model spend; run it among the priority-2 steps after G1",
+   "journey": "github"
+  },
+  {
+   "id": "G2",
+   "addition": true,
+   "step": "G2 revised (W15-01 and its fix-up; the owner's answers of 2026-11-09). Part (1) needed live check 2's legacy PR #5 open on fr/status; #5 was closed on 2026-11-09 with the owner's OK, so part (1) runs only if a marker-less PR is opened on fr/status by hand for it, else it is skipped (W15-01's composed and real-daemon tests cover the legacy case). Part (2) adds: after B's session, B's Docs tab lists docs/status.md as present (kept in the app), the same after a daemon restart (the Docs note's words are run C's, W15B-04). If run C's D1 (one repository, one project) lands before live check 3, linking B to the same repository is offered A instead, and G2 checks that offer in place of parts (1) and (2).",
+   "source": "wave15a-review-w15-merge:blocking[1]; wave15a-fixup-w15-merge fixed[1]; /tmp/frbench/owner-decisions-2026-11-09.md answers 2 and 3",
+   "needs": "as G2 (the new FORERUNNER_TEST_GITHUB_TOKEN is seen only by a session started after the owner's update)",
+   "est_usd": 0.0,
+   "priority": 1,
+   "displaces": "none: at most USD 0.15 as planned; part (1) skipped saves about USD 0.05",
+   "journey": "github"
+  },
+  {
+   "id": "G4",
+   "addition": true,
+   "step": "G4 amended (W15-55/W15-63, corrected by the fix-up): push a commit to a waiting PR's branch on GitHub and press Merge first; then expect '#N changed after the review: look at the new commits, then merge it yourself or redo the task.' (or w15-words' W15B-11 words) and 'Accepted \u00b7 changed after the review'. Without a press or a rebuild the row keeps Merge: that is as designed.",
+   "source": "wave15a-review-w15-merge:non_blocking[1]; wave15a-fixup-w15-merge:notes_for_other_areas[7] (W15B-40)",
+   "needs": "as G4",
+   "est_usd": 0.0,
+   "priority": 2,
+   "displaces": "none: G4's expectation corrected",
+   "journey": "github"
+  },
+  {
+   "id": "R1",
+   "addition": true,
+   "step": "R1 expectations added (W15-16 fix-up, W15B-19): if a wrap-up is sent, the model-call log's message starts 'Wrap up now: this run has used'; the session log's 'Session review measured' line sets the work against the estimate and names the reviews apart; the pairing task ends Done \u00b7 Reviewed (an observation only: the bench's 'Needs your decision: tried 4 times' is explained, W15B-42: the stand-in coder writes only the outcome's first file, testenv/src/bench/role-player.ts:638).",
+   "source": "wave15a-fixup-w15-run fixed[3]; W15B-19; W15B-42 (explained on the bench, not a live question)",
+   "needs": "as R1",
+   "est_usd": 0.0,
+   "priority": 1,
+   "displaces": "none: expectations added to R1",
+   "journey": "run"
+  },
+  {
+   "id": "S4",
+   "addition": true,
+   "step": "S4 expectations added (W15-25 fix-up, W15B-44): every finding of the critic reaches the retry brief; an order to read a page the rule refuses is replaced by the rule's line; note any order that names a refused site by a name only ('the MDN page') as the known residual.",
+   "source": "wave15a-fixup-w15-review fixed[1]; wave15a-fix-w15-review:new_problems[1]",
+   "needs": "as S4",
+   "est_usd": 0.0,
+   "priority": 1,
+   "displaces": "none: expectations added to S4",
+   "journey": "research"
+  },
+  {
+   "id": "S6",
+   "addition": true,
+   "step": "S6 expectation added (W15-24 fix-up, W15-58): if the critic sends the word counter back, the session log's line names the review's blocking finding (not what passed).",
+   "source": "wave15a-fixup-w15-review fixed[0]; wave15a-fix-w15-review fixed[5]",
+   "needs": "as S6",
+   "est_usd": 0.0,
+   "priority": 1,
+   "displaces": "none",
+   "journey": "research"
+  },
+  {
+   "id": "R3",
+   "addition": true,
+   "step": "R3 expectation added (W15B-14, after w15-words): the second session's log has one line saying the waiting review went on and no 'The writer started'; the card before the raise reads 'The work is done; its review waits for room in the budget.'.",
+   "source": "W15B-14; W15-65 re-check",
+   "needs": "as R3",
+   "est_usd": 0.0,
+   "priority": 1,
+   "displaces": "none",
+   "journey": "run"
+  },
+  {
+   "id": "S5",
+   "addition": true,
+   "step": "S5 note: the plan card's 'reads no website' line is w15-tail's W15B-07; if W15B-07 ended in not_done, check only that the plan asks the person for websites or sources.",
+   "source": "wave15a-fix-w15-review:not_done[0]; W15B-07",
+   "needs": "as S5",
+   "est_usd": 0.0,
+   "priority": 2,
+   "displaces": "none",
+   "journey": "research"
+  }
+ ]
+}

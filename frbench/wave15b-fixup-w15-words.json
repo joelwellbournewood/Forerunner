@@ -1,0 +1,131 @@
+{
+ "area": "w15-words",
+ "branch": "fix/w15-words",
+ "head_sha": "4fed63822065b6ee17c6f32d2071b45d9f73ce50",
+ "commits": [
+  {
+   "sha": "557c9ea720ed01612c1b045b2dd3eb27c3bf91ed",
+   "subject": "words: the waiting review's line is no task start, so nothing says the reviewed task runs after its verdict (W15B-14, U-072)"
+  },
+  {
+   "sha": "4fed63822065b6ee17c6f32d2071b45d9f73ce50",
+   "subject": "words: a task only you can do waits for your answers in the log; the asked line and the plan card's merged line keep their bounds (W15B-79, W15-86, U-072, U-078)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking (review of w15-words, W15B-14): the review-only pass's log line was written as a task.started {specialist:'critic', reviewOnly:true} that no task.finished ever ends. Four readers take the last task.started with no task.finished after it as the task in flight: server.ts liveSessionView (currentTask), project-status.ts workingOn (the project card's working and its 'Working on \"X\"' line), project-facts.ts workingNowBlock (the chat's '# Working now') and the UI's session-steps.ts currentFromLog (the session page's Current task and the drawer's steps). So after the critic's verdict, until the next task started or the session's last status change, the session page showed '\"X\" \u00b7 critic' next to Stop now, the header said 'Working on \"X\"', and the chat was told the critic was working on X. At the base nothing claimed a task in flight there.",
+   "u_ids": [
+    "U-072"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"w15-words, wave 15 run B\" > \"W15B-14: after the waiting review's verdict, while its session ends, no screen and no chat says the task runs\" (at ba7288b GET /sessions/:id currentTask was {title:'Rules index', specialist:'critic'}); apps/ui/test/real-daemon.test.ts \"w15-words, wave 15 run B\" > \"W15B-14: after the waiting review's verdict, while its session ends, the session page, the drawer and the header say no task runs\" (same failure through the UI's client)",
+   "how": "Root cause: runner.ts wrote a task.started for a pass that has no run, so nothing ends it. The runner now writes the line as its own event type, critic.review_resumed (REVIEW_RESUMED_EVENT, exported from daemon/event-audience.ts). It is in PERSON_EVENT_TYPES, and personLine reads it with reviewResumedLine, so the words are unchanged. No task.started is written for the pass, the coder's or the critic's, so none of the four readers counts it and none of them needed a change. The reviewOnly branches in event-lines.ts and views.ts lineOf are gone. Both tests hold the session's last status change (store.session.setStatus to a terminal status) after the verdict and the status doc are written, then read four things: GET /sessions/:id (status running, currentTask null), GET /projects/:id (working.taskTitle null, and the status line without the quoted title), workingNowBlock (': between tasks;') and, in real-daemon, currentFromLog and taskStepsFromLog over client.sessionEvents (both null). The w15-words unit test reads the new type. The runtime.md sections on the review-only pass, the person-level types and the critic's events are updated.",
+   "check_in_the_app": "Bench (--provider bench, optionally --env FORERUNNER_BENCH_CRITIC_DELAY_MS=1500 so the review can be seen): 1. Make a project and set its budget to CHF 0.01 in Settings. 2. Add one coder task, 'Make the rules page in rules.html', and press Start. The Inbox card reads 'The work is done; its review waits for room in the budget.' 3. Add a second ready task, 'Make the members page in members.html'. 4. Raise the project budget to CHF 5 in Settings and open the new session's page. The log reads 'The critic reviews \"Make the rules page in rules.html\": its work was done in an earlier session.', then 'The critic accepted ...', then 'The coder started \"Make the members page ...\"'. Current task reads 'Choosing the next task\u2026' during the review and after its verdict, and only ever names the members page. The project's header never says 'Working on' the rules page. Live check 3 (step R3 of w15-review: project budget CHF 0.06, one writer task, the review pauses, then raise the budget): on the second session's page, during the critic's review and after its verdict, Current task never names the reviewed task. The project header never says 'Alice is working on' it. Asked in chat 'what are you working on?' while that session runs, the agent does not name the reviewed task as running."
+  },
+  {
+   "problem": "Non-blocking, in this area's own new sentence (W15B-79): the new needs_human fallback '\"X\" could not run: <first sentence> (Inbox).' also caught a task only the person can do (U-022). That task's executor summary 'Waiting for your answers in the Inbox (2 question(s)); no specialist ran.' read '\"Confirm the colours with the human\" could not run: Waiting for your answers ... (Inbox).': a capital in mid-sentence, and 'could not run' for a task that asks the person.",
+   "u_ids": [
+    "U-072"
+   ],
+   "failing_test_before": "packages/runtime/test/w15-words.test.ts \"w15-words, wave 15 run B\" > \"a task only you can do waits for your answers; it never 'could not run' (fixup)\" (at 557c9ea it received '\"Confirm the colours with the human\" could not run: Waiting for your answers in the Inbox (2 question(s)); no specialist ran (Inbox).')",
+   "how": "event-lines.ts: PERSON_TASK_WAITS (/^Waiting for your answers in the Inbox\\b/) gives '\"X\" waits for your answers (Inbox).'. The read of p.asked is removed: nothing writes that field, so it was dead code. The executor's summary alone decides, through ASKED_YOU. A new real-daemon case runs a stand-in specialist that asks (FORERUNNER_BENCH_ASK) and reads the session log's person line, so a change to the executor's asked-you sentence fails a test instead of falling through to 'could not run'.",
+   "check_in_the_app": "Bench with --env \"FORERUNNER_BENCH_ASK=Choose the colours\": add the coder task 'Choose the colours in colours.md' and press Start. The session log reads 'The coder has questions for you about \"Choose the colours in colours.md\" (Inbox).', the row reads 'Needs your answer', and the session reads 'Ended: 1 task needs you'. A person task reaching a session (a plan's 'Confirm ... with the human') reads '\"Confirm ... with the human\" waits for your answers (Inbox).'. This path is rare, because tasks created for the person file their questions at creation."
+  },
+  {
+   "problem": "Non-blocking (W15-86): writing-rules.test.ts dropped the plan card's 100-character bound on the runs-on line when the merged line started to name its tasks, so nothing bounded that line any more. Also, onceForThePlan's JSDoc sat above namedTasks in plan-tasks.ts.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "none (a guard: packages/runtime/test/writing-rules.test.ts 'polish-words, wave 13: the plan card's runs-on lines' bound, and the new 'the merged line names three tasks at most, each cut at a word, within 100 characters beside the names (fixup-w15-words)' pass on the fixer's code)",
+   "how": "The existing case again asserts that the line's own words stay within 100 characters with the quoted titles taken out. A new case with four long titles checks: three names, each at most 40 characters inside its quotes; 'and 1 more'; the line's own words within 100 characters; at most 100 + 3*40 in all. The JSDoc is moved back onto onceForThePlan, inside the w15-words region of plan-tasks.ts.",
+   "check_in_the_app": "Bench --provider bench-api --subscription: start a new project from a web brief whose plan has four or more code tasks. The plan card's subscription line names at most three tasks, each cut at a word, then 'and N more', for example 'On your subscription the tests of \"A\", \"B\", \"C\" and 1 more will not run: commands cannot run there.'"
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Reviewer non-blocking: the session result and its chip still say '\"X\" ... need your decision (Inbox).' for a task whose card is a specialist's questions card (sibling of W15B-14).",
+   "why": "Logged, not fixed. session/result.ts needsYouSentence takes only titles. Giving the card kind needs it plumbed from the runner's needsYouNow through SessionOutcome.needsYou, and sessionUpdateLine's exact-sentence removal, so a fix touches every result and Update assertion that reads 'need your decision (Inbox)'. That is too large for a fixup. Evidence: the reviewer's bench walk 4, where the result read '\"Choose the `colours` ...\" and \"Draft the poster text in poster.md\" need your decision (Inbox).' while the card says ': the specialist asks you'."
+  },
+  {
+   "problem": "Reviewer non-blocking: task commit bodies written to GitHub contain the internal marker '<<<UNTRUSTED_CONTENT source=tool_output ...' (from plainReport).",
+   "why": "Not changed. Those markers are the spotlighting wrapper around tool output. Stripping them from text that a later model may read (the critic reads the git log) could weaken the rule that file and tool text never becomes instructions, and the commit-body logic is w15-tail's in pr-executor.ts. A later area should decide how a commit body shows untrusted text."
+  },
+  {
+   "problem": "Reviewer non-blocking: a paused task that spent nothing reads 'CHF 0.00 / of less than CHF 0.01 budget' on its Tasks row, and the log reads 'it spent CHF 0.00'.",
+   "why": "Not changed. The log line is budget-pause.ts's stopped sentence (pauseSentence), and w15-words owns only the texts of limitWords and wrapUpSentWords there. Both readings are true, so they are left for a polish area."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm -w exec vitest run --project unit packages/runtime/test/budget-pause.test.ts packages/runtime/test/w15-words.test.ts packages/runtime/test/event-lines.test.ts packages/runtime/test/writing-rules.test.ts",
+   "result": "Before the fix, the new W15B-14 composed case failed (currentTask {title:'Rules index', specialist:'critic'}). After it: all pass (124 tests in the first three files, 59 in w15-words + writing-rules)."
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts test/real-daemon.test.ts -t \"w15-words\"",
+   "result": "Before the fix, the new W15B-14 case failed (currentTask named the reviewed task). After it, the block passes (9 tests, including the new W15B-79 asked-you case)."
+  },
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit, docs check, secret scan)",
+   "result": "Exit 0: 487 files, 5143 unit tests passed, 7 skipped. Lint: 39 biome warnings, none in changed lines. Secret scan clean (2090 files). The first run caught a TS2345 (a missing project_id in the new writing-rules case), fixed before commit and re-run green."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm docs:links",
+   "result": "docs-check ok (87 files); link-check ok (206 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed, 6 skipped; 30 tests passed, 75 skipped; exit 0"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed, 1 skipped; exit 0"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "89 files, 1080 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed"
+  },
+  {
+   "command": "Bench fixup-w15-words (daemon 48561, UI 2161, --provider bench, FORERUNNER_BENCH_LONG='Write the', FORERUNNER_BENCH_CRITIC_DELAY_MS=1500, FORERUNNER_BENCH_ASK='Choose the colours'): a review-only walk script (scratchpad review-only-walk.cjs), journeys/budget.cjs fx live --below-chf 0.0005, and an asked-you walk (ask-walk.cjs)",
+   "result": "Review-only walk (/tmp/frbench/fixup-w15-words/steps/after-review-only.json, screenshots 01-04). The Inbox card read 'The work is done; its review waits for room in the budget.' The walk script's first check FAILed only because its regex read the row's label ('Paused at the project's budget') instead of the card. The session log read 'The critic reviews \"Make the rules page in rules.html\": its work was done in an earlier session.', then 'The critic accepted ...', with no start line for that task, then the members page ran. In 89 polls while the session ran (51 of them after the verdict), GET /sessions/:id never named the reviewed task, the project line never did (values: 'Working (0 of 2 done)', 'Working on \"Make the members page ...\"', ...), and the page's Current task read only 'Choosing the next task\u2026' or the members page. Budget journey: Inbox 'It stopped before it wrote anything.' (x2) and 'Drops it.'; session 'Ended: 3 paused'. Its 'tiny task's log line' check fails as it did before the fix (pre-existing). Asked walk: 'The coder has questions for you about \"Choose the colours in colours.md\" (Inbox).', row 'Needs your answer'. Bench stopped with stop.mjs; its home and browser profile deleted."
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  }
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fixup-w15-words/steps/01-after-inbox-review-waits.png",
+   "/tmp/frbench/fixup-w15-words/steps/02-after-session-during-the-review.png",
+   "/tmp/frbench/fixup-w15-words/steps/03-after-session-ended.png",
+   "/tmp/frbench/fixup-w15-words/steps/04-after-tasks-after.png",
+   "/tmp/frbench/fixup-w15-words/steps/after-review-only.json",
+   "/tmp/frbench/fixup-w15-words/steps/09-fx-inbox.png",
+   "/tmp/frbench/fixup-w15-words/steps/10-fx-session.png",
+   "/tmp/frbench/fixup-w15-words/steps/fx-budget.json",
+   "/tmp/frbench/fixup-w15-words/steps/after-asked.json"
+  ]
+ },
+ "new_problems": [
+  "The session view's Current task reads 'Choosing the next task\u2026' while the critic reviews a task (any task, not only a review-only pass): the critic's review of a normal run comes after its task.finished. This is the base behaviour and unchanged here. The log's line says what happens, but a reviewer may want the page to say the critic is reviewing \"X\" (packages/runtime/src/daemon/server.ts liveSessionView, apps/ui/src/lib/session-steps.ts currentFromLog). Bench: after-review-only.json shows the polls during the critic's delayed review with currentTask null.",
+  "session/result.ts needsYouSentence: '\"X\" needs your decision (Inbox).' for a task whose card is a questions card (sibling of W15B-14, from the reviewer's walk 4). It needs card kinds carried in SessionOutcome.needsYou.",
+  "Commit bodies written to GitHub carry '<<<UNTRUSTED_CONTENT source=tool_output ...' markers from plainReport (the reviewer's bench, commit 7c57ca6). Removing them needs a security decision, because the markers keep tool text from being read as instructions.",
+  "The executor's person-task summary itself says '(2 question(s))' (packages/runtime/src/session/executor.ts:854). The log no longer shows it, but describeEvent-less readers (the Tasks row reason, the run summary) may."
+ ],
+ "notes_for_other_areas": [
+  "New event type: critic.review_resumed (REVIEW_RESUMED_EVENT, exported from packages/runtime/src/daemon/event-audience.ts, in PERSON_EVENT_TYPES), payload {taskId, title, specialist: 'critic'}. The runner writes it once per review-only pass (W15-27) in place of the fixer's task.started {reviewOnly:true}, which no longer exists. Its person line is unchanged: 'The critic reviews \"X\": its work was done in an earlier session.' (reviewResumedLine). Readers of the task in flight (liveSessionView, workingOn, workingNowBlock, currentFromLog) must keep treating only task.started as a start. Run C's D8 ('a running session visible everywhere') should read it the same way and never take the review-only line for a task in flight.",
+  "Changed sentence (session log): '\"X\" could not run: Waiting for your answers in the Inbox (2 question(s)); no specialist ran (Inbox).' -> '\"X\" waits for your answers (Inbox).' for a task only the person can do (event-lines.ts PERSON_TASK_WAITS). 'has questions for you' is decided by the executor's summary alone (ASKED_YOU). The unused p.asked read is gone. Merge with w15-tail: W15B-01's folder-hold summary still reads '\"X\" could not run: its folder holds a commit ... (Inbox).' as before.",
+  "Test-only guards: writing-rules.test.ts bounds the plan card's merged runs-on line again (its own words within 100 characters, at most three names of at most 40 characters each). The real-daemon 'w15-words, wave 15 run B' block gains two cases, W15B-14 (held session end) and W15B-79 (asked-you line from the stand-in's real executor summary). budget-pause.test.ts's w15-words block gains the held-session-end case. Its fixture's coder replies now also serve the title 'Rules index'."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/w15-words.test.ts 'the review-only pass has one line of its own' (renamed '..., a person's line that is no task start')",
+   "why": "The line is now the critic.review_resumed event's, not a task.started with reviewOnly. It asserts the type is not task.started, its audience is person, and the words are unchanged."
+  }
+ ]
+}
