@@ -825,9 +825,19 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
   };
 }
 
-/** A value as the card and the change log say it: the key's own words when it has them. */
+/**
+ * A value as the card, the change log and an undo question say it: the key's own words when it
+ * has them; a yes/no key "on" or "off", never "true", "false" or "unset" (W15B-16: every one is
+ * off until it is set, as the daemon reads it).
+ */
 const showFor = (spec: SettingSpec, v: unknown): string =>
-  spec.display ? spec.display(v) : show(v);
+  spec.display
+    ? spec.display(v)
+    : spec.schema instanceof z.ZodBoolean
+      ? v === true
+        ? "on"
+        : "off"
+      : show(v);
 
 function sentenceOf(t: Target): string {
   const { effect } = t;

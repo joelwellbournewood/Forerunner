@@ -20,7 +20,8 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
     });
     expect(lowered.status).toBe("done");
     expect(harness.daemon.state.changes[0]?.sentence).toBe(
-      "Lowered the monthly hard ceiling from CHF 150 to CHF 100. Undo.",
+      // W15B-16 (w15-words): the fake says the daemon's sentence ("the monthly cap", CHF 0.00).
+      "Lowered the monthly cap from CHF 150.00 to CHF 100.00. Undo.",
     );
     renderApp("/changes", harness);
     const row = (await screen.findAllByTestId("change")).find(
@@ -47,7 +48,7 @@ describe("undo asks for the confirmation of the value it restores (U-057)", () =
       ).toEqual({ answer: "device", deviceId: ME.desktopDeviceId }),
     );
     expect(await screen.findByTestId("changes-note")).toHaveTextContent(
-      "Undone: Lowered the monthly hard ceiling from CHF 150 to CHF 100.",
+      "Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.",
     );
     expect(screen.queryByTestId("changes-undo-pending")).not.toBeInTheDocument();
     const me = await harness.client.me();

@@ -543,7 +543,8 @@ describe("IntentParser: a budget clause never loses its tail", () => {
     expect(r.commands).toEqual([]);
     // W15-35: the schema's own sentence, without the command's or the field's name.
     expect(r.question?.text).toBe(
-      "The budget per session must be more than CHF 0: a session plans its work within it. Which value did you mean?",
+      // W15B-16 (w15-words): CHF 0.00 and what to do.
+      "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend. Which value did you mean?",
     );
     expect(r.question?.text).not.toMatch(/budget\.set|amountChf/);
     expect(r.matched).toBe("pattern");

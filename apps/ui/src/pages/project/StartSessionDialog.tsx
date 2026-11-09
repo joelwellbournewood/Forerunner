@@ -253,9 +253,10 @@ export function budgetProblem(text: string, monthLeft: MoneyLike | null): string
   const chf = chfToMicro(text.replace(",", "."));
   if (chf === null)
     return text.trim().startsWith("-")
-      ? "The budget must be more than CHF 0."
+      ? "The budget must be more than CHF 0.00."
       : "The budget must be an amount in CHF, like 5.00.";
-  if (chf <= 0) return "The budget must be more than CHF 0.";
+  // W15B-16: CHF with its two decimals (design §5 rule 7), never "CHF 0".
+  if (chf <= 0) return "The budget must be more than CHF 0.00.";
   if (monthLeft && chf > monthLeft.chfMicro)
     return `That is more than what is left of your monthly cap (${chfWords(monthLeft.chfMicro)}).`;
   return null;

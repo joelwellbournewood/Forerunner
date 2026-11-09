@@ -1194,8 +1194,10 @@ your agents may reach beyond their built-in tools.
   in CHF at the day's rate ("about CHF 6.40 / 32.00 per million input / output tokens instead
   of CHF 3.20 / 16.00"); Anthropic lists it as USD 8 / 40 against USD 4 / 20, a 2x surcharge. A project's budget can be 0, which means no budget
   (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
-  stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
-  change card shows the new value in words, with what it changes as the sentence under it.
+  stops all spending (raising it needs this computer's OK), and a session's budget cannot be 0
+  either: a session plans its work within it, so enter the most a session may spend. A new
+  install's cap is CHF 150.00. A change card shows the new value in words, with what it changes
+  as the sentence under it; a setting that is on or off says "on" or "off".
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice

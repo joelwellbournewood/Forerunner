@@ -130,7 +130,9 @@ export async function monthlyCeilingOf(human: HumanRow, ctx: CommandContext): Pr
 export const ZERO_REFUSED: Record<"session" | "month", string> = {
   month:
     "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month.",
-  session: "The budget per session must be more than CHF 0: a session plans its work within it.",
+  // W15B-16: the amount with its decimals and what to do, as the monthly cap's says it.
+  session:
+    "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
 };
 
 const params = z

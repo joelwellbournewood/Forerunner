@@ -111,7 +111,8 @@ describe("Settings Basics (design §6)", () => {
     await user.type(input, "0");
     // later #43: 0 is refused with why, here (a session plans within its budget).
     expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
-      "The budget per session must be more than CHF 0: a session plans its work within it.",
+      // W15B-16 (w15-words): CHF 0.00 and what to do, as the daemon's ZERO_REFUSED.session.
+      "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
     );
     expect(within(dialog).getByTestId("setting-apply")).toBeDisabled();
     await user.clear(input);

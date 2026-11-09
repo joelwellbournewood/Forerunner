@@ -4886,6 +4886,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     you: mergeModeEffect("you"),
     after_review: mergeModeEffect("after_review"),
   };
+  /** The yes/no keys (`z.boolean()` in SETTING_SPECS): "on" or "off", off until set (W15B-16). */
+  const BOOLEAN_KEYS = new Set(["small_project_mode", "voice_alerts", "status_pull_request"]);
   const PROJECT_KEYS = new Set([
     "small_project_mode",
     "status_pull_request",
@@ -5044,9 +5046,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             ? "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month."
             : scope === "project"
               ? "budget.set: amountChf must be a number"
-              : "The budget per session must be more than CHF 0: a session plans its work within it.",
+              : // The daemon's `ZERO_REFUSED.session` (W15B-16).
+                "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
         );
       }
+      // The daemon's amounts (`chfExact`) and verbs (budget.ts `describe`, W15B-16): "CHF 150.00",
+      // "Raised" up, "Lowered" down.
+      const chf2 = (n: number) => `CHF ${n.toFixed(2)}`;
+      const verbOf = (from: number, to: number) =>
+        to > from ? "Raised" : to < from ? "Lowered" : "Set";
+      const askVerbOf = (from: number, to: number) =>
+        to > from ? "Raise" : to < from ? "Lower" : "Set";
       if (scope === "month") {
         const fromChf = me.monthlyCap.chfMicro / 1_000_000;
         const raise = amountChf > fromChf;
@@ -5058,11 +5068,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           card: card(
             {
               command: name,
-              what: "the monthly hard ceiling",
-              oldValue: `CHF ${fromChf}`,
-              newValue: `CHF ${amountChf}`,
+              what: "the monthly cap",
+              oldValue: chf2(fromChf),
+              newValue: chf2(amountChf),
               scope: "global",
-              sentence: `${raise ? "Raised" : "Lowered"} the monthly hard ceiling from CHF ${fromChf} to CHF ${amountChf}. Undo.`,
+              ask: `${askVerbOf(fromChf, amountChf)} the monthly cap to ${chf2(amountChf)}?`,
+              sentence: `${verbOf(fromChf, amountChf)} the monthly cap from ${chf2(fromChf)} to ${chf2(amountChf)}. Undo.`,
             },
             monthRisk,
           ),
@@ -5080,7 +5091,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (scope === "project") {
         const fromChf = project.budget.chfMicro / 1_000_000;
         // later #43: 0 is no budget, said so.
-        const words = (chf: number) => (chf <= 0 ? "no budget" : `CHF ${chf}`);
+        const words = (chf: number) => (chf <= 0 ? "no budget" : chf2(chf));
+        const verb = fromChf <= 0 || amountChf <= 0 ? "Set" : verbOf(fromChf, amountChf);
         return {
           name,
           params,
@@ -5092,7 +5104,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               oldValue: words(fromChf),
               newValue: words(amountChf),
               scope: "project",
-              sentence: `Set the project budget for ${project.name} from ${words(fromChf)} to ${words(amountChf)}${amountChf <= 0 ? ": only the monthly cap limits its spending" : ""}. Undo.`,
+              sentence: `${verb} the project budget for ${project.name} from ${words(fromChf)} to ${words(amountChf)}${amountChf <= 0 ? ": only the monthly cap limits its spending" : ""}. Undo.`,
               ...(amountChf <= 0
                 ? {
                     ask: `Remove the project budget for ${project.name}? Only the monthly cap limits its spending then.`,
@@ -5121,10 +5133,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           {
             command: name,
             what: `${until ? "tonight's" : "the"} session budget for ${project.name}`,
-            oldValue: "CHF 5",
-            newValue: `CHF ${amountChf}`,
+            oldValue: chf2(5),
+            newValue: chf2(amountChf),
             scope: "session",
-            sentence: `Raised the session budget for ${project.name} from CHF 5 to CHF ${amountChf}${until ? `, until ${until}` : ""}. Undo.`,
+            sentence: `${verbOf(5, amountChf)} the session budget for ${project.name} from ${chf2(5)} to ${chf2(amountChf)}${until ? `, until ${until}` : ""}. Undo.`,
             projectId: project.id,
             projectName: project.name,
             usesActiveProject: projectRef === undefined,
@@ -5287,9 +5299,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // and the surcharge for the direction asked, in the change card and the sentence.
         const value = params.value;
         const before = state.fastMode[project.id] ?? null;
-        const shown = before === null ? "unset" : String(before);
+        // A yes/no setting reads "on" or "off", never "true" or "unset" (W15B-16).
+        const shown = before === true ? "on" : "off";
         const effect = fastModeEffect(value);
-        const sentence = `Set Opus fast mode for ${project.name} from ${shown} to ${value}: ${effect}. Undo.`;
+        const sentence = `Set Opus fast mode for ${project.name} from ${shown} to ${value ? "on" : "off"}: ${effect}. Undo.`;
         return {
           name,
           params,
@@ -5299,8 +5312,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               command: name,
               what: `Opus fast mode for ${project.name}`,
               oldValue: shown,
-              newValue: String(value),
-              ask: askWith(`Opus fast mode for ${project.name}`, String(value), effect),
+              newValue: value ? "on" : "off",
+              ask: askWith(`Opus fast mode for ${project.name}`, value ? "on" : "off", effect),
               scope: "project",
               sentence,
               projectId: project.id,
@@ -5463,6 +5476,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         }
         if (key === "default_autonomy" && typeof v === "number")
           return `${AUTONOMY[v] ?? "level"} (level ${v})`;
+        // A yes/no setting reads "on" or "off" (W15B-16), as the daemon's `showFor`.
+        if (typeof v === "boolean" || ((v === undefined || v === null) && BOOLEAN_KEYS.has(key)))
+          return v === true ? "on" : "off";
         return v === undefined || v === null ? "unset" : JSON.stringify(v);
       };
       const currentValue =

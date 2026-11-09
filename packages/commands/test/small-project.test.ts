@@ -20,11 +20,12 @@ describe("small-project mode (B.6)", () => {
       w.ctx(),
     );
     expect(card.what).toBe("small project mode for Game");
-    expect(card.oldValue).toBe("false");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off", never true, false or unset.
+    expect(card.oldValue).toBe("off");
     // P7-10: the value is the value; what it changes is the read-back's second sentence.
-    expect(card.newValue).toBe("true");
+    expect(card.newValue).toBe("on");
     expect(card.ask).toContain(ON.slice(1));
-    expect(card.sentence).toBe(`Set small project mode for Game from false to true: ${ON}. Undo.`);
+    expect(card.sentence).toBe(`Set small project mode for Game from off to on: ${ON}. Undo.`);
     const on = done(
       await w.executor.execute({
         name: "settings.set",
@@ -32,7 +33,7 @@ describe("small-project mode (B.6)", () => {
         ctx: w.ctx(),
       }),
     );
-    expect(on.sentence).toBe(`Set small project mode for Game from false to true: ${ON}. Undo.`);
+    expect(on.sentence).toBe(`Set small project mode for Game from off to on: ${ON}. Undo.`);
     expect((await w.store.project.mustGet(w.game.id)).small_project_mode).toBe(true);
     const off = done(
       await w.executor.execute({
@@ -41,7 +42,7 @@ describe("small-project mode (B.6)", () => {
         ctx: w.ctx(),
       }),
     );
-    expect(off.sentence).toBe(`Set small project mode for Game from true to false: ${OFF}. Undo.`);
+    expect(off.sentence).toBe(`Set small project mode for Game from on to off: ${OFF}. Undo.`);
     // A key without an effect keeps its plain sentence: the effect text is per key (the
     // speed-versus-quality slider has its own, `speed-quality.test.ts`).
     const plain = done(

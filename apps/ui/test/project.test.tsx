@@ -530,8 +530,9 @@ describe("Project page", () => {
     expect(within(blockers).queryByTestId("start-session-over-budget")).toBeNull();
     // 0, a negative amount and more than is left this month are refused in words.
     for (const [typed, said] of [
-      ["0", "The budget must be more than CHF 0."],
-      ["-5", "The budget must be more than CHF 0."],
+      // W15B-16 (w15-words): CHF with its two decimals.
+      ["0", "The budget must be more than CHF 0.00."],
+      ["-5", "The budget must be more than CHF 0.00."],
       ["1000000", "That is more than what is left of your monthly cap (CHF 120.00)."],
     ] as const) {
       await user.clear(budget);

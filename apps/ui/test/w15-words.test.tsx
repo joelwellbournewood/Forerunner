@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
 import { aboutChf, chfWords, formatMoney } from "../src/lib/money.ts";
 import { money, TASKS } from "./fixtures.ts";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
@@ -338,6 +339,78 @@ describe("w15-words, wave 15 run B", () => {
           ],
         },
       });
+    });
+  });
+  describe("W15B-16: on and off; CHF 0.00 with what to do", () => {
+    it("Settings: the session budget's 0 says CHF 0.00 and what to do; a negative amount says CHF 0.00 too", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      renderApp("/settings", harness);
+      const cap = (await screen.findAllByTestId("setting-row")).find(
+        (r) => r.dataset.key === "project.session_cap",
+      ) as HTMLElement;
+      await user.click(within(cap).getByTestId("setting-change"));
+      const dialog = await screen.findByTestId("setting-dialog");
+      const input = within(dialog).getByTestId("setting-value");
+      await user.clear(input);
+      await user.type(input, "0");
+      expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
+        ZERO_REFUSED.session,
+      );
+      expect(ZERO_REFUSED.session).toBe(
+        "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
+      );
+      await user.clear(input);
+      await user.type(input, "-3");
+      expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
+        "The amount must be CHF 0.00 or more.",
+      );
+      expect(within(dialog).getByTestId("setting-apply")).toBeDisabled();
+    });
+
+    it("the Start dialog's budget of 0 says CHF 0.00", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      const budget = within(dialog).getByLabelText(/Session budget/);
+      for (const typed of ["0", "-5"]) {
+        await user.clear(budget);
+        await user.type(budget, typed);
+        expect(within(dialog).getByTestId("start-session-budget-error")).toHaveTextContent(
+          "The budget must be more than CHF 0.00.",
+        );
+      }
+    });
+
+    it("the fake daemon's budget and yes/no sentences are the daemon's", async () => {
+      const harness = createHarness();
+      const run = (name: string, params: Record<string, unknown>) =>
+        harness.client.executeCommands({
+          commands: [{ name, params }],
+          wordsUsed: "Settings",
+          source: "ui",
+          confirm: "tap",
+        });
+      const zero = await run("budget.set", { scope: "session", amountChf: 0 });
+      expect(zero.status).toBe("refused");
+      expect(zero.reason).toBe(ZERO_REFUSED.session);
+      // The same literals real-daemon.test.ts "w15-words, wave 15 run B" reads from the daemon.
+      expect(
+        (await run("budget.set", { scope: "session", amountChf: 8, project: "proj_atlas" }))
+          .sentence,
+      ).toBe("Raised the session budget for Atlas from CHF 5.00 to CHF 8.00. Undo.");
+      expect((await run("budget.set", { scope: "month", amountChf: 3 })).sentence).toBe(
+        "Lowered the monthly cap from CHF 150.00 to CHF 3.00. Undo.",
+      );
+      const fast = await run("settings.set", {
+        key: "fast_mode",
+        value: true,
+        project: "proj_atlas",
+      });
+      expect(fast.sentence).toMatch(/^Set Opus fast mode for Atlas from off to on: /);
     });
   });
 });

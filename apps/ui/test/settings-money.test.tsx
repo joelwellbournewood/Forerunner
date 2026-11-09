@@ -17,9 +17,10 @@ describe("money in Settings (design §6)", () => {
     expect(asChf("1,50")).toBe(1.5);
     expect(asChf("CHF 5")).toBe(5);
     expect(asChf("0")).toBeNull();
-    expect(moneyProblem("0")).toBe("The amount must be more than CHF 0.");
+    // W15B-16 (w15-words): CHF with its two decimals.
+    expect(moneyProblem("0")).toBe("The amount must be more than CHF 0.00.");
     // later #43: a negative amount is never taken; 0 depends on the field.
-    expect(moneyProblem("-3")).toBe("The amount must be CHF 0 or more.");
+    expect(moneyProblem("-3")).toBe("The amount must be CHF 0.00 or more.");
     expect(moneyProblem("abc")).toBe("Type an amount in CHF, like 12.30 or 12,30.");
     expect(moneyProblem("150.40")).toBeNull();
     const budget = commandForSetting({

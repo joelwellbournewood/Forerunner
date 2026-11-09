@@ -14063,4 +14063,54 @@ describe("w15-words, wave 15 run B", () => {
       }
     }, 60_000);
   });
+
+  describe("W15B-16: the daemon's budget and yes/no sentences, as the fake says them", () => {
+    let rt: RuntimeApp;
+    let client: DaemonClient;
+
+    beforeAll(async () => {
+      ({ rt, client } = await composeWithRolePlayer({}));
+    }, 60_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    const run = (name: string, params: Record<string, unknown>) =>
+      client.executeCommands({
+        commands: [{ name, params }],
+        wordsUsed: "Settings",
+        source: "ui",
+        confirm: "tap",
+      });
+
+    it("a session budget of 0 is refused with CHF 0.00 and what to do; the month and the session read as the fake's", async () => {
+      const project = await client.createProject({ name: "Atlas", goal: "A page" });
+      const zero = await run("budget.set", { scope: "session", amountChf: 0, project: project.id });
+      expect(zero.status).toBe("refused");
+      expect(zero.reason).toBe(
+        "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
+      );
+      // The literals w15-words.test.tsx reads from the fake daemon (the session first: once the
+      // month is CHF 3.00, a session of CHF 8.00 is above it and asks for more than a tap).
+      expect(
+        (await run("budget.set", { scope: "session", amountChf: 8, project: project.id })).sentence,
+      ).toBe("Raised the session budget for Atlas from CHF 5.00 to CHF 8.00. Undo.");
+      expect((await run("budget.set", { scope: "month", amountChf: 3 })).sentence).toBe(
+        "Lowered the monthly cap from CHF 150.00 to CHF 3.00. Undo.",
+      );
+    });
+
+    it("Opus fast mode reads from off to on, and its undo asks to put it back to on", async () => {
+      const project = await client.createProject({ name: "Beacon", goal: "A page" });
+      const on = await run("settings.set", { key: "fast_mode", value: true, project: project.id });
+      expect(on.sentence).toMatch(/^Set Opus fast mode for Beacon from off to on: /);
+      const off = await run("settings.set", {
+        key: "fast_mode",
+        value: false,
+        project: project.id,
+      });
+      expect(off.sentence).toMatch(/^Set Opus fast mode for Beacon from on to off: /);
+      expect(`${on.sentence} ${off.sentence}`).not.toMatch(/\b(true|false|unset)\b/);
+    });
+  });
 });

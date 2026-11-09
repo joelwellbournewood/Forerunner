@@ -29,7 +29,8 @@ describe("w15-chat, wave 15", () => {
     );
     const asking = await screen.findByTestId("changes-undo-pending");
     expect(within(asking).getByTestId("command-readback")).toHaveTextContent(
-      /^Take back "Lowered the monthly hard ceiling from CHF 150(\.00)? to CHF 100(\.00)?"\? Confirm in the app on a paired device\.$/,
+      // W15B-16 (w15-words): the fake says the daemon's sentence ("the monthly cap").
+      /^Take back "Lowered the monthly cap from CHF 150(\.00)? to CHF 100(\.00)?"\? Confirm in the app on a paired device\.$/,
     );
     expect(within(asking).queryByTestId("card-old")).not.toBeInTheDocument();
     expect(within(asking).queryByTestId("card-undo")).not.toBeInTheDocument();

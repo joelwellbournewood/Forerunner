@@ -418,8 +418,9 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         unit: "CHF",
         zero: {
           allowed: false,
+          // The daemon's words (`ZERO_REFUSED.session` in @forerunner/commands; W15B-16).
           refused:
-            "The budget per session must be more than CHF 0: a session plans its work within it.",
+            "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
         },
         initial: (c) => {
           const m = obj(c);

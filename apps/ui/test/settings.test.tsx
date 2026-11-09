@@ -347,7 +347,8 @@ describe("Settings", () => {
       deviceId: ME.desktopDeviceId,
     });
     expect(await within(dialog).findByTestId("command-sentence")).toHaveTextContent(
-      "Raised the monthly hard ceiling from CHF 150 to CHF 200.",
+      // W15B-16 (w15-words): the fake says the daemon's sentence ("the monthly cap", CHF 0.00).
+      "Raised the monthly cap from CHF 150.00 to CHF 200.00.",
     );
   });
 
@@ -409,7 +410,8 @@ describe("Settings", () => {
       answer: "device",
     });
     expect(await within(dialog).findByTestId("command-sentence")).toHaveTextContent(
-      "Raised the monthly hard ceiling from CHF 150 to CHF 200.",
+      // W15B-16 (w15-words): the fake says the daemon's sentence ("the monthly cap", CHF 0.00).
+      "Raised the monthly cap from CHF 150.00 to CHF 200.00.",
     );
   });
 

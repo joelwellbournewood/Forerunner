@@ -569,6 +569,19 @@ among them.
   month a fresh agent runs the seeded change …" and "each month the critic grades the eval
   sets".
 
+### Wave 15 (w15-words): on, off and CHF 0.00
+
+- **A yes/no setting reads "on" or "off" (W15B-16).** `showFor` says a `z.boolean()` key
+  without a `display` of its own as "on" or "off" (every one is off until set), in the card's
+  values, the sentence, the read-back and the undo question: "Set Opus fast mode for Game from
+  off to on: …", "Put Opus fast mode for Game back to on? …", "Set voice alerts from off to on."
+  (before: "from unset to true", "back to true"). `test/w15-words.test.ts`.
+- **The session budget's 0 says CHF 0.00 and what to do (W15B-16).** `ZERO_REFUSED.session`
+  reads "The budget per session must be more than CHF 0.00: a session plans its work within it.
+  Enter the most a session may spend." (before: "... more than CHF 0: ..."), as Settings'
+  session cap field (`SettingsFields.tsx`) and the fake daemon say it. 0 stays refused for a
+  session and for the month (owner question W15-109 open).
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`

@@ -402,7 +402,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       }),
     );
     expect(small.sentence).toBe(
-      `Set small project mode for Game from false to true: ${SMALL_PROJECT_MODE_EFFECT.on}. Undo.`,
+      `Set small project mode for Game from off to on: ${SMALL_PROJECT_MODE_EFFECT.on}. Undo.`,
     );
     expect((await w.store.project.mustGet(w.game.id)).small_project_mode).toBe(true);
     expect(
@@ -1678,7 +1678,8 @@ describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () =>
         ctx: w.ctx(),
       }),
     );
-    expect(r.sentence).toBe("Set voice alerts from unset to true. Undo.");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off", never true, false or unset.
+    expect(r.sentence).toBe("Set voice alerts from off to on. Undo.");
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs.voice_alerts).toBe(true);
     expect(
       refused(

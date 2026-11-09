@@ -42,18 +42,19 @@ describe("the fast_mode setting (D.20)", () => {
     const params = { key: "fast_mode", value: true, project: "game" };
     const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
     expect(card.what).toBe("Opus fast mode for Game");
-    expect(card.oldValue).toBe("unset");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off", never true, false or unset.
+    expect(card.oldValue).toBe("off");
     // P7-10: the value is the value; what it changes is the read-back's second sentence.
-    expect(card.newValue).toBe("true");
+    expect(card.newValue).toBe("on");
     expect(card.ask).toContain(ON.slice(1));
-    expect(card.sentence).toBe(`Set Opus fast mode for Game from unset to true: ${ON}. Undo.`);
+    expect(card.sentence).toBe(`Set Opus fast mode for Game from off to on: ${ON}. Undo.`);
 
     // Medium risk: a yes before anything changes.
     const p = pending(await w.executor.execute({ name: "settings.set", params, ctx: w.ctx() }));
     expect(p.decision).toBe("needs_yes");
     expect((await w.store.project.mustGet(w.game.id)).settings.fast_mode).toBeUndefined();
     const on = done(await w.executor.confirmByText(p.pendingId, "yes", human));
-    expect(on.sentence).toBe(`Set Opus fast mode for Game from unset to true: ${ON}. Undo.`);
+    expect(on.sentence).toBe(`Set Opus fast mode for Game from off to on: ${ON}. Undo.`);
     expect((await w.store.project.mustGet(w.game.id)).settings.fast_mode).toBe(true);
     // Other projects are untouched: the flag is per project.
     expect((await w.store.project.mustGet(w.pharma.id)).settings.fast_mode).toBeUndefined();
@@ -65,16 +66,16 @@ describe("the fast_mode setting (D.20)", () => {
         ctx: w.ctx(),
       }),
     );
-    expect(p2.card.newValue).toBe("false");
+    expect(p2.card.newValue).toBe("off");
     expect(p2.card.ask).toContain(OFF.slice(1));
     const off = done(await w.executor.confirmByText(p2.pendingId, "yes", human));
-    expect(off.sentence).toBe(`Set Opus fast mode for Game from true to false: ${OFF}. Undo.`);
+    expect(off.sentence).toBe(`Set Opus fast mode for Game from on to off: ${OFF}. Undo.`);
     expect((await w.store.project.mustGet(w.game.id)).settings.fast_mode).toBe(false);
     const log = await w.store.changeLog.list();
     expect(log.map((e) => e.sentence)).toEqual(
       expect.arrayContaining([
-        `Set Opus fast mode for Game from unset to true: ${ON}. Undo.`,
-        `Set Opus fast mode for Game from true to false: ${OFF}. Undo.`,
+        `Set Opus fast mode for Game from off to on: ${ON}. Undo.`,
+        `Set Opus fast mode for Game from on to off: ${OFF}. Undo.`,
       ]),
     );
     await w.store.close();
@@ -92,16 +93,16 @@ describe("the fast_mode setting (D.20)", () => {
       "Opus runs of this project on an API key are requested in fast mode at about CHF 24.00 / 120.00 per million input / output tokens instead of CHF 3.20 / 16.00, a 7.5x surcharge; a subscription ignores it (API only)";
     const params = { key: "fast_mode", value: true, project: "game" };
     const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
-    expect(card.newValue).toBe("true");
+    expect(card.newValue).toBe("on");
     expect(card.ask).toContain(corrected.slice(1));
     const p = pending(await w.executor.execute({ name: "settings.set", params, ctx: w.ctx() }));
     const on = done(await w.executor.confirmByText(p.pendingId, "yes", human));
-    expect(on.sentence).toBe(`Set Opus fast mode for Game from unset to true: ${corrected}. Undo.`);
+    expect(on.sentence).toBe(`Set Opus fast mode for Game from off to on: ${corrected}. Undo.`);
     const off = await w.executor.plan(
       { name: "settings.set", params: { key: "fast_mode", value: false, project: "game" } },
       w.ctx(),
     );
-    expect(off.newValue).toBe("false");
+    expect(off.newValue).toBe("off");
     expect(off.ask).toContain("the fast-mode surcharge (7.5x, about CHF 24.00 / 120.00) stops");
     await w.store.close();
   });
