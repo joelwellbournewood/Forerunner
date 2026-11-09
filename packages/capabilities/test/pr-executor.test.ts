@@ -324,9 +324,12 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     });
     expect(res.outcome).toBe("failed");
     expect(res.summary).toBe(
-      `Forerunner could not push the branch ${res.branch} to o/sample: GitHub refused it: "Permission to o/sample denied to the token". Check the GitHub token in Settings and the repository on GitHub, then press Try again.`,
+      'GitHub refused the push: "Permission to o/sample denied to the token". Check the GitHub token in Settings and o/sample on GitHub, then press Try again.',
     );
     expect(res.summary).not.toContain("git push");
+    // C-59 (the review of polish-words): the task's branch, with its id part, is not named.
+    expect(res.branch).toMatch(/^fr\/[0-9a-f]{8}-/);
+    expect(res.summary).not.toContain(res.branch ?? "fr/");
     await w.store.close();
   });
 

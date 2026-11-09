@@ -181,7 +181,13 @@ with their milestone.
   the words quote with what to do (R-2, polish-words: before, the person read "GitHub could not
   be reached"). A progress line is only a progress shape ("Writing objects", "Resolving deltas",
   "Total 3"): a host's reason that starts with such a word ("Writing to this repository is
-  disabled") is the reason shown (R-3).
+  disabled") is the reason shown (R-3). `pushFailedWords` names no branch (C-59; the review of
+  polish-words): the task's branch carries its id part ("fr/1a2b3c4d-write-the-guide"), and the
+  sentence is the task's reason, read on its row, drawer and card, which name the task. A
+  refusal leads with the host's line ('GitHub refused the push: "Permission to o/r.git denied to
+  some-bot". Check the GitHub token in Settings and o/r on GitHub, then press Try again.'), so
+  the Tasks row's "Failed: …", cut at 100 characters, reaches it; before, the head with the
+  branch and the repository took the row.
   `GitOps.remoteBranches()` lists the remote's branches as last fetched; `changedFiles(base,
   head)` takes a head other than HEAD; `filesBetween(from, to)` compares two trees;
   `hasMergesSince(base, head)`, `setRef(ref, rev | null)`, `mergeFrom(ref, message?, {
@@ -801,8 +807,8 @@ called (the old code asked it to `get` and then `erase`) and the stale credentia
 
 `pr-executor.test.ts` runs `PrTaskExecutor` against local bare repositories and
 `MemoryGitHost`: the PR flow end to end, a push the host refuses (a pre-receive hook) failing
-the task with `pushFailedWords` ("Forerunner could not push the branch <branch> to <repo>: GitHub
-refused it (...). Check the GitHub token in Settings, then press Try again."; the network and
+the task with `pushFailedWords` ('GitHub refused the push: "<the host's line>". Check the GitHub
+token in Settings and <repo> on GitHub, then press Try again.', no branch named; the network and
 other refusals have their own words; before, the reason was git's output), an empty repository getting its README commit on
 `main` before the task's branch and PR (the branch holding only the task's change), a base
 branch the remote lacks failing in words, an empty repository whose host refuses the first

@@ -803,6 +803,25 @@ describe("polish-words, wave 13: money, budget lines, the log's lines", () => {
       /^Forerunner did not upload the branch write-the-guide: /,
     );
   });
+
+  it("a push GitHub refused reads on the Tasks row with GitHub's own line and no task id (C-59, R-2; review of polish-words)", async () => {
+    const { pushFailedWords } = await import("../../capabilities/src/githost/push-words.ts");
+    const { plainReason } = await import("../src/daemon/task-words.ts");
+    const reason = pushFailedWords(
+      "owner/forerunner-sandbox",
+      "fr/01a19c00-write-a-short-readme-section",
+      new Error(
+        "git push fr/01a19c00-write-a-short-readme-section failed: remote: Permission to owner/forerunner-sandbox.git denied to some-bot.\nfatal: unable to access 'https://github.com/owner/forerunner-sandbox.git/': The requested URL returned error: 403",
+      ),
+    );
+    // What the row shows (`taskDisplay`'s "Failed: " + plainReason, cut at 100).
+    const row = `Failed: ${plainReason(reason)}`;
+    expect(row).toBe(
+      'Failed: GitHub refused the push: "Permission to owner/forerunner-sandbox.git denied to some-bot". Check…',
+    );
+    expect(row).not.toMatch(/01a19c00|fr\//);
+    expect(violations(reason, 220)).toEqual([]);
+  });
 });
 
 describe("polish-words, wave 13: merge, preview, take-out and page-reader words", () => {

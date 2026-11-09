@@ -104,17 +104,21 @@ function hostLine(said: string, max = 80): string {
  * A task's branch the host refused, in words with what to do (design §5.8): before, the task's
  * reason was git's own output ("push failed: git push fr/... failed: remote: ... error: failed
  * to push some refs"), which the person read on the Tasks tab and in the session result.
+ *
+ * The branch is not named (C-59, design §5.3; the review of polish-words): it is the task's id
+ * part and its title ("fr/1a2b3c4d-write-the-guide"), and the sentence is the task's reason, read
+ * on its own row, in its drawer and on its card, which name the task. A refusal leads with
+ * GitHub's own line, so the row's "Failed: …" (cut at 100 characters) reaches it.
  */
-export function pushFailedWords(repoName: string, branch: string, e: unknown): string {
+export function pushFailedWords(repoName: string, _branch: string, e: unknown): string {
   const failure = pushFailure(e);
-  const head = `Forerunner could not push the branch ${branch} to ${repoName}`;
   if (failure.kind === "unreachable")
-    return `${head}: GitHub could not be reached. Try again later.`;
+    return `Forerunner could not push the work to ${repoName}: GitHub could not be reached. Try again later.`;
   if (failure.kind === "refused")
     return failure.said
-      ? `${head}: GitHub refused it: "${hostLine(failure.said)}". Check the GitHub token in Settings and the repository on GitHub, then press Try again.`
-      : `${head}: GitHub refused it (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`;
-  return `${head}${failure.said ? `: git said "${failure.said}"` : ""}. Press Try again; if it fails again, look at the repository on GitHub.`;
+      ? `GitHub refused the push: "${hostLine(failure.said)}". Check the GitHub token in Settings and ${repoName} on GitHub, then press Try again.`
+      : `GitHub refused the push to ${repoName} (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.`;
+  return `Forerunner could not push the work to ${repoName}${failure.said ? `: git said "${failure.said}"` : ""}. Press Try again; if it fails again, look at the repository on GitHub.`;
 }
 
 /**

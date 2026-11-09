@@ -72,7 +72,7 @@ describe("a push the host refused, in the person's words", () => {
         'o/archived is empty and Forerunner could not make its first commit: git said "This repository is archived and read-only". Add a README on GitHub, then press Try again.',
       );
       expect(pushFailedWords("o/archived", "fr/1-page", e)).toBe(
-        'Forerunner could not push the branch fr/1-page to o/archived: git said "This repository is archived and read-only". Press Try again; if it fails again, look at the repository on GitHub.',
+        'Forerunner could not push the work to o/archived: git said "This repository is archived and read-only". Press Try again; if it fails again, look at the repository on GitHub.',
       );
     });
   }
@@ -128,7 +128,7 @@ describe("polish-words: git's HTTPS refusals (R-2, R-3)", () => {
       said: "Permission to o/r.git denied to some-bot",
     });
     expect(pushFailedWords("o/r", "fr/write-the-page", e)).toBe(
-      'Forerunner could not push the branch fr/write-the-page to o/r: GitHub refused it: "Permission to o/r.git denied to some-bot". Check the GitHub token in Settings and the repository on GitHub, then press Try again.',
+      'GitHub refused the push: "Permission to o/r.git denied to some-bot". Check the GitHub token in Settings and o/r on GitHub, then press Try again.',
     );
     expect(firstPushFailedWords("o/r", e)).toBe(
       'o/r is empty and GitHub refused Forerunner\'s first commit: "Permission to o/r.git denied to some-bot". Check the token in Settings, then press Try again.',
@@ -159,13 +159,53 @@ describe("polish-words: git's HTTPS refusals (R-2, R-3)", () => {
     });
   });
 
+  it("names no task id, and GitHub's own line comes within the row's first 100 characters (C-59 sibling, review of polish-words)", async () => {
+    // A task's branch is `fr/<8 hex of its id>-<its title>`; the reason is the Tasks row's
+    // "Failed: …" (cut at 100), the drawer and the failed-task card, which name the task.
+    // Before: 'Forerunner could not push the branch fr/1a2b3c4d-write-a-short-readme-section to
+    // owner/forerunner-sandbox: GitHub refused it: "…' spent the row on the head.
+    const branch = "fr/1a2b3c4d-write-a-short-readme-section";
+    const repoName = "owner/forerunner-sandbox";
+    const refused = await pushError(
+      [
+        "remote: Permission to owner/forerunner-sandbox.git denied to some-bot.",
+        "fatal: unable to access 'https://github.com/owner/forerunner-sandbox.git/': The requested URL returned error: 403",
+        "",
+      ].join("\n"),
+    );
+    const words = pushFailedWords(repoName, branch, refused);
+    expect(words).toBe(
+      'GitHub refused the push: "Permission to owner/forerunner-sandbox.git denied to some-bot". Check the GitHub token in Settings and owner/forerunner-sandbox on GitHub, then press Try again.',
+    );
+    expect(words.slice(0, 100)).toContain(
+      '"Permission to owner/forerunner-sandbox.git denied to some-bot"',
+    );
+    const unreachable = await pushError(
+      "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\n",
+    );
+    const local = await pushError(
+      ["remote: Writing to this repository is disabled.", ...TAIL].join("\n"),
+    );
+    const silent = await pushError(
+      "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403\n",
+    );
+    for (const e of [refused, unreachable, local, silent]) {
+      const w = pushFailedWords(repoName, branch, e);
+      expect(w).not.toContain("1a2b3c4d");
+      expect(w).not.toContain("fr/");
+    }
+    expect(pushFailedWords(repoName, branch, silent)).toBe(
+      "GitHub refused the push to owner/forerunner-sandbox (the token may not write to it, or a rule protects the branch). Check the GitHub token in Settings, then press Try again.",
+    );
+  });
+
   it("only a real network failure says GitHub could not be reached", async () => {
     const e = await pushError(
       "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\n",
     );
     expect(pushFailure(e)).toEqual({ kind: "unreachable" });
     expect(pushFailedWords("o/r", "fr/write-the-page", e)).toBe(
-      "Forerunner could not push the branch fr/write-the-page to o/r: GitHub could not be reached. Try again later.",
+      "Forerunner could not push the work to o/r: GitHub could not be reached. Try again later.",
     );
   });
 });
