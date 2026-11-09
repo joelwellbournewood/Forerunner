@@ -7,6 +7,7 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { requestWords } from "../daemon/request-words.ts";
 import {
   loadTaskDisplayContext,
   plainReason,
@@ -253,22 +254,53 @@ export function replyNames(reply: string, names: readonly string[]): boolean {
   });
 }
 
-/** A card in full for the model: project, task, the question and its options. */
+/**
+ * A card in full for the model: project, task, the question, the specialist's reason and the
+ * options the Inbox offers (W15-30: before, the stored options alone, "Cancel the task", while
+ * the Inbox offered Send answers, Go ahead without and Cancel task, and no reason). A card of
+ * another project (`otherProject`) says "this project" as the card's project: live, "for this
+ * project" in a Static hosts card read as the project being talked about.
+ */
 export function cardLine(
-  r: Pick<HumanRequestRow, "why" | "options" | "steps" | "change_card">,
+  r: Pick<
+    HumanRequestRow,
+    "kind" | "why" | "options" | "steps" | "change_card" | "status" | "answer"
+  >,
   projectName: string | null,
   taskTitle: string | null,
+  opts: { otherProject?: boolean } = {},
 ): string {
   const where = [projectName, taskTitle ? quote(taskTitle) : null].filter(Boolean).join(", ");
   const said = plainReason(r.why.replace(/\s*\n\s*/g, " "), 600);
   const why = /[.!?…"]$/.test(said) ? said : `${said}.`;
-  const key = (r.change_card as { key?: unknown } | null)?.key;
+  const card = (r.change_card ?? {}) as { key?: unknown; context?: unknown };
+  const key = card.key;
   const steps =
     typeof key === "string" && key.startsWith("person_questions:") && r.steps.length
       ? ` Questions: ${r.steps.map((s) => plainReason(String(s), 200)).join(" | ")}.`
       : "";
-  const options = r.options.length ? ` Options: ${r.options.map(String).join(" / ")}.` : "";
-  return `${where ? `[${where}] ` : ""}${why}${steps}${options}`;
+  // Why the specialist asks, in its words, as the Inbox card's body quotes it (L-12).
+  const context =
+    typeof card.context === "string"
+      ? plainReason(card.context.replace(/^[\s:;,.\-–—*]+/, "").replace(/"/g, "'"), 300)
+      : "";
+  const reason = context ? ` The specialist said: "${context}"` : "";
+  const words = requestWords(r, { projectName, taskTitle });
+  const labels = [
+    ...(words.reply === "form" ? ["Send answers"] : []),
+    ...words.choices.map((c) => c.label),
+  ];
+  const offered = labels.length ? labels : r.options.map(String);
+  const options = offered.length ? ` Options: ${offered.join(" / ")}.` : "";
+  const line = `${why}${steps}${reason}${options}`;
+  const own =
+    opts.otherProject && projectName
+      ? line.replace(
+          /\b(t)his project\b/gi,
+          (_m, t: string) => `${t === "T" ? "The" : "the"} ${projectName} project`,
+        )
+      : line;
+  return `${where ? `[${where}] ` : ""}${own}`;
 }
 
 /** Where the plan from the brief stands, as the chat is told it (`IntakeService.status`). */

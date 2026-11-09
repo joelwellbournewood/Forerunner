@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import {
   CARD_EXPIRED_REPLY,
+  CHAT_OPEN_REQUEST_RULES,
   ConversationAgent,
   cardAnsweredReply,
   YES_TO_WHAT_REPLY,
@@ -620,5 +621,126 @@ describe("w15-chat, wave 15", () => {
       '`web_access` with `{"mode": "only", "only": ["developer.mozilla.org"]}`',
     );
     expect(prompt).toContain("a lesson is a note for later sessions and changes no\n     setting");
+  });
+
+  // W15-30 (live check 2, research F12): in "Reading rules", Talk listed "Static hosts"'s
+  // questions card in full as "not yet mentioned in this conversation", without the
+  // specialist's reason (its rule reads only 10.1.2.3) and with "this project" unresolved, so the
+  // model told the person that card could be answered yes. The verifier's repro
+  // (scratchpad/f12/repro.mts) is this case.
+  async function questionsCardOn(w: World, projectId: string) {
+    const t = await task(w, "Summarize the MDN page on the dialog element", {
+      project_id: projectId,
+      status: "needs_human",
+      specialist: "researcher",
+    });
+    return w.store.humanRequest.insert({
+      human_id: w.human,
+      project_id: projectId,
+      task_id: t.id,
+      kind: "decision",
+      why: '"Summarize the MDN page on the dialog element" stopped because the work needs your answers; it was not retried.',
+      steps: [
+        "Can developer.mozilla.org be added to the allowed research domains for this project, so I can fetch the dialog page?",
+        "Or is there a copy of the page on 10.1.2.3 that I should summarize instead?",
+      ],
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+      change_card: {
+        key: `person_questions:${t.id}`,
+        source: "specialist",
+        context:
+          "This project's research may only read 10.1.2.3 and its subdomains, so that domain is outside the allowed list.",
+      },
+    } as never);
+  }
+
+  it("another project's card is a count by project in this project's chat, never 'not yet mentioned' (W15-30)", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    await questionsCardOn(w, w.notes);
+    await w.chat("only read developer.mozilla.org for research", w.quote);
+    const sent = w.last(0);
+    expect(sent).not.toContain("[Notes CLI,");
+    expect(sent).not.toContain("allowed research domains");
+    expect(sent).not.toContain("not yet mentioned in this conversation");
+    expect(sent).toContain(
+      "- open_requests: none in this project; +1 card in Notes CLI (another project: bring it up only if the human asks what is pending or names it)",
+    );
+    // The rules say whose a card is.
+    expect(CHAT_OPEN_REQUEST_RULES).toContain(
+      "A card marked [card of <project>, another project] is about that project",
+    );
+    await w.store.close();
+  });
+
+  it("asked what is pending, another project's card is listed as that project's with the specialist's reason and the Inbox's options (W15-30)", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 }), textReply("ok", { ttftMs: 0 })]);
+    await questionsCardOn(w, w.notes);
+    await w.chat("what is pending?", w.quote);
+    const sent = w.last(0);
+    expect(sent).toContain('[Notes CLI, "Summarize the MDN page on the dialog element"]');
+    expect(sent).toContain("[card of Notes CLI, another project]");
+    // "This project" is the card's project, not the one talked about.
+    expect(sent).toContain(
+      'The specialist said: "The Notes CLI project\'s research may only read 10.1.2.3 and its subdomains, so that domain is outside the allowed list."',
+    );
+    expect(sent).toContain("allowed research domains for the Notes CLI project");
+    expect(sent).not.toMatch(/\bthis project\b/i);
+    // The Inbox's options, not the stored "Cancel the task" alone.
+    expect(sent).toContain("Options: Send answers / Go ahead without / Cancel task.");
+    // Named by its project, it is listed too.
+    await w.chat("what does Notes CLI need from me?", w.quote);
+    expect(w.last(1)).toContain("[card of Notes CLI, another project]");
+    await w.store.close();
+  });
+
+  it("in its own project's chat the card is listed in full, with the specialist's own words (W15-30)", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    await questionsCardOn(w, w.notes);
+    await w.chat("anything?", w.notes);
+    const sent = w.last(0);
+    expect(sent).toContain('[Notes CLI, "Summarize the MDN page on the dialog element"]');
+    expect(sent).not.toContain("another project");
+    expect(sent).toContain(
+      "The specialist said: \"This project's research may only read 10.1.2.3 and its subdomains",
+    );
+    expect(sent).toContain("[blocking] [not yet mentioned in this conversation]");
+    await w.store.close();
+  });
+
+  it("a card already mentioned and one not yet mentioned are marked each by its own state (W15-30)", async () => {
+    const w = await setup([
+      textReply("The Summarize the MDN page on the dialog element task needs answers.", {
+        ttftMs: 0,
+      }),
+      textReply("ok", { ttftMs: 0 }),
+    ]);
+    await questionsCardOn(w, w.quote);
+    await w.chat("anything?", w.quote);
+    const style = await task(w, "Style the page", { status: "needs_human" });
+    await w.store.humanRequest.insert({
+      human_id: w.human,
+      project_id: w.quote,
+      task_id: style.id,
+      kind: "decision",
+      why: '"Style the page" failed 4 times and needs your decision.',
+      steps: [],
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      blocking: false,
+      risk: "medium",
+    } as never);
+    await w.chat("and the page?", w.quote);
+    const sent = w.last(1);
+    // Before: "… [already mentioned; blocking] | … (not yet mentioned in this conversation)".
+    expect(sent).toContain(
+      "Options: Send answers / Go ahead without / Cancel task. [already mentioned; blocking] | ",
+    );
+    expect(sent).toMatch(
+      /"Style the page" failed 4 times and needs your decision\. Options: Try again \/ Mark done anyway \/ Cancel task\. \[not yet mentioned in this conversation\]/,
+    );
+    expect(sent).not.toContain("[already mentioned; blocking] [not yet mentioned");
+    expect(sent).not.toContain("(not yet mentioned in this conversation)");
+    await w.store.close();
   });
 });

@@ -3841,9 +3841,23 @@ in one project cancelled a task in another. Now:
   and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
   session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the
   project's folder: the first of `docsDirs`), and the open cards in full in the `open_requests`
-  fact (`cardLine`: project, task, the whole question, a person-questions card's questions and
-  the options; this project's first, eight at most; each card named by `cardReference`, which the
-  role prompt says is for `request_answer` only, never said to the person). The system prompt
+  fact (`cardLine`: project, task, the whole question, a person-questions card's questions, the
+  specialist's reason (`change_card.context`, "The specialist said: …", as the Inbox body) and
+  the options the Inbox offers (`requestWords`' choices, "Send answers" first for a form card;
+  W15-30: before, the stored options alone, "Cancel the task", beside an Inbox card offering
+  three); eight at most; each card named by `cardReference`, which the role prompt says is for
+  `request_answer` only, never said to the person). W15-30 (live check 2, research F12; design
+  §3.9 read as "ask about the project", the owner confirms the wording, W15-148): a project's
+  conversation lists its own cards and those about no project; another project's card only when
+  the line asks what is pending (`ASKS_PENDING_RE`) or names its project or its task, then
+  marked `[card of <project>, another project]` with "this project" in its words said as
+  "the <project> project"; the rest are `+N card(s) in <project> (another project: bring it up
+  only if the human asks what is pending or names it)`, never "not yet mentioned". Each listed
+  card carries its own marks (`[blocking]`, `[already mentioned; blocking]`, `[not yet
+  mentioned in this conversation]`): before, one note for the whole list read "not yet
+  mentioned" beside a card marked "already mentioned". The conversation outside any project
+  lists every card as before; `request_answer` still resolves a reference among all open cards
+  (`allOpen`). `CHAT_OPEN_REQUEST_RULES` says what the mark means. The system prompt
   keeps only the projects
   by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone). `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
@@ -4003,7 +4017,7 @@ the rule had changed; the Overview went on reading "any public website". Now:
 `memory_record` and has a `# Settings` part: a rule the app enforces (`web_access`, who merges,
 fast mode, quiet hours, the other keys) is changed with `settings_set` in the shape its
 definition gives (commands.md, "Wave 15"), never recorded as a lesson, and no setting is said to
-have changed unless `settings_set` said so. The registry's `conversation-agent` prompt (1.2.0)
+have changed unless `settings_set` said so. The registry's `conversation-agent` prompt (1.2.0, 1.2.1 for W15-30)
 says the same in its action list. `# Now` carries the project's rule in force, in the
 Overview's words (`- Research reads: only developer.mozilla.org`, `researchReadsLine`).
 `POST /chat` and `/chat/stream` say what a turn changed to the screens as `POST
