@@ -12405,6 +12405,114 @@ describe("w15-run, wave 15", () => {
     }
   }, 60_000);
 
+  it("W15-21: the person's Stop, sent with the version the Tasks tab read before any call was booked, stops the run without a version_conflict", async () => {
+    // The coder's first call is held, then its second: the Stop goes in between.
+    const held = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const holds = [held(), held()];
+    let coderCalls = 0;
+    const w = await world(
+      [
+        ...accepts,
+        toolReply("list_dir", { path: "." }, "Looking first.", {
+          when: (r: ModelRequest) =>
+            isRole("coder")(r) && !JSON.stringify(r.messages).includes("tool_result"),
+          usage: { input_tokens: 20_000, output_tokens: 100 },
+        }),
+        textReply("Wrote nothing; the folder is ready.\n\nLeft to do: nothing", {
+          when: isRole("coder"),
+          usage: { input_tokens: 25_000, output_tokens: 100 },
+        }),
+      ],
+      "stop",
+    );
+    const stream = w.fake.stream.bind(w.fake);
+    w.fake.stream = (r) => {
+      if (!isRole("coder")(r) || coderCalls >= holds.length) return stream(r);
+      const hold = holds[coderCalls++]?.promise ?? Promise.resolve();
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          void hold.then(resolve);
+          if (r.signal?.aborted) resolve();
+          r.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield* stream(r);
+      })();
+    };
+    const { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({ name: "Stop", goal: "A folder" });
+      const created = await client.createTask(project.id, {
+        title: "Set up the folder",
+        outcome: "The folder is ready",
+        acceptanceCriteria: ["the folder exists"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      const taskId = created.id;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === taskId);
+      await eventually(
+        async () => coderCalls === 1,
+        "the coder's first call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      // What the Tasks tab shows while the first call runs: nothing spent yet.
+      const read = await row();
+      expect(read?.status).toBe("in_progress");
+      expect(read?.spent?.usdMicro ?? 0).toBe(0);
+      holds[0]?.resolve();
+      await eventually(
+        async () => coderCalls === 2,
+        "the coder's second call",
+        async () => `${coderCalls}`,
+        20_000,
+      );
+      await eventually(
+        async () => ((await row())?.spent?.usdMicro ?? 0) > 0,
+        "the first call's cost on the Tasks row",
+        async () => JSON.stringify((await row())?.spent),
+        20_000,
+      );
+      // Stop, with the version the row showed before the call was booked.
+      const stopped = await client.taskAction(taskId, {
+        action: "stop",
+        version: read?.version ?? -1,
+      });
+      // The task is paused by the person (no version_conflict, no "This task changed").
+      expect(stopped.status).toBe("needs_human");
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const after = await row();
+      expect(after?.status).toBe("needs_human");
+      expect(after?.display?.label).toBe("Paused by you");
+      // What the stopped run spent stays on the task, once.
+      const runs = await rt.store.run.forTask(taskId);
+      expect(after?.actual.usdMicro).toBe(runs.reduce((s, r) => s + r.cost_usd_micro, 0));
+      expect(after?.actual.usdMicro ?? 0).toBeGreaterThan(0);
+    } finally {
+      for (const h of holds) h.resolve();
+      await rt.close();
+    }
+  }, 60_000);
+
   it("W15-18: the Start dialog prices a four-file task with tests above a one-line change, near what it cost live, and the same after a restart", async () => {
     const w = await world([], "size");
     let { rt, client } = await w.open();
@@ -12460,4 +12568,139 @@ describe("w15-run, wave 15", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // Live check 2 (RUN-2): the plan card priced 'Review src/clamp.js for bugs' about CHF 0.04;
+  // after Approve and start and Stop now the Start dialog said about CHF 0.02, and a restart
+  // moved it back. The stopped run's partial cost had taught the live estimates; the fold after
+  // a restart takes finished tasks only.
+  it("W15-19: after Approve and start and Stop now during the first task's run, the Start dialog gives each task the plan card's figure, and the same after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15run-stop-"));
+    const clock = new ShiftedClock("2026-11-09T09:00:00Z");
+    const provider = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    // The first specialist call is paid; the second is held until the stop aborts it, so the
+    // run the person stops has spent something (what taught the estimates before).
+    let specialistCalls = 0;
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => {
+      if (detectRole(req).role !== "specialist") return stream(req);
+      specialistCalls += 1;
+      if (specialistCalls !== 2) return stream(req);
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          void held.then(resolve);
+          if (req.signal?.aborted) resolve();
+          req.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield* stream(req);
+      })();
+    };
+    const open = async () => {
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    let { rt, client } = await open();
+    try {
+      const brief = "A page that shows a random quote";
+      const project = await client.createProject({
+        name: "Stopped quote",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      if (!card?.planTasks) throw new Error(`no plan card: ${JSON.stringify(card)}`);
+      // What the plan card shows for each task the plan writes.
+      const onCard = new Map(
+        card.planTasks
+          .filter((t) => t.specialist !== null)
+          .map((t) => [t.title, t.estimateUsdMicro] as const),
+      );
+      expect(onCard.size).toBeGreaterThan(0);
+
+      await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+      await eventually(
+        async () => specialistCalls >= 2,
+        "the first task's second model call",
+        async () => `${specialistCalls} specialist calls`,
+        20_000,
+      );
+      const running = (await client.sessions({ projectId: project.id })).find(
+        (s) => s.status === "running",
+      );
+      if (!running) throw new Error("no running session after Approve and start");
+      // Stop now, as the session page sends it.
+      await client.stopSession(running.id, "stopped from the live view");
+      await eventually(
+        async () =>
+          (await client.sessions({ projectId: project.id })).every((s) => s.status !== "running"),
+        "the stopped session to end",
+        async () => (await client.sessions({ projectId: project.id })).map((s) => s.status).join(),
+        20_000,
+      );
+      // The run the person stopped spent something: what the estimates learned from before.
+      const tasks = await client.tasks(project.id);
+      const stopped = tasks.filter((t) => t.actual.usdMicro > 0);
+      expect(stopped.map((t) => t.status)).toEqual(["ready"]);
+
+      const figures = async () => {
+        const check = await client.startCheck(project.id);
+        const all = [...check.runnable, ...check.later];
+        const out: Record<string, number> = {};
+        for (const t of tasks) {
+          if (!onCard.has(t.title)) continue;
+          const item = all.find((i) => i.taskId === t.id);
+          if (!item) throw new Error(`"${t.title}" is not in the Start check`);
+          out[t.title] = item.estimate.usdMicro;
+        }
+        return out;
+      };
+      const want = Object.fromEntries(onCard);
+      // Before: the stopped task's figure was its stopped run's partial cost's lesson.
+      expect(await figures()).toEqual(want);
+      // A restart reads the same figures (validation rule 4).
+      await rt.close();
+      ({ rt, client } = await open());
+      expect(await figures()).toEqual(want);
+    } finally {
+      release();
+      await rt.close();
+    }
+  }, 90_000);
 });
