@@ -144,3 +144,16 @@ Asked: the open questions after wave 15 run A (see NEXT-SESSION.md 'Open owner q
   autonomy level, every change shown with one Undo. D8 = a running session is unmistakable on
   every screen (the header and navigation on every page, Home, the project, the Talk panel),
   with what it is doing and how to stop it.
+
+## Session lead's notes after the two run C designs (2026-11-09 16:35 UTC)
+
+Two points the D5-D8 design listed as open are already answered by the owner's confirmation of
+the roll-up ("All this sounds good except the status line ..."), and are NOT open:
+- A session the person started keeps going by itself until its work is done, including after a
+  credential wait inside it: when the credential is back (the reset), that session goes on by
+  itself (that is what 'wait' means). It is the person's own start continuing, shown on the run
+  indicator while it waits ("Waiting until 15:40, then it goes on", with Cancel). It never moves
+  onto another credential unless the policy says so. A NEW session after a stop the person did
+  not start still needs the person (or the hands-off setting).
+- The agent changes its own tasks without asking from Standard up; at Advisor and Assisted it
+  asks first on one card (the session lead's proposal, confirmed by the owner).
