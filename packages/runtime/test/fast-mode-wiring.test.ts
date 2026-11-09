@@ -129,7 +129,8 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
       ctx,
     );
     // P7-10: the value is the value; the price the person says yes to is in the read-back.
-    expect(planned.newValue).toBe("true");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off" (before: "true").
+    expect(planned.newValue).toBe("on");
     expect(planned.ask).toContain("about CHF 24.00 / 120.00");
     expect(planned.ask).toContain("7.5x");
   });
