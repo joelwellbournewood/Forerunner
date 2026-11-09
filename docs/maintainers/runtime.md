@@ -2763,9 +2763,26 @@ of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the sessio
 outer limit ends the session there; no try is counted and no ladder card is filed. A
 credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the
 wait's `billing.fallback` sentence (`stoppedRunSentence`), as a run a credential stopped; no
-review-failed card is filed beside the credential's own. Either way the task runs again in the
+review-failed card is filed beside the credential's own. Either way the task goes on in the
 next session (when the limit changed, or the credential serves: `wakeBudgetWaits`,
-`RuntimeApp.billing.waits.wake`) and the critic reviews it once. A credential refusal with
+`RuntimeApp.billing.waits.wake`) and the critic reviews it once. **The review-only pass**
+(W15-27, TR-15 of ADR 0112; `session/review-pending.ts`): at either refusal the runner keeps the
+run's result on its Run row (`keepForReview`: a `reviewPending` artifact with the attempt, the
+specialist, the summary and report, the changed files, the PR and branch, the site rule, the
+search results seen, and `workHash`, a hash of the changed files as they are; the pages are on the
+row already, `reviewSources`). Before `execute`, `reviewOnlyResult` takes the task's latest work
+run's entry when the attempt is the same, the executor's `prepareReview(task)` makes the workspace
+ready (a repository task's worktree on its branch, `PrTaskExecutor.prepareReview`; a project's
+folder in place; `LoopTaskExecutor.prepareReview` the run's worktree) and `workHash` there is the
+kept one; the entry is cleared either way, and the result (`keptResult`, `reviewOnly: true`) goes
+to the critic without a run: no `task.started`, no `task.files`, no `task.finished`, no
+`onTaskFinished`, and the person's heard lines and queue notes wait for a run. The critic's diff of
+a project's folder whose session end committed the work is the task's files since its last
+"Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
+the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
+worktree, a folder linked from the person's own computer, whose executor has no hook) runs the
+specialist again, as before. Test: `budget-pause.test.ts` 'w15-review, wave 15' (one coder run in
+all, across a restart too; a file changed while the review waited runs it again). A credential refusal with
 nothing known to wait for still files the review-failed card. Tests: `budget-pause.test.ts` "a
 review refused at the project's budget pauses the task", `credential-wait-session.test.ts` "a
 review that meets a credential's usage limit waits for it" (the usage limit, and the key

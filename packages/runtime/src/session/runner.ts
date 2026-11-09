@@ -112,6 +112,15 @@ import {
   sessionUpdateLine,
   waitingOf,
 } from "./result.ts";
+import {
+  clearPending,
+  keepPending,
+  keptResult,
+  latestWorkRun,
+  pendingOfRun,
+  reviewPendingOf,
+  workHash,
+} from "./review-pending.ts";
 import { type ReviewRefusal, reviewRefusalOf } from "./review-refusal.ts";
 import {
   needsContainerSandbox,
@@ -288,6 +297,11 @@ export interface TaskExecutionResult {
    * limits anything: the critic judges the run under the rule it ran under.
    */
   webRule?: string;
+  /**
+   * The review-only pass (W15-27): the result of an earlier session's run whose review a limit
+   * refused, reviewed now without running the specialist again (`session/review-pending.ts`).
+   */
+  reviewOnly?: boolean;
 }
 
 /** One web search result a run saw ('web-search'), as the critic is told of it. */
@@ -361,6 +375,13 @@ export interface TaskExecutor {
    * then gets the item with that specialist. Null or absent: the item's.
    */
   chooseSpecialist?(ctx: { task: TaskRow; item: PlanItem }): Promise<string | null>;
+  /**
+   * The review-only pass (W15-27): makes the task's workspace ready for a review of its kept
+   * result without running the specialist (a repository task's worktree on its branch; a
+   * project's folder is in place) and says where it is. Null: it cannot be made ready (the
+   * worktree is gone, it is on another branch), and the specialist runs again. Absent: no pass.
+   */
+  prepareReview?(task: TaskRow): Promise<{ worktree?: string } | null>;
 }
 
 /**
@@ -1539,6 +1560,12 @@ export class SessionRunner {
               `session ${session.id} started work`,
               { agentId: agent.id },
             );
+          // W15-27 (TR-15): a task whose last run finished and whose review a limit refused is
+          // reviewed now, without running its specialist again, while its attempt and its work
+          // are unchanged; anything else runs it again, as before. Before, the next session ran
+          // the specialist again first (live check 2, RUN-6), although its card said the work
+          // was done and only its review waited.
+          const kept = await this.reviewOnlyResult(task);
           // The specialist that runs this attempt, known before the log says who started it
           // (U-044): the retry ladder's stand-in after two failed attempts, the plan's name read
           // as the registry's. Before, the log named the plan's specialist for work another one
@@ -1594,7 +1621,8 @@ export class SessionRunner {
           const renew = () => cancelRenew();
           // What the human said since the last task started reaches this task's brief (spec
           // O.9): read now, between the tasks, and given to this task alone.
-          const said = heard.filter((h) => h.deliveredTo === null);
+          // The review-only pass writes no brief: what was said waits for a run.
+          const said = kept ? [] : heard.filter((h) => h.deliveredTo === null);
           for (const h of said) {
             h.deliveredTo = task.id;
             await store.message.markRead(h.id);
@@ -1619,7 +1647,7 @@ export class SessionRunner {
           });
           const stopWatch = this.watchTask(task.id, taskController.signal);
           // The queue's notes for this task (U-038): those naming it, or naming no task.
-          const notes = notesForTask(brief.queue.items, task, [...knownTasks.values()]);
+          const notes = kept ? [] : notesForTask(brief.queue.items, task, [...knownTasks.values()]);
           for (const n of notes) notesGiven.set(n.id, [...(notesGiven.get(n.id) ?? []), task.id]);
           if (notes.length)
             await emit("task.notes", {
@@ -1652,32 +1680,34 @@ export class SessionRunner {
             });
           };
           try {
-            result = await this.deps.executor.execute({
-              task,
-              session,
-              token,
-              budget,
-              item: runItem,
-              signal: taskController.signal,
-              heard: said.map(({ deliveredTo: _to, ...line }) => line),
-              ...(notes.length ? { notes } : {}),
-              ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
-              onStarted: ({ specialist }) => {
-                steps = steps
-                  .then(() => sayStarted(specialist))
-                  .catch((e: unknown) =>
-                    this.logger.warn("start not recorded", { error: errorMessage(e) }),
-                  );
-              },
-              onStep: (step) => {
-                steps = steps
-                  .then(() => sayStarted(runItem.specialist))
-                  .then(() => recordStep(task, step))
-                  .catch((e: unknown) =>
-                    this.logger.warn("step not recorded", { error: errorMessage(e) }),
-                  );
-              },
-            });
+            result =
+              kept ??
+              (await this.deps.executor.execute({
+                task,
+                session,
+                token,
+                budget,
+                item: runItem,
+                signal: taskController.signal,
+                heard: said.map(({ deliveredTo: _to, ...line }) => line),
+                ...(notes.length ? { notes } : {}),
+                ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
+                onStarted: ({ specialist }) => {
+                  steps = steps
+                    .then(() => sayStarted(specialist))
+                    .catch((e: unknown) =>
+                      this.logger.warn("start not recorded", { error: errorMessage(e) }),
+                    );
+                },
+                onStep: (step) => {
+                  steps = steps
+                    .then(() => sayStarted(runItem.specialist))
+                    .then(() => recordStep(task, step))
+                    .catch((e: unknown) =>
+                      this.logger.warn("step not recorded", { error: errorMessage(e) }),
+                    );
+                },
+              }));
           } catch (e) {
             if (isSandboxNotReady(e)) {
               // U-079: the sandbox stopped being ready after the plan (Docker quit): the task
@@ -1741,7 +1771,7 @@ export class SessionRunner {
           // An executor that never said it started (a person's task, a test's executor) is
           // started now, before its end; a task whose credential pick waited before any run
           // never started, and its wait's line says so.
-          if (result.outcome !== "usage_limit")
+          if (result.outcome !== "usage_limit" && !result.reviewOnly)
             await sayStarted(result.specialist ?? runItem.specialist);
           // TR-13: added in one statement, so the tail a stopped run reports later (added the
           // same way, `lateRunCost`) is never written over by this.
@@ -1755,7 +1785,7 @@ export class SessionRunner {
           task = await store.task.mustGet(task.id);
           // A run the person cancelled changed nothing that stays (`recordMove` sets it aside):
           // the session's result and the task's files never list it.
-          if (result.changedFiles?.length && task.status !== "cancelled") {
+          if (result.changedFiles?.length && task.status !== "cancelled" && !result.reviewOnly) {
             filesByTask.set(task.id, result.changedFiles);
             // The pull request and branch the files went to, for the session page and the log
             // (GitHub walk, 2026-11-02: neither named the PR or the branch).
@@ -1778,40 +1808,42 @@ export class SessionRunner {
             result.outcome === "done" || result.outcome === "in_review"
               ? couldNotWords(result.summary)
               : null;
-          await emit(
-            "task.finished",
-            {
-              taskId: task.id,
-              // The log's line names the task and who did it (design §3.7, §5 rule 3).
-              title: task.title,
-              specialist: result.specialist ?? runItem.specialist,
-              outcome: result.outcome,
-              costUsdMicro: result.costUsdMicro,
-              summary: result.summary,
-              // A paused run's own report (ADR 0112): the drawer shows it under the sentence.
-              ...(result.outcome === "paused" && result.finalReport?.trim()
-                ? { report: result.finalReport.trim().slice(0, 4_000) }
-                : {}),
-              ...(toCritic ? { review: true } : {}),
-              ...(couldNot !== null ? { couldNot } : {}),
-              ...(again ? { again: true } : {}),
-            },
-            result.costUsdMicro,
-          );
-          try {
-            await this.deps.onTaskFinished?.({
-              sessionId: session.id,
-              task,
-              item,
-              result,
-              durationMs: Math.max(0, Math.round(clock.monotonic() - execStarted)),
-            });
-          } catch (e) {
-            this.logger.warn("task finished hook failed", {
-              taskId: task.id,
-              error: errorMessage(e),
-            });
-          }
+          if (!result.reviewOnly)
+            await emit(
+              "task.finished",
+              {
+                taskId: task.id,
+                // The log's line names the task and who did it (design §3.7, §5 rule 3).
+                title: task.title,
+                specialist: result.specialist ?? runItem.specialist,
+                outcome: result.outcome,
+                costUsdMicro: result.costUsdMicro,
+                summary: result.summary,
+                // A paused run's own report (ADR 0112): the drawer shows it under the sentence.
+                ...(result.outcome === "paused" && result.finalReport?.trim()
+                  ? { report: result.finalReport.trim().slice(0, 4_000) }
+                  : {}),
+                ...(toCritic ? { review: true } : {}),
+                ...(couldNot !== null ? { couldNot } : {}),
+                ...(again ? { again: true } : {}),
+              },
+              result.costUsdMicro,
+            );
+          if (!result.reviewOnly)
+            try {
+              await this.deps.onTaskFinished?.({
+                sessionId: session.id,
+                task,
+                item,
+                result,
+                durationMs: Math.max(0, Math.round(clock.monotonic() - execStarted)),
+              });
+            } catch (e) {
+              this.logger.warn("task finished hook failed", {
+                taskId: task.id,
+                error: errorMessage(e),
+              });
+            }
           // The task is read again now that the run returned: a state a person set while it ran
           // stands, and the runner never moves the task from it (U-039). A session stopped by
           // the kill switch still ends as killed; when the person's move of the task stopped
@@ -2020,6 +2052,8 @@ export class SessionRunner {
                 );
                 heldClaims.delete(task.id);
                 notAgain.add(task.id);
+                // W15-27: the work waits only for its review; it is reviewed without a run.
+                await this.keepForReview(now, result, runItem.specialist);
                 const owner = await store.human.get(agent.owner_human_id).catch(() => undefined);
                 await emit(BILLING_FALLBACK_EVENT, {
                   taskId: task.id,
@@ -2091,6 +2125,8 @@ export class SessionRunner {
                   error: errorMessage(e),
                 });
               }
+              // W15-27: the run's result is kept for the review alone (TR-15).
+              await this.keepForReview(waiting, result, runItem.specialist);
               await emit(REVIEW_PAUSED_EVENT, {
                 taskId: task.id,
                 title: task.title,
@@ -3160,6 +3196,64 @@ export class SessionRunner {
       watching = false;
       cancel();
     };
+  }
+
+  /**
+   * W15-27 (TR-15): keeps the result of a run whose review a limit refused on its Run row, for
+   * the review-only pass. A failure to keep it only costs the rerun of today.
+   */
+  private async keepForReview(
+    task: TaskRow,
+    result: TaskExecutionResult,
+    specialist: string,
+  ): Promise<void> {
+    if (!result.runId) return;
+    try {
+      await keepPending(
+        this.deps.store,
+        result.runId,
+        reviewPendingOf(result, task.attempt, result.specialist ?? specialist),
+      );
+    } catch (e) {
+      this.logger.warn("the run's result was not kept for its review", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+  }
+
+  /**
+   * W15-27 (TR-15): the kept result of the task's latest run, to review without running the
+   * specialist, when the run kept one (`reviewPending`), the attempt is the same, the executor
+   * can make its workspace ready (`prepareReview`) and the work there is unchanged (`workHash`).
+   * The entry is cleared when the pass takes it, and when it no longer applies. Null: run it.
+   */
+  private async reviewOnlyResult(task: TaskRow): Promise<TaskExecutionResult | null> {
+    const { store, executor } = this.deps;
+    if (!this.deps.critic || !executor.prepareReview) return null;
+    try {
+      const run = await latestWorkRun(store, task.id);
+      const pending = run ? pendingOfRun(run) : null;
+      if (!run || !pending) return null;
+      const ready = pending.attempt === task.attempt ? await executor.prepareReview(task) : null;
+      const same = !!ready && workHash(ready.worktree, pending.changedFiles) === pending.workHash;
+      await clearPending(store, run);
+      if (!ready || !same) {
+        this.logger.info("the kept result no longer matches the work: the specialist runs again", {
+          taskId: task.id,
+          attempt: task.attempt === pending.attempt,
+          ready: !!ready,
+        });
+        return null;
+      }
+      return keptResult(run, pending, ready.worktree);
+    } catch (e) {
+      this.logger.warn("the review-only pass was not prepared: the specialist runs again", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+      return null;
+    }
   }
 
   /**

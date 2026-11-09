@@ -1714,6 +1714,15 @@ export class LoopTaskExecutor implements TaskExecutor {
   }
 
   /**
+   * The review-only pass (W15-27): the task's worktree as its run had it, nothing run. A task
+   * with no worktree is reviewed in place.
+   */
+  async prepareReview(task: TaskRow): Promise<{ worktree?: string } | null> {
+    const worktree = await this.deps.worktreeFor?.(task);
+    return worktree ? { worktree } : {};
+  }
+
+  /**
    * Whether a run is offered Anthropic's web search, and with what ('web-search'): a loop run
    * of an entry granted `web_search` and the page reader, on a provider that runs the search,
    * while the key and the project's lists are not refused (`deps.webSearch`) and the task has

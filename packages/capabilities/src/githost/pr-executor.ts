@@ -2649,6 +2649,40 @@ export class PrTaskExecutor implements TaskExecutor {
     });
     return pr.htmlUrl;
   }
+
+  /**
+   * The review-only pass (W15-27, TR-15 of ADR 0112): the task's workspace, ready for a review of
+   * the result an earlier session kept, without running the specialist. A repository task's
+   * worktree is put back on its branch (the critic's checks and tries run there); a project's
+   * folder is in place. Null when it cannot be made ready (no worktree, no branch, a checkout
+   * git refuses): the specialist runs again, as before. It writes no commit and pushes nothing.
+   */
+  async prepareReview(task: TaskRow): Promise<{ worktree?: string } | null> {
+    const target = await this.deps.repoFor(task);
+    if (!target) {
+      const workspace = (await this.deps.workspaceFor?.(task)) ?? null;
+      return workspace && existsSync(join(workspace, ".git")) ? { worktree: workspace } : null;
+    }
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    const branch = task.branch;
+    if (!branch || !existsSync(join(dir, ".git"))) return null;
+    return inWorktree(dir, async () => {
+      try {
+        const git = await this.gitFor(target, dir);
+        if ((await git.currentBranch()) !== branch) {
+          if (!(await git.hasRef(`refs/heads/${branch}`))) return null;
+          await git.checkout(branch);
+        }
+        return { worktree: dir };
+      } catch (e) {
+        this.logger.warn("the task's worktree was not made ready for its review", {
+          taskId: task.id,
+          error: errorMessage(e),
+        });
+        return null;
+      }
+    });
+  }
 }
 
 /** What `PrTaskExecutor.takeOut` did in git (merged-actions). */
