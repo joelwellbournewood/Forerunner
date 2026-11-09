@@ -818,8 +818,8 @@ work. A session you start while a new project's plan is being drafted waits for 
 finish ("queued") and then runs. A review waits the same way: when the critic's review of a finished
 task meets a limit or a refusal and no other credential can do it, the task goes back to Ready
 without counting as a failed try, its row reads "Waits until 15:40, ...", no card is filed
-beside the credential's own, and at that time its session runs it again and the critic reviews
-it.
+beside the credential's own, and at that time its session has the critic review the work
+without running the specialist again (unless the files it wrote changed meanwhile).
 
 Until you choose an order, tasks use the subscription first and Chat, project setup
 and reviews use the API key first.
@@ -909,7 +909,9 @@ The same holds when the limit is reached by the critic's review rather than by t
 task pauses at that limit with the same card ('"Contact page" paused before its review: the
 project's budget of CHF 0.01 has no room for it.' in the log; the card says "The work is done;
 its review waits for room in the budget."), it does not count as a failed
-try, and once it goes on its next session finishes it and the critic reviews it once.
+try, and once it goes on its next session reviews the work without running the specialist
+again (its log says only that the critic reviewed it), unless the files it wrote changed
+meanwhile: then the specialist does it again first.
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the
 agent did with the wrap-up: in a project linked to a GitHub repository it is one commit on the
