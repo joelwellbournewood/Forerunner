@@ -498,19 +498,24 @@ describe("Project page", () => {
     await screen.findByTestId("summary");
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
-    const warning = await within(dialog).findByTestId("start-session-cannot-run");
+    // d1109-oversize-start (D4): the task larger than the work budget runs anyway, with the
+    // warning, so Start is on (before: "Nothing can run: ..." with Start off and the larger task
+    // told to shrink). The stuck task is still named, in the same note.
+    const warning = await within(dialog).findByTestId("start-session-oversized-note");
+    expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull();
     expect(within(dialog).queryByTestId("start-session-no-work")).toBeNull();
-    expect(within(warning).getByTestId("start-session-blocked")).toHaveTextContent(
-      'Nothing can run: "Write the migration guide" waits on "Try the old approach", which was cancelled.',
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      'This session works on "Decide the versioning scheme" until its work budget is used.',
     );
-    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+    expect(within(warning).getByTestId("start-session-oversized")).toHaveTextContent(
+      '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+    );
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled();
     // later #69: the state in words, not "(cancelled)".
     expect(within(warning).getByTestId("start-session-waiting")).toHaveTextContent(
       '"Write the migration guide" waits on "Try the old approach", which was cancelled, so it cannot run. Change what it waits for on the Tasks tab.',
     );
-    expect(within(warning).getByTestId("start-session-over-budget")).toHaveTextContent(
-      '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00',
-    );
+    expect(within(warning).queryByTestId("start-session-over-budget")).toBeNull();
     // The real default is filled in (design §3.6), not hidden behind "leave empty".
     const budget = within(dialog).getByLabelText(/Session budget/);
     expect(budget).toHaveValue("5.00");
@@ -518,8 +523,9 @@ describe("Project page", () => {
     await user.clear(budget);
     await user.type(budget, "20");
     await waitFor(() =>
-      expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull(),
+      expect(within(dialog).queryByTestId("start-session-oversized-note")).toBeNull(),
     );
+    expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull();
     expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
       'This session runs "Decide the versioning scheme" (about CHF 8.00).',
     );

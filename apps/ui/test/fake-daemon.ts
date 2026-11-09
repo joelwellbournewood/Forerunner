@@ -85,6 +85,7 @@ import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
+import { leftOutSentence, oversizedSentence } from "@forerunner/runtime/daemon/oversize-words";
 import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
 import {
   blockedTaskIds,
@@ -161,6 +162,7 @@ import type {
   ModelWatchReportSummary,
   QueueItemView,
 } from "../src/api/contracts.ts";
+import { formatChf } from "../src/lib/money.ts";
 import { FULL_REVIEW_SPECIALISTS, FULL_REVIEW_TIER } from "../src/lib/task-actions.ts";
 import { TASK_TRANSITIONS } from "../src/lib/task-transitions.ts";
 import {
@@ -837,11 +839,13 @@ function fakeStartCheck(
   const cap = budgetUsdMicro ?? FAKE_SESSION_CAP_USD_MICRO;
   const work = Math.floor(cap * 0.8);
   const runnable: StartCheckView["runnable"] = [];
-  const overBudget: StartCheckView["overBudget"] = [];
+  let overBudget: (StartCheckView["overBudget"][number] & { at: number })[] = [];
   const waiting: StartCheckView["waiting"] = [];
   const sandboxTasks: StartCheckView["runnable"] = [];
   let total = 0;
-  for (const t of ready) {
+  /** D4: the first ready task whose figure alone is more than the work budget (as the runner). */
+  let larger: (StartCheckView["runnable"][number] & { at: number; aheadUsd: number }) | null = null;
+  for (const [at, t] of ready.entries()) {
     const waitsOn = t.dependsOn
       .filter((d) => byId.get(d)?.status !== "done")
       .map((d) => ({
@@ -857,8 +861,15 @@ function fakeStartCheck(
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
     // U-079: a full-review task waits while the Docker sandbox is not ready.
     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
+    // D4 (d1109-oversize-start): larger than the whole work budget: the first is held for after
+    // the work that fits; a second one waits for the next session (one a session).
+    else if (estimate > work) {
+      if (larger === null) larger = { ...named, at, aheadUsd: total };
+      else overBudget.push({ ...named, ahead: money(total), why: "one_large", at });
+    }
     // C-45: what the tasks before it take (polish-screens, wave 13).
-    else if (total + estimate > work) overBudget.push({ ...named, ahead: money(total) });
+    else if (total + estimate > work)
+      overBudget.push({ ...named, ahead: money(total), why: "after_others", at });
     else {
       runnable.push(named);
       total += estimate;
@@ -881,6 +892,49 @@ function fakeStartCheck(
       changed = true;
     }
   }
+  // D4: the larger task gets what the tasks before it leave (those that follow included), at
+  // least a fifth of the work budget; with less, it and any other larger one wait (no_room).
+  const chf = (m: { chfMicro: number }) => ({ chfMicro: m.chfMicro, text: formatChf(m.chfMicro) });
+  let oversized: StartCheckView["oversized"] = null;
+  if (larger) {
+    const before =
+      total +
+      later
+        .filter((l) => l.estimate.usdMicro <= work)
+        .reduce((sum, l) => sum + l.estimate.usdMicro, 0);
+    const room = Math.max(0, work - before);
+    const { at, aheadUsd, ...named } = larger;
+    if (room >= Math.max(1, Math.ceil(work * 0.2))) {
+      oversized = {
+        ...named,
+        room: money(room),
+        after: before > 0,
+        sentence: oversizedSentence({
+          title: named.title,
+          estimate: chf(named.estimate),
+          workBudget: chf(money(work)),
+          room: before > 0 ? chf(money(room)) : null,
+        }),
+      };
+      overBudget.push({ ...named, ahead: money(aheadUsd), why: "oversized", at });
+    } else {
+      overBudget.push({ ...named, ahead: money(aheadUsd), why: "no_room", at });
+      overBudget = overBudget.map((o) => (o.why === "one_large" ? { ...o, why: "no_room" } : o));
+    }
+    overBudget.sort((a, b) => a.at - b.at);
+  }
+  const overBudgetView: StartCheckView["overBudget"] = overBudget.map(({ at: _at, ...o }) => ({
+    ...o,
+    sentence:
+      o.why === "oversized" && oversized
+        ? oversized.sentence
+        : leftOutSentence(o.why === "oversized" || !o.why ? "after_others" : o.why, {
+            title: o.title,
+            estimate: chf(o.estimate),
+            workBudget: chf(money(work)),
+            ahead: chf(o.ahead ?? money(0)),
+          }),
+  }));
   const stuckOn = waiting
     .flatMap((w) => w.waitsOn.map((d) => ({ w, d })))
     .find(({ d }) => ["failed", "cancelled", "needs_human", null].includes(d.status));
@@ -890,7 +944,7 @@ function fakeStartCheck(
         sentence: "Sessions are stopped (Stop all), so nothing can start.",
         action: { kind: "resume", label: "Allow sessions again", to: null },
       }
-    : runnable.length > 0 || (opts.busy && opts.busyHere)
+    : runnable.length > 0 || oversized || (opts.busy && opts.busyHere)
       ? null
       : stuckOn
         ? stuckOn.d.status === "needs_human"
@@ -910,30 +964,26 @@ function fakeStartCheck(
               sentence: `Nothing can run: "${sandboxTasks[0].title}" is waiting for Docker.`,
               action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
             }
-          : overBudget[0]
-            ? {
-                kind: "nothing_runnable",
-                sentence: `Nothing can run within this budget: "${overBudget[0].title}" needs about CHF ${(overBudget[0].estimate.chfMicro / 1e6).toFixed(2)}.`,
-                action: null,
-              }
-            : {
-                kind: "nothing_runnable",
-                sentence:
-                  ready.length === 0
-                    ? "Nothing can run: no task is ready."
-                    : "Nothing can run: every ready task waits on another one.",
-                action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
-              };
+          : // D4: a task larger than the work budget is no blocker: the session takes it.
+            {
+              kind: "nothing_runnable",
+              sentence:
+                ready.length === 0
+                  ? "Nothing can run: no task is ready."
+                  : "Nothing can run: every ready task waits on another one.",
+              action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+            };
   return {
     projectId,
     sessionBudget: money(cap),
     workBudget: money(work),
     ready: ready.length,
     runnable,
-    overBudget,
+    overBudget: overBudgetView,
     waiting,
     later,
     blocked,
+    oversized,
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
     busy: opts.busy ?? false,
     planning: false,

@@ -163,3 +163,49 @@ describe("source discovery contract", () => {
     }
   });
 });
+
+/**
+ * d1109-oversize-start (OS-3): the fake daemon's Start check answers the shapes the real one
+ * does (`oversized` with its warning, each left-out task's `why` and `sentence`), parsed by the
+ * daemon's own schema; the real daemon's answer is parsed the same way in real-daemon.test.ts
+ * ("d1109-oversize-start, run C").
+ */
+describe("d1109-oversize-start, run C: the Start check's larger task", () => {
+  it("the fake daemon's answer parses with the daemon's schema and carries the warning and the reasons", async () => {
+    const { StartCheckView } = await import("@forerunner/runtime/daemon/api-types");
+    const { createHarness } = await import("./helpers.tsx");
+    const { money } = await import("./fixtures.ts");
+    const harness = createHarness();
+    const ready = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (!ready) throw new Error("fixture changed");
+    ready.title = "Build the shop";
+    ready.estimate = money(7_500_000);
+    harness.daemon.state.tasks.push({
+      ...ready,
+      id: "task_big2",
+      title: "Big two",
+      estimate: money(11_250_000),
+      priority: "low",
+    });
+    const res = await harness.daemon.app.request("/projects/proj_atlas/start-check", {
+      headers: { authorization: "Bearer test-token" },
+    });
+    const view = StartCheckView.parse(await res.json());
+    expect(view.blocked).toBeNull();
+    expect(view.oversized).toMatchObject({
+      title: "Build the shop",
+      estimate: { chfMicro: 6_000_000 },
+      room: { chfMicro: 4_000_000 },
+      after: false,
+      sentence:
+        '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+    });
+    expect(view.overBudget.map((t) => [t.title, t.why])).toEqual([
+      ["Build the shop", "oversized"],
+      ["Big two", "one_large"],
+    ]);
+    expect(view.overBudget[1]?.sentence).toBe(
+      '"Big two" needs about CHF 9.00, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+    );
+  });
+});

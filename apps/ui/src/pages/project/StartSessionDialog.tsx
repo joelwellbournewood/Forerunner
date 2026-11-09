@@ -1,3 +1,4 @@
+import { oversizedPlanClause } from "@forerunner/runtime/daemon/oversize-words";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type StartCheckView, type StartSessionView } from "../../api/client.ts";
@@ -143,12 +144,20 @@ function about(values: readonly { estimate: MoneyLike }[]): string {
  * #48), a task ready now was one of "up to N more as they become ready". Null when nothing runs.
  */
 export function planSentence(check: StartCheckView): string | null {
+  // D4 (d1109-oversize-start): the task larger than the work budget the session takes after the
+  // work that fits, named by the daemon's clause (`oversizedPlanClause`): alone, "This session
+  // works on "X" until its work budget is used."; after the others, "..., then works on "X"
+  // with what is left."
+  const big = check.oversized ?? null;
   const [first, ...rest] = check.runnable;
-  if (!first) return null;
+  if (!first) return big ? oversizedPlanClause(big.title, true) : null;
   const head = `This session runs "${first.title}" (${about([first])})`;
   const now = rest.length > 0 ? ` and ${rest.length} more (${about(rest)})` : "";
-  if (check.later.length === 0) return `${head}${now}.`;
-  return `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)}).`;
+  const runs =
+    check.later.length === 0
+      ? `${head}${now}`
+      : `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)})`;
+  return big ? `${runs}, ${oversizedPlanClause(big.title, false)}.` : `${runs}.`;
 }
 
 /**
@@ -194,49 +203,35 @@ function BlockerLines({ check }: { check: StartCheckView }) {
         </>
       ),
     });
-  // A task left out is larger than the whole work budget, or (live walk 2, phase C) only does
-  // not fit after the tasks that run first: "needs about CHF 1.20, more than this session's work
-  // budget of CHF 2.40" was untrue for the second kind. Each says which it is. C-45: the tasks
-  // larger than the budget are one line (each had its own, saying the same); "the tasks that run
-  // first" is what the check says runs before that task (`ahead`), not every task that runs.
-  const tooBig = check.overBudget.filter((t) => t.estimate.usdMicro > check.workBudget.usdMicro);
-  const [onlyBig] = tooBig;
-  if (onlyBig && tooBig.length === 1)
+  // D4 (d1109-oversize-start): a task larger than the whole work budget is no longer refused or
+  // told to shrink ("Give the session a larger budget, or the task a smaller one." is gone): the
+  // one the session takes is said in the amber note (`start-session-oversized`), and a second
+  // one, or one the tasks before it leave too little for, in the daemon's sentence of why it
+  // waits (`overBudget[].sentence`).
+  const others = check.overBudget.filter(
+    (t) => t.why !== "oversized" && t.taskId !== check.oversized?.taskId,
+  );
+  const waitsForNext = others.filter((t) => t.why === "one_large" || t.why === "no_room");
+  for (const t of waitsForNext)
     lines.push({
-      key: `b-${onlyBig.taskId}`,
+      key: `b-${t.taskId}`,
       testId: "start-session-over-budget",
-      node: (
-        <>
-          "{onlyBig.title}" needs <AboutMoney value={onlyBig.estimate} />, more than this session's
-          work budget of <Money value={check.workBudget} /> (the budget less a fifth kept for
-          reviews). Give the session a larger budget, or the task a smaller one.
-        </>
-      ),
-    });
-  else if (tooBig.length > 1)
-    lines.push({
-      key: "b-too-big",
-      testId: "start-session-over-budget",
-      node: (
-        <>
-          {namesWithEstimates(tooBig)} each need more than this session's work budget of{" "}
-          <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
-          session a larger budget, or the tasks smaller ones.
-        </>
-      ),
+      node: <>{t.sentence}</>,
     });
   // An older daemon does not say what runs before a task: every task that runs, as before.
   const allFirst = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
   // W15-38: the tasks that may be left for next time are one line (each had the same long
   // sentence), at most three named; "the tasks that run first" is what runs before the first of
-  // them, which the others wait behind too.
-  const left = check.overBudget.filter((x) => !tooBig.includes(x));
+  // them, which the others wait behind too. One task alone reads the daemon's sentence of it.
+  const left = others.filter((x) => !waitsForNext.includes(x));
   const [firstLeft] = left;
   if (firstLeft && left.length === 1)
     lines.push({
       key: `b-${firstLeft.taskId}`,
       testId: "start-session-over-budget",
-      node: (
+      node: firstLeft.sentence ? (
+        <>{firstLeft.sentence}</>
+      ) : (
         <>
           "{firstLeft.title}" (<AboutMoney value={firstLeft.estimate} />) may be left for next time:
           the tasks that run first take {aboutChf(firstLeft.ahead?.chfMicro ?? allFirst)} of this
@@ -448,6 +443,17 @@ export function StartSessionDialog({
                   </p>
                 ) : null}
                 {data ? <BlockerLines check={data} /> : null}
+              </div>
+            ) : data?.oversized ? (
+              // D4 (d1109-oversize-start): the warning, with Start on: the task larger than the
+              // work budget works with what is left, keeps its work and asks to continue.
+              <div
+                role="note"
+                className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+                data-testid="start-session-oversized-note"
+              >
+                <p data-testid="start-session-oversized">{data.oversized.sentence}</p>
+                <BlockerLines check={data} />
               </div>
             ) : data && plan ? (
               <BlockerLines check={data} />

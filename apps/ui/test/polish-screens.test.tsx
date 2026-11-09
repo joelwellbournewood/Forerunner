@@ -296,7 +296,7 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     expect(dialog).not.toHaveTextContent(/\((ready|draft|failed|cancelled|needs_human)\)/);
   });
 
-  it("two tasks larger than the work budget are one line, not one each", async () => {
+  it("two tasks larger than the work budget: the first runs with the warning, the second is one line of why it waits", async () => {
     const harness = createHarness();
     const ready = readyTask(harness);
     ready.estimate = money(10_000_000);
@@ -308,12 +308,18 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
       priority: "low",
     });
     const { dialog } = await openDialog(harness);
-    await within(dialog).findByTestId("start-session-cannot-run");
+    // d1109-oversize-start (D4): before, both were one line telling the person to give the
+    // session a larger budget, or the tasks smaller ones, with Start off.
+    expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull();
+    expect(await within(dialog).findByTestId("start-session-oversized")).toHaveTextContent(
+      '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+    );
     const lines = within(dialog).getAllByTestId("start-session-over-budget");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toHaveTextContent(
-      '"Decide the versioning scheme" (about CHF 8.00) and "Port the app" (about CHF 9.60) each need more than this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget, or the tasks smaller ones.',
+      '"Port the app" needs about CHF 9.60, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
     );
+    expect(dialog).not.toHaveTextContent("smaller ones");
   });
 
   it("'the tasks that run first' sums only the tasks ordered before the one left out", async () => {

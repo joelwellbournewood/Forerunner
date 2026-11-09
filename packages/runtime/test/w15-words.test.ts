@@ -216,19 +216,29 @@ describe("w15-words, wave 15 run B", () => {
       );
     });
 
-    it("the Start check's refusal of a task larger than the budget", () => {
+    it("the Start check no longer refuses a task larger than the budget (d1109-oversize-start, D4)", () => {
+      // Before: 'Nothing can run within this budget: "Write the note" needs less than CHF 0.01.'
+      // with Start off. Now the session takes it (`oversized`), and the warning is the daemon's
+      // sentence of it (oversize-words.test.ts says "less than CHF 0.01" for such an amount).
       const blocked = startBlocked(
         {
           runnable: [],
           ready: 1,
           waiting: [],
-          overBudget: [{ taskId: "t1", title: "Write the note", estimateUsdMicro: tiny }],
+          overBudget: [
+            { taskId: "t1", title: "Write the note", estimateUsdMicro: tiny, reason: "oversized" },
+          ],
+          oversized: {
+            taskId: "t1",
+            title: "Write the note",
+            estimateUsdMicro: tiny,
+            roomUsdMicro: tiny - 1,
+            after: false,
+          },
         } as never,
         { stopped: false, hasModel: true, projectId: "p1", chfPerUsd: 0.8 } as never,
       );
-      expect(blocked?.sentence).toBe(
-        'Nothing can run within this budget: "Write the note" needs less than CHF 0.01.',
-      );
+      expect(blocked).toBeNull();
     });
 
     it("the wrap-up note says 'less than CHF 0.01' at most once (W15B-77)", () => {
