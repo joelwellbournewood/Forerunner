@@ -358,7 +358,9 @@ describe("phase 2 gate", () => {
       const body = (
         await run(["git", "--git-dir", w.bare, "log", "-1", "--format=%b", pr.head.ref])
       ).stdout;
-      expect(body).toContain(`Task ${taskId}`);
+      // W15B-13: the body GitHub shows names no task id (before: "Task <uuid>."); the subject
+      // above is the task's title.
+      expect(body).not.toContain(String(taskId));
     }
     const mainLog = (await run(["git", "--git-dir", w.bare, "log", "--format=%s", "main"])).stdout;
     expect(mainLog.trim()).toBe("seed");

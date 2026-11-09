@@ -1555,8 +1555,12 @@ as one blocking approval request (kind `approval`, options `approve` / `reject`,
 cost and where the docs will go; the `why`, `steps` and the route's `summary` count the
 shaped plan's milestones, one in small-project mode with a step saying the phases join it)
 with one `project.intake` audit row; an open intake request for the project is reused without
-a call, and a call with a new `brief` while one is open is refused with `claim_conflict` (409)
-naming the open request. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the
+a call, and a call with a new `brief` while one is open is refused with `claim_conflict` (409),
+"A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief."
+(the open request in `details.requestId` only; W15B-13). What it writes on GitHub names no
+request id and no "doc(s)": the first commit of an empty repository, the docs commit ("Drafted
+by Forerunner from the project's brief: 3 docs drafted, 2 from the templates.",
+`docSetWords`), the comment on an open docs pull request and that pull request's body. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the
 answer once: approve writes the milestones and tasks through `applyProjectPlan` (its `keyed`
 map turns the first-session keys into task ids), the items' estimates onto the task rows, the
 first-session plan onto `summary_cache.first_session` and `next_steps` and into the queue as

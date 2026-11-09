@@ -702,7 +702,8 @@ const WIP_OUTCOMES: ReadonlySet<TaskExecutionResult["outcome"]> = new Set([
 
 /**
  * A work-in-progress commit's message: why it stopped in the subject, then the run's own
- * "Where I stopped:" and "Left to do:" (data, kept plain), then the task.
+ * "Where I stopped:" and "Left to do:" (data, kept plain); no task id (W15B-13: the branch is
+ * pushed, and its title is in the subject).
  */
 export function workInProgressMessage(
   task: Pick<TaskRow, "id" | "title">,
@@ -729,7 +730,6 @@ export function workInProgressMessage(
             : "Left to do: not listed.",
         ]
       : []),
-    `Task ${task.id}.`,
   ].join("\n\n");
 }
 
@@ -1107,7 +1107,7 @@ export class PrTaskExecutor implements TaskExecutor {
 
     // A commit message is plain text: no markdown marks, no lesson lines (L-19).
     const commit = await git.commitAll(
-      `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}\n\nTask ${task.id}.`,
+      `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}`,
     );
     // TM-1 (leftovers7-tailmerge): whether the branch holds any change of the task's own, from
     // where its work starts (the base, with the work it builds on), not whether this run
@@ -2421,10 +2421,7 @@ export class PrTaskExecutor implements TaskExecutor {
     if (aside) {
       if (workspace) {
         const title = task.title.replace(/\s+/g, " ").trim();
-        const r = await git.applyCommitted(
-          `${aside}`,
-          `${WIP_SUBJECT}${title} (brought back)\n\nTask ${task.id}.`,
-        );
+        const r = await git.applyCommitted(`${aside}`, `${WIP_SUBJECT}${title} (brought back)`);
         if (!r.ok) return { result: "conflict" };
         for (const f of r.files) back.add(f);
       } else {

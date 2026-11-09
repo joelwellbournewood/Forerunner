@@ -240,6 +240,11 @@ with their milestone.
   request whose body carries the outcome, the acceptance criteria (no heading when there are
   none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
+  No commit body that is pushed names the task by its id (W15B-13: the task's commit, the
+  work-in-progress commit `workInProgressMessage` and the brought-back one; before: "Task
+  <uuid>."): the title is the subject. Subjects and markers code reads stay as they are
+  (`WIP_SUBJECT`, "Workspace before \"...\" (task <id>)" and the set-aside subjects, on refs
+  kept on this computer; `builtOnBy`, `loop/critic.ts` and `loop/project-checks.ts` read them).
   A run that changed no file fails with "The run changed no file. It reported: …" in plain words
   (`emptyChangeSummary`, L-18, polish-words; before, the raw report and "(no changes were made in
   the worktree)").
