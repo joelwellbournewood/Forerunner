@@ -140,8 +140,9 @@ export interface TaskDisplayContext {
    */
   live?: (taskId: string) => boolean;
   /**
-   * Ready tasks that hold work in progress from a run that paused at a budget and left changed
-   * files (P7-20): a Cancel sets it aside, as a paused task's does. Absent: none.
+   * Tasks that hold work in progress a Cancel sets aside (`taskHeldWork`): a ready one whose run
+   * paused at a budget and left changed files (P7-20), and one paused at its budget whose run
+   * wrote something (W15-56). Absent: none.
    */
   heldWork?: ReadonlySet<string>;
   /**
@@ -272,7 +273,7 @@ const HOST_UNREACHABLE = "unreachable";
  * more than "waits for you to merge" (no Merge, or Merge with a warning), by its outcome; the
  * record's sentence is the line under it.
  */
-const LEFT_TO_YOU_LABELS: Readonly<Record<string, string>> = {
+export const LEFT_TO_YOU_LABELS: Readonly<Record<string, string>> = {
   closed: "Accepted · pull request closed",
   rebuild_conflict: "Accepted · could not be rebuilt",
   head_moved: "Accepted · changed after the review",
@@ -282,6 +283,21 @@ const LEFT_TO_YOU_LABELS: Readonly<Record<string, string>> = {
   blocked_by_rules: "Accepted · merge it on GitHub",
   merge_commits_off: "Accepted · merge it on GitHub",
 };
+
+/**
+ * W15B-12: whether a done task's label says its accepted work waits on the person in some other
+ * way than a plain Merge (`WAITING_FOR_YOUR_MERGE`): its task's folder (`OWED_FOLDER_LABEL`), a
+ * conflict with the base, or an outcome left to the person (`LEFT_TO_YOU_LABELS`: a closed pull
+ * request, one that could not be rebuilt, ...). The project's Done line counts them as needing
+ * the person, never as waiting to be merged.
+ */
+export function needsYouAfterAccept(label: string): boolean {
+  return (
+    label === OWED_FOLDER_LABEL ||
+    /^Accepted · conflicts with /.test(label) ||
+    Object.values(LEFT_TO_YOU_LABELS).includes(label)
+  );
+}
 
 /**
  * A task's status while its budget card is open (ADR 0112): paused at the limit the card names
@@ -602,7 +618,11 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
           "warn",
           {
             detail: budgetPauseDetail((card.change_card as { source?: unknown } | null)?.source),
-            cancelWork: cancelWorkOf(task, ctx, { paused: true }),
+            // W15-56: only when its run wrote something (`taskHeldWork`); a task paused before
+            // any step wrote a file is only dropped ("Drops it.").
+            ...(ctx.heldWork?.has(task.id)
+              ? { cancelWork: cancelWorkOf(task, ctx, { paused: true }) }
+              : {}),
             blocker: {
               kind: "card",
               taskId: null,

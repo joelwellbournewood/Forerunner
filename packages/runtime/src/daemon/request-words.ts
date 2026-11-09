@@ -1,4 +1,5 @@
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
+import { moneyWords } from "../session/money-words.ts";
 import {
   ANSWER_CARD_KEYS,
   blockedFindingsAnswer,
@@ -94,11 +95,51 @@ export interface RequestWordsContext {
    * request): the plan card's line while Approve and start works says so (L-20).
    */
   projectRepository?: boolean;
+  /**
+   * A budget card's task holds work its Cancel sets aside (W15-56, `taskHeldWork`, read when the
+   * card is shown): false when its run wrote nothing, so the card promises no set-aside and keeps
+   * nothing; absent when not read (worded as before).
+   */
+  heldWork?: boolean;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+
+/**
+ * A model's words without their markdown (W15-61, W15-57; design §5 rule 6): backticks, emphasis
+ * and list marks dropped, a leading colon or dash too, on one line. Data stays data: only marks go.
+ */
+export function withoutMarkdown(text: string): string {
+  return text
+    .replace(/`+([^`]*)`+/g, "$1")
+    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
+    .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|[.,;:!?]|$)/g, "$1$2")
+    .replace(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g, "$1")
+    .replace(/^[\s:;,.\-–—*]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * W15-57: an item of a paused run's note as the budget card quotes it: plain words, a list's
+ * heading colon dropped, and cut at a word well under what the card kept (`cardHandoff` cut it at
+ * 80 or 160 characters, mid-word: "rounds(players…"), so a stored cut never shows.
+ */
+function cardItem(text: string, max: number): string {
+  let t = withoutMarkdown(text);
+  // A stored cut: the word it fell in is dropped ("... using upd…" -> "... using…").
+  const stored = /…$/.test(t);
+  if (stored)
+    t = t
+      .replace(/…$/, "")
+      .replace(/\s*\S*$/, "")
+      .replace(/[\s,;:]+$/, "");
+  t = t.replace(/[\s:]+$/, "");
+  if (t.length > max) return cutWords(t, max);
+  return stored ? `${t}…` : t;
+}
 
 /** A title as a line names it: whole when short, else cut at a word. */
 export function cutWords(text: string, max: number): string {
@@ -357,14 +398,8 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   // first words with the heading's colon (': I made no edits…'): the quote starts at a word.
   // W15-61 (design §5 rule 6): the specialist's words without their markdown (live: "a bare
   // `node wc.js`", "**Summary**"), backticks, emphasis and list marks dropped.
-  const context = str(card.context)
-    ?.replace(/`+([^`]*)`+/g, "$1")
-    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
-    .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|[.,;:!?]|$)/g, "$1$2")
-    .replace(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g, "$1")
-    .replace(/^[\s:;,.\-–—*]+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const raw = str(card.context);
+  const context = raw ? withoutMarkdown(raw) : undefined;
   const body =
     [
       planned
@@ -569,7 +604,8 @@ function chfAt(usdMicro: unknown, rate: unknown): string | null {
   if (typeof usdMicro !== "number" || !Number.isFinite(usdMicro)) return null;
   const r = typeof rate === "number" && rate > 0 ? rate : 0.8;
   const cents = Math.round(Math.round(Math.max(0, usdMicro) * r) / 10_000);
-  return `CHF ${(cents / 100).toFixed(2)}`;
+  // W15-74: an amount above zero under a centime is "less than CHF 0.01", never "CHF 0.00".
+  return moneyWords(`CHF ${(cents / 100).toFixed(2)}`, usdMicro);
 }
 
 /**
@@ -589,8 +625,9 @@ function budgetCard(
   const session = card.source === "session" || card.source === "session_budget";
   const goesOn = goesOnWords(card);
   const body =
-    [pausedWorkSentence(card), goesOn ?? waitingSentence(waiting)].filter(Boolean).join(" ") ||
-    null;
+    [pausedWorkSentence(card, ctx.heldWork), goesOn ?? waitingSentence(waiting)]
+      .filter(Boolean)
+      .join(" ") || null;
   const choices: RequestChoiceWords[] = [];
   for (const option of r.options.map(optionLabel)) {
     const what = budgetStopAnswer(option);
@@ -609,7 +646,7 @@ function budgetCard(
     else if (what === "cancel")
       choices.push({
         label: option,
-        explain: cancelPausedExplain(waiting),
+        explain: cancelPausedExplain(waiting, ctx.heldWork),
         tone: goesOn ? "secondary" : "danger",
         confirm: cancelConfirm(ctx.taskTitle ?? str(card.task_title) ?? "the task", waiting),
         input: null,
@@ -639,18 +676,20 @@ function budgetCard(
 /**
  * What the paused run did and left, in one sentence from its own note (data): "Done: guide.md
  * has 3 parts; left: write the rest, check it." A run that wrote no note (a tiny budget, a hard
- * stop): its work so far is kept.
+ * stop): its work so far is kept, or, when it wrote nothing (`heldWork` false, W15-56), that it
+ * stopped before it wrote anything.
  */
-function pausedWorkSentence(card: JsonObject): string | null {
+function pausedWorkSentence(card: JsonObject, heldWork?: boolean): string | null {
   // TR-14: the specialist finished and only its review waits (a review a limit refused): the
   // run-pause words ("It stopped before it could say where it stood") were not true of it.
   if (card.review_waits === true)
     return "The work is done; its review waits for room in the budget.";
-  const done = str(card.done);
+  const doneSaid = str(card.done);
+  const done = doneSaid ? cardItem(doneSaid, 140) : null;
   const left = Array.isArray(card.left)
     ? card.left.filter((t): t is string => typeof t === "string" && t.trim() !== "")
     : [];
-  const items = left.slice(0, 3).map((t) => noFinalDot(t));
+  const items = left.slice(0, 3).map((t) => noFinalDot(cardItem(t, 70)));
   const leftWords = items.length
     ? `${items.join(", ")}${left.length > 3 ? ` and ${left.length - 3} more` : ""}`
     : null;
@@ -659,6 +698,7 @@ function pausedWorkSentence(card: JsonObject): string | null {
   if (leftWords) return `Left: ${leftWords}.`;
   // A card of before budget-resume has neither: its title says it all.
   if (!("done" in card)) return null;
+  if (heldWork === false) return "It stopped before it wrote anything.";
   return "It stopped before it could say where it stood; its work so far is kept.";
 }
 
@@ -709,9 +749,16 @@ function goesOnWords(card: JsonObject): string | null {
 /**
  * What Cancel does to a paused task: its work goes aside unless a later task built on it (in a
  * project's folder it then stays; P7-18: "until you reopen it" was promised there too), what
- * waits is stuck (design §3.5).
+ * waits is stuck (design §3.5). A task whose run wrote nothing (`heldWork` false, W15-56) is
+ * only dropped: nothing is set aside.
  */
-function cancelPausedExplain(waiting: readonly string[]): string {
+function cancelPausedExplain(waiting: readonly string[], heldWork?: boolean): string {
+  if (heldWork === false) {
+    if (waiting.length === 0) return "Drops it.";
+    if (waiting.length === 1)
+      return `Drops it; "${cutWords(waiting[0] as string, 50)}" will be stuck.`;
+    return `Drops it; the ${waiting.length} tasks after it will be stuck.`;
+  }
   if (waiting.length === 0)
     return "Drops it; its work is set aside unless a later task built on it.";
   // Tasks that wait on it have not built on it: within 100 characters (design §5.1).
@@ -937,10 +984,12 @@ const NOT_APPLIED_MAX = 140;
 export function leftOpenCardTitle(card: JsonObject, taskTitle: string): string {
   if (card.notice === "conflict")
     return `${q(taskTitle)} conflicts with ${str(card.base) ?? "main"}`;
-  return (
-    rebuildTitle(card, taskTitle) ??
-    `The critic accepted ${q(taskTitle)}, but ${prOfCard(card)} was not merged`
-  );
+  const rebuilt = rebuildTitle(card, taskTitle);
+  if (rebuilt) return rebuilt;
+  // W15B-11: what happened (before: 'The critic accepted "X", but pull request #3 was not
+  // merged', the old reason, over a sentence about new commits).
+  if (card.status === "head_moved") return `${q(taskTitle)} changed after the review`;
+  return `The critic accepted ${q(taskTitle)}, but ${prOfCard(card)} was not merged`;
 }
 
 /**

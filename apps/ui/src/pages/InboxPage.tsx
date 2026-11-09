@@ -21,8 +21,8 @@ import {
   INPUT_CLASS,
   Loading,
 } from "../components/ui.tsx";
-import { formatChf, usdMicroToChfMicro } from "../lib/money.ts";
-import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
+import { aboutChf, chfWords, usdMicroToChfMicro } from "../lib/money.ts";
+import { inAppText, withoutMarks, withoutUndoWord } from "../lib/plain-words.ts";
 import { decisionLine, planTotalWords } from "../lib/plan-card.ts";
 import {
   daemonRunnerKeys,
@@ -32,6 +32,7 @@ import {
   unlockChallengeOf,
 } from "../lib/runner-unlock.ts";
 import { browserStorage, type KeyValueStore } from "../lib/storage.ts";
+import { specialistName } from "../lib/task-actions.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useScrollToHash } from "../lib/use-hash-scroll.ts";
@@ -183,6 +184,8 @@ export function personQuestionsOf(card: unknown): PersonQuestionsView | null {
 /**
  * The questions with one answer field each (U-022). The answer is sent as
  * `{ answers: [{ question, answer }] }`, the blank ones left out; at least one must be given.
+ * Each question and the context read without the specialist's markdown (`withoutMarks`,
+ * W15B-17); the answer sent keeps the question as it was asked.
  */
 function PersonQuestionsForm({
   card,
@@ -211,11 +214,16 @@ function PersonQuestionsForm({
       }}
     >
       {showContext && card.context ? (
-        <p className="text-xs text-neutral-600 dark:text-neutral-400">{card.context}</p>
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="person-questions-context"
+        >
+          {withoutMarks(card.context)}
+        </p>
       ) : null}
       {card.questions.map((q, i) => (
         <label key={q} className="block text-sm">
-          <span className="font-medium">{q}</span>
+          <span className="font-medium">{withoutMarks(q)}</span>
           <textarea
             className={`${INPUT_CLASS} mt-1 min-h-12`}
             value={answers[i] ?? ""}
@@ -238,8 +246,11 @@ function PersonQuestionsForm({
   );
 }
 
-/** The intake card's estimates in CHF (U-074), at the default rate the card has no other for. */
-const chf = (micro: number): string => formatChf(usdMicroToChfMicro(micro));
+/**
+ * The intake card's estimates in CHF (U-074), at the default rate the card has no other for;
+ * under a centime "less than CHF 0.01", never "CHF 0.00" (W15-74).
+ */
+const aboutUsd = (micro: number): string => aboutChf(usdMicroToChfMicro(micro));
 
 /**
  * A drafted decision doc as text (design §3.3: "rendered as text, never raw markdown"): the
@@ -325,11 +336,15 @@ function IntakeCard({
   };
   const agentTasks = tasks.filter((t) => !isPerson(t));
   const estimated = agentTasks.filter((t) => costOf(t) !== undefined);
-  const total = estimated.reduce((s, t) => s + (costOf(t) ?? 0), 0);
+  // W15-72: the total is the sum of the figures the rows show (each rounded to the centime),
+  // so they add up as read; under a centime in all it reads "less than CHF 0.01".
+  const shownChf = (usd: number) => Math.round(usdMicroToChfMicro(usd) / 10_000) * 10_000;
+  const exactChf = estimated.reduce((s, t) => s + usdMicroToChfMicro(costOf(t) ?? 0), 0);
+  const shownTotal = estimated.reduce((s, t) => s + shownChf(costOf(t) ?? 0), 0);
   const totalWords = planTotalWords({
     agentTasks: agentTasks.length,
     estimated: estimated.length,
-    total: chf(total),
+    total: chfWords(shownTotal > 0 ? shownTotal : exactChf),
     personTasks: agentTasks.length < tasks.length,
   });
   const decision = card.docs.find((d) => isDecisionDoc(d.path));
@@ -367,11 +382,12 @@ function IntakeCard({
                 ·{" "}
                 {isPerson(t)
                   ? "you: answer its questions"
-                  : (t.specialist ?? "the agent chooses who")}
+                  : // W15-43: the specialist in words ("writer"), never the registry's key.
+                    (specialistName(t.specialist) ?? "the agent chooses who")}
                 {isPerson(t)
                   ? ""
                   : cost !== undefined
-                    ? ` · about ${chf(cost)}`
+                    ? ` · ${aboutUsd(cost)}`
                     : " · cost not known"}
                 {after.length ? ` · after ${after.map((a) => `"${a}"`).join(", ")}` : ""}
               </span>

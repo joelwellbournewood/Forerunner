@@ -905,7 +905,8 @@ describe("Tasks tab (design §3.5)", () => {
     // the project's view (`?project=`).
     await user.selectOptions(who, "coder");
     expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
-      "On your subscription its tests will not run: it cannot run commands there.",
+      // W15-86 (w15-words): one subject per clause.
+      "On your subscription this task's tests will not run: commands cannot run there.",
     );
   });
 

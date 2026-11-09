@@ -878,6 +878,8 @@ export function createDaemonApp(
       hasModel: !!rt.provider,
       // A ready project offers Continue only when the Start dialog would start (later #62).
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
+      // W15-67: the ready line names a credential wait now, kept or not (as the Start check).
+      credentialWaitNow: (projectId) => rt.billing.waits.now(projectId),
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });

@@ -1369,7 +1369,7 @@ export class IntakeService {
       if (opts.brief !== undefined || changes.length > 0) {
         throw new ForerunnerError(
           "claim_conflict",
-          `an intake proposal is open for this project (request ${open.id}); answer it in the inbox before planning from a new brief`,
+          "A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.",
           { details: { requestId: open.id, reason: "proposal_open" } },
         );
       }
@@ -2339,7 +2339,8 @@ export class IntakeService {
     project: ProjectRow,
     repo: RepoRef,
     docs: Record<string, string>,
-    requestId: string,
+    // W15B-13: no request id in what is written on GitHub; kept for the caller's signature.
+    _requestId: string,
   ): Promise<IntakeDocsOutcome> {
     const host = this.deps.gitHost;
     const info = await host.getRepo(repo);
@@ -2370,7 +2371,7 @@ export class IntakeService {
       ...(this.deps.identity ? { identity: this.deps.identity } : {}),
       first: async (scratch) => {
         first = await writeDocSet(scratch, docs, project);
-        return `docs: start the repository with the project's doc set\n\nThe repository was empty; Forerunner made this first commit from the approved plan (intake request ${requestId}) so the project's work has a branch to start from.`;
+        return "docs: start the repository with the project's doc set\n\nThe repository was empty; Forerunner made this first commit from the approved plan so the project's work has a branch to start from.";
       },
     });
     const firstSet = first as Awaited<ReturnType<typeof writeDocSet>> | null;
@@ -2390,7 +2391,7 @@ export class IntakeService {
     );
     const r = await writeDocSet(dir, docs, project);
     const commit = await git.commitAll(
-      `docs: project doc set from the brief\n\nDrafted by Forerunner intake (request ${requestId}): ${r.written.length} doc(s) drafted, ${r.scaffolded.length} from the templates, ${r.kept.length} kept as they were.`,
+      `docs: project doc set from the brief\n\nDrafted by Forerunner from the project's brief: ${docSetWords(r)}.`,
     );
     if (!commit.committed && !existingPr)
       return { target: "repository", repo: fullName, branch, prUrl: null, ...r };
@@ -2399,13 +2400,13 @@ export class IntakeService {
       await host.commentOnPullRequest(
         repo,
         existingPr.number,
-        `Updated by intake request ${requestId}: ${r.written.length} doc(s) drafted, ${r.scaffolded.length} from the templates.`,
+        `Updated by Forerunner from the project's brief: ${docSetWords(r)}.`,
       );
       return { target: "repository", repo: fullName, branch, prUrl: existingPr.htmlUrl, ...r };
     }
     const pr = await host.createPullRequest(repo, {
       title: `docs: project doc set for ${project.name}`,
-      body: `The standard doc set drafted from the project brief by Forerunner intake (request ${requestId}).\n\nDrafted: ${
+      body: `The standard doc set drafted from the project brief by Forerunner.\n\nDrafted: ${
         r.written.join(", ") || "none"
       }\nFrom the templates: ${r.scaffolded.join(", ") || "none"}\nKept as they were: ${
         r.kept.join(", ") || "none"
@@ -2419,6 +2420,28 @@ export class IntakeService {
     });
     return { target: "repository", repo: fullName, branch, prUrl: pr.htmlUrl, ...r };
   }
+}
+
+/**
+ * What a doc set write did, in words for the commit and the pull request comment (W15B-13):
+ * "3 docs drafted, 2 from the templates, 1 kept as it was"; a part with nothing is left out
+ * (before: "3 doc(s) drafted, 0 from the templates, ..." with the request's id).
+ */
+export function docSetWords(r: {
+  written: readonly string[];
+  scaffolded: readonly string[];
+  kept?: readonly string[];
+}): string {
+  const parts = [
+    r.written.length
+      ? `${r.written.length} ${r.written.length === 1 ? "doc" : "docs"} drafted`
+      : null,
+    r.scaffolded.length ? `${r.scaffolded.length} from the templates` : null,
+    r.kept?.length
+      ? `${r.kept.length} kept as ${r.kept.length === 1 ? "it was" : "they were"}`
+      : null,
+  ].filter((p): p is string => p !== null);
+  return parts.length ? parts.join(", ") : "no doc changed";
 }
 
 /**

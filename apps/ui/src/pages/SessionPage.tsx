@@ -28,6 +28,13 @@ const LEVEL_STYLES: Record<Level, string> = {
   error: "bg-red-100 dark:bg-red-950/60",
 };
 
+/** What a line's tone means, in words (W15B-15: its accessible name, never shown as text). */
+const LEVEL_WORDS: Record<Exclude<Level, "info">, string> = {
+  warning: "Worth a look",
+  escalation: "Needs you",
+  error: "Something went wrong",
+};
+
 const ACTIVE = new Set(["planned", "running", "paused"]);
 /** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
 export const ENDED = ENDED_SESSION;
@@ -521,9 +528,17 @@ export function SessionPage() {
                   </>
                 ) : null}
                 {e.level !== "info" ? (
-                  <Badge tone={e.level === "warning" ? "warn" : "bad"} testId="level-badge">
-                    {e.level}
-                  </Badge>
+                  // W15B-15: the tone by colour, named in words for a screen reader; never the
+                  // raw level ("warning", "escalation", "error") as text on the line.
+                  <span
+                    role="img"
+                    aria-label={LEVEL_WORDS[e.level]}
+                    title={LEVEL_WORDS[e.level]}
+                    data-testid="level-badge"
+                    className={`inline-block h-2 w-2 shrink-0 self-center rounded-full ${
+                      e.level === "warning" ? "bg-amber-500" : "bg-red-600"
+                    }`}
+                  />
                 ) : null}
                 <EventText type={e.type} text={e.text} className="font-sans text-sm" />
                 {e.cost.chfMicro > 0 ? (

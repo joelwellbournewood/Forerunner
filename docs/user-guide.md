@@ -73,7 +73,11 @@ sessions are stopped "Ready: 3 tasks. Sessions are stopped.", the bar at the top
 **Allow sessions again**); "Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
 Claude key: "Planning failed: Claude is not connected" with **Connect Claude**), or "You
 rejected the plan. Nothing was written." with **Draft a new plan**; "Done: all 7 tasks. Your
-files: <folder>". The project's page has the reason in full. Home and the project pages follow
+files: <folder>". On a repository, done work whose pull request is not merged yet is named:
+"Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview." with
+**Open Overview** (a pull request that waits for a commit in its task's folder, was closed,
+could not be rebuilt or has a failed check needs you there, and is never said to wait to be
+merged). The project's page has the reason in full. Home and the project pages follow
 the work as it happens: no reload needed.
 
 **New project** asks for a name, a goal, a short brief and a repository link; the agent drafts a
@@ -150,8 +154,10 @@ left them; an open file or task stays on its own tab.
   file in the copy that a merge changes too, or left a file where a merge brings one, Forerunner
   never overwrites it: the copy stops following and the line says so and why ("This computer's
   copy of o/r has not followed merges since 14:05. You changed README.md in this copy, and a merge
-  changed it too: move your change out of the way and the copy follows again."). Move your change away and
-  the next merge brings the copy up to date again.
+  changed it too: move your change out of the way and the copy follows again."). A file an editor
+  saved with Windows line endings (CRLF) counts as your own change, even when its text looks the
+  same. Move your change away and the copy follows again within about a minute, as it does after
+  a merge.
 - **Local only** (on Files, for a repository project): a folder inside this computer's copy,
   "Never uploaded. Agents can read and change it." Put files there that the work may use but
   that must stay out of the repository (notes, data, drafts). An agent reads what its task needs
@@ -416,7 +422,7 @@ If the conflict goes away without a change to the pull request (the other change
 main again), the row and its card say again what they said before (a rebuild's warning, for
 example) and offer Merge again; a card filed only for the conflict closes. If you resolve it on GitHub with a
 commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
-after the review: look at the new commits, then merge it yourself or redo the task." and offers no
+after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks." and offers no
 Merge, and the card says the same; merge it on GitHub, or press **Redo**.
 
 **A conflict the agent cannot resolve while it works.** Its card offers **I resolved it**, **Drop
@@ -502,7 +508,7 @@ seen within about a minute; closing it without merging offers the button again.
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
-after the review: look at the new commits, then merge it yourself or redo the task."); **I merged
+after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.", under the title '"X" changed after the review'); **I merged
 it** and **Leave it open** close the card. It always makes a merge commit, so a pull
 request that carries another's work brings that work to the default branch as it is, and GitHub
 marks the other pull request merged too; it never rebases or force-pushes a branch, and when the
@@ -605,7 +611,8 @@ you stay where you were; the dialog says it started, with **Open the session** a
 "needs about CHF 3.00, more than this session's work budget of CHF 2.40" when it alone is too
 large (several such tasks are one line), or "(about CHF 1.20) may be left for next time: the
 tasks that run first take about CHF 1.50 of this session's work budget of CHF 2.40" when it only
-does not fit after the tasks ordered before it. A task with a budget of its own is counted at
+does not fit after the tasks ordered before it. Several tasks left out are one line, naming up
+to three and then how many more. A task with a budget of its own is counted at
 most at what is left of that budget, since its runs never spend more.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it
@@ -699,7 +706,7 @@ The cards you meet most:
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
   needs a full review while Docker is not running, under a task where it runs and why when
   that is worth knowing ("Runs on your API key: only it can ask you questions while it works
-  here.", "On your subscription its tests will not run: it cannot run commands there."; New task says the same
+  here.", "On your subscription this task's tests will not run: commands cannot run there."; New task says the same
   when you pick who does it),
   "No specialist here is named ..." beside a task whose specialist this install does not have
   (it would wait for you: change who does it after you approve), the total and what it covers ("About CHF 1.04
@@ -743,7 +750,8 @@ device), the card stays and says "Choose one of: …" with its options.
 Some work only you can do: choose the stack, the hosting, the repository or the domain, name an
 account, settle a preference. Forerunner never hands that to a specialist, which cannot ask you.
 It asks you in the Inbox instead, on a card that names the task and the project and lists the
-questions, each with its own answer field.
+questions, each with its own answer field. A question reads as plain text, without the marks a
+specialist may write (backticks, stars).
 
 - **A task planned for you** (the plan says it "asks you in the Inbox") is asked as soon as the
   plan is approved, or when Forerunner starts. No specialist runs and nothing is spent.
@@ -851,12 +859,19 @@ closes, the mark goes, and the waiting work starts by itself: the tasks run, and
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
-new API key: 2 tasks"), and so does the Start dialog ("Nothing can run yet. Waits for a new API
-key: save one in Settings.", with **Save a new key**) instead of what a session would run.
+new API key: 2 tasks"), and so does the Start dialog ("Nothing can run until you save a new API
+key in Settings.", with **Save a new key**) instead of what a session would run.
 Opening the Start dialog changes nothing: when your credential rests until a reset and no
 session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
-Press Start and it runs then." and **Start** stays on; press it (or **Continue where it
-stopped**) and the work starts by itself at 15:40. Only looking starts nothing. If
+Press Start and the work starts then." and **Start** stays on; press it (or **Continue where it
+stopped**) and the work starts by itself at 15:40 (then the dialog says "Nothing can run until
+15:40 (your API key's limit); it starts by itself then."). Only looking starts nothing. The
+project's line says it too: "Ready: 1 task; nothing runs until 15:40 (your API key's limit)"
+with **Continue**, and where New task, the plan card or Settings say where a specialist runs,
+they say "Waits until 15:40 (your API key's limit). Press Start and the work starts then."
+(creating a task keeps no wait, so nothing starts by itself until you press Start). A task's
+run that Anthropic refused reads "Stopped: Anthropic refused your API key" (or "your
+subscription sign-in") in its drawer. If
 you add a Claude subscription instead of a new key, the work that waited starts by itself on the
 subscription when your order lets it go there (with no order chosen, tasks use the
 subscription first), with no restart, and once no work waits on the refused key its card closes
@@ -899,7 +914,7 @@ ends with a small table, **What each can do here**:
 - **Code tasks** stay on your first choice. On a subscription they cannot run commands, so
   their own tests do not run, and on a project whose dependencies must be installed the
   project's own checks cannot run before the review either; the plan card then says "On your
-  subscription its tests will not run: it cannot run commands there." The setting **Code tasks
+  subscription this task's tests will not run: commands cannot run there." The setting **Code tasks
   that need commands** (Settings → Advanced, Other settings) sends them to the API key instead
   ("The API key (runs their tests; costs money)"; Forerunner asks you to confirm).
 
@@ -985,7 +1000,9 @@ stopped": the run's note, the files it changed and its to-do list (a run that st
 could write a note says so and lists the files). **Cancel** on a paused task sets its work aside
 and names the tasks that will be stuck ("Drops it. Its work so far is set aside unless a later
 task built on it; Undo brings it back."); in a project's folder that another task has built on
-since, its files stay and the line says why. Undo, or Reopen later, brings the work back, and its
+since, its files stay and the line says why. A task paused before its run wrote anything has no
+work to set aside: its card says "It stopped before it wrote anything." and its Cancel says only
+"Drops it." (with the tasks that will be stuck). Undo, or Reopen later, brings the work back, and its
 next run continues from it. Cancel of a running task in a project linked to your own folder says
 that what it wrote stays in your folder. A task's run never spends more than what
 is left of the session's work budget (the fifth kept for reviews stays for them), so a task that
@@ -1197,8 +1214,10 @@ your agents may reach beyond their built-in tools.
   in CHF at the day's rate ("about CHF 6.40 / 32.00 per million input / output tokens instead
   of CHF 3.20 / 16.00"); Anthropic lists it as USD 8 / 40 against USD 4 / 20, a 2x surcharge. A project's budget can be 0, which means no budget
   (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
-  stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
-  change card shows the new value in words, with what it changes as the sentence under it.
+  stops all spending (raising it needs this computer's OK), and a session's budget cannot be 0
+  either: a session plans its work within it, so enter the most a session may spend. A new
+  install's cap is CHF 150.00. A change card shows the new value in words, with what it changes
+  as the sentence under it; a setting that is on or off says "on" or "off".
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice

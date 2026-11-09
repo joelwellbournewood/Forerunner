@@ -654,7 +654,8 @@ export function headMovedSentence(pr: number): string {
  * did (live check 2, F10).
  */
 function headMovedWords(name: string): string {
-  return `${name} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
+  // W15B-11: each way out says where it is: GitHub, or Redo on the task's row in Tasks.
+  return `${name} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
 }
 
 function headMoved(name: string, now: string, reviewed: string): MergePrArtifacts {
@@ -2096,9 +2097,10 @@ const STEPS: Partial<Record<MergeStatus, string[]>> = {
   checks_failed: ["Open the failed check on the pull request", "Fix it or merge it yourself"],
   checks_pending: ["Look at the checks on the pull request", "Merge it once they pass"],
   conflict: ["Resolve the conflict on the PR branch", "Merge the pull request"],
+  // W15B-11: no "ask for a new review", which nothing offers.
   head_moved: [
     "Look at the commits pushed after the review",
-    "Merge it yourself or ask for a new review",
+    "Merge it yourself on GitHub, or redo the task from its row in Tasks",
   ],
   blocked_by_rules: ["Open the pull request on GitHub", "Merge it once its rules are met"],
   merge_commits_off: [

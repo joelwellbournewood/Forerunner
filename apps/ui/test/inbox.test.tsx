@@ -620,7 +620,7 @@ describe("Inbox", () => {
     // The subscription first (no order chosen): the coder stays on it, and its tests will not run.
     await waitFor(() =>
       expect(within(card).getAllByTestId("intake-task-runs-on")[0]).toHaveTextContent(
-        "On your subscription its tests will not run: it cannot run commands there.",
+        "On your subscription this task's tests will not run: commands cannot run there.",
       ),
     );
     // C-68: a specialist this install does not have: the task will wait for the person.
@@ -800,7 +800,8 @@ describe("Inbox", () => {
       "Build the quote page · coder · about CHF 0.64",
       'Test the pick logic and page rendering · tester · about CHF 0.40 · after "Build the quote page"',
       "Human decisions: hosting, repository, quote source · you: answer its questions",
-      'Publish the page and write the runbook · ops-deploy · cost not known · after "Human decisions: hosting, repository, quote source", "Test the pick logic and page rendering" · Needs Docker',
+      // W15-43 (w15-words): the specialist in words, never its registry key (before: "ops-deploy").
+      'Publish the page and write the runbook · deployment specialist · cost not known · after "Human decisions: hosting, repository, quote source", "Test the pick logic and page rendering" · Needs Docker',
     ]);
     expect(within(card).getByTestId("intake-total")).toHaveTextContent(
       "About CHF 1.04 for 2 of the 3 tasks the agent does; the other one has no estimate yet.",
@@ -1289,6 +1290,8 @@ describe("Inbox", () => {
         t3.actual = money(420_000);
         t3.reason = '"Decide the versioning scheme" paused at its budget of CHF 0.40.';
       }
+      // W15-56: its run wrote versioning.md before the pause (the daemon reads the run).
+      harness.daemon.state.taskMeta.heldWork?.add("task_3");
       return harness;
     };
     const cardOf = async () =>
@@ -1457,6 +1460,8 @@ describe("Inbox", () => {
       harness.daemon.state.requests.unshift(monthCard());
       const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
       if (t3) t3.status = "needs_human";
+      // W15-56: its run wrote something before the cap stopped it (the daemon reads the run).
+      harness.daemon.state.taskMeta.heldWork?.add("task_3");
       renderApp("/inbox", harness);
       const card = (await screen.findAllByTestId("request")).find(
         (r) => r.getAttribute("data-request-id") === "req_month",

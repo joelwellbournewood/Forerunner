@@ -36,9 +36,25 @@ export function formatChf(chfMicro: number): string {
   return `CHF ${formatAmount(chfMicro)}`;
 }
 
-/** The display string for a Money value: CHF only. */
+/**
+ * An amount as a person reads it (the daemon's `moneyWords`, design §5 rule 7, W15-74): above
+ * zero it never reads "CHF 0.00" (a running task's spend, a meter beside "Less than CHF 0.01."),
+ * but "less than CHF 0.01"; nothing spent stays "CHF 0.00".
+ */
+export function chfWords(chfMicro: number): string {
+  const formatted = formatChf(chfMicro);
+  return chfMicro > 0 && formatted === "CHF 0.00" ? "less than CHF 0.01" : formatted;
+}
+
+/** An estimate in words (W15-74): "about CHF 0.40", or "less than CHF 0.01" under a centime. */
+export function aboutChf(chfMicro: number): string {
+  const words = chfWords(chfMicro);
+  return words === formatChf(chfMicro) ? `about ${words}` : words;
+}
+
+/** The display string for a Money value: CHF only, never "CHF 0.00" above zero (`chfWords`). */
 export function formatMoney(money: MoneyLike): string {
-  return formatChf(money.chfMicro);
+  return chfWords(money.chfMicro);
 }
 
 /** Tooltip text with the raw USD figure, the only place USD is ever shown. */

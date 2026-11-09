@@ -285,7 +285,7 @@ export class WebReadPolicy {
         host,
         message: this.only.length
           ? `${host} is not on this project's "only these websites" list (${names(this.only)})`
-          : `${host} is not on this project's "only these websites" list, which names no website`,
+          : `${host} was not read: this project's "only these websites" list is empty`,
       };
     return { ok: true, url, host };
   }

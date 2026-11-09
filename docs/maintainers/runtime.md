@@ -532,7 +532,9 @@ reports `refused` while the vault holds the refused credential (`refusedSince`),
 skips it (`refused`). (2) Both a usage limit and a refusal return outcome `usage_limit` with
 `stoppedRunSentence` (what is really scheduled; the Run row's outcome is `usage_limit` or
 `credential_refused`, decided before the row is written, so the task's drawer reads "Stopped at
-the usage limit" or "Stopped: Anthropic refused the credential", never "Failed": the leftovers
+the usage limit" or "Stopped: Anthropic refused your API key" ("your subscription sign-in", or
+"your key or sign-in" when the run's `billing_source_id` names no row; `runOutcomeWords` with
+`refusedCredentialWords`, W15-78; before: "the credential"), never "Failed": the leftovers
 of wave 7, `credential-wait-session.test.ts`) and, when no credential may take the task now
 (`nextCredential`: the same pick, which only reads the sources), `credentialWait`; the runner
 releases the claim (no try counted, never a passing error), and either lets the task wait
@@ -597,8 +599,10 @@ session; everything after the planning session started (its first message, its b
 calls) is in the one try whose finally closes the session and releases the hold (TR-7: a throw
 before that try left the agent held and every start queued until a restart). R-startcred: `RuntimeApp.billing.waits.now(projectId)` is the wait every ready
 task's pick meets now (`waitSentence` and `saveLink`), and `startBlocked`'s `credentialWait` fact
-turns it into "Nothing can run yet. Waits for a new API key: save one in Settings." with the save
-link (`nothing_runnable`, asked by the Start check only). The check only reads (TR-2, leftovers7-tailrun: before, it kept the wait on its source with `noteWait`, so opening the Start dialog or the stopped bar's Continue made the work start by itself at the reset although the person only looked): a wait a Start or a session already kept on its source (`limits.waiting` names the project) says "... and starts by itself." with Start off; a resting credential's wait nobody kept says what Start does instead ("Nothing can run until 15:40 (your API key's limit). Press Start and it runs then.", `startKeepsWaitSentence`) with `blocked.startable: true`, so the dialog keeps Start on and the stopped bar's Continue starts it; `POST /sessions` does not refuse on it, so that start meets the wait and keeps it (the executor's `noteWait`) and the work starts at the reset; a refused credential's wait keeps Start off (saving a key is the step). Tests: `real-daemon.test.ts` "leftovers7-tailrun, wave 13" (TR-2), R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds`, R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
+turns it into "Nothing can run until you save a new API key in Settings." (W15-78,
+`nothingRunsYetSentence` from the wait's own sentence; a kept wait: "Nothing can run until 15:40
+(your API key's limit); it starts by itself then."; before: "Nothing can run yet. Waits ...") with the save
+link (`nothing_runnable`, asked by the Start check only). The check only reads (TR-2, leftovers7-tailrun: before, it kept the wait on its source with `noteWait`, so opening the Start dialog or the stopped bar's Continue made the work start by itself at the reset although the person only looked): a wait a Start or a session already kept on its source (`limits.waiting` names the project) says "... and starts by itself." with Start off; a resting credential's wait nobody kept says what Start does instead ("Nothing can run until 15:40 (your API key's limit). Press Start and the work starts then.", `startKeepsWaitSentence`; W15-65: "it runs then" had no thing for "it") with `blocked.startable: true`, so the dialog keeps Start on and the stopped bar's Continue starts it; `POST /sessions` does not refuse on it, so that start meets the wait and keeps it (the executor's `noteWait`) and the work starts at the reset; a refused credential's wait keeps Start off (saving a key is the step). Tests: `real-daemon.test.ts` "leftovers7-tailrun, wave 13" (TR-2), R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds` (W15-66: in the Start form, `waitThenStartSentence`, "Waits until 15:40 (your API key's limit). Press Start and the work starts then.", since creating a task keeps no wait; before: "... and starts by itself."; test `real-daemon.test.ts` "w15-words, wave 15 run B"), R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
 `credential-limits.test.ts` "credential waits: the Start check, another credential, a failed
 start, a planning call". (5) The words: the session result's first builder
 (`RESULT_LINE_BUILDERS` in `session/result.ts`, `LastSessionOutcome.credentialWait`: "Waits
@@ -1005,7 +1009,7 @@ session stopped after 7 s, or one that planned nothing, threw the person's brief
 
 **The result (`session/result.ts`, design §5).** `sessionResultLines` writes at most three
 lines, from the tasks as they stand at the end (`collectEndState`): what needs the person ("X"
-needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
+needs your decision (Inbox); "X" failed: <reason> (a reason cut at a word ends in its "…", never "….", W15-52); Waiting for Docker: "X"), what happened (Did
 N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
 "Y", which failed; Nothing could run: "X" needs about CHF 1.20, more than this session's work
 budget of CHF 0.32, when the plan left every ready task out for its estimate (W6-23: before, "no
@@ -1551,8 +1555,12 @@ as one blocking approval request (kind `approval`, options `approve` / `reject`,
 cost and where the docs will go; the `why`, `steps` and the route's `summary` count the
 shaped plan's milestones, one in small-project mode with a step saying the phases join it)
 with one `project.intake` audit row; an open intake request for the project is reused without
-a call, and a call with a new `brief` while one is open is refused with `claim_conflict` (409)
-naming the open request. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the
+a call, and a call with a new `brief` while one is open is refused with `claim_conflict` (409),
+"A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief."
+(the open request in `details.requestId` only; W15B-13). What it writes on GitHub names no
+request id and no "doc(s)": the first commit of an empty repository, the docs commit ("Drafted
+by Forerunner from the project's brief: 3 docs drafted, 2 from the templates.",
+`docSetWords`), the comment on an open docs pull request and that pull request's body. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the
 answer once: approve writes the milestones and tasks through `applyProjectPlan` (its `keyed`
 map turns the first-session keys into task ids), the items' estimates onto the task rows, the
 first-session plan onto `summary_cache.first_session` and `next_steps` and into the queue as
@@ -2051,11 +2059,22 @@ budget-stop; the owner's decision of 2026-11-02).**
   before that step.", and "Told the coder to wrap up: it spent CHF 0.02 of CHF 0.15, and its next
   step could take it past CHF 0.07." (W15-16: the start line said "at CHF 0.07" and the run was
   told at CHF 0.02; both lines now name the real trigger, spend plus the next step's worst
-  case). `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
+  case). `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
+  (`flaggedSearchNote`, executor.ts) name the specialist in words (`saidByName`: "the writer", never "writer-marketing"; W15-43, W15B-78).
+  `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
   centime as "less than CHF 0.01" (W15-16). No
   "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
   "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
-  line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for
+  line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). W15-74 (wave
+  15 run B): every budget and estimate a person reads follows the same rule, an estimate through
+  `aboutWords` ("about CHF 0.40", or "less than CHF 0.01" with no "about"): the budget card's
+  title, button and reasons (`budget-card.ts` `chfText`), the card's Continue line
+  (`request-words.ts` `chfAt`), the session log's start and plan lines (`event-lines.ts`,
+  `views.ts`), the result's "Left for next time" and "Nothing could run" lines and the stop at a
+  project's budget or the month's cap (`stopLimitWords`), and the Start check's "needs ...". With
+  two or more amounts under a centime the wrap-up note says it once: "Told the coder to wrap up: it
+  may spend less than CHF 0.01, and its next step could leave too little to finish." (W15B-77).
+  The brief says what the two headings are for
   (`WRAP_UP_BRIEF_LINE`). Every brief also says today's date in the person's time zone
   (`todayLine`: "Today's date is 2026-11-09 (Europe/Zurich).", UTC when none is known; W15-31),
   in the user message, so the system prompt and its cache stay as they are; a page read says when
@@ -2210,7 +2229,9 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Inbox.", "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.", or at
   the project's budget, which never resets, "It goes on by itself once you raise the project's budget;
   cancel it in the Inbox.", W14-6); the
-  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ..." or "It stopped
+  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ...", each item plain
+  (`withoutMarkdown`: no backticks, emphasis or list marks) and ending at a word, a cut the card kept
+  (`cardHandoff`, 80 characters) losing the word it fell in, W15-57; or "It stopped
   before it could say where it stood; its work so far is kept.", then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
   you reopen it; ..."; a Settings link at the outer limits); the session result: the builder
@@ -2237,7 +2258,17 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   task there only when its last work run paused and that run's session has a `task.files` event
   for it with files (`runLeftFiles`): a run paused before it wrote anything holds nothing, and
   the line would have promised a set-aside that never comes (the review of polish-words; test:
-  `real-daemon.test.ts` "Cancel on a ready task holding its work so far").
+  `real-daemon.test.ts` "Cancel on a ready task holding its work so far"). W15-56 (wave 15 run
+  B): the same check (`taskHeldWork`, exported from `task-display.ts`) covers a task paused at its
+  budget (`needs_human` with its card), on its last work run whatever its outcome (a review that
+  waits for room keeps a finished run's files): only with `heldWork` does its row send
+  `cancelWork`, and `requestContexts` (`views.ts`) passes `RequestWordsContext.heldWork` for an
+  open budget card, so a task paused before it wrote anything reads "It stopped before it wrote
+  anything." and "Drops it." ("Drops it; \"X\" will be stuck.") on its card, and "Drops it." on
+  its row, drawer and dialog. The UI's `cancelWorkLine` guesses the paused line from the card only
+  for a row without the daemon's `display`. The chat's read-back (`moveAsk` through
+  `commands/task.ts` `cancelWorkFor`) still reads the open card only (run B left `task.ts` to run
+  C). Tests: `real-daemon.test.ts` and `test/w15-words.test.ts`, "w15-words, wave 15 run B".
 - *Settings.* `push_unfinished_work` (`session/push-unfinished.ts`, `pushUnfinishedOf`): the
   project row "Push unfinished work to GitHub" in `settingsView` for a project on a host
   repository; compose passes it to `PrTaskExecutor` as `pushUnfinishedFor`.
@@ -2844,8 +2875,19 @@ run's entry when the attempt is the same, the executor's `prepareReview(task)` m
 ready (a repository task's worktree on its branch, `PrTaskExecutor.prepareReview`; a project's
 folder in place; `LoopTaskExecutor.prepareReview` the run's worktree) and `workHash` there is the
 kept one; the entry is cleared either way, and the result (`keptResult`, `reviewOnly: true`) goes
-to the critic without a run: no `task.started`, no `task.files`, no `task.finished`, no
-`onTaskFinished`, and the person's heard lines and queue notes wait for a run. The critic's diff of
+to the critic without a run: no `task.files`, no `task.finished`, no `onTaskFinished`, and the
+person's heard lines and queue notes wait for a run. Its one line is a `critic.review_resumed`
+event (`REVIEW_RESUMED_EVENT` in `daemon/event-audience.ts`, a person line, `specialist: "critic"`;
+W15B-14, `reviewResumedLine`): "The critic reviews \"Notes page\": its work was done in an earlier
+session." before the verdict (before: nothing until the verdict); no `task.started` is written,
+the coder's or the critic's. It is not a `task.started` because nothing ends it: the session view's
+`currentTask`, the project's `working` (`workingOn`), the chat's "# Working now" and the UI's
+`currentFromLog` read the last `task.started` without a `task.finished` after it as the task in
+flight, so a first version that wrote one said the reviewed task still ran after its verdict, until
+the next task started or the session ended (fixup-w15-words). Tests: `budget-pause.test.ts` and
+`real-daemon.test.ts` 'w15-words, wave 15 run B' hold the session's last status change after the
+verdict and read the session view, the project's line, the chat block and `currentFromLog` (no
+task in flight). The critic's diff of
 a project's folder whose session end committed the work is the task's files since its last
 "Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
 the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
@@ -2886,7 +2928,8 @@ during a long downtime is still applied. At session end `reviewSession` runs the
 stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persisted as a
 review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
 as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
-memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
+memory port. Events: `critic.review_resumed` (the review-only pass, W15B-14),
+`critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review with a card for the person, U-045), `critic.session_review`,
 `task.blocked_by_findings`.
 
@@ -3538,7 +3581,7 @@ not the reviewed commit, and before, a conflict that went away on main left a re
 "changed after the review" with no Merge and without its warning. A head that moved since (the person resolved it on GitHub with a commit of their own) is not the
 reviewed version, so the record says what the merge step would (`last_outcome` `head_moved`,
 `headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
-then merge it yourself or redo the task."), the Overview offers no Merge, and the open conflict
+then merge it yourself on GitHub, or redo the task from its row in Tasks."; W15B-11: before, "... merge it yourself or redo the task." with no place for either; its card is titled '"X" changed after the review', `leftOpenCardTitle` on `change_card.status`, and its Details no longer say "ask for a new review"), the Overview offers no Merge, and the open conflict
 card takes those words (`notice` cleared, so it is titled as the merge step's left-open card; its
 options stay Redo and Leave it open; its Details become the head-moved steps, `leftOpenSteps`
 from `loop/merge.ts`, as an open card the notice takes over gets the conflict's). Before (the review's fix-up), the row offered Merge again and
@@ -5830,7 +5873,7 @@ dialog's"), New task and Settings
 show (`choiceLine`: "Runs on your API key: it reads web pages here but cannot search, so it reads
 known addresses." (within 100 characters, P7-15, polish-words) when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your
-subscription its tests will not run: it cannot run commands there."); `chooser.table()` is
+subscription this task's tests will not run: commands cannot run there."); `chooser.table()` is
 Settings' "What each can do here" (`abilityTable`). Tests: `credential-chooser.test.ts` (research
 with no search on the key and no pages on the subscription runs on the key with the plan card's
 sentence; with both on, the order decides; a task that needs the person's answers runs on the
@@ -6302,7 +6345,14 @@ worded by `moreEventLines` (`daemon/event-lines.ts`: `peers.feed`, `queue.consum
 its type in words and its warning, never JSON. Money is CHF (`chfOf`), the critic's terms are
 words (`reviewLevel`, `verdictWords`, `decisionWords`, `retryWords`: no "tier", "verdict",
 "improve_brief"), the autonomy level is named (`autonomyWords`), and `inbox.message` names the
-sender (the runner adds `fromName`; an older row says "another agent"). Person-facing money
+sender (the runner adds `fromName`; an older row says "another agent"). W15-60: the Details lines read as the person's do: a retry's start "The coder started \"X\"
+(about CHF 0.02)." (`personLine`; before "Started ... with coder"), a run the person's stop
+ended "Stopped by you during \"X\" (CHF 0.01)." (before "killed ... run stopped by its caller"), any other
+finished run without its report (before "... Summary: <report>"), the plan line's summary as a
+sentence of its own with a capital (`sentenceOf`; the runner's summary says "1 task", "2 tasks",
+never "task(s)"), and the session review's measure the work against the estimate with the
+reviews apart (W15B-19: "... the work cost CHF 0.05 against an estimate of CHF 0.23, and the
+reviews CHF 0.05.", from `workUsdMicro` and `reviewsUsdMicro`; an event without them reads as before). Person-facing money
 elsewhere is CHF too: the session summary and the status doc's note use the cost ledger's own
 `chf_micro`; the plan-approval card's estimates use the runner's `chfPerUsd` dep (compose's
 rate); the budget-stop notification the run's `spentChfMicro`; the chat-turn refusal, the
@@ -6316,8 +6366,9 @@ ledger's CHF (`critic.md`).
 Every `EventView` carries `audience` (`daemon/event-audience.ts`, no Node, shared with the
 state service's view and the UI's stand-in daemon): `person` for what a person follows a session
 by (`session.started`, `task.started`, `task.files`, `task.finished`, `task.retrying`,
-`critic.verdict`, `session.stopped`, `session.ended`, Docker waits, a person's or another
-agent's move of a running task, merges, budget warnings, errors, chat turns), `detail` for the
+`critic.review_resumed`, `critic.verdict`, `session.stopped`, `session.ended`, Docker waits, a
+person's or another agent's move of a running task, merges, budget warnings, errors, chat
+turns), `detail` for the
 rest (the brief, memory, peers, the queue, each `task.step`, `session.replanned`, the review's
 measurements, the docs status, notifications). A `task.finished` the person's own stop ended is
 a detail: the `session.stopped` line tells it once. The session page shows the person lines and
@@ -6334,10 +6385,23 @@ specialist's words, `couldNotWords`, which ends a sentence only at a dot before 
 "index.html" or "data/members.csv" stays whole, C-50) when its report says it could not do the
 work, and `again`. A task's changed files name its pull request, never its branch with the task's
 id (C-59; without a pull request, `branchWords` drops the id part).
+A run that ended `needs_human` reads '<who> has questions for you about "X" (Inbox).' only when it
+asked (the executor's asked-you summary, W15B-79); one that ended waiting without asking (a
+dependency base that could not be built, a folder hold) reads '"X" could not run: <its first
+sentence> (Inbox).', as its cannot-run card says, and a task only the person can do (U-022, the
+executor's "Waiting for your answers in the Inbox ...") reads '"X" waits for your answers
+(Inbox).' (fixup-w15-words; before: 'could not run: Waiting for your answers ...'). Only the
+summary decides (`ASKED_YOU`, `PERSON_TASK_WAITS`): `real-daemon.test.ts` 'w15-words, wave 15
+run B' runs a specialist that asks and reads its line, so a change to the executor's sentence
+fails there.
 A reviewed run's own line is a detail when it could not do the work or is a retry; the critic's
 line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `specialist`, and
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,
-"Log line"), "… It needs your decision (Inbox).", "… The critic accepted it anyway." or "… Its
+"Log line"), "… It needs your decision (Inbox)." (W15B-14: the verdict's `card`, `cardKindOf` of
+the card it filed, read by the runner's `verdictCardKind`: a questions card "… The specialist asks
+you (Inbox)." and alone '"X": the specialist asks you (Inbox).', a sign-off "… needs your sign-off
+(Inbox).", "needs your decision" only for a decision card or an event without `card`), "… The
+critic accepted it anyway." or "… Its
 review did not run; it waits in the Inbox.". "Could not" is read from the report's first
 sentence only. A sent-back line names why, once (W15-58): `critic.verdict` carries `blocking`,
 the review's first finding by severity (`blockingFindingOf` in the runner), and reads 'The critic
@@ -6467,7 +6531,13 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
-  waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
+  waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready"; W15-67: while no
+  ready task can run because its credential rests or was refused, kept or not, the line names
+  the wait from `ProjectCardFacts.credentialWaitNow`, `RuntimeApp.billing.waits.now` passed by
+  `projectCardOf` and asked only while a task is ready: "Ready: 1 task; nothing runs until 15:40
+  (your API key's limit)" with Continue (Start keeps the wait), "Ready: 1 task; it starts by
+  itself at 15:40 (...)" with none once kept, "Ready: 1 task; nothing runs until you save a new
+  API key" with Save a new key (`waitHeadWords`), action `start`:
   the Start dialog; only when that dialog would start: without Claude "Ready: 3 tasks. Claude is
   not connected." with Connect Claude, and under Stop all "Ready: 3 tasks. Sessions are
   stopped." with no button, the header's stopped bar having Allow sessions again; the card's
@@ -6476,7 +6546,13 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   the Overview shows: later #53, #54), or for a repository project "Done: all 6 tasks. 2 pull
   requests wait for you to merge." with Open Overview (the rows reading `WAITING_FOR_YOUR_MERGE`,
   C-58) and "; 2 taken out" when tasks were taken out (the owner question's recommendation, built
-  meanwhile); then paused or draft work. The task words are `taskDisplay`'s, so the
+  meanwhile). W15B-12: a done task whose accepted work waits on the person in any other way
+  (`needsYouAfterAccept` in `task-words.ts`: `OWED_FOLDER_LABEL`, "Accepted · conflicts with
+  main", every `LEFT_TO_YOU_LABELS` label) counts too, never as waiting to be merged: "Done: all 3
+  tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.", or alone "Done:
+  all 2 tasks. 1 task needs you on the Overview.", with Open Overview (before, "Done: all 2 tasks."
+  while #3 waited for a commit in its folder); a merge that goes on by itself (merging, waiting
+  for its checks or for GitHub) is not counted. Then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
 - A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
   §5.1; review of fix/progress-navigation: Home showed the intake's whole error, about 170
@@ -6516,7 +6592,11 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`; the routes count only the
   tasks that still wait now, `stillBlocked` in `views.ts`, so a page read after the person
   answered the card or the task moved on no longer says it, L-21, polish-words;
-  `test/session-status-words.test.ts`).
+  `test/session-status-words.test.ts`). A task it left paused at a budget (`handoff.paused`) is
+  said as paused, as the log's end line says it: "Ended: 2 paused", "Ended: 1 task needs you, 2
+  paused" (W15B-10; `stillBlocked` and `blockedOfHandoff` return `{ needYou, paused }`; before,
+  "Ended: 3 tasks need you" beside "Session over: 3 paused."; test `real-daemon.test.ts`
+  "w15-words, wave 15 run B", across a restart).
 
 ### The project's files (design §3.10; `daemon/docs-routes.ts`)
 

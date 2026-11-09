@@ -28,6 +28,7 @@ import {
   RUN_UNPUSHED_REF,
   readForerunnerMarker,
   WIP_SUBJECT,
+  workInProgressMessage,
 } from "../src/githost/pr-executor.ts";
 
 const identity = { name: "Forerunner", email: "agent@example.test" };
@@ -2754,5 +2755,63 @@ describe("w15-tail, wave 15 run B: what resetting a task's branch would drop (W1
     expect(runs).toBe(1);
     expect(await git.headSha()).toBe(mine);
     await w.store.close();
+  });
+});
+
+describe("w15-words, wave 15 run B", { timeout: 120_000 }, () => {
+  it("W15B-13: what Forerunner writes on GitHub for a task names it, never by its id", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Add health endpoint",
+      outcome: "GET /health works",
+      acceptance_criteria: ["returns 200"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: innerWriting({ "health.ts": "export const ok = true;\n" }),
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const res = await exec.execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("in_review");
+    // The task's commit as GitHub shows it: its title, then the report (before: "Task <uuid>.").
+    const body = (
+      await run(["git", "--git-dir", w.bare, "log", "-1", "--format=%B", res.branch ?? ""])
+    ).stdout;
+    expect(body.startsWith("Add health endpoint\n")).toBe(true);
+    expect(body).not.toContain(task.id);
+    // The work-in-progress commit of a paused run, which is pushed with the branch.
+    const wip = workInProgressMessage(task, {
+      outcome: "paused",
+      budgetStop: { source: "task_budget", capUsdMicro: 400_000 } as never,
+      handoff: {
+        stopped: "health.ts has the route",
+        leftToDo: ["add the test"],
+        stoppedBy: "wrap_up",
+      },
+    } as never);
+    expect(wip).not.toContain(task.id);
+    expect(wip).not.toMatch(/\bTask [0-9a-f-]{8,}/);
+    expect(wip.split("\n\n").at(-1)).toBe("Left to do:\n- add the test");
   });
 });

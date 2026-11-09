@@ -9,6 +9,15 @@ export function moneyWords(formatted: string, amount: number): string {
   return amount > 0 && /^CHF 0\.00$/.test(formatted.trim()) ? "less than CHF 0.01" : formatted;
 }
 
+/**
+ * An estimate in words (W15-74): "about CHF 0.40", or "less than CHF 0.01" for one under a
+ * centime ("about less than" says nothing more), never "about CHF 0.00" for an amount above zero.
+ */
+export function aboutWords(formatted: string, amount: number): string {
+  const w = moneyWords(formatted, amount);
+  return w === formatted ? `about ${formatted}` : w;
+}
+
 /** The same at the start of a sentence: "Less than CHF 0.01." */
 export function moneyWordsFirst(formatted: string, amount: number): string {
   const w = moneyWords(formatted, amount);

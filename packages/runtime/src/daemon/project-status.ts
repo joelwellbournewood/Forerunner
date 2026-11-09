@@ -1,6 +1,13 @@
 import type { HumanRequestRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import { waitHeadWords } from "../session/credential-wait.ts";
 import type { ProjectCard, TaskDisplay } from "./api-types.ts";
-import { cardKindOf, holdsTask, shortTitle, WAITING_FOR_YOUR_MERGE } from "./task-words.ts";
+import {
+  cardKindOf,
+  holdsTask,
+  needsYouAfterAccept,
+  shortTitle,
+  WAITING_FOR_YOUR_MERGE,
+} from "./task-words.ts";
 
 /**
  * A project's state in one sentence (design §2, "Project status"), the line the project header,
@@ -64,6 +71,16 @@ export interface ProjectStatusInput {
     label: string;
     line?: string;
     save?: { label: string; to: string } | null;
+  } | null;
+  /**
+   * W15-67: no ready task can run now because its credential rests or was refused, kept or not
+   * (`RuntimeApp.billing.waits.now`, the Start check's sentence and its link): the ready line
+   * names the wait and its time. Null: a ready task would run.
+   */
+  credentialWaitNow?: {
+    text: string;
+    save: { label: string; to: string } | null;
+    startable?: boolean;
   } | null;
   /**
    * Whether a Claude credential is in force now (the intake can call the model); null when not
@@ -310,6 +327,21 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       };
     if (input.stopped === true)
       return { kind: "ready", text: `Ready: ${n}. Sessions are stopped.`, action: null };
+    // W15-67: the only credential rests (or was refused), so nothing runs before its reset (or
+    // a new key): the line names the wait and its time. Continue stays where Start still keeps
+    // the wait (`startable`); a refusal links to where a new one is saved; a kept wait starts
+    // by itself. Before: "Ready to continue: 1 task ready" said nothing of the wait.
+    const wait = input.credentialWaitNow;
+    if (wait)
+      return {
+        kind: "ready",
+        text: `Ready: ${n}; ${waitHeadWords(wait.text)}`,
+        action: wait.startable
+          ? { kind: "start", label: "Continue", to: null }
+          : wait.save
+            ? { kind: "link", label: wait.save.label, to: wait.save.to }
+            : null,
+      };
     return {
       kind: "ready",
       text: `Ready to continue: ${n} ready`,
@@ -351,13 +383,24 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
     const labels = input.tasks.map((t) => input.displays.get(t.id)?.label ?? "");
     const takenOut = labels.filter((l) => /^Taken out in #\d+/.test(l)).length;
     const toMerge = labels.filter((l) => l === WAITING_FOR_YOUR_MERGE).length;
-    const merges = toMerge
-      ? ` ${plural(toMerge, "pull request waits", "pull requests wait")} for you to merge.`
+    // W15B-12: accepted work that waits on the person in another way (its folder, a conflict, a
+    // closed pull request, one that could not be rebuilt, a failed check) counts too, said as
+    // needing the person on the Overview, never as waiting to be merged. Before: "Done: all 2
+    // tasks." while #3 waited for a commit in its folder.
+    const needYou = labels.filter(needsYouAfterAccept).length;
+    const waits = toMerge
+      ? `${plural(toMerge, "pull request waits", "pull requests wait")} for you to merge`
       : "";
+    const others = needYou
+      ? toMerge
+        ? `${needYou} ${needYou === 1 ? "needs" : "need"} you on the Overview`
+        : `${plural(needYou, "task needs", "tasks need")} you on the Overview`
+      : "";
+    const merges = waits || others ? ` ${[waits, others].filter(Boolean).join(", and ")}.` : "";
     return {
       kind: "done",
       text: `Done: all ${plural(total, "task")}${takenOut ? `; ${takenOut} taken out` : ""}.${merges}`,
-      action: toMerge
+      action: merges
         ? {
             kind: "link",
             label: "Open Overview",

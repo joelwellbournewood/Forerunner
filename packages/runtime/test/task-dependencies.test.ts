@@ -46,7 +46,8 @@ describe("the plan is cut by skipping what does not fit (U-040)", () => {
     expect(cut.estimateUsdMicro).toBe(3_000_000);
     expect(cut.leftOutForBudget?.map((i) => i.taskId)).toEqual(["big", "tiny"]);
     expect(cut.workBudgetUsdMicro).toBe(3_000_000);
-    expect(cut.summary).toBe("4 ready task(s) in priority order (2 item(s) cut to fit the budget)");
+    // W15-60: "items" as the number says (before: "item(s)").
+    expect(cut.summary).toBe("4 ready task(s) in priority order (2 items cut to fit the budget)");
     // A plan that fits is unchanged and says nothing was left out.
     const whole = cutPlanToBudget(plan, 10_000_000);
     expect(whole.items).toHaveLength(4);

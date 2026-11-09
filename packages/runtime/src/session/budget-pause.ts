@@ -1,5 +1,9 @@
+import { saidByName } from "@forerunner/critic";
 import type { RunWrapUpLine } from "../enforcement/budget.ts";
 import { moneyWords } from "./money-words.ts";
+
+/** A specialist as a sentence names it ("writer" for writer-marketing; `saidByName`). */
+const specialistWords = (specialist: string) => saidByName(specialist) ?? "specialist";
 
 /**
  * A budget stop is a clean pause (ADR 0112, the owner's decision of 2026-11-02). A task's run is
@@ -202,7 +206,8 @@ export function limitWords(
     case "task_budget":
       return `its budget of ${chf(capUsdMicro)}`;
     case "specialist_limit":
-      return `the ${specialist}'s limit of ${chf(capUsdMicro)} per run (it has no budget of its own)`;
+      // W15-43 (W15B-78): the specialist in words ("the writer"), never its registry key.
+      return `the ${specialistWords(specialist)}'s limit of ${chf(capUsdMicro)} per run (it has no budget of its own)`;
     case "session":
       return `this session's budget of ${chf(capUsdMicro)}`;
     case "project":
@@ -294,9 +299,18 @@ export function wrapUpSentWords(
   chfOf: (usdMicro: number) => string,
 ): string {
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
+  // W15-43 (W15B-78): the specialist in words ("the writer"), never its registry key.
+  const who = specialistWords(specialist);
+  // W15-74 (W15B-77): amounts under a centime are said once, not "less than CHF 0.01 of less
+  // than CHF 0.01, ... past less than CHF 0.01": what it may spend, and why now.
+  const amounts = [spentUsdMicro, capUsdMicro, ...(line ? [line.lineUsdMicro] : [])];
+  if (amounts.filter((usd) => chf(usd) === "less than CHF 0.01").length >= 2)
+    return line
+      ? `Told the ${who} to wrap up: it may spend ${chf(capUsdMicro)}, and its next step could leave too little to finish.`
+      : `Told the ${who} to wrap up: it may spend ${chf(capUsdMicro)}.`;
   return line
-    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and its next step could take it past ${chf(line.lineUsdMicro)}.`
-    : `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
+    ? `Told the ${who} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and its next step could take it past ${chf(line.lineUsdMicro)}.`
+    : `Told the ${who} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
 }
 
 /** A handoff as the run's artifact stores it: data only, already redacted and cut. */

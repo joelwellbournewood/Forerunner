@@ -73,19 +73,20 @@ describe("Settings: Opus fast mode (D.20)", () => {
     const pending = await within(dialog).findByTestId("command-pending");
     expect(pending).toHaveAttribute("data-decision", "needs_yes");
     expect(within(pending).getByTestId("change-card")).toHaveAttribute("data-risk", "medium");
-    expect(within(pending).getByTestId("card-old")).toHaveTextContent("false");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off", as the daemon says it.
+    expect(within(pending).getByTestId("card-old")).toHaveTextContent("off");
     // P7-10: the card's value is the value; what it changes is the read-back under it.
-    expect(within(pending).getByTestId("card-new")).toHaveTextContent(/^true$/);
+    expect(within(pending).getByTestId("card-new")).toHaveTextContent(/^on$/);
     expect(within(pending).getByTestId("command-readback")).toHaveTextContent(ON.slice(1));
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set Opus fast mode for Atlas from false to true: ${ON}.`,
+      `Set Opus fast mode for Atlas from off to on: ${ON}.`,
     );
     expect(harness.daemon.state.fastMode.proj_atlas).toBe(true);
     // The change log keeps the sentence as said; the app shows it without "Undo." (U-074).
     expect(harness.daemon.state.changes[0]?.sentence).toBe(
-      `Set Opus fast mode for Atlas from false to true: ${ON}. Undo.`,
+      `Set Opus fast mode for Atlas from off to on: ${ON}. Undo.`,
     );
   });
 
@@ -100,17 +101,17 @@ describe("Settings: Opus fast mode (D.20)", () => {
     expect(within(dialog).getByTestId("setting-value")).toHaveValue("false");
     await user.click(within(dialog).getByTestId("setting-apply"));
     const pending = await within(dialog).findByTestId("command-pending");
-    expect(within(pending).getByTestId("card-new")).toHaveTextContent(/^false$/);
+    expect(within(pending).getByTestId("card-new")).toHaveTextContent(/^off$/);
     expect(within(pending).getByTestId("command-readback")).toHaveTextContent(OFF.slice(1));
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set Opus fast mode for Beacon from true to false: ${OFF}.`,
+      `Set Opus fast mode for Beacon from on to off: ${OFF}.`,
     );
     expect(harness.daemon.state.fastMode.proj_beacon).toBe(false);
   });
 
-  it("a project whose flag was never set reads off and its card says unset, as the daemon's does", async () => {
+  it("a project whose flag was never set reads off and its card says off, as the daemon's does", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     harness.daemon.state.fastMode = { proj_atlas: null };
@@ -123,11 +124,12 @@ describe("Settings: Opus fast mode (D.20)", () => {
     expect(within(dialog).getByTestId("setting-value")).toHaveValue("true");
     await user.click(within(dialog).getByTestId("setting-apply"));
     const pending = await within(dialog).findByTestId("command-pending");
-    expect(within(pending).getByTestId("card-old")).toHaveTextContent("unset");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off", as the daemon says it.
+    expect(within(pending).getByTestId("card-old")).toHaveTextContent("off");
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
-      `Set Opus fast mode for Atlas from unset to true: ${ON}.`,
+      `Set Opus fast mode for Atlas from off to on: ${ON}.`,
     );
   });
 

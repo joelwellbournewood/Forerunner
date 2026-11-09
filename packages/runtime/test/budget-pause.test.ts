@@ -11,6 +11,7 @@ import {
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
+import { workingNowBlock } from "../src/conversation/project-facts.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
@@ -1178,8 +1179,10 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
 
   it("amounts under a centime read 'less than CHF 0.01', never 'CHF 0.00'", () => {
     expect(limitWords("task_budget", 4_000, chf, "coder")).toBe("its budget of less than CHF 0.01");
+    // W15B-77 (w15-words): said once, not three times (before: "it spent less than CHF 0.01 of
+    // less than CHF 0.01, and its next step could take it past less than CHF 0.01.").
     expect(wrapUpSentWords("coder", 3_000, 6_000, { ...line, lineUsdMicro: 4_000 }, chf)).toBe(
-      "Told the coder to wrap up: it spent less than CHF 0.01 of less than CHF 0.01, and its next step could take it past less than CHF 0.01.",
+      "Told the coder to wrap up: it may spend less than CHF 0.01, and its next step could leave too little to finish.",
     );
     expect(
       pauseSentence(
@@ -1349,5 +1352,187 @@ describe("w15-review, wave 15", () => {
     const said = await raiseAndFinish(r.projectId, r.taskId);
     expect((await workRuns(r.taskId)).map((x) => x.outcome)).toEqual(["completed", "completed"]);
     expect(said.join(" | ")).toMatch(/The coder started "Prices page"/);
+  }, 120_000);
+});
+
+/**
+ * w15-words, wave 15 run B. W15B-14: the review-only pass (W15-27) says in the session log that
+ * the waiting review goes on, before its verdict (before: nothing, and no start line).
+ */
+describe("w15-words, wave 15 run B", () => {
+  const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-words-review-only-"));
+  // The coder of either project's index writes it in one call and says nothing is left.
+  const indexCoder = (r: ModelRequest) => coderOn("Index page")(r) || coderOn("Rules index")(r);
+  const ENDED_STATUSES: readonly string[] = ["completed", "stopped", "failed", "killed"];
+  const fake = new FakeProvider({
+    clock,
+    latency: "none",
+    onNoMatch: "echo",
+    replies: [
+      submitReply({}, { times: Number.POSITIVE_INFINITY }),
+      closingReply(),
+      textReply("Wrote index.html.\n\nLeft to do: nothing", {
+        when: (r: ModelRequest) =>
+          indexCoder(r) && JSON.stringify(r.messages).includes('"tool_result"'),
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 500, output_tokens: 20 },
+      }),
+      toolReply("write_file", { path: "index.html", content: "<p>Index</p>\n" }, "Writing.", {
+        when: indexCoder,
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 500, output_tokens: 20 },
+      }),
+    ],
+  });
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("W15B-14: the waiting review's session has one line saying it goes on, then the verdict, and no start of the coder", async () => {
+    const r = await runOne(req, rt, "Index page", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 10_000,
+    });
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    const set = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: r.projectId } },
+        ],
+        wordsUsed: "Settings: Project budget to 5",
+        source: "ui",
+        projectId: r.projectId,
+      }),
+    });
+    let result = (await set.json()) as Json;
+    if (result.status === "pending")
+      result = (await (
+        await req(`/commands/${String(result.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        })
+      ).json()) as Json;
+    expect(result.status, JSON.stringify(result)).toBe("done");
+    await rt.scheduler.tick();
+    const sessions = async () => rt.store.session.forProject(r.projectId);
+    await waitFor(
+      async () => {
+        const t = await rt.store.task.mustGet(r.taskId);
+        const all = await sessions();
+        return all.length === 2 &&
+          ["done", "needs_human"].includes(t.status) &&
+          all.every((s) => ["completed", "stopped", "failed", "killed"].includes(s.status))
+          ? true
+          : undefined;
+      },
+      async () =>
+        `the review and its session to end (${(await rt.store.task.mustGet(r.taskId)).status})`,
+    );
+    const second = (await sessions()).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    const events = (await (await req(`/sessions/${String(second?.id)}/events`)).json()) as Json[];
+    const said = events.filter((e) => e.audience === "person").map((e) => String(e.text ?? ""));
+    const goesOn = 'The critic reviews "Index page": its work was done in an earlier session.';
+    expect(said.filter((l) => l === goesOn)).toHaveLength(1);
+    const accepted = said.indexOf('The critic accepted "Index page".');
+    expect(accepted).toBeGreaterThan(said.indexOf(goesOn));
+    expect(said.join(" | ")).not.toMatch(/The coder started/);
+  }, 120_000);
+
+  it("W15B-14: after the waiting review's verdict, while its session ends, no screen and no chat says the task runs", async () => {
+    const r = await runOne(req, rt, "Rules index", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 10_000,
+    });
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    // The second session's last status change waits: its verdict, its status doc and its memory
+    // are written, and it still runs (the session page, the header and the chat read it now).
+    const repo = rt.store.session;
+    const setStatus = repo.setStatus;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held: string | null = null;
+    repo.setStatus = (async (...args: Parameters<typeof setStatus>) => {
+      const [id, , to] = args;
+      if (held === null && id !== r.sessionId && ENDED_STATUSES.includes(to)) {
+        const row = await repo.get(id);
+        if (row?.project_id === r.projectId) {
+          held = id;
+          await gate;
+        }
+      }
+      return setStatus.apply(repo, args);
+    }) as typeof setStatus;
+    try {
+      const set = await req("/commands/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          commands: [
+            {
+              name: "budget.set",
+              params: { scope: "project", amountChf: 5, project: r.projectId },
+            },
+          ],
+          wordsUsed: "Settings: Project budget to 5",
+          source: "ui",
+          projectId: r.projectId,
+        }),
+      });
+      let result = (await set.json()) as Json;
+      if (result.status === "pending")
+        result = (await (
+          await req(`/commands/${String(result.pendingId)}/confirm`, {
+            method: "POST",
+            body: JSON.stringify({ answer: "tap" }),
+          })
+        ).json()) as Json;
+      expect(result.status, JSON.stringify(result)).toBe("done");
+      await rt.scheduler.tick();
+      const id = await waitFor(
+        async () => held ?? undefined,
+        async () =>
+          `the waiting review's session to reach its end (${(await rt.store.task.mustGet(r.taskId)).status})`,
+      );
+      const events = (await (await req(`/sessions/${id}/events`)).json()) as Json[];
+      expect(events.map((e) => e.type)).toContain("critic.verdict");
+      expect(
+        events.filter((e) => e.audience === "person").map((e) => e.text),
+        "the line that says the review goes on is still there",
+      ).toContain('The critic reviews "Rules index": its work was done in an earlier session.');
+      // The session page: running, between tasks (before: Current task "Rules index" · critic,
+      // next to Stop now, after its verdict).
+      const view = (await (await req(`/sessions/${id}`)).json()) as Json;
+      expect(view.status).toBe("running");
+      expect(view.currentTask ?? null).toBeNull();
+      // The project's header and Home line (before: 'Working on "Rules index"').
+      const card = (await (await req(`/projects/${r.projectId}`)).json()) as Json;
+      expect((card.working as Json | null)?.taskTitle ?? null).toBeNull();
+      expect(String((card.statusLine as Json | null)?.text ?? "")).not.toContain('"Rules index"');
+      // What the chat is told (before: 'A session … is running: "Rules index" (the critic)').
+      const chat = await workingNowBlock(rt.store, rt.agent.id, r.projectId, clock.now());
+      expect(chat).toContain(": between tasks;");
+      expect(chat).not.toContain('"Rules index"');
+    } finally {
+      release();
+      repo.setStatus = setStatus;
+    }
+    await waitFor(
+      async () =>
+        (await rt.store.session.forProject(r.projectId)).every((s) =>
+          ENDED_STATUSES.includes(s.status),
+        )
+          ? true
+          : undefined,
+      async () => "the waiting review's session to end",
+    );
   }, 120_000);
 });

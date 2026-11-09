@@ -41,11 +41,17 @@ import { MID_SESSION_LIMIT_SETTING, midSessionLimitOf } from "../session/billing
 import { countsList } from "../session/counts.ts";
 import { CREDENTIAL_REFUSED_KEY } from "../session/credential-wait.ts";
 import { runCapOf } from "../session/executor.ts";
+import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
-import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
+import {
+  blockedOfHandoff,
+  type EndedWaits,
+  endedStatusText,
+  stopReasonOfHandoff,
+} from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
-import { isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
+import { ANSWER_CARD_KEYS, isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
 import type {
   AgentView,
@@ -99,7 +105,7 @@ import {
   workingOn,
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
-import { loadTaskDisplayContext, runOrder, taskDisplay } from "./task-display.ts";
+import { loadTaskDisplayContext, runOrder, taskDisplay, taskHeldWork } from "./task-display.ts";
 import { plainPlurals, withoutIds } from "./task-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
@@ -147,6 +153,16 @@ export interface ProjectCardFacts {
   hasModel?: boolean | null;
   /** Stop all is on: a ready project offers no Continue the Start dialog would refuse. */
   stopped?: boolean | null;
+  /**
+   * W15-67: why no ready task of the project can run now, when its credential rests or was
+   * refused (`RuntimeApp.billing.waits.now`, read only; the Start check's words), recorded or
+   * not; null when one would run. Asked only while a task is ready.
+   */
+  credentialWaitNow?: (projectId: string) => Promise<{
+    text: string;
+    save: { label: string; to: string } | null;
+    startable?: boolean;
+  } | null>;
 }
 
 export async function projectCard(
@@ -189,6 +205,11 @@ export async function projectCard(
   const repository = facts?.repository ? facts.repository(p) : null;
   const folder = !repository && facts?.folder ? facts.folder(p) : null;
   const working = await workingOn(store, p.id);
+  // W15-67: the wait now, whether a Start kept it or not, only while a task is ready.
+  const waitNow =
+    facts?.credentialWaitNow && tasks.some((t) => displays.get(t.id)?.key === "ready")
+      ? await facts.credentialWaitNow(p.id).catch(() => null)
+      : null;
   const statusLine = projectStatusLine({
     projectId: p.id,
     tasks,
@@ -198,6 +219,7 @@ export async function projectCard(
     planError: plan.error,
     planWait: "wait" in plan ? (plan.wait ?? null) : null,
     credentialWait: ctx.credentialWait ?? null,
+    credentialWaitNow: waitNow,
     hasModel: facts?.hasModel ?? null,
     stopped: facts?.stopped ?? null,
     working,
@@ -439,14 +461,23 @@ export function runView(
  * now (L-21): a task the person answered, retried or merged since does not ("Ended: 1 task
  * needs you" stayed on the page after the retry and the merge).
  */
-export async function stillBlocked(store: StateStore, handoff: unknown): Promise<number> {
+export async function stillBlocked(store: StateStore, handoff: unknown): Promise<EndedWaits> {
   const ids = blockedTaskIds(handoff);
-  let n = 0;
+  // W15B-10: a task the session left paused at a budget is said as paused (the log's end line
+  // "Session over: 2 paused."), not as needing the person, while it still waits on its card.
+  const pausedIds = new Set(
+    Array.isArray((handoff as { paused?: unknown } | null)?.paused)
+      ? ((handoff as { paused: unknown[] }).paused.filter((x) => typeof x === "string") as string[])
+      : [],
+  );
+  const out: EndedWaits = { needYou: 0, paused: 0 };
   for (const id of new Set(ids)) {
     const t = await store.task.get(id);
-    if (t && (t.status === "needs_human" || t.status === "failed")) n += 1;
+    if (!t || (t.status !== "needs_human" && t.status !== "failed")) continue;
+    if (pausedIds.has(id) && t.status === "needs_human") out.paused += 1;
+    else out.needYou += 1;
   }
-  return n;
+  return out;
 }
 
 export function sessionView(
@@ -455,7 +486,7 @@ export function sessionView(
   chfPerUsd: number,
   current: SessionView["currentTask"] = null,
   /** The tasks it left waiting that still wait now (`stillBlocked`); absent: as it left them. */
-  blockedNow?: number,
+  blockedNow?: number | EndedWaits,
 ): SessionView {
   return {
     id: s.id,
@@ -556,6 +587,12 @@ export function describeEvent(
   return plainPlurals(withoutIds(lineOf(type, p, chfPerUsd)));
 }
 
+/** A clause as a sentence of its own: a capital first, a full stop last (W15-60). */
+function sentenceOf(text: string): string {
+  const t = text.trim().replace(/[.\s]+$/, "");
+  return t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}.` : "";
+}
+
 function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): string {
   if (eventAudience(type, p) === "person") {
     const line = personLine(type, p, chfPerUsd);
@@ -571,7 +608,9 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.brief":
       return `State brief ready: ${n("unread")} unread, ${count("ready", "ready task")}${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
     case "session.planned":
-      return `Plan: ${count("items", "task")}, about ${chf("estimateUsdMicro")}.${s("summary") ? ` ${cutAtWord(plainLine(s("summary")), 120)}` : ""}`;
+      // W15-60: the plan's summary is a sentence of its own, with a capital (before: "Plan: 1
+      // task, about CHF 0.02. the first session you approved...").
+      return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${s("summary") ? ` ${sentenceOf(cutAtWord(plainLine(s("summary")), 120))}` : ""}`;
     case "session.paused":
       return `Paused: ${s("reason")}.`;
     case "session.plan_filed":
@@ -579,9 +618,22 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.plan_approved":
       return `Running the plan you approved (${count("items", "task")}).`;
     case "task.started":
-      return `Started "${s("title")}" with ${s("specialist")} (about ${chf("estimateUsdMicro")}).`;
+      // W15-60: a retry's start (a detail) reads as a first attempt's does: "The coder started
+      // "X" (about CHF 0.02)." (before: 'Started "X" with coder (about ...)', the registry key).
+      return (
+        personLine(type, { ...p, again: false }, chfPerUsd) ??
+        `Started "${s("title")}" (${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}).`
+      );
     case "task.finished":
-      return `Finished "${s("title") || "the task"}": ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${cutAtWord(plainLine(s("summary")), 200)}`;
+      // W15-60: a run the person's stop ended (a detail: their stop's own line says it) reads
+      // "Stopped by you during ...", never "killed ... run stopped by its caller"; every other
+      // outcome as the person's line, never the report's text ("Summary: ...").
+      if (s("outcome") === "killed")
+        return `Stopped by you during "${s("title") || "the task"}"${n("costUsdMicro") > 0 ? ` (${moneyWords(chf("costUsdMicro"), n("costUsdMicro"))})` : ""}.`;
+      return (
+        personLine(type, p, chfPerUsd) ??
+        `Finished "${s("title") || "the task"}" (${moneyWords(chf("costUsdMicro"), n("costUsdMicro"))}).`
+      );
     case "task.claims_released":
       return `Put ${count("count", "task")} back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
@@ -624,7 +676,13 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "critic.session_review_metrics": {
       const m = (p.metrics ?? {}) as Record<string, unknown>;
       const k = (key: string) => (typeof m[key] === "number" ? (m[key] as number) : 0);
-      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done, ${chfOf(k("actualUsdMicro"), chfPerUsd)} spent of a ${chfOf(k("estimateUsdMicro"), chfPerUsd)} estimate.`;
+      const done = `${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done`;
+      const money = (key: string) => moneyWords(chfOf(k(key), chfPerUsd), k(key));
+      // W15B-19: the work against the estimate, the reviews named apart (the estimate is the
+      // work's: W15-18). Before: "CHF 0.10 spent of a CHF 0.23 estimate", reviews included.
+      if (typeof m.workUsdMicro === "number")
+        return `Session review measured: ${done}; the work cost ${money("workUsdMicro")} against an estimate of ${money("estimateUsdMicro")}${k("reviewsUsdMicro") > 0 ? `, and the reviews ${money("reviewsUsdMicro")}` : ""}.`;
+      return `Session review measured: ${done}, ${money("actualUsdMicro")} spent of a ${money("estimateUsdMicro")} estimate.`;
     }
     case "critic.session_review":
       return `Session review: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;
@@ -761,12 +819,17 @@ export async function requestContexts(
             )
             .map((t) => t.title)
         : [];
+      // W15-56: an open budget card names a set-aside only when its task's run wrote something.
+      const budgetOpen =
+        r.status === "open" &&
+        (r.change_card as { key?: unknown } | null)?.key === ANSWER_CARD_KEYS.budgetStop;
       out.set(r.id, {
         projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
         taskTitle: task?.title ?? null,
         taskStatus: task?.status ?? null,
         waiting,
         movedByYou: !!task?.author_human && !task.author_agent,
+        ...(budgetOpen && task ? { heldWork: await taskHeldWork(store, task) } : {}),
       });
       continue;
     }

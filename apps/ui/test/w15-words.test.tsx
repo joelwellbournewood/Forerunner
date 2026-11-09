@@ -1,0 +1,637 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
+import { aboutChf, chfWords, formatMoney } from "../src/lib/money.ts";
+import { inAppText } from "../src/lib/plain-words.ts";
+import { money, TASKS } from "./fixtures.ts";
+import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
+
+/**
+ * w15-words (wave 15 run B): what the screens say, read where the person reads it (design §5),
+ * with the fake daemon wording rows and cards through the daemon's own words. Each case clicks
+ * what the person clicks.
+ */
+
+const rowOf = async (id: string) =>
+  (await screen.findAllByTestId("task-row")).find(
+    (r) => r.getAttribute("data-task-id") === id,
+  ) as HTMLElement;
+
+function addTask(
+  harness: Harness,
+  id: string,
+  title: string,
+  extra: Partial<(typeof TASKS)[number]> = {},
+) {
+  harness.daemon.state.tasks.push({
+    ...(TASKS[2] as (typeof TASKS)[number]),
+    id,
+    title,
+    riskTier: 1,
+    prUrl: null,
+    ...extra,
+  });
+}
+
+function addCard(
+  harness: Harness,
+  id: string,
+  taskId: string,
+  changeCard: object,
+  extra: Partial<(typeof harness.daemon.state.requests)[number]> = {},
+) {
+  harness.daemon.state.requests.push({
+    ...(harness.daemon.state.requests[0] as (typeof harness.daemon.state.requests)[number]),
+    id,
+    taskId,
+    projectId: "proj_atlas",
+    status: "open",
+    why: "seed",
+    changeCard: changeCard as never,
+    ...extra,
+  });
+}
+
+describe("w15-words, wave 15 run B", () => {
+  describe("W15-56: a task paused before it wrote anything", () => {
+    const seed = () => {
+      const harness = createHarness();
+      addTask(harness, "t_empty", "Write the guide for members", { status: "needs_human" });
+      addCard(
+        harness,
+        "req_empty",
+        "t_empty",
+        {
+          key: "task:budget_stop",
+          task_id: "t_empty",
+          title: '"Write the guide for members" paused at its budget of CHF 0.01',
+          source: "task_budget",
+          continue_usd_micro: 12_500,
+          chf_per_usd: 0.8,
+          done: "",
+          left: [],
+        },
+        {
+          why: '"Write the guide for members" paused at its budget of CHF 0.01.',
+          options: ["Continue (CHF 0.01 more)", "Cancel task"],
+        },
+      );
+      return harness;
+    };
+
+    it("the row, the dialog and the drawer say Drops it., never set aside", async () => {
+      const user = userEvent.setup();
+      const harness = seed();
+      renderApp("/projects/proj_atlas/tasks?task=t_empty", harness);
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(within(drawer).getByTestId("drawer-explain-cancel")).toHaveTextContent(/^Drops it\.$/);
+      const row = await rowOf("t_empty");
+      expect(within(row).getByTestId("task-status")).toHaveTextContent("Paused at its budget");
+      expect(within(row).getByTestId("action-cancel")).toHaveAttribute("title", "Drops it.");
+      await user.click(within(row).getByTestId("action-cancel"));
+      const dialog = await screen.findByTestId("action-dialog");
+      expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(/^Drops it\.$/);
+      expect(dialog).not.toHaveTextContent(/set aside|so far/);
+    });
+
+    it("its Inbox card says it stopped before it wrote anything, and Cancel task only drops it", async () => {
+      const harness = seed();
+      renderApp("/inbox", harness);
+      const card = (await screen.findAllByTestId("request")).find(
+        (r) => r.getAttribute("data-request-id") === "req_empty",
+      ) as HTMLElement;
+      expect(within(card).getByTestId("request-body")).toHaveTextContent(
+        "It stopped before it wrote anything.",
+      );
+      expect(card).not.toHaveTextContent(/so far is kept|set aside/);
+      expect(
+        within(card)
+          .getAllByTestId("option-explain")
+          .map((e) => e.textContent),
+      ).toEqual([
+        "Adds CHF 0.01 to its budget and starts a session that goes on from where it stopped.",
+        "Drops it.",
+      ]);
+      expect(postedCalls(harness, "/requests/req_empty/answer")).toEqual([]);
+    });
+  });
+
+  describe("W15-74 (W15B-18): money under a centime never reads CHF 0.00 on screen", () => {
+    it("chfWords and aboutChf: 'less than CHF 0.01' above zero, 'CHF 0.00' for nothing", () => {
+      expect(chfWords(3_200)).toBe("less than CHF 0.01");
+      expect(chfWords(0)).toBe("CHF 0.00");
+      expect(chfWords(5_000)).toBe("CHF 0.01");
+      expect(aboutChf(3_200)).toBe("less than CHF 0.01");
+      expect(aboutChf(400_000)).toBe("about CHF 0.40");
+      expect(formatMoney(money(4_000))).toBe("less than CHF 0.01");
+      expect(formatMoney(money(0))).toBe("CHF 0.00");
+    });
+
+    it("a running task's spend on its Tasks row and in its drawer", async () => {
+      const harness = createHarness();
+      addTask(harness, "t_run", "Write the note", {
+        status: "in_progress",
+        spent: money(4_000),
+        actual: money(4_000),
+      });
+      renderApp("/projects/proj_atlas/tasks?task=t_run", harness);
+      const row = await rowOf("t_run");
+      expect(row).toHaveTextContent("less than CHF 0.01");
+      expect(row).not.toHaveTextContent("CHF 0.00");
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(drawer).toHaveTextContent("spent less than CHF 0.01");
+    });
+
+    it("the session's budget meter and the log's cost column", async () => {
+      const harness = createHarness();
+      const session = harness.daemon.state.sessions[0];
+      if (session) session.spent = money(4_000);
+      const event = harness.daemon.state.events.find((e) => e.id === "ev_5");
+      if (event) event.cost = money(4_000);
+      renderApp("/sessions/sess_1", harness);
+      const header = await screen.findByTestId("session-header");
+      await waitFor(() =>
+        expect(within(header).getByTestId("session-spend")).toHaveTextContent(
+          "less than CHF 0.01 of CHF 5.00",
+        ),
+      );
+      const rows = await screen.findAllByTestId("event-row");
+      const finished = rows.find((r) => r.getAttribute("data-seq") === "5") as HTMLElement;
+      expect(finished).toHaveTextContent("less than CHF 0.01");
+      expect(finished).not.toHaveTextContent("CHF 0.00");
+    });
+  });
+  describe("W15B-15: the session log shows no raw level word", () => {
+    it("a warning, an escalation and an error keep their tone, named in words, with no level word on the line", async () => {
+      const harness = createHarness();
+      harness.daemon.state.events.push({
+        id: "ev_err",
+        sessionId: "sess_1",
+        seq: 6,
+        type: "session.error",
+        text: "Claude did not answer (network).",
+        payload: {},
+        cost: money(0),
+        at: "2026-10-19T21:09:30.000Z",
+        level: "error",
+        audience: "person",
+      });
+      renderApp("/sessions/sess_1", harness);
+      const rows = await screen.findAllByTestId("event-row");
+      const of = (level: string) =>
+        rows.find((r) => r.getAttribute("data-level") === level) as HTMLElement;
+      for (const [level, name] of [
+        ["warning", "Worth a look"],
+        ["escalation", "Needs you"],
+        ["error", "Something went wrong"],
+      ] as const) {
+        const row = of(level);
+        expect(row, level).toBeDefined();
+        expect(within(row).getByTestId("level-badge")).toHaveAccessibleName(name);
+        expect(within(row).getByTestId("level-badge")).toHaveTextContent("");
+        expect(row.textContent ?? "", level).not.toMatch(/\b(warning|escalation|error)\b/);
+      }
+    });
+  });
+  describe("W15-43: a specialist is named in words on the Tasks tab and the plan card", () => {
+    /** A plan card as the daemon files it, with two tasks and their first-session estimates. */
+    const planCard = (
+      tasks: { key: string; title: string; specialist?: string; usd: number }[],
+    ) => ({
+      id: "req_intake",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: "sess_9",
+      kind: "approval",
+      why: 'Intake for "Atlas"',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Launch",
+                successCriteria: [],
+                targetDate: null,
+                tasks: tasks.map((t) => ({
+                  key: t.key,
+                  title: t.title,
+                  outcome: "done",
+                  acceptanceCriteria: [],
+                  priority: 5,
+                  dependsOn: [],
+                  ...(t.specialist ? { specialist: t.specialist } : {}),
+                })),
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "First.",
+            items: tasks.map((t) => ({ key: t.key, estimateUsdMicro: t.usd })),
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+
+    it("the plan card says 'writer', never 'writer-marketing'", async () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(
+        planCard([
+          { key: "a", title: "Write the flyer", specialist: "writer-marketing", usd: 250_000 },
+          { key: "b", title: "Build the page", specialist: "coder", usd: 400_000 },
+        ]) as never,
+      );
+      renderApp("/inbox", harness);
+      const card = await screen.findByTestId("intake-card");
+      const tasks = within(card).getAllByTestId("intake-task");
+      expect(tasks[0]).toHaveTextContent("Write the flyer · writer · about CHF 0.20");
+      expect(card).not.toHaveTextContent("writer-marketing");
+    });
+
+    it("the Who column, its filter and the drawer say 'writer'", async () => {
+      const harness = createHarness();
+      addTask(harness, "t_flyer", "Write the flyer", {
+        status: "ready",
+        specialist: "writer-marketing",
+      });
+      renderApp("/projects/proj_atlas/tasks?task=t_flyer", harness);
+      const row = await rowOf("t_flyer");
+      expect(within(row).getByText("writer")).toBeInTheDocument();
+      expect(row).not.toHaveTextContent("writer-marketing");
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(drawer).not.toHaveTextContent("writer-marketing");
+      const options = Array.from(document.querySelectorAll("option")).map((o) => o.textContent);
+      expect(options).not.toContain("writer-marketing");
+    });
+  });
+  describe("W15B-17: the questions card reads without markdown; the answer keeps the question", () => {
+    const asked = [
+      "Can `developer.mozilla.org` be added to the project's websites?",
+      "Which **hosting** should the page use, _Cloudflare Pages_ or GitHub Pages?",
+    ];
+    const seed = () => {
+      const harness = createHarness();
+      addTask(harness, "t_hosts", "Compare the hosts", { status: "needs_human" });
+      addCard(
+        harness,
+        "req_hosts",
+        "t_hosts",
+        {
+          key: "person_questions:t_hosts",
+          task_id: "t_hosts",
+          task_title: "Compare the hosts",
+          questions: asked,
+          source: "specialist",
+          on_answer: "resume",
+          context: "The **researcher** reads only `github.io` pages so far.",
+          applied_at: null,
+        },
+        { kind: "decision", why: '"Compare the hosts" needs your answers.', steps: asked },
+      );
+      return harness;
+    };
+
+    it("the labels and the context are plain; Send answers sends the questions as asked", async () => {
+      const user = userEvent.setup();
+      const harness = seed();
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const request = form.closest('[data-testid="request"]') as HTMLElement;
+      expect(
+        within(form).getByText("Can developer.mozilla.org be added to the project's websites?"),
+      ).toBeVisible();
+      expect(
+        within(form).getByText(
+          "Which hosting should the page use, Cloudflare Pages or GitHub Pages?",
+        ),
+      ).toBeVisible();
+      // What the person reads of the card: no tick, no star, no underscore of markdown.
+      expect(request.textContent).not.toMatch(/[`*]|_Cloudflare/);
+      expect(request).toHaveTextContent("The researcher reads only github.io pages so far.");
+      const fields = within(form).getAllByTestId("person-answer");
+      await user.type(fields[0] as HTMLElement, "Yes");
+      await user.type(fields[1] as HTMLElement, "Cloudflare Pages");
+      await user.click(within(form).getByTestId("send-answers"));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_hosts/answer")).toHaveLength(1),
+      );
+      expect(postedCalls(harness, "/requests/req_hosts/answer")[0]?.body).toMatchObject({
+        answer: {
+          answers: [
+            { question: asked[0], answer: "Yes" },
+            { question: asked[1], answer: "Cloudflare Pages" },
+          ],
+        },
+      });
+    });
+  });
+  describe("W15B-16: on and off; CHF 0.00 with what to do", () => {
+    it("Settings: the session budget's 0 says CHF 0.00 and what to do; a negative amount says CHF 0.00 too", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      renderApp("/settings", harness);
+      const cap = (await screen.findAllByTestId("setting-row")).find(
+        (r) => r.dataset.key === "project.session_cap",
+      ) as HTMLElement;
+      await user.click(within(cap).getByTestId("setting-change"));
+      const dialog = await screen.findByTestId("setting-dialog");
+      const input = within(dialog).getByTestId("setting-value");
+      await user.clear(input);
+      await user.type(input, "0");
+      expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
+        ZERO_REFUSED.session,
+      );
+      expect(ZERO_REFUSED.session).toBe(
+        "The budget per session must be more than CHF 0.00: a session plans its work within it. Enter the most a session may spend.",
+      );
+      await user.clear(input);
+      await user.type(input, "-3");
+      expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
+        "The amount must be CHF 0.00 or more.",
+      );
+      expect(within(dialog).getByTestId("setting-apply")).toBeDisabled();
+    });
+
+    it("the Start dialog's budget of 0 says CHF 0.00", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      const budget = within(dialog).getByLabelText(/Session budget/);
+      for (const typed of ["0", "-5"]) {
+        await user.clear(budget);
+        await user.type(budget, typed);
+        expect(within(dialog).getByTestId("start-session-budget-error")).toHaveTextContent(
+          "The budget must be more than CHF 0.00.",
+        );
+      }
+    });
+
+    it("the fake daemon's budget and yes/no sentences are the daemon's", async () => {
+      const harness = createHarness();
+      const run = (name: string, params: Record<string, unknown>) =>
+        harness.client.executeCommands({
+          commands: [{ name, params }],
+          wordsUsed: "Settings",
+          source: "ui",
+          confirm: "tap",
+        });
+      const zero = await run("budget.set", { scope: "session", amountChf: 0 });
+      expect(zero.status).toBe("refused");
+      expect(zero.reason).toBe(ZERO_REFUSED.session);
+      // The same literals real-daemon.test.ts "w15-words, wave 15 run B" reads from the daemon.
+      expect(
+        (await run("budget.set", { scope: "session", amountChf: 8, project: "proj_atlas" }))
+          .sentence,
+      ).toBe("Raised the session budget for Atlas from CHF 5.00 to CHF 8.00. Undo.");
+      expect((await run("budget.set", { scope: "month", amountChf: 3 })).sentence).toBe(
+        "Lowered the monthly cap from CHF 150.00 to CHF 3.00. Undo.",
+      );
+      const fast = await run("settings.set", {
+        key: "fast_mode",
+        value: true,
+        project: "proj_atlas",
+      });
+      expect(fast.sentence).toMatch(/^Set Opus fast mode for Atlas from off to on: /);
+    });
+  });
+  describe("W15-38: the Start dialog names the tasks left out once, at most three", () => {
+    /** proj_atlas's ready work: "Decide the versioning scheme" and `titles`, each of `usd`. */
+    const seed = (titles: string[], usd: number) => {
+      const harness = createHarness();
+      const tasks = harness.daemon.state.tasks;
+      const first = tasks.find((t) => t.id === "task_3");
+      if (!first) throw new Error("fixture changed");
+      first.estimate = money(usd);
+      titles.forEach((title, i) => {
+        tasks.push({ ...first, id: `task_left_${i}`, title, estimate: money(usd) });
+      });
+      return harness;
+    };
+    const openWithBudget = async (harness: Harness, typed: string) => {
+      const user = userEvent.setup();
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      const budget = within(dialog).getByLabelText(/Session budget/);
+      await user.clear(budget);
+      await user.type(budget, typed);
+      return dialog;
+    };
+
+    it("CHF 0.04 with four tasks left out: one line, three named, then 'and 1 more'", async () => {
+      const harness = seed(["About page", "Contact page", "Menu", "Footer"], 25_000);
+      const dialog = await openWithBudget(harness, "0.04");
+      await waitFor(() =>
+        expect(within(dialog).getAllByTestId("start-session-over-budget")).toHaveLength(1),
+      );
+      expect(within(dialog).getByTestId("start-session-over-budget")).toHaveTextContent(
+        '"About page" (about CHF 0.02), "Contact page" (about CHF 0.02), "Menu" (about CHF 0.02) and 1 more may be left for next time: the tasks that run first take about CHF 0.02 of this session\'s work budget of CHF 0.03 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure they run.',
+      );
+      expect(within(dialog).queryByTestId("start-session-more")).toBeNull();
+    });
+
+    it("CHF 0.04 with three tasks left out: one line names the three", async () => {
+      const harness = seed(["About page", "Contact page", "Menu"], 25_000);
+      const dialog = await openWithBudget(harness, "0.04");
+      await waitFor(() =>
+        expect(within(dialog).getAllByTestId("start-session-over-budget")).toHaveLength(1),
+      );
+      expect(within(dialog).getByTestId("start-session-over-budget")).toHaveTextContent(
+        /^"About page" \(about CHF 0\.02\), "Contact page" \(about CHF 0\.02\) and "Menu" \(about CHF 0\.02\) may be left for next time: /,
+      );
+    });
+
+    it("tasks each larger than the work budget: at most three named, then 'and N more'", async () => {
+      const harness = seed(["About page", "Contact page", "Menu", "Footer"], 100_000);
+      const dialog = await openWithBudget(harness, "0.04");
+      const line = await within(dialog).findByTestId("start-session-over-budget");
+      await waitFor(() =>
+        expect(line).toHaveTextContent(
+          '"Decide the versioning scheme" (about CHF 0.08), "About page" (about CHF 0.08), "Contact page" (about CHF 0.08) and 2 more each need more than this session\'s work budget of CHF 0.03',
+        ),
+      );
+      expect(line).not.toHaveTextContent("Menu");
+    });
+  });
+  describe("W15-39: the Start dialog while a plan is drafted", () => {
+    it("the planning line names the plan; a second Start still says the plan is being drafted", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness({ startOutcome: "queued", agentPlanning: true });
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      const start = async () => {
+        await user.click(screen.getByTestId("start-session"));
+        const dialog = await screen.findByTestId("start-session-dialog");
+        expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+          /^Your agent is drafting a plan; this session starts once the plan is ready\.$/,
+        );
+        await user.click(within(dialog).getByTestId("confirm-start-session"));
+        return within(dialog).findByTestId("start-session-notice");
+      };
+      expect(await start()).toHaveTextContent(
+        "Queued: your agent is drafting a plan. This one starts when the plan is ready.",
+      );
+      await user.click(within(screen.getByTestId("start-session-dialog")).getByText("Close"));
+      await waitFor(() => expect(screen.queryByTestId("start-session-dialog")).toBeNull());
+      const second = await start();
+      // Before: "Queued: your agent is in another session, and 1 other start waits ..." while
+      // the person sees "Drafting the plan", not a session.
+      expect(second).toHaveTextContent(
+        "Queued: your agent is drafting a plan, and 1 other start waits before this one; they run one after the other, in order. This one starts after them, once the plan is ready.",
+      );
+      expect(second).not.toHaveTextContent("another session");
+    });
+  });
+  describe("W15-72: the plan card's figures add up to its total as shown", () => {
+    /** A plan card as the daemon files it: one milestone, each task with its first-session estimate. */
+    const planCard = (tasks: { key: string; title: string; usd: number }[]) => ({
+      id: "req_intake",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: "sess_9",
+      kind: "approval",
+      why: 'Intake for "Atlas"',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Launch",
+                successCriteria: [],
+                targetDate: null,
+                tasks: tasks.map((t) => ({
+                  key: t.key,
+                  title: t.title,
+                  outcome: "done",
+                  acceptanceCriteria: [],
+                  priority: 5,
+                  dependsOn: [],
+                  specialist: "coder",
+                })),
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "First.",
+            items: tasks.map((t) => ({ key: t.key, estimateUsdMicro: t.usd })),
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+
+    it("three tasks of about CHF 0.44 each read About CHF 1.32, never CHF 1.33", async () => {
+      const harness = createHarness();
+      // USD 555,000 micro is CHF 0.444 at 0.8: each row rounds to CHF 0.44, the sum to CHF 1.33.
+      harness.daemon.state.requests.unshift(
+        planCard([
+          { key: "a", title: "Build the page", usd: 555_000 },
+          { key: "b", title: "Write the copy", usd: 555_000 },
+          { key: "c", title: "Test the page", usd: 555_000 },
+        ]) as never,
+      );
+      renderApp("/inbox", harness);
+      const card = await screen.findByTestId("intake-card");
+      for (const row of within(card).getAllByTestId("intake-task"))
+        expect(row).toHaveTextContent("about CHF 0.44");
+      expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+        "About CHF 1.32 for the 3 tasks.",
+      );
+    });
+
+    it("tasks each under a centime still read less than CHF 0.01 in total", async () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(
+        planCard([
+          { key: "a", title: "Build the page", usd: 2_000 },
+          { key: "b", title: "Write the copy", usd: 2_000 },
+        ]) as never,
+      );
+      renderApp("/inbox", harness);
+      const card = await screen.findByTestId("intake-card");
+      expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+        "Less than CHF 0.01 for the 2 tasks.",
+      );
+    });
+  });
+  describe("W15-40: the Docs tab says no zero count", () => {
+    it("with no drifted doc there is no '0 drifted' (project-tabs.test.tsx reads '1 drifted')", async () => {
+      const harness = createHarness();
+      const docs = harness.daemon.state.docs.proj_atlas ?? [];
+      for (const d of docs) d.drift = false;
+      renderApp("/projects/proj_atlas/docs", harness);
+      const tab = await screen.findByTestId("docs");
+      expect(within(tab).getByTestId("docs-present")).toHaveTextContent("7 of 8 present");
+      expect(tab).not.toHaveTextContent("0 drifted");
+      expect(within(tab).queryByTestId("docs-drift")).toBeNull();
+    });
+  });
+  describe("W15B-24: a needs-device read-back says 'Confirm on this device.' in the app", () => {
+    it("both of the daemon's forms read 'Confirm on this device.'", () => {
+      expect(
+        inAppText('Take back "Lowered the monthly cap"? Confirm in the app on a paired device.'),
+      ).toBe('Take back "Lowered the monthly cap"? Confirm on this device.');
+      expect(
+        inAppText(
+          "Change: the monthly cap. Confirm in the app on a paired device; on the phone with biometric.",
+        ),
+      ).toBe("Change: the monthly cap. Confirm on this device.");
+    });
+
+    it("Changes: an undo that needs this device reads 'Confirm on this device.'", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      const lowered = await harness.client.executeCommands({
+        commands: [{ name: "budget.set", params: { scope: "month", amountChf: 100 } }],
+        source: "ui",
+        confirm: "tap",
+      });
+      renderApp("/changes", harness);
+      const row = (await screen.findAllByTestId("change")).find(
+        (r) => r.dataset.changeId === lowered.changeLogId,
+      ) as HTMLElement;
+      await user.click(within(row).getByTestId("change-undo"));
+      const asking = await screen.findByTestId("changes-undo-pending");
+      const readback = within(asking).getByTestId("command-readback");
+      expect(readback).toHaveTextContent(/\? Confirm on this device\.$/);
+      expect(readback).not.toHaveTextContent("paired device");
+    });
+  });
+});

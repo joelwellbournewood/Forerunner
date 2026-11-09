@@ -605,13 +605,22 @@ export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: 
 }
 
 /**
- * A run that changed no file (L-18, polish-words): "The run changed no file." first, then its own
- * report, plain (no markdown) and on one line, which the reason and the failed-task card cut at
- * a word.
+ * A run that changed no file (L-18, polish-words): "The run changed no file." first, then the
+ * first sentence of its own report, plain (no markdown), cut at a word past 160 characters: two
+ * sentences in all (W15-52: the failed-task card's body was the whole report, six sentences).
  */
 export function emptyChangeSummary(report: string): string {
   const said = plainReport(report).replace(/\s+/g, " ").trim();
-  return said ? `The run changed no file. It reported: ${said}` : "The run changed no file.";
+  if (!said) return "The run changed no file.";
+  // A sentence ends at ".", "!" or "?" before white space and a capital: "README.md" is a word.
+  const first = said.split(/(?<=[.!?])\s+(?=["'(\p{Lu}])/u)[0] ?? said;
+  let line = first;
+  if (first.length > 160) {
+    const cut = first.slice(0, 159);
+    const space = cut.lastIndexOf(" ");
+    line = `${(space > 80 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
+  }
+  return `The run changed no file. It reported: ${line}`;
 }
 
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */
@@ -784,7 +793,8 @@ const WIP_OUTCOMES: ReadonlySet<TaskExecutionResult["outcome"]> = new Set([
 
 /**
  * A work-in-progress commit's message: why it stopped in the subject, then the run's own
- * "Where I stopped:" and "Left to do:" (data, kept plain), then the task.
+ * "Where I stopped:" and "Left to do:" (data, kept plain); no task id (W15B-13: the branch is
+ * pushed, and its title is in the subject).
  */
 export function workInProgressMessage(
   task: Pick<TaskRow, "id" | "title">,
@@ -811,7 +821,6 @@ export function workInProgressMessage(
             : "Left to do: not listed.",
         ]
       : []),
-    `Task ${task.id}.`,
   ].join("\n\n");
 }
 
@@ -1203,7 +1212,7 @@ export class PrTaskExecutor implements TaskExecutor {
 
     // A commit message is plain text: no markdown marks, no lesson lines (L-19).
     const commit = await git.commitAll(
-      `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}\n\nTask ${task.id}.`,
+      `${task.title}\n\n${plainReport(result.summary).slice(0, 500)}`,
     );
     // W15B-01: Forerunner's own until its push goes through (a refused push, a stop before it):
     // the task's next run never holds for it as for a commit of the person's.
@@ -2552,10 +2561,7 @@ export class PrTaskExecutor implements TaskExecutor {
     if (aside) {
       if (workspace) {
         const title = task.title.replace(/\s+/g, " ").trim();
-        const r = await git.applyCommitted(
-          `${aside}`,
-          `${WIP_SUBJECT}${title} (brought back)\n\nTask ${task.id}.`,
-        );
+        const r = await git.applyCommitted(`${aside}`, `${WIP_SUBJECT}${title} (brought back)`);
         if (!r.ok) return { result: "conflict" };
         for (const f of r.files) back.add(f);
       } else {

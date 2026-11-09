@@ -1,7 +1,7 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
 import { plainReason } from "../daemon/task-words.ts";
-import { moneyWordsFirst } from "./money-words.ts";
+import { aboutWords, moneyWords, moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
 import {
   MONTH_CAP_STOP,
@@ -218,7 +218,9 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
         // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
         // L-18 (polish-words): plain (no markdown) and cut at a word, as the Tasks row reads it.
         const reason = plainReason(f0.reason, 160).replace(/\s*\(\s*\)/g, "");
-        return [`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`];
+        const said = lowerFirst(noDot(reason)) || "no reason given";
+        // W15-52: a reason cut at a word ends in its "…", never "….".
+        return [`"${f0.title}" failed: ${said}${said.endsWith("…") ? "" : "."}`];
       }
       return o.failed.length > 1 ? [`${namesOf(titlesOf(o.failed))} failed.`] : [];
     },
@@ -292,11 +294,13 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       if (big) {
         const who =
           f.leftOutForBudget.length === 1
-            ? `"${big.title}" needs about ${formatChf(big.estimateChfMicro)}`
+            ? `"${big.title}" needs ${aboutWords(formatChf(big.estimateChfMicro), big.estimateChfMicro)}`
             : `${namesOf(titlesOf(f.leftOutForBudget))} need more`;
         return [
           `Nothing could run: ${who}, more than this session's work budget${
-            typeof f.workBudgetChfMicro === "number" ? ` of ${formatChf(f.workBudgetChfMicro)}` : ""
+            typeof f.workBudgetChfMicro === "number"
+              ? ` of ${moneyWords(formatChf(f.workBudgetChfMicro), f.workBudgetChfMicro)}`
+              : ""
           }. Start a session with a larger budget.`,
         ];
       }
@@ -324,12 +328,15 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       if (f.leftOutForBudget.length && o.stopReason !== "nothing_runnable") {
         const named = f.leftOutForBudget
           .slice(0, 3)
-          .map((t) => `"${t.title}" (about ${formatChf(t.estimateChfMicro)})`)
+          .map(
+            (t) =>
+              `"${t.title}" (${aboutWords(formatChf(t.estimateChfMicro), t.estimateChfMicro)})`,
+          )
           .join(", ");
         const more =
           f.leftOutForBudget.length > 3 ? ` and ${f.leftOutForBudget.length - 3} more` : "";
         return [
-          `Left for next time: ${named}${more}; this session's ${formatChf(f.sessionCapChfMicro)} was used.`,
+          `Left for next time: ${named}${more}; this session's ${moneyWords(formatChf(f.sessionCapChfMicro), f.sessionCapChfMicro)} was used.`,
         ];
       }
       // Ready tasks that wait for a credential are said by the wait's sentence, not as ready

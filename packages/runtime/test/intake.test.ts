@@ -17,6 +17,7 @@ import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import { chfText } from "../src/money-words.ts";
 import type { StateBrief } from "../src/session/brief.ts";
 import {
+  docSetWords,
   INTAKE_AUDIT_TOOL,
   INTAKE_BUILTIN_PROMPT_VERSION,
   INTAKE_CALLS,
@@ -1558,5 +1559,155 @@ describe("w15-review, wave 15", () => {
     expect(none).toContain("figures from memory");
     expect(NO_WEB_RULE).toContain("never from the model's own knowledge");
     expect(SMALL_PLAN_RULES.join(" ")).toContain("or the web access line asks for one");
+  });
+});
+
+describe("w15-words, wave 15 run B", () => {
+  it("W15B-13: the plan's commits, pull request, comment and refusal name no request id and say how many docs in words", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-intake-w15-words-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const replies: ScriptReply[] = [];
+    const host = new MemoryGitHost("alice");
+    const bare = join(home, "sample.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(home, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(home, "seed", "README.md"), "# sample (kept)\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "sample", private: true, cloneUrl: bare });
+    const emptyBare = join(home, "empty.git");
+    await run(["git", "init", "--bare", "-b", "main", emptyBare]);
+    await host.createRepo({ owner: "o", name: "empty", private: true, cloneUrl: emptyBare });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider(replies, clock),
+      gitHost: host,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    const answer = async (requestId: string, value: string) => {
+      const row = await rt.store.humanRequest.mustGet(requestId);
+      const res = await req(`/requests/${requestId}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: row.version, answer: value }),
+      });
+      expect(res.status).toBe(200);
+    };
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+    try {
+      const projectId = String(
+        (
+          await json(
+            await req("/projects", {
+              method: "POST",
+              body: JSON.stringify({ name: "Sample", goal: "g", brief: "b", repos: ["o/sample"] }),
+            }),
+          )
+        ).id,
+      );
+      replies.push({ text: JSON.stringify(proposal()) });
+      const first = await json(
+        await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" }),
+      );
+      // The refusal of a new brief while the plan waits (before: "... (request <id>) ...").
+      const refused = await req(`/projects/${projectId}/intake`, {
+        method: "POST",
+        body: JSON.stringify({ brief: "a different brief" }),
+      });
+      expect(refused.status).toBe(409);
+      const said = await json(refused);
+      expect(said.message).toBe(
+        "A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.",
+      );
+      await answer(String(first.requestId), "approve");
+      const pr = (await host.listPullRequests({ owner: "o", name: "sample" })).find((p) =>
+        p.head.ref.startsWith("fr/intake-"),
+      );
+      expect(pr?.body.split("\n\n")[0]).toBe(
+        "The standard doc set drafted from the project brief by Forerunner.",
+      );
+      expect(pr?.body).not.toMatch(uuid);
+      const message = (
+        await run(["git", "--git-dir", bare, "log", "-1", "--format=%B", pr?.head.ref ?? ""])
+      ).stdout;
+      expect(message).toMatch(
+        /^docs: project doc set from the brief\n\nDrafted by Forerunner from the project's brief: \d+ docs? drafted/,
+      );
+      expect(message).not.toMatch(uuid);
+      expect(message).not.toContain("(s)");
+      // A second plan on the same project updates the open pull request with a comment.
+      replies.push({ text: JSON.stringify(proposal()) });
+      const second = await json(
+        await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" }),
+      );
+      await answer(String(second.requestId), "approve");
+      const comments = await host.listPullRequestComments(
+        { owner: "o", name: "sample" },
+        pr?.number ?? 0,
+      );
+      const comment = comments.at(-1)?.body ?? "";
+      expect(comment).toMatch(/^Updated by Forerunner from the project's brief: /);
+      expect(comment).not.toMatch(uuid);
+      expect(comment).not.toContain("(s)");
+      // An empty repository: the plan is its first commit.
+      replies.push({ text: JSON.stringify(proposal()) });
+      const fresh = String(
+        (
+          await json(
+            await req("/projects", {
+              method: "POST",
+              body: JSON.stringify({
+                name: "Fresh",
+                goal: "g",
+                brief: "b",
+                repos: ["o/empty"],
+                intake: true,
+              }),
+            }),
+          )
+        ).id,
+      );
+      const drafted = (await rt.intake.inFlight(fresh)) as { requestId: string } | null;
+      await answer(String(drafted?.requestId), "approve");
+      const firstCommit = (
+        await run(["git", "--git-dir", emptyBare, "log", "-1", "--format=%B", "main"])
+      ).stdout.trim();
+      expect(firstCommit).toBe(
+        "docs: start the repository with the project's doc set\n\nThe repository was empty; Forerunner made this first commit from the approved plan so the project's work has a branch to start from.",
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("W15B-13: docSetWords says how many in words and leaves out a part with nothing", () => {
+    expect(docSetWords({ written: ["a", "b", "c"], scaffolded: ["d", "e"], kept: ["f"] })).toBe(
+      "3 docs drafted, 2 from the templates, 1 kept as it was",
+    );
+    expect(docSetWords({ written: ["a"], scaffolded: [], kept: ["b", "c"] })).toBe(
+      "1 doc drafted, 2 kept as they were",
+    );
+    expect(docSetWords({ written: [], scaffolded: [] })).toBe("no doc changed");
   });
 });

@@ -214,12 +214,13 @@ export function moneyProblem(value: string, zero?: SettingCommand["zero"]): stri
   const micro = chfToMicro(value);
   if (micro === null)
     return value.trim().startsWith("-")
-      ? "The amount must be CHF 0 or more."
+      ? "The amount must be CHF 0.00 or more."
       : "Type an amount in CHF, like 12.30 or 12,30.";
-  if (micro < 0) return "The amount must be CHF 0 or more.";
+  // W15B-16: CHF with its two decimals (design §5 rule 7), never "CHF 0".
+  if (micro < 0) return "The amount must be CHF 0.00 or more.";
   if (micro === 0) {
     if (zero?.allowed) return null;
-    return zero && !zero.allowed ? zero.refused : "The amount must be more than CHF 0.";
+    return zero && !zero.allowed ? zero.refused : "The amount must be more than CHF 0.00.";
   }
   return null;
 }

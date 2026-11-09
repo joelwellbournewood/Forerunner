@@ -131,13 +131,15 @@ export function choiceLine(
     if (lacks.has("askPerson"))
       return `${runsOn}, where it cannot ask you while it works: ${who} lists its questions in its report.`;
     if (lacks.has("commands"))
-      return `${runsOn}, where it cannot run commands: its tests will not run.`;
+      // W15-86: one subject per clause (before: "where it cannot run commands: its tests ...").
+      return `${runsOn}, where commands cannot run: this task's tests will not run.`;
   }
   if (choice.onlyIt.length) return `${runsOn}: only it can ${canWords(choice.onlyIt)} here.`;
   if (choice.lost.includes("commands") && opts.dependencies)
+    // W15-86: one subject (before: "its tests will not run: it cannot run commands there").
     return choice.kind === "subscription"
-      ? "On your subscription its tests will not run: it cannot run commands there."
-      : `On ${where(choice.kind)} its tests will not run: it cannot run commands there.`;
+      ? "On your subscription this task's tests will not run: commands cannot run there."
+      : `On ${where(choice.kind)} this task's tests will not run: commands cannot run there.`;
   return null;
 }
 

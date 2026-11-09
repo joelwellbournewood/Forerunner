@@ -1,4 +1,5 @@
 import { chfToUsdMicro, DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
+import { saidByName } from "@forerunner/critic";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   HumanRequestRow,
@@ -10,6 +11,7 @@ import type {
 import { ANSWER_CARD_KEYS, budgetStopAnswer } from "../wiring/request-answers.ts";
 import type { BudgetStopSource, RunHandoff } from "./budget-pause.ts";
 import { unappliedAnswers } from "./findings.ts";
+import { moneyWords } from "./money-words.ts";
 import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
 import type { BudgetStop } from "./runner.ts";
 
@@ -67,8 +69,11 @@ export function continueUsdMicro(
   return chfToUsdMicro(steps * CONTINUE_STEP_CHF_MICRO, rate);
 }
 
-const chfText = (usdMicro: number, rate: number) =>
-  formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate));
+/** W15-74: a limit or an amount under a centime reads "less than CHF 0.01", never "CHF 0.00". */
+const chfText = (usdMicro: number, rate: number) => {
+  const chfMicro = usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate);
+  return moneyWords(formatChf(chfMicro), chfMicro);
+};
 
 /** "Continue (CHF 0.40 more)": the card's main button. */
 export function continueLabel(moreUsdMicro: number, rate: number): string {
@@ -89,7 +94,8 @@ export function budgetStopTitle(
     case "task_budget":
       return `${title} paused at its budget of ${chf}`;
     case "specialist_limit":
-      return `${title} paused at the ${stop.specialist}'s limit of ${chf} per run`;
+      // W15-43: the specialist in words ("the writer"), never its registry key.
+      return `${title} paused at the ${saidByName(stop.specialist) ?? "specialist"}'s limit of ${chf} per run`;
     case "session":
       return `${title} paused at this session's budget of ${chf}`;
     case "project":

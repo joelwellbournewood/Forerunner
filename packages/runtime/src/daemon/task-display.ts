@@ -11,7 +11,11 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { mergeModeOf } from "../loop/merge-mode.ts";
-import { type CredentialWaitWords, waitRowWords } from "../session/credential-wait.ts";
+import {
+  type CredentialWaitWords,
+  refusedCredentialWords,
+  waitRowWords,
+} from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { waitingOf } from "../wiring/billing-pick.ts";
@@ -57,21 +61,13 @@ export async function loadTaskDisplayContext(
   // when that run left work (the session's `task.files` for it): a run paused before it wrote
   // anything holds none, and the line would promise a set-aside that never comes (the review of
   // polish-words: the bench's CHF 0.004 guide wrote no file, and its cancel set nothing aside).
+  // W15-56: a task paused at its budget (needs_human with its card) holds work only when its run
+  // wrote some: one paused before any step wrote a file has nothing a Cancel sets aside, and its
+  // row, drawer and card say "Drops it." (before: "Its work so far is set aside ...").
   const heldWork = new Set<string>();
   for (const t of projectTasks) {
-    if (t.status !== "ready") continue;
-    const latest = (
-      await store.run.list({ task_id: t.id } as never, {
-        orderBy: [{ column: "created_at", direction: "desc" }],
-        limit: 5,
-      })
-    ).find((r) => r.specialist !== "critic");
-    if (
-      latest &&
-      (latest.outcome === "paused" || latest.outcome === "budget_exceeded") &&
-      (await runLeftFiles(store, latest, t.id))
-    )
-      heldWork.add(t.id);
+    if (t.status !== "ready" && t.status !== "needs_human") continue;
+    if (await taskHeldWork(store, t)) heldWork.add(t.id);
   }
   for (const t of projectTasks) {
     if (t.status !== "claimed" && t.status !== "in_progress") continue;
@@ -117,6 +113,34 @@ export async function loadTaskDisplayContext(
     ...(credentialWait ? { credentialWait } : {}),
     ...(linked && isAbsolute(linked) ? { ownFolder: true } : {}),
   };
+}
+
+/**
+ * Whether the task holds work in progress that a Cancel sets aside (P7-20, W15-56): its last work
+ * run (not the critic's) left changed files, and for a ready task that run paused at a budget (a
+ * Continue, or a Reopen after a cancel). A task paused at its budget (`needs_human`) holds what
+ * its last run wrote, the run that paused or one whose review waits for room. A run that wrote
+ * nothing holds none. False for any other status.
+ */
+export async function taskHeldWork(
+  store: StateStore,
+  task: Pick<TaskRow, "id" | "status">,
+): Promise<boolean> {
+  if (task.status !== "ready" && task.status !== "needs_human") return false;
+  const latest = (
+    await store.run.list({ task_id: task.id } as never, {
+      orderBy: [{ column: "created_at", direction: "desc" }],
+      limit: 5,
+    })
+  ).find((r) => r.specialist !== "critic");
+  if (!latest) return false;
+  if (
+    task.status === "ready" &&
+    latest.outcome !== "paused" &&
+    latest.outcome !== "budget_exceeded"
+  )
+    return false;
+  return runLeftFiles(store, latest, task.id);
 }
 
 /**
@@ -260,8 +284,11 @@ export function reviewSentence(verdict: string): string {
   }
 }
 
-/** A run's outcome label in words. */
-function runOutcomeWords(outcome: string): string {
+/**
+ * A run's outcome label in words; `sourceKind` is the kind of credential the run was billed to
+ * (a refused one is named as the person set it up, W15-78).
+ */
+export function runOutcomeWords(outcome: string, sourceKind?: string | null): string {
   switch (outcome) {
     case "running":
       return "Running";
@@ -281,7 +308,7 @@ function runOutcomeWords(outcome: string): string {
     // The leftovers of wave 7: a run (or a review) Anthropic's refusal of the credential stopped
     // is no failed run; the task went back to ready and waits for a new one.
     case "credential_refused":
-      return "Stopped: Anthropic refused the credential";
+      return `Stopped: Anthropic refused ${refusedCredentialWords(sourceKind)}`;
     // ADR 0112: a run that wrapped up with work left, and one a budget stopped.
     case "paused":
       return "Paused";
@@ -500,6 +527,14 @@ export async function taskDetail(
         r.session_id,
         stopReasonOfHandoff((await store.session.get(r.session_id))?.handoff),
       );
+  // W15-78: a run Anthropic's refusal stopped names what was refused (its credential's kind).
+  const refusedKinds = new Map<string, string | null>();
+  for (const r of runRows)
+    if (r.outcome === "credential_refused" && r.billing_source_id && !refusedKinds.has(r.id))
+      refusedKinds.set(
+        r.id,
+        (await store.billingSource.get(r.billing_source_id).catch(() => undefined))?.kind ?? null,
+      );
   const runs = runRows.map((r) => {
     const got = reports.get(r.id);
     const work = isWorkRun(r);
@@ -512,7 +547,9 @@ export async function taskDetail(
       startedAt: r.created_at,
       durationMs: r.duration_ms,
       cost: money(r.cost_usd_micro, chfPerUsd),
-      outcome: stoppedReview ? REVIEW_STOPPED : runOutcomeWords(r.outcome),
+      outcome: stoppedReview
+        ? REVIEW_STOPPED
+        : runOutcomeWords(r.outcome, refusedKinds.get(r.id) ?? null),
       report: stoppedReview
         ? `${REVIEW_STOPPED_SENTENCE}: ${reviewStopWords(task, stopReasons.get(r.session_id) ?? null)}.`
         : (got?.report ?? null),

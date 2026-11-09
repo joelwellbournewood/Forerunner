@@ -47,7 +47,10 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("stop-now")).toHaveCount(0);
   const escalation = page.locator('[data-testid="event-row"][data-level="escalation"]');
   await expect(escalation).toHaveCount(1);
-  await expect(escalation.getByTestId("level-badge")).toHaveText("escalation");
+  // W15B-15 (w15-words): the tone by colour, named in words for a screen reader; no raw level
+  // word on the line (before: the badge's text was "escalation").
+  await expect(escalation.getByTestId("level-badge")).toHaveAccessibleName("Needs you");
+  await expect(escalation).not.toContainText("escalation");
   await expect(page.getByTestId("steps")).toHaveText("6");
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
 

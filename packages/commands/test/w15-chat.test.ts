@@ -410,7 +410,8 @@ describe("w15-chat, wave 15", () => {
     expect(off.sentence).toContain("at about CHF 3.60 / 18.00 per million input / output tokens");
     const undo = await w.executor.undo(off.changeLogId, w.ctx());
     if (undo.status !== "pending") throw new Error(`expected pending, got ${undo.status}`);
-    expect(undo.card.ask).toContain("Put Opus fast mode for Game back to true?");
+    // W15B-16 (w15-words): a yes/no setting reads "on" or "off", never true, false or unset.
+    expect(undo.card.ask).toContain("Put Opus fast mode for Game back to on?");
     expect(undo.card.ask).toContain("about CHF 7.20 / 36.00");
     expect(JSON.stringify(undo)).not.toMatch(/USD/);
   });

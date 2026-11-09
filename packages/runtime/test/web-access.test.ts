@@ -464,7 +464,12 @@ describe("a stored 'only' rule never fails open (R-failopen)", () => {
         settings: { web_access: { mode: "only", only: [], never: [] } },
       });
       expect((await card(none.id)).researchReads).toBe("Research reads: no website");
-      await expect(read(none.id)).rejects.toThrow(notOnTheList);
+      // W15-78 (w15-words): an empty list is said as empty, never "not on this list" (before:
+      // "127.0.0.1 is not on this project's "only these websites" list"); still refused.
+      await expect(read(none.id)).rejects.toMatchObject({
+        message:
+          'Refused: 127.0.0.1 was not read: this project\'s "only these websites" list is empty.',
+      });
     } finally {
       await rt.close();
       rmSync(home, { recursive: true, force: true });

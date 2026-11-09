@@ -245,9 +245,15 @@ with their milestone.
   request whose body carries the outcome, the acceptance criteria (no heading when there are
   none) and the report without its "Lesson:" lines (`withoutLessons`; the commit message is the
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
+  No commit body that is pushed names the task by its id (W15B-13: the task's commit, the
+  work-in-progress commit `workInProgressMessage` and the brought-back one; before: "Task
+  <uuid>."): the title is the subject. Subjects and markers code reads stay as they are
+  (`WIP_SUBJECT`, "Workspace before \"...\" (task <id>)" and the set-aside subjects, on refs
+  kept on this computer; `builtOnBy`, `loop/critic.ts` and `loop/project-checks.ts` read them).
   A run that changed no file fails with "The run changed no file. It reported: …" in plain words
   (`emptyChangeSummary`, L-18, polish-words; before, the raw report and "(no changes were made in
-  the worktree)").
+  the worktree)"), with only the report's first sentence, cut at a word past 160 characters: two
+  sentences in all, which the failed-task card quotes (W15-52: it quoted the whole report).
   **One branch per task** (R-branch, leftovers7-merge): the branch is
   `taskBranchName(task)`, `fr/<the id's last 8 hex characters>-<title>`, stored on the task at
   its first run. Before, it took the id's first 8 characters, which are a UUIDv7's creation
@@ -834,7 +840,9 @@ unless `FORERUNNER_WEB_FETCH=off`.
   ... `isLocalName`) refused whatever any list says; then the project's rule
   (`WebReadRules {mode, only, never}`): a host covered by a never entry refused, and in `only`
   mode a host no only entry covers refused, each refusal naming the list; `only` with nothing on
-  its list stays `only` and reads no website (R-failopen), never any public one. `siteCovers` is the
+  its list stays `only` and reads no website (R-failopen), never any public one, and says so
+  plainly: "example.org was not read: this project's \"only these websites\" list is empty" (W15-78;
+  before: "... is not on ... list, which names no website"; test `test/w15-words.test.ts`). `siteCovers` is the
   reader's own matcher: an entry covers the site and its subdomains, case, `*.`, a leading `www.`
   and a trailing dot normalised (`hostOfUrl` strips one trailing dot too, C-70); the capability
   token's `domainCovered` is not used here and is unchanged. `addressAllowed`: only a public

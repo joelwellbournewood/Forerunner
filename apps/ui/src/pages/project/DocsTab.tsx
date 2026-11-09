@@ -30,9 +30,12 @@ export function DocsTab({ projectId }: { projectId: string }) {
         <Badge testId="docs-present">
           {present} of {rows.length} present
         </Badge>
-        <Badge tone={drifted > 0 ? "warn" : "neutral"} testId="docs-drift">
-          {drifted} drifted
-        </Badge>
+        {/* W15-40: no zero count (design §5): the badge only when a doc drifted. */}
+        {drifted > 0 ? (
+          <Badge tone="warn" testId="docs-drift">
+            {drifted} drifted
+          </Badge>
+        ) : null}
         <span className="text-xs text-neutral-500">
           Kept by the agent; on a task with a full review the critic also checks they match the
           work.

@@ -681,7 +681,8 @@ describe("polish-words, wave 13: the Inbox cards' words (design §5)", () => {
 describe("polish-words, wave 13: the plan card's runs-on lines", () => {
   it("'its tests will not run' is said once for the plan, under the first task (P7-14)", async () => {
     const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
-    const line = "On your subscription its tests will not run: it cannot run commands there.";
+    // W15-86 (w15-words): one subject (before: "its tests will not run: it cannot run commands").
+    const line = "On your subscription this task's tests will not run: commands cannot run there.";
     const views = await planTaskViews(
       {
         status: "open",
@@ -707,12 +708,53 @@ describe("polish-words, wave 13: the plan card's runs-on lines", () => {
             : { kind: "subscription", line: null },
       },
     );
+    // W15-86 (w15-words): the line names the tasks (design §5 rule 5), up to three, then "and N
+    // more"; naming them takes it past the 100 characters a consequence line keeps (before: "the
+    // tests of 2 tasks", which named none).
     expect(views?.map((v) => v.runsOn?.line ?? null)).toEqual([
-      "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
+      'On your subscription the tests of "Build the page" and "Add the script" will not run: commands cannot run there.',
       null,
       null,
     ]);
-    expect(views?.[0]?.runsOn?.line?.length).toBeLessThanOrEqual(100);
+    // Its own words keep the 100 characters (design §5 rule 1); only the names go past them.
+    const merged = views?.[0]?.runsOn?.line ?? "";
+    expect(merged.replace(/"[^"]*"/g, '""').length).toBeLessThanOrEqual(100);
+  });
+
+  it("the merged line names three tasks at most, each cut at a word, within 100 characters beside the names (fixup-w15-words)", async () => {
+    const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
+    const line = "On your subscription this task's tests will not run: commands cannot run there.";
+    const titles = [
+      "Build the members page with the table of everyone who paid this year",
+      "Add the script that sorts the members table by name and by the year they joined",
+      "Write the tests for the sorting script and for the members table in the page",
+      "Check the page on a phone and fix what does not fit on a small screen",
+    ];
+    const views = await planTaskViews(
+      {
+        status: "open",
+        project_id: "p",
+        change_card: {
+          key: "intake:p",
+          proposal: {
+            plan: {
+              tasks: titles.map((title, i) => ({ key: `t${i}`, title, specialist: "coder" })),
+            },
+          },
+        } as never,
+      },
+      { has: () => true, forTask: async () => ({ kind: "subscription", line }) },
+    );
+    const lines = (views ?? []).map((v) => v.runsOn?.line ?? null);
+    expect(lines.slice(1)).toEqual([null, null, null]);
+    const merged = lines[0] ?? "";
+    const names = merged.match(/"[^"]*"/g) ?? [];
+    expect(names).toHaveLength(3);
+    for (const n of names) expect(n.length).toBeLessThanOrEqual(42);
+    expect(merged).toMatch(/ and 1 more will not run: commands cannot run there\.$/);
+    expect(merged.replace(/"[^"]*"/g, '""').length).toBeLessThanOrEqual(100);
+    // Beside those 100, at most three names of at most 40 characters inside their quotes.
+    expect(merged.length).toBeLessThanOrEqual(100 + 3 * 40);
   });
 
   it("research on the API key without search says so within 100 characters (P7-15)", async () => {

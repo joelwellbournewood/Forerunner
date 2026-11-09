@@ -15,6 +15,9 @@ const IN_APP: Array<[RegExp, string]> = [
     /Confirm in the app on a paired device; on the phone with biometric\.?/g,
     "Confirm on this device.",
   ],
+  // W15B-24: the short form a read-back with one question ends in (the daemon's executor.ts);
+  // the person is in the app already. Voice and the phone keep the daemon's words.
+  [/Confirm in the app on a paired device\.?/g, "Confirm on this device."],
 ];
 
 /** A daemon text as the app shows it: no "say yes", "reply to the email" or "say undo". */
@@ -22,6 +25,26 @@ export function inAppText(text: string): string {
   let out = text;
   for (const [re, by] of IN_APP) out = out.replace(re, by);
   return out.replace(/\s{2,}/g, " ").trim();
+}
+
+/**
+ * A specialist's line as the app shows it (W15B-17): code ticks, bold, emphasis, a heading or
+ * list marker dropped, a link as its words and its address, so "Can `developer.mozilla.org` be
+ * added?" reads "Can developer.mozilla.org be added?". Only for what is shown: an answer sent
+ * keeps the question as it was asked.
+ */
+export function withoutMarks(text: string): string {
+  return text
+    .replace(/`+([^`]*)`+/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, "$1$2")
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, words: string, href: string) =>
+      words === href ? words : `${words} (${href})`,
+    )
+    .replace(/(^|[\s(])[*_]([^*_\s][^*_\n]*?)[*_](?=[\s).,;:!?]|$)/g, "$1$2")
+    .replace(/^\s*#+\s+/, "")
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

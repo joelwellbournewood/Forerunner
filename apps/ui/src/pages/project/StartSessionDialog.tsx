@@ -2,12 +2,20 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type StartCheckView, type StartSessionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
-import { Button, ErrorBanner, Field, INPUT_CLASS, Money } from "../../components/ui.tsx";
 import {
+  AboutMoney,
+  Button,
+  ErrorBanner,
+  Field,
+  INPUT_CLASS,
+  Money,
+} from "../../components/ui.tsx";
+import {
+  aboutChf,
   chfMicroToUsdMicro,
   chfToMicro,
+  chfWords,
   formatAmount,
-  formatChf,
   type MoneyLike,
 } from "../../lib/money.ts";
 import { useAsync } from "../../lib/use-async.ts";
@@ -15,17 +23,19 @@ import { useClient, useIdentity } from "../../store/context.tsx";
 import { useIntakeStatus } from "./IntakeBanner.tsx";
 
 /**
- * What the dialog says when the start did not hand back a session to open (U-003). A waiting
- * start runs in order behind the ones already waiting, never replaced (U-043), so the notice
- * says how many come first.
- */
-/**
  * The line in place of what the session runs while the agent drafts a plan (TR-12): a Start
- * waits for it, so saying "This session runs ..." read as if it started at once.
+ * waits for it, so saying "This session runs ..." read as if it started at once. W15-39: "it"
+ * named the session or the plan; it names the plan.
  */
 export const PLANNING_WAIT_LINE =
-  "Your agent is drafting a plan; this session starts once it is ready.";
+  "Your agent is drafting a plan; this session starts once the plan is ready.";
 
+/**
+ * What the dialog says when the start did not hand back a session to open (U-003). A waiting
+ * start runs in order behind the ones already waiting, never replaced (U-043), so the notice
+ * says how many come first. While the agent drafts a plan, that is what it waits for, with or
+ * without starts ahead (W15-39: with one ahead it said "your agent is in another session").
+ */
 export function startNotice(
   result: StartSessionView["result"],
   ahead = 0,
@@ -38,8 +48,10 @@ export function startNotice(
   switch (result) {
     case "queued":
       // TR-12: what it waits for is a plan the agent drafts, not a session the person can see.
-      if (opts.planning && ahead === 0)
-        return "Queued: your agent is drafting a plan. This one starts when the plan is ready.";
+      if (opts.planning)
+        return ahead > 0
+          ? `Queued: your agent is drafting a plan, and ${before} This one starts after them, once the plan is ready.`
+          : "Queued: your agent is drafting a plan. This one starts when the plan is ready.";
       return ahead > 0
         ? `Queued: your agent is in another session, and ${before} This one starts after them.`
         : "Queued: your agent is in another session. This one starts when that one ends.";
@@ -119,9 +131,9 @@ export function sandboxWaitingText(w: NonNullable<StartCheckView["waitingForSand
   return `${names} ${one ? "needs" : "need"} a full review, which runs in the Docker sandbox, and it is not ready: ${w.headline} Next: ${w.step}. ${one ? "It waits" : "They wait"}; nothing fails and no retry is used.`;
 }
 
-/** "about CHF 0.80" for a sum of estimates. */
+/** "about CHF 0.80" for a sum of estimates ("less than CHF 0.01" under a centime, W15-74). */
 function about(values: readonly { estimate: MoneyLike }[]): string {
-  return `about ${formatChf(values.reduce((s, v) => s + v.estimate.chfMicro, 0))}`;
+  return aboutChf(values.reduce((s, v) => s + v.estimate.chfMicro, 0));
 }
 
 /**
@@ -139,9 +151,13 @@ export function planSentence(check: StartCheckView): string | null {
   return `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)}).`;
 }
 
-/** '"A" (about CHF 6.00) and "B" (about CHF 7.00)'. */
+/**
+ * '"A" (about CHF 6.00) and "B" (about CHF 7.00)': at most three named, then "and N more"
+ * (W15-38: the line named every task).
+ */
 function namesWithEstimates(tasks: readonly { title: string; estimate: MoneyLike }[]): string {
-  const parts = tasks.map((t) => `"${t.title}" (about ${formatChf(t.estimate.chfMicro)})`);
+  const parts = tasks.map((t) => `"${t.title}" (${aboutChf(t.estimate.chfMicro)})`);
+  if (parts.length > 3) return `${parts.slice(0, 3).join(", ")} and ${parts.length - 3} more`;
   return parts.length <= 1
     ? (parts[0] ?? "")
     : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
@@ -191,7 +207,7 @@ function BlockerLines({ check }: { check: StartCheckView }) {
       testId: "start-session-over-budget",
       node: (
         <>
-          "{onlyBig.title}" needs about <Money value={onlyBig.estimate} />, more than this session's
+          "{onlyBig.title}" needs <AboutMoney value={onlyBig.estimate} />, more than this session's
           work budget of <Money value={check.workBudget} /> (the budget less a fifth kept for
           reviews). Give the session a larger budget, or the task a smaller one.
         </>
@@ -211,16 +227,34 @@ function BlockerLines({ check }: { check: StartCheckView }) {
     });
   // An older daemon does not say what runs before a task: every task that runs, as before.
   const allFirst = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
-  for (const t of check.overBudget.filter((x) => !tooBig.includes(x)))
+  // W15-38: the tasks that may be left for next time are one line (each had the same long
+  // sentence), at most three named; "the tasks that run first" is what runs before the first of
+  // them, which the others wait behind too.
+  const left = check.overBudget.filter((x) => !tooBig.includes(x));
+  const [firstLeft] = left;
+  if (firstLeft && left.length === 1)
     lines.push({
-      key: `b-${t.taskId}`,
+      key: `b-${firstLeft.taskId}`,
       testId: "start-session-over-budget",
       node: (
         <>
-          "{t.title}" (about <Money value={t.estimate} />) may be left for next time: the tasks that
-          run first take about {formatChf(t.ahead?.chfMicro ?? allFirst)} of this session's work
-          budget of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews).
-          Give the session a larger budget to be sure it runs.
+          "{firstLeft.title}" (<AboutMoney value={firstLeft.estimate} />) may be left for next time:
+          the tasks that run first take {aboutChf(firstLeft.ahead?.chfMicro ?? allFirst)} of this
+          session's work budget of <Money value={check.workBudget} /> (the budget less a fifth kept
+          for reviews). Give the session a larger budget to be sure it runs.
+        </>
+      ),
+    });
+  else if (firstLeft)
+    lines.push({
+      key: "b-left",
+      testId: "start-session-over-budget",
+      node: (
+        <>
+          {namesWithEstimates(left)} may be left for next time: the tasks that run first take{" "}
+          {aboutChf(firstLeft.ahead?.chfMicro ?? allFirst)} of this session's work budget of{" "}
+          <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+          session a larger budget to be sure they run.
         </>
       ),
     });
@@ -245,11 +279,12 @@ export function budgetProblem(text: string, monthLeft: MoneyLike | null): string
   const chf = chfToMicro(text.replace(",", "."));
   if (chf === null)
     return text.trim().startsWith("-")
-      ? "The budget must be more than CHF 0."
+      ? "The budget must be more than CHF 0.00."
       : "The budget must be an amount in CHF, like 5.00.";
-  if (chf <= 0) return "The budget must be more than CHF 0.";
+  // W15B-16: CHF with its two decimals (design §5 rule 7), never "CHF 0".
+  if (chf <= 0) return "The budget must be more than CHF 0.00.";
   if (monthLeft && chf > monthLeft.chfMicro)
-    return `That is more than what is left of your monthly cap (${formatChf(monthLeft.chfMicro)}).`;
+    return `That is more than what is left of your monthly cap (${chfWords(monthLeft.chfMicro)}).`;
   return null;
 }
 
@@ -420,7 +455,7 @@ export function StartSessionDialog({
             <Field
               label="Session budget (CHF)"
               hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
-                data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
+                data?.monthLeft ? ` Left this month: ${chfWords(data.monthLeft.chfMicro)}.` : ""
               }`}
             >
               <input

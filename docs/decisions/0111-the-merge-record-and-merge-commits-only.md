@@ -500,3 +500,14 @@ spent model calls on work the person had not asked to drop.
    at the run, not at the Redo itself (the owner's answer D6 of 2026-11-09 changes what Redo
    does; run C). Bringing the person's commit into the run instead of holding is an open owner
    question.
+
+## Amendment (2026-11-09, wave 15 run B): the head-moved card says where each way out is (W15B-11)
+
+Words only, no new button. The head-moved sentence names where each way out is: "#8 changed
+after the review: look at the new commits, then merge it yourself on GitHub, or redo the task
+from its row in Tasks." Its card is titled by what happened, '"X" changed after the review'
+(before: 'The critic accepted "X", but pull request #8 was not merged', the old reason), and its
+Details no longer say "ask for a new review", which nothing offers. The card is open only while
+its task is done, whose row offers Redo, and a Redo withdraws it in the same transaction (point
+5, and point 2 of the review's fix-up of the merge side above), so the sentence never stands
+beside a task that offers no Redo.
