@@ -976,8 +976,11 @@ On an API key the researcher also **searches the web** with Anthropic's web sear
 searches per task, fewer when the task's money left would not pay for them, at about 1 cent each
 plus the results it reads (the task's cost and the session's log include them: "searched the web
 for ..."). Searching never eats the reserve a run keeps to finish: the run is told to wrap up at
-the same point with or without search (a fifth of its budget left, as the session's log says when
-it starts), and close to that point it is offered fewer searches, then none. On a Claude
+the same point with or without search (as the session's log says when it starts). A run is offered
+up to two searches a step, the same offer for the whole run (changing it would make the run pay to
+send its conversation again), until the money before its wrap-up point no longer covers them; then
+search goes away for the rest of the run and it reads pages by their address. A task whose budget
+is too small for even one search is told so in its brief and reads pages by their address. On a Claude
 subscription it searches with Claude Code's search, and opens pages with Forerunner's reader as
 on the key (Claude Code's own page reader is switched off). Search only finds pages: a claim in
 the research counts as sourced only when its page was opened and read, so the researcher opens

@@ -5709,15 +5709,24 @@ its `max_uses`, passes its blocks through unchanged and prices it.
   carries the searches billed. `toApiMessage` sends a message's `raw` as it is (a copy, so a
   request's cache mark never reaches the kept turn); `cacheHistory` never marks a raw message.
   A 400 for a request that carried the tool is read by `webSearchRefusal`: "not enabled" is
-  `WEB_SEARCH_OFF_CODE`, a domain problem `WEB_SEARCH_LISTS_CODE`.
-- *Loop* (`agent/loop.ts`): `RunRequest.webSearch` (`{ limit, allowedDomains?, blockedDomains? }`)
-  is used while the token grants `web_search` (`WEB_SEARCH_TOOL`), the provider runs it and the
-  pricing has `searches`. Each call's `max_uses` is the smaller of the searches left (`limit` less
-  those made) and what the hooks' room pays after the call's own worst case at
-  `pricing.searches(1)`, and, for a work run, what is left below its wrap-up line
-  (`SessionBudget.lineFor`) after that worst case; none once the wrap-up is due; 0 leaves the
-  tool out; a search the last turn left pending (`pendingServerToolUses`) keeps the tool and is
-  counted. The call's estimate adds `pricing.searches(maxUses)` for every cap; the line and the
+  `WEB_SEARCH_OFF_CODE`, a domain problem `WEB_SEARCH_LISTS_CODE`. The server tool goes after the
+  app's tools and their cache mark, which keeps only the tools' entry: the loop keeps its
+  definition fixed for the run (W15-15).
+- *Loop* (`agent/loop.ts`): `RunRequest.webSearch` (`{ limit, maxUses?, allowedDomains?,
+  blockedDomains? }`) is used while the token grants `web_search` (`WEB_SEARCH_TOOL`), the provider
+  runs it and the pricing has `searches`. W15-15: the offer is decided once, at the run's first
+  call, and its definition stays byte-identical while it stands (a changed `max_uses` rewrote the
+  cached conversation from the first search's blocks on, and dropping the tool voided the system
+  and every message entry: live check 2, F3). `max_uses` is the executor's `maxUses` when given,
+  else `searchOfferAtStart` (`enforcement/budget.ts`: the smaller of the searches left,
+  `WEB_SEARCH_MAX_USES_PER_CALL` (2) and what the money below the run's wrap-up line pays after the
+  first call's worst case, within the hooks' room); every call that offers it counts the whole
+  `pricing.searches(maxUses)`; the tool is dropped, once and for good, at the first call where
+  `searchOfferCovered` fails (spend + the call's tokens + the searches above the line, or above
+  the room), fewer searches are left than `max_uses`, or the wrap-up is due or sent; a search the
+  last turn left pending (`pendingServerToolUses`) keeps the tool for that call and is counted.
+  Once the line is fixed the offer is checked before a file-writing call's output cap is fitted,
+  so the cap gets what the searches leave (W15-13). The call's estimate adds `pricing.searches(maxUses)` for every cap; the line and the
   wrap-up use the tokens' worst case alone (`beforeModelCall`'s third argument), so offering
   search never moves them (review of 'web-search'). The assistant message keeps `response.raw`; a `pause_turn` is
   continued (at most `MAX_PAUSE_CONTINUATIONS` in a row, then an error that says so); a

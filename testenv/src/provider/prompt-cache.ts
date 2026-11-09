@@ -19,6 +19,12 @@ import type { ChatMessage, ModelRequest, Usage } from "./types.ts";
  * or last read it) and writes every marked prefix past it, billed once as the tokens from the
  * read to its last breakpoint; a prefix shorter than `minTokens` is never written; what follows
  * the last breakpoint is plain input. Tokens are counted as the provider counts them.
+ *
+ * Web search (W15-15, the API's rules as live check 2 measured them, F3): turning the server tool
+ * on or off changes what the API renders before the system prompt, so it voids the system and
+ * message entries (the tools entry keeps); a changed tool definition (its `max_uses`, its domain
+ * lists) voids the message entries from the first server block in the history on. Before, the
+ * stand-in ignored `webSearch`, so no test saw a run that changed its offer rewrite its cache.
  */
 export interface PromptCacheOptions {
   clock?: Clock;
@@ -56,6 +62,17 @@ function sentForm(m: ChatMessage, marked: boolean): { role: string; content: unk
   if (typeof m.content === "string")
     return { role: m.role, content: [{ type: "text", text: m.content }] };
   return { role: m.role, content: m.raw ?? m.content };
+}
+
+/** Whether a message holds a server tool's block (a web search and its results). */
+function holdsServerBlock(m: ChatMessage): boolean {
+  const blocks = (m.raw ?? (Array.isArray(m.content) ? m.content : [])) as { type?: unknown }[];
+  return blocks.some(
+    (b) =>
+      typeof b?.type === "string" &&
+      (b.type.startsWith("server_tool") || b.type.endsWith("_tool_result")) &&
+      b.type !== "tool_result",
+  );
 }
 
 export const DEFAULT_PROMPT_CACHE_MIN_TOKENS = 512;
@@ -102,9 +119,16 @@ export class PromptCacheSim {
         .update(canonicalJson({ model: req.model, ...(parts as object) }), "utf8")
         .digest("hex");
     const tools = (req.tools ?? []).map((t) => ({ ...t }));
+    // Web search on or off is part of every entry after the tools; its definition, of every
+    // message entry that holds a server block.
+    const search = req.webSearch ? { webSearch: true } : {};
+    const searchDef = req.webSearch ? { webSearchDef: { ...req.webSearch } } : {};
     if (req.cache?.tools && tools.length) marks.push({ tokens: toolsTokens, key: key({ tools }) });
     if (req.cache?.system && req.system)
-      marks.push({ tokens: toolsTokens + systemTokens, key: key({ tools, system: req.system }) });
+      marks.push({
+        tokens: toolsTokens + systemTokens,
+        key: key({ tools, system: req.system, ...search }),
+      });
     if (req.cache?.messages && req.messages.length) {
       const last = req.messages.length - 1;
       const at: number[] = [];
@@ -124,9 +148,16 @@ export class PromptCacheSim {
           messageTokens.slice(0, i).reduce((s, n) => s + n, 0) +
           (split ? this.count(split[0]) : (messageTokens[i] ?? 0));
         const prefix = req.messages.slice(0, i + 1).map((m, j) => sentForm(m, j === i));
+        const served = req.messages.slice(0, i + 1).some(holdsServerBlock);
         marks.push({
           tokens: toolsTokens + systemTokens + upTo,
-          key: key({ tools, system: req.system ?? "", messages: prefix }),
+          key: key({
+            tools,
+            system: req.system ?? "",
+            ...search,
+            ...(served ? searchDef : {}),
+            messages: prefix,
+          }),
         });
       }
     }

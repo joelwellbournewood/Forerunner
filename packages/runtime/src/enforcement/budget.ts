@@ -67,6 +67,57 @@ export function wrapUpLineOf(capUsdMicro: number, firstCallUsdMicro: number): Ru
 }
 
 /**
+ * At most this many web searches in one call (W15-15). The offer is fixed for a whole run, so its
+ * definition never changes and never rewrites the cached conversation; every call that offers it
+ * counts the whole `max_uses` in its worst case, and the tool is dropped once fewer searches are
+ * left than this. A small number keeps that worst case small, so the offer stands for most of a
+ * run instead of only its first call; the model searches again in a later call when it needs to.
+ */
+export const WEB_SEARCH_MAX_USES_PER_CALL = 2;
+
+/**
+ * The run's web search offer, decided once at its start (W15-15, W15-17): the smaller of the
+ * searches left, `WEB_SEARCH_MAX_USES_PER_CALL`, and what the money below the run's wrap-up line
+ * pays after the first call's own worst case (and the room the hooks report, when given). 0: no
+ * search on this run. One helper for the loop's first call and the executor's brief, so the brief
+ * never promises a search the run is not offered.
+ */
+export function searchOfferAtStart(o: {
+  capUsdMicro: number;
+  firstCallUsdMicro: number;
+  perSearchUsdMicro: number;
+  searchesLeft: number;
+  roomUsdMicro?: number;
+}): number {
+  const most = Math.max(0, Math.min(o.searchesLeft, WEB_SEARCH_MAX_USES_PER_CALL));
+  if (most === 0) return 0;
+  const line = wrapUpLineOf(o.capUsdMicro, o.firstCallUsdMicro);
+  if (line.saveOnly) return 0;
+  const spare =
+    Math.min(o.roomUsdMicro ?? Number.POSITIVE_INFINITY, line.lineUsdMicro) - o.firstCallUsdMicro;
+  if (!(o.perSearchUsdMicro > 0)) return spare >= 0 ? most : 0;
+  return Math.max(0, Math.min(most, Math.floor(spare / o.perSearchUsdMicro)));
+}
+
+/**
+ * Whether a run's fixed search offer still stands on a call (W15-15): its spend, the call's
+ * tokens' worst case and the whole `max_uses` worst case stay at or below the run's wrap-up line,
+ * and within the room the hooks report. A search is never paid from the reserve kept to finish.
+ */
+export function searchOfferCovered(o: {
+  lineUsdMicro: number;
+  spentUsdMicro: number;
+  callUsdMicro: number;
+  searchesUsdMicro: number;
+  roomUsdMicro: number;
+}): boolean {
+  return (
+    o.spentUsdMicro + o.callUsdMicro + o.searchesUsdMicro <= o.lineUsdMicro &&
+    o.callUsdMicro + o.searchesUsdMicro <= o.roomUsdMicro
+  );
+}
+
+/**
  * The run's line a refusal of its first call carries (`details.line`, review of budget-stop):
  * a budget below that call's worst case is refused before the call, and the drivers still say
  * the line ("save only") from it. Undefined when the details hold none.

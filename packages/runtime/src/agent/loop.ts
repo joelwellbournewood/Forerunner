@@ -4,6 +4,9 @@ import { z } from "zod";
 import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
 import {
   type SessionBudget,
+  searchOfferAtStart,
+  searchOfferCovered,
+  WEB_SEARCH_MAX_USES_PER_CALL,
   WRAP_UP_CALLS,
   WRAP_UP_SHARE,
   wrapUpLineIn,
@@ -203,6 +206,12 @@ export interface RunRequest {
   webSearch?: {
     /** Searches this run may still make (the task's cap less its earlier runs' searches). */
     limit: number;
+    /**
+     * The run's `max_uses`, decided once before its brief (W15-17, `searchOfferAtStart` in the
+     * executor): the loop sends it unchanged while the offer stands. Absent: the loop decides it
+     * at its first call with the same helper.
+     */
+    maxUses?: number;
     /** The project's lists in the server's form (`wiring/web-ports.ts`); never both. */
     allowedDomains?: string[];
     blockedDomains?: string[];
@@ -466,6 +475,10 @@ export class LoopAgentDriver {
       req.provider.serverWebSearch === true &&
       typeof req.pricing.searches === "function";
     let searchesMade = 0;
+    // W15-15: the run's one search offer (`max_uses`, fixed at its first call) and whether it
+    // was dropped, which is for good.
+    let searchFixed: number | undefined;
+    let searchDropped = false;
     const searchResults: WebSearchHit[] = [];
     const searchQueries = new Map<string, string>();
     let webSearchRefused: "off" | "lists" | undefined;
@@ -549,35 +562,39 @@ export class LoopAgentDriver {
         // The run's wrap-up line, once its first call fixed it (ADR 0112), and its spend so far.
         const fixedLine = ctx.phase === "work" ? req.budget.wrapUpLineOf(claims.runId) : undefined;
         const runSpent = req.budget.spentByRunId(claims.runId);
-        // 'web-search': the call's `max_uses`, from the money left after the call's own worst
-        // case and the searches the run may still make; a search the last turn left pending runs
-        // at the start of this call whatever, so the tool stays and its price is counted. The
-        // searches are paid only from the money below the run's wrap-up line (ADR 0112, its
-        // amendment in ADR 0107 of 2026-11-08): offering them never eats the reserve kept to
-        // finish, so near the line fewer are offered, and none once past it or told to wrap up.
-        // Once the line is fixed they are decided before the output cap, which then gets what
-        // they leave (W15-13); the first call fixes the line from its own worst case, so there
-        // they come after it.
+        // 'web-search' (W15-15): the offer is decided once, at the run's first call, and its
+        // definition stays byte-identical while it stands: a changed `max_uses` or a dropped tool
+        // rewrites the cached conversation (live check 2, F3: a quarter to a third of a research
+        // run's cost). Every limit stays in code: `max_uses` is fixed at the smaller of the
+        // searches left, `WEB_SEARCH_MAX_USES_PER_CALL` and what the money below the run's
+        // wrap-up line pays (`searchOfferAtStart`, the executor's decision when it gave one);
+        // every call that offers the tool counts the whole `max_uses` in its worst case; and the
+        // tool is dropped, once and for good, at the first call where the searches left, the
+        // money below the line or the room no longer cover it, or the run was told to wrap up
+        // (a search never eats the reserve kept to finish, ADR 0107's amendment of 2026-11-08).
+        // A search the last turn left pending runs at the start of this call whatever, so the
+        // tool stays for it and its price is counted. Once the line is fixed the offer is
+        // checked before the output cap, which then gets what the searches leave (W15-13); the
+        // first call fixes the line from its own worst case, so there it comes after it.
         const pendingSearches = pendingServerToolUses(messages).length;
-        const searchesFor = async (tokensUsdMicro: number): Promise<number> => {
-          let n = 0;
-          if (searchOn || pendingSearches > 0) {
-            const left = Math.max(0, (req.webSearch?.limit ?? 0) - searchesMade);
-            const per = req.pricing.searches?.(1) ?? 0;
-            if (searchOn && left > 0 && !wrapUpDue) {
-              let spare = (await this.deps.hooks.callRoomUsdMicro(ctx)) - tokensUsdMicro;
-              const line =
-                fixedLine ??
-                req.budget.lineFor(claims.runId, claims.budgetUsdMicro, tokensUsdMicro, ctx.phase);
-              if (line) spare = Math.min(spare, line.lineUsdMicro - runSpent - tokensUsdMicro);
-              n = Math.min(left, per > 0 ? Math.max(0, Math.floor(spare / per)) : left);
-            }
-            n = Math.max(n, pendingSearches);
-          }
-          return n;
+        const searchesLeft = Math.max(0, (req.webSearch?.limit ?? 0) - searchesMade);
+        const offerStands = async (tokensUsdMicro: number): Promise<boolean> => {
+          if (!searchOn || searchDropped || !searchFixed) return false;
+          if (pendingSearches > 0) return true;
+          if (wrapUpDue || wrapUpSent || searchesLeft < searchFixed) return false;
+          const line =
+            fixedLine ??
+            req.budget.lineFor(claims.runId, claims.budgetUsdMicro, tokensUsdMicro, ctx.phase);
+          return searchOfferCovered({
+            lineUsdMicro: line ? line.lineUsdMicro : Number.POSITIVE_INFINITY,
+            spentUsdMicro: runSpent,
+            callUsdMicro: tokensUsdMicro,
+            searchesUsdMicro: req.pricing.searches?.(searchFixed) ?? 0,
+            roomUsdMicro: await this.deps.hooks.callRoomUsdMicro(ctx),
+          });
         };
-        let maxUses = fixedLine ? await searchesFor(priceAt(floor)) : 0;
-        const searchesBefore = maxUses > 0 ? (req.pricing.searches?.(maxUses) ?? 0) : 0;
+        let offered = fixedLine ? await offerStands(priceAt(floor)) : false;
+        const searchesBefore = offered ? (req.pricing.searches?.(searchFixed ?? 0) ?? 0) : 0;
         let maxOut = floor;
         if (callCeiling > floor) {
           let room = (await this.deps.hooks.callRoomUsdMicro(ctx)) - searchesBefore;
@@ -603,7 +620,24 @@ export class LoopAgentDriver {
           maxOut = fitMaxTokens(priceAt, floor, callCeiling, room);
         }
         const tokensWorstCase = priceAt(maxOut);
-        if (!fixedLine) maxUses = await searchesFor(tokensWorstCase);
+        if (searchOn && searchFixed === undefined) {
+          searchFixed = Math.min(
+            req.webSearch?.maxUses ??
+              searchOfferAtStart({
+                capUsdMicro: claims.budgetUsdMicro,
+                firstCallUsdMicro: tokensWorstCase,
+                perSearchUsdMicro: req.pricing.searches?.(1) ?? 0,
+                searchesLeft,
+                roomUsdMicro: await this.deps.hooks.callRoomUsdMicro(ctx),
+              }),
+            searchesLeft,
+            WEB_SEARCH_MAX_USES_PER_CALL,
+          );
+        }
+        if (!fixedLine) offered = await offerStands(tokensWorstCase);
+        // Gone once, gone for the run: never offered again.
+        if (searchFixed && !offered && !searchDropped && searchOn) searchDropped = true;
+        const maxUses = offered ? (searchFixed ?? 0) : 0;
         // A retry the money below the line could not raise is asked to send less (U-085).
         if (cutNote && (cutNote.always || raise === undefined || maxOut <= cutNote.maxOut)) {
           appendText(messages, cutNote.text);

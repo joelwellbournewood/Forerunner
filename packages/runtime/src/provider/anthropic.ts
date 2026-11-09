@@ -267,18 +267,22 @@ export class AnthropicMessagesProvider implements ModelProvider {
         ? [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }]
         : req.system;
     }
-    if (req.tools?.length) {
-      params.tools = req.tools.map((t, i) => ({
+    const tools = req.tools ?? [];
+    if (tools.length) {
+      params.tools = tools.map((t, i) => ({
         name: t.name,
         description: t.description,
         input_schema: t.input_schema as Anthropic.Tool.InputSchema,
-        ...(req.cache?.tools && i === req.tools!.length - 1
+        ...(req.cache?.tools && i === tools.length - 1
           ? { cache_control: { type: "ephemeral" as const } }
           : {}),
       }));
     }
-    // After the app's own tools (and their cache mark), so a change of the search's `max_uses`
-    // leaves the tools' cached entry as it is.
+    // After the app's own tools (and their cache mark), which keeps the tools' own entry. That
+    // mark does not protect the rest (W15-15, live check 2's F3): turning search on or off voids
+    // the system and every message entry, and a changed definition (`max_uses`, the lists) the
+    // message entries from the first search's blocks on. So the loop keeps one definition,
+    // byte-identical, for a whole run and drops it at most once.
     if (search) params.tools = [...(params.tools ?? []), webSearchTool(search)];
     if (req.cache?.messages) {
       const used =

@@ -344,3 +344,7 @@ names the model. A model the price table does not know is priced as the run's mo
    `optional` notes, never a reason to pause; "Nothing works yet" or "None of the tests pass"
    stays work. The wrap-up and the brief's line ask for only what the criteria still need, as a
    list, or "nothing", with no optional extras.
+3. **Searches near the line (W15-15; amends the 'web-search' note in ADR 0107).** A run is no
+   longer offered fewer searches call by call as it nears its line: its fixed offer stands while
+   the money below the line covers it whole, then goes for the rest of the run (ADR 0107's
+   amendment of 2026-11-09, point 2).

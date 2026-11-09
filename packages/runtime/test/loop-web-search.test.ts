@@ -16,6 +16,7 @@ import {
   WRAP_UP_TEXT,
 } from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
+import { WEB_SEARCH_MAX_USES_PER_CALL } from "../src/enforcement/budget.ts";
 import { EnforcementHooks, type RunContext } from "../src/enforcement/hooks.ts";
 import { AnthropicMessagesProvider } from "../src/provider/anthropic.ts";
 import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
@@ -479,9 +480,9 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
     // The same line with or without search: the reserve is a fifth of the cap.
     expect(offered.line).toEqual(without.line);
     expect(offered.line).toMatchObject({ reserveUsdMicro: 500_000, lineUsdMicro: 2_000_000 });
-    // Search was offered on every call all the same.
+    // Search was offered on every call all the same, one fixed definition (W15-15).
     expect(offered.calls.map((c) => Number(c.webSearch?.max_uses))).toEqual(
-      offered.calls.map(() => 10),
+      offered.calls.map(() => WEB_SEARCH_MAX_USES_PER_CALL),
     );
   });
 
@@ -514,8 +515,10 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
     expect(offered.wrap).toEqual(without.wrap);
     expect(offered.calls).toHaveLength(without.calls.length);
     // Before the wrap-up each call's whole worst case, its searches included, stays below the
-    // line: the reserve kept to finish is never spent on searches. Near the line fewer searches
-    // are offered, then none; after the wrap-up, none.
+    // line: the reserve kept to finish is never spent on searches. W15-15: the offer is one
+    // fixed definition, so the cache holds; once the money below the line no longer covers it
+    // the tool is dropped for good; after the wrap-up, none (before, fewer were offered call by
+    // call, each change rewriting the cached conversation).
     const line = offered.line?.type === "budget_line" ? offered.line.lineUsdMicro : 0;
     let spent = 0;
     let wrapped = false;
@@ -527,10 +530,11 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
       if (e.type === "model_call_end") spent += e.costUsdMicro;
     }
     for (const c of offered.calls) maxUses.push(Number(c.webSearch?.max_uses ?? 0));
-    expect(maxUses[0]).toBe(10);
+    expect(maxUses[0]).toBe(WEB_SEARCH_MAX_USES_PER_CALL);
     expect(maxUses.at(-1)).toBe(0);
-    expect(maxUses.some((n) => n > 0 && n < 10)).toBe(true);
-    expect([...maxUses].sort((a, b) => b - a)).toEqual(maxUses);
+    const gone = maxUses.indexOf(0);
+    expect(maxUses.slice(0, gone).every((n) => n === WEB_SEARCH_MAX_USES_PER_CALL)).toBe(true);
+    expect(maxUses.slice(gone).every((n) => n === 0)).toBe(true);
   });
 
   it("Stop now while a search runs aborts the stream in flight and the run reports killed", async () => {
@@ -568,5 +572,151 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
     const res = await p;
     expect(res.outcome).toBe("killed");
     expect(aborted).toBe(true);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-15, live check 2's F3): the loop set `max_uses` on every call from the
+ * money below the line and dropped the tool when it reached 0. Once a search's blocks are in the
+ * history a changed definition rewrites the cached conversation, and dropping the tool rewrites
+ * the system and every message entry: a quarter to a third of a research run's cost was cache
+ * rewrites. The prompt-cache stand-in now plays those rules, and the model behind the Messages
+ * API stand-in searches on every call.
+ */
+describe("w15-run, wave 15: the web search offer is fixed for the run, so the cache holds (W15-15)", () => {
+  async function searchingRun(runCap: number, limit = 10) {
+    const h = harness();
+    const model = new FakeProvider({
+      replies: [
+        {
+          when: (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_TEXT.slice(0, 30)),
+          reply: {
+            text: "Where I stopped: three hosts compared.\nLeft to do: nothing",
+            usage: { output_tokens: 300 },
+          },
+          times: Number.POSITIVE_INFINITY,
+        },
+        // It searches on every call that offers the tool, and reads a page on every call.
+        {
+          when: (r: ModelRequest) => !!r.webSearch,
+          reply: {
+            text: "Searching again, then reading the first result.",
+            searches: [{ query: "static site host free tier", results: HITS }],
+            toolCalls: [{ name: "web_fetch", input: { url: HITS[0]?.url } }],
+            usage: { output_tokens: 300 },
+          },
+          times: 12,
+        },
+        {
+          when: (r: ModelRequest) => !r.webSearch,
+          reply: {
+            text: "Reading the next page.",
+            toolCalls: [{ name: "web_fetch", input: { url: HITS[1]?.url } }],
+            usage: { output_tokens: 300 },
+          },
+          times: 12,
+        },
+        { reply: { text: "Done: three hosts compared.", usage: { output_tokens: 300 } } },
+      ],
+      latency: "none",
+      clock: h.clock,
+      onNoMatch: "throw",
+      promptCache: true,
+    });
+    const standIn = messagesApiStandIn({ model, clock: h.clock, search: { resultTokens: 6_000 } });
+    const events: RunEvent[] = [];
+    // A page the size a real one is, so the conversation is worth caching.
+    const page: ToolSpec<{ url: string }> = {
+      name: "web_fetch",
+      description: "read one web page",
+      schema: z.object({ url: z.string() }),
+      actionClass: "read",
+      risk: "low",
+      async execute(input) {
+        return { content: `page ${input.url}: ${"the free tier gives 100 GB. ".repeat(600)}` };
+      },
+    };
+    const res = await new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }).run({
+      token: issue(h, {
+        allowedTools: ["web_fetch", "web_search"],
+        budgetUsdMicro: runCap,
+        taskId: "task-1",
+      }),
+      budget: budget("sess-1", 10_000_000, h.clock),
+      provider: new AnthropicMessagesProvider({
+        apiKey: KEY,
+        fetch: standInFetch(standIn),
+        maxRetries: 0,
+        clock: h.clock,
+      }),
+      model: MODEL,
+      billingSourceId: "bs",
+      system: "You are the researcher. ".repeat(200),
+      messages: [{ role: "user", content: "Compare the free tiers of three static site hosts." }],
+      tools: new ToolRegistry().register(page),
+      pricing: PRICING,
+      timeoutMs: 3_600_000,
+      wrapUp: WRAP_UP_TEXT,
+      webSearch: { limit },
+      onEvent: (ev) => events.push(ev),
+    });
+    const calls = standIn.requests.filter((r) => r.path === "/v1/messages" && r.status === 200);
+    return { res, events, calls };
+  }
+
+  it("a run that searches on every call: one byte-identical definition, dropped at most once and never again; each call reads what the last one cached; the limits hold in code", async () => {
+    // USD 0.80: the money below the line runs short partway through the run.
+    const { res, events, calls } = await searchingRun(800_000);
+    expect(res.outcome).toBe("completed");
+    const offered = calls.map((c) => (c.webSearch ? JSON.stringify(c.webSearch) : null));
+    // Search was offered at the start, and every request that offered it sent the same bytes.
+    expect(offered[0]).not.toBeNull();
+    expect(new Set(offered.filter((d) => d !== null)).size).toBe(1);
+    // Dropped at most once: once gone, never back.
+    const firstGone = offered.indexOf(null);
+    if (firstGone >= 0) expect(offered.slice(firstGone).every((d) => d === null)).toBe(true);
+    // Each call reads at least what the previous call read and wrote, except at the one drop.
+    const ends = events.filter(
+      (e): e is Extract<RunEvent, { type: "model_call_end" }> => e.type === "model_call_end",
+    );
+    expect(ends.length).toBe(calls.length);
+    for (let i = 1; i < ends.length; i++) {
+      if (i === firstGone) continue;
+      const prev = ends[i - 1]?.usage;
+      const cur = ends[i]?.usage;
+      expect(
+        cur?.cache_read_input_tokens,
+        `call ${i + 1}: read ${cur?.cache_read_input_tokens}, the call before read ${prev?.cache_read_input_tokens} and wrote ${prev?.cache_creation_input_tokens}`,
+      ).toBeGreaterThanOrEqual(
+        (prev?.cache_read_input_tokens ?? 0) + (prev?.cache_creation_input_tokens ?? 0),
+      );
+    }
+    // The searches never pass the task's searches left.
+    expect(res.webSearches).toBeLessThanOrEqual(10);
+    // Every call that offered the tool counted its whole max_uses in its worst case.
+    const starts = events.filter(
+      (e): e is Extract<RunEvent, { type: "model_call_start" }> => e.type === "model_call_start",
+    );
+    calls.forEach((c, i) => {
+      const n = Number(c.webSearch?.max_uses ?? 0);
+      if (n > 0)
+        expect(starts[i]?.estimateUsdMicro ?? 0).toBeGreaterThan(PRICING.searches?.(n) ?? 0);
+    });
+    // No search is paid from the reserve kept to finish: told to wrap up at or below the line,
+    // and the tool is gone from that call on.
+    const line = events.find((e) => e.type === "budget_line");
+    const wrap = events.find((e) => e.type === "wrap_up_sent");
+    if (wrap?.type === "wrap_up_sent" && line?.type === "budget_line") {
+      expect(wrap.spentUsdMicro).toBeLessThanOrEqual(line.lineUsdMicro);
+      const at = calls.length - 1;
+      expect(calls[at]?.webSearch).toBeUndefined();
+    }
+  });
+
+  it("the searches left at the start bound the run: with three left it never makes more than three", async () => {
+    const { res, calls } = await searchingRun(5_000_000, 3);
+    expect(res.webSearches).toBeLessThanOrEqual(3);
+    const defs = new Set(calls.filter((c) => c.webSearch).map((c) => JSON.stringify(c.webSearch)));
+    expect(defs.size).toBe(1);
   });
 });

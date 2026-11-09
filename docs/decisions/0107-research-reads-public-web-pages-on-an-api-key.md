@@ -404,3 +404,20 @@ rewritten.
    aborted at once, ending as `tool_not_allowed` with that reason. A read without a value gets no
    replacement, as before (R-readhook). WebFetch's and WebSearch's replacements are scrubbed whole
    (their `url` and `query` went back unredacted before).
+2. **The search offer is decided once and stays the same for the run (W15-15, W15-17; amends
+   points 4 and 9 of the 'web-search' amendment).** Live check 2 measured what point 9 assumed
+   away: dropping the server tool voids the system and every message entry of the prompt cache,
+   and a changed `max_uses` once a search's blocks are in the history voids the message entries
+   from them on (F3: a quarter to a third of a research run's cost was cache rewrites). And the
+   brief said "Use web_search" to a run whose budget let no call offer it (F5). Now one helper,
+   `searchOfferAtStart`, decides the offer before the brief (the executor) with the loop's own
+   arithmetic: the smaller of the task's searches left, `WEB_SEARCH_MAX_USES_PER_CALL` (2: every
+   call that offers the tool counts its whole `max_uses`, so a small number keeps the offer for
+   most of a run instead of its first call; the model searches again in a later call) and what the
+   money below the run's wrap-up line pays after the first call. 0 means no search line, no grant
+   and no tool. The definition is sent byte-identical while the offer stands; the tool is dropped,
+   once and for good, at the first call where the searches left, the money below the line or the
+   room no longer cover the whole `max_uses`, or the run is told to wrap up. Every limit stays in
+   code (ADR 0112's "a search never eats the reserve kept to finish" holds); `WEB_SEARCH_LINE`
+   says to read pages by their address once search is no longer offered. The prompt-cache
+   stand-in plays these rules, so a test sees a rewrite.
