@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { requestWords } from "../src/daemon/request-words.ts";
+import { sessionEnded } from "../src/notifications/producers.ts";
 
 /**
  * w15-chat (wave 15): the words cards, the project line and notifications are written in, at the
@@ -107,5 +108,43 @@ describe("w15-chat, wave 15", () => {
     expect(
       line([change("r1", "settings.set"), { id: "r2", change_card: { key: "person:questions" } }]),
     ).toBe("Waiting for you: 1 change to confirm and 1 question");
+  });
+
+  // W15-62 (live check 2, run RUN-8): 'Chess tools: did 2 tasks: "Write the…" and "Write the…"':
+  // each name cut at a word "however short", so the two read the same.
+  it("a notification's title tells two tasks apart within 60 characters (W15-62)", () => {
+    const facts = {
+      sessionId: "s-1",
+      status: "completed",
+      stopReason: "done",
+      spentUsdMicro: 10_000,
+      completed: ["a", "b"],
+      needsHuman: [],
+      projectName: "Chess tools",
+    };
+    const two = sessionEnded("h-1", {
+      ...facts,
+      summary:
+        'Did 2 tasks: "Write the meeting notes in notes.md" and "Write the summary in summary.md". Nothing left. CHF 0.20.',
+    });
+    expect(two.title.length).toBeLessThanOrEqual(60);
+    const names = [...two.title.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    // Before: "Write the…" twice.
+    expect(new Set(names).size).toBe(names.length);
+    expect(two.title).toBe('Chess tools: did 2 tasks: "Write the meeting…" and 1 more');
+    // Names that differ in their first word keep the shortest cut (unchanged).
+    const quote = sessionEnded("h-1", {
+      ...facts,
+      projectName: "Quote page",
+      summary: 'Did 2 tasks: "Create index.html" and "Write script.js". Nothing left. CHF 0.20.',
+    });
+    expect(quote.title).toBe('Quote page: did 2 tasks: "Create…" and "Write script.js"');
+    // Two names with a common start each keep the word that tells them apart when they fit.
+    const fits = sessionEnded("h-1", {
+      ...facts,
+      projectName: "Club",
+      summary: 'Did 2 tasks: "Write the guide in guide.md" and "Write the notes in notes.md".',
+    });
+    expect(fits.title).toBe('Club: did 2 tasks: "Write the guide…" and "Write the notes…"');
   });
 });

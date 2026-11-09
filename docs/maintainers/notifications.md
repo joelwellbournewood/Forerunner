@@ -223,7 +223,11 @@ one hook each: `hooks.sessionEnded(humanId, facts)`, `hooks.requestOpened(req, h
 What they say follows the writing rules (design §5, "Notification"): a title of at most
 `NOTIFICATION_TITLE_MAX` (60) characters that names the project and the task and what happened,
 a body of at most `NOTIFICATION_BODY_MAX` (140) that is one sentence and what to do, no ids, no
-"(s)", no raw verdicts. `requestOpened(req, humanId, { projectName, taskTitle })` takes the
+"(s)", no raw verdicts. A title too long shortens its quoted names at a word, but never before
+the word that tells a name from the others beside it (`keepOf`, W15-62: live check 2 read
+'Chess tools: did 2 tasks: "Write the…" and "Write the…"'); when they still do not fit, a list
+of names names fewer and counts the rest ('… did 2 tasks: "Write the meeting…" and 1 more',
+design §5 rule 5), and only then is the text cut. `requestOpened(req, humanId, { projectName, taskTitle })` takes the
 card's own title from `requestWords` ('Quote page: "Style the page" failed 4 times'; a card
 with one sentence has it as its title) and its body ('The designer said: "…" Answer it in the
 Inbox.'); compose reads the names when the request is inserted. `sessionEnded` takes the

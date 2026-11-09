@@ -52,25 +52,97 @@ function plain(s: string): string {
 }
 
 /**
+ * How much of a name stays when it is cut (W15-62): its words up to the first one that differs
+ * from every other name beside it, so two names never read the same ("Write the meeting…" and
+ * "Write the summary…", never "Write the…" twice). One name alone keeps its first word.
+ */
+function keepOf(name: string, others: readonly string[]): number {
+  const bare = (s: string) => s.replace(/…$/, "");
+  const words = bare(name).split(" ");
+  let keep = words[0]?.length ?? 0;
+  for (const other of others) {
+    const ow = bare(other).split(" ");
+    let i = 0;
+    while (i < words.length - 1 && words[i]?.toLowerCase() === ow[i]?.toLowerCase()) i++;
+    keep = Math.max(keep, words.slice(0, i + 1).join(" ").length);
+  }
+  return keep;
+}
+
+/** The quoted names of a text, each with its place. */
+const quotedNames = (t: string) =>
+  [...t.matchAll(/"([^"]+)"/g)].map((m) => ({
+    name: m[1] as string,
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }));
+
+/** The longest quoted names shortened at a word, never below what tells them apart. */
+function shortenNames(text: string, max: number): string {
+  let t = text;
+  for (let i = 0; i < 8 && t.length > max; i++) {
+    const names = quotedNames(t).map((q) => q.name);
+    const candidates = [...new Set(names)]
+      .map((name) => ({
+        name,
+        keep: keepOf(
+          name,
+          names.filter((n) => n !== name),
+        ),
+      }))
+      .filter((c) => c.name.replace(/…$/, "").length > Math.max(c.keep, 1) && c.name.length > 12)
+      .sort((a, b) => b.name.length - a.name.length);
+    const longest = candidates[0];
+    if (!longest) break;
+    const target = Math.max(12, longest.name.length - (t.length - max) - 1);
+    // A name is cut at a word ("Create…", never "Create inde…"), but not before the word that
+    // tells it from the others.
+    const head = longest.name.slice(0, target - 1);
+    const space = head.lastIndexOf(" ");
+    const at = Math.max(space > 0 ? space : head.length, longest.keep);
+    const short = `${longest.name.slice(0, at).replace(/[\s,;:.]+$/, "")}…`;
+    if (short.length >= longest.name.length) break;
+    t = t.replace(`"${longest.name}"`, `"${short}"`);
+  }
+  return t;
+}
+
+/** A list of quoted names as the result writes it: "A", "B" and "C"; or "A" and 2 more. */
+function nameList(names: readonly string[], more: number): string {
+  const q = names.map((n) => `"${n}"`);
+  if (more > 0) return `${q.join(", ")} and ${more} more`;
+  return q.length <= 1 ? q.join("") : `${q.slice(0, -1).join(", ")} and ${q.at(-1)}`;
+}
+
+/**
  * A text within `max`: the quoted names in it are shortened first (a task's title, cut at a
- * word), so what happened stays whole; only then the text itself is cut.
+ * word, never below the word that tells it from the others), so what happened stays whole;
+ * then a list of names names fewer, "and 1 more" (design §5 rules 1 and 5, W15-62); only then
+ * the text itself is cut.
  */
 function fit(text: string, max: number): string {
-  let t = text;
-  // The longest quoted name is shortened first, by what is over, never below 12 characters.
-  for (let i = 0; i < 6 && t.length > max; i++) {
-    const longest = [...t.matchAll(/"([^"]+)"/g)]
-      .map((m) => m[1] as string)
-      .sort((a, b) => b.length - a.length)[0];
-    if (!longest || longest.length <= 12) break;
-    const target = Math.max(12, longest.length - (t.length - max) - 1);
-    // A name is cut at a word, however short that leaves it ("Create…", never "Create inde…").
-    const head = longest.slice(0, target - 1);
-    const space = head.lastIndexOf(" ");
-    const short = `${(space > 0 ? head.slice(0, space) : head).replace(/[\s,;:.]+$/, "")}…`;
-    t = t.replace(`"${longest}"`, `"${short}"`);
+  const t = shortenNames(text, max);
+  if (t.length <= max) return t;
+  // The names in one list ("A", "B" and "C"): fewer of them, the rest counted.
+  const names = quotedNames(text);
+  const listed =
+    names.length >= 2 &&
+    names
+      .slice(1)
+      .every((q, i) => [", ", " and "].includes(text.slice(names[i]?.end ?? 0, q.start)));
+  if (listed) {
+    const start = names[0]?.start ?? 0;
+    const end = names.at(-1)?.end ?? 0;
+    for (let keep = names.length - 1; keep >= 1; keep--) {
+      const fewer = `${text.slice(0, start)}${nameList(
+        names.slice(0, keep).map((q) => q.name),
+        names.length - keep,
+      )}${text.slice(end)}`;
+      const f = shortenNames(fewer, max);
+      if (f.length <= max) return f;
+    }
   }
-  return t.length <= max ? t : cut(t, max);
+  return cut(t, max);
 }
 
 const capitalFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
