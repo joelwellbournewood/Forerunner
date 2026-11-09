@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { ZERO_REFUSED } from "../src/commands/budget.ts";
 import { settingsSet } from "../src/commands/settings.ts";
-import { CommandExecutor, type ExecuteResult } from "../src/index.ts";
+import { CommandExecutor, type ExecuteResult, IntentParser } from "../src/index.ts";
 import { world } from "./helpers.ts";
 
 /**
@@ -155,5 +156,42 @@ describe("w15-chat, wave 15", () => {
       /^Take back "Lowered the monthly cap from CHF 150(\.00)? to CHF 100(\.00)?"\?$/,
     );
     expect(back.card.what).not.toMatch(/^undo:/);
+  });
+
+  // W15-35 (wave 13 polish-screens): a refused command through POST /commands/execute read
+  // "budget.set: invalid parameters", the words hidden in details.issues.
+  it("a refusal by the parameters' schema reads the schema's own sentence; chat asks with it, without the command's name (W15-35)", async () => {
+    const w = await world();
+    const month = refused(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 0 },
+        ctx: w.ctx({ source: "ui" }),
+      }),
+    );
+    expect(month.reason).toBe(ZERO_REFUSED.month);
+    expect(month.code).toBe("validation");
+    // A field of the wrong type has no sentence of its own: the command and the field, never
+    // the bare "invalid parameters".
+    const typed = refused(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: "ten" },
+        ctx: w.ctx({ source: "ui" }),
+      }),
+    );
+    expect(typed.reason).toBe(
+      "budget.set: invalid parameters (amountChf: Invalid input: expected number, received string)",
+    );
+    // Chat's question says the same sentence.
+    const parsed = await new IntentParser(w.registry).parse("set the monthly cap to 0", {
+      source: "chat",
+      timezone: "Europe/Zurich",
+      now: w.clock.now(),
+      activeProjectId: null,
+      projects: [],
+    });
+    expect(parsed.question?.text).toBe(`${ZERO_REFUSED.month} Which value did you mean?`);
+    expect(parsed.question?.text).not.toContain("budget.set");
   });
 });

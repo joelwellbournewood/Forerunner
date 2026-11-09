@@ -537,6 +537,13 @@ among them.
   to <old value>?" from the card kept in memory, else 'Take back "<the change, without its
   effect>"?' from the row's sentence. The read-back is that question, and Changes shows it
   alone with Yes and No (no card rows).
+- **A refusal says why in the schema's words (W15-35).** `CommandRegistry.validate` refuses
+  with the parameters' own sentence when an issue carries one (`isSentence`: a capital first, a
+  full stop last; `ZERO_REFUSED` for budget.set's 0 for a session or the month), else
+  "<command>: invalid parameters (<field>: <issue>; …)"; the issues stay in `details.issues`.
+  Before, every client but chat read "budget.set: invalid parameters". The parser's question
+  (`invalidQuestion`) asks with the same sentence and no command name ("The monthly cap must be
+  more than … Which value did you mean?").
 
 ## How to change it
 

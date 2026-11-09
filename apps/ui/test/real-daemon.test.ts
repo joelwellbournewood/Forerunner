@@ -33,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
 import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
+import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
 import { saidByName } from "../../../packages/critic/src/followup.ts";
 import {
   AcceptingCriticProvider,
@@ -12348,6 +12349,27 @@ describe("w15-chat, wave 15", () => {
       expect((await client.project(project.id)).researchReads).toBe(
         "Research reads: any public website",
       );
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-35 (wave 13 polish-screens): POST /commands/execute with budget.set 0 for the month
+  // answered "budget.set: invalid parameters"; the schema's sentence was in details.issues only.
+  it("POST /commands/execute refuses the monthly cap's 0 with the schema's own sentence (W15-35)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const month = await client.executeCommands({
+        commands: [{ name: "budget.set", params: { scope: "month", amountChf: 0 } }],
+        wordsUsed: "Monthly spending cap to 0",
+        source: "ui",
+      });
+      expect(month.status).toBe("refused");
+      expect(month.code).toBe("validation");
+      expect(month.reason).toBe(ZERO_REFUSED.month);
+      expect(month.reason).not.toMatch(/budget\.set|invalid parameters/);
+      // The cap is as it was.
+      expect((await client.me()).monthlyCap.chfMicro).toBe(150_000_000);
     } finally {
       await rt.close();
     }

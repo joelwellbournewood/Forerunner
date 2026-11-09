@@ -2,7 +2,7 @@ import { ForerunnerError, isForerunnerError } from "@forerunner/platform";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "@forerunner/runtime";
 import { z } from "zod";
 import { matchProjects } from "./commands/shared.ts";
-import type { CommandRegistry } from "./registry.ts";
+import { type CommandRegistry, isSentence } from "./registry.ts";
 import { endOfTonight, localMidnight, nextLocalTime, startOfTomorrow } from "./time.ts";
 import type { CommandSource } from "./types.ts";
 
@@ -173,6 +173,10 @@ function untilQuestion(leftover: string): IntentQuestion {
 
 /** A pattern matched but the registry refused the values: the same question the model path asks. */
 function invalidQuestion(name: string, e: unknown): IntentQuestion {
+  // W15-35: the schema's own sentence, as every client reads it ("The monthly cap must be more
+  // than CHF 0.00: …"), without the command's name.
+  if (isForerunnerError(e) && isSentence(e.message))
+    return { text: `${e.message} Which value did you mean?`, options: [] };
   const issues = isForerunnerError(e) ? e.details.issues : undefined;
   const detail =
     Array.isArray(issues) && issues.length > 0
