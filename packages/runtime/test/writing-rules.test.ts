@@ -5,7 +5,7 @@ import { requestWords } from "../src/daemon/request-words.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { scanForInjection } from "../src/injection/scan.ts";
 import * as producers from "../src/notifications/producers.ts";
-import { sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
+import { MERGE_WAITS, sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
 
 /*
  * The writing rules of core-experience design §5, checked mechanically on what the system writes
@@ -468,6 +468,37 @@ describe("polish-words, wave 13: the words a person reads (design §5)", () => {
     expect(violations(said, 100)).toEqual([]);
   });
 
+  it("the session result's merge-later line holds for a merge GitHub did not answer about, not only checks (P7-5)", () => {
+    // `waitingPrs` counts both MERGE_WAITS statuses: "checks_pending" and "unreachable" (GitHub
+    // did not answer; Forerunner tries the merge again), so the line may not promise checks only.
+    expect([...MERGE_WAITS].sort()).toEqual(["checks_pending", "unreachable"]);
+    const lines = (waitingPrs: number) =>
+      sessionResultLines({
+        outcome: {
+          done: [{ id: "t", title: "Write the page" }],
+          failed: [],
+          needsYou: [],
+          leftOver: [],
+          waiting: [],
+          waitingForDocker: [],
+          stopReason: "queue_empty",
+          spentChfMicro: 20_000,
+        },
+        inReview: [],
+        leftOutForBudget: [],
+        sessionCapChfMicro: 1_000_000,
+        openTasks: 0,
+        waitingPrs,
+      }).join(" ");
+    expect(lines(1)).toContain(
+      "1 reviewed pull request merges by itself once its checks pass or GitHub answers.",
+    );
+    expect(lines(2)).toContain(
+      "2 reviewed pull requests merge by themselves once their checks pass or GitHub answers.",
+    );
+    expect(lines(1)).not.toMatch(/merges when its checks pass\./);
+  });
+
   it("the session result's failed line reads the run's report plain, cut at a word (L-18)", () => {
     const lines = sessionResultLines({
       outcome: {
@@ -775,6 +806,26 @@ describe("polish-words, wave 13: money, budget lines, the log's lines", () => {
 });
 
 describe("polish-words, wave 13: merge, preview, take-out and page-reader words", () => {
+  it("a Yes on a change card that was not applied names the card's question, not 'the change card' (W14-4)", async () => {
+    const { changeNotAppliedWords } = await import("../src/daemon/request-words.ts");
+    // The repo.create card of the bench's walk 8, answered after the offer linked a repository.
+    const said = changeNotAppliedWords(
+      {
+        what: "a GitHub repository for Bat count",
+        ask: 'Create the private GitHub repository bench/bat-count for "Bat count"? Its tasks then run on branches with pull requests.',
+      },
+      "Bat count already has a repository (bench/bat-count); one is created only for a project without one",
+    );
+    expect(said).toBe(
+      "Your Yes to \"Create the private GitHub repository bench/bat-count for 'Bat count'?\" was not applied: Bat count already has a repository (bench/bat-count); one is created only for a project without one. Nothing changed; ask again if you still want it.",
+    );
+    expect(said).not.toMatch(/change card/);
+    // A card with no question of its own reads by what it is about.
+    expect(changeNotAppliedWords({ what: 'the task "Write the guide"' }, "")).toBe(
+      'Your Yes about the task "Write the guide" was not applied: it was refused. Nothing changed; ask again if you still want it.',
+    );
+  });
+
   it("a preview blocked by a file open in another program says so and what to do (P7-24)", async () => {
     const { previewFailedSentence } = await import("../src/daemon/pull-requests.ts");
     const busy = Object.assign(new Error("EBUSY: resource busy or locked, rmdir 'C:\\x'"), {

@@ -369,6 +369,7 @@ import {
   pickPrincipal,
 } from "./identity.ts";
 import { ProjectPullRequests } from "./pull-requests.ts";
+import { changeNotAppliedWords } from "./request-words.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
@@ -3905,14 +3906,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         humanId: human.id,
         deviceId: remoteDevice?.id ?? null,
         onRefused: async (card, r) => {
-          const what = typeof card.cardJson.what === "string" ? card.cardJson.what : card.id;
           await store.message.send({
             from_agent_id: agent.id,
             to_human_id: human.id,
             project_id:
               typeof card.cardJson.projectId === "string" ? card.cardJson.projectId : null,
             type: "warning",
-            body: `Your answer to the change card "${what}" was not applied: ${r.reason ?? "refused"}. Nothing changed; ask again if you still want it.`,
+            // W14-4 (polish-words): the card as the Inbox showed it, never "the change card".
+            body: changeNotAppliedWords(card.cardJson, r.reason ?? ""),
             requires_ack: false,
             author_agent: agent.id,
           });

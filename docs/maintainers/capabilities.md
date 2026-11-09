@@ -288,7 +288,10 @@ with their milestone.
   before it starts with no `DEPS_BASE_REF` and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
-  whether it was pushed) with the task outcome `needs_human`. Its options each lead somewhere
+  whether it was pushed) with the task outcome `needs_human`. Its first sentence, the card's
+  title, names the task ('"Write the guide" conflicts with main in README.md'), never the branch
+  (W14-5, polish-words: it read "Rebase of fr/e34de89b-… onto main conflicts in …"); the steps
+  name the branch, where the person fetches it. Its options each lead somewhere
   (U-028): the runtime's `syncPrAnswers` applies the answer (`runtime.md`), and the task's next
   run reads it from the card (`outcome`, then `consumed_at` once a run used it). "I resolved
   it" takes the person's branch (the host's, else the worktree's; `GitOps.hasRef`), checks the

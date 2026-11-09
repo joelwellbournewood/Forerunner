@@ -2241,13 +2241,17 @@ export class PrTaskExecutor implements TaskExecutor {
     const { task } = ctx;
     const { branch, target, conflicts } = c;
     const repoName = `${target.repo.owner}/${target.repo.name}`;
+    // W14-5 (polish-words): the card's first sentence (its title in the Inbox) names the task,
+    // never its branch ("Rebase of fr/e34de89b-… onto main conflicts"); the steps below still
+    // name the branch, where the person fetches it.
+    const named = `"${task.title.replace(/\s+/g, " ").trim()}"`;
     const what = c.again
-      ? `The branch ${branch} still conflicts with ${target.base}`
+      ? `${named} still conflicts with ${target.base}`
       : c.rebuild
-        ? `Rebuilding ${branch} without ${andList(c.rebuild.dropped.map(droppedWords))} conflicts`
+        ? `Rebuilding ${named} without ${andList(c.rebuild.dropped.map(droppedWords))} conflicts`
         : c.merging
-          ? `Bringing ${target.base} and the work it builds on into ${branch} conflicts`
-          : `Rebase of ${branch} onto ${target.base} conflicts`;
+          ? `Bringing ${target.base} and the work ${named} builds on into it conflicts`
+          : `${named} conflicts with ${target.base}`;
     let pushed = true;
     try {
       await c.git.push(branch, { force: c.force, defaultBranch: target.base });

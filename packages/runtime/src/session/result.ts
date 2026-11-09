@@ -330,14 +330,16 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   {
     // merge-in-app: what merges by itself once its checks pass is not left for the person
     // (before: "Left 1 reviewed pull request for you to merge" for one the retry then merged).
-    name: "merges when its checks pass",
+    // P7-5 (polish-words): `waitingPrs` also counts a merge GitHub did not answer about
+    // (MERGE_WAITS "unreachable", tried again), so the line names both, never checks only.
+    name: "merges by itself later",
     line: 3,
     build: (f) =>
       f.waitingPrs
         ? [
             f.waitingPrs === 1
-              ? "1 reviewed pull request merges when its checks pass."
-              : `${f.waitingPrs} reviewed pull requests merge when their checks pass.`,
+              ? "1 reviewed pull request merges by itself once its checks pass or GitHub answers."
+              : `${f.waitingPrs} reviewed pull requests merge by themselves once their checks pass or GitHub answers.`,
           ]
         : [],
   },

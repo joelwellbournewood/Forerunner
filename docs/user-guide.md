@@ -135,8 +135,8 @@ are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **
   keep your own files in its Local only folder, not beside the merged ones. If you changed a
   file in the copy that a merge changes too, or left a file where a merge brings one, Forerunner
   never overwrites it: the copy stops following and the line says so and why ("This computer's
-  copy of o/r, not updated since 14:05. You changed README.md in this copy, and a merge changed it
-  too: move your change out of the way and the copy follows again."). Move your change away and
+  copy of o/r has not followed merges since 14:05. You changed README.md in this copy, and a merge
+  changed it too: move your change out of the way and the copy follows again."). Move your change away and
   the next merge brings the copy up to date again.
 - **Local only** (on Files, for a repository project): a folder inside this computer's copy,
   "Never uploaded. Agents can read and change it." Put files there that the work may use but

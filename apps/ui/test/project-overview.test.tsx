@@ -111,8 +111,10 @@ describe("Files (design §3.10)", () => {
     );
     const tab = await screen.findByTestId("files-tab");
     const said = await within(tab).findByTestId("files-repository");
-    expect(said).toHaveTextContent(
-      `This computer's copy of org/atlas, not updated since 14:05. ${line} Work waiting in a pull request is on the Overview.`,
+    // W14-5 (polish-words): what happened, then what to do; the pull requests' line, which has
+    // nothing to do with the stuck copy, is left out (it was three sentences).
+    expect(said.textContent).toBe(
+      `This computer's copy of org/atlas has not followed merges since 14:05. ${line}`,
     );
     expect(said).not.toHaveTextContent("As merged");
     // The person moved their change away; the next merge brought the copy up to date.

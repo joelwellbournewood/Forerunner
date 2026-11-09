@@ -3138,7 +3138,9 @@ behind a withdrawn or expired `repo.create` card is dropped (`RepoProposals.with
 `RepoProposals`) and at the next sync otherwise, so Chat no longer reads it back as waiting and a
 late Yes is refused. Before, the offer was filed beside such a card and, once either was answered,
 the other's Yes posted 'Your answer to the change card "…" was not applied: … already has a
-repository'. Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
+repository'. That warning (`changeNotAppliedWords` in `request-words.ts`, W14-4, polish-words)
+names the card by the question the Inbox showed ('Your Yes to "Create the private GitHub
+repository o/r for 'X'?" was not applied: …'), never as "the change card". Tests: the three "fixup R-repooffer" cases in `repo-create.test.ts` (Chat first, the
 offer's Yes closing a previewed card, a link made another way).
 
 **What the person reads (merge-in-app).** `taskDisplay()`'s done case reads the task's merge record
@@ -3152,9 +3154,11 @@ names them); a task without a record stays "Done". A `queued` record the person 
 reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTaskDisplayContext`):
 "Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
 and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
-mode read "waiting for you", although the retry merges it by itself). The session result's builder "merges when its checks
-pass" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges when its checks
-pass." and "Left N reviewed pull requests for you to merge." counts only what waits for the person
+mode read "waiting for you", although the retry merges it by itself). The session result's builder "merges by itself
+later" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges by itself once
+its checks pass or GitHub answers." (P7-5, polish-words: `waitingPrs` counts `checks_pending` and
+`unreachable` alike, so the line names both) and "Left N reviewed pull requests for you to merge."
+counts only what waits for the person
 (`ResultFacts.waitingPrs`, `openPrs`). The Overview's Last result gets "Since then: merged #2, #3
 and #4." (`mergedSinceLine` in `views.ts`) for the pull requests the session left open whose record
 says merged now.
@@ -6203,7 +6207,8 @@ default branch as the host has it after every merge, not only at a session's end
   change out of the way and the copy follows again.", "notes.md in this copy is in the way of a
   merged file: move it and the copy follows again.", "Git could not bring it to what is merged;
   it tries again at the next merge."), absent otherwise; the Files tab then says "This
-  computer's copy of <repo>, not updated since 14:05." and the line, never "As merged". Tests:
+  computer's copy of <repo> has not followed merges since 14:05." and the line, never "As merged",
+  and leaves out its pull requests' line (W14-5, polish-words: it made three sentences). Tests:
   `loop-docs.test.ts` "a copy that cannot follow a merge says why", `real-daemon.test.ts` and
   `project-overview.test.tsx` (R-copystuck).
 

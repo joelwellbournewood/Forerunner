@@ -1766,7 +1766,13 @@ describe("leftovers of wave 7, merge side (leftovers7-merge)", { timeout: 120_00
     const card = (await s.w.store.humanRequest.list({ status: "open" } as never)).find(
       (r) => r.task_id === task.id,
     );
-    expect(card?.why).toContain("conflicts in README.md");
+    expect(card?.why).toContain("conflicts with main in README.md");
+    // W14-5 (polish-words): the card's title names the task, not its branch (it read "Rebase of
+    // fr/e34de89b-write-the-welcome-page-in-index.html onto main conflicts in …"); the steps
+    // still name the branch, where the person fetches it.
+    expect(card?.why).toMatch(/^"Write the guide" conflicts with main in README\.md;/);
+    expect(card?.why).not.toMatch(/fr\/|Rebase of/);
+    expect(card?.steps.join(" ")).toMatch(/fr\//);
     await s.w.store.close();
   });
 

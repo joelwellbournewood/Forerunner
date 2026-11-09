@@ -880,6 +880,27 @@ function rebuildTitle(card: JsonObject, taskTitle: string): string | null {
 }
 
 /**
+ * The Update when a Yes on a change card from Chat, Talk or the phone was not applied (W14-4,
+ * polish-words): it names the card by the question the Inbox showed (its title, `ChangeCard.ask`),
+ * never by a kind name a person never saw ('the change card "a GitHub repository for X"').
+ */
+export function changeNotAppliedWords(card: Record<string, unknown>, reason: string): string {
+  const ask = typeof card.ask === "string" ? card.ask.trim() : "";
+  const what = typeof card.what === "string" ? card.what.trim() : "";
+  const about = ask
+    ? `Your Yes to "${firstSentence(ask, 120).replace(/"/g, "'")}"`
+    : what
+      ? `Your Yes about ${what}`
+      : "Your Yes";
+  const why =
+    reason
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[.\s]+$/, "") || "it was refused";
+  return `${about} was not applied: ${why}. Nothing changed; ask again if you still want it.`;
+}
+
+/**
  * A left-open card's title (`merge:left_open`), what it is about now: the conflict notice
  * ('"X" conflicts with main', R-conflict), a rebuild ('"X" was rebuilt without pull request
  * #4'), else the pull request not merged. The Overview's Decisions line reads it too (W14-3:
