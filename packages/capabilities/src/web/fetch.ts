@@ -430,9 +430,21 @@ export async function readWebPage(
   }
 }
 
-/** The tool's answer to the model: where the page came from, then its text. */
-export function renderWebPage(page: WebPageRead, maxBytes = DEFAULT_WEB_MAX_BYTES): string {
-  const head = `${page.finalUrl} (HTTP ${page.status}${page.title ? `, ${JSON.stringify(page.title)}` : ""})${page.finalUrl !== page.url ? `, redirected from ${page.url}` : ""}`;
+/** A read time as the model and the critic see it: "2026-11-09 04:24 UTC" (W15-31). */
+export function readAtWords(iso: string): string {
+  return `${iso.slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
+ * The tool's answer to the model: where the page came from and when it was read (W15-31: a
+ * brief that asks for access dates can be answered from the page itself), then its text.
+ */
+export function renderWebPage(
+  page: WebPageRead,
+  maxBytes = DEFAULT_WEB_MAX_BYTES,
+  readAt?: string,
+): string {
+  const head = `${page.finalUrl} (HTTP ${page.status}${page.title ? `, ${JSON.stringify(page.title)}` : ""})${page.finalUrl !== page.url ? `, redirected from ${page.url}` : ""}${readAt ? `, read ${readAtWords(readAt)}` : ""}`;
   const cut = page.truncated
     ? `\n[The page was cut: only the first ${Math.round(maxBytes / 1024)} KiB or the requested characters were read.]`
     : "";
@@ -471,10 +483,12 @@ export function webFetchTool(opts: WebFetchOptions): ToolSpec<{ url: string; max
           ...(opts.isPublic ? { isPublic: opts.isPublic } : {}),
           proxied: proxySetIn(opts.env ?? process.env),
         });
+        const readAt = opts.clock.nowIso();
         return {
-          content: renderWebPage(page, maxBytes),
+          content: renderWebPage(page, maxBytes, readAt),
           untrusted: { source: "web_page", origin: page.finalUrl },
           artifacts: {
+            readAt,
             url: page.url,
             finalUrl: page.finalUrl,
             status: page.status,

@@ -24,6 +24,8 @@ export interface WebSource {
   text?: string;
   /** Why it was not read, in words: a refusal by the network rules, an error status, a timeout. */
   error?: string;
+  /** When it was read (ISO), as the page reader said (W15-31). */
+  readAt?: string;
 }
 
 /** Characters of one page the critic gets; a cited passage is near the top or quoted. */
@@ -54,6 +56,7 @@ export function withWebSourceLog(tools: ToolRegistry, log: WebSource[]): ToolReg
         const a = r.artifacts ?? {};
         log.push({
           url: input.url,
+          ...(str(a.readAt) ? { readAt: str(a.readAt) } : {}),
           ...(str(a.finalUrl) ? { finalUrl: str(a.finalUrl) } : {}),
           ...(typeof a.status === "number" ? { status: a.status } : {}),
           ...(str(a.title) ? { title: str(a.title) } : {}),
@@ -108,6 +111,7 @@ export function reviewSourcesArtifact(log: readonly WebSource[]): JsonObject {
         ...(s.status !== undefined ? { status: s.status } : {}),
         ...(s.title ? { title: s.title } : {}),
         ...(s.error ? { error: s.error } : {}),
+        ...(s.readAt ? { readAt: s.readAt } : {}),
         ...(keepText ? { text: (s.text ?? "").slice(0, MAX_SOURCE_CHARS) } : {}),
       };
     }),
@@ -141,10 +145,16 @@ export function keptSourcesOf(artifacts: readonly unknown[] | null | undefined):
       ...(typeof o.status === "number" ? { status: o.status } : {}),
       ...(str(o.title) ? { title: str(o.title) } : {}),
       ...(str(o.error) ? { error: str(o.error) } : {}),
+      ...(str(o.readAt) ? { readAt: str(o.readAt) } : {}),
       ...(typeof o.text === "string" ? { text: o.text } : {}),
     });
   }
   return out;
+}
+
+/** A read time as the critic sees it: "2026-11-09 04:24 UTC" (the page reader's words). */
+function readAtWords(iso: string): string {
+  return `${iso.slice(0, 16).replace("T", " ")} UTC`;
 }
 
 /** Search results listed for the critic at most ('web-search'); the rest are counted. */
@@ -242,8 +252,11 @@ export function webSourceEvidence(
       artifacts.push(`web page read (text not included, over ${MAX_SOURCES} pages): ${where}`);
       continue;
     }
+    // W15-31: when the page was read, so a cited access date can be checked.
+    const when = s.readAt ? `read ${readAtWords(s.readAt)}` : "";
+    const how = [when, before ? "by an earlier run of this task" : ""].filter(Boolean).join(" ");
     inputFiles.push({
-      path: `web page ${where}${before ? " (read by an earlier run of this task)" : ""}`,
+      path: `web page ${where}${how ? ` (${how})` : ""}`,
       content: s.text ?? "",
     });
   }

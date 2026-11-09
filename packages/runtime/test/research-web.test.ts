@@ -109,12 +109,23 @@ async function world(opts: {
   loopback?: boolean;
   /** The task's attempt (a retry) and the open findings of its last review. */
   attempt?: number;
+  /** The clock's time when the run starts (W15-31). */
+  clockAt?: string;
+  /** The person's time zone (W15-31). */
+  timezone?: string;
   findings?: { severity: string; description: string; required_action: string }[];
 }) {
   const h = harness();
+  if (opts.clockAt) await h.clock.set(opts.clockAt);
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
   stores.push(store);
-  const human = (await store.human.insert({ name: "J", email: "j@x.test" })).id;
+  const human = (
+    await store.human.insert({
+      name: "J",
+      email: "j@x.test",
+      ...(opts.timezone ? { timezone: opts.timezone } : {}),
+    })
+  ).id;
   const agent = (await store.agent.insert({ name: "Alice", owner_human_id: human })).id;
   // The fixture runs on this computer: the reader reaches it through the development seam
   // (`loopback`), never through a list ('sites': no list opens this computer).
@@ -244,7 +255,11 @@ describe("the researcher runs on an API key and reads the web (ADR 0107)", () =>
       }),
     ]);
     expect(webSourceEvidence(w.result.webSources).inputFiles).toEqual([
-      { path: `web page ${pageUrl}`, content: expect.stringContaining("Hugo builds") },
+      // W15-31: the critic is told when the page was read.
+      {
+        path: `web page ${pageUrl} (read 2026-03-02 09:00 UTC)`,
+        content: expect.stringContaining("Hugo builds"),
+      },
     ]);
     expect(w.runs[0]?.artifacts).toContainEqual({
       webSources: [{ url: pageUrl, status: 200, title: "Static site generators compared" }],
@@ -425,5 +440,38 @@ describe("w15-review, wave 15", () => {
       "10.1.2.3",
       "developer.mozilla.org",
     ]);
+  });
+
+  it("W15-31: the brief says today's date in the person's time zone, each page says when it was read, and the system prompt does not change", async () => {
+    const w = await world({
+      specialist: "researcher",
+      clockAt: "2026-11-09T04:24:00Z",
+      timezone: "Europe/Zurich",
+      replies: [
+        { tools: [{ name: WEB_FETCH_TOOL, input: { url: pageUrl } }] },
+        { text: `Hugo builds 10,000 pages in about 2 seconds (${pageUrl}, accessed 2026-11-09).` },
+      ],
+    });
+    const brief = w.provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain("Today's date is 2026-11-09 (Europe/Zurich).");
+    // The page the model got says when it was read.
+    expect(toolResults(w.provider)).toContain(", read 2026-11-09 04:24 UTC");
+    expect(w.result.webSources?.[0]?.readAt).toBe("2026-11-09T04:24:00.000Z");
+    // The critic's source list says it too.
+    expect(webSourceEvidence(w.result.webSources).inputFiles.map((f) => f.path)).toEqual([
+      `web page ${pageUrl} (read 2026-11-09 04:24 UTC)`,
+    ]);
+    // The system prompt carries no date: the same on another day (prompt caching unchanged).
+    const other = await world({
+      specialist: "researcher",
+      clockAt: "2026-11-10T22:00:00Z",
+      replies: [{ text: "Done." }],
+    });
+    expect(other.provider.calls[0]?.system).toBe(w.provider.calls[0]?.system);
+    expect(String(w.provider.calls[0]?.system)).not.toContain("2026-11-09");
+    // No time zone known: UTC, and late in the UTC day the date is the UTC one.
+    expect(String(other.provider.calls[0]?.messages[0]?.content)).toContain(
+      "Today's date is 2026-11-10 (UTC).",
+    );
   });
 });

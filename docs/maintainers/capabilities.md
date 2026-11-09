@@ -804,8 +804,10 @@ unless `FORERUNNER_WEB_FETCH=off`.
   redirects, a host not found, a timeout are `unavailable` / `not_supported` with one
   sentence. The loop driver returns the message to the model as `ERROR: ...`.
 - **The result.** `renderWebPage`: the final address, status and title, "redirected from" and
-  the cut note when they apply, then the text; `untrusted: { source: "web_page", origin }`;
-  `artifacts` with the address, final address, status, title, type, characters, `truncated`
+  the cut note when they apply, the read time ("read 2026-11-09 04:24 UTC", `readAtWords`,
+  W15-31: a brief that asks for access dates is answered from the page), then the text;
+  `untrusted: { source: "web_page", origin }`; `artifacts` with `readAt` (ISO), the address,
+  final address, status, title, type, characters, `truncated`
   (the executor's source log reads them, `runtime.md` "Web research").
 
 Not here: web search (Anthropic's server tool on an API key, Claude Code's WebSearch on a

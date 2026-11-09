@@ -490,6 +490,27 @@ export const LOCAL_ONLY_BRIEF_LINE =
   "A folder named \"Local only\" in the project's folder, when there is one, holds the person's own files on this computer and is never uploaded: read or change them when the task needs it, and put their content into your work only when the task asks for it.";
 
 /**
+ * The brief's date line (W15-31): today in the person's time zone (an unknown or invalid one is
+ * UTC), as YYYY-MM-DD.
+ */
+export function todayLine(nowMs: number, timezone: string | null | undefined): string {
+  const date = (tz: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(nowMs));
+  if (timezone)
+    try {
+      return `Today's date is ${date(timezone)} (${timezone}).`;
+    } catch {
+      // an unknown time zone: UTC below
+    }
+  return `Today's date is ${date("UTC")} (UTC).`;
+}
+
+/**
  * The retry brief's line where the project's site rule limits research (W15-25): a finding that
  * asks for a page the rule refuses is no order.
  */
@@ -935,6 +956,9 @@ export class LoopTaskExecutor implements TaskExecutor {
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
         // ADR 0112: what the wrap-up's two headings are for.
         WRAP_UP_BRIEF_LINE,
+        // W15-31: today's date, in the person's time zone (a brief that asks for access dates or
+        // "this year" can be answered); in the user message, so the system prompt stays cached.
+        await this.todayLine(token.claims.ownerHumanId),
         ...retryConstraints(task.attempt, openFindings, {
           kept: keptByLadder,
           // Only a specialist that reads web pages is held to the site rule's orders.
@@ -1711,6 +1735,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       // The project's rule the run read pages under (W15-25), for the critic.
       ...(webRule ? { webRule } : {}),
     };
+  }
+
+  /** "Today's date is 2026-11-09 (Europe/Zurich)." in the person's time zone, else UTC (W15-31). */
+  private async todayLine(humanId: string): Promise<string> {
+    const human = await this.deps.store.human.get(humanId).catch(() => undefined);
+    return todayLine(this.deps.clock.now(), human?.timezone);
   }
 
   /**

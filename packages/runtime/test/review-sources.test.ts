@@ -245,10 +245,12 @@ describe("w15-review, wave 15", () => {
   it("W15-26: after a pause and Continue, the review reads every page the paused run read", async () => {
     const { taskId, sent } = await pauseAndContinue(TITLE);
     expect(sent).toContain(
-      `### web page ${base}/netlify.html (read by an earlier run of this task)`,
+      `### web page ${base}/netlify.html (read 2026-11-09 04:24 UTC by an earlier run of this task)`,
     );
     expect(sent).toContain("Netlify's free plan includes 100 GB of bandwidth a month.");
-    expect(sent).toContain(`### web page ${base}/pages.html (read by an earlier run of this task)`);
+    expect(sent).toContain(
+      `### web page ${base}/pages.html (read 2026-11-09 04:24 UTC by an earlier run of this task)`,
+    );
     expect(sent).toContain("Cloudflare Pages allows 500 builds a month on the free plan.");
     // What the drawer reads keeps the addresses only: the text never reaches a screen.
     const detail = (await (await req(`/tasks/${taskId}`)).json()) as Json;

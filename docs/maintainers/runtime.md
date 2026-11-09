@@ -2023,7 +2023,12 @@ budget-stop; the owner's decision of 2026-11-02).**
   "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
   "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
   line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for
-  (`WRAP_UP_BRIEF_LINE`).
+  (`WRAP_UP_BRIEF_LINE`). Every brief also says today's date in the person's time zone
+  (`todayLine`: "Today's date is 2026-11-09 (Europe/Zurich).", UTC when none is known; W15-31),
+  in the user message, so the system prompt and its cache stay as they are; a page read says when
+  (`WebSource.readAt`, kept for a later review), and the critic's input file names it ("web page
+  <address> (read 2026-11-09 04:24 UTC)"). The intake's request says "Today: <date> (UTC)" for a
+  milestone's date.
 - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
   do:", markdown-tolerant, "nothing" is empty, cut) and decides: a run is paused when it stopped

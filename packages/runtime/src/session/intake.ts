@@ -1950,6 +1950,8 @@ export class IntakeService {
       `Project: ${project.name}`,
       `Goal: ${project.goal}`,
       `Stage: ${project.stage}`,
+      // W15-31: a milestone's date is planned from today's.
+      `Today: ${new Date(this.deps.clock.now()).toISOString().slice(0, 10)} (UTC)`,
       `Repositories: ${repos}`,
       `Plan size: ${
         size === "small"

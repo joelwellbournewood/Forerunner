@@ -968,7 +968,13 @@ read less applies at once. The agent browser's own site list is a separate thing
 nothing research reads. A block list written before this setting existed is shown and enforced
 here too. The plan for a project with "Only these websites" plans no research that needs another
 website; each research run is told the rule and says in its report what it could not read
-because of it, and a refused page says which rule refused it.
+because of it, and a refused page says which rule refused it. The review of a research task is
+told the same rule, so a page research rightly did not read is never held against the work, and
+it reads every page the work rests on, also those read before a pause.
+
+Every brief says today's date in your time zone, and every page research reads says when it was
+read (for example "read 2026-11-09 04:24 UTC"), so a source list can give the date each page was
+accessed, and the review can check it.
 
 On an API key the researcher also **searches the web** with Anthropic's web search: at most ten
 searches per task, fewer when the task's money left would not pay for them, at about 1 cent each
