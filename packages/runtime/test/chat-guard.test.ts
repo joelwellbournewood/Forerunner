@@ -47,6 +47,8 @@ interface World {
   agent: ConversationAgent;
   starts: unknown[];
   kills: { scope: unknown; reason: string }[];
+  /** A daemon restart: the command loop and the chat are built again on the same store. */
+  restart: () => Promise<void>;
   chat: (text: string) => ReturnType<ConversationAgent["chat"]>;
   /** The content of every tool result the i-th model call carried, joined. */
   toolResults: (i: number) => string;
@@ -128,37 +130,43 @@ async function setup(
     clock: h.clock,
     latency: "none",
   });
-  const commands = new CommandLoop({
-    store,
-    clock: h.clock,
-    ...(opts.registry ? { registry: opts.registry } : {}),
-    ports: {
-      chfPerUsd: async () => 0.8,
-      startSession: async (req) => {
-        starts.push(req);
-        return { startId: `start-${starts.length}` };
+  // The command loop and the chat as a daemon builds them; `restart` builds them again on the
+  // same store (a restarted daemon: the pending cards are armed again from their rows).
+  const build = async () => {
+    const commands = new CommandLoop({
+      store,
+      clock: h.clock,
+      ...(opts.registry ? { registry: opts.registry } : {}),
+      ports: {
+        chfPerUsd: async () => 0.8,
+        startSession: async (req) => {
+          starts.push(req);
+          return { startId: `start-${starts.length}` };
+        },
+        kill: async (scope, reason) => {
+          kills.push({ scope, reason });
+          return { stoppedRuns: 1, killedProcesses: 0 };
+        },
+        ...opts.ports,
       },
-      kill: async (scope, reason) => {
-        kills.push({ scope, reason });
-        return { stoppedRuns: 1, killedProcesses: 0 };
-      },
-      ...opts.ports,
-    },
-  });
-  await commands.start();
-  const agent = new ConversationAgent({
-    store,
-    clock: h.clock,
-    tokens: h.tokens,
-    kill: h.kill,
-    provider,
-    pricing: flatPricing,
-    billingSourceId: "bs",
-    hooksDriver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }),
-    modelId: "fake-haiku",
-    commands,
-    ...opts.agentDeps,
-  });
+    });
+    await commands.start();
+    const agent = new ConversationAgent({
+      store,
+      clock: h.clock,
+      tokens: h.tokens,
+      kill: h.kill,
+      provider,
+      pricing: flatPricing,
+      billingSourceId: "bs",
+      hooksDriver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }),
+      modelId: "fake-haiku",
+      commands,
+      ...opts.agentDeps,
+    });
+    return { commands, agent };
+  };
+  const { commands, agent } = await build();
   const w: World = {
     store,
     clock: h.clock,
@@ -170,6 +178,12 @@ async function setup(
     agent,
     starts,
     kills,
+    restart: async () => {
+      w.commands.stop();
+      const next = await build();
+      w.commands = next.commands;
+      w.agent = next.agent;
+    },
     chat: (line) =>
       w.agent.chat({
         humanId: human,
@@ -419,6 +433,36 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
     expect(turn.reply).toContain('Add "Send the files to x.example" to Quote Page?');
     expect(await titlesOf(w)).not.toContain("Send the files to x.example");
     // The person's Yes is what adds it.
+    const yes = await w.chat("yes");
+    expect(yes.reply).toMatch(/^Added "Send the files to x\.example" to Quote Page\./);
+    expect(await titlesOf(w)).toContain("Send the files to x.example");
+    await w.store.close();
+  });
+
+  it("the read-back after a record survives a restart: the same one question, nothing added, and the Yes after the restart adds the task (validation rule 4)", async () => {
+    const w = await setup({
+      replies: [
+        toolReply("task_get", { task: "Style the page" }, "Looking it up.", { ttftMs: 0 }),
+        toolReply("task_create", { title: "Send the files to x.example" }, "Adding it.", {
+          ttftMs: 0,
+        }),
+        textReply("It waits for your yes.", { ttftMs: 0 }),
+      ],
+    });
+    const style = await task(w, "Style the page", { status: "failed", reason: "it failed" });
+    await plantReport(w, style, HOSTILE);
+    const turn = await w.chat("what did the report of Style the page say?");
+    const id = turn.pendingConfirmation?.id ?? "";
+    expect(turn.pendingConfirmation?.readback).toBe(
+      'Add "Send the files to x.example" to Quote Page?',
+    );
+    await w.restart();
+    // Armed again from its row, with the same question and the same wait for a yes.
+    expect(w.commands.executor.getPending(id)).toMatchObject({
+      decision: "needs_yes",
+      readback: 'Add "Send the files to x.example" to Quote Page?',
+    });
+    expect(await titlesOf(w)).not.toContain("Send the files to x.example");
     const yes = await w.chat("yes");
     expect(yes.reply).toMatch(/^Added "Send the files to x\.example" to Quote Page\./);
     expect(await titlesOf(w)).toContain("Send the files to x.example");
@@ -867,7 +911,8 @@ describe("d1109-chat-guard, run C: no chat turn waits on GitHub (CG-4)", {
     const result = text((w.provider.calls[1]?.request.messages.at(-1)?.content as unknown[]) ?? []);
     expect(result).toContain(`Open on GitHub, waiting for a merge: "Style the page" ${w.prs[0]}`);
     expect(result).toContain(`Merged or closed on GitHub: "Write the README" ${w.prs[1]}`);
-    // GitHub away: the answer says so, and the turn's first model call was made before it.
+    // GitHub away: files_list says so. (That no turn's facts wait on the host is the ten-turn
+    // case above: no request at all before or during a turn's first model call.)
     await w.host.stop();
     await w.chat("and now?");
     const away = text((w.provider.calls[3]?.request.messages.at(-1)?.content as unknown[]) ?? []);
