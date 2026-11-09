@@ -71,6 +71,20 @@ export function relativeTime(iso: string | null | undefined, now = Date.now()): 
   return formatDateTime(iso);
 }
 
+/**
+ * How long a session worked, as its row in the Sessions list says it (d1109-sessions): "under a
+ * minute", "12 min", "1 h 5 min", "2 h". Null (still working) reads "".
+ */
+export function durationWords(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "";
+  if (ms < 60_000) return "under a minute";
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes - h * 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "—";
   if (ms < 1000) return `${Math.round(ms)} ms`;

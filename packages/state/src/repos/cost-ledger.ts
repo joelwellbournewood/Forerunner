@@ -152,4 +152,69 @@ export class CostLedgerRepo extends Repository<CostLedgerRow> {
   byProject(filter: CostFilter = {}): Promise<CostBucket[]> {
     return this.breakdown("project_id", filter);
   }
+
+  /**
+   * What each of these sessions spent, split by the kind of the billing source that paid
+   * (`api_key`, `subscription`, `plan_credits`, `fake`; null for a row without a source), in one
+   * query per 500 ids (d1109-sessions, ADR 0116): the Sessions list's one figure per row and
+   * which credential paid it. Each session's buckets add up to `sum({ sessionId })`.
+   */
+  async sumsBySessionAndSource(sessionIds: readonly string[]): Promise<SessionSourceSum[]> {
+    const ids = [...new Set(sessionIds)];
+    const out: SessionSourceSum[] = [];
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const rows = await this.db.query<{
+        session_id: string;
+        source_kind: string | null;
+        usd_micro: unknown;
+        chf_micro: unknown;
+        entries: unknown;
+      }>(
+        `SELECT c."session_id" AS session_id, b."kind" AS source_kind,
+           CAST(COALESCE(SUM(c."usd_micro"), 0) AS BIGINT) AS usd_micro,
+           CAST(COALESCE(SUM(c."chf_micro"), 0) AS BIGINT) AS chf_micro,
+           COUNT(*) AS entries
+         FROM "cost_ledger" c LEFT JOIN "billing_source" b ON b."id" = c."billing_source_id"
+         WHERE c."session_id" IN (${chunk.map(() => "?").join(", ")})
+         GROUP BY c."session_id", b."kind"
+         ORDER BY c."session_id", b."kind"`,
+        chunk,
+      );
+      for (const r of rows)
+        out.push({
+          sessionId: r.session_id,
+          sourceKind: r.source_kind ?? null,
+          usd_micro: Number(r.usd_micro ?? 0),
+          chf_micro: Number(r.chf_micro ?? 0),
+          entries: Number(r.entries ?? 0),
+        });
+    }
+    return out;
+  }
+
+  /**
+   * What chat about a project cost (d1109-sessions): the ledger rows of the conversation's
+   * session rows (`summary` "conversation") booked to the project. Chat is one conversation, not
+   * a session (design §3.9), so the Sessions list says it on one line of its own.
+   */
+  async chatSpendForProject(projectId: string): Promise<CostSum> {
+    const [row] = await this.db.query<RawSum>(
+      `SELECT ${SUM_COLUMNS} FROM "cost_ledger"
+       WHERE "project_id" = ? AND "session_id" IN (
+         SELECT "id" FROM "session" WHERE "summary" = 'conversation')`,
+      [projectId],
+    );
+    return toSum(row);
+  }
+}
+
+/** One session's spend paid by one kind of billing source (`sumsBySessionAndSource`). */
+export interface SessionSourceSum {
+  sessionId: string;
+  /** The billing source's kind, or null for ledger rows without a source. */
+  sourceKind: string | null;
+  usd_micro: number;
+  chf_micro: number;
+  entries: number;
 }

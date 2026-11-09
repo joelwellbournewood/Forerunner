@@ -13,20 +13,25 @@ import { FilesTab } from "./project/FilesTab.tsx";
 import { IntakeBanner, useIntakeStatus } from "./project/IntakeBanner.tsx";
 import { PlanTab } from "./project/PlanTab.tsx";
 import { ReviewsTab } from "./project/ReviewsTab.tsx";
+import { SessionsTab } from "./project/SessionsTab.tsx";
 import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 import { SummaryTab } from "./project/SummaryTab.tsx";
 import { TasksTab } from "./project/TasksTab.tsx";
 
 /**
- * The project's tabs (design §6): Overview, Tasks, Chat and Files in the bar; Plan, Docs,
- * Reviews, Costs and Data behind More (same routes, one click away). The Overview keeps the
- * address `summary` it had as the Summary tab, so every link to it still works.
+ * The project's tabs (design §6): Overview, Tasks, Chat and Files in the bar; Sessions, Plan,
+ * Docs, Reviews, Costs and Data behind More (same routes, one click away). Sessions is first
+ * behind More (the owner's decision D2 of 2026-11-09, ADR 0116): the list is looked back on, so
+ * it is one click from the Overview's "All N sessions" and every session page's "All sessions",
+ * not a fifth tab in the bar. The Overview keeps the address `summary` it had as the Summary
+ * tab, so every link to it still works.
  */
 export const PROJECT_TABS = [
   { id: "summary", label: "Overview", more: false },
   { id: "tasks", label: "Tasks", more: false },
   { id: "chat", label: "Chat", more: false },
   { id: "files", label: "Files", more: false },
+  { id: "sessions", label: "Sessions", more: true },
   { id: "plan", label: "Plan", more: true },
   { id: "docs", label: "Docs", more: true },
   { id: "reviews", label: "Reviews", more: true },
@@ -211,6 +216,7 @@ export function ProjectPage() {
       </nav>
       <div className="min-h-0 flex-1" data-testid={`tab-panel-${tab}`}>
         {tab === "summary" ? <SummaryTab projectId={id} project={view} /> : null}
+        {tab === "sessions" ? <SessionsTab projectId={id} project={view} /> : null}
         {tab === "plan" ? <PlanTab projectId={id} project={view} /> : null}
         {tab === "tasks" ? (
           <TasksTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />

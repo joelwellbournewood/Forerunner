@@ -148,6 +148,55 @@ export class SessionRepo extends Repository<SessionRow> {
     );
     return row;
   }
+
+  /**
+   * The listed rule of a project's sessions (d1109-sessions, ADR 0116) as SQL on the row `s`:
+   * the project's sessions that ran a task or spent money or work now, planning calls included
+   * (`plan.intake`); never the conversation's row, never a session that ended without a run and
+   * without a ledger row (an automatic start that found nothing is not news, design §4.8).
+   */
+  private listedWhere(): string {
+    const intake =
+      this.db.dialect === "sqlite"
+        ? `json_extract(s."plan", '$.intake') IS NOT NULL`
+        : `(s."plan" -> 'intake') IS NOT NULL`;
+    return `s."project_id" = ? AND s."summary" <> 'conversation' AND (
+      s."status" IN ('planned', 'running', 'paused')
+      OR EXISTS (SELECT 1 FROM "run" r WHERE r."session_id" = s."id")
+      OR EXISTS (SELECT 1 FROM "cost_ledger" c WHERE c."session_id" = s."id")
+      OR ${intake})`;
+  }
+
+  /**
+   * One page of a project's listed sessions, newest first by (created_at, id): a keyset page,
+   * so a session that starts between two pages never shifts or repeats a row. `before` is the
+   * last row of the page before (its created_at and id); `ended` leaves out the sessions that
+   * work now (the list shows those above its rows).
+   */
+  pageForProject(
+    projectId: string,
+    opts: { limit: number; before?: { createdAt: string; id: string }; ended?: boolean },
+  ): Promise<SessionRow[]> {
+    const params: unknown[] = [projectId];
+    let sql = `SELECT s.* FROM ${this.qt} s WHERE ${this.listedWhere()}`;
+    if (opts.ended) sql += ` AND s."status" NOT IN ('planned', 'running', 'paused')`;
+    if (opts.before) {
+      sql += ` AND (s."created_at" < ? OR (s."created_at" = ? AND s."id" < ?))`;
+      params.push(opts.before.createdAt, opts.before.createdAt, opts.before.id);
+    }
+    sql += ` ORDER BY s."created_at" DESC, s."id" DESC LIMIT ?`;
+    params.push(Math.max(1, Math.floor(opts.limit)));
+    return this.rows(sql, params);
+  }
+
+  /** How many sessions of the project the list shows (the same rule as `pageForProject`). */
+  async listedCountForProject(projectId: string): Promise<number> {
+    const [row] = await this.db.query<{ n: unknown }>(
+      `SELECT COUNT(*) AS n FROM ${this.qt} s WHERE ${this.listedWhere()}`,
+      [projectId],
+    );
+    return Number(row?.n ?? 0);
+  }
 }
 
 export class RunRepo extends Repository<RunRow> {

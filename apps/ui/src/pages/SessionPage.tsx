@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { describeError, type EventView, type SessionView } from "../api/client.ts";
+import {
+  describeError,
+  type EventView,
+  type SessionTasksView,
+  type SessionView,
+} from "../api/client.ts";
 import { type StreamMode, subscribeSessionEvents } from "../api/sse.ts";
 import { ExternalLink } from "../components/ExternalLink.tsx";
 import { ReadAloud } from "../components/ReadAloud.tsx";
@@ -36,6 +41,13 @@ const LEVEL_WORDS: Record<Exclude<Level, "info">, string> = {
 };
 
 const ACTIVE = new Set(["planned", "running", "paused"]);
+/**
+ * How often a working session's spend may read "Tasks in this session" again (d1109-sessions):
+ * once a second, the stream's own pace, because the running task's CHF sits beside "Spent of
+ * this session's budget" and the two must not disagree for longer than a glance (on the bench,
+ * with 5 s, a one-task session read CHF 0.03 on the meter beside CHF 0.02 on its task).
+ */
+const TASKS_READ_MS = 1_000;
 /** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
 export const ENDED = ENDED_SESSION;
 
@@ -133,6 +145,8 @@ export function SessionPage() {
   const [confirmStopNow, setConfirmStopNow] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const seenSeq = useRef(new Set<number>());
+  /** "Tasks in this session" (d1109-sessions, U-086): each task it worked on, opening its drawer. */
+  const [tasks, setTasks] = useState<SessionTasksView | null>(null);
 
   const appendEvents = useCallback((incoming: EventView[]) => {
     const fresh = incoming.filter((e) => !seenSeq.current.has(e.seq));
@@ -224,6 +238,62 @@ export function SessionPage() {
     };
   }, [client, id, appendEvents, streamOptions]);
 
+  // The session's tasks, read again when a task starts or ends here, when the session ends, and
+  // while it works when its spend moves (a model call of the running task was booked), at most
+  // every TASKS_READ_MS, so the running task's CHF follows "Spent of this session's budget"
+  // (W15-21's "CHF 0.00 until the run returns" on this page; d1109-sessions review).
+  const tasksAbort = useRef<AbortController | null>(null);
+  /** When the spend last read the tasks, and the spend the tasks were last read at. */
+  const spendRead = useRef<{ at: number; chfMicro: number | null }>({ at: 0, chfMicro: null });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new session's page starts afresh
+  useEffect(() => {
+    const controller = new AbortController();
+    tasksAbort.current = controller;
+    spendRead.current = { at: 0, chfMicro: null };
+    setTasks(null);
+    return () => controller.abort();
+  }, [id]);
+  const readTasks = useCallback(() => {
+    const signal = tasksAbort.current?.signal;
+    return client
+      .sessionTasks(id, signal)
+      .then((t) => {
+        if (!signal?.aborted) setTasks(t);
+      })
+      .catch(() => {
+        // the section stays as it was; the log and the header still say what happened
+      });
+  }, [client, id]);
+  const taskMoves = events.filter(
+    (e) => e.type === "task.started" || e.type === "task.finished",
+  ).length;
+  const sessionStatus = session?.status ?? null;
+  useEffect(() => {
+    if (!sessionStatus) return;
+    void taskMoves;
+    void readTasks();
+  }, [readTasks, sessionStatus, taskMoves]);
+  const spentWhileWorking =
+    session?.id === id && !ENDED.has(session.status) ? session.spent.chfMicro : null;
+  useEffect(() => {
+    if (spentWhileWorking === null) return;
+    const was = spendRead.current;
+    // The first figure is the one the tasks were first read at.
+    if (was.chfMicro === null) {
+      spendRead.current = { ...was, chfMicro: spentWhileWorking };
+      return;
+    }
+    if (was.chfMicro === spentWhileWorking) return;
+    const timer = setTimeout(
+      () => {
+        spendRead.current = { at: Date.now(), chfMicro: spentWhileWorking };
+        void readTasks();
+      },
+      Math.max(0, was.at + TASKS_READ_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [spentWhileWorking, readTasks]);
+
   const shown = useMemo(
     () => (details ? events : events.filter((e) => e.audience === "person")),
     [events, details],
@@ -287,8 +357,10 @@ export function SessionPage() {
   const ended = ENDED.has(session.status);
   const stream = streamWords(mode, ended);
   const at = startedAtWords(session.startedAt);
-  // Design §3.7: "Quote page · session at 14:05", never the session's id.
-  const title = `${projectName ?? "Session"}${at ? `${projectName ? " · session" : ""} at ${at}` : ""}`;
+  // Design §3.7: "Quote page · session at 14:05", never the session's id; a planning call's
+  // page "Quote page · planning at 14:05" (d1109-sessions).
+  const kind = session.planning ? "planning" : "session";
+  const title = `${projectName ?? (session.planning ? "Planning" : "Session")}${at ? `${projectName ? ` · ${kind}` : ""} at ${at}` : ""}`;
   const live = ended ? null : currentFromLog(events);
   const pullRequests = pullRequestsFromLog(events);
   const current =
@@ -316,6 +388,16 @@ export function SessionPage() {
               className="text-sm text-blue-700 hover:underline dark:text-blue-300"
             >
               Open the project
+            </Link>
+          ) : null}
+          {session.projectId ? (
+            // d1109-sessions: the project's other sessions (ADR 0116).
+            <Link
+              to={`/projects/${encodeURIComponent(session.projectId)}/sessions`}
+              className="text-sm text-blue-700 hover:underline dark:text-blue-300"
+              data-testid="all-sessions"
+            >
+              All sessions
             </Link>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
@@ -433,6 +515,47 @@ export function SessionPage() {
               ))}
             </ul>
           </div>
+        ) : null}
+        {tasks && tasks.tasks.length > 0 ? (
+          <section
+            className="text-sm"
+            data-testid="session-tasks"
+            aria-labelledby="session-tasks-title"
+          >
+            <h2 id="session-tasks-title" className="text-xs text-neutral-500">
+              Tasks in this session
+            </h2>
+            <ul className="space-y-0.5">
+              {tasks.tasks.map((t) => (
+                <li
+                  key={t.id}
+                  className="flex flex-wrap items-baseline gap-2"
+                  data-testid="session-task"
+                >
+                  <Link
+                    to={`/projects/${encodeURIComponent(t.projectId)}/tasks?task=${encodeURIComponent(t.id)}`}
+                    className="text-blue-700 hover:underline dark:text-blue-300"
+                    data-testid="session-task-open"
+                    title="Opens the task with its runs."
+                  >
+                    "{t.title}"
+                  </Link>
+                  <span data-testid="session-task-here">{t.here}</span>
+                  {t.now ? (
+                    <span
+                      className="text-neutral-600 dark:text-neutral-400"
+                      data-testid="session-task-now"
+                    >
+                      now: {t.now}
+                    </span>
+                  ) : null}
+                  <span className="ml-auto text-neutral-500" data-testid="session-task-spent">
+                    {t.spentWords}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
         {session.summary && session.summary !== "conversation" ? (
           <div className="flex flex-wrap items-start gap-2">

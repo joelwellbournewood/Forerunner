@@ -259,6 +259,11 @@ export const ProjectSummary = z.object({
   spend: Money,
   /** Plain text for TTS. */
   spoken: z.string(),
+  /**
+   * How many sessions the project's Sessions list holds (d1109-sessions, ADR 0116): the
+   * Overview's Last result links "All 3 sessions" from two on. Absent from an older daemon.
+   */
+  sessionCount: z.number().int().optional(),
 });
 export type ProjectSummary = z.infer<typeof ProjectSummary>;
 
@@ -677,8 +682,88 @@ export const SessionView = z.object({
    * "Interrupted: Forerunner closed", "Stopping after this task". Optional as `stopReason`.
    */
   statusText: z.string().optional(),
+  /**
+   * The plan from a brief's planning call (d1109-sessions): its page is titled "<project> ·
+   * planning at 14:05" and lists no tasks. Absent from an older daemon.
+   */
+  planning: z.boolean().optional(),
 });
 export type SessionView = z.infer<typeof SessionView>;
+
+/**
+ * One row of a project's Sessions list (d1109-sessions, ADR 0116; `GET /projects/:id/sessions`):
+ * every word is the daemon's. Line 1 is `gist`; line 2 is when (the screen's clock), how long
+ * (`durationMs`, null while it works), `countsWords`, `endedWords`, `spentWords` and `startedBy`,
+ * each left out when empty.
+ */
+export const ProjectSessionRowView = z.object({
+  id: z.string(),
+  startedAt: z.string().nullable(),
+  endedAt: z.string().nullable(),
+  /** How long it worked; for a session a dead process left, to the last thing it logged. */
+  durationMs: z.number().nullable(),
+  working: z.boolean(),
+  planning: z.boolean(),
+  /** What it did in one sentence of at most 100 characters; a working one, what it does now. */
+  gist: z.string(),
+  tasks: z.object({
+    done: z.number().int(),
+    failed: z.number().int(),
+    paused: z.number().int(),
+    needsYou: z.number().int(),
+    cancelled: z.number().int(),
+    /** An older row's tasks left waiting for the person ("2 left for you"). */
+    leftForYou: z.number().int(),
+  }),
+  /** "2 done, 1 failed"; "" when it ended none. */
+  countsWords: z.string(),
+  /** How it ended ("Done", "Stopped by you", "Interrupted: Forerunner closed"); null while it works. */
+  endedWords: z.string().nullable(),
+  /** The cost ledger's figure for the session, as booked, read when shown. */
+  spent: Money,
+  /** "CHF 0.80 on your API key", "CHF 0.40 so far on your API key". */
+  spentWords: z.string(),
+  /** Why it started when the person did not press Start ("started on its schedule"), else null. */
+  startedBy: z.string().nullable(),
+});
+export type ProjectSessionRowView = z.infer<typeof ProjectSessionRowView>;
+
+export const ProjectSessionsView = z.object({
+  projectId: z.string(),
+  /** How many sessions the list holds in all (no total of money: the Costs tab has totals). */
+  count: z.number().int(),
+  /** The sessions working now, on the first page only. */
+  working: z.array(ProjectSessionRowView),
+  /** Ended sessions, newest first by start. */
+  rows: z.array(ProjectSessionRowView),
+  /** The cursor of the next page (`?before=`), null on the last. */
+  next: z.string().nullable(),
+  /** "Chat about this project: CHF 0.30." when chat about it cost anything; first page only. */
+  chat: z.object({ spent: Money, words: z.string() }).nullable(),
+});
+export type ProjectSessionsView = z.infer<typeof ProjectSessionsView>;
+
+/** A task a session worked on (`GET /sessions/:id/tasks`, the session page's "Tasks in this session"). */
+export const SessionTaskView = z.object({
+  id: z.string(),
+  title: z.string(),
+  projectId: z.string(),
+  /** What happened to it in this session: "Done", "Failed", "Paused at its budget of CHF 0.40". */
+  here: z.string(),
+  /** Its status now, when that differs ("Done"); null when it is still what happened here. */
+  now: z.string().nullable(),
+  /** What this session spent on it (the ledger's rows for the session and the task). */
+  spent: Money,
+  spentWords: z.string(),
+});
+export type SessionTaskView = z.infer<typeof SessionTaskView>;
+
+export const SessionTasksView = z.object({
+  sessionId: z.string(),
+  projectId: z.string().nullable(),
+  tasks: z.array(SessionTaskView),
+});
+export type SessionTasksView = z.infer<typeof SessionTasksView>;
 
 export const EventView = z.object({
   id: z.string(),
@@ -3281,4 +3366,8 @@ export const DAEMON_ROUTES = {
     "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID resumes after the later of the two) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
   events:
     "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, agent.changed ({ id, name }: an agent was renamed; re-read /me and /agents), extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
+  projectSessions:
+    "GET /projects/:id/sessions?before=&limit= (ProjectSessionsView: the project's Sessions list, d1109-sessions, ADR 0116: the sessions that ran a task, spent money or work now, planning calls included, never the conversation; the working ones on top (first page), then the ended ones newest first by start, `limit` a page (20, at most 50), `next` the opaque cursor of the page after (null on the last; it stays valid across a restart); `count` in all, no money total; each row's words are the daemon's and its figure the cost ledger's as booked, read when shown; `chat` 'Chat about this project: CHF 0.30.' when above zero; 404 'No such project.'; 400 for a cursor it cannot read)",
+  sessionTasks:
+    "GET /sessions/:id/tasks (SessionTasksView: the tasks a session worked on, in the order it first ran them, each with what happened to it there, what it is now when that differs and what the session spent on it (the ledger's rows for the session and the task, reviews included); none for a planning call; 404 for an unknown session; d1109-sessions)",
 } as const;

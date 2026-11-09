@@ -2996,6 +2996,10 @@ export class SessionRunner {
       })),
       next: skipped,
       stop_reason: stopReason,
+      // What the session did, named (d1109-sessions, ADR 0116): the project's Sessions list and
+      // the session page read it from the row itself, after a restart and after later sessions
+      // (before, only the project's last session kept it, in the project's cache).
+      outcome,
       ...(opts.note?.trim() ? { note: opts.note.trim() } : {}),
       ...(endInboxRecord ? { end_inbox: endInboxRecord } : {}),
       ...(carriedForward.length ? { carried_forward: carriedForward } : {}),

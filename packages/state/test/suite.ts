@@ -1770,6 +1770,188 @@ export function defineStateSuite(target: SuiteTarget): void {
           current.id,
         );
       });
+
+      // d1109-sessions (ADR 0116): a project's Sessions list, a keyset page at a time, and its
+      // one figure per session from the ledger, split by the credential that paid.
+      describe("a project's sessions (d1109-sessions)", () => {
+        async function listed() {
+          const other = await store.project.insert({ name: "Other" });
+          const key = await store.billingSource.insert({
+            human_id: s.human.id,
+            kind: "api_key",
+            label: "API key",
+          });
+          const sub = await store.billingSource.insert({
+            human_id: s.human.id,
+            kind: "subscription",
+            label: "Subscription",
+          });
+          const at = async (fields: Record<string, unknown>) => {
+            await clock.advance(1_000);
+            return store.session.insert({
+              agent_id: s.alice.id,
+              project_id: s.project.id,
+              ...fields,
+            });
+          };
+          // The seed's session (no run, no ledger row, planned) works now: listed.
+          const ran = await at({ status: "planned" });
+          await store.session.setStatus(ran.id, ran.version, "running");
+          const ranRow = await store.session.mustGet(ran.id);
+          await store.session.setStatus(ranRow.id, ranRow.version, "completed");
+          await store.run.insert({ session_id: ran.id, specialist: "coder", model: "m" });
+          const spent = await at({});
+          const spentRow = await store.session.setStatus(spent.id, spent.version, "running");
+          await store.session.setStatus(spentRow.id, spentRow.version, "stopped");
+          const book = (sessionId: string, usd: number, source: string | null, project = true) =>
+            store.costLedger.record({
+              human_id: s.human.id,
+              kind: "api",
+              project_id: project ? s.project.id : null,
+              session_id: sessionId,
+              billing_source_id: source,
+              usd_micro: usd,
+              chf_micro: Math.round(usd * 0.9),
+              model: "m",
+            });
+          await book(spent.id, 1_000, key.id);
+          await book(spent.id, 3_000, sub.id);
+          await book(spent.id, 500, key.id);
+          await book(ran.id, 2_000, null);
+          // Nothing ran and nothing was spent: not listed.
+          const empty = await at({});
+          const emptyRow = await store.session.setStatus(empty.id, empty.version, "running");
+          await store.session.setStatus(emptyRow.id, emptyRow.version, "completed");
+          // The planning call: listed by its plan alone.
+          const planning = await at({
+            plan: { intake: { project_id: s.project.id } },
+            reason: "intake of Demo",
+            author_agent: s.alice.id,
+          });
+          const planningRow = await store.session.setStatus(
+            planning.id,
+            planning.version,
+            "running",
+          );
+          await store.session.setStatus(planningRow.id, planningRow.version, "failed");
+          // The conversation's row and another project's session: never listed here.
+          const chat = await at({ summary: "conversation", status: "planned" });
+          await book(chat.id, 700, key.id);
+          await store.costLedger.record({
+            human_id: s.human.id,
+            kind: "api",
+            project_id: other.id,
+            session_id: chat.id,
+            usd_micro: 9_000,
+            chf_micro: 8_100,
+            model: "m",
+          });
+          const elsewhere = await store.session.insert({
+            agent_id: s.alice.id,
+            project_id: other.id,
+          });
+          await store.run.insert({ session_id: elsewhere.id, specialist: "coder", model: "m" });
+          // A session working now.
+          const working = await at({});
+          await store.session.start(working.id, working.version);
+          return { ran, spent, empty, planning, chat, working, key, sub, other };
+        }
+
+        it("pages newest first by start, keeps the listed rule, and a cursor continues without a row twice or missed", async () => {
+          const l = await listed();
+          const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+          // The seed's session is planned (works now): listed too, oldest.
+          const all = await store.session.pageForProject(s.project.id, { limit: 50 });
+          expect(ids(all)).toEqual([
+            l.working.id,
+            l.planning.id,
+            l.spent.id,
+            l.ran.id,
+            s.session.id,
+          ]);
+          expect(await store.session.listedCountForProject(s.project.id)).toBe(5);
+          const ended = await store.session.pageForProject(s.project.id, {
+            limit: 50,
+            ended: true,
+          });
+          expect(ids(ended)).toEqual([l.planning.id, l.spent.id, l.ran.id]);
+          // One at a time, with a session that starts between two pages.
+          const seen: string[] = [];
+          let before: { createdAt: string; id: string } | undefined;
+          for (let i = 0; i < 10; i++) {
+            const page = await store.session.pageForProject(s.project.id, {
+              limit: 1,
+              ended: true,
+              ...(before ? { before } : {}),
+            });
+            if (!page.length) break;
+            seen.push(...ids(page));
+            const last = page[page.length - 1] as { created_at: string; id: string };
+            before = { createdAt: last.created_at, id: last.id };
+            if (i === 0) {
+              await clock.advance(1_000);
+              const late = await store.session.insert({
+                agent_id: s.alice.id,
+                project_id: s.project.id,
+              });
+              await store.run.insert({ session_id: late.id, specialist: "coder", model: "m" });
+            }
+          }
+          expect(seen).toEqual([l.planning.id, l.spent.id, l.ran.id]);
+          // Two rows that started in the same millisecond keep one order, by id.
+          const t = clock.nowIso();
+          const a = await store.session.insert({ agent_id: s.alice.id, project_id: l.other.id });
+          const b = await store.session.insert({ agent_id: s.alice.id, project_id: l.other.id });
+          expect([a.created_at, b.created_at]).toEqual([t, t]);
+          await store.run.insert({ session_id: a.id, specialist: "coder", model: "m" });
+          await store.run.insert({ session_id: b.id, specialist: "coder", model: "m" });
+          const tied = (await store.session.pageForProject(l.other.id, { limit: 50 })).filter(
+            (r) => r.created_at === t,
+          );
+          expect(ids(tied)).toEqual([a.id, b.id].sort().reverse());
+          const second = await store.session.pageForProject(l.other.id, {
+            limit: 50,
+            before: { createdAt: t, id: [a.id, b.id].sort().reverse()[0] as string },
+          });
+          expect(ids(second)[0]).toBe([a.id, b.id].sort()[0]);
+        });
+
+        it("sums each session's ledger rows by the kind of credential that paid, as sum() does, and chat about the project apart", async () => {
+          const l = await listed();
+          const sums = await store.costLedger.sumsBySessionAndSource([
+            l.spent.id,
+            l.ran.id,
+            l.empty.id,
+          ]);
+          const of = (id: string) =>
+            sums
+              .filter((x) => x.sessionId === id)
+              .map((x) => [x.sourceKind, x.usd_micro, x.chf_micro, x.entries]);
+          expect(of(l.spent.id)).toEqual([
+            ["api_key", 1_500, 1_350, 2],
+            ["subscription", 3_000, 2_700, 1],
+          ]);
+          expect(of(l.ran.id)).toEqual([[null, 2_000, 1_800, 1]]);
+          expect(of(l.empty.id)).toEqual([]);
+          for (const id of [l.spent.id, l.ran.id]) {
+            const total = await store.costLedger.sum({ sessionId: id });
+            const split = sums.filter((x) => x.sessionId === id);
+            expect(split.reduce((n, x) => n + x.usd_micro, 0)).toBe(total.usd_micro);
+            expect(split.reduce((n, x) => n + x.chf_micro, 0)).toBe(total.chf_micro);
+          }
+          expect(await store.costLedger.sumsBySessionAndSource([])).toEqual([]);
+          // Chat about the project: the conversation's rows booked to it, nothing else.
+          expect(await store.costLedger.chatSpendForProject(s.project.id)).toMatchObject({
+            usd_micro: 700,
+            chf_micro: 630,
+            entries: 1,
+          });
+          expect(await store.costLedger.chatSpendForProject(l.other.id)).toMatchObject({
+            usd_micro: 9_000,
+            entries: 1,
+          });
+        });
+      });
     });
 
     describe("reasons on milestone and plan changes (B.5)", () => {

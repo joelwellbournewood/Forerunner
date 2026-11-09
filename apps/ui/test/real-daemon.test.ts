@@ -21,7 +21,10 @@ import {
   SystemClock,
 } from "@forerunner/platform";
 import { WRAP_UP_MARK } from "@forerunner/runtime/agent/loop";
-import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
+import {
+  KILL_ACTIVE_START_MESSAGE,
+  type ProjectSessionsView as ProjectSessionsViewT,
+} from "@forerunner/runtime/daemon/api-types";
 import {
   type ComposeOptions,
   composeRuntime,
@@ -15294,4 +15297,683 @@ describe("d1109-oversize-start, run C", () => {
       await rt.close();
     }
   }, 90_000);
+});
+
+describe("d1109-sessions, run C", () => {
+  /**
+   * A project lists its sessions (the owner's decision D2 of 2026-11-09, ADR 0116): the bench's
+   * stand-in (the role-player) on a home on disk, so the same home can be composed again; its
+   * model calls can be held per task title, as a session the person watches mid-task.
+   */
+  async function world(env: Record<string, string> = {}) {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-sessions-"));
+    const bench = benchOptionsFromEnv(
+      { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
+      new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+    );
+    const provider = createRolePlayer(bench);
+    const holds = new Map<string, Promise<void>>();
+    /** Calls of a held title that still go through before the hold (`hold(title, after)`). */
+    const passes = new Map<string, number>();
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => {
+      const label = req.origin?.label ?? "";
+      const held = [...holds.entries()].find(([title]) => label.includes(` on ${title}`));
+      if (!held) return stream(req);
+      const [title, hold] = held;
+      const left = passes.get(title) ?? 0;
+      if (left > 0) {
+        passes.set(title, left - 1);
+        return stream(req);
+      }
+      return (async function* () {
+        await hold;
+        yield* stream(req);
+      })();
+    };
+    const hold = (title: string, after = 0) => {
+      passes.set(title, after);
+      let open = () => {};
+      holds.set(
+        title,
+        new Promise<void>((r) => {
+          open = r;
+        }),
+      );
+      return () => {
+        holds.delete(title);
+        open();
+      };
+    };
+    const open = async (opts: { recover?: boolean } = {}) => {
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock: new SystemClock(),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        ...(opts.recover !== undefined ? { recoverSessions: opts.recover } : {}),
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client, app, token };
+    };
+    return { open, bench, hold, home };
+  }
+
+  const ENDED_STATES = ["completed", "stopped", "failed", "killed"];
+  const endOf = async (client: DaemonClient, sessionId: string) => {
+    await eventually(
+      async () => ENDED_STATES.includes((await client.session(sessionId)).status),
+      `session ${sessionId} to end`,
+      async () => (await client.session(sessionId)).status,
+      30_000,
+    );
+    return client.session(sessionId);
+  };
+  /** The project's sessions until none works; the newest one's id. */
+  const allEnded = async (client: DaemonClient, projectId: string) =>
+    eventually(
+      async () =>
+        (await client.sessions({ projectId })).every((s) => ENDED_STATES.includes(s.status)),
+      "every session of the project to end",
+      async () => JSON.stringify((await client.sessions({ projectId })).map((s) => s.status)),
+      30_000,
+    );
+  const ID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
+  const readsPlain = (view: ProjectSessionsViewT) => {
+    const said = JSON.stringify(
+      [...view.working, ...view.rows].map((r) => [
+        r.gist,
+        r.countsWords,
+        r.endedWords,
+        r.spentWords,
+        r.startedBy,
+      ]),
+    );
+    expect(said).not.toMatch(ID);
+    expect(said).not.toMatch(/intake|USD|needs_human|in_progress|budget_exceeded/);
+  };
+  const BRIEF = "A page that shows a quote.";
+
+  it("SL-4, SL-8, SL-10: the list of a project's sessions, newest first, a page at a time, the same after a restart", async () => {
+    const w = await world();
+    const first = await w.open();
+    let { rt, client } = first;
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      // The plan from the brief: a planning call of its own, then Approve and start.
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: "A quote page",
+        brief: BRIEF,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const planningRow = (await client.sessions({ projectId: project.id }))[0];
+      // SL-10: the planning call's page carries its words, never "intake: Quote page (…)".
+      const drafted = await client.session(planningRow?.id ?? "");
+      expect(drafted.planning).toBe(true);
+      expect(drafted.statusText).toBe("Plan drafted");
+      expect(drafted.summary).toMatch(
+        /^Drafted a plan of \d tasks?; it waits for your approval\.$/,
+      );
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      const planned = Number(/plan of (\d)/.exec(drafted.summary)?.[1]);
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "Approve and start",
+      });
+      await eventually(
+        async () => (await client.sessions({ projectId: project.id })).length >= 2,
+        "Approve and start's session",
+        async () => "",
+        20_000,
+      );
+      await allEnded(client, project.id);
+      const doneSession = (await client.sessions({ projectId: project.id })).find(
+        (s) => !s.planning,
+      );
+      expect((await client.session(planningRow?.id ?? "")).summary).toBe(
+        `Drafted a plan of ${planned} ${planned === 1 ? "task" : "tasks"}; you approved it.`,
+      );
+      // A session the person stops mid-task, before anything finished.
+      await client.createTask(project.id, {
+        title: "Write the notes in notes.md",
+        outcome: "notes.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const releaseNotes = w.hold("Write the notes in notes.md");
+      const stoppedStart = await client.startSession({ agentId, projectId: project.id });
+      const stoppedId = stoppedStart.session?.id ?? "";
+      await eventually(
+        async () => (await rt.store.run.forSession(stoppedId)).length > 0,
+        "the stopped session's run to begin",
+        async () => (await client.session(stoppedId)).status,
+        20_000,
+      );
+      await client.stopSession(stoppedId);
+      releaseNotes();
+      await endOf(client, stoppedId);
+      // An automatic start that found nothing: not listed, not counted.
+      const empty = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: project.id,
+        trigger: "schedule",
+        status: "planned",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      const emptyRunning = await rt.store.session.setStatus(empty.id, empty.version, "running");
+      await rt.store.session.setStatus(emptyRunning.id, emptyRunning.version, "completed", {
+        handoff: { stop_reason: "nothing_runnable" } as never,
+      });
+      // One held mid-task, the first it runs.
+      const third = await client.createTask(project.id, {
+        title: "Task 3",
+        outcome: "three.md exists",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "high",
+      });
+      const releaseThird = w.hold("Task 3");
+      const heldStart = await client.startSession({ agentId, projectId: project.id });
+      const heldId = heldStart.session?.id ?? "";
+      await eventually(
+        async () => (await rt.store.run.forSession(heldId)).some((r) => r.task_id === third.id),
+        "the held session to run Task 3",
+        async () => (await client.session(heldId)).status,
+        20_000,
+      );
+      const tasksNow = await client.tasks(project.id);
+      const doneNow = tasksNow.filter((t) => t.status === "done").length;
+      const view = await client.projectSessions(project.id);
+      expect(view.working.map((r) => r.id)).toEqual([heldId]);
+      expect(view.working[0]).toMatchObject({
+        gist: `Working on "Task 3" (${doneNow} of ${tasksNow.length} done)`,
+        durationMs: null,
+        working: true,
+        endedWords: null,
+      });
+      expect(view.working[0]?.spentWords).toMatch(/^CHF \d+\.\d{2} so far$/);
+      expect(view.rows.map((r) => r.id)).toEqual([stoppedId, doneSession?.id, planningRow?.id]);
+      expect(view.count).toBe(4);
+      expect(view).not.toHaveProperty("total");
+      const [stopped, done, planning] = view.rows;
+      expect(stopped).toMatchObject({
+        gist: "Nothing finished.",
+        countsWords: "",
+        endedWords: "Stopped by you",
+        working: false,
+        planning: false,
+      });
+      expect(done?.gist).toMatch(new RegExp(`^Did ${planned} tasks?: "`));
+      expect(done).toMatchObject({
+        countsWords: `${planned} done`,
+        endedWords: "Done",
+        startedBy: null,
+      });
+      expect(done?.durationMs).toBeGreaterThanOrEqual(0);
+      expect(planning).toMatchObject({
+        gist: `Drafted a plan of ${planned} ${planned === 1 ? "task" : "tasks"}; you approved it.`,
+        planning: true,
+        endedWords: null,
+      });
+      // The stand-in pays from no credential: the figure alone.
+      for (const r of view.rows)
+        expect(r.spentWords).toMatch(/^(CHF \d+\.\d{2}|less than CHF 0\.01)$/);
+      readsPlain(view);
+      // SL-8: the Overview counts what the list holds.
+      expect((await client.projectSummary(project.id)).sessionCount).toBe(4);
+      // A page at a time, in order, the last with no next.
+      const paged: string[] = [];
+      let before: string | null = null;
+      for (let i = 0; i < 5; i++) {
+        const page = await client.projectSessions(project.id, { limit: 1, before });
+        paged.push(...page.rows.map((r) => r.id));
+        if (i > 0) expect(page.working).toEqual([]);
+        if (!page.next) break;
+        before = page.next;
+      }
+      expect(paged).toEqual(view.rows.map((r) => r.id));
+      const firstPage = await client.projectSessions(project.id, { limit: 1 });
+      // SL-10: GET /sessions carries the planning words too.
+      const listed = await client.sessions({ projectId: project.id });
+      expect(JSON.stringify(listed.map((s) => [s.summary, s.statusText]))).not.toMatch(/intake/);
+      // Refusals in one sentence, no stack.
+      const missing = await client.projectSessions("no-such-project").catch((e: unknown) => e);
+      expect(missing).toBeInstanceOf(ApiError);
+      expect((missing as ApiError).status).toBe(404);
+      expect((missing as ApiError).message).toBe("No such project.");
+      const bad = await client
+        .projectSessions(project.id, { before: "not-a-cursor" })
+        .catch((e: unknown) => e);
+      expect((bad as ApiError).status).toBe(400);
+      expect((bad as ApiError).message).toBe(
+        "This list cannot go on from there. Open Sessions again.",
+      );
+      expect((bad as ApiError).message).not.toMatch(/at \w+ \(|Error:/);
+
+      // Stop the held one and close; the same home composed again reads the same list.
+      await client.stopSession(heldId);
+      releaseThird();
+      await endOf(client, heldId);
+      const beforeRestart = await client.projectSessions(project.id);
+      await rt.close();
+      ({ rt, client } = await w.open());
+      const afterRestart = await client.projectSessions(project.id);
+      expect(afterRestart).toEqual(beforeRestart);
+      // A cursor taken before the restart (after the stopped session, while the held one still
+      // worked) goes on after it, from where it was: the session that ended since is newer.
+      expect(beforeRestart.rows.map((r) => r.id)).toEqual([
+        heldId,
+        stoppedId,
+        doneSession?.id,
+        planningRow?.id,
+      ]);
+      const next = await client.projectSessions(project.id, {
+        limit: 1,
+        before: firstPage.next,
+      });
+      expect(next.rows.map((r) => r.id)).toEqual([doneSession?.id]);
+      expect((await client.projectSummary(project.id)).sessionCount).toBe(4);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("SL-5: one figure per session, the ledger's as booked, read when shown: a rate change, a late booking and a restart change no screen apart", async () => {
+    const w = await world();
+    let { rt, client } = await w.open();
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Figures", goal: "One figure" });
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await endOf(client, sessionId);
+      const three = async () => {
+        const row = (await client.projectSessions(project.id)).rows.find((r) => r.id === sessionId);
+        const page = await client.session(sessionId);
+        const last = (await client.projectSummary(project.id)).lastSession;
+        const booked = await rt.store.costLedger.sum({ sessionId });
+        return { row, page, last, booked };
+      };
+      const chfIn = (text: string | undefined) => {
+        const m = /CHF (\d+\.\d{2})\.\s*$/.exec(text ?? "");
+        return m ? Math.round(Number(m[1]) * 100) : null;
+      };
+      const cents = (micro: number) => Math.round(micro / 10_000);
+      const check = async () => {
+        const t = await three();
+        expect(t.row?.spent.chfMicro).toBe(t.booked.chf_micro);
+        expect(t.page.spent.chfMicro).toBe(t.booked.chf_micro);
+        expect(t.last?.id).toBe(sessionId);
+        expect(chfIn(t.last?.summary)).toBe(cents(t.booked.chf_micro));
+        expect(chfIn(t.page.summary)).toBe(cents(t.booked.chf_micro));
+        return t;
+      };
+      const before = await check();
+      expect(before.booked.entries).toBeGreaterThan(0);
+      // Today's rate moves: the figure is what was booked, not the counter at the new rate.
+      const rate = rt.chfPerUsd;
+      rt.chfPerUsd = () => 2.5;
+      const moved = await check();
+      expect(moved.page.spent.chfMicro).toBe(before.page.spent.chfMicro);
+      rt.chfPerUsd = rate;
+      // A stopped run's usage booked after the end (R-lateusage books it to the session's
+      // ledger): every screen follows, the stored texts stay as they were written.
+      const storedRow = await rt.store.session.mustGet(sessionId);
+      const storedCache = JSON.stringify(
+        ((await rt.store.project.mustGet(project.id)).summary_cache as { last_session?: unknown })
+          .last_session,
+      );
+      const run = (await rt.store.run.forSession(sessionId))[0];
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        agent_id: rt.agent.id,
+        project_id: project.id,
+        session_id: sessionId,
+        task_id: run?.task_id ?? null,
+        run_id: run?.id ?? null,
+        kind: "api",
+        usd_micro: 25_000,
+        chf_micro: 20_000,
+        model: "fake",
+      });
+      const late = await check();
+      expect(late.booked.chf_micro).toBe(before.booked.chf_micro + 20_000);
+      expect(late.row?.spentWords).toBe(`CHF ${(late.booked.chf_micro / 1_000_000).toFixed(2)}`);
+      expect((await rt.store.session.mustGet(sessionId)).summary).toBe(storedRow.summary);
+      expect(
+        JSON.stringify(
+          ((await rt.store.project.mustGet(project.id)).summary_cache as { last_session?: unknown })
+            .last_session,
+        ),
+      ).toBe(storedCache);
+      // After a restart, the same.
+      await rt.close();
+      ({ rt, client } = await w.open());
+      const again = await check();
+      expect(again.row).toEqual(late.row);
+      // A row from before run C (its text has no such sentence): shown as stored.
+      const old = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: project.id,
+        trigger: "manual",
+        status: "planned",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      await rt.store.run.insert({ session_id: old.id, specialist: "coder", model: "fake" });
+      const oldRunning = await rt.store.session.setStatus(old.id, old.version, "running");
+      await rt.store.session.setStatus(oldRunning.id, oldRunning.version, "completed", {
+        summary: "Did 1 task. Spent CHF 0.04 in all.",
+        handoff: { done: [], stop_reason: "completed" } as never,
+      });
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        project_id: project.id,
+        session_id: old.id,
+        kind: "api",
+        usd_micro: 50_000,
+        chf_micro: 40_000,
+        model: "fake",
+      });
+      expect((await client.session(old.id)).summary).toBe("Did 1 task. Spent CHF 0.04 in all.");
+      expect((await client.session(old.id)).spent.chfMicro).toBe(40_000);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("SL-9: the session page lists the tasks it worked on, what each did there and what it is now, each with its CHF from the ledger", async () => {
+    const w = await world({ FORERUNNER_BENCH_FAIL_MODE: "error" });
+    const { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Two tasks", goal: "Two pages" });
+      const a = await client.createTask(project.id, {
+        title: "Write page A in a.html",
+        outcome: "a.html exists",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "high",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write page B in b.html",
+        outcome: "b.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      w.bench.fail.push("Write page B");
+      const s1 = (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      await endOf(client, s1);
+      expect((await client.tasks(project.id)).find((t) => t.id === b.id)?.status).toBe("failed");
+      // Try again on its card starts the work again; this time it works.
+      w.bench.fail.length = 0;
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.taskId === b.id && r.status === "open",
+      );
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "Try again",
+      });
+      await eventually(
+        async () => (await client.sessions({ projectId: project.id })).length >= 2,
+        "the second session",
+        async () => "",
+        20_000,
+      );
+      await allEnded(client, project.id);
+      const s2 =
+        (await client.sessions({ projectId: project.id })).find((s) => s.id !== s1)?.id ?? "";
+      const first = await client.sessionTasks(s1);
+      expect(first.tasks.map((t) => [t.title, t.here, t.now])).toEqual([
+        ["Write page A in a.html", "Done", null],
+        ["Write page B in b.html", "Failed", "Done"],
+      ]);
+      const second = await client.sessionTasks(s2);
+      expect(second.tasks.map((t) => [t.title, t.here, t.now])).toEqual([
+        ["Write page B in b.html", "Done", null],
+      ]);
+      for (const [sessionId, view] of [
+        [s1, first],
+        [s2, second],
+      ] as const)
+        for (const t of view.tasks) {
+          const booked = await rt.store.costLedger.sum({ sessionId, taskId: t.id });
+          expect(t.spent.chfMicro).toBe(booked.chf_micro);
+          expect(t.projectId).toBe(project.id);
+        }
+      expect(first.tasks[0]?.id).toBe(a.id);
+      // Unknown session: 404.
+      const missing = await client.sessionTasks("no-such-session").catch((e: unknown) => e);
+      expect((missing as ApiError).status).toBe(404);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("SL-10: a planning call that failed reads the words the project page showed, after a restart too; it lists no tasks", async () => {
+    const w = await world({ FORERUNNER_BENCH_INTAKE: "error" });
+    let { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({
+        name: "Failing plan",
+        goal: "A plan",
+        brief: BRIEF,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+      const status = await client.intakeStatus(project.id);
+      expect(status.state).toBe("failed");
+      const words = status.error ?? "";
+      expect(words.length).toBeGreaterThan(0);
+      const read = async () => {
+        const view = await client.projectSessions(project.id);
+        const row = view.rows[0];
+        const page = await client.session(row?.id ?? "");
+        return { view, row, page };
+      };
+      const check = async () => {
+        const { view, row, page } = await read();
+        expect(view.count).toBe(1);
+        expect(row).toMatchObject({ planning: true, endedWords: "Planning failed" });
+        expect(row?.gist).toBe(
+          `Planning failed: ${words}`.length <= 100
+            ? `Planning failed: ${words}`
+            : expect.stringMatching(/^Planning failed: .+…$/),
+        );
+        expect(page.summary).toBe(row?.gist);
+        expect(page.statusText).toBe("Planning failed");
+        expect(page.planning).toBe(true);
+        expect((await client.sessionTasks(row?.id ?? "")).tasks).toEqual([]);
+        readsPlain(view);
+        return row;
+      };
+      const before = await check();
+      await rt.close();
+      ({ rt, client } = await w.open());
+      expect(await check()).toEqual(before);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("SL-11: how a session ended and why it started, as the row and the page say it (rows seeded as the engine and older installs write them)", async () => {
+    const w = await world();
+    const { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({ name: "Starts", goal: "Why each started" });
+      const seed = async (
+        fields: { trigger?: string; plan?: Record<string, unknown> },
+        handoff: Record<string, unknown>,
+      ) => {
+        const row = await rt.store.session.insert({
+          agent_id: rt.agent.id,
+          project_id: project.id,
+          trigger: fields.trigger ?? "manual",
+          status: "planned",
+          summary: "",
+          handoff: {},
+          runner: "pc",
+          ...(fields.plan
+            ? { plan: fields.plan, reason: "seeded", author_agent: rt.agent.id }
+            : {}),
+        });
+        await rt.store.run.insert({ session_id: row.id, specialist: "coder", model: "fake" });
+        const running = await rt.store.session.setStatus(row.id, row.version, "running");
+        await rt.store.session.setStatus(running.id, running.version, "stopped", {
+          handoff: handoff as never,
+        });
+        return row.id;
+      };
+      const wait = await seed({}, { stop_reason: "credential_wait" });
+      const plan = await seed({}, { stop_reason: "plan_awaiting_approval" });
+      const scheduled = await seed({ trigger: "schedule" }, { stop_reason: "completed" });
+      const comment = await seed({ trigger: "pr_comment" }, { stop_reason: "completed" });
+      const ci = await seed({ trigger: "ci" }, { stop_reason: "completed" });
+      const bySchedule = await seed(
+        { plan: { startedBy: { by: "schedule" } } },
+        { stop_reason: "completed" },
+      );
+      const phone = await seed(
+        { trigger: "remote", plan: { startedBy: { by: "person" } } },
+        { stop_reason: "completed" },
+      );
+      const answered = await seed({ trigger: "message" }, { stop_reason: "completed" });
+      const reset = await seed({ trigger: "budget_reset" }, { stop_reason: "completed" });
+      const rows = new Map((await client.projectSessions(project.id)).rows.map((r) => [r.id, r]));
+      expect(rows.get(wait)?.endedWords).toBe("Stopped to wait for a Claude credential");
+      expect((await client.session(wait)).statusText).toBe(
+        "Stopped to wait for a Claude credential",
+      );
+      expect(rows.get(plan)?.endedWords).toBe("Ended with a plan for you to approve");
+      expect((await client.session(plan)).statusText).toBe("Ended with a plan for you to approve");
+      expect(rows.get(scheduled)?.startedBy).toBe("started on its schedule");
+      expect(rows.get(comment)?.startedBy).toBe("started by a pull request comment");
+      expect(rows.get(ci)?.startedBy).toBe("started by CI");
+      expect(rows.get(bySchedule)?.startedBy).toBe("started on its schedule");
+      expect(rows.get(phone)?.startedBy).toBe("started from your phone");
+      expect(rows.get(answered)?.startedBy).toBeNull();
+      expect(rows.get(reset)?.startedBy).toBeNull();
+      // A Start from the dialog says nothing of how it started.
+      const agentId = (await client.agents())[0]?.id ?? "";
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      await endOf(client, started);
+      const own = (await client.projectSessions(project.id)).rows.find((r) => r.id === started);
+      expect(own?.startedBy).toBeNull();
+      expect(own?.endedWords).toBe("Done");
+      // Chat about the project is one line under the list, never a session row (design §3.9).
+      expect((await client.projectSessions(project.id)).chat).toBeNull();
+      const before = (await client.projectSessions(project.id)).count;
+      const me = await client.me();
+      await client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what is left to do?",
+        source: "text",
+      });
+      const after = await client.projectSessions(project.id);
+      expect(after.count).toBe(before);
+      const booked = await rt.store.costLedger.chatSpendForProject(project.id);
+      expect(booked.entries).toBeGreaterThan(0);
+      expect(after.chat?.spent.chfMicro).toBe(booked.chf_micro);
+      expect(after.chat?.words).toMatch(
+        /^Chat about this project: (CHF \d+\.\d{2}|less than CHF 0\.01)\.$/,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("SL-9 while a task runs: its CHF is the ledger's for the session and the task as each model call is booked, the figure the session's spend shows", async () => {
+    // Review of d1109-sessions (bench step 11): the session page read "Running CHF 0.00" for
+    // the whole run while "Spent of this session's budget" grew. The page reads this route
+    // again when the session's spend moves; this is what the route answers mid-run.
+    const w = await world();
+    const { rt, client } = await w.open();
+    let release = () => {};
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Live figure", goal: "One page" });
+      const title = "Write the page in page.html";
+      const task = await client.createTask(project.id, {
+        title,
+        outcome: "page.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      // The run's first model call goes through and is booked; the next one waits.
+      release = w.hold(title, 1);
+      const sessionId =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      const booked = async () => rt.store.costLedger.sum({ sessionId, taskId: task.id });
+      await eventually(
+        async () => (await booked()).entries > 0,
+        "the run's first model call to be booked",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const mid = await client.sessionTasks(sessionId);
+      expect(mid.tasks.map((t) => [t.title, t.here, t.now])).toEqual([[title, "Running", null]]);
+      const midBooked = await booked();
+      expect(midBooked.chf_micro).toBeGreaterThan(0);
+      expect(mid.tasks[0]?.spent.chfMicro).toBe(midBooked.chf_micro);
+      // The session page's "Spent of this session's budget" and this row read one ledger.
+      expect((await client.session(sessionId)).spent.chfMicro).toBe(
+        (await rt.store.costLedger.sum({ sessionId })).chf_micro,
+      );
+      expect(mid.tasks[0]?.spentWords).toMatch(/^(CHF \d+\.\d{2}|less than CHF 0\.01)$/);
+      // The run goes on: the figure moves with each booking, and at the end equals the ledger.
+      release();
+      await endOf(client, sessionId);
+      const end = await client.sessionTasks(sessionId);
+      const endBooked = await booked();
+      expect(endBooked.chf_micro).toBeGreaterThan(midBooked.chf_micro);
+      expect(end.tasks.map((t) => [t.title, t.here])).toEqual([[title, "Done"]]);
+      expect(end.tasks[0]?.spent.chfMicro).toBe(endBooked.chf_micro);
+    } finally {
+      release();
+      await rt.close();
+    }
+  }, 120_000);
 });

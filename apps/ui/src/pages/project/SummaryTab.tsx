@@ -185,6 +185,19 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
               >
                 Open the session
               </Link>
+              {/* d1109-sessions: the project's other sessions, from two on (ADR 0116). */}
+              {(data.sessionCount ?? 0) >= 2 ? (
+                <>
+                  {" · "}
+                  <Link
+                    to={`/projects/${encodeURIComponent(projectId)}/sessions`}
+                    className="text-blue-700 hover:underline dark:text-blue-300"
+                    data-testid="all-sessions"
+                  >
+                    All {data.sessionCount} sessions
+                  </Link>
+                </>
+              ) : null}
             </p>
           </div>
         ) : (
