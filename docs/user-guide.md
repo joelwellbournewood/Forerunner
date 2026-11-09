@@ -594,7 +594,8 @@ you stay where you were; the dialog says it started, with **Open the session** a
 "needs about CHF 3.00, more than this session's work budget of CHF 2.40" when it alone is too
 large (several such tasks are one line), or "(about CHF 1.20) may be left for next time: the
 tasks that run first take about CHF 1.50 of this session's work budget of CHF 2.40" when it only
-does not fit after the tasks ordered before it. A task with a budget of its own is counted at
+does not fit after the tasks ordered before it. Several tasks left out are one line, naming up
+to three and then how many more. A task with a budget of its own is counted at
 most at what is left of that budget, since its runs never spend more.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it

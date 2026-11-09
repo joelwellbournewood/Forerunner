@@ -413,4 +413,64 @@ describe("w15-words, wave 15 run B", () => {
       expect(fast.sentence).toMatch(/^Set Opus fast mode for Atlas from off to on: /);
     });
   });
+  describe("W15-38: the Start dialog names the tasks left out once, at most three", () => {
+    /** proj_atlas's ready work: "Decide the versioning scheme" and `titles`, each of `usd`. */
+    const seed = (titles: string[], usd: number) => {
+      const harness = createHarness();
+      const tasks = harness.daemon.state.tasks;
+      const first = tasks.find((t) => t.id === "task_3");
+      if (!first) throw new Error("fixture changed");
+      first.estimate = money(usd);
+      titles.forEach((title, i) => {
+        tasks.push({ ...first, id: `task_left_${i}`, title, estimate: money(usd) });
+      });
+      return harness;
+    };
+    const openWithBudget = async (harness: Harness, typed: string) => {
+      const user = userEvent.setup();
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      await user.click(screen.getByTestId("start-session"));
+      const dialog = await screen.findByTestId("start-session-dialog");
+      const budget = within(dialog).getByLabelText(/Session budget/);
+      await user.clear(budget);
+      await user.type(budget, typed);
+      return dialog;
+    };
+
+    it("CHF 0.04 with four tasks left out: one line, three named, then 'and 1 more'", async () => {
+      const harness = seed(["About page", "Contact page", "Menu", "Footer"], 25_000);
+      const dialog = await openWithBudget(harness, "0.04");
+      await waitFor(() =>
+        expect(within(dialog).getAllByTestId("start-session-over-budget")).toHaveLength(1),
+      );
+      expect(within(dialog).getByTestId("start-session-over-budget")).toHaveTextContent(
+        '"About page" (about CHF 0.02), "Contact page" (about CHF 0.02), "Menu" (about CHF 0.02) and 1 more may be left for next time: the tasks that run first take about CHF 0.02 of this session\'s work budget of CHF 0.03 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure they run.',
+      );
+      expect(within(dialog).queryByTestId("start-session-more")).toBeNull();
+    });
+
+    it("CHF 0.04 with three tasks left out: one line names the three", async () => {
+      const harness = seed(["About page", "Contact page", "Menu"], 25_000);
+      const dialog = await openWithBudget(harness, "0.04");
+      await waitFor(() =>
+        expect(within(dialog).getAllByTestId("start-session-over-budget")).toHaveLength(1),
+      );
+      expect(within(dialog).getByTestId("start-session-over-budget")).toHaveTextContent(
+        /^"About page" \(about CHF 0\.02\), "Contact page" \(about CHF 0\.02\) and "Menu" \(about CHF 0\.02\) may be left for next time: /,
+      );
+    });
+
+    it("tasks each larger than the work budget: at most three named, then 'and N more'", async () => {
+      const harness = seed(["About page", "Contact page", "Menu", "Footer"], 100_000);
+      const dialog = await openWithBudget(harness, "0.04");
+      const line = await within(dialog).findByTestId("start-session-over-budget");
+      await waitFor(() =>
+        expect(line).toHaveTextContent(
+          '"Decide the versioning scheme" (about CHF 0.08), "About page" (about CHF 0.08), "Contact page" (about CHF 0.08) and 2 more each need more than this session\'s work budget of CHF 0.03',
+        ),
+      );
+      expect(line).not.toHaveTextContent("Menu");
+    });
+  });
 });

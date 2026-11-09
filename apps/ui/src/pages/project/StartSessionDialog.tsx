@@ -147,9 +147,13 @@ export function planSentence(check: StartCheckView): string | null {
   return `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)}).`;
 }
 
-/** '"A" (about CHF 6.00) and "B" (about CHF 7.00)'. */
+/**
+ * '"A" (about CHF 6.00) and "B" (about CHF 7.00)': at most three named, then "and N more"
+ * (W15-38: the line named every task).
+ */
 function namesWithEstimates(tasks: readonly { title: string; estimate: MoneyLike }[]): string {
   const parts = tasks.map((t) => `"${t.title}" (${aboutChf(t.estimate.chfMicro)})`);
+  if (parts.length > 3) return `${parts.slice(0, 3).join(", ")} and ${parts.length - 3} more`;
   return parts.length <= 1
     ? (parts[0] ?? "")
     : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
@@ -219,16 +223,34 @@ function BlockerLines({ check }: { check: StartCheckView }) {
     });
   // An older daemon does not say what runs before a task: every task that runs, as before.
   const allFirst = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
-  for (const t of check.overBudget.filter((x) => !tooBig.includes(x)))
+  // W15-38: the tasks that may be left for next time are one line (each had the same long
+  // sentence), at most three named; "the tasks that run first" is what runs before the first of
+  // them, which the others wait behind too.
+  const left = check.overBudget.filter((x) => !tooBig.includes(x));
+  const [firstLeft] = left;
+  if (firstLeft && left.length === 1)
     lines.push({
-      key: `b-${t.taskId}`,
+      key: `b-${firstLeft.taskId}`,
       testId: "start-session-over-budget",
       node: (
         <>
-          "{t.title}" (<AboutMoney value={t.estimate} />) may be left for next time: the tasks that
-          run first take {aboutChf(t.ahead?.chfMicro ?? allFirst)} of this session's work budget of{" "}
+          "{firstLeft.title}" (<AboutMoney value={firstLeft.estimate} />) may be left for next time:
+          the tasks that run first take {aboutChf(firstLeft.ahead?.chfMicro ?? allFirst)} of this
+          session's work budget of <Money value={check.workBudget} /> (the budget less a fifth kept
+          for reviews). Give the session a larger budget to be sure it runs.
+        </>
+      ),
+    });
+  else if (firstLeft)
+    lines.push({
+      key: "b-left",
+      testId: "start-session-over-budget",
+      node: (
+        <>
+          {namesWithEstimates(left)} may be left for next time: the tasks that run first take{" "}
+          {aboutChf(firstLeft.ahead?.chfMicro ?? allFirst)} of this session's work budget of{" "}
           <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
-          session a larger budget to be sure it runs.
+          session a larger budget to be sure they run.
         </>
       ),
     });
