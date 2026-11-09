@@ -514,7 +514,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
       const v = (value ?? {}) as { enabled?: boolean; day?: number; time?: string };
       return v.enabled === false
         ? "the critic is no longer graded against the eval sets each month"
-        : `the critic grades the eval sets on day ${v.day ?? 1} at ${v.time ?? "06:00"} each month`;
+        : // W15-46: the value in words names the schedule ("on, day 1 at 06:00"); said once.
+          "each month the critic grades the eval sets";
     },
   },
   model_watch: {
@@ -558,7 +559,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     effect: (value) => {
       const v = (value ?? {}) as { enabled?: boolean; day?: number; time?: string };
       return v.enabled
-        ? `a fresh agent runs the seeded change on day ${v.day ?? 1} at ${v.time ?? "07:00"} each month and its stuck places become a docs task`
+        ? // W15-46: the value in words names the schedule ("on, day 2 at 08:00"); said once.
+          "each month a fresh agent runs the seeded change and its stuck places become a docs task"
         : "no monthly handover test runs on the project";
     },
   },

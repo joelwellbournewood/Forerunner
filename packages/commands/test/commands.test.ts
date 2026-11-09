@@ -438,7 +438,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     );
     expect(handover.sentence).toBe(
       // later #30: in words, never JSON.
-      "Set the monthly handover test for Game from off to on, day 2 at 08:00: a fresh agent runs the seeded change on day 2 at 08:00 each month and its stuck places become a docs task. Undo.",
+      "Set the monthly handover test for Game from off to on, day 2 at 08:00: each month a fresh agent runs the seeded change and its stuck places become a docs task. Undo.",
     );
     expect((await w.store.project.mustGet(w.game.id)).settings.handover).toEqual({
       enabled: true,

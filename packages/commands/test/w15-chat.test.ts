@@ -341,4 +341,36 @@ describe("w15-chat, wave 15", () => {
     );
     expect(await w.store.changeLog.list()).toEqual([]);
   });
+
+  // W15-46 (wave 13 polish-screens review): "… to on, day 2 at 08:00: a fresh agent runs the
+  // seeded change on day 2 at 08:00 each month …" said the schedule twice; the calibration too.
+  it("a monthly job's change names its schedule once (W15-46)", async () => {
+    const w = await world();
+    const handover = await w.executor.plan(
+      {
+        name: "settings.set",
+        params: {
+          key: "handover",
+          value: { enabled: true, day: 2, time: "08:00" },
+          project: "Game",
+        },
+      },
+      w.ctx(),
+    );
+    expect(handover.sentence).toBe(
+      "Set the monthly handover test for Game from off to on, day 2 at 08:00: each month a fresh agent runs the seeded change and its stuck places become a docs task. Undo.",
+    );
+    expect(handover.sentence.match(/day 2 at 08:00/g)).toHaveLength(1);
+    const calibration = await w.executor.plan(
+      {
+        name: "settings.set",
+        params: { key: "calibration", value: { enabled: true, day: 3, time: "05:30" } },
+      },
+      w.ctx(),
+    );
+    expect(calibration.sentence.match(/day 3 at 05:30/g)).toHaveLength(1);
+    expect(calibration.sentence).toBe(
+      "Set the monthly critic calibration from on, day 1 at 06:00 (the default) to on, day 3 at 05:30: each month the critic grades the eval sets. Undo.",
+    );
+  });
 });

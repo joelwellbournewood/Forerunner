@@ -560,6 +560,11 @@ among them.
   `MONTHLY_CAP_ZERO`, the fake daemon's refusal) reads "The monthly cap must be more than CHF
   0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you
   want to spend in a month." 0 stays refused for the month (owner question W15-109 open).
+- **A monthly job's schedule, once (W15-46).** The handover test's and the calibration's change
+  sentence named the schedule in the value and again in the effect ("… to on, day 2 at 08:00: a
+  fresh agent runs the seeded change on day 2 at 08:00 each month …"); the effect now says "each
+  month a fresh agent runs the seeded change …" and "each month the critic grades the eval
+  sets".
 
 ## How to change it
 
