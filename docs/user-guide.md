@@ -364,8 +364,11 @@ never repeats work that is already in the default branch:
   merges, unless the rebuild dropped work its review read (then the row says so and waits for you). If you commit in that
   folder, Forerunner never drops your commit: the rebuild waits and the row says "#8 waits for
   a commit made in its task's folder: push it to GitHub or undo it." Push it (the next check
-  rebuilds #8 with your commit, and #8 waits for your look, since the review did not read it)
-  or undo it in the folder (`git reset --hard origin/<branch>`). In a chain
+  rebuilds #8 with your commit, and #8 waits for your look, since the review did not read it:
+  the row says "#8 changed after the review: look at the new commits, then merge it yourself or
+  redo the task." and offers no Merge, and a Merge you pressed while it waited is dropped, with
+  a card that says so) or undo it in the folder (`git reset --hard origin/<branch>`). The same
+  holds for any commit pushed to #8's branch on GitHub: a rebuild never makes it reviewed. In a chain
   (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt; while #6 cannot be
   rebuilt yet (its folder is busy, or its rebuild conflicts), #8 waits for it too, with no card
   of its own, and nothing merges #8 meanwhile.

@@ -1624,6 +1624,145 @@ describe("w15-merge, wave 15", { timeout: 240_000 }, () => {
     expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
     expect(await m.prCommits(prB)).toEqual(["Add footer"]);
   });
+
+  /**
+   * The fix-up of the review: the rebuild read the branch as GitHub had it, with the person's
+   * pushed commit in it, as the reviewed change (its own change was the same before and after
+   * the rebuild), moved the record's reviewed head onto it, offered Merge under "Reviewed by the
+   * critic" and let a kept Merge merge the commit nobody reviewed (bench J3, J4).
+   */
+  const changedAfterReview = (pr: number) =>
+    `#${pr} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
+
+  it("the person's commit pushed to GitHub, as the sentence offers, with A squash-merged: the rebuild keeps it, but B is not taken as reviewed; it waits for the person's look with no Merge and nothing merges it (W15-02 fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    const reviewed = await m.record(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    writeFileSync(join(dir, "mine.txt"), "my own change\n");
+    const g = asPerson(dir);
+    await g(["add", "mine.txt"]);
+    await g(["commit", "-q", "-m", "My own change"]);
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("owed_folder_commits");
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    await m.poll();
+    // The rebuild ran with the commit: B holds its own change and the person's, onto main.
+    expect(await m.prFiles(prB)).toEqual(["mine.txt", m.fileOf("Add footer")].sort());
+    expect(await m.prCommits(prB)).not.toContain("Add page");
+    const after = await m.record(b.id);
+    // Before: reviewed_head_sha moved onto the new head, last_outcome "not_allowed", Merge.
+    expect(after).toMatchObject({
+      state: "left_to_you",
+      rebuild_owed_for: null,
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+      own_change_id: reviewed.own_change_id,
+    });
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      canMerge: false,
+      sentence: changedAfterReview(prB),
+    });
+    expect(row).toMatchObject({
+      label: "Accepted · changed after the review",
+      detail: changedAfterReview(prB),
+    });
+    // The person's Merge on the app is refused with the same words; polls merge nothing.
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    expect(await prs.merge(project, prB, m.w.human)).toMatchObject({
+      state: "refused",
+      sentence: changedAfterReview(prB),
+    });
+    await m.poll();
+    await m.merge.retryWaiting();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.hostGit("ls-tree", "-r", "--name-only", "main")).not.toContain("mine.txt");
+  });
+
+  it("Merge pressed during the commit wait, then the commit pushed: the kept press is not carried over to work the review did not read; nothing merges #B, and one card says it changed after the review (W15-02, W15-05 fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    const reviewed = await m.record(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    writeFileSync(join(dir, "mine.txt"), "my own change\n");
+    const g = asPerson(dir);
+    await g(["add", "mine.txt"]);
+    await g(["commit", "-q", "-m", "My own change"]);
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    const waitsForCommit = `#${prB} waits for a commit made in its task's folder: push it to GitHub or undo it.`;
+    expect(await prs.merge(project, prB, m.w.human)).toMatchObject({
+      state: "queued",
+      sentence: waitsForCommit,
+    });
+    await prs.idle();
+    expect(await m.record(b.id)).toMatchObject({ state: "queued", approval: "person" });
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    await m.poll();
+    await m.poll();
+    await m.merge.retryWaiting();
+    await m.host.settle();
+    // Before: Forerunner merged #B by itself, and mine.txt (never reviewed) reached main.
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.hostGit("ls-tree", "-r", "--name-only", "main")).not.toContain("mine.txt");
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      approval: "none",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+    });
+    const cards = await m.cards(b.id);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.body).toContain(changedAfterReview(prB));
+  });
+
+  it("a commit pushed to B's branch on GitHub before A is squash-merged: the rebuild does not take it as reviewed either (W15-02 fix-up, sibling)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    const reviewed = await m.record(b.id);
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    // Someone pushes a commit to B's branch on GitHub (not from the task's folder).
+    const elsewhere = mkdtempSync(join(tmpdir(), "fr-w15-push-"));
+    try {
+      await run(["git", "clone", "-q", "--branch", branch, m.hostDir, elsewhere]);
+      writeFileSync(join(elsewhere, "theirs.txt"), "their change\n");
+      const g = asPerson(elsewhere);
+      await g(["add", "theirs.txt"]);
+      await g(["commit", "-q", "-m", "Their change"]);
+      await g(["push", "-q", "origin", `HEAD:${branch}`]);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect(await m.prFiles(prB)).toEqual(["theirs.txt", m.fileOf("Add footer")].sort());
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+    });
+    const { waiting } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge?.canMerge).toBe(false);
+  });
 });
 
 describe("w15-merge, wave 15: a chain with a busy middle (W15-03)", { timeout: 240_000 }, () => {

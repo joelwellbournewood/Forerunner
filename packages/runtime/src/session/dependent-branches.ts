@@ -13,6 +13,7 @@ import {
   headMovedSentence,
   leftOpenSteps,
   MERGE_LEFT_OPEN_KEY,
+  MERGE_LEFT_OPEN_OPTIONS,
   type MergedEvent,
   REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
@@ -132,6 +133,20 @@ export function rebuildConflictSentence(
     ? `merge it on GitHub only if you want ${gone.length === 1 ? `${prName(gone[0]?.number)}'s` : "their"} changes too`
     : "resolve it on GitHub";
   return `${prName(pr)} could not be rebuilt without ${andList(dropped.map(droppedWords))}: both change ${files}. It waits for you: redo the task, or ${merge}.`;
+}
+
+/**
+ * W15-02 fix-up: whether the branch, as GitHub had it before a rebuild, held the change the
+ * record's review read. The task's own change (`own_change_id`, which a dependency merged by
+ * squash, main merged in or an earlier rebuild keeps) is compared when the record has it, as
+ * the merge step does (`keepsOwnChange`); else the head itself. A commit pushed on top that
+ * changes anything (the person's, as the folder's wait offers, or anyone's on GitHub) is not
+ * the reviewed change. An earlier rebuild whose push failed moved the record to its own head
+ * and the same own change, so it is read as reviewed and rebuilt again.
+ */
+function reviewedChangeBefore(record: MergeRecordRow, r: DependentRebuild): boolean {
+  if (record.own_change_id) return r.ownBefore === record.own_change_id;
+  return !!record.reviewed_head_sha && r.before === record.reviewed_head_sha;
 }
 
 /** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
@@ -711,6 +726,15 @@ export class DependentBranches {
       return true;
     }
     if (r.ownBefore && r.ownAfter && r.ownBefore === r.ownAfter) {
+      // W15-02 fix-up: the branch as GitHub had it before the rebuild holds work the review did
+      // not read (a commit the person pushed, as the folder's wait offers, or anyone pushed to
+      // the branch on GitHub): the rebuild keeps it, but the record never follows it. Before,
+      // the record moved its reviewed head onto it, the Overview offered Merge under "Reviewed
+      // by the critic", and a Merge the person pressed during the folder's wait merged it.
+      if (!reviewedChangeBefore(record, r)) {
+        await this.changedAfterReview(task, record, pr);
+        return true;
+      }
       // Only what main already has was dropped: the same reviewed change on the new head.
       // W15-03: a rebuild conflict an earlier pass said is over (its sentence, its card): the
       // record waits for the person's Merge again (live check 2: it kept "could not be rebuilt"
@@ -733,6 +757,76 @@ export class DependentBranches {
     });
     if (task) await this.card(task, record, pr, sentence, "rebuilt_changed", r.dropped);
     return true;
+  }
+
+  /**
+   * W15-02 fix-up: a rebuild whose branch held work the review did not read leaves the record
+   * at the reviewed commit and to the person, as the merge step does when it finds the head
+   * moved (`head_moved`: no Merge on the Overview, "merge it yourself or redo the task"). A
+   * Merge the person pressed before (kept while the folder waited) or the automatic mode's is
+   * dropped, and one card says why; a record that already waited for the person's Merge says
+   * it on its row only, as the merge step does. Said once: a later rebuild finds it said.
+   */
+  private async changedAfterReview(
+    task: TaskRow | undefined,
+    record: MergeRecordRow,
+    pr: { number: number; url: string },
+  ): Promise<void> {
+    const { store } = this.deps;
+    const sentence = headMovedSentence(pr.number);
+    if (record.last_outcome === "head_moved" && record.sentence === sentence) return;
+    const wasLeft = record.state === "left_to_you";
+    const moved = await store.mergeRecord.move(record.id, "left_to_you", {
+      sentence,
+      last_outcome: "head_moved",
+      approval: "none",
+      approved_by: null,
+    });
+    this.logger.info("dependent branch rebuilt with work the review did not read", {
+      taskId: record.task_id,
+      pr: pr.number,
+    });
+    if (!task) return;
+    try {
+      const open = await this.openMergeCard(task.id);
+      if (open) {
+        // The card open for this merge (a notice, a rebuild's card) says it now.
+        await store.humanRequest.patch(open.id, {
+          why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+          options: [...MERGE_LEFT_OPEN_OPTIONS],
+          steps: leftOpenSteps("head_moved"),
+          change_card: {
+            ...((open.change_card ?? {}) as JsonObject),
+            sentence,
+            status: "head_moved",
+            notice: null,
+            base: null,
+            rebuild: null,
+            without: null,
+          },
+        });
+        return;
+      }
+      if (wasLeft) return;
+      const agentId = moved.agent_id || task.owner_agent_id || task.author_agent || "";
+      const humanId = (await store.agent.get(agentId))?.owner_human_id ?? "";
+      if (!humanId) return;
+      await fileLeftOpenRequest(store, {
+        task,
+        sessionId: null,
+        humanId,
+        agentId,
+        outcome: {
+          taskId: task.id,
+          prUrl: pr.url,
+          status: "head_moved",
+          reason: `PR left open for you: ${sentence}`,
+          sentence,
+        },
+      });
+    } catch (e) {
+      this.logger.warn("head-moved card not filed", { taskId: task.id, error: errorMessage(e) });
+    }
   }
 
   /**

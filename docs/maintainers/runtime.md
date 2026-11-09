@@ -3359,7 +3359,17 @@ is never dropped** (W15-02): `folderHold` (capabilities) holds the rebuild for a
 task's branch that GitHub's branch lacks and that is not Forerunner's own unpushed step (a base
 merge the merge step made before its push, `unpushedBaseMerge`'s shape; work-in-progress commits;
 its own rebuild cut short, put back first), and the outcome's `held` says which (`changes` or
-`commits`). **The wait is written at the poll** (W15-05): `DependentBranches.sayFolderWait`
+`commits`). **A rebuild never makes work the review did not read reviewed** (W15-02 fix-up; the
+review found the person's pushed commit taken as reviewed and merged by a kept Merge):
+`settleRecord` follows a clean same-own-change rebuild with the record only when the branch, as
+GitHub had it before the rebuild, held the reviewed change (`reviewedChangeBefore`: its own
+change equals the record's `own_change_id`, as `ReviewedPrMerge.keepsOwnChange` reads it, or,
+with none, its head is `reviewed_head_sha`; a rebuild whose push failed moved the record to its
+own head and change, so it still rebuilds). Otherwise `changedAfterReview` leaves the record at
+the reviewed commit, `left_to_you` with `head_moved` and `headMovedSentence` (no Merge on the
+Overview), drops a kept approval (`approval: "none"`), and one card says it: the open merge card
+takes the words, and a new one is filed only when the record was not already waiting for the
+person's Merge (as the merge step's `settle`). **The wait is written at the poll** (W15-05): `DependentBranches.sayFolderWait`
 writes `owedFolderWait(pr, held)` (`owed_folder_changes` with `owedFolderSentence`, or
 `owed_folder_commits` with `owedCommitSentence`: "#8 waits for a commit made in its task's
 folder: push it to GitHub or undo it.") on the record at the poll that finds it, on a queued

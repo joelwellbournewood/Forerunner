@@ -442,3 +442,20 @@ Each point keeps R-lock, R-chain, R-conflict and R-owed: nothing merges an unreb
    up-to-date comment "This task's work no longer changes anything on main, so this pull request is
    closed. Its branch is kept." Text Forerunner writes on GitHub names a session by its start
    time; the ids code reads are in a hidden mark.
+
+## Amendment: the review's fix-up of the merge side ('w15-merge', 2026-11-09)
+
+The independent review of the amendment above walked the bench and found that point 3's way out
+("push it to GitHub") broke the decision this ADR started from: a commit pushed to the branch
+after the review is never merged by Forerunner.
+
+1. **A rebuild never makes work the review did not read reviewed.** A clean rebuild with the same
+   own change before and after follows the merge record only when the branch, as GitHub had it
+   before the rebuild, held the reviewed change: its own change is the record's, or, on a record
+   without one, its head is the reviewed commit. Before, the rebuild compared the branch with
+   itself, so the person's pushed commit (or anyone's on GitHub) became the reviewed head, the
+   Overview offered Merge, and a Merge pressed during the folder's wait merged it. Now the record
+   stays at the reviewed commit and says "#8 changed after the review: look at the new commits,
+   then merge it yourself or redo the task." with no Merge; a kept approval is dropped, and one
+   card says it (a new card only when the record did not already wait for the person's Merge, as
+   the merge step does when it finds the head moved).
