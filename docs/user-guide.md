@@ -351,9 +351,10 @@ never repeats work that is already in the default branch:
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a
 task's open pull request, Forerunner says so once: the Overview row shows "#8 conflicts with main
-in index.html: resolve the conflict on GitHub, or redo the task." instead of Merge, and one Inbox
-card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from main) and
-**Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
+in index.html: resolve the conflict on GitHub, or redo the task." instead of Merge, the task's row
+on the Tasks tab says "Accepted · conflicts with main" (the same sentence in its drawer), and one
+Inbox card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from
+main) and **Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
 the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
 If the conflict goes away without a change to the pull request (the other change is taken out of
 main again), the row offers Merge again and the card closes. If you resolve it on GitHub with a

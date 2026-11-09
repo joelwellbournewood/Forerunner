@@ -152,6 +152,49 @@ describe("polish-words, wave 13: the Tasks screen", () => {
     expect(specialistName(null)).toBeNull();
   });
 
+  it("a pull request that conflicts reads 'Accepted · conflicts with main' on its row and says what to do in the drawer; the mergeable one waits for the Merge (W14-5)", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_conflict", "Write the notes", {
+      status: "done",
+      prUrl: "https://github.com/o/r/pull/3",
+    });
+    addTask(harness, "t_mergeable", "Write the guide", {
+      status: "done",
+      prUrl: "https://github.com/o/r/pull/2",
+    });
+    // As the daemon's merge records (`TaskDisplayContext.merges`): the conflict notice's.
+    harness.daemon.state.taskMeta.merges?.set("t_conflict", {
+      state: "left_to_you",
+      approval: "none",
+      pr_number: 3,
+      sentence:
+        "#3 conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.",
+      last_outcome: "conflict",
+    });
+    harness.daemon.state.taskMeta.merges?.set("t_mergeable", {
+      state: "left_to_you",
+      approval: "none",
+      pr_number: 2,
+      sentence: "#2 waits for you: press Merge on the Overview.",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_conflict", harness);
+    const row = await rowOf("t_conflict");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent(
+      "Accepted · conflicts with main",
+    );
+    expect(row).not.toHaveTextContent(/waiting for you to merge|fr\//);
+    expect(within(await rowOf("t_mergeable")).getByTestId("task-status")).toHaveTextContent(
+      "Accepted · waiting for you to merge",
+    );
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(within(drawer).getByTestId("drawer-status")).toHaveTextContent(
+      "Accepted · conflicts with main",
+    );
+    expect(drawer).toHaveTextContent(
+      "#3 conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.",
+    );
+  });
+
   it("New task's light review says what is true now, with no tier or checks words (C-23)", async () => {
     const user = userEvent.setup();
     renderApp("/projects/proj_atlas/tasks");

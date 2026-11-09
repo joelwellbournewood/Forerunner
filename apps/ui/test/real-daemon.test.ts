@@ -24,6 +24,7 @@ import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
@@ -11262,6 +11263,75 @@ describe("polish-words, wave 13", () => {
       /needs you/,
     );
   }, 90_000);
+
+  it("a pull request that conflicts reads 'Accepted · conflicts with <base>' with what to do, never 'waiting for you to merge'; the done line counts what Merge can merge (W14-5)", async () => {
+    const project = await client.createProject({ name: "Conflicts", goal: "Three guides" });
+    await rt.store.project.patch(project.id, { repos: ["o/conflicts"] } as never);
+    // As the merge record says it (the conflict notice, `dependent-branches.ts`; the merge
+    // step's own conflict uses the same `last_outcome`), with the card answered "Leave it open":
+    // nothing else holds the task.
+    const seedPr = async (title: string, n: number, sentence: string, lastOutcome?: string) => {
+      const url = `https://github.com/o/conflicts/pull/${n}`;
+      const t = await seedTask(project.id, title, { pr_url: url });
+      const record = await rt.store.mergeRecord.pin({
+        task_id: t.id,
+        project_id: project.id,
+        agent_id: rt.agent.id,
+        pr_number: n,
+        pr_url: url,
+        reviewed_head_sha: String(n).repeat(40),
+      } as never);
+      await rt.store.mergeRecord.move(record.id, "left_to_you", {
+        sentence,
+        ...(lastOutcome ? { last_outcome: lastOutcome } : {}),
+      });
+      return t;
+    };
+    const waiting = await seedPr(
+      "Write the guide",
+      2,
+      "#2 waits for you: press Merge on the Overview.",
+    );
+    const onMain = await seedPr(
+      "Write the notes",
+      3,
+      conflictNoticeSentence(3, "main", ["README.md"]),
+      "conflict",
+    );
+    const onTrunk = await seedPr(
+      "Write the intro",
+      4,
+      conflictNoticeSentence(4, "trunk", []),
+      "conflict",
+    );
+    const rows = await client.tasks(project.id);
+    const display = (id: string) => rows.find((r) => r.id === id)?.display;
+    expect(display(onMain.id)).toMatchObject({
+      key: "done",
+      label: "Accepted · conflicts with main",
+      tone: "warn",
+      detail:
+        "#3 conflicts with main in README.md: resolve the conflict on GitHub, or redo the task.",
+    });
+    expect(display(onTrunk.id)).toMatchObject({
+      label: "Accepted · conflicts with trunk",
+      tone: "warn",
+      detail: "#4 conflicts with trunk: resolve the conflict on GitHub, or redo the task.",
+    });
+    // The one Merge can merge says so, and its detail (the Overview's button) is not repeated.
+    expect(display(waiting.id)).toMatchObject({
+      label: "Accepted · waiting for you to merge",
+      tone: "good",
+      detail: null,
+    });
+    // No row names a branch (C-59).
+    expect(JSON.stringify(rows.map((r) => r.display))).not.toMatch(/fr\/|branch/);
+    // Home's done line counts the pull request Merge can merge; the two that conflict say so on
+    // their rows and the Overview, where its button leads.
+    const line = (await client.project(project.id)).statusLine;
+    expect(line?.text).toBe("Done: all 3 tasks. 1 pull request waits for you to merge.");
+    expect(line?.action?.to).toBe(`/projects/${project.id}`);
+  });
 });
 
 describe("polish-words, wave 13: the Inbox cards through the real daemon", () => {

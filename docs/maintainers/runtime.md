@@ -3160,7 +3160,14 @@ names them); a task without a record stays "Done". A `queued` record the person 
 reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTaskDisplayContext`):
 "Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
 and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
-mode read "waiting for you", although the retry merges it by itself). The session result's builder "merges by itself
+mode read "waiting for you", although the retry merges it by itself). A record left to the person
+whose `last_outcome` is `conflict` (the conflict notice, or the merge step's own conflict) reads
+"Accepted · conflicts with main" (the base named in its sentence, "trunk" included), warn tone,
+the record's sentence ("#3 conflicts with main in README.md: resolve the conflict on GitHub, or
+redo the task.") as its detail; Home's done line does not count it among the pull requests that
+"wait for you to merge" (W14-5, polish-words: it read "waiting for you to merge", and Merge
+cannot merge it; tests: `real-daemon.test.ts` "a pull request that conflicts reads 'Accepted ·
+conflicts with <base>'", `polish-words.test.tsx` the same row and drawer). The session result's builder "merges by itself
 later" (`RESULT_LINE_BUILDERS`, `MERGE_WAITS`) says "1 reviewed pull request merges by itself once
 its checks pass or GitHub answers." (P7-5, polish-words: `waitingPrs` counts `checks_pending` and
 `unreachable` alike, so the line names both) and "Left N reviewed pull requests for you to merge."
