@@ -1,0 +1,170 @@
+{
+ "area": "w15-review",
+ "branch": "fix/w15-review",
+ "head_sha": "1bb77f7ebdfc23490cfb09f49e3424742eda852f",
+ "commits": [
+  {
+   "sha": "9cfb895",
+   "subject": "verification: only a described input stops a command being tried; where it runs never does (W15-24, U-044)"
+  },
+  {
+   "sha": "3c3e154",
+   "subject": "review: under a site rule a retry brief keeps every finding; only an order to read a refused page is replaced (W15-25, U-044)"
+  },
+  {
+   "sha": "668e75d",
+   "subject": "review: a tagged summary loses its verdict word too, so 'Accepted:' never follows 'Waits for you' (W15-51, U-074)"
+  },
+  {
+   "sha": "5c9698e",
+   "subject": "ui: a person's own done task shows nothing in the Critic column, not 'Not reviewed' (W15-42, U-074)"
+  },
+  {
+   "sha": "1bb77f7",
+   "subject": "session: the paused-review comment says what the next session does now (W15-27, U-044)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking 2 (W15-24 regression): the fixer's CONNECTORS list took any connector (on, in, for, with, from, at, by, to, ...) after a command with no written argument as 'its arguments are described'. So commands that the base ran silently stopped being tried, with no not-tried line in their place. That covered tools that take no argument ('Running node hello.js in a terminal / from the command line prints ...', 'node greet.js to print a greeting', '... at the prompt') and bare runs said in words ('node app.js by itself exits with code 1', 'node wc.js on its own ...').",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/try-plan.test.ts 'w15-review, wave 15' > 'W15-24: a command said with where or how it runs, not what it is given, is tried as before', 'W15-24: a tool that takes no argument is tried from a sentence that says where it runs; a bare run said in words expects its error', 'W15-24: a tool whose input is only described, and that no written command runs, is told as not tried, never silently left out'",
+   "how": "try-plan.ts: words that say where or how a command runs (in, from, at, to, by, into, onto, through, about, over, alone) are back in GOES_ON. They end the command as written, as on the base. Only INTRODUCES_INPUT words (on, with, for, against, using, given, passing) can mark a command `described`, and only when describesInput finds the name of an input (INPUT_NOUN: file, path, text, input, argument, name, folder, csv, flag, ...) within the next six words, before a word that goes on. So 'on its own', 'on the command line' and 'with Node 22' end the command, and 'with no arguments' stays a bare run, whose own sentence or bareRunFails sets expectsError. planTries collects described scripts (describedOnly). For each one that no written command runs, it adds 'wc.js was not tried: an acceptance criterion says in words what it is given, not the command to run'. The old 'reads its command line, but neither the brief nor a README says how to run it', which was untrue there, is skipped for such a script. Live check 2's wc.js case is unchanged: it tries only 'node wc.js <file>' and has no notTried line. ADR 0110's amendment point 1 and runtime.md are rewritten to match.",
+   "check_in_the_app": "Bench (walked, steps 09-10 under /tmp/frbench/fixup-w15-review/steps): create coder task 'Write the greeting tool in hello.js' with the criterion 'Running node hello.js from the command line prints a greeting', and coder task 'Write the word counter in wc.js' with the criterion \"node wc.js on a file containing 'a b c' prints 3\". Start, then open each drawer's 'See what was checked'. hello.js should read 'node hello.js: worked / ran node hello.js (from an acceptance criterion) ...' (on the fixer's head it was not tried at all). wc.js should read 'wc.js was not tried: an acceptance criterion says in words what it is given, not the command to run'. Live check 3 (step S6, unchanged): brief 'A command line tool that counts the words in a file. Usage: node wc.js <file>.', then Approve and start. Expect Done \u00b7 Reviewed and tried after one run, with only 'node wc.js <file>: worked' tried and no 'Sent back: Tried node wc.js' line."
+  },
+  {
+   "problem": "Blocking 1 (W15-25 regression): retryConstraints dropped a whole finding from a research retry brief when its description or its required action named a host the site rule refuses, or anything that looks like a host ('socket.io'). Under an 'only' rule, the reviewer's two findings ('figures for vercel.com ... come from memory' -> 'Remove those figures ...'; 'socket.io is required' -> 'Drop socket.io ...') both vanished, and the retry got no findings at all. That breaks design \u00a74.6.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/research-web.test.ts 'w15-review, wave 15' > 'W15-25: under a site rule every finding reaches the retry brief; a host in a finding's words or an action that reads no page is no reason to drop it' (before: no 'Critic findings to resolve' in the brief the model received). The extended 'W15-25: after Go ahead without, the next brief holds no order to read a page the site rule refuses' also fails before (the finding was dropped, not kept with its order replaced).",
+   "how": "executor.ts: every non-note finding is an order again. Only a required action for which asksForRefusedPage holds is replaced by REFUSED_PAGE_ACTION ('The page this asks for is one the project's rule refuses: do not read it; meet the finding from what the rule allows, or say in the report what the rule kept out.'). The finding's description is kept as is. asksForRefusedPage reads the required action clause by clause. It looks for an order to read in an order's place (clause start, or after and/then/or/to/also/first/please/must/should/now/comma): fetch, read, open, visit, browse, load, retrieve, consult, download, access, scrape, crawl, cite, quote, look up, go to, web_fetch. It also takes 'check/verify/confirm/compare \u2026 against/on/at/with' and 'source/take/get/pull/copy/use \u2026 from'. The order counts only when a host the rule refuses follows it in the same clause. A host in the description, a host in an action that removes, marks or fixes something, and the same words used as nouns ('the quote from \u2026', 'the access dates for \u2026') change nothing. WEB_RULE_WINS_LINE follows once whenever the rule refuses anything and findings are listed. ADR 0107's amendment point 2 and runtime.md are rewritten to match.",
+   "check_in_the_app": "Live check 3 (step S4, extended): under web_access {mode:'only', only:['10.1.2.3']}, add a researcher task naming an MDN page and Start. If the critic sends it back, press Go ahead without or let the retry run. In the model-call log, the next researcher brief should list every open finding under 'Critic findings to resolve'. A finding whose action asked to fetch a developer.mozilla.org page should read '<description> -> The page this asks for is one the project's rule refuses: ...', and the brief should not contain 'Fetch https://developer.mozilla.org'. A finding that asks to remove or mark figures should keep its own action. 'The project's rule on which websites research may read comes before any finding ...' should appear once."
+  },
+  {
+   "problem": "Reviewer's non-blocking W15-51 (bench): the drawer and the Reviews tab read 'Waits for you: the report asks you something. Accepted: the changed file matches the brief.', because ruledSummary stripped a verdict word only at the very start and the stand-in's summary starts with '[stand-in model] '.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "packages/critic/test/critic.test.ts 'w15-review, wave 15' > \"W15-51: a summary that starts with a tag ('[stand-in model] Accepted: \u2026') loses its verdict word too, so 'Accepted:' never follows 'Waits for you'\"",
+   "how": "critic.ts ruledSummary keeps a short bracketed tag before the model's words and strips the verdict word after it too, then capitalises the words after the tag. critic.md is updated.",
+   "check_in_the_app": "Bench (walked, steps 03 and 04): start with FORERUNNER_BENCH_ASK=Contact page and FORERUNNER_BENCH_ASK_STYLE=bullets, and run a coder task 'Write the Contact page in contact.html'. The drawer's review and the Reviews tab ('needs you') read 'Waits for you: the report asks you something. The changed file matches the brief.', with no 'Accepted:' (the daemon's views drop the stand-in tag)."
+  },
+  {
+   "problem": "Reviewer's non-blocking W15-42: a person's own task ('Me') that is done read 'Not reviewed' in the Critic column, where it read '\u2014' before. It is true, but it reads as a warning on a task the critic never reviews by design.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'w15-review, wave 15' > \"W15-42: a person's own task that is done shows nothing in the Critic column ...\"",
+   "how": "TasksTab.tsx criticColumn returns nothing for a task whose specialist is 'person'. A task marked done anyway still reads 'Not reviewed'. apps.md's Tasks row is updated.",
+   "check_in_the_app": "Bench (walked, steps 06-08): create a task with specialist 'person' ('Send the club logo') and Start. In the Inbox, type an answer on '\"Send the club logo\" needs your answers' and press Send answers. On the Tasks tab the row reads 'Done \u00b7 You \u00b7 CHF 0.00 \u00b7 \u2014'."
+  },
+  {
+   "problem": "Reviewer's non-blocking W15-27: a stale comment in runner.ts's review-refusal branch said 'The next session runs the task again and the critic reviews it once.'",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "none (comment only)",
+   "how": "The comment now says the next session reviews the kept result without running the specialist again when the attempt and the changed files are unchanged (keepForReview / reviewOnlyResult), and runs the task again first otherwise.",
+   "check_in_the_app": "No visible change."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Reviewer's non-blocking W15-27: ReviewPending keeps no head commit. Only the changed files' content (workHash) is compared, and a run with no worktree hashes every file as gone.",
+   "why": "It needs a design call on what 'a changed head' means for a project folder versus a repository worktree. The current check is conservative: on any mismatch it falls back to today's rerun, so it never reviews stale work. Left as a note."
+  },
+  {
+   "problem": "Reviewer's non-blocking W15-27: a review-only pass says nothing in the session log before the critic's verdict, and the session summary says 'Did 1 task' for a review alone.",
+   "why": "These are new session-log sentences in event-lines outside personLine's critic case, which belongs to w15-words. The fixer already handed the proposed line to w15-words."
+  },
+  {
+   "problem": "Reviewer's non-blocking W15-26: the page text kept on Run rows (reviewSources) has no restart test of its own.",
+   "why": "The same Run-row artifacts mechanism survives the W15-27 restart test. Not added in this fix-up."
+  },
+  {
+   "problem": "Reviewer's non-blocking: personLine's critic-review 'human' case says '\"X\" needs your decision (Inbox).' for a questions card, where design \u00a72 says 'Needs your answer'.",
+   "why": "This is old behaviour and a wording change in the session log. It is left for w15-words (see notes_for_other_areas)."
+  },
+  {
+   "problem": "W15-25 residual: an order to read a refused page that names no host (the live 'Fetch the MDN dialog page and write dialog.md') stays an order in the retry brief.",
+   "why": "Nothing in code can tell 'MDN' is a refused site. The critic is told the rule (critic.md 1.3.0), and WEB_RULE_WINS_LINE in the brief says the rule comes before any finding. This is unchanged from the fixer's report."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+   "result": "EXIT 0; unit 480 files, 5005 passed, 7 skipped (docs:check without --base has no origin/main)"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (50 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0; 30 passed, 75 skipped (Postgres-backed tests skip without FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "EXIT 0; 87 files, 1027 passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "EXIT 0; 35 passed"
+  },
+  {
+   "command": "failing-first: the new research-web cases run against the fixer's executor.ts (git show HEAD:... swapped in, then restored)",
+   "result": "3 failed before (the probe case: no 'Critic findings to resolve'; Go ahead without: finding dropped; Fix the link: dropped), all pass after. The try-plan and critic cases were run red before their fix, and the tasks.test.tsx case was red ('Not reviewed')."
+  },
+  {
+   "command": "bench fixup-w15-review (--provider bench, ports 48522/2122; FORERUNNER_BENCH_CRITIC_REJECT=Rework page, FORERUNNER_BENCH_ASK=Contact page, ASK_STYLE=bullets); scripts in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fixup-w15-review-walk{1,2,3}.cjs",
+   "result": "W15-58: the session log reads 'The critic sent \"Write the Rework page in rework.html\" back: The change does not meet the first acceptance criterion as written. Trying again.' W15-28: GET /notifications/recent has one request_blocking ('...: the specialist asks you') and no sign-off. W15-51: the drawer and Reviews tab show 'Waits for you: the report asks you something. The changed file matches the brief.' W15-42: a person's done task shows '\u2014'. W15-24: node hello.js is tried from 'Running node hello.js from the command line ...' ('node hello.js: worked'), and wc.js gets the not-tried line. The bench is stopped and its home and browser profile are deleted."
+  },
+  {
+   "command": "cargo (desktop shell)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/research-web.test.ts 'w15-review, wave 15' > 'W15-25: a finding naming a host is an order as before where the rule refuses nothing, and for a specialist that reads no pages'",
+   "why": "The fixer's assertion said 'Fix the link to developer.mozilla.org' is dropped under an only-10.1.2.3 rule. That encoded the over-broad filter the review found blocking. Fixing a link reads no page, so under the corrected design it stays an order, and the assertion now checks that it is kept."
+  },
+  {
+   "test": "packages/runtime/test/research-web.test.ts 'w15-review, wave 15' > 'W15-25: after Go ahead without, the next brief holds no order to read a page the site rule refuses'",
+   "why": "Strengthened, not weakened: the old assertions (no 'developer.mozilla.org', no 'Fetch https://', the medium finding kept, WEB_RULE_WINS_LINE, the rule line) all stay. It now also asserts that the high finding is kept with its order replaced by REFUSED_PAGE_ACTION."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-w15-review/steps/22-w4-contact-drawer.png",
+   "/tmp/frbench/review-w15-review/steps/24-w4-reviews-tab.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-w15-review/steps/01-w1-session-log.png",
+   "/tmp/frbench/fixup-w15-review/steps/03-w1-contact-drawer.png",
+   "/tmp/frbench/fixup-w15-review/steps/04-w1-reviews-tab.png",
+   "/tmp/frbench/fixup-w15-review/steps/05-w1-inbox.png",
+   "/tmp/frbench/fixup-w15-review/steps/08-w2-tasks-after-person-answered.png",
+   "/tmp/frbench/fixup-w15-review/steps/09-w3-hello-drawer-checked.png",
+   "/tmp/frbench/fixup-w15-review/steps/10-w3-wc-drawer-checked.png"
+  ]
+ },
+ "new_problems": [
+  "The bench session log (01-w1-session-log.txt) reads '\"Write the Contact page in contact.html\" needs your decision (Inbox).' for a questions card whose Inbox title is '...: the specialist asks you' and whose Tasks status is 'Needs your answer'. The words disagree (design \u00a72); this is old behaviour, for w15-words.",
+  "INPUT_NOUN is a word list: an odd sentence such as 'node wc.js for a quick word count prints ...' reads 'word' as a described input, and the command is told as not tried instead of run bare. It is rare, and it is said in See what was checked, never silent."
+ ],
+ "notes_for_other_areas": [
+  "New person-facing sentence (try-plan.ts, shown in 'See what was checked'): '<script> was not tried: <an acceptance criterion | the brief | README.md> says in words what it is given, not the command to run'. It replaces, for that case only, '<f> reads its command line, but neither the brief nor <README> says how to run it, so it was not tried'. w15-words may reword it; the test is try-plan.test.ts 'W15-24: a tool whose input is only described ...'.",
+  "Model-facing text added (executor.ts, test the exact text): REFUSED_PAGE_ACTION = \"The page this asks for is one the project's rule refuses: do not read it; meet the finding from what the rule allows, or say in the report what the rule kept out.\" It replaces a required action in a retry brief's '- [sev] description -> action' line. New export asksForRefusedPage(requiredAction, refusesHost). retryConstraints keeps every non-note finding as an order again (the fixer's 'outside' list is gone).",
+  "ruledSummary (critic.ts): a leading short bracketed tag ('[stand-in model] ') is kept, and the verdict word after it is stripped as well.",
+  "Tasks tab Critic column (TasksTab.tsx criticColumn): a person's own task ('person') shows '\u2014' in any status; criticColumn's task parameter now takes an optional specialist.",
+  "For w15-words: personLine's critic-review 'human' case says '\"X\" needs your decision (Inbox).' even when the card is a questions card ('Needs your answer' in design \u00a72). The event does not say which card it is today; adding that is a payload change in runner.ts/critic, not done here."
+ ]
+}

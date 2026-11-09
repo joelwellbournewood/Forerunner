@@ -1,0 +1,164 @@
+{
+ "area": "w15-run",
+ "branch": "fix/w15-run",
+ "head_sha": "8500294cb8d7a1c03f8e764424d975124fcbdcde",
+ "commits": [
+  {
+   "sha": "19c2bdb85d5c72f23a1bdede4bf889fa5ed807c8",
+   "subject": "real-daemon test: after Stop now the Start dialog gives the plan card's figures, and a Stop sent with an older version stops the run (W15-19, W15-21, U-072)"
+  },
+  {
+   "sha": "17ffd019248ec2a41892ce295457301e742cd41e",
+   "subject": "budget-pause: a \"nothing\" that goes on to name work, and a hedged item, stay work left (W15-14, U-042)"
+  },
+  {
+   "sha": "639e7dcb6aafcd0b16c2860face9427fc5a9ba73",
+   "subject": "loop: the wrap-up names the share of what this run may spend (W15-16, U-042)"
+  },
+  {
+   "sha": "8500294cb8d7a1c03f8e764424d975124fcbdcde",
+   "subject": "web search test and docs: the W15-15 run asserts its one drop; stale lines say what is true (W15-15, W15-12)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking finding: W15-19 had no test at the boundary the person uses. The only test called observeTaskRuns(..., \"killed\") inside the estimates model. Nothing drove the runner's task.finished feed (compose.ts onTaskFinished) with the outcome a Stop now gives, and nothing checked what the plan card and the Start dialog show. A wrong outcome in that wiring would have left every test green.",
+   "u_ids": [
+    "U-072"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-run, wave 15 > W15-19: after Approve and start and Stop now during the first task's run, the Start dialog gives each task the plan card's figure, and the same after a restart'. With the W15-19 change to estimates/model.ts taken out, it fails as RUN-2 did: 'Build the random quote page ...' expected 108000, received 34150.",
+   "how": "New real-daemon case. It composes the daemon with the bench's role-player on a file-backed home and reads each plan task's figure from the plan card (GET /inbox planTasks). It answers 'Approve and start', lets the first task's first model call be paid and holds the second until the abort releases it. It sends Stop now through client.stopSession(id, 'stopped from the live view') as the session page does, and waits for the session to end. The task the stopped run spent on is back in Ready. client.startCheck then gives every task its plan-card figure, and it gives the same figures after the runtime is closed and composed again on the same home. No route changed, so the fake daemon is untouched. A stop during the very first call spends nothing and taught nothing even before the fix, so the case holds the second call: that is the paid stop that live check 2 met (RUN-2: two calls before Stop now).",
+   "check_in_the_app": "Bench fixup-w15-run (--provider bench, 48521/2121), walk /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx-w15run-b.cjs:\n- New project 'Pairing page 3' through the UI. The plan card reads 'Build the page ... \u00b7 coder \u00b7 about CHF 0.09' and 'Check ... \u00b7 tester \u00b7 about CHF 0.10'.\n- Approve and start. Wait until the coder's Tasks row shows a paid call (spent 2085 USD micro), then press Stop now on the session page.\n- The Start dialog reads 'about CHF 0.09' and 'about CHF 0.10' (start-check 86400 and 100800 CHF micro), and the same after restart-daemon.mjs.\n- Screenshots: /tmp/frbench/fixup-w15-run/steps/01-b-plan-card.png, 04-b-start-dialog-after-stop-now.png, 05-b-start-dialog-after-restart.png.\nLive check 3: on the API key, create a project from a brief, note the plan card's figures, press Approve and start, wait until the first task's Tasks row shows a cost, then press Stop now. Start session shows the same figure for every task, and so does a restart of the app."
+  },
+  {
+   "problem": "Non-blocking review item (W15-21): the case proved 'no version_conflict' only by reading task.version. It never sent an action the way the person does.",
+   "u_ids": [
+    "U-072"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-run, wave 15 > W15-21: the person's Stop, sent with the version the Tasks tab read before any call was booked, stops the run without a version_conflict'. With task.addCost bumping the version again, it fails with ApiError 'This task changed: it is now Running.'",
+   "how": "New real-daemon case. It reads the Tasks row (status in_progress, spent 0) while the coder's first call is held, then releases that call and waits until the row's spent is above 0. It sends POST /tasks/:id/action 'stop' with the version it read first. The task becomes needs_human / 'Paused by you', the session ends, and actual equals the sum of the task's Run rows, above 0.",
+   "check_in_the_app": "Bench walk F (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx-w15run-f.cjs):\n- While the run went on, the Tasks row's cost rose (3905, then 6056 USD micro) and read 'CHF 0.01' after the poll.\n- The task's version was 4 before and after the booked calls.\n- Pressing Stop in the drawer showed no 'This task changed'. The task ended 'Paused by you' with spent = actual = the run line, CHF 0.05.\n- Screenshots: /tmp/frbench/fixup-w15-run/steps/06-f-tasks-row-while-running.png to 09-f-after-stop.png."
+  },
+  {
+   "problem": "Non-blocking review item (W15-14): parseHandoff over-matched. 'Nothing - but the README is incomplete' and 'Nothing in the task works yet' were read as nothing. 'Perhaps the most important: finish the parser' and 'Maybe fix the failing build' were filed as optional extras. Unfinished work that heard the wrap-up therefore went to the critic instead of pausing on its budget card.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"w15-run, wave 15: 'Left to do' counts only what the criteria still need (W15-14) > a 'nothing' that goes on to name work, and a hedged item, stay work left (review of W15-14)\". First failure: 'Nothing - but the README is incomplete: expected [] to deeply equal [ Array(1) ]'.",
+   "how": "Changes in budget-pause.ts:\n- In NOTHING, what the 'nothing' is about (criteria, brief, task, scope, requirements, deliverables) must end the line, and the words that say done (criteria, criterion, complete(d), done, finished, met) must be whole words.\n- New NOT_NOTHING / isNothing: a qualified 'nothing' that contains but, except, however, yet, not, never, n't, still, missing, incomplete, unfinished, fail(s/ed/ing) or broken stays an item.\n- OPTIONAL no longer takes a line that starts with maybe, perhaps or possibly.\n- Every earlier W15-14 case still passes: the live F4 report, 'None required by the criteria.', 'Nothing: all criteria are met.', 'Nothing works yet', and others.\n- runtime.md and ADR 0112 (its 2026-11-09 amendment, point 2) say so.",
+   "check_in_the_app": "Bench budget journey (scripts/bench/journeys/budget.cjs fixup-w15-run walk): the long task heard the wrap-up once and listed 'write the rest of guide.md' and 'check guide.md against the criteria'. It stayed 'Paused at its budget' with no critic call. Live check 3: when a researcher at Budget 0.15 lists only 'Nothing for the acceptance criteria.' plus an 'Optionally ...' extra, it is still reviewed and Done."
+  },
+  {
+   "problem": "Non-blocking review item (W15-16): the wrap-up said 'this task has used N% of its budget' but computed N from the run's cap. On a continued run that cap is what is left of the task's budget, so the words were not true.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"w15-run, wave 15: the wrap-up's words ... (W15-16) > the model hears the share it really used, not 'about a fifth is left'\" and the composed coder case's wrap-up block. The assertions were changed to the new words first and failed: \"expected 'Wrap up now: this task has used 15% o\u2026' to be 'Wrap up now: this run has used 15% of\u2026'\".",
+   "how": "loop.ts wrapUpText now says 'Wrap up now: this run has used N% of what it may spend, and its next step could take it past the share kept to finish. ...'. Only the model hears this. The trigger, the line and the reserve are unchanged. ADR 0112's W15-16 amendment and runtime.md quote the new words.",
+   "check_in_the_app": "Bench budget journey: the model-call log's wrap-up request reads 'Wrap up now: this run has used 76% of what it may spend, ...'. That is true: CHF 0.06 of CHF 0.08. The log lines are unchanged ('This run may spend CHF 0.08: before a step that could take it past CHF 0.06 it is told to wrap up, keeping a reserve of CHF 0.02 to finish.', 'Session over: 2 paused. CHF 0.07.')."
+  },
+  {
+   "problem": "Non-blocking review items (W15-15, W15-12):\n- The W15-15 case 'a run that searches on every call' guarded its drop and wrap-up assertions with if (firstGone >= 0) and if (wrap ...), so they could pass without checking anything.\n- cc-tool-outputs.ts's header named a test file that does not exist.\n- scripts/bench/README.md still said 'max_uses at most 10'.",
+   "u_ids": [],
+   "failing_test_before": "none (test tightened). The tightened case passes: the USD 0.80 run drops the offer once, after its first call, and wraps up at or below its line with the tool gone from the last call.",
+   "how": "The case now asserts that the offer is dropped once, after the first call, and never comes back. It throws when no budget_line or wrap_up_sent event exists, and asserts that the last call carries no web search. The header now names test/security-sdk.test.ts. The bench README now says one offer per run, fixed at its start, the same max_uses (at most 2) on every call until it is dropped once for good.",
+   "check_in_the_app": "Not person-facing. Run: npx vitest run packages/runtime/test/loop-web-search.test.ts -t W15-15"
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W15-18 (carried from the fixer, not changed here): the daemon's log line for critic.session_review_metrics ('Session review measured: ... CHF 0.10 spent of a CHF 0.23 estimate.') still compares the whole spend, reviews included, with the work-only estimate.",
+   "why": "The line is in packages/runtime/src/daemon/views.ts, outside w15-run's region; shared_files gives the log line builders there to w15-words. metrics.workUsdMicro and reviewsUsdMicro exist for it (see notes_for_other_areas)."
+  },
+  {
+   "problem": "Reviewer's non-blocking item: executor's web-search overshoot sentence could read '... more than the less than CHF 0.01 planned' now that chfText goes through moneyWords.",
+   "why": "Theoretical: the overshoot happens only on a call that offers web search, and that call's estimate includes max_uses x USD 0.01 >= CHF 0.016. The sentence's wording belongs to w15-words, so it is noted there and not changed."
+  },
+  {
+   "problem": "Reviewer's non-blocking item: the bench stand-in's wrap-up report still says 'stopped when told that about a fifth of the budget was left', and its comment says the same (testenv/src/bench/role-player.ts:655 and :1124).",
+   "why": "role-player.ts is w15-review's file in wave 15. The fixer changed only its WRAP_UP_MARK, which the new wrap-up needed. The stand-in's report text is noted for w15-review instead of edited here."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check",
+   "result": "exit 0: lint (39 warnings, none in this fix-up's files), lint:paths and typecheck clean; 479 files, 5013 tests passed, 7 skipped; link-check ok (206 files); secret-scan clean (2079 files). Its docs:check cannot diff against origin/main here, so it was also run separately (next line)."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (55 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "exit 0: 87 files, 1028 tests passed (1026 before, plus the two new real-daemon cases)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed. The local config was removed afterwards and never committed. UI sources did not change; only UI tests did."
+  },
+  {
+   "command": "npx biome check on every file this fix-up touched",
+   "result": "clean (budget-pause.test.ts formatted with --write)"
+  },
+  {
+   "command": "Fails before: estimates/model.ts W15-19 lines reverted, the W15-19 real-daemon case run, then git checkout",
+   "result": "failed: 'Build the random quote page ...' expected 108000, received 34150; passes with the fix"
+  },
+  {
+   "command": "Fails before: task.addCost bumping version again, the W15-21 Stop case run, then git checkout",
+   "result": "failed: ApiError 'This task changed: it is now Running.'; passes with the fix"
+  },
+  {
+   "command": "Bench fixup-w15-run (--provider bench, daemon 48521, UI 2121, FORERUNNER_BENCH_LONG and FORERUNNER_BENCH_DELAY_MS=1500): walk B (fx-w15run-b.cjs), walk F (fx-w15run-f.cjs), scripts/bench/journeys/budget.cjs",
+   "result": "B: the plan card's figures (CHF 0.09 and 0.10) equal the Start dialog's after a paid Stop now and after a daemon restart. F: the version stayed 4 over the booked calls, Stop in the drawer gave no conflict, and the task ended 'Paused by you' at CHF 0.05 = run line. Budget: the model heard 'Wrap up now: this run has used 76% of what it may spend', the long task paused with 2 items and no critic, and 'Session over: 2 paused.'. The journey's 'tiny task's log line' check fails as it did for the reviewer on head and base alike (not this area). Bench stopped with stop.mjs; its home and browser profile deleted; steps kept in /tmp/frbench/fixup-w15-run/steps/."
+  },
+  {
+   "command": "git status; git branch -f fix/w15-run HEAD",
+   "result": "clean; fix/w15-run = 8500294"
+  }
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fixup-w15-run/steps/01-b-plan-card.png",
+   "/tmp/frbench/fixup-w15-run/steps/03-b-session-after-stop-now.png",
+   "/tmp/frbench/fixup-w15-run/steps/04-b-start-dialog-after-stop-now.png",
+   "/tmp/frbench/fixup-w15-run/steps/05-b-start-dialog-after-restart.png",
+   "/tmp/frbench/fixup-w15-run/steps/06-f-tasks-row-while-running.png",
+   "/tmp/frbench/fixup-w15-run/steps/09-f-after-stop.png",
+   "/tmp/frbench/fixup-w15-run/steps/14-walk-session.png"
+  ]
+ },
+ "new_problems": [
+  "Seen on the bench (walk B, /tmp/frbench/fixup-w15-run/steps/03-b-session-after-stop-now.txt): the session page's budget meter reads 'Spent of this session's budget CHF 0.00 of CHF 5.00 (0%)' while the result line says 'Less than CHF 0.01.'. This is the same sub-centime display gap the reviewer saw on the Tasks row; it is in the UI's Money component, outside w15-run.",
+  "The reviewer's other non-blocking items outside this area remain open: the status chip 'Ended: 3 tasks need you' next to 'Session over: 3 paused.' (views.ts endedStatusText); the budget card's 'paused at its budget of CHF 0.00' (budget-card.ts); the started line '(about CHF 0.00)' (views.ts); the W15-12 refusal sentence says what happened but not what to do. All of these are words for w15-words."
+ ],
+ "notes_for_other_areas": [
+  "Sentences changed in this fix-up (old -> new), for the merge step:\n- loop.ts wrapUpText (model-facing): 'Wrap up now: this task has used N% of its budget, and its next step ...' -> 'Wrap up now: this run has used N% of what it may spend, and its next step ...'. Asserted in budget-pause.test.ts (the W15-16 describe and the composed coder case). WRAP_UP_MARK is unchanged.",
+  "budget-pause.ts parseHandoff: NOTHING is narrower, and the new NOT_NOTHING/isNothing keep a qualified 'nothing' that names work as an item. OPTIONAL no longer takes maybe/perhaps/possibly. A stand-in or test report that relied on 'Maybe ...' being optional now counts it as work left.",
+  "Merge step: intake.ts is 'w15-review only' in wave 15's shared_files, but w15-run's W15-18 commit (4bb3db4) changed keyedTasks and withBoundedEstimates there so that each plan task's outcome and criteria reach boundedPlanEstimate. The plan card and the Start dialog need it to agree for sized tasks. The reviewer's trial merge with fix/w15-review auto-merged intake.ts and intake.test.ts. Keep both areas' hunks.",
+  "w15-review (testenv/src/bench/role-player.ts is yours): the stand-in's wrap-up comment (:655, 'Told that about a fifth of the budget is left') and its report text in wrapUpReport (:1124, '... and stopped when told that about a fifth of the budget was left.') are stale since W15-16. Proposed words: '... and stopped when told to wrap up.'",
+  "w15-words: views.ts endedStatusText still counts paused tasks as 'need you' ('Ended: 3 tasks need you'), while event-lines endedCounts now says 'Session over: 3 paused.'. Proposed chip: 'Ended: 3 paused' (or 'N need you, M paused').",
+  "w15-words: views.ts critic.session_review_metrics log line ('Session review measured: ... CHF X spent of a CHF Y estimate.') should use metrics.workUsdMicro against the estimate and name metrics.reviewsUsdMicro apart. Proposed: 'Session review measured: 1 of 2 planned tasks done; the work cost CHF 0.05 against an estimate of CHF 0.23, and the reviews CHF 0.05.'",
+  "w15-words: executor.ts's web-search overshoot note ('this call cost CHF X, more than the CHF Y planned, ...') goes through chfText -> moneyWords. Proposed: 'Web search results were larger than planned: this call cost CHF X where CHF Y was planned, and the next one must fit what is left.'",
+  "Live check 3 (W15-12, known-shape step the reviewer asked for): on the subscription, run a task whose granted secret is in a file it reads with Read (for example a config file holding the secret). The run must go on with the value scrubbed (the model sees [REDACTED], the session log shows no 'denied'). It must not be refused. If it is refused, Claude Code sent a key that sdk-tools.d.ts does not name, and CC_TOOL_OUTPUT_SHAPES in packages/runtime/src/agent/cc-tool-outputs.ts needs that key."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts \"w15-run, wave 15: the wrap-up's words ... (W15-16) > the model hears the share it really used\" and the composed coder case's wrap-up text regex",
+   "why": "The wrap-up now says 'this run has used N% of what it may spend': the share is of the run's cap, which on a continued run is what is left of the task's budget."
+  },
+  {
+   "test": "packages/runtime/test/loop-web-search.test.ts 'w15-run, wave 15 ... (W15-15) > a run that searches on every call ...'",
+   "why": "Tightened, not weakened. The drop and wrap-up assertions were conditional and are now unconditional: the run must drop the offer exactly once after its first call and must wrap up at or below its line."
+  }
+ ]
+}

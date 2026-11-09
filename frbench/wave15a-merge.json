@@ -1,0 +1,107 @@
+{
+ "merged": [
+  "fix/w15-merge (7a38796) as merge 11d9dfb: no conflicts (based on 931ed52; a087b18 only changes NEXT-SESSION.md, so the merged tree is the validated branch plus that doc)",
+  "fix/w15-run (8500294) as merge 5fb6e49",
+  "fix/w15-review (1bb77f7) as merge 39f5314",
+  "fix/w15-chat (e48518e) as merge 3600089"
+ ],
+ "head_sha": "3600089c0b6765af1a8d59ba9f48103dc86d5428",
+ "pushed": true,
+ "conflicts_resolved": [
+  "w15-run merge, apps/ui/test/real-daemon.test.ts (append-only): kept both blocks, w15-merge's two describe blocks first, then 'w15-run, wave 15'.",
+  "w15-review merge, append-only test files: apps/ui/test/real-daemon.test.ts, apps/ui/test/tasks.test.tsx, packages/capabilities/test/pr-executor.test.ts, packages/runtime/test/budget-pause.test.ts and packages/runtime/test/event-lines.test.ts. Git's hunks were tangled, so I rebuilt each file from HEAD's version, added w15-review's 'w15-review, wave 15' block at the end, and re-applied w15-review's other hunks: the budget-pause imports (writeFileSync, projectWorkspaceDir) and the real-daemon TR-5 planner-line assertion it split for W15-33.",
+  "w15-review merge, docs/decisions/0107 and 0112: kept both dated 2026-11-09 amendments, w15-run's first.",
+  "w15-review merge, docs/maintainers/apps.md tasks-tab row: w15-run's Cost-cell (spent) sentence and w15-review's Critic-column and Read-list sentences sit in different places of the same line. Merged word by word with git merge-file; every sentence of both kept.",
+  "w15-chat merge, apps/ui/test/real-daemon.test.ts: rebuilt from HEAD and re-applied w15-chat's four edits to existing cases (ZERO_REFUSED import, the W15-76 Yes explain, the W15-47 no-USD GET /settings case, the W15-44 'CHF 3.00' sentence). Then appended its DefinitionReader stand-in and its 'w15-chat, wave 15' block after the other three areas' blocks.",
+  "w15-chat merge, docs/maintainers/apps.md, the '/' and '/projects/:id/:tab?' rows: merged word by word with no word-level conflict; all sides' sentences kept.",
+  "Auto-merged and checked by hand: runner.ts (w15-review's review-only pass and w15-run's live cost booking). The kept result carries costUsdMicro 0, so the end-of-run addCost adds nothing twice. Also auto-merged: executor.ts, intake.ts (w15-run's W15-18 hunk in w15-review's file kept, as both reviewers noted), TaskDrawer.tsx, TasksTab.tsx, commands/task.ts, request-words.ts, fake-daemon.ts, api-types.ts and server.ts, each change in its owner's region."
+ ],
+ "integration_fixes": [
+  "In merge commit 39f5314, following the wave 15 merge-step rule ('the merge commit updates that assertion to the new words'): w15-review's new packages/runtime/test/review-sources.test.ts (W15-26) spotted the wrap-up by w15-run's old text \"About a fifth of this task's budget is left\". W15-16 replaced that text with \"Wrap up now: this run has used N% ...\". After the merge its stand-in never heard the wrap-up and kept fetching, so the run ended budget_exceeded instead of paused, and 2 cases failed. The test now matches WRAP_UP_MARK from agent/loop.ts, as the bench role-player does, and both cases pass. No assertion was weakened.",
+  "The first merge commit was re-made (11d9dfb, before the second merge, not pushed at the time) to carry a body and the Co-Authored-By/Claude-Session trailers, like the other merge commits."
+ ],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "pnpm lint (biome check .)",
+   "result": "exit 0, 39 warnings, the same count as before the merge; none new"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1478 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "exit 0 (node packages and apps/ui)"
+  },
+  {
+   "command": "pnpm test (unit), after each merge",
+   "result": "Merge 2: 481 files, 5043 passed. Merge 3: 2 failures in review-sources.test.ts (old wrap-up text, fixed as above), then that file passes. Merge 4: 484 files, 5102 passed, 7 skipped."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (162 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (206 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2086 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped (Postgres/Docker-gated, as expected)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 59 cases (42 hostile, 17 controls), 0 failed"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty folder> pnpm test (CI-style)",
+   "result": "exit 0: 484 files, 5102 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty folder> pnpm vitest run --config vitest.config.ts (CI-style; also run plainly after merges 2-4)",
+   "result": "exit 0: 88 files, 1050 passed (plain runs: 1033 after merge 2, 1038 after merge 3, 1050 after merge 4)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 35 passed (local config is git-excluded, not committed)"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test (apps/desktop/src-tauri)",
+   "result": "not run: no area touched apps/desktop or any Rust file (git diff a087b18..HEAD lists none)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "signature check over git rev-list origin/claude/nifty-knuth-f9udt0..HEAD",
+   "result": "83 commits checked, none unsigned"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "a087b18..3600089 pushed on the first try, no force"
+  }
+ ],
+ "smoke": "node scripts/bench/start.mjs --name merge-w15 --daemon-port 48530 --ui-port 2130 --fresh, then journeys/smoke.cjs merge-w15: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. Plan card had 2 tasks; Approve and start ran one session, and 2/2 tasks were done. The journey script did not need changes. The bench was stopped with stop.mjs, and its home and browser profile were deleted. The result is kept at /tmp/frbench/merge-w15/steps/smoke-result.json.",
+ "problems_left": [
+  "Nothing the merge broke is left: every suite above is green on 3600089.",
+  "Leftovers from the areas' own reports, not caused by the merge and not changed here: (1) testenv/src/bench/role-player.ts still reports 'stopped when told that about a fifth of the budget was left' (w15-review's file; w15-run's note). (2) views.ts: the endedStatusText chip 'Ended: N tasks need you' and the critic.session_review_metrics line, both for w15-words. (3) docs-routes.ts: the Docs row note on a status held by another project's status PR (no wave-15 owner). (4) Not built: the W15-02 sibling (a resume of a branch whose PR is open resets a person's local commit) and the W15-33 plan-card line. (5) The budget journey's 'tiny task' check fails on head and on base alike.",
+  "CI on GitHub (Windows and Linux, Desktop app workflow) has not been watched yet for 3600089."
+ ]
+}

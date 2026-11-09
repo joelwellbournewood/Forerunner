@@ -1,0 +1,1276 @@
+{
+ "base": "3600089",
+ "items": [
+  {
+   "id": "W15B-01",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[6]",
+    "wave15a-fixup-w15-merge:not_done[1]",
+    "wave15a-fixup-w15-merge:new_problems[1]",
+    "wave15a-merge:problems_left[1] (4, first half)"
+   ],
+   "severity": "major (data loss: a commit the person made in a task's folder is dropped without a word)",
+   "decision": "fix",
+   "area": "w15-tail",
+   "title": "A resume or a redo from main of a branch whose pull request is open (the Tasks-row Redo of a done task, with or without a merge card; a Try again) resets the task's folder and drops a commit the person made there without a word (the W15-02 sibling)",
+   "evidence": "Review of w15-merge non_blocking[6]; fix-up report not_done[1] and new_problems[1] (the place and both options); merge problems_left[1] (4); the second site (:1087) found by the adversarial check of this triage and confirmed at 3600089.",
+   "root_cause_at_head": "Holds at 3600089, at two reset sites in packages/capabilities/src/githost/pr-executor.ts executeIn, neither asking folderHold (:277-310; its only callers are the rebuild path :2000 and merge.ts:1930): (1) :982 resume = (!!existingPr && !dropped) || !!wip; with no work in progress :1011 'else await git.createBranch(branch, `origin/${branch}`)'; (2) the drop / redo-from-main path: a Redo of a done task with an open merge card closes it with REDO_FROM_BASE (commands/task.ts:308-322 redoMergeCards), conflictAnswer reads it as 'dropped' (:2834), resume is false, the branch keeps its name while its PR is open (:968 renames only without a PR) and :1087 'git.createBranch(branch, depsBase ?? `origin/${target.base}`)' runs 'checkout -B' (packages/capabilities/src/githost/git.ts:496) over the same local branch. Before both, :922 cleanAfterCutShortRun sets anything uncommitted aside under failedRef (kept, but silently).",
+   "notes": "Decision (session lead, the safe direction, consistent with W15-02's rebuild and ADR 0111 'a commit pushed afterwards is never merged by Forerunner'): hold, never reset and never bring the commit along unasked. Before either reset (:1011, and :1087 when the branch keeps its name because its PR is open), folderHold(git, branch, base) === 'commits' stops the run before any model call: nothing reset, no spend; executeIn returns { outcome: 'needs_human', summary: <sentence>, costUsdMicro: 0, branch } as the dependency-base refusal already does (:1039, :1079). The runner (runner.ts:2328-2369, unchanged) then sets the task needs_human with that reason and files the cannot-run card ('\"X\" could not run. <sentence>', Try again / Cancel task; session/cannot-run-card.ts:33, :67, :118); the Tasks row reads 'Needs your decision: it could not run' (task-words.ts:615-627) and offers Answer, Edit, Cancel (apps/ui/src/lib/task-actions.ts:84-85). So the sentence names Try again, never Redo: resume path 'Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.'; redo-from-main path 'Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.'. The session goes on with other tasks. The tail delivers the sentence only as the run's summary (no edit to task-words.ts, task-display.ts, event-lines.ts or runner.ts); the session log's task.finished line for a needs_human run that asked nothing is w15-words' W15B-79. Not in run B: an immediate answer at the Redo itself (it needs commands/task.ts task.reopen and a folder port; commands/task.ts is in neither area, and the owner's D6 of 2026-11-09 changes what Redo does in run C: a hint for run C). Uncommitted changes in a done task's folder stay as built (set aside under failedRef and kept) unless the executor can tell cheaply that the last run finished; the fixer logs which. A new owner question asks the owner to confirm hold over bring-along (owner_questions[0])."
+  },
+  {
+   "id": "W15B-02",
+   "sources": [
+    "wave15a-fixup-w15-chat:not_done[0]",
+    "wave15a-fixup-w15-chat:new_problems[0]",
+    "wave15a-fixup-w15-chat:new_problems[1]"
+   ],
+   "severity": "major (money: a removed project's kept credential wait, its handover schedule or a stale link starts a session that spends with no action from the person)",
+   "decision": "fix",
+   "area": "w15-tail",
+   "title": "A removed project (the New project row's Undo archives it, W15-36) can still start work: a kept credential wait or its handover schedule starts a session by itself, its page (from an old notification or a bookmark) offers Start session and Create a repository, a plan the intake was still drafting is filed after the removal, and the creation's Undo goes through while a session of that project runs",
+   "evidence": "Fix-up report of w15-chat not_done[0], new_problems[0] and [1]; the unattended paths (the credential wake, the handover schedule) found by the adversarial check of this triage and confirmed at 3600089.",
+   "root_cause_at_head": "No path that starts work reads status 'archived' (grep finds it only in commands/project.ts and server.ts:2489-2505, the Changes names): packages/runtime/src/daemon/compose.ts:3556-3632 credentialWaits.wake takes every project with a kept wait and ready tasks (store.project.get, no status check) and calls scheduler.requestStart, every scheduler tick (:3411); :3285-3299 refreshJobSchedules passes store.project.list({}) (archived rows included) to syncHandoverSchedules (jobs/handover.ts:147-164), so a handover job keeps firing; :3300-3318 startSession / runSession load the project with mustGet and start it; server.ts:1519-1590 POST /sessions checks budget and runnability only; session/intake.ts:1342-1345 propose() loads the project with mustGet and :1414 files its card whatever the status; commands/project.ts:272-312 the undo archives the row (tasks stay ready) and withdraws the cards open at that moment, with no check for a running session (store.session.active, packages/state/src/repos/session.ts:117, is not read). The budget wake is closed by that withdrawal: wakeBudgetWaits reads open cards only (session/budget-card.ts:392). The Scheduler (session/triggers.ts:218) needs no change: every start it runs passes startSession. GET /projects/:id already returns status: 'archived' (views.ts:207, api-types.ts:128); apps/ui/src/pages/ProjectPage.tsx:141 and :159 show Create a repository and Start session for it.",
+   "notes": "Builds only the safety part; it does not answer the open owner question W5-40 (removing a project), listed in owner_questions with a sharper form. One guard where every start passes: compose.ts startSession (:3300) refuses an archived project with one sentence (a POST /sessions start, the chat's session.start, a credential wake, a budget resume, a plan approval's start and a handover job all go through it); POST /sessions refuses at once with the same sentence before requestStart (no session row); credentialWaits.wake skips a removed project and drops its wait (else every tick retries it); refreshJobSchedules schedules no handover for it; the intake files no card for it (propose refuses, and the filing re-reads the status before the insert, so a plan drafted during the Undo is never filed; the call already made is not refunded); the creation's Undo is refused while a session of that project runs ('Cannot be undone now: a session of <name> is running. Stop it first.', the undoBlocked pattern of the W15-36 fix-up); ProjectPage reads the status GET /projects/:id already gives and says 'This project was removed.' with no Start session or Create a repository (no api-types or views.ts change). The owner's D6 of 2026-11-09 (the person says when a session starts) removes the credential wake's own start in run C; until then this guard is what stops it."
+  },
+  {
+   "id": "W15B-03",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[2]",
+    "wave15a-fixup-w15-chat:new_problems[4]"
+   ],
+   "severity": "minor (security: no hostile test of the chat's card facts)",
+   "decision": "fix",
+   "area": "w15-tail",
+   "title": "No hostile test covers the chat's card facts: since W15-30 a card quotes up to 300 characters of the specialist's words (which can come from a web page) to the chat model, which holds command tools; the data rule added in the fix-up is tested only by its exact system text",
+   "evidence": "Review of w15-chat non_blocking[2] (security note; the rule itself was added in the fix-up, fixed[4]); fix-up new_problems[4].",
+   "root_cause_at_head": "evals/injection/cases holds 19 email and 40 web cases (scripted 'attempts' a hostile model makes), none for the conversation; packages/runtime/src/conversation/agent.ts:379-395 CHAT_OPEN_REQUEST_RULES carries the rule and packages/runtime/test/conversation-memory.test.ts asserts its text only. What code enforces today: a widening of the site rule asks a yes (commands/settings.ts narrowingActsAtOnce, :66-70), a task change said in chat is read back once (commands/executor.ts:290-296, askFromChat), a limit change by an agent needs the person (executor.ts:282-289, limitChange). A narrowing acts at once whoever asked for it (W15B-80).",
+   "notes": "Coverage, not a fix: one composed conversation test at the chat's boundary (the request builder and the command gate, with a scripted chat model that obeys a questions card's quoted words) asserts what code enforces: a card that orders a wider site rule, a task cancel and a budget raise ends the turn in the read-back (needs_yes or the person's confirmation) with nothing changed, and the request's system text carries the data rule. Expected to pass at 3600089: then it is committed as a guard and the report says it passed at once (validation rule 8 is for fixes; this fixes nothing). If a code-enforced part fails, that is a real bug: the failing case stays, the fix goes in the gate (packages/commands/src/executor.ts decideSteps, or a spec's narrows / limit flag in commands/settings.ts), siblings after. The prompt text (agent.ts) is not changed in run B (run C's D3). What no code can tell (a narrowing the card's words asked for, which acts at once) is W15B-80, later for run C. The injection harness form (evals/injection) is optional; if used, its runner must take a chat channel, else the composed test alone and the gap logged."
+  },
+  {
+   "id": "W15B-04",
+   "sources": [
+    "wave15a-fixup-w15-merge:not_done[0]",
+    "wave15a-fixup-w15-merge:new_problems[0]",
+    "wave15a-fixup-w15-merge:notes_for_other_areas[1]",
+    "wave15a-fix-w15-merge:new_problems[1]",
+    "wave15a-review-w15-merge:non_blocking[11]",
+    "wave15a-merge:problems_left[1] (3)"
+   ],
+   "severity": "minor (an untrue sentence: the Docs tab tells the person to turn on a setting that is on)",
+   "decision": "later",
+   "title": "While another project's status pull request holds this project's status in the app (W15-01), the Docs row reads 'kept in the app: no status pull request (Settings turns it on)' with the setting on, and nothing on screen says why the status pull request was not written",
+   "evidence": "Fix-up of w15-merge not_done[0] and new_problems[0] (/tmp/frbench/fixup-w15-merge/steps/03-j1b-b-docs-tab.txt); the fixer's new_problems[1]; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/daemon/docs-routes.ts:266-270 picks the note from found.root === statusRoot only; packages/runtime/src/loop/docs.ts:451-460 statusDocRoot returns the app folder in both cases (setting off, or held: STATUS_HELD_MARK :130, written at :944-948) and DocsRoutesDeps (docs-routes.ts:39-60) has no port that says which. docs-routes.ts was in no wave 15 area.",
+   "notes": "Later: run C. The owner answered W15-112 on 2026-11-09 (D1, /tmp/frbench/owner-decisions-2026-11-09.md): one repository belongs to one project, and existing duplicates get a clear, safe way to become one. Run C removes the state this note describes and decides what a duplicate shows until it is merged; a port ProjectDocs.statusHeld(project) and the note 'kept in the app: another project's status pull request is open on this repository' are the cheap fix if run C keeps duplicates visible for a while."
+  },
+  {
+   "id": "W15B-05",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[0]",
+    "wave15a-fixup-w15-merge:not_done[2]"
+   ],
+   "severity": "minor (timers and GitHub calls after stop; a poll held for N x 15 s)",
+   "decision": "fix",
+   "area": "w15-tail",
+   "title": "The null-mergeable re-read (W15-07) waits up to about 15 s per pull request, one after another, not per poll as decided, on a real setTimeout that stop() does not cancel: after Quit a poll can go on calling GitHub, and a main branch move with N open PRs holds one poll for N x 15 s",
+   "evidence": "Review of w15-merge non_blocking[0]; fix-up not_done[2] (not changed); read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/session/githost-watcher.ts:376 realDelay = new Promise(setTimeout) (not the watcher's clock); :563-571 the loop runs per PR inside readPullRequest; stop() (:412-415) cancels only the next tick.",
+   "notes": "About 15 s of re-reads per poll in all, through the watcher's clock so stop() ends the wait; no GitHub call after stop. Validation rule: processes and timers are tested for what is left after stop and Quit."
+  },
+  {
+   "id": "W15B-06",
+   "sources": [
+    "wave15a-fixup-w15-merge:new_problems[2]"
+   ],
+   "severity": "minor (the chat knows less: owner complaint 8)",
+   "decision": "later",
+   "title": "The chat's docs search never reads a repository project's status kept in the app (the default, Status pull request off, and the held case), so the chat cannot quote the project's own status",
+   "evidence": "Fix-up of w15-merge new_problems[2]; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/daemon/compose.ts:4080-4083 docsDirs -> ProjectDocs.docsDirsFor (loop/docs.ts:472-481: the linked folder, the copy, the workspace); statusDocRoot (loop/docs.ts:451-460, the app-status folder) is read only by the Docs routes. docsDirsFor's first root is read elsewhere as the project's folder (compose.ts:3496 hasDependenciesToInstall, server.ts:872), so the chat's own list is where the app's status goes, not docsDirsFor.",
+   "notes": "Later: run C. The owner's D3 of 2026-11-09 (the chat recalls anything recorded on demand, documents among it, with tools) reworks how the chat reads a project's documents; run C's recall must include the status kept in the app (statusDocRoot, not docsDirsFor, whose first root other callers read as the project's folder)."
+  },
+  {
+   "id": "W15B-07",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[0]",
+    "wave15a-merge:problems_left[1] (4, second half)"
+   ],
+   "severity": "minor (a plan card that does not say a research task can read nothing)",
+   "decision": "fix",
+   "area": "w15-tail",
+   "title": "W15-33's plan-card line is not built: under an empty 'only these websites' list the plan card shows a researcher task with no word that it can read no website (the planner-text part landed in run A)",
+   "evidence": "Fix report of w15-review not_done[0] (needs a PlanTaskView field, the fake daemon, the render and a real-daemon case); merge problems_left[1] (4).",
+   "root_cause_at_head": "packages/runtime/src/daemon/plan-tasks.ts:97-151 planTaskViews builds key, title, specialist, unknown, estimateUsdMicro and runsOn only; PlanTaskView (packages/runtime/src/daemon/api-types.ts) has no field for a per-project limitation; its deps are built in server.ts:1861-1871 (GET /inbox), where deps.estimate.project already carries the project row (its settings hold the site rule, webAccessOf) but nothing says whether a specialist reads web pages; apps/ui/src/pages/InboxPage.tsx:277-286 cannotRunHere reads only the install's per-specialist limitation (GET /settings/models).",
+   "notes": "PlanTaskView gains note: string | null (append-only) for a task whose specialist reads web pages under an 'only' list that names no website: 'Reads no website: this project's \"only these websites\" list is empty. Add websites in Settings, or Change the plan.'; plan-tasks.ts reads the rule from deps.estimate.project.settings and a new PlanTasksDeps.readsWeb(name), passed at server.ts:1861-1871 from the registry; the fake daemon in the same commit; InboxPage renders it under the task beside runsOn. Live check 3 step S5 reads it."
+  },
+  {
+   "id": "W15B-08",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[7]",
+    "wave15a-fix-w15-merge:not_done[2] (both parts: the real-daemon cases and the compose-twice restart for before_conflict)",
+    "wave15a-fixup-w15-merge:not_done[3]",
+    "wave15a-review-w15-review:non_blocking[6]",
+    "wave15a-fixup-w15-review:not_done[2]"
+   ],
+   "severity": "minor (binding test rules, AGENTS.md Validation: the boundary the person uses, answers with the Inbox's own options, persisted state across a restart)",
+   "decision": "fix",
+   "area": "w15-tail",
+   "title": "Run A's boundary tests owed: no real-daemon case for W15-55 (GET /projects/:id/tasks labels for a closed PR and a rebuild conflict) or W15-68 (an unreachable merge); no restart case for the earlier notice's words a conflict notice keeps (before_conflict, W15-04); W15-06's cases answer with typed labels, not requestView(row).options; W15-26's kept page text (reviewSources) has no restart case",
+   "evidence": "Review of w15-merge non_blocking[7]; the fixer's and fix-up's not_done; review of w15-review non_blocking[6]; read at 3600089.",
+   "root_cause_at_head": "apps/ui/test/real-daemon.test.ts has the W15-04 case (:12292) and W15-19 (:12968) and none naming W15-55 or W15-68; no test file mentions before_conflict, although packages/runtime/src/session/dependent-branches.ts :391-421 persists it on the notice's card, :446-470 beforeConflict reads it back and :478-500 restoreCard puts the earlier card's words back (TM-7) (the W15-04 cases in packages/runtime/test/dependent-branches-merge.test.ts:1881-2010 run in one composition); packages/capabilities/test/pr-executor.test.ts:2323-2362 answers the rebase-conflict card with the test's own label strings; packages/runtime/test/review-sources.test.ts:247-263 runs in one composition.",
+   "notes": "Tests only (AGENTS.md Validation: the boundary the person uses, the Inbox's own options, persisted state across a restart). A case that fails is a real bug: fix it in the same commit and log it. No product change otherwise."
+  },
+  {
+   "id": "W15B-09",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[3]",
+    "wave15a-fixup-w15-chat:not_done[1] (substring match)"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "The chat matches another project's name anywhere in a line ('Go' matches any line with 'go'), so a short-named project's open card is listed in another project's chat",
+   "evidence": "Review of w15-chat non_blocking[3]; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:1327-1332 said.includes(o.other.toLowerCase()) (a substring; a task's name needs 6 letters, a project's name nothing).",
+   "notes": "Later: run C. The owner answered W15-148 on 2026-11-09 (D3): short answers from this project's open cards and state, anything else recalled on demand. Run C rebuilds this selection; it should name a project only as a whole word or phrase."
+  },
+  {
+   "id": "W15B-10",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[0]",
+    "wave15a-fixup-w15-run:new_problems[1] (chip)",
+    "wave15a-fixup-w15-run:notes_for_other_areas[4]",
+    "wave15a-merge:problems_left[1] (2, chip)"
+   ],
+   "severity": "words (two words for one state on one screen)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The session page's chip reads 'Ended: 3 tasks need you' while the log's end line now says 'Session over: 3 paused.' (W15-69's sibling)",
+   "evidence": "Bench /tmp/frbench/review-w15-run/steps/32-d-session.png; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/session/stop-words.ts:163-172 endedStatusText counts handoff.blocked (runner.ts:2809 needsHuman + failed, budget pauses included via :2340) through packages/runtime/src/daemon/views.ts:442-452 stillBlocked; handoff.paused (runner.ts:2821) is not read.",
+   "notes": "Chip as the end line: 'Ended: 2 paused', 'Ended: 1 task needs you, 2 paused'."
+  },
+  {
+   "id": "W15B-11",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[2]",
+    "wave15a-fixup-w15-merge:new_problems[3]"
+   ],
+   "severity": "words (a card offers a way out none of its buttons does; its title is the old reason)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The head-moved card is titled 'The critic accepted \"X\", but pull request #3 was not merged' and offers only 'I merged it' / 'Leave it open', while its sentence ends '... merge it yourself or redo the task.'",
+   "evidence": "Review of w15-merge non_blocking[2]; fix-up new_problems[3]; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/daemon/request-words.ts:937-945 leftOpenCardTitle has a case for a conflict notice and a rebuild only, so a head_moved card falls to the old title; :952-981 mergeLeftOpenCard's body is the record's sentence from packages/runtime/src/loop/merge.ts headMovedWords; the options are I merged it / Leave it open (Redo is on the Tasks row).",
+   "notes": "Words only, no new button: the title names what happened ('\"X\" changed after the review'), the body names where each way out is ('... merge it yourself on GitHub, or redo the task from its row in Tasks.'). True in the one state the card is shown in: a head_moved card is open only while its task is done, whose row offers Redo (task-actions.ts:109-114); a Redo withdraws it in the same transaction (commands/task.ts:308-322 redoMergeCards), so it never shows beside W15B-01's hold, which leaves the task needs_human with its own cannot-run card naming Try again. The 'main' literal stays (W15-71 later)."
+  },
+  {
+   "id": "W15B-12",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[4]"
+   ],
+   "severity": "words (an untrue status: Done while a pull request waits on the person)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The project line and Home read 'Done: all 2 tasks.' while #3 waits for the person (its folder, a commit there, a closed or conflicting pull request): only the label 'Accepted · waiting for you to merge' is counted",
+   "evidence": "Bench /tmp/frbench/review-w15-merge/steps/05-j2-overview-folder-wait.png; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/daemon/project-status.ts:345-375 counts labels equal to WAITING_FOR_YOUR_MERGE only; packages/runtime/src/daemon/task-words.ts:463-467 (OWED_FOLDER_LABEL) and :275-284 (LEFT_TO_YOU_LABELS, W15-55: closed, rebuild_conflict, head_moved, rebuilt_without, rebuilt_changed, checks_failed, blocked_by_rules, merge_commits_off) are not counted. Not every one is a pull request that waits to be merged: 'Accepted · pull request closed' and 'Accepted · could not be rebuilt' are not.",
+   "notes": "Every task whose work is accepted but not merged and needs the person counts, in words true for each outcome: the plain waits keep '1 pull request waits for you to merge.'; the rest are named as needing the person on the Overview, never as waiting to be merged (for example 'Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.' with Open Overview). W15-108's built form (b) ('; 2 taken out') is kept."
+  },
+  {
+   "id": "W15B-13",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[5]",
+    "wave15a-fixup-w15-merge:not_done[4]",
+    "wave15a-fix-w15-merge:new_problems[0]"
+   ],
+   "severity": "words with a reader (ids on GitHub and in a refusal: the W15-08 class)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "UUIDs left in text Forerunner writes on GitHub and in one refusal: the task commit bodies 'Task <uuid>.', the intake's first commit, docs commit, PR comment and PR body 'intake request <uuid>' (with 'doc(s)'), and the refusal '... open for this project (request <id>) ...'",
+   "evidence": "Review of w15-merge non_blocking[5]; fix-up not_done[4]; fixer new_problems[0]; read at 3600089.",
+   "root_cause_at_head": "packages/capabilities/src/githost/pr-executor.ts:732 (the work-in-progress commit body), :1110 (the task's commit body), :2426 (brought back); packages/runtime/src/session/intake.ts:2349 (the first commit's body), :2369 (the docs commit, 'doc(s)'), :2378 (the PR comment 'Updated by intake request <id>: ... doc(s) ...'), :2384 (the PR body '... by Forerunner intake (request <id>).'), :1351 (the claim_conflict refusal). Nothing parses 'Task <uuid>.' from a body: code reads subjects (pr-executor.ts:737-745 builtOnBy) and greps '(task <id>)' (loop/critic.ts:313, loop/project-checks.ts:195), which stay. The subjects that keep '(task <id>)' are messages of refs kept on this computer, never pushed: setAside under failedRef (:1489), set aside on cancel (:2339, :2380, :2391) and the baseline of a project without a repository (:2482, a local git with no remote, :2455-2470).",
+   "notes": "Words only; every subject or marker code reads stays byte for byte. The adversarial check's note that '(task <uuid>)' subjects may reach GitHub was checked and rejected: those are local refs (see root cause); the fixer logs in new_problems any pushed text with an id that the run's tests find."
+  },
+  {
+   "id": "W15B-14",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[2] (log line)",
+    "wave15a-fix-w15-review:notes_for_other_areas[7]",
+    "wave15a-review-w15-review:non_blocking[2]",
+    "wave15a-fixup-w15-review:not_done[1]",
+    "wave15a-review-w15-review:non_blocking[5]",
+    "wave15a-fixup-w15-review:not_done[3]",
+    "wave15a-fixup-w15-review:new_problems[0]",
+    "wave15a-fixup-w15-review:notes_for_other_areas[4]"
+   ],
+   "severity": "words (the log does not say what happened; it names the wrong card)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The session log's critic lines: a review-only pass (W15-27) says nothing before the verdict, and a questions card reads '\"X\" needs your decision (Inbox).' where its card says '...: the specialist asks you' and the task 'Needs your answer'",
+   "evidence": "Bench /tmp/frbench/fix-w15-review/steps/16-w2c-session-2.txt and /tmp/frbench/review-w15-review/steps/01-w1-session-log.txt; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/session/runner.ts:3264-3297 reviewOnlyResult emits nothing when it takes the kept result (sayStarted is skipped for result.reviewOnly); packages/runtime/src/daemon/event-lines.ts:249 (decision 'human': '\"X\" needs your decision (Inbox).') and :230 (its couldNot variant: '... It needs your decision (Inbox).') say 'needs your decision' for every human decision; the critic.verdict emit (runner.ts:3338-3365) carries no card kind although packages/runtime/src/loop/critic.ts:730-741 knows it (askedPerson). (:232 is the blocked_by_findings line, unchanged.)",
+   "notes": "The critic.verdict payload gains the card kind and the review-only pass one event or payload, both in runner.ts (w15-words' in run B; w15-tail does not edit runner.ts). Widened by W15B-79 (event-lines.ts :215-216, the task.finished line of a needs_human run that asked nothing). The session result's 'Did 1 task' for a review alone is kept: the task became done in this session."
+  },
+  {
+   "id": "W15B-15",
+   "sources": [
+    "wave15a-fix-w15-review:new_problems[0]",
+    "wave15a-review-w15-review:non_blocking[4]"
+   ],
+   "severity": "words (raw level names on the session page; design §3.7)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The session log shows the raw level word ('warning', 'escalation', 'error') as a badge on its lines outside Details",
+   "evidence": "Bench /tmp/frbench/fix-w15-review/steps/06-after-w15-27-session-1.txt, /tmp/frbench/review-w15-review/steps/01-w1-session-log.png; read at 3600089.",
+   "root_cause_at_head": "apps/ui/src/pages/SessionPage.tsx:523-527 renders {e.level} in a Badge; the level comes from packages/runtime/src/daemon/views.ts:520-527 (escalation for any event with payload.escalation, e.g. the critic.verdict emit at runner.ts:3357-3359).",
+   "notes": "No raw level word on screen; the tone stays by colour with an accessible name in words."
+  },
+  {
+   "id": "W15B-16",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[0]",
+    "wave15a-review-w15-chat:non_blocking[4]",
+    "wave15a-fixup-w15-chat:not_done[1] (fast mode, session 0, fake drift)",
+    "wave15a-fixup-w15-chat:new_problems[5] (fast mode, session 0)",
+    "wave15a-fix-w15-chat:new_problems[7]",
+    "wave15a-review-w15-chat:non_blocking[7]",
+    "wave15a-fix-w15-chat:new_problems[6]",
+    "wave15a-review-w15-chat:non_blocking[9]",
+    "wave15a-review-w15-chat:non_blocking[11] (fake budget words)"
+   ],
+   "severity": "words (raw states; an error with no way out)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "Settings words: a yes/no setting reads 'true'/'false' ('Put Opus fast mode for Game back to true?', 'from unset to true'); the session budget's 0 refusal reads 'CHF 0' and gives no way out; the fake daemon's budget sentences still say 'the monthly hard ceiling' in whole francs",
+   "evidence": "Fixer and review of w15-chat; read at 3600089.",
+   "root_cause_at_head": "packages/commands/src/commands/settings.ts:828-830 showFor falls back to show(v) for a spec without display (fast_mode :313-327 and every other z.boolean() spec); the session budget's 0 refusal is packages/commands/src/commands/budget.ts:130-134 ZERO_REFUSED.session in the daemon and apps/ui/src/pages/SettingsFields.tsx:418-423 (session_cap zero.refused, 'The budget per session must be more than CHF 0: a session plans its work within it.') in Settings, which session_cap reaches before the generic fallback apps/ui/src/pages/SettingsPage.tsx:222; siblings without two decimals: SettingsPage.tsx:218/:220 ('The amount must be CHF 0 or more.') and :222 ('The amount must be more than CHF 0.'), apps/ui/src/pages/project/StartSessionDialog.tsx:248/:250 ('The budget must be more than CHF 0.'); apps/ui/test/fake-daemon.ts:5047-5051 'the monthly hard ceiling' and whole francs (the daemon says 'the monthly cap', CHF 3.00).",
+   "notes": "Owner question W15-109 untouched: 0 stays refused for a session and for the month; only the words change (CHF 0.00, and what to do)."
+  },
+  {
+   "id": "W15B-17",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[9]"
+   ],
+   "severity": "words (live: 'Can `developer.mozilla.org` be added…' was a question)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The questions card's answer fields show each question with the specialist's markdown (backticks, bold), and the form's context line is the raw text; W15-61 cleaned only the card body",
+   "evidence": "Fixer of w15-chat new_problems[9]; live check 2 W15-61 evidence; read at 3600089.",
+   "root_cause_at_head": "apps/ui/src/pages/InboxPage.tsx:213-218 PersonQuestionsForm renders {card.context} and each {q} as stored; packages/runtime/src/daemon/request-words.ts:360-367 strips markdown only from the body's quote.",
+   "notes": "The answer sent keeps the question as asked; only what is shown is plain."
+  },
+  {
+   "id": "W15B-18",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[6]",
+    "wave15a-fixup-w15-run:new_problems[0]"
+   ],
+   "severity": "words (CHF 0.00 for money spent)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The UI's Money shows CHF 0.00 for a positive amount under half a centime: a running task's spend on the Tasks row and in the drawer, and the session's budget meter ('CHF 0.00 of CHF 5.00 (0%)') beside 'Less than CHF 0.01.'",
+   "evidence": "Bench /tmp/frbench/review-w15-run/steps/38-e-drawer-while-running.png, /tmp/frbench/fixup-w15-run/steps/03-b-session-after-stop-now.txt; read at 3600089.",
+   "root_cause_at_head": "apps/ui/src/lib/money.ts:35-43 formatChf / formatMoney round to two decimals with no sub-centime case; apps/ui/src/components/ui.tsx:203-209 Money; used by TasksTab.tsx:510, TaskDrawer.tsx:141 and :330, SessionPage.tsx:530 and the budget meter.",
+   "notes": "Merged into W15-74's revised acceptance (one item in the spec). The drawer's row one call behind the list while running is the 5 s poll: not a problem."
+  },
+  {
+   "id": "W15B-19",
+   "sources": [
+    "wave15a-fix-w15-run:not_done[0]",
+    "wave15a-fix-w15-run:new_problems[0]",
+    "wave15a-fixup-w15-run:not_done[0]",
+    "wave15a-fixup-w15-run:notes_for_other_areas[5]",
+    "wave15a-review-w15-run:non_blocking[11] (metrics line)",
+    "wave15a-merge:problems_left[1] (2, metrics line)"
+   ],
+   "severity": "words (a false comparison in the log)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The session log's 'Session review measured: ... CHF 0.10 spent of a CHF 0.23 estimate.' sets the spend with reviews against the work-only estimate (W15-18's last part)",
+   "evidence": "Bench of fix-w15-run AFTER; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/daemon/views.ts:624-628 reads metrics.actualUsdMicro; the critic's metrics carry workUsdMicro and reviewsUsdMicro since W15-18.",
+   "notes": "Merged into W15-60's revised item (the same lineOf in views.ts)."
+  },
+  {
+   "id": "W15B-20",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[11] (budget card title, started line)",
+    "wave15a-fixup-w15-run:new_problems[1] (budget card, started line)"
+   ],
+   "severity": "words",
+   "decision": "duplicate",
+   "title": "The budget card's 'paused at its budget of CHF 0.00' and the started line's '(about CHF 0.00)'",
+   "evidence": "Seen on the w15-run bench; read at 3600089.",
+   "root_cause_at_head": "Holds: packages/runtime/src/session/budget-card.ts:70-100; packages/runtime/src/daemon/views.ts:581.",
+   "notes": "Duplicate of W15-74 (still open, in the revised w15-words)."
+  },
+  {
+   "id": "W15B-21",
+   "sources": [
+    "wave15a-fix-w15-review:notes_for_other_areas[0]"
+   ],
+   "severity": "none",
+   "decision": "duplicate",
+   "title": "W15-27 landed: 'review_waits' now means the next session reviews the kept result without running the specialist again",
+   "evidence": "Fix report of w15-review fixed[3] and notes_for_other_areas[0].",
+   "root_cause_at_head": "packages/runtime/src/session/runner.ts:3264-3297 reviewOnlyResult; request-words.ts:647-648 the line.",
+   "notes": "Duplicate of W15-65's re-check: the line 'The work is done; its review waits for room in the budget.' stays (the acceptance's W15-27-landed branch)."
+  },
+  {
+   "id": "W15B-22",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[5]",
+    "wave15a-fixup-w15-run:new_problems[1] (refusal sentence)"
+   ],
+   "severity": "words",
+   "decision": "later",
+   "title": "The W15-12 refusal ('Claude Code's LS tool has no output shape this run can check, so the run stopped before the model saw this task's secret.') says what happened but not what to do",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/agent/cc-tool-outputs.ts:283-288, packages/runtime/src/agent/sdk.ts:1001.",
+   "notes": "Later: a rare path (the subscription, a tool output whose shape the SDK's types do not name); the sentence is true. Reword with what the owner's checklist step for W15-12 shows (owner_checklist_additions[0]); kept out to hold w15-words at about 24 (25 with W15B-24)."
+  },
+  {
+   "id": "W15B-23",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[0]",
+    "wave15a-fixup-w15-chat:not_done[1] (read-back)"
+   ],
+   "severity": "words",
+   "decision": "later",
+   "title": "The same-title pick's read-back 'Pause \"Write the guide\"?' does not say which of the two tasks it is",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/commands/src/commands/task.ts:487 (the read-back); the pick is findTask's (:164-221).",
+   "notes": "Later: two tasks with one title and a chat change only; the pick itself is right and tested. The review's comma part is fixed (task.ts:174 sameTitleRefusal '(the older one)'). Kept out to hold w15-words at about 24 (25 with W15B-24)."
+  },
+  {
+   "id": "W15B-24",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[6]"
+   ],
+   "severity": "words (the desktop app tells the person to confirm on another device)",
+   "decision": "words",
+   "title": "The in-app read-back of a high-risk change ends 'Confirm in the app on a paired device.' while the person is in the desktop app",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "Holds: packages/commands/src/executor.ts:147 '${card.ask} Confirm in the app on a paired device.' (a needs_device read-back); apps/ui/src/lib/plain-words.ts:8-17 IN_APP maps only the long form ('Confirm in the app on a paired device; on the phone with biometric.' -> 'Confirm on this device.'), so the short form reaches the desktop app as it is.",
+   "notes": "Moved from later to w15-words (the adversarial check's minor note, accepted): one IN_APP entry in plain-words.ts, tested by a plain-words unit and the Changes read-back's UI test. The daemon's text for voice and the phone stays. Last in the order and below the cut line.",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15B-25",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[5]"
+   ],
+   "severity": "words",
+   "decision": "later",
+   "title": "An undo card's Details read 'Undo: This cannot be undone.'; the site rule's effect says 'except the ones listed' when none are listed",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/commands/src/change-card.ts:58 NO_UNDO_HINT; packages/commands/src/commands/settings.ts:235-240 webAccessEffect.",
+   "notes": "Later: pre-existing, behind Details or one rare value. Kept out to hold w15-words at about 24 (25 with W15B-24)."
+  },
+  {
+   "id": "W15B-26",
+   "sources": [
+    "wave15a-fixup-w15-run:not_done[2]",
+    "wave15a-fixup-w15-run:notes_for_other_areas[3]",
+    "wave15a-review-w15-run:non_blocking[9] (role-player)",
+    "wave15a-merge:problems_left[1] (1)"
+   ],
+   "severity": "cosmetic",
+   "decision": "later",
+   "title": "The bench stand-in still reports 'stopped when told that about a fifth of the budget was left'",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "testenv/src/bench/role-player.ts:655 (comment) and :1124 (report text).",
+   "notes": "Later: the stand-in's own report on the bench, not the product; with the next change to testenv/src/bench."
+  },
+  {
+   "id": "W15B-27",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[10]",
+    "wave15a-merge:problems_left[1] (5)"
+   ],
+   "severity": "bench",
+   "decision": "later",
+   "title": "The budget journey's 'tiny task' check fails on head and base alike (CHF 0.004 is below the stand-in's first-step worst case)",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "scripts/bench/journeys/budget.cjs (its default budget).",
+   "notes": "Later: bench harness, W15-143's class; not in the smoke journey or live check 3."
+  },
+  {
+   "id": "W15B-28",
+   "sources": [
+    "wave15a-fix-w15-merge:not_done[0]"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "W15-09 (b): unstaged edits to other files make the person's rebase fail with git's own text",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "Not built (part (a) holds: only unmerged paths are checked for markers).",
+   "notes": "Later: below wave 15's cut line; minor; next wave's leftovers."
+  },
+  {
+   "id": "W15B-29",
+   "sources": [
+    "wave15a-fixup-w15-merge:not_done[5]"
+   ],
+   "severity": "minor (Windows)",
+   "decision": "later",
+   "title": "W15-11: the import's existing checkout has no test of its line-endings pin (only its failure is logged)",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/loop/docs.ts import path; the project-folder site has a test.",
+   "notes": "Later: below the cut line; needs an import fixture with an existing checkout. The owner installs fresh, so no earlier folder exists on his PC."
+  },
+  {
+   "id": "W15B-30",
+   "sources": [
+    "wave15a-fix-w15-run:new_problems[1]"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "W15-18's size factor: a tester task and a data report that name files they read are priced at x0.3-0.4 of the starting figure",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/estimates/model.ts taskSizeFactor.",
+   "notes": "Later: needs more live samples; the learner corrects per unit of size; live check 3 R1 measures one task."
+  },
+  {
+   "id": "W15B-31",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[2] (pass for a linked folder)"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "W15-27's review-only pass is not offered for a project linked to a folder without git: it falls back to running the specialist again",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/capabilities/src/githost/pr-executor.ts:2910-2915 prepareReview returns null without a .git; documented in ADR 0112.",
+   "notes": "Later: the fallback is today's behaviour and the card's line ('The work is done; its review waits ...') stays true."
+  },
+  {
+   "id": "W15B-32",
+   "sources": [
+    "wave15a-review-w15-review:non_blocking[1]",
+    "wave15a-fixup-w15-review:not_done[0]"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "ReviewPending keeps no head commit; a run with no worktree hashes every file as 'gone', so a change there cannot be seen",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/session/review-pending.ts:43-57 workHash; executor.ts:1833-1836 prepareReview gives {} without a worktree.",
+   "notes": "Later: in the daemon tasks run through PrTaskExecutor, whose prepareReview gives a folder or null; the no-worktree case is the bare LoopTaskExecutor. The stale runner comment is fixed (fix-up fixed[4])."
+  },
+  {
+   "id": "W15B-33",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[4]"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "The intake's 'Today' line is the UTC date, not the person's time zone",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/session/intake.ts (the intake request has no owner time zone at hand).",
+   "notes": "Later: off by a day only near midnight, model-facing."
+  },
+  {
+   "id": "W15B-34",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[1]",
+    "wave15a-fix-w15-chat:new_problems[2]",
+    "wave15a-fixup-w15-chat:new_problems[5] (phone command names)",
+    "wave15a-review-w15-chat:non_blocking[11] (phone)"
+   ],
+   "severity": "words (phone)",
+   "decision": "later",
+   "title": "The phone shows raw command names on Changes ('Commands: project.switch ...') and its offline card writes 'CHF 15'",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "apps/ui/test/mobile-changes.test.tsx:94, mobile-remote.test.tsx:33; tests/e2e/src/scenario-phone.ts.",
+   "notes": "Later: phase H (the phone, after the desktop round); ChangeLogView's new name fields can serve it."
+  },
+  {
+   "id": "W15B-35",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[1]",
+    "wave15a-fixup-w15-chat:not_done[1] (voice and phone)"
+   ],
+   "severity": "minor (voice, phone)",
+   "decision": "later",
+   "title": "Voice turns and the phone watcher emit no project.changed or inbox.changed after a command",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/voice/bridge.ts ~979.",
+   "notes": "Later: voice and phone are out of scope this round (design §7)."
+  },
+  {
+   "id": "W15B-36",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[4]",
+    "wave15a-review-w15-chat:non_blocking[11] (Sources)"
+   ],
+   "severity": "words (Advanced)",
+   "decision": "later",
+   "title": "Settings > Sources shows 'secret:github_token', 'A reference to the vault (secret:<name>)' and 'fr setup'",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "apps/ui/src/pages/SourcesSection.tsx:140-150.",
+   "notes": "Later: an Advanced form whose field takes a vault reference: a form change, not a sentence."
+  },
+  {
+   "id": "W15B-37",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[8]",
+    "wave15a-fixup-w15-chat:new_problems[3]",
+    "wave15a-review-w15-chat:non_blocking[11] (project.create)"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "Chat's project.create inserts the project directly, without the brief, plan or dashboard path POST /projects makes",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/commands/src/commands/project.ts (no createProject port from chat).",
+   "notes": "Later: pre-existing; the person's path is New project; the chat's create needs its own design."
+  },
+  {
+   "id": "W15B-38",
+   "sources": [
+    "wave15a-fixup-w15-chat:new_problems[2]"
+   ],
+   "severity": "words",
+   "decision": "later",
+   "title": "An Update about a removed project's change still ends 'Undo in Changes', where the change now reads 'Cannot be undone now'",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "apps/ui/src/pages/InboxPage.tsx:756-773 MessageBody (static from the message's 'Undo.').",
+   "notes": "Later: needs the message to carry its change's undo state; only after a creation's Undo; Changes says why."
+  },
+  {
+   "id": "W15B-39",
+   "sources": [
+    "wave15a-fix-w15-merge:not_done[3]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "W15-10 end to end with a translated git",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/test/git-untranslated-sites.test.ts pins every GitOps site; this machine has no git translations.",
+   "notes": "Owner's checklist item 11 (TM-6) already covers it."
+  },
+  {
+   "id": "W15B-40",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[1]",
+    "wave15a-fixup-w15-merge:notes_for_other_areas[7]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "W15-55/W15-63 check: a commit pushed to a waiting PR's branch shows only after Merge is pressed or a rebuild runs",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "Behaviour as designed (the poll reads no head move without a rebuild or a conflict notice).",
+   "notes": "live_check_3_additions: G4 corrected (press Merge first)."
+  },
+  {
+   "id": "W15B-41",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[4]",
+    "wave15a-fixup-w15-run:notes_for_other_areas[7]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "W15-12's strict shapes on the real subscription: a Read of a file holding the granted secret must go on scrubbed, not be refused",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/agent/cc-tool-outputs.ts CC_TOOL_OUTPUT_SHAPES tied to sdk-tools.d.ts at compile time; runtime keys beyond the types are unknown here.",
+   "notes": "owner_checklist_additions[0] (the subscription is not reachable from live check 3)."
+  },
+  {
+   "id": "W15B-42",
+   "sources": [
+    "wave15a-fix-w15-run:new_problems[2]"
+   ],
+   "severity": "none (bench stand-in)",
+   "decision": "not_a_problem",
+   "title": "On the bench stand-in the Swiss pairing task ends 'Needs your decision: tried 4 times' before and after w15-run",
+   "evidence": "/tmp/frbench/review-w15-run/steps/14-a-session-details.txt and 10-a-drawer-after-write-the-sw.txt; /tmp/frbench/fix-w15-run/steps/03-after-tasks-after-the-run.txt and before-steps/03 (the same on the base); testenv/src/bench/role-player.ts:637-648.",
+   "root_cause_at_head": "Investigated on the bench evidence (no spend): /tmp/frbench/review-w15-run/steps/14-a-session-details.txt shows each of the four attempts write only src/elo.js ('wrote src/elo.js', 'ran node --check src/elo.js: ok') while the criteria name src/elo.js, src/swiss.js, test/elo.test.js and test/swiss.test.js; the stand-in critic sends it back each time ('src/swiss.js, test/elo.test.js, test/swiss.test.js are not in the task's folder'), and after the fourth the retry ladder files the decision card ('Needs your decision: tried 4 times'), as designed. The cause is the stand-in coder: testenv/src/bench/role-player.ts:637-648 writes the files the title names, else only the first file the outcome names (:638 filesNamed(brief.outcome).slice(0, 1)), never the criteria's other files.",
+   "notes": "Not a product problem: the critic rightly refuses work that misses three named files and the ladder stops after four tries. Live check 3's R1 already runs this task with the real model; its expectation (Done · Reviewed) stays as an observation, not as the way to find the cause. A stand-in that writes every file the criteria name is a bench change for the next touch of testenv/src/bench (W15-143's class)."
+  },
+  {
+   "id": "W15B-43",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[1]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "W15-32: the bench stand-in does not act on a default output file the way the live model did",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "The prompt fix is guarded by registry.test.ts.",
+   "notes": "Live check 3 S2 (only the named file is written)."
+  },
+  {
+   "id": "W15B-44",
+   "sources": [
+    "wave15a-fix-w15-review:new_problems[1]",
+    "wave15a-fixup-w15-review:not_done[4]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "W15-25 residual: an order to read a refused page that names no host ('Fetch the MDN dialog page') stays an order in the retry brief",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "Nothing in code can tell 'MDN' is a refused site; the critic is told the rule (critic.md 1.3.0) and the brief carries WEB_RULE_WINS_LINE.",
+   "notes": "Live check 3 S4 (expectation added)."
+  },
+  {
+   "id": "W15B-45",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[3]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "The task folder's Open folder said 'Opens the project's folder.'",
+   "evidence": "apps/ui/src/pages/project/SummaryTab.tsx:590 explain=\"Opens this task's folder on this computer.\" (fix-up fixed[3]). The path shown is the folder the person must act in (W15-05's point): not a problem.",
+   "root_cause_at_head": "Fixed at 3600089: apps/ui/src/pages/project/SummaryTab.tsx:590 explain=\"Opens this task's folder on this computer.\" (fix-up fixed[3]). The path shown is the folder the person must act in (W15-05's point): not a problem.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-46",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[8]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "A press on a row the branch rules block got past the refusal while its record waited for the folder",
+   "evidence": "packages/runtime/src/daemon/pull-requests.ts:595-599 (folder wait read only when merge.state !== 'blocked').",
+   "root_cause_at_head": "Fixed at 3600089: packages/runtime/src/daemon/pull-requests.ts:595-599 (folder wait read only when merge.state !== 'blocked').",
+   "notes": ""
+  },
+  {
+   "id": "W15B-47",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[9]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "testenv/src/githost/ops.ts named a FakeGitHost.setLazyMergeability that does not exist",
+   "evidence": "testenv/src/githost/ops.ts:35-38 names host.ops.lazyMergeability.",
+   "root_cause_at_head": "Fixed at 3600089: testenv/src/githost/ops.ts:35-38 names host.ops.lazyMergeability.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-48",
+   "sources": [
+    "wave15a-review-w15-merge:non_blocking[10]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "withdrawCards' doc comment sat on openMergeCards",
+   "evidence": "packages/commands/src/commands/task.ts:294 openMergeCards has its own comment; :325-330 the comment sits on withdrawCards.",
+   "root_cause_at_head": "Fixed at 3600089: packages/commands/src/commands/task.ts:294 openMergeCards has its own comment; :325-330 the comment sits on withdrawCards.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-49",
+   "sources": [
+    "wave15a-fix-w15-run:not_done[1]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "W15-19 had no real-daemon Stop-now case",
+   "evidence": "apps/ui/test/real-daemon.test.ts:12968 (fix-up fixed[0]).",
+   "root_cause_at_head": "Fixed at 3600089: apps/ui/test/real-daemon.test.ts:12968 (fix-up fixed[0]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-50",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[1]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "parseHandoff read 'Nothing - but the README is incomplete' as nothing and hedged items as optional",
+   "evidence": "packages/runtime/src/session/budget-pause.ts:66-68 NOT_NOTHING / isNothing (fix-up fixed[2]).",
+   "root_cause_at_head": "Fixed at 3600089: packages/runtime/src/session/budget-pause.ts:66-68 NOT_NOTHING / isNothing (fix-up fixed[2]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-51",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[2]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "intake.ts (w15-review's file) changed by w15-run's W15-18",
+   "evidence": "Merge 39f5314 kept both areas' hunks (wave15a-merge conflicts_resolved[6]); suites green at 3600089.",
+   "root_cause_at_head": "Fixed at 3600089: Merge 39f5314 kept both areas' hunks (wave15a-merge conflicts_resolved[6]); suites green at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-52",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[3]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "The wrap-up said 'this task has used N%' computed from the run's cap",
+   "evidence": "packages/runtime/src/agent/loop.ts:101 'Wrap up now: this run has used N of what it may spend' (fix-up fixed[3]).",
+   "root_cause_at_head": "Fixed at 3600089: packages/runtime/src/agent/loop.ts:101 'Wrap up now: this run has used N of what it may spend' (fix-up fixed[3]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-53",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[7]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "W15-15's 'searches on every call' case could pass vacuously",
+   "evidence": "packages/runtime/test/loop-web-search.test.ts:677-679 asserts the offer is dropped once (fix-up fixed[4]).",
+   "root_cause_at_head": "Fixed at 3600089: packages/runtime/test/loop-web-search.test.ts:677-679 asserts the offer is dropped once (fix-up fixed[4]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-54",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[8]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "W15-21's real-daemon case proved 'no version_conflict' by task.version only",
+   "evidence": "apps/ui/test/real-daemon.test.ts:12800 sends the person's Stop with the read version (fix-up fixed[1]).",
+   "root_cause_at_head": "Fixed at 3600089: apps/ui/test/real-daemon.test.ts:12800 sends the person's Stop with the read version (fix-up fixed[1]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-55",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[9] (doc lines)"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "Stale doc lines: cc-tool-outputs.ts's header and scripts/bench/README.md 'max_uses at most 10'",
+   "evidence": "packages/runtime/src/agent/cc-tool-outputs.ts:29 names test/security-sdk.test.ts; scripts/bench/README.md:24 'at most 2'. The role-player text is W15B-26 (later).",
+   "root_cause_at_head": "Fixed at 3600089: packages/runtime/src/agent/cc-tool-outputs.ts:29 names test/security-sdk.test.ts; scripts/bench/README.md:24 'at most 2'. The role-player text is W15B-26 (later).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-56",
+   "sources": [
+    "wave15a-review-w15-review:non_blocking[0]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "ruledSummary kept 'Accepted:' after the stand-in's '[stand-in model]' tag",
+   "evidence": "packages/critic/src/critic.ts:1295-1297 strips the verdict word after a short bracketed tag (fix-up fixed[2]).",
+   "root_cause_at_head": "Fixed at 3600089: packages/critic/src/critic.ts:1295-1297 strips the verdict word after a short bracketed tag (fix-up fixed[2]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-57",
+   "sources": [
+    "wave15a-review-w15-review:non_blocking[3]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "A described command of a script that reads its command line was told as 'neither the brief nor a README says how to run it'",
+   "evidence": "packages/runtime/src/loop/try-plan.ts:248 '<script> was not tried: <source> says in words what it is given, not the command to run'.",
+   "root_cause_at_head": "Fixed at 3600089: packages/runtime/src/loop/try-plan.ts:248 '<script> was not tried: <source> says in words what it is given, not the command to run'.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-58",
+   "sources": [
+    "wave15a-review-w15-review:non_blocking[7]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "A person's own done task read 'Not reviewed' in the Critic column",
+   "evidence": "apps/ui/src/pages/project/TasksTab.tsx:110 (nothing for specialist 'person'; fix-up fixed[3]).",
+   "root_cause_at_head": "Fixed at 3600089: apps/ui/src/pages/project/TasksTab.tsx:110 (nothing for specialist 'person'; fix-up fixed[3]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-59",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[3]"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "Changes' humanName fell back to the raw human id for another person",
+   "evidence": "apps/ui/src/pages/ChangesPage.tsx:102 ('another person' / 'the agent'; fix-up fixed[1]).",
+   "root_cause_at_head": "Fixed at 3600089: apps/ui/src/pages/ChangesPage.tsx:102 ('another person' / 'the agent'; fix-up fixed[1]).",
+   "notes": ""
+  },
+  {
+   "id": "W15B-60",
+   "sources": [
+    "wave15a-fix-w15-merge:not_done[1]",
+    "wave15a-review-w15-merge:non_blocking[12]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "W15-73: two waiting rows of same-titled tasks read alike; W15-09 and W15-73 left in not_done",
+   "evidence": "apps/ui/src/pages/project/SummaryTab.tsx:541-543 reads '\"title\" · pull request #N': the rows differ by number. The reviewer accepted both not_done entries (W15-09 (b) is W15B-28, later).",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-61",
+   "sources": [
+    "wave15a-fix-w15-merge:new_problems[2]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "After the last task PR merged the Overview kept 'Waiting for you to merge' with only the docs section",
+   "evidence": "SummaryTab.tsx:518-524 renders the heading only while waiting PRs exist; the docs pull requests under it still wait for the person's Merge, so the heading and its line are true.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-62",
+   "sources": [
+    "wave15a-fix-w15-merge:notes_for_other_areas[1]",
+    "wave15a-fix-w15-merge:notes_for_other_areas[2]",
+    "wave15a-fixup-w15-merge:notes_for_other_areas[0]",
+    "wave15a-fix-w15-review:notes_for_other_areas[6]",
+    "wave15a-fixup-w15-review:notes_for_other_areas[0]",
+    "wave15a-fix-w15-chat:notes_for_other_areas[0]",
+    "wave15a-fixup-w15-chat:notes_for_other_areas[0]",
+    "wave15a-fix-w15-run:notes_for_other_areas[1] (budgetLineWords; wrapUpSentWords is W15B-77 and W15B-78)",
+    "wave15a-fix-w15-run:notes_for_other_areas[2] (WEB_SEARCH_LINE, model-facing)",
+    "wave15a-fix-w15-run:notes_for_other_areas[3] (the session result's cancel and merge-later sentences)",
+    "wave15a-fix-w15-run:notes_for_other_areas[7] (the critic's session-review words)",
+    "wave15a-fixup-w15-run:notes_for_other_areas[0] (wrapUpText, model-facing)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Run A's new and changed sentences, listed by each area for w15-words and the merge step",
+   "evidence": "Checked one by one against design §5 at 3600089 (one sentence each, names not ids, no raw states, CHF with two decimals): pass, with two exceptions split out as words items: wrapUpSentWords' sub-centime form ('Told the coder to wrap up: it spent less than CHF 0.01 of less than CHF 0.01, and its next step could take it past less than CHF 0.01.', budget-pause.ts:289-299, asserted at budget-pause.test.ts:1180-1183) is W15B-77, and the registry key in the session log's notes ('Told the writer-marketing to wrap up', the flagged-search note, the pause sentence's 'the writer-marketing's limit') is W15B-78. budgetLineWords already collapses its sub-centime case (:275-277). The model-facing texts (wrapUpText, WEB_SEARCH_LINE) are asserted by their exact text (budget-pause.test.ts:1168-1177). The 'main' literal in the merge sentences is W15-71 (later). The web_access wrong-shape refusal's JSON example (settings.ts:770) is a tool result for the chat model, which retries with it (W15-29); the person's Settings form never sends a wrong shape. '(up to CHF 5)' in a session start read-back is design §5's own example.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": "Narrowed after the adversarial check: the first version cited only the merge, review and chat lists."
+  },
+  {
+   "id": "W15B-63",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[12]",
+    "wave15a-fixup-w15-run:not_done[1]",
+    "wave15a-fixup-w15-run:notes_for_other_areas[6]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The web search overshoot note could read '... more than the less than CHF 0.01 planned'",
+   "evidence": "packages/runtime/src/session/executor.ts:1380: a call that offers search plans at least max_uses x USD 0.01 (about CHF 0.016), so the planned figure is never under a centime.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-64",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[3]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "W15-28's optional re-read guard in compose.ts's notify hook was not built",
+   "evidence": "No sign-off is filed any more; notifications-wiring.test.ts proves one notification.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-65",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[5]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "W15-26: with every page's text kept the review request still ends with the 'nothing missing' line",
+   "evidence": "With every page present the evidence is complete; listing one as missing would be untrue. A page whose text was not kept is listed under 'Evidence not available' (review-sources.test.ts:263).",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-66",
+   "sources": [
+    "wave15a-fix-w15-review:not_done[6]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Bench BEFORE screenshots of w15-review were not taken on the base code",
+   "evidence": "Process only; the BEFORE evidence is live check 2's and each fix's test failed on the old code first.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-67",
+   "sources": [
+    "wave15a-fix-w15-review:new_problems[2]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Older databases may hold withdrawn critic:signoff rows",
+   "evidence": "Nothing reads them; the owner installs fresh (NEXT-SESSION: no upgrade check this round).",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-68",
+   "sources": [
+    "wave15a-fix-w15-review:notes_for_other_areas[8]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "taskCheck gives the drawer nothing for a task done without review",
+   "evidence": "packages/runtime/src/daemon/task-words.ts:479-480 labels it 'Done: accepted without review' (design §2); task-display.ts:229 returns null on purpose.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-69",
+   "sources": [
+    "wave15a-fixup-w15-review:new_problems[1]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "INPUT_NOUN is a word list: 'node wc.js for a quick word count prints ...' reads 'word' as a described input",
+   "evidence": "Rare, and said in 'See what was checked' as not tried, never silent.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-70",
+   "sources": [
+    "wave15a-review-w15-review:non_blocking[8]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The never-starting browser test process ran on about a minute after the launch timeout",
+   "evidence": "W15-91 (not a problem): the fake browser's 'sleep 600', ended with the bench.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-71",
+   "sources": [
+    "wave15a-fix-w15-chat:new_problems[5]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The bench model-call log stores tool names only, not their definitions",
+   "evidence": "settings_set's definition is asserted by real-daemon.test.ts (DefinitionReader) and conversation-memory.test.ts.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-72",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[8]",
+    "wave15a-fixup-w15-chat:not_done[1] (files outside files[])"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "w15-chat changed files outside its files[] (server.ts, settings-view.ts, loop/commands.ts, intent.ts, types.ts, api-types.ts)",
+   "evidence": "Merged at 3600089 with every suite green (wave15a-merge validation); each change in its handler.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-73",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[10]",
+    "wave15a-fixup-w15-chat:not_done[1] (the 5 KB definition)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "settings_set's definition is about 5 KB on every chat call; calibration's line names 'budget_usd'",
+   "evidence": "The prompt cache serves it after the first call; 'budget_usd' is the setting's key in a model-facing line.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-74",
+   "sources": [
+    "wave15a-review-w15-run:non_blocking[11] (plan figure)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The session plan's 'about CHF 0.21' differs from the Start dialog's CHF 0.13 because retried attempts join the plan",
+   "evidence": "Pre-existing: a re-plan prices the attempts it plans (packages/runtime/src/daemon/views.ts:574); the Start dialog prices the start. Both true for what they cover.",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-75",
+   "sources": [
+    "wave15a-merge:problems_left[0]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Nothing the merge broke is left",
+   "evidence": "Every suite green on 3600089 (wave15a-merge validation).",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-76",
+   "sources": [
+    "wave15a-merge:problems_left[2]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "CI on GitHub (Windows, Linux, Desktop app) not watched yet for 3600089",
+   "evidence": "A session-lead step, not a code problem: watch CI and the Desktop app workflow on 3600089 before run B starts (areas notes).",
+   "root_cause_at_head": "Read at 3600089.",
+   "notes": ""
+  },
+  {
+   "id": "W15B-77",
+   "sources": [
+    "wave15a-fix-w15-run:notes_for_other_areas[1] (wrapUpSentWords)"
+   ],
+   "severity": "words (minor: only a run whose cap is under a centime; not readable at a glance)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The wrap-up note of a run whose cap is under a centime reads 'Told the coder to wrap up: it spent less than CHF 0.01 of less than CHF 0.01, and its next step could take it past less than CHF 0.01.'",
+   "evidence": "packages/runtime/test/budget-pause.test.ts:1180-1183 asserts that sentence verbatim; read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/session/budget-pause.ts:289-299 wrapUpSentWords puts each amount through moneyWords (W15-16) with no collapsed form, where budgetLineWords has one (:275-277: '(both are under CHF 0.01)'); called at session/executor.ts:1383-1388 as a task.step note, shown by event-lines.ts:536-538.",
+   "notes": "Merged into W15-74 (amounts under a centime) in the revised w15-words: when two or more amounts are under a centime the note says so once ('Told the coder to wrap up: it has spent less than CHF 0.01, close to its budget.'-like words; the fixer's choice, one sentence). A text change in budget-pause.ts only; no logic there. W15-74's own note ('wrap-up sentences stay out') is revised: this one is in."
+  },
+  {
+   "id": "W15B-78",
+   "sources": [
+    "wave15a-fix-w15-run:notes_for_other_areas[1] (wrapUpSentWords 'Told the S')"
+   ],
+   "severity": "words (registry ids on screen: design §5 rule 3; the W15-43 class)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The session log names a specialist by its registry key: 'Told the writer-marketing to wrap up: ...', 'A web search result reads like instructions; the writer-marketing and the critic were told ...', and the pause sentence 'The run stopped at the writer-marketing's limit of CHF 0.40 per run ...'",
+   "evidence": "Read at 3600089; the adversarial check of this triage.",
+   "root_cause_at_head": "packages/runtime/src/session/executor.ts:1385 wrapUpSentWords(spec.name, ...) and :1756 limitWords(..., spec.name) (budget-pause.ts:205 'the ${specialist}'s limit', :298-299 'Told the ${specialist}'), :1369 the flagged-search note '... the ${spec.name} and the critic ...'; each reaches the session log as a task.step note (runner.ts:1690-1692, event-lines.ts:536-538 plainLine, which strips markdown but not a registry key) or as the pause sentence (the task's reason and the log line). saidByName (packages/critic/src/followup.ts:137) gives the person's word. Not shown: executor.ts:1095 and :1103 ('the ${spec.name} gets no web tools ...') are 'warning' run events on the 'run' bus (compose.ts:2372-2379), whose only listener (compose.ts:3172-3180) acts on injection_flagged and run_end: they reach no screen.",
+   "notes": "Merged into W15-43 (registry keys on screen) in the revised w15-words: limitWords and wrapUpSentWords name the specialist in words (a text change in budget-pause.ts; callers unchanged), and the flagged-search note's text in executor.ts does too. The adversarial check's executor.ts:1095/:1103 part is rejected (not person-facing, see root cause)."
+  },
+  {
+   "id": "W15B-79",
+   "sources": [
+    "sibling found at 3600089 while checking W15B-01's hold sentence (adversarial check tail_problems[3]: the row and log sentence of the hold)"
+   ],
+   "severity": "words (a log line that promises questions nobody asked: design §5 rule 9)",
+   "decision": "words",
+   "area": "w15-words",
+   "title": "The session log's line for a run that ends needs_human without asking anything reads 'The coder has questions for you about \"X\" (Inbox).' (today for a dependency base that could not be built; after run B also for W15B-01's hold)",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/runtime/src/daemon/event-lines.ts:215-216 task.finished's needs_human case says 'has questions for you' for every needs_human outcome; packages/capabilities/src/githost/pr-executor.ts:1039 and :1079 return needs_human with the dependency base's sentence and no questions, and the runner files a cannot-run card for it (runner.ts:2360-2369), whose card and row say it could not run (task-words.ts:615-627).",
+   "notes": "Merged into W15B-14 (the log's lines name the right card): 'has questions for you' only when the run asked (its summary is the asked-you sentence, executor.ts:1796-1801), else the run's own sentence ('\"X\" could not run: <its sentence>' or similar, one line). w15-tail's W15B-01 tests assert the row, card and reason, not this line; the merge step's full suite covers both. Never cut: without it the hold's log line is untrue."
+  },
+  {
+   "id": "W15B-80",
+   "sources": [
+    "wave15a-review-w15-chat:non_blocking[2] (narrowing part)",
+    "wave15a-fixup-w15-chat:new_problems[4] (narrowing part)"
+   ],
+   "severity": "minor (security: an injected narrowing acts at once; reversible in Changes)",
+   "decision": "later",
+   "title": "A card's quoted words that ask the chat model to narrow a setting ('only read x.example') take effect at once: a narrowing needs no Yes whoever asked, and no code can tell the person's request from a card's",
+   "evidence": "Read at 3600089.",
+   "root_cause_at_head": "packages/commands/src/commands/settings.ts:66-70 narrowingActsAtOnce ('sites': a narrowing acts at once, only a widening asks a yes); the only defence against a card's words is CHAT_OPEN_REQUEST_RULES (conversation/agent.ts:393-395), a prompt.",
+   "notes": "Later: run C, with D3 (the chat recalls anything recorded, with tools, and escalates selectively), which widens what reaches that model and reworks agent.ts: whether a chat-originated narrowing in a turn whose facts quote card words is read back first is a design choice for that rework (AGENTS.md: enforce in code, never only in prompts). Not one of the four never-later classes: it gives no wider access, no spend and no lost work, and Changes undoes it. W15B-03's coverage case in run B is the base it builds on."
+  }
+ ],
+ "words_items_rechecked": [
+  {
+   "id": "W15-56",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/daemon/task-display.ts:55-75 (heldWork for ready tasks only) and :127-139 runLeftFiles; task-words.ts:596-612 (the needs_human budget case sends cancelWork with paused: true always); cancel-words.ts:37, :60; request-words.ts:640-662 pausedWorkSentence ('its work so far is kept'); apps/ui/src/lib/task-actions.ts:128-145 cancelWorkLine",
+   "note": "Unchanged by run A."
+  },
+  {
+   "id": "W15-57",
+   "status_at_head": "changed",
+   "where_now": "packages/runtime/src/daemon/request-words.ts:638-662 pausedWorkSentence (its 'and N more' already holds, :652-655); the items come from session/budget-pause.ts parseHandoff, cut at MAX_ITEM_CHARS 200 with '…' mid-word by cut() (:96, used at :154)",
+   "note": "Half of the acceptance already holds at 3600089 ('and N more'). What remains: markdown backticks and bullet dashes are quoted as given, and an item cut mid-word at 200 characters shows its cut. The fix is in request-words (strip the markdown, shorten each quoted item at a word well under 200 so the stored cut never shows); budget-pause.ts's parseHandoff and cut stay as w15-run left them."
+  },
+  {
+   "id": "W15-60",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/daemon/views.ts:574 'Plan:' + the lowercase summary from session/runner.ts:3855 (also 'task(s)'); :581 'Started ... with <registry key>'; :583 'Finished ...: killed (...). run stopped by its caller' (the Details lines; the person lines in event-lines.ts already read well); plus :624-628 the session review line (W15B-19, merged here)",
+   "note": "Lines moved (were :563-580 and runner.ts:3714)."
+  },
+  {
+   "id": "W15-74",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/session/budget-card.ts:70-71 chfText (formatChf), :78-100 budgetStopTitle, :283, :295; daemon/views.ts:581; daemon/event-lines.ts:185; session/result.ts:295, :327; apps/ui/src/pages/SessionPage.tsx:529-531; plus the UI's Money (apps/ui/src/lib/money.ts:35-43) on the Tasks row, the drawer and the budget meter (W15B-18, merged here)",
+   "note": "W15-16 landed: limitWords, budgetLineWords and pauseSentence (budget-pause.ts:193-280) and executor.ts chfText (:816) go through moneyWords now. wrapUpSentWords (:289-299) does too, but its sub-centime form repeats 'less than CHF 0.01' three times: that sentence joins this item (W15B-77)."
+  },
+  {
+   "id": "W15-66",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/daemon/compose.ts:3510-3516 (the chooser's runs-on line) uses waitSentence, session/credential-wait.ts:178-186 ('... and starts by itself.')",
+   "note": "Line moved (was :3511-3516). The owner's D5 and D6 of 2026-11-09 (a credential policy; the person says when a session starts, so work that waited joins a running session or waits for the next Start) change what waits and what starts by itself in run C; run B's words are true for 3600089's behaviour and each changed sentence is listed for run C."
+  },
+  {
+   "id": "W15-65",
+   "status_at_head": "changed",
+   "where_now": "packages/runtime/src/session/credential-wait.ts:193-201 startKeepsWaitSentence ('Press Start and it runs then.', still true); packages/runtime/src/daemon/request-words.ts:647-648 the review_waits line",
+   "note": "W15-27 landed (wave15a-fix-w15-review fixed[3], notes_for_other_areas[0]): the next session reviews the kept result without running the specialist again while the attempt and the changed files are unchanged. 'The work is done; its review waits for room in the budget.' is true and stays (the acceptance's W15-27-landed branch). A folder project without git falls back to a rerun (ADR 0112, W15B-31); the line promises no review-only pass, so it stays true there too. Only startKeepsWaitSentence is reworded. The owner's D5 and D6 of 2026-11-09 (a credential policy; the person says when a session starts, so work that waited joins a running session or waits for the next Start) change what waits and what starts by itself in run C; run B's words are true for 3600089's behaviour and each changed sentence is listed for run C."
+  },
+  {
+   "id": "W15-78",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/daemon/task-display.ts:284 'Stopped: Anthropic refused the credential'; daemon/start-blocked.ts:78-82 'Nothing can run yet. ' + the wait's text; packages/capabilities/src/web/policy.ts:288",
+   "note": "Unchanged by run A. The owner's D5 and D6 of 2026-11-09 (a credential policy; the person says when a session starts, so work that waited joins a running session or waits for the next Start) change what waits and what starts by itself in run C; run B's words are true for 3600089's behaviour and each changed sentence is listed for run C."
+  },
+  {
+   "id": "W15-67",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/daemon/project-status.ts:298-317 (the ready line); its credentialWait input is the recorded wait only, passed by views.ts projectCard (:174 loadTaskDisplayContext, :199 'credentialWait: ctx.credentialWait ?? null'; task-display.ts:101 and :146 credentialWaitRow). The wait now is rt.billing.waits.now(projectId) (compose.ts:3647-3660, runNowProbe), which the Start check reads (server.ts:1397-1400); projectCardOf (server.ts:852-877) builds the card's facts.",
+   "note": "The place was wrong in the first version (it named 'server.ts or task-display.ts'): loadTaskDisplayContext has no billing port. The input goes in as a new ProjectCardFacts field (views.ts:135-150) read at :199 and passed by projectCardOf; both hunks are w15-words' in the run B shared_files rules. The owner's D5 of 2026-11-09 (a credential policy) changes what waits in run C; run B's line is true for 3600089's behaviour."
+  },
+  {
+   "id": "W15-86",
+   "status_at_head": "still_true",
+   "where_now": "packages/runtime/src/daemon/plan-tasks.ts:159-181 onceForThePlan ('the tests of N tasks will not run', names no task); session/credential-choice.ts:134 and :139-140 (two subjects)",
+   "note": "Unchanged by run A."
+  },
+  {
+   "id": "W15-72",
+   "status_at_head": "still_true",
+   "where_now": "apps/ui/src/pages/InboxPage.tsx:317-335 (the total sums costOf unrounded while each row shows chf(cost) rounded at :375-378)",
+   "note": "Unchanged by run A."
+  },
+  {
+   "id": "W15-43",
+   "status_at_head": "still_true",
+   "where_now": "apps/ui/src/lib/task-actions.ts:263-267 whoName returns the registry id (specialistName :283-287 exists); apps/ui/src/pages/InboxPage.tsx:366-371 prints t.specialist; siblings: session/budget-card.ts:91 'the ${stop.specialist}'s limit'; session/budget-pause.ts:205 limitWords and :298-299 wrapUpSentWords, called with spec.name at session/executor.ts:1756 and :1385; the flagged-search note at executor.ts:1369",
+   "note": "Widened by W15B-78 (the session log's notes and the pause sentence). executor.ts:1095/:1103 are run events no screen shows: not in the item."
+  },
+  {
+   "id": "W15-38",
+   "status_at_head": "still_true",
+   "where_now": "apps/ui/src/pages/project/StartSessionDialog.tsx:199-210 ('each need more than', every name) and :212-226 (one 'may be left for next time' sentence per task)",
+   "note": "Unchanged by run A."
+  },
+  {
+   "id": "W15-39",
+   "status_at_head": "still_true",
+   "where_now": "apps/ui/src/pages/project/StartSessionDialog.tsx:22-27 PLANNING_WAIT_LINE ('... starts once it is ready'), :29-46 startNotice (the planning words only when ahead === 0), :17-21 the orphaned JSDoc",
+   "note": "Unchanged by run A."
+  },
+  {
+   "id": "W15-40",
+   "status_at_head": "still_true",
+   "where_now": "apps/ui/src/pages/project/DocsTab.tsx:25-34",
+   "note": "Unchanged by run A."
+  },
+  {
+   "id": "W15-52",
+   "status_at_head": "still_true",
+   "where_now": "packages/capabilities/src/githost/pr-executor.ts:530-533 emptyChangeSummary (was :372), used at :1129",
+   "note": "Moved only."
+  },
+  {
+   "id": "W15-53",
+   "status_at_head": "still_true",
+   "where_now": "docs/user-guide.md:148 ('the next merge brings the copy up to date again')",
+   "note": "Moved from ~:139."
+  }
+ ],
+ "owner_questions": [
+  "New (W15B-01): a commit the person makes in a task's folder before a Redo or a Try again: should Forerunner bring it along into the work it reviews, or hold the task until the person pushes or undoes it? Built in run B: hold, as W15-02's rebuild does (ADR 0111: a commit pushed afterwards is never merged by Forerunner); the task waits with a cannot-run card ('push it or undo it, then press Try again'). Recommendation: hold. The owner's D6/D7 of 2026-11-09 do not answer it.",
+  "New, a sharper form of the open W5-40 (removing a project), from W15B-02: should the New project row's Undo still be offered once the project's work has run (it archives the project with its tasks and frees the name, W15-36), or only until its first session starts, with removing a project its own action? Built: any time, as today; run B adds only the safety part (a removed project starts nothing, by itself or by a press; the Undo is refused while its session runs)."
+ ],
+ "count_by_decision": {
+  "fix": 6,
+  "later": 20,
+  "words": 14,
+  "duplicate": 2,
+  "live_only": 5,
+  "not_a_problem": 18,
+  "already_fixed": 15
+ },
+ "blocking_checked": [
+  {
+   "source": "wave15a-review-w15-merge:blocking[0]",
+   "fixed_by": "wave15a-fixup-w15-merge fixed[0] (7a38796)",
+   "evidence_at_head": "packages/runtime/src/session/dependent-branches.ts:147 reviewedChangeBefore, used at :734 (a rebuild never moves reviewed_head_sha onto work the review did not read)"
+  },
+  {
+   "source": "wave15a-review-w15-merge:blocking[1]",
+   "fixed_by": "wave15a-fixup-w15-merge fixed[1]",
+   "evidence_at_head": "packages/runtime/src/loop/docs.ts:451-460 statusDocRoot returns the app folder while held (STATUS_HELD_MARK); the Docs row's note is W15B-04"
+  },
+  {
+   "source": "wave15a-review-w15-merge:blocking[2]",
+   "fixed_by": "wave15a-fixup-w15-merge fixed[2]",
+   "evidence_at_head": "packages/commands/src/commands/task.ts:308-322 redoMergeCards records the cards and their marks for the Undo; apps/ui/test/real-daemon.test.ts:12292"
+  },
+  {
+   "source": "wave15a-review-w15-run:blocking[0]",
+   "fixed_by": "wave15a-fixup-w15-run fixed[0]",
+   "evidence_at_head": "apps/ui/test/real-daemon.test.ts:12968 (W15-19 through Approve and start, Stop now and a restart)"
+  },
+  {
+   "source": "wave15a-review-w15-review:blocking[0]",
+   "fixed_by": "wave15a-fixup-w15-review fixed[1]",
+   "evidence_at_head": "packages/runtime/src/session/executor.ts:530 REFUSED_PAGE_ACTION, :586 asksForRefusedPage (every finding stays; only an order to read a refused page is replaced)"
+  },
+  {
+   "source": "wave15a-review-w15-review:blocking[1]",
+   "fixed_by": "wave15a-fixup-w15-review fixed[0]",
+   "evidence_at_head": "packages/runtime/src/loop/try-plan.ts:135-148 INTRODUCES_INPUT and INPUT_NOUN (a command's arguments count as described only after a word that introduces an input and an input's name; 'in a terminal', 'by itself', 'on its own' end the command, which is run)"
+  },
+  {
+   "source": "wave15a-review-w15-chat:blocking[0]",
+   "fixed_by": "wave15a-fixup-w15-chat fixed[0]",
+   "evidence_at_head": "packages/commands/src/commands/project.ts:35 historyAfterSwitch, :130-155 project_history kept by project.create with switch"
+  },
+  {
+   "source": "wave15a-review-w15-chat:blocking[1]",
+   "fixed_by": "wave15a-fixup-w15-chat fixed[1]",
+   "evidence_at_head": "apps/ui/src/pages/ChangesPage.tsx:91-95 (a removed project reads '<name> (removed)', no link)"
+  },
+  {
+   "source": "wave15a-review-w15-chat:blocking[2]",
+   "fixed_by": "wave15a-fixup-w15-chat fixed[2]",
+   "evidence_at_head": "packages/commands/src/commands/project.ts:59 freedName, :272-290 (the name is freed)"
+  }
+ ],
+ "skipped_informational": [
+  "wave15a-fix-w15-merge:notes_for_other_areas[0]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[3]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[4]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[5]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[6]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[7]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[8]",
+  "wave15a-fix-w15-merge:notes_for_other_areas[9]",
+  "wave15a-fixup-w15-merge:notes_for_other_areas[2]",
+  "wave15a-fixup-w15-merge:notes_for_other_areas[3]",
+  "wave15a-fixup-w15-merge:notes_for_other_areas[4]",
+  "wave15a-fixup-w15-merge:notes_for_other_areas[5]",
+  "wave15a-fixup-w15-merge:notes_for_other_areas[6]",
+  "wave15a-fix-w15-run:notes_for_other_areas[0]",
+  "wave15a-fix-w15-run:notes_for_other_areas[4]",
+  "wave15a-fix-w15-run:notes_for_other_areas[5]",
+  "wave15a-fix-w15-run:notes_for_other_areas[6]",
+  "wave15a-fix-w15-run:notes_for_other_areas[8]",
+  "wave15a-fix-w15-run:notes_for_other_areas[9]",
+  "wave15a-fixup-w15-run:notes_for_other_areas[1]",
+  "wave15a-fixup-w15-run:notes_for_other_areas[2]",
+  "wave15a-fix-w15-review:notes_for_other_areas[1]",
+  "wave15a-fix-w15-review:notes_for_other_areas[2]",
+  "wave15a-fix-w15-review:notes_for_other_areas[3]",
+  "wave15a-fix-w15-review:notes_for_other_areas[4]",
+  "wave15a-fix-w15-review:notes_for_other_areas[5]",
+  "wave15a-fix-w15-review:notes_for_other_areas[9]",
+  "wave15a-fix-w15-review:notes_for_other_areas[10]",
+  "wave15a-fixup-w15-review:notes_for_other_areas[1]",
+  "wave15a-fixup-w15-review:notes_for_other_areas[2]",
+  "wave15a-fixup-w15-review:notes_for_other_areas[3]",
+  "wave15a-fix-w15-chat:notes_for_other_areas[1]",
+  "wave15a-fix-w15-chat:notes_for_other_areas[2]",
+  "wave15a-fix-w15-chat:notes_for_other_areas[3]",
+  "wave15a-fix-w15-chat:notes_for_other_areas[4]",
+  "wave15a-fix-w15-chat:notes_for_other_areas[5]",
+  "wave15a-fixup-w15-chat:notes_for_other_areas[1]",
+  "wave15a-fixup-w15-chat:notes_for_other_areas[2]",
+  "wave15a-fixup-w15-chat:notes_for_other_areas[3]"
+ ],
+ "notes": [
+  "Sources read whole: the four areas' fix, fix-up and review reports and wave15a-merge.json; wave15-areas.json and wave15-triage.json; NEXT-SESSION.md's open owner questions; design core-experience.md §2, §3, §5; AGENTS.md Validation and docs/maintainers/validation.md. Every 'fix' and 'words' item was confirmed at 3600089 by reading the code at the place named (root_cause_at_head gives the line now).",
+  "Keys: <file-stem>:<field>[<index>]; a key with '(part)' or a numbered part is one entry that names several problems, each given to its own item; every part is cited on the item that takes it.",
+  "skipped_informational lists the notes_for_other_areas entries that ask nothing of another area (exports, API fields, merge hints); the entries that list sentences for w15-words, the run area's included, are cited on W15B-62, W15B-77 and W15B-78.",
+  "All nine blocking findings of run A's reviews are fixed by the fix-ups at 3600089 (blocking_checked).",
+  "Security, data loss and money first: W15B-01 (a person's commit dropped, at two reset sites) and W15B-02 (a removed project starts sessions that spend, by itself or by a press) are major and first in w15-tail; W15B-03 (coverage of the chat's card facts) third. No leftover lets a secret reach the model, writes into another project's data or lets spend pass a limit at 3600089 as far as these sources show; W15-12's runtime shapes on the real subscription are the owner's checklist step (W15B-41).",
+  "The owner's answers of 2026-11-09 (/tmp/frbench/owner-decisions-2026-11-09.md, read again at 14:20 UTC, after this triage's first version): D1 one repository one project (W15-112), D2 a sessions list (W15-111), D3 chat recall and selective escalation (W15-148), D4 an oversized task runs anyway and wraps up (W6-23), D5 one credential policy (U-078's 'Wait'), D6 the person says when a session starts and prepared work joins a running session if it fits (the Tasks-row start question), D7 the agent keeps its own task list right, D8 a running session is unmistakable on every screen. Run C builds all eight; run B builds none and keeps 3600089's behaviour where they touch it (W15-65, W15-66, W15-67, W15-78's credential-wait words; W15B-01's Try again; W15B-02's wake guard). Still open: W15-108, W15-109, W15-110, W5-40, and the two new questions above.",
+  "Adversarial check of this triage (verdict needs-changes), points accepted and fixed: missing_items[0] (W15B-08 takes the before_conflict restart case); missing_items[1] (W15B-77 and W15B-78, merged into W15-74 and W15-43; W15B-62 narrowed and the run area's lists cited); missing_items[2] (citations added to W15B-09, -34, -35, -36, -37, -72, -73); wrong_decisions[0] (W15B-62); wrong_decisions[1] (W15B-02 major, the credential wake and the handover schedule added to its root cause and acceptance); wrong_decisions[2] (W15B-42 investigated on the bench evidence: the stand-in coder writes one file, not_a_problem); wrong_decisions[3] (W15B-03 restated as coverage with both branches; the part code cannot enforce split to W15B-80, later for run C); every words_spec_problems entry but the last; every tail_problems entry; every file_conflicts entry (resolved in wave15b-areas.json's shared_files); the minor note on W15B-24 (moved to w15-words).",
+  "Adversarial check, points rejected with evidence: (1) executor.ts:1095/:1103 as session-log text: they are 'warning' run events on the 'run' bus (compose.ts:2372-2379) whose only listener (compose.ts:3172-3180) handles injection_flagged and run_end, so no screen shows them (W15B-78 takes :1369, :1385 and :1756). (2) words_spec_problems[8] (W15B-11's 'redo from its row' against W15B-01's hold): no conflict in fact, since a Redo withdraws the head-moved card in the same transaction (commands/task.ts:308-322) and the card is only open while the task is done; the spec now states the one state each sentence is shown in. (3) The minor note that '(task <uuid>)' subjects may reach GitHub: they are messages of refs kept on this computer (pr-executor.ts:1489, :2339, :2380, :2391) and of the local baseline of a project without a repository (:2455-2482).",
+  "New sibling found while confirming the check's points: W15B-79 (the log's 'has questions for you' for a needs_human run that asked nothing, today for a dependency base that could not be built), merged into W15B-14."
+ ]
+}

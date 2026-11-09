@@ -1,0 +1,187 @@
+{
+ "area": "w15-merge",
+ "branch": "fix/w15-merge",
+ "head_sha": "7a387966bb41e2241a4c3739613391eb29a171e6",
+ "commits": [
+  {
+   "sha": "8271982",
+   "subject": "dependent-branches: a rebuild never makes a commit the review did not read reviewed (W15-02, W15-05, U-028)"
+  },
+  {
+   "sha": "0bb5c2c",
+   "subject": "docs: a project whose status stayed in the app for another project's status pull request shows it on Docs (W15-01, U-087)"
+  },
+  {
+   "sha": "600067a",
+   "subject": "task: the Tasks row's Redo records the merge card it closes, says so, and its Undo opens it again (W15-04, U-028)"
+  },
+  {
+   "sha": "162b198",
+   "subject": "pull-requests: a press on a row the branch rules block is refused with the rule's words; the task folder's Open folder says it opens that folder (W15-05, U-028)"
+  },
+  {
+   "sha": "7a38796",
+   "subject": "import, docs, testenv: a line-endings pin that fails is logged; the project folder's pin is tested (W15-11, U-037)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking 1 (W15-02 with W15-05). A commit the person pushed to GitHub, as the folder-wait sentence tells them to, was taken as reviewed. The next rebuild (dependency squash-merged) moved the record's reviewed_head_sha onto it, and the Overview offered Merge under 'Reviewed by the critic'. A Merge pressed during the commit wait, which W15-05 keeps, then made Forerunner merge mine.txt into main by itself (bench J3, J4). The same hole existed before wave 15 for any commit pushed to a dependent's branch on GitHub.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-merge, wave 15': \"the person's commit pushed to GitHub, as the sentence offers, with A squash-merged ...\" (reviewed_head_sha moved, last_outcome not_allowed); \"Merge pressed during the commit wait, then the commit pushed ...\" (#B merged by Forerunner); \"a commit pushed to B's branch on GitHub before A is squash-merged ...\" (sibling)",
+   "how": "Root cause: settleRecord (session/dependent-branches.ts) compared ownBefore with ownAfter. Both were read from GitHub's branch, which already held the pushed commit, and neither was compared with the record. The fix adds reviewedChangeBefore: the branch's own change before the rebuild must equal the record's own_change_id, the same rule ReviewedPrMerge.keepsOwnChange uses. With no own_change_id, the head must equal reviewed_head_sha. A rebuild whose push failed had already moved the record to its own head and change, so it still rebuilds. When the change differs, changedAfterReview runs. It leaves the record at the reviewed commit as left_to_you with head_moved and headMovedSentence ('#N changed after the review: look at the new commits, then merge it yourself or redo the task.'), so there is no Merge. It sets approval to none, which drops a kept press. One card says it: an open merge card takes the words, and a new card is filed only when the record was not already waiting for the person, as the merge step's settle does. Said once.",
+   "check_in_the_app": "Live: run a chain A <- B on a repository project. In B's task folder (the path under B's Overview row), commit a file. Squash-merge A on GitHub. Within one poll B's row reads '#N waits for a commit made in its task's folder: push it to GitHub or undo it.'; press Merge there (answer: the same sentence). Push the commit from the folder. Within a poll or two, B's row reads '#N changed after the review: look at the new commits, then merge it yourself or redo the task.' with no Merge, and the Tasks row reads 'Accepted \u00b7 changed after the review'. One Inbox card says the same. Pressing Merge is refused with those words. Wait several polls: #N is not merged and the file is not on main. Bench fixup-w15-merge J3 and J4 passed every check (steps/j3-checks.json, j4-checks.json, screenshots 08-11)."
+  },
+  {
+   "problem": "Blocking 2 (W15-01). The second project's status 'stays in the app', but its Docs tab said 'docs/status.md missing / not written yet' and GET /projects/<B>/docs/docs%2Fstatus.md answered 404. The user guide and ADR 0106's amendment promised that B keeps its status under Docs.",
+   "u_ids": [
+    "U-087"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts 'w15-merge, wave 15' > 'the status a project keeps in the app while another project's status pull request is open is where its Docs tab reads docs/status.md, after a restart too ...'; apps/ui/test/real-daemon.test.ts 'w15-merge, wave 15' W15-01 case: B's GET /projects/:id/docs and docs/status.md before and after the daemon is composed again (failed with 'not written yet')",
+   "how": "Root cause: ProjectDocs.statusDocRoot (loop/docs.ts) returned null whenever the status pull request setting was on. Now, when another project's open status PR keeps this project's status in the app, writeSessionStatus also writes a file (STATUS_HELD_MARK, '.held-by-another-status-pr') in the app-status folder. While that file exists, statusDocRoot gives the Docs routes the app's copy first, as with the setting off. Being a file, it survives a restart. It is removed when the project's next status is written to its own pull request, or kept in the app with the setting off. docs-routes.ts is in no wave-15 area, so it is unchanged (see not_done for its note words).",
+   "check_in_the_app": "Live: link projects A and B to one repository, Status pull request on in both. Run a session in A (its status PR opens), then one in B. B's Docs tab lists Status docs/status.md as present, and opening it shows B's session ('Write the notes in b-notes.md'), not A's. The same holds after the app restarts. Close A's status PR on GitHub and run another session in B: B opens its own status PR, and its Docs tab reads the repository's copy again. Bench J1/J1b/J1c/J1d passed every check, after a daemon restart too (steps 01-06)."
+  },
+  {
+   "problem": "Blocking 3 (W15-04). The Tasks-row Redo withdrew the done task's merge card outside the move's change, so Undo put the task back to done but left the conflict notice withdrawn for good, still carrying the redo_from_base mark. The notice is said once, so no poll brought it back. The Redo's line also did not say the card closed or that the redo starts from main, and no undo test existed.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts W15-04 block > \"the Tasks row's Redo says the card closed and the task is done again from main; its Undo puts the task back to done and opens the same card again, without the Redo's mark ...\"; apps/ui/test/real-daemon.test.ts 'w15-merge, wave 15' > \"the Tasks row's Redo of a done task with a conflict notice ... its Undo, after the daemon starts again ...\" (POST /tasks/:id/action redo, the daemon composed again, then POST /changes/:id/undo)",
+   "how": "personMove (commands/task.ts) now withdraws a done task's open merge cards itself (redoMergeCards, opts.redoMergeCards from taskReopen). That puts them in after.withdrawn_requests, and after.redone_cards records what each card held in the fields the mark sets (redoMarkOf in loop/merge-mode.ts). moveSentence gains fromMain: 'Reopened \"X\" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.' undoMove reopens the cards with the mark taken off (notRedoneMergeCard). taskReopen.undoSentence adds '; its card is back in the Inbox'. It still starts no session (the owner question). The fake daemon's redo withdraws a done task's merge:left_open cards and says the same line. The misplaced doc comment above openMergeCards is fixed.",
+   "check_in_the_app": "Live: make a done task's PR conflict with main (merge a conflicting change on GitHub) until the Inbox shows '\"<task>\" conflicts with main'. Press Redo on its Tasks row: the line reads 'Reopened \"<task>\" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.', the card leaves the Inbox, and no session starts. Restart the app, then press Undo on that change in Changes. It reads 'Undone: the task \"<task>\" is done again; its card is back in the Inbox.', the task row reads 'Accepted \u00b7 conflicts with main', and the same card is in Needs you with Redo and Leave it open, still there after two polls. Bench J5/J5b with a daemon restart between them passed every check (steps 12-17)."
+  },
+  {
+   "problem": "Non-blocking (W15-05): a press on a row that the branch's rules block got past the refusal when the record also waited for the task's folder. The approval was kept and the answer was the folder's sentence. Also, the task folder's Open folder said 'Opens the project's folder.'",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/pull-requests-view.test.ts 'w15-merge, wave 15' (answer was queued with the folder sentence, approval kept); apps/ui/test/project-overview.test.tsx 'w15-merge, wave 15' > \"the task folder's Open folder says it opens the task's folder\" (title was \"Opens the project's folder.\")",
+   "how": "ProjectPullRequests.merge now reads the folder wait only for a row whose merge state is not 'blocked', so a row the rules block is refused with the rule's words. SummaryTab passes explain=\"Opens this task's folder on this computer.\" to the task folder's FolderPath.",
+   "check_in_the_app": "Live (needs a repository with a required approving review on main): leave a file in a dependent task's folder while it owes a rebuild, then press Merge on its row. The press is refused with 'This repository needs an approving review before merging ...' and no approval is kept. In the desktop app, hover Open folder under a folder-wait row: it reads 'Opens this task's folder on this computer.'"
+  },
+  {
+   "problem": "Non-blocking (W15-11): the import's existing checkout and the project folder's session-end commit swallowed a failed line-endings pin with catch(() => undefined), and only the task folder's pin had a test. The ops.ts comment named a FakeGitHost.setLazyMergeability that does not exist.",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "none failed before. Added packages/runtime/test/loop-docs.test.ts 'w15-merge, wave 15' > 'a project folder made before the line-endings pin gets core.autocrlf=false at its next session-end commit (W15-11)', which covers the previously untested site.",
+   "how": "Both sites now log a warning and are never fatal, as capabilities.md already said. The testenv comment now names host.ops.lazyMergeability and says the bench has no switch for it.",
+   "check_in_the_app": "On Windows, with a project folder (no repository) made by an earlier version, end a session. `git -C <folder> config --local core.autocrlf` then reads false."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The Docs tab's note on B's status row reads 'kept in the app: no status pull request (Settings turns it on)' while B's setting is on (bench steps/03-j1b-b-docs-tab.txt).",
+   "why": "The note is chosen in packages/runtime/src/daemon/docs-routes.ts, which is in no wave-15 area's files, and the rule says such a file is not changed in wave 15. The sentence is named in notes_for_other_areas."
+  },
+  {
+   "problem": "W15-02 sibling: a Tasks-row Redo of a done task with no merge card resumes with createBranch(branch, origin/branch) (pr-executor.ts executeIn, the resume path without work in progress). A commit the person made in that folder is reset away without a word.",
+   "why": "Fixing it changes how a run's start behaves: stop with needs_human and one sentence, or bring the commit along into the reviewed work. That needs a decision and its own tests, so it is logged in new_problems with the place and both options."
+  },
+  {
+   "problem": "W15-07: the null-mergeable re-read is bounded per PR (up to about 15 s each, PRs one after another), not per poll, and its setTimeout is not cancelled by stop().",
+   "why": "Non-blocking; not changed in this fix-up."
+  },
+  {
+   "problem": "Real-daemon cases the acceptance names for W15-55 (GET /projects/:id/tasks with a closed PR or a rebuild conflict), W15-68 (unreachable merge) and W15-06 (answering with requestView(row).options).",
+   "why": "Not added in this fix-up. They are covered by the fixer's composed and unit tests and by the reviewer's bench walk J5/J6."
+  },
+  {
+   "problem": "W15-08 siblings: the task commit message 'Task <uuid>.' (pr-executor.ts ~:1110) shows in GitHub's commit list, and the intake docs PR says 'request <uuid>' (session/intake.ts, w15-review's file).",
+   "why": "Non-blocking; not changed in this fix-up."
+  },
+  {
+   "problem": "The import checkout's line-endings pin has no test of its own (only its failure is now logged).",
+   "why": "W15-11 is below the cut line. The project-folder site got a test, and the import site would need an import fixture with an existing checkout."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint && pnpm lint:paths && pnpm typecheck",
+   "result": "all exit 0"
+  },
+  {
+   "command": "pnpm test",
+   "result": "exit 0: 481 files, 5005 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base 931ed52; pnpm docs:links; pnpm secrets:scan",
+   "result": "docs-check ok (37 files); link-check ok (206 files); secret-scan clean (2080 files). There is no origin in the worktree, so the check ran with --base."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 87 files, 1027 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 35 passed (local config not committed)"
+  },
+  {
+   "command": "fail-first checks",
+   "result": "The 3 new dependent-branches cases, the new loop-docs W15-01 case, the new dependent-branches W15-04 case, the pull-requests-view case and the project-overview Open-folder case failed before their fix. The two real-daemon cases (W15-01 Docs status, W15-04 Redo/Undo across a restart) were run with the source fix reverted (git checkout of docs.ts, then of task.ts + merge-mode.ts): both failed, then passed with the fix re-applied."
+  },
+  {
+   "command": "bench fixup-w15-merge (--provider bench, --githost 48529, daemon 48520, UI 2120, FORERUNNER_GITHOST_POLL_MS=8000), walks adapted from the reviewer's scripts",
+   "result": "J1 11/11, J1b 3/3, J1c and J1d after a daemon restart 5/5, J2 (W15-05 regression) 18/18, J3 16/16, J4 6/6 (the card check re-read with the Inbox's real shape, j4b), J5 8/8, J5b after a daemon restart 5/5. Checks in /tmp/frbench/fixup-w15-merge/steps/*-checks.json. Bench stopped with stop.mjs; its home, fake GitHub repos and browser profile deleted."
+  },
+  {
+   "command": "cargo (desktop shell)",
+   "result": "not run: apps/desktop untouched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-w15-merge/steps/03-j1-b-docs-tab.png",
+   "/tmp/frbench/review-w15-merge/steps/10-j3-overview-after-push.png",
+   "/tmp/frbench/review-w15-merge/steps/11-j3-tasks-after-push.png",
+   "/tmp/frbench/review-w15-merge/steps/j4-checks.json"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-w15-merge/steps/03-j1b-b-docs-tab.png",
+   "/tmp/frbench/fixup-w15-merge/steps/04-j1b-b-docs-status-open.png",
+   "/tmp/frbench/fixup-w15-merge/steps/05-j1d-after-restart-b-docs-tab.png",
+   "/tmp/frbench/fixup-w15-merge/steps/08-j3-overview-after-push-changed-after-review.png",
+   "/tmp/frbench/fixup-w15-merge/steps/09-j3-tasks-after-push-changed-after-review.png",
+   "/tmp/frbench/fixup-w15-merge/steps/10-j4-overview-after-push-press-dropped.png",
+   "/tmp/frbench/fixup-w15-merge/steps/11-j4-inbox-changed-after-review-card.png",
+   "/tmp/frbench/fixup-w15-merge/steps/14-j5-tasks-after-redo-line.png",
+   "/tmp/frbench/fixup-w15-merge/steps/16-j5b-changes-after-undo.png",
+   "/tmp/frbench/fixup-w15-merge/steps/17-j5b-inbox-after-undo.png",
+   "/tmp/frbench/fixup-w15-merge/steps/j3-checks.json",
+   "/tmp/frbench/fixup-w15-merge/steps/j4-checks.json",
+   "/tmp/frbench/fixup-w15-merge/steps/j5b-checks.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'w15-merge, wave 15' W15-01 case (the fixer's own new case)",
+   "why": "Extended, not weakened: it now also asserts B's GET /projects/:id/docs status row and docs/status.md content, before and after the daemon is composed again (blocking 2)."
+  }
+ ],
+ "new_problems": [
+  "docs-routes.ts (in no wave-15 area): with Status pull request on and another project's status PR open, B's Docs row note reads 'kept in the app: no status pull request (Settings turns it on)', which is wrong while the setting is on (/tmp/frbench/fixup-w15-merge/steps/03-j1b-b-docs-tab.txt). The fixer's earlier finding also stands: the Docs tab does not say why B's status PR was not written (owner question W15-112).",
+  "Data loss sibling of W15-02, at pr-executor.ts executeIn, the resume path without work in progress (`else await git.createBranch(branch, `origin/${branch}`)`). A Tasks-row Redo of a done task with no merge card, or any resume of a branch whose PR is open, resets the local branch to GitHub's, so a commit the person made in the task folder is dropped without a word. A fix should check folderHold(git, branch, base) === 'commits' there first, then either stop with needs_human and one sentence or bring the commit along into the run. Choosing between them needs a decision.",
+  "The chat's docs search (ProjectDocs.docsDirsFor) never reads the app-status folder, with the status PR setting off or held, so the chat cannot quote a repository project's own status that is kept in the app.",
+  "The head-moved card filed when a kept press is dropped (and by the merge step) is titled with the old first sentence 'The critic accepted \"X\", but pull request #3 was not merged' and offers only 'I merged it' / 'Leave it open' while its sentence says '... or redo the task' (request-words mergeLeftOpenCard, w15-words' function)."
+ ],
+ "notes_for_other_areas": [
+  "New or changed sentences (for w15-words and the merge step): (1) The Tasks-row Redo of a done task with an open merge card: 'Reopened \"X\" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.' (commands/task.ts moveSentence, new extra `fromMain`). (2) Its Undo: 'Undone: the task \"X\" is done again; its card is back in the Inbox.' (taskReopen.undoSentence; before it never named the card). (3) The task folder's Open folder title: \"Opens this task's folder on this computer.\" (SummaryTab, was FolderPath's default \"Opens the project's folder.\"). (4) A rebuild that finds work the review did not read now writes the existing headMovedSentence ('#N changed after the review: look at the new commits, then merge it yourself or redo the task.') with last_outcome head_moved. No new sentence, but a new place it appears.",
+  "Sentence needed in docs-routes.ts (no wave-15 owner): while a project's status is held by another project's open status PR (ProjectDocs.statusDocRoot returns the app folder with the setting on; the file STATUS_HELD_MARK '.held-by-another-status-pr' exists in statusInAppDir), the Docs row note should read something like 'kept in the app: another project's status pull request is open on this repository' instead of 'kept in the app: no status pull request (Settings turns it on)'. docs-routes would need a small port, e.g. ProjectDocs.statusHeld(project) checking that file.",
+  "loop/docs.ts exports STATUS_HELD_MARK. statusDocRoot(project) now returns the app-status folder when the setting is on and the status is held.",
+  "loop/merge-mode.ts exports redoMarkOf(card) and notRedoneMergeCard(card, was). task.reopen's change has after.withdrawn_requests (including the merge cards) and after.redone_cards {id: {applied_at, outcome, redo_from_base}}.",
+  "session/dependent-branches.ts: settleRecord's clean same-own-change branch now first checks reviewedChangeBefore(record, r) (own_change_id, or reviewed_head_sha when there is none). The record goes head_moved with approval 'none' when the check fails. Anything that moves reviewed_head_sha on a rebuild should keep this check.",
+  "ProjectPullRequests.merge: a row whose merge.state is 'blocked' (branch rules) is refused with its sentence even when its record waits for the task's folder.",
+  "apps/ui/test/fake-daemon.ts: a 'redo' task action on a done task withdraws its open merge:left_open cards, records them in after.withdrawn_requests and says the 'from main' line (fake-tasks.ts actionSentence gains `fromMain`).",
+  "Corrected live-check step for W15-63/W15-55 (the fixer's step was wrong): a commit pushed to a waiting PR's branch on GitHub is noticed at the poll only when a rebuild runs (a dependency merged or closed) or a conflict notice resolves. Otherwise the row keeps Merge until Merge is pressed, and then reads '#N changed after the review: ...' and 'Accepted \u00b7 changed after the review'. Live check 3 should press Merge before expecting the words."
+ ]
+}

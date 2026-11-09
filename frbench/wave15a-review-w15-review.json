@@ -1,0 +1,116 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-w15-review\" (stand-in only, --provider bench, daemon port 48512, UI port 2112), started from this worktree at fix/w15-review 86c2c46. Steps are under /tmp/frbench/review-w15-review/steps/ and the scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk*.cjs. The bench is stopped and its home deleted.\n\nWalk 1 (FORERUNNER_BENCH_CRITIC_REJECT=Rework page, FORERUNNER_BENCH_ASK=Contact page, ASK_STYLE=bullets). A project with two coder tasks, then Start.\n- W15-58: the session log (01-w1-session-log.png) reads 'The critic sent \"Write the Rework page in rework.html\" back: The change does not meet the first acceptance criterion as written. Trying again.' on one line, with no 'Sent back:' inside. PASS.\n- W15-28: GET /notifications/recent has exactly one request_blocking notification, 'Review walk: \"Write the Contact\u2026\": the specialist asks you', and none says 'needs your sign-off'. The state DB's human_request table has one row (the questions card, open) and no withdrawn sign-off. The Inbox has one card (05-w1-inbox). PASS.\n- W15-51: the drawer (22-w4-contact-drawer.txt) and the Reviews tab (24-w4-reviews-tab.txt) show 'needs you' above 'Waits for you: the report asks you something. Accepted: the changed file matches the brief.' The summary no longer starts with 'Accepted:', so the acceptance line holds. 'Accepted:' is still in the sentence on the bench (see non-blocking).\n\nWalk 2 (W15-27). Project 'Budget review', project budget CHF 0.01, set the way Settings sets it; one coder task; Start.\n- Session 1 stops at the project's budget. The Inbox card (07-w2-inbox-review-waits) reads 'The work is done; its review waits for room in the budget. It goes on by itself once you raise the project's budget in Settings.' with Open Settings / Cancel task.\n- As a person: Inbox, then Open Settings, then 'Project budget' Change, typed 5, 'Preview and apply' (10\u201315-w2c-*.png).\n- Session 2 starts by itself. Its log (16-w2c-session-2.txt) is only 'The session started\u2026', 'The critic accepted \"Write the review page in review.html\".', 'Session over: 1 done.' The task is Done, Reviewed and tried. Runs are [critic Finished, critic Stopped at a budget, coder Finished]: one coder run. PASS.\n\nWalk 3/5 (W15-42; REJECT=Failed page, REJECT_TIMES=always). Two tasks reach the ladder's card ('failed 4 times'). On one card, in the Inbox: Mark done anyway, then 'Yes, mark done anyway'. The Tasks tab (26-w5-tasks-after-mark-done.png) shows 'Done: accepted without review' with Critic 'Not reviewed', and the other task 'sent back'. No raw 'accepted'. PASS.\n\nWalk 6 (W15-49; FORERUNNER_BROWSER_EXECUTABLE set to a script that never starts a browser). 'See what was checked' reads 'hours.html was not tried: the browser did not start within a minute; the page was judged from its files', with no 'browserType' and no 'ms exceeded'. daemon.log has WARN '[try-page] the browser did not start for the page try {\"error\":\"browserType.launch: Timeout 60000ms exceeded.\"}'. PASS.\n\nWalked only through tests:\n- W15-24, W15-25, W15-26, W15-31, W15-32, W15-33, W15-41, W15-50, W15-54: the stand-in cannot write wc.js, read pages under a site rule, or write report tables. Those need live check 3.\n\nEvery screen above matches design \u00a73.5, \u00a73.7 and \u00a73.8 for this area. Work goes on by itself after the budget raise (\u00a74.2). Two things in the session log belong to other areas: the raw 'escalation' chip and 'needs your decision (Inbox)' (non-blocking).\n\nValidation run here:\n- pnpm check: EXIT 0. 480 files, 5000 passed, 7 skipped. docs:check has no origin/main.\n- pnpm test:integration: EXIT 0. 30 passed, 75 skipped.\n- pnpm test:e2e: EXIT 0. 25 passed, 1 skipped.\n- UI vitest: 87 files, 1026 passed.\n- Playwright (local config): 35 passed.\n- The fixer's named tests: 26 files, 434 passed.\n\nFailing-first check: I put claude/nifty-knuth-f9udt0's packages/runtime/src, critic/src, capabilities/src and evals/registry into the working tree and ran the w15-review cases. These 7 fail on the base:\n- W15-24 in verification.test.ts: verdicts [revise, escalate, \u2026] instead of [accept].\n- W15-25 in verification.test.ts: no web-rule section.\n- W15-26, both cases in review-sources.test.ts: no '### web page', and the 'complete' line.\n- W15-27, both runs in budget-pause.test.ts: [completed, completed] coder runs.\n- W15-28 in notifications-wiring.test.ts: a sign-off row exists.\n\nThe fallback case 'work that changed \u2026 is done again' passes on both, as it should. Then I restored the fix's sources; the worktree is clean.\n\nTwo regressions found by unit probes of the fix's own functions; details in blocking:\n- retryConstraints with a site rule.\n- commandsIn on base vs fix.",
+ "blocking": [
+  {
+   "issue": "W15-25 drops whole critic findings from a research retry brief whenever their description (not only their required action) names a host the site rule refuses, or something that merely looks like a host. The retry then gets no findings at all, only the 'rule comes before any finding' line. This breaks design \u00a74.6 (a retry brief carries the open findings). It is also wider than the spec, which says 'retryConstraints drops a required action naming a refused host'.",
+   "where": "packages/runtime/src/session/executor.ts:568-574 (refused() checks `${f.description}\\n${f.required_action}`), :529-531 HOST_TLD",
+   "evidence": "Probe calling the branch's retryConstraints(2, findings, { refusesHost: webRuleRefuses({mode:'only', only:['developer.mozilla.org'], never:[]}) }). Two findings:\n(1) description 'The free-tier figures for vercel.com and netlify.com have no source the run read: they come from memory.', required action 'Remove those figures or mark them as not verified under Uncertainty.'\n(2) description 'The report says socket.io is required but the brief asks for plain WebSocket.', required action 'Drop socket.io from the recommendation.'\nWith the rule, the brief is only 'Attempt 3 (\u2026)' and WEB_RULE_WINS_LINE: no 'Critic findings to resolve', both findings gone. Without the rule, both are listed. Neither required action asks to read a page. Finding 1 is exactly what W15-33's 'never from memory' planning leads the critic to raise. Under an only/never list the researcher retries blind, the critic sends it back again, and the ladder climbs to Opus and the person: the money pattern this wave fixes in W15-24. 'socket.io' (a library) counts as a host because 'io' is in HOST_TLD.",
+   "expected": "Keep every finding in the retry brief. Drop, or replace with the rule line, only a required action that asks to read or fetch a page of a refused host. A finding whose action removes, marks or drops something stays as an order. Add a test with the probe's two findings that asserts both reach the brief under an 'only' rule. Keep the existing test for an order to fetch a refused page."
+  },
+  {
+   "issue": "W15-24's new CONNECTORS list makes many prose commands 'described' when they have no written argument, so they are no longer tried. This includes commands of tools that take no argument ('in a terminal', 'from the command line', 'to print', 'at the prompt') and bare runs said in words ('by itself', 'on its own'). No 'not tried' line replaces them for a script that does not read its command line. Verification that ran on the base silently stops (ADR 0104/0110 tries, rule 8 siblings).",
+   "where": "packages/runtime/src/loop/try-plan.ts:140-145 (CONNECTORS), :379-386 (described when !kept.length), :210-211 (described skipped before commandTry), :226-238 (no notTried line unless READS_ARGS)",
+   "evidence": "commandsIn(text), base (claude/nifty-knuth-f9udt0) vs fix:\n- 'Running node hello.js in a terminal prints Hello, world': base [node hello.js], fix []\n- 'node hello.js from the command line prints Hello, world': base [node hello.js], fix []\n- 'node greet.js to print a greeting': base [node greet.js], fix []\n- 'node hello.js at the prompt prints the time': base [node hello.js], fix []\n- 'node app.js by itself exits with code 1': base [node app.js], tried as a bare run that expects an error; fix []\nThe last one is the W15-24 pattern itself: a bare run that should expect an error. The fix handles only 'with no \u2026' and 'without \u2026'. No test covers these sentences.",
+   "expected": "Treat a command as 'described' only when its arguments are really described: when the script reads its command line (READS_ARGS on its code) and nothing written is given. A tool that reads no arguments is run bare as before. Or narrow CONNECTORS to words that introduce an argument (on, with, against, using, given, passing) and handle 'by itself' / 'on its own' / 'alone' as bare runs. Add try-plan cases for a no-argument tool ('Running node hello.js from the command line prints Hello, world' is tried) and for 'node wc.js on its own exits with code 1' (tried bare, expects the error). Keep the live wc.js case passing."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W15-24: live check 2's wc.js is Done after one run; only 'node wc.js <file>' is tried (verification.test.ts, try-plan.test.ts)",
+   "holds": true,
+   "note": "Passes on the fix and fails on the base ([revise, escalate, \u2026]). Over-broad for other sentences: blocking 2."
+  },
+  {
+   "claim": "W15-25: the critic's request carries the site rule section; critic.md 1.3.0; the next brief holds no order to read a refused host",
+   "holds": true,
+   "note": "The section and the prompt are tested and fail on the base. The retry filter drops findings that are no such order: blocking 1."
+  },
+  {
+   "claim": "W15-26: a review reads every page a paused task's earlier run read; a page without kept text is listed under Evidence not available",
+   "holds": true,
+   "note": "Both cases fail on the base. The 'complete' line still appears when every page is present; the fixer's not_done reasoning is sound. No restart case for reviewSources, but the same Run-row artifacts survive the W15-27 restart test."
+  },
+  {
+   "claim": "W15-27: after the budget is raised the paused review is done without running the specialist again, also across a restart; changed work runs again",
+   "holds": true,
+   "note": "Tests fail on the base; I walked it on the bench through Inbox, Open Settings and Change project budget. One coder run, and session 2's log has only the critic's line."
+  },
+  {
+   "claim": "W15-28: one notification for the questions card, no sign-off filed",
+   "holds": true,
+   "note": "The test fails on the base. On the bench: one request_blocking notification, one human_request row, no withdrawn sign-off."
+  },
+  {
+   "claim": "W15-58: the sent-back line names the blocking finding once; '<file>' stays whole",
+   "holds": true,
+   "note": "Bench screenshot 01-w1-session-log.png."
+  },
+  {
+   "claim": "W15-51: a rule's 'human' summary never starts 'Accepted:'; GET /tasks/:id serves it (real-daemon case)",
+   "holds": true,
+   "note": "Holds as the acceptance line is written. On the bench the text still reads '\u2026 Accepted: the changed file matches the brief.' (non-blocking)."
+  },
+  {
+   "claim": "W15-51 check_in_the_app: 'The drawer's review and the Reviews tab should read Waits for you\u2026, never Accepted: ...' (bench)",
+   "holds": false,
+   "note": "On the bench both show 'Waits for you: the report asks you something. Accepted: the changed file matches the brief.' The stand-in's '[stand-in model] ' prefix stops ruledSummary from stripping 'Accepted:'."
+  },
+  {
+   "claim": "W15-42: the Critic column says 'Not reviewed' / 'Failed review' / '\u2014', never raw 'accepted'",
+   "holds": true,
+   "note": "tasks.test.tsx, and on the bench after Mark done anyway."
+  },
+  {
+   "claim": "W15-49: a browser that never starts reads in plain words; the raw text goes to the log",
+   "holds": true,
+   "note": "On the bench with a never-starting browser; the WARN is in daemon.log."
+  },
+  {
+   "claim": "W15-50: the checks line names no package.json that is not there",
+   "holds": true,
+   "note": "Unit test only; I did not see it on the bench."
+  },
+  {
+   "claim": "W15-31: today's date in the brief (person's time zone), read time on web_fetch results and in the critic's page list, system prompt unchanged",
+   "holds": true,
+   "note": "research-web.test.ts passes. The intake 'Today' line is UTC, which the fixer listed in not_done."
+  },
+  {
+   "claim": "W15-41 / W15-54: a markdown table reads as plain lines; each page read is listed once",
+   "holds": true,
+   "note": "tasks.test.tsx (UI) passes. I did not see it on the bench: the stand-in writes no tables."
+  },
+  {
+   "claim": "W15-32: specialist prompts name the default file only when the brief names none (1.1.0)",
+   "holds": true,
+   "note": "registry.test.ts. Leaving the stand-in unchanged is allowed by the cut line."
+  },
+  {
+   "claim": "W15-33: planner text says never from memory and plan a person task for sources; the plan-card line is not built",
+   "holds": true,
+   "note": "intake.test.ts and real-daemon.test.ts assertions were updated for the new design text, not weakened. The plan-card line is in not_done, allowed by the cut line."
+  },
+  {
+   "claim": "No test weakened; changed assertions follow the design",
+   "holds": true,
+   "note": "evidence.test.ts (critic 1.3.0), try-page R-sandbox (plain words), research-web (read time in the path), intake TR-5 and real-daemon TR-5 (new planner text): each change follows the item's design."
+  },
+  {
+   "claim": "Validation: pnpm check, test:integration, test:e2e, UI vitest, Playwright all green",
+   "holds": true,
+   "note": "Re-run here with the same results: 5000 / 30 / 25 / 1026 / 35."
+  }
+ ],
+ "non_blocking": [
+  "W15-51 on the bench: ruledSummary strips a leading 'Accepted:' only at the very start, and the stand-in's summary starts '[stand-in model] Accepted: \u2026'. The person sees 'needs you' above 'Waits for you: the report asks you something. Accepted: the changed file matches the brief.' (22-w4-contact-drawer.txt, 24-w4-reviews-tab.txt). Real-model summaries in live check 2 do not start with 'Accepted', so the live path is fine. Either strip the stand-in marker before the verdict-word strip in packages/critic/src/critic.ts ruledSummary (~:1295), or fix the fixer's check_in_the_app step for the bench.",
+  "W15-27: ReviewPending keeps no head commit. The spec says 'a changed head or attempt falls back', but the pass compares only the content of the changed files (workHash). A run with no worktree hashes every file as 'gone', so a change cannot be seen there. Also, runner.ts:2095 still says 'The next session runs the task again and the critic reviews it once.' (stale comment).",
+  "W15-27: a review-only pass says nothing in the session log before the verdict, and the session summary says 'Did 1 task' for a review alone (16-w2c-session-2.txt). The fixer passed a proposed line to w15-words.",
+  "W15-24 sibling: a described command of a script that reads its command line is not added to `seen`. When nothing else in the brief writes the command out, the plan says '<file> reads its command line, but neither the brief nor a README says how to run it', although the brief did say it in words.",
+  "Session log, other areas' rendering: an event label shows as a raw chip ('escalation' before the contact task's line, 01-w1-session-log.png; the fixer saw 'warning'). This breaks design \u00a73.7 'must not show event type names'; it belongs to w15-words.",
+  "personLine's critic-review 'human' case (this area's region) says '\"X\" needs your decision (Inbox).' for a questions card. Design \u00a72 calls that state 'Needs your answer', and the card is titled '\u2026: the specialist asks you'. This is old behaviour.",
+  "W15-26: page text kept on Run rows (reviewSources) is not tested across a restart on its own. The W15-27 restart test covers the same artifacts mechanism, without pages.",
+  "W15-42: a person's own task ('Me') that is done has no review, so its Critic column now reads 'Not reviewed' where it read '\u2014'. That is true, but may read as a warning on a task that is never reviewed by design.",
+  "The never-starting browser test process ('sleep 600' as the fake browser) was still running about a minute after the 60 s launch timeout, until the bench stopped. Triage W15-91 says this is not a problem; it is noted only for live check 3."
+ ]
+}

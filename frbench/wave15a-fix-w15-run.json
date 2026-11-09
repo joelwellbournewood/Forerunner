@@ -1,0 +1,284 @@
+{
+ "area": "w15-run",
+ "branch": "fix/w15-run",
+ "head_sha": "b2be08d1f4c94f6da818465d4616a07a553ee89f",
+ "commits": [
+  {
+   "sha": "5218ffe69007fe9fc483b9d2ab94be453cd89faa",
+   "subject": "sdk: a built-in tool's scrubbed output goes back only in a shape the guard confirms (W15-12)"
+  },
+  {
+   "sha": "5843373431a67f8598b77d2b6df5ee4617be11f5",
+   "subject": "loop: a write and a cut-off retry are paid from the money below the run's line (W15-13, U-085, U-042)"
+  },
+  {
+   "sha": "285bf0d41213b3aba59d976394492321987aa4b1",
+   "subject": "budget-pause: \"Left to do\" counts only what the criteria still need (W15-14, U-042)"
+  },
+  {
+   "sha": "e3c5f03e25456eb6f00eea5a75b1b49623070366",
+   "subject": "loop: one web search offer per run, fixed at its start, so the prompt cache holds (W15-15, U-042)"
+  },
+  {
+   "sha": "7dd453fc8c8d4882a8257c7925ba958c28a14072",
+   "subject": "executor: the brief's search line follows what the run can pay (W15-17)"
+  },
+  {
+   "sha": "ab56627fd0ae8a4b790d8be1c307c223beb7d817",
+   "subject": "budget-pause: the wrap-up's words and amounts say what is true (W15-16, U-042, U-074)"
+  },
+  {
+   "sha": "83d2adb0d0edda7c1669f5719591fdcf0d6104d2",
+   "subject": "estimates: a run the person stopped teaches the estimates nothing (W15-19, U-072)"
+  },
+  {
+   "sha": "ae3fbfcc061682c9a5c9a9e7b7c47b4ab163948d",
+   "subject": "result: the session says what you cancelled, what paused and why merges wait (W15-59, W15-69, W15-70, U-072, U-074)"
+  },
+  {
+   "sha": "414fc86f8261877b86becb1a4fa5aeea9af182a4",
+   "subject": "tasks: one spent figure per task, live while it runs (W15-20, W15-21, U-071, U-072)"
+  },
+  {
+   "sha": "19ebd33a3b5ab7ad0b39ca325b523eeffe0244fe",
+   "subject": "compose: a person's task or a failed request never decides a project's credential wait (W15-22, U-078)"
+  },
+  {
+   "sha": "7ca82e6810bfffdfd16b7816c5971152280ca46e",
+   "subject": "lint: no warning left in loop.ts, anthropic.ts, compose.ts or the files this area touched (W15-23)"
+  },
+  {
+   "sha": "fb225aacc24c1d723088c553662d0f8fa681ee2b",
+   "subject": "executor test: the Run row failure case refuses the end's write, not a call's live cost (W15-21, U-072)"
+  },
+  {
+   "sha": "4bb3db4f4730cd37f9c639436f02c07d937e3fae",
+   "subject": "estimates: a task's figure grows with its size, and the session review sets the work against it (W15-18, U-072)"
+  },
+  {
+   "sha": "b2be08d1f4c94f6da818465d4616a07a553ee89f",
+   "subject": "real-daemon test: the W15-20/W15-21 case holds its calls without Promise.withResolvers (W15-21, U-072)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "W15-12: on the subscription, Claude Code keeps a tool's ORIGINAL output when a PostToolUse hook's replacement fails the tool's output schema; the scrubbed output of a built-in tool was returned unchecked, so an unknown tool, a changed SDK shape or a key holding the secret could let a task's secret reach the model.",
+   "u_ids": [],
+   "failing_test_before": "packages/runtime/test/security-sdk.test.ts 'w15-run, wave 15 ... (W15-12)': each built-in tool fixture (WebFetch's url carried the value) and the five 'refused, never passed' cases",
+   "how": "New packages/runtime/src/agent/cc-tool-outputs.ts: strict zod shapes for Bash, Read (6 variants), Edit, Write, Glob, Grep, NotebookEdit, TodoWrite, WebFetch, WebSearch, tied at compile time to the SDK's own output types; unconfirmedToolOutput() checks the original and the scrubbed replacement. sdk.ts's post hook fails closed: when redaction changed the output and the shape is not confirmed (or a key held the value), it writes a refuseToolOutput audit row, emits tool_denied, aborts the run with tool_not_allowed and returns continue:false (no replacement when a key held the secret). redactToolOutput now reports changed/keyHeld.",
+   "check_in_the_app": "On the subscription, run a task whose secret appears in a built-in tool's output in a shape the guard does not know: the session log shows the tool denied and the run ends with '... so the run stopped before the model saw this task's secret.'; the audit shows the refused row; the model never receives the value."
+  },
+  {
+   "problem": "W15-13: a CHF 0.20 coder was told to wrap up after spending CHF 0.05 and wrote nothing (RUN-1); a research run paid for a whole-file reply that was cut and thrown away, and the retry asked up to 32,000 tokens with no room check (F8).",
+   "u_ids": [
+    "U-085",
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-cache.test.ts 'w15-run, wave 15 ... (W15-13)' (RUN-1, kept writes and once-only retry, F8, note when nothing can be raised) and budget-pause.test.ts 'w15-run, wave 15: a coder's multi-file write ...' (composed through the Messages API stand-in at Sonnet 5.5 prices: the write call got 4,096)",
+   "how": "loop.ts sizes the write cap and the cut-off retry from the money below the run's wrap-up line only (line - spent - searches), bounds the first call by max(0.1 cap, the floor's price), raises only the retried call, keeps the complete tool_use blocks of a cut reply (the cut last call never runs) and tells the model what was kept (cutOffNote).",
+   "check_in_the_app": "Give a coder task a CHF 0.20 budget that writes several files on the API key and start a session: it writes the files instead of hearing 'Wrap up now' after a few centimes; a reply cut at its limit keeps the files it wrote and the log names the cut once."
+  },
+  {
+   "problem": "W15-14: finished research that heard the wrap-up and wrote 'Left to do: - Nothing for the acceptance criteria. - Optionally, ...' was paused at its budget without review, and the person got a 'Continue (CHF 0.15 more)' card for done work.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'w15-run, wave 15 ... (W15-14)' (live report, variants, request text, composed run) and apps/ui/test/real-daemon.test.ts 'w15-run, wave 15 > W15-14' (needs_human before)",
+   "how": "budget-pause.ts NOTHING accepts a qualified 'nothing' (for the criteria/task/brief...), optional extras are parsed apart (RunHandoff.optional) and never count as unfinished work; the wrap-up text and WRAP_UP_BRIEF_LINE ask for 'Left to do:' only what the task's criteria still need, as a list, or nothing; no optional extras.",
+   "check_in_the_app": "Run a researcher task at Budget 0.15 until it hears the wrap-up and lists 'Nothing for the acceptance criteria' plus an optional extra: the task goes to review and Done; no budget card appears in the Inbox."
+  },
+  {
+   "problem": "W15-15: a research run changed its web search offer (max_uses, or dropped the tool) call by call, rewriting the prompt cache: a quarter to a third of the run's cost was cache rewrites (F3).",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-web-search.test.ts 'w15-run, wave 15 ... (W15-15)' (8 different definitions in one run; 12 searches with 3 left)",
+   "how": "The offer is decided once at the run's start (searchOfferAtStart in enforcement/budget.ts), with a fixed WEB_SEARCH_MAX_USES_PER_CALL = 2, and dropped once for good when it is no longer covered (searchOfferCovered); the stand-in prompt cache (testenv prompt-cache.ts) now keys on the web search tool so tests see the rewrite; anthropic.ts comment corrected and its non-null assertion removed.",
+   "check_in_the_app": "Run a research task on the API key on the bench and read model-calls.jsonl: every call carries the same web search definition (max_uses 2) until it is dropped once, and cache_read_input_tokens keep growing."
+  },
+  {
+   "problem": "W15-17: a researcher at CHF 0.15 was told 'Use web_search to find pages' although no call of its run could pay for a search; it reported it had no web_search tool (F5).",
+   "u_ids": [],
+   "failing_test_before": "packages/runtime/test/executor-web-search.test.ts 'w15-run, wave 15 ... (W15-17)' (the small budget's brief said WEB_SEARCH_LINE and the grant held web_search)",
+   "how": "executor.ts searchPlanFor decides the offer before the brief with the loop's own helper and the run's cap, model and brief; it returns null when no search can be paid, so the brief and the grant say no search, and passes maxUses to the loop; WEB_SEARCH_LINE gained the clause on how many searches a call may make.",
+   "check_in_the_app": "Start a researcher task with a CHF 0.15 budget: its brief (session Details) does not promise web_search; at a larger budget it does, with the per-call limit."
+  },
+  {
+   "problem": "W15-16: the session log said 'at CHF 0.07 it is told to wrap up' while the run was told at CHF 0.02; the model heard 'About a fifth of this task's budget is left' with 87% left; amounts under a centime read 'CHF 0.00'.",
+   "u_ids": [
+    "U-042",
+    "U-074"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'w15-run, wave 15: the wrap-up's words ... (W15-16)' (wrapUpText did not exist; limitWords said CHF 0.00; the start and told lines named a spend)",
+   "how": "loop.ts wrapUpText(spent, cap) says the share used and that the next step could pass the reserve (WRAP_UP_MARK 'Wrap up now:'); budgetLineWords and wrapUpSentWords describe the real trigger (a step that could take it past CHF X, keeping a reserve of CHF R); executor chfText, limitWords and wrapUpSentWords go through moneyWords ('less than CHF 0.01').",
+   "check_in_the_app": "Run a task with a small budget until it wraps up: the session log's start line reads 'before a step that could take it past CHF X it is told to wrap up, keeping a reserve of CHF R to finish', the told line names what it spent of its budget, and a pause under a centime says 'less than CHF 0.01'."
+  },
+  {
+   "problem": "W15-19: after Stop now, the plan card and the Start dialog gave different figures for the same task, and a restart moved the figure back (RUN-2).",
+   "u_ids": [
+    "U-072"
+   ],
+   "failing_test_before": "packages/runtime/test/estimates.test.ts 'w15-run, wave 15: a stopped run teaches the estimates nothing (W15-19)' (observeTaskRuns returned true for the killed call)",
+   "how": "estimates/model.ts NO_SAMPLE_CALL_OUTCOMES adds 'killed'; RunTally counts killed and completed runs and isNoSample leaves out a task whose stopped run no completed run followed, in the live feed and the fold alike; once a later run completes it, the stopped run's cost counts.",
+   "check_in_the_app": "Approve and start a plan, press Stop now on the running task, then compare the plan card's figure with the Start dialog's for that task: they agree, and the same after restarting the app."
+  },
+  {
+   "problem": "W15-59, W15-69, W15-70: a session whose only task the person cancelled during review ended with 'CHF 0.01.' and nothing else (RUN-10); the end line counted a task paused at its budget as 'needs you'; one sentence mixed merges waiting for checks with GitHub not answering.",
+   "u_ids": [
+    "U-072",
+    "U-074"
+   ],
+   "failing_test_before": "packages/runtime/test/writing-rules.test.ts 'w15-run, wave 15: the result says what the person cancelled (W15-59)' and the split merge-later case (W15-70); event-lines.test.ts 'w15-run, wave 15 ... (W15-69)'; continuity-cancel.test.ts 'w15-run, wave 15 ... (W15-59)'",
+   "how": "runner.ts puts the tasks the person cancelled in LastSessionOutcome.cancelled, session.ended carries a paused count and needsHuman leaves paused tasks out, and ResultFacts has checksPendingPrs and unansweredPrs (waitingPrs removed); session/result.ts writes the cancel sentence and two merge-later sentences; event-lines.ts endedCounts says 'N paused'.",
+   "check_in_the_app": "Cancel the only task of a session while the critic reviews it: the session result says you cancelled it. Let a task pause at its budget: the end line says '1 paused', not '1 needs you'. With merges waiting, the result names checks pending and GitHub not answering in separate sentences."
+  },
+  {
+   "problem": "W15-20, W15-21: the Tasks row and drawer showed the work-only cost while Costs > By task counted the critic's reviews (RUN-3), and a running task read CHF 0.00 in the row and drawer until its run ended (RUN-4).",
+   "u_ids": [
+    "U-071",
+    "U-072"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-run, wave 15 > W15-20, W15-21' (timed out waiting for the first call's cost on the Tasks row: CHF 0.00) and apps/ui/test/tasks.test.tsx 'w15-run, wave 15: one figure per task (W15-20)'; later packages/runtime/test/executor.test.ts Run row failure case (found by the full run, test changed by design)",
+   "how": "TaskView.spent is the cost ledger's figure for the task, reviews included (server reads costLedger.breakdown by task_id once per list); TasksTab's Cost cell and TaskDrawer show spent (actual from an older daemon). runner.ts books each model call's cost on the task in recordStep and adds only the rest at the end; executor.ts writes the Run row's cost after each call (awaited before the final total); task.addCost no longer bumps version, so a person's action during a run never meets version_conflict.",
+   "check_in_the_app": "Start a session and open the project's Tasks tab while a task runs: its Cost rises after each call (bench AFTER: CHF 0.01 while running, BEFORE: CHF 0.00). After the run the row and the drawer show the same figure as Costs > By task (bench AFTER: CHF 0.09 both; BEFORE: CHF 0.05 on the row vs CHF 0.09 in Costs). Pause or Cancel during the run works."
+  },
+  {
+   "problem": "W15-22: credentialWaitNow let the first ready task decide for the whole project: a task for the person (no billing request) or a request that threw read as 'can run', so the Start check said nothing of the wait on the key's limit and a wake started a session before the reset.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/credential-limits.test.ts 'w15-run, wave 15: a person's task does not decide the project's credential wait (W15-22)' (expected '' to contain '16:40')",
+   "how": "compose.ts runNowProbe skips a task without a billing request, treats a failed request or pick as unknown, and says runs only when a task's pick succeeds; credentialWaitNow is its wait and the wake's predicate asks its runs.",
+   "check_in_the_app": "With the API key at its limit, a project whose first ready task is yours and whose coder task waits: open Start session; it says nothing can run until the reset time, and no session starts before then."
+  },
+  {
+   "problem": "W15-23: pnpm lint named useOptionalChain in loop.ts appendText and compose.ts pairingGuideUrl (anthropic.ts's non-null assertion went with W15-15); this area's W15-17 change had left an unused import (an error) in executor-web-search.test.ts.",
+   "u_ids": [],
+   "failing_test_before": "pnpm lint (biome): loop.ts:1288 and compose.ts:4996 useOptionalChain, executor-web-search.test.ts:19 noUnusedImports, credential-limits.test.ts:724 useOptionalChain",
+   "how": "The optional chains biome asks for (same branches for an absent message or feed) and the unused import removed; npx biome check over every file this area touched is clean, and none of pnpm lint's remaining 39 warnings is in them.",
+   "check_in_the_app": "Run pnpm lint: no warning in loop.ts, anthropic.ts, compose.ts or this area's files."
+  },
+  {
+   "problem": "W15-18: estimates ignored a task's size: 'Write the Swiss pairing tool with tests' (four files and their tests, USD 0.21 of work live) was 'about CHF 0.03' like a one-line footer; the session review compared spend with reviews against an estimate without them (RUN-16).",
+   "u_ids": [
+    "U-072"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-run, wave 15 > W15-18: the Start dialog prices a four-file task with tests above a one-line change ...' (expected 40000 to be >= 120000); packages/runtime/test/estimates.test.ts 'w15-run, wave 15: an estimate grows with the task's size (W15-18)' (3 cases); packages/critic/test/session-review.test.ts 'w15-run, wave 15: the session review sets the work's cost against the estimate (W15-18)' (2 cases)",
+   "how": "estimates/model.ts taskSizeFactor(outcome, criteria, specialist): deterministic, no model call (0.4 per file named beyond the first, 0.4 for tests to write except for the tester, 0.05 per 'at least N cases' beyond three, 0.1 per criterion beyond three; between 1 and SIZE_FACTOR_MAX 4). estimate() multiplies the cold start by it for a task with no own estimate, boundedPlanEstimate keeps the plan's guess in the sized band (intake passes each plan task's outcome and criteria), sampleForTask measures against the same sized figure (learning per unit of size); plan card, Start dialog and runner keep pricing through planEstimateUsdMicro. critic session-review compares the work's cost (ledger less the critic's Run rows) with the estimate, names the reviews apart and adds metrics workUsdMicro/reviewsUsdMicro. ADR 0019 amended.",
+   "check_in_the_app": "Create a coder task 'Write the Swiss pairing tool with tests' with its four files and tests in the outcome, and a one-line footer task; open Start session: the big one reads 'about CHF 0.11', the footer 'about CHF 0.03' (BEFORE: both CHF 0.03); restart the app, same figures. After the session, the review line reads 'cost CHF 0.10 (work CHF 0.05 against an estimate of CHF 0.23, reviews CHF 0.05)'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W15-18 (partial): the daemon's log line for critic.session_review_metrics ('Session review measured: ... CHF 0.10 spent of a CHF 0.23 estimate.') still sets the whole spend, reviews included, against the work-only estimate.",
+   "why": "The line is in packages/runtime/src/daemon/views.ts outside this area's region (only TaskView.spent is mine). The critic's metrics now carry workUsdMicro and reviewsUsdMicro for whoever owns that line; the critic's own summary and findings are fixed."
+  },
+  {
+   "problem": "W15-19 has no real-daemon (UI client) Stop-now case.",
+   "why": "The fix is covered at the estimates boundary both feeds share (live observeTaskRuns and the fold after a restart, on the real store); a UI-client case was left out for time."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check",
+   "result": "exit 0: lint, lint:paths and typecheck clean; 479 files, 5012 tests passed, 7 skipped; docs:links ok (206 files); secret-scan clean (2079 files). Its docs:check found no origin/main and checked nothing, so it was run separately below. A first run failed on apps/ui typecheck (Promise.withResolvers in this area's real-daemon case), fixed in b2be08d."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (55 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "exit 0: 87 files, 1026 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (local config not committed)"
+  },
+  {
+   "command": "npx biome check <every file this area touched>; pnpm lint",
+   "result": "clean in touched files; pnpm lint has 39 warnings, none in this area's files"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "no matches; git status clean; fix/w15-run = HEAD b2be08d"
+  },
+  {
+   "command": "bench fix-w15-run (--provider bench, ports 48501/2101): BEFORE on base sources, AFTER on HEAD, walk /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w15run-walk.cjs",
+   "result": "BEFORE: Start dialog both tasks CHF 0.03; row CHF 0.00 during the run; after the run row CHF 0.05 vs Costs CHF 0.09; review 'cost CHF 0.10 against an estimate of CHF 0.11'. AFTER: Swiss CHF 0.11, footer CHF 0.03; row CHF 0.01 during the run; row CHF 0.09 = Costs CHF 0.09; review 'cost CHF 0.10 (work CHF 0.05 against an estimate of CHF 0.23, reviews CHF 0.05)'. Bench stopped with stop.mjs; /tmp/frbench/fix-w15-run/home deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-w15-run/before-steps/01-before-start-dialog.png",
+   "/tmp/frbench/fix-w15-run/before-steps/02-before-tasks-during-the-run.png",
+   "/tmp/frbench/fix-w15-run/before-steps/03-before-tasks-after-the-run.png",
+   "/tmp/frbench/fix-w15-run/before-steps/04-before-drawer-big-task.png",
+   "/tmp/frbench/fix-w15-run/before-steps/05-before-costs.png",
+   "/tmp/frbench/fix-w15-run/before-steps/06-before-session.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w15-run/steps/01-after-start-dialog.png",
+   "/tmp/frbench/fix-w15-run/steps/02-after-tasks-during-the-run.png",
+   "/tmp/frbench/fix-w15-run/steps/03-after-tasks-after-the-run.png",
+   "/tmp/frbench/fix-w15-run/steps/04-after-drawer-big-task.png",
+   "/tmp/frbench/fix-w15-run/steps/05-after-costs.png",
+   "/tmp/frbench/fix-w15-run/steps/06-after-session.png"
+  ]
+ },
+ "new_problems": [
+  "views.ts 'critic.session_review_metrics' log line ('Session review measured: 1 of 2 planned tasks done, CHF 0.10 spent of a CHF 0.23 estimate.' on the AFTER bench) still compares spend including reviews with the work-only estimate; metrics.workUsdMicro / reviewsUsdMicro now exist for it (views.ts is outside w15-run's region).",
+  "Size factor calibration (W15-18): checked against live check 2's 16 tasks (/tmp/frbench/live2/run/run-live/home/data/state.sqlite), the starting figure is within about x2.5 of the work's cost except a tester task and a data report that name files they read rather than write (x0.38 and x0.31 of the starting figure). The learner corrects per unit of size after samples; a later calibration could count only files the task writes.",
+  "On the bench stand-in the Swiss pairing task ends 'Needs your decision: tried 4 times' both before and after this area's changes (stand-in behaviour, seen in /tmp/frbench/fix-w15-run/steps/03-after-tasks-after-the-run.txt); not investigated."
+ ],
+ "notes_for_other_areas": [
+  "loop.ts: WRAP_UP_TEXT is removed; use wrapUpText(spentUsdMicro, capUsdMicro) and WRAP_UP_MARK = 'Wrap up now:' (testenv/src/bench/role-player.ts WRAP_UP_MARK changed to match; scripts/bench/journeys/budget.cjs uses it). New model text cutOffNote(maxOut, where, kept) for a cut reply.",
+  "budget-pause.ts sentences changed: budgetLineWords '...: before a step that could take it past CHF X it is told to wrap up, keeping a reserve of CHF R to finish.'; wrapUpSentWords 'Told the S to wrap up: it spent A of B, and its next step could take it past CHF L.'; WRAP_UP_BRIEF_LINE asks for 'Left to do:' only what the task's criteria still need (no optional extras). RunHandoff gains `optional`; parseHandoff returns it. limitWords and wrapUpSentWords go through moneyWords ('less than CHF 0.01').",
+  "executor.ts: WEB_SEARCH_LINE gained a clause on the per-call limit; searchPlanFor(..., run) returns {limit, lists, maxUses} or null when no search can be paid; enforcement/budget.ts exports WEB_SEARCH_MAX_USES_PER_CALL = 2, searchOfferAtStart, searchOfferCovered; RunRequest.webSearch has maxUses. chfText goes through moneyWords. The Run row's cost is written after each model call (liveRunWrites), the end's write last.",
+  "Session outcome: LastSessionOutcome.cancelled (tasks the person cancelled); ResultFacts.checksPendingPrs and unansweredPrs replace waitingPrs; session.ended carries `paused` and needsHuman excludes paused tasks; event-lines endedCounts adds 'N paused'; session/result.ts has the cancel sentence and two merge-later sentences (NOT_NEWS includes the cancel sentence).",
+  "TaskView.spent (Money, optional): the ledger's figure for the task, reviews included (what Costs > By task shows); TaskView.actual stays the work-only budget counter. TasksTab Cost cell and TaskDrawer show spent ?? actual; the fake daemon's task views have spent.",
+  "task.addCost no longer bumps the task's version; the runner books each model call on the task in recordStep (bookedLive) and adds only the rest at the end.",
+  "Estimates: EstimateInput gains outcome and acceptance_criteria; taskSizeFactor() and SIZE_FACTOR_MAX exported; boundedPlanEstimate(guess, specialist, size = 1); EstimateTaskInput may carry outcome/acceptance_criteria; planEstimateUsdMicro passes the row's. NO_SAMPLE_CALL_OUTCOMES includes 'killed'; RunTally has killed and completed.",
+  "Critic session review: SessionMetrics.workUsdMicro and reviewsUsdMicro; with reviews the overrun finding reads 'Session work cost CHF W exceeded its estimate CHF E by N% (the reviews, CHF R more, are not in the estimate)' and the summary 'cost CHF T (work CHF W against an estimate of CHF E, reviews CHF R)'; without reviews the words are unchanged.",
+  "compose.ts: runNowProbe(projectId) -> {runs, wait}; credentialWaitNow is its wait and the wake predicate uses runs.",
+  "Security (W15-12): packages/runtime/src/agent/cc-tool-outputs.ts exports CC_TOOL_OUTPUT_SHAPES and unconfirmedToolOutput(); enforcement/hooks.ts redactToolOutput returns {value, changed, keyHeld} and refuseToolOutput() writes the audit row; a refused output stops the run with tool_not_allowed. A Claude Code SDK upgrade that changes a tool's output type fails the compile-time ties in cc-tool-outputs.ts."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/loop.test.ts U-085 case",
+   "why": "W15-13: later calls return to their own limit; only the retried call is raised."
+  },
+  {
+   "test": "packages/runtime/test/loop-web-search.test.ts 'ordinary size' and 'reaches its line' cases",
+   "why": "W15-15: a fixed max_uses 2 on every call (was 10), one definition then none (was a falling max_uses)."
+  },
+  {
+   "test": "packages/runtime/test/executor-web-search.test.ts USD 5 case",
+   "why": "W15-17: expects max_uses 2 (was 10); after seven searches 2, after nine 1 (was 3)."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts (start line, told line, wrap-up block, capped run's start line); executor-brief.test.ts and two apps/ui/test/real-daemon.test.ts cases (start line); wrap-up.test.ts, loop-cache.test.ts, loop-web-search.test.ts (wrapUpText, WRAP_UP_MARK); scripts/bench/journeys/budget.cjs",
+   "why": "W15-16: the wrap-up's sentences now describe the real trigger and the share used instead of a spend amount and 'about a fifth'."
+  },
+  {
+   "test": "packages/runtime/test/writing-rules.test.ts P7-5 case and loop-merge.test.ts",
+   "why": "W15-70: the checks-pending sentence no longer names GitHub; GitHub not answering has its own sentence."
+  },
+  {
+   "test": "packages/runtime/test/executor.test.ts 'keeps the session going when the Run row cannot be written ...'",
+   "why": "W15-21: each call's cost is written live before the end's write, so the spy now refuses the first write that carries the outcome (the end's) instead of the first patch; every assertion is unchanged."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts 'a project without a repository' (two cases)",
+   "why": "W15-18: the scaffold task ('A runnable skeleton with tests') is priced in its sized band (SCAFFOLD_BAND) instead of the flat coder band."
+  }
+ ]
+}

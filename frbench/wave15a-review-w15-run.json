@@ -1,0 +1,94 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I set up a worktree at fix/w15-run b2be08d and ran one bench, \"review-w15-run\" (--provider bench, daemon 48511, UI 2111, built from this worktree). For comparison I briefly ran a base bench, \"review-w15-run-base\", from a detached worktree of claude/nifty-knuth-f9udt0 on the same ports. Both benches are stopped, their homes are deleted and the base worktree is removed. Screenshots and texts are in /tmp/frbench/review-w15-run/steps/ (base: /tmp/frbench/review-w15-run-base/steps/). The walk scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/rv-w15run-{a,bc,e,f}.cjs.\n\n**Walk A (W15-18, W15-20, W15-21)**\n- Created two tasks through the UI's New task dialog: the Swiss pairing tool (four files and tests) and the one-line footer (01-02).\n- Start dialog (04-a-start-dialog.png): \"This session runs \"Write the Swiss pairing tool with tests\" (about CHF 0.10) and 1 more (about CHF 0.03).\" After a daemon restart the figures were the same (05; start-check 100800 and 32000 CHF micro both times). That is more than 3x the footer and at least CHF 0.06.\n- Started the session from the dialog. While the task ran, GET /projects/:id/tasks showed actual and spent rising after each call (1994, 9482, ... USD micro), and the drawer's run line had a live cost (4101).\n- After the run, the Tasks row matched Costs > By task: CHF 0.09 and CHF 0.09 for Swiss, CHF 0.01 and CHF 0.01 for the footer, and the footer drawer read \"spent CHF 0.01\" (09, 11, 12-a-costs.png). The work-only actual stayed below spent: 59661 vs 111783 USD micro.\n\n**Walk E/F (W15-21)**\n- Coder runs with calls costing about CHF 0.01 each. The row read \"CHF 0.01\" while running (36/37-e) and the drawer read \"spent CHF 0.01\" (38-e). The row follows within the Tasks tab's 5-second poll.\n- F: a long coder run. The task's version was 4 before and after three booked calls, with spent at USD 0.019. I pressed Stop in the drawer during the run: no \"This task changed\", the task ended \"Paused by you\" and spent equals actual equals the run line, CHF 0.02 (41-44-f).\n\n**Walk B (W15-19)**\n- New project through the UI; plan card: \"Build the page ... coder \u00b7 about CHF 0.02\" and \"Check ... tester \u00b7 about CHF 0.10\" (17-b-plan-card.png).\n- Approve and start, then Stop now on the session page during the first call (19-b). The Start dialog read about CHF 0.02 and CHF 0.10, the same as the plan card (20-b). After a daemon restart it read the same (21-b).\n- A second, accidental Stop now during the tester's task also left the tester at CHF 0.10, equal to its plan card.\n\n**Walk C (W15-59)**\n- One coder task; Start through the dialog; FORERUNNER_BENCH_CRITIC_DELAY_MS=10000. While the task read \"Being reviewed\" I pressed Cancel on the Tasks tab, then \"Cancel task\".\n- The session page result read \"You cancelled \"Write the meeting notes\"; nothing else ran. Less than CHF 0.01.\" (25-c-session-page.png).\n\n**Walk D (W15-16, W15-69)**\n- I ran scripts/bench/journeys/budget.cjs with FORERUNNER_BENCH_LONG.\n- Head's log lines:\n  - \"This run may spend CHF 0.08: before a step that could take it past CHF 0.06 it is told to wrap up, keeping a reserve of CHF 0.02 to finish.\"\n  - \"Told the coder to wrap up: it spent CHF 0.06 of CHF 0.08, and its next step could take it past CHF 0.06.\"\n  - \"stopped at its budget of less than CHF 0.01\"\n  - \"Session over: 3 paused. CHF 0.07.\" (32-d-session.png)\n- Base's lines for the same walk: \"at CHF 0.06 it is told to wrap up\", \"the last CHF 0.02 is kept to finish\", \"stopped at its budget of CHF 0.00\", \"Session over: 3 need you.\"\n- The model received \"Wrap up now: this task has used 76% of its budget, and its next step could take it past the share kept to finish. ... (only what the task's criteria still need, as a list, or nothing; no optional extras).\" This is true at that point: CHF 0.06 of 0.08.\n- The journey's check \"the tiny task's log line says it pauses and keeps its work\" fails on head and on base alike, so it is not a regression.\n\n**Not walkable on the stand-in**\n- W15-12 (SDK path), W15-13 cut and retry, W15-14 qualified \"Nothing\", W15-15/17 web search (bench-api only; I stayed on --provider bench) and W15-22 are covered by tests, which I ran.\n- Fails before, checked by putting the fix's own tests onto base sources in a scratch worktree:\n  - W15-12: 6 failures; base even leaked the value through WebFetch's url field.\n  - W15-13: 6 failures, e.g. RUN-1 'budget_exceeded', and loop.test [1024,4096,4096].\n  - W15-15: 4 failures, e.g. \"expected 8 to be 1\" definitions.\n- All 17 named test files pass on head (330 tests).\n\n**Validation I ran on head**\n- pnpm typecheck: exit 0.\n- pnpm lint: exit 0 with 39 warnings, none in this area's 45 touched files; biome check on them is clean, and none of the W15-23 named warnings remain in loop.ts, anthropic.ts or compose.ts.\n- pnpm test: 479 files, 5012 tests passed.\n- docs-check --base claude/nifty-knuth-f9udt0, link-check, secret-scan and check-paths: all ok.\n- UI vitest: 87 files, 1026 tests passed.\n- pnpm test:integration: 30 passed, 75 skipped.\n- pnpm test:e2e: 25 passed, 1 skipped.\n- Playwright with the local config: 35 passed; the config was removed afterwards.\n- Trial merge with fix/w15-review (git merge-tree): intake.ts and intake.test.ts auto-merge. The only conflicts are in the append-only test files and appended docs, as expected.",
+ "blocking": [
+  {
+   "issue": "W15-19 has no test at the person's boundary. Its acceptance asks for a real-daemon case next to 'the plan card's figure is the Start dialog's', and it is missing. The only test is internal to the estimates model.",
+   "where": "packages/runtime/test/estimates.test.ts:795-870 (the W15-19 describe); apps/ui/test/real-daemon.test.ts 'w15-run, wave 15' block (no W15-19 case)",
+   "evidence": "- The spec's acceptance reads: \"W15-19 (real-daemon next to 'the plan card's figure is the Start dialog's'): after Approve and start and Stop now during the first call, client.startCheck gives each task the plan card's figure; composing the runtime again gives the same figure.\"\n- The fixer's own not_done[1] says \"W15-19 has no real-daemon (UI client) Stop-now case ... left out for time\".\n- The W15-19 test calls `live.observeTaskRuns(..., \"killed\")` directly and asserts `recentSamples()` and `estimate()`. Those are internal shapes, with no assertion on what the plan card or Start dialog show (validation rules 1 and 2).\n- It never drives the runner\u2192compose.ts:2665 feed that turns a Stop now into the outcome passed to observeTaskRuns. If that wiring passed another outcome, every test would stay green while the person saw two figures.\n- The behaviour itself holds on the bench (walk B: plan card CHF 0.02 and 0.10 = Start dialog after Stop now = after restart). This is a test gap, not a behaviour bug.\n- W15-19 is not on the spec's cut list (W15-22, W15-23, W15-70).",
+   "expected": "Add a case in the 'w15-run, wave 15' describe of apps/ui/test/real-daemon.test.ts, beside the leftovers7-session R-estimates block:\n- intake plan card (planTasks figures);\n- Approve and start;\n- Stop now through the client while the first call is held;\n- client.startCheck gives each task the plan card's figure;\n- close the runtime and compose it again on the same home: the same figures.\nNo fake-daemon change is needed (no route change)."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W15-12: a built-in tool's scrubbed output is handed back only in a shape the guard confirms. An unknown tool, an unknown shape or a key holding the value is refused with an audit row and the run stops as tool_not_allowed.",
+   "holds": true,
+   "note": "Fails before (6 failures on base; base also leaked the value through WebFetch's url). Passes on head. Each fixture is typed with `satisfies` against sdk-tools.d.ts, and cc-tool-outputs.ts ties the zod shapes to the SDK types at compile time. The refusal returns continue:false, aborts the controller and writes an audit row. A read with no secret gets no replacement (R-readhook)."
+  },
+  {
+   "claim": "W15-13: the write cap and the cut-off retry are paid only from the money below the run's line. The raised cap applies to the retried call only, and the complete tool calls of a cut reply are kept.",
+   "holds": true,
+   "note": "Fails before (RUN-1 budget_exceeded, F8 cut, loop.test [1024,4096,4096]). Passes on head. After the line is fixed, the room is min(hooks room, line - spent - searches). The cut last block never runs, and a reply with server blocks is never partly kept."
+  },
+  {
+   "claim": "W15-14: a qualified 'Nothing for the acceptance criteria' and optional extras do not pause finished work.",
+   "holds": true,
+   "note": "The budget-pause and real-daemon (Budget 0.15 researcher) cases pass. The NOTHING and OPTIONAL patterns over-match some phrasings (see non_blocking)."
+  },
+  {
+   "claim": "W15-15: one web search offer per run (max_uses 2), dropped at most once; the cache holds.",
+   "holds": true,
+   "note": "Fails before (8 definitions). Passes on head. The wrap-up line is still checked on the tokens' worst case alone. The search offer stands only while spend + call + searches stays at or below the line, so the reserve stays protected."
+  },
+  {
+   "claim": "W15-17: the brief's search line follows what the run can pay.",
+   "holds": true,
+   "note": "searchPlanFor returns null when searchOfferAtStart gives 0. The executor-web-search cases pass. The loop re-checks coverage at its first call."
+  },
+  {
+   "claim": "W15-16: the wrap-up words and amounts are true, and amounts under a centime read 'less than CHF 0.01'.",
+   "holds": true,
+   "note": "Bench budget walk D, before and after, shows the new start and told lines and 'less than CHF 0.01'. The model got 'Wrap up now: this task has used 76% ...'."
+  },
+  {
+   "claim": "W15-19: a stopped run teaches the estimates nothing; plan card and Start dialog agree after Stop now and after a restart.",
+   "holds": true,
+   "note": "Holds on the bench (walk B). The real-daemon acceptance case is missing; see blocking."
+  },
+  {
+   "claim": "W15-59, W15-69, W15-70: the result names what you cancelled, the end line says 'N paused', and checks pending and GitHub not answering are named apart.",
+   "holds": true,
+   "note": "Bench walk C: 'You cancelled \"Write the meeting notes\"; nothing else ran. Less than CHF 0.01.' Walk D: 'Session over: 3 paused.' The W15-70 unit passes."
+  },
+  {
+   "claim": "W15-20, W15-21: one spent figure per task, reviews included, live while it runs; booking does not bump the version.",
+   "holds": true,
+   "note": "Bench: row = Costs (CHF 0.09 and 0.09, CHF 0.01 and 0.01); live row CHF 0.01 while running; version 4 unchanged over three booked calls; Stop during the run gave no conflict. actual = work runs' total, so nothing is counted twice."
+  },
+  {
+   "claim": "W15-22: a person's task or a failed request never decides a project's credential wait.",
+   "holds": true,
+   "note": "runNowProbe skips tasks with no request and failed ones; the wake predicate uses runs. The composed credential-limits case passes."
+  },
+  {
+   "claim": "W15-23: no lint warning in loop.ts, anthropic.ts, compose.ts or this area's files.",
+   "holds": true,
+   "note": "biome on the 45 touched files is clean, and full lint has none of the named warnings left."
+  },
+  {
+   "claim": "W15-18: an estimate grows with the task's size; the session review sets the work against the estimate.",
+   "holds": true,
+   "note": "Start dialog CHF 0.10 vs 0.03, the same after a restart. The plan card equals the Start dialog for a sized three-file task (walk B). The critic's summary names the reviews apart. The views.ts log line is left as not_done (another area's region)."
+  },
+  {
+   "claim": "Validation: pnpm check, integration, e2e, the UI suite and Playwright pass.",
+   "holds": true,
+   "note": "I re-ran all of them on head; all green (numbers in acceptance_walk)."
+  }
+ ],
+ "non_blocking": [
+  "W15-69 sibling: the session page's status chip still reads 'Ended: 3 tasks need you' while the log's end line now reads 'Session over: 3 paused.' on the same screen (/tmp/frbench/review-w15-run/steps/32-d-session.png). The chip comes from views.ts endedStatusText, which is not w15-run's region; pass it to w15-words.",
+  "parseHandoff over-matches some phrasings. I probed it with tsx:\n- 'Nothing - but the README is incomplete' is read as nothing ('complete' matches inside 'incomplete');\n- 'Nothing in the task works yet' is read as nothing;\n- 'Perhaps the most important: finish the parser' and 'Maybe fix the failing build' are filed as optional.\nThe result is a critic review instead of a pause card. That costs no money and the critic still checks, but the qualifier patterns should be narrower.",
+  "intake.ts is 'w15-review only' in the wave 15 shared_files, yet w15-run changed keyedTasks and withBoundedEstimates for W15-18. testenv/src/bench/role-player.ts (w15-review's file) also changed: its WRAP_UP_MARK was needed by the new wrap-up text. A trial merge with fix/w15-review auto-merges intake.ts and intake.test.ts; the merge step should know about it.",
+  "The wrap-up text says 'this task has used N% of its budget' but computes from the run's cap. On a continued run (cap = what is left of the task's budget) the share is of the remainder. This is model-facing; 'this run has used' would be exact.",
+  "For live check 3 (W15-12): the strict shapes refuse any runtime key Claude Code sends beyond sdk-tools.d.ts. Add a known-shape step: a subscription task reads a file that holds its granted secret; the run goes on with the value scrubbed and is not refused. Otherwise every Read of such a file could stop the run.",
+  "The W15-12 refusal message a person may read as the run's error ('Claude Code's LS tool has no output shape this run can check, so the run stopped before the model saw this task's secret.') says what happened but not what to do (design section 5, rule 8). Words for w15-words.",
+  "The Tasks row and the drawer show 'CHF 0.00' for a running task's spend under a centime (UI Money component). The row follows the daemon by up to 5 s (poll), and the drawer's 'spent' (from the list row) and its run line (from the detail fetch) differed by one call while running: CHF 0.01 vs CHF 0.02 (38-e-drawer-while-running.png).",
+  "In the W15-15 test 'a run that searches on every call', the drop and wrap-up assertions are guarded by `if (firstGone >= 0)` and `if (wrap ...)`, so they can pass vacuously. Assert that the USD 0.80 run actually drops the offer once.",
+  "The W15-21 real-daemon case proves 'no version_conflict' through task.version only. A client action sent with the read version during the run would be the boundary test. Bench walk F did this by hand: Stop during the run, no conflict.",
+  "Stale doc lines:\n- cc-tool-outputs.ts's header points at `test/cc-tool-outputs.test.ts`, which does not exist (the fixtures are in security-sdk.test.ts);\n- scripts/bench/README.md still says a researcher's request carries 'max_uses at most 10' (now a fixed 2 per run);\n- the LONG stand-in's report still says 'stopped when told that about a fifth of the budget was left'.",
+  "The budget journey's check 'the tiny task's log line says it pauses and keeps its work' fails on head and base alike: CHF 0.004 is below the stand-in's first-step worst case. The journey's default or its README needs updating; this is not caused by this area.",
+  "Left for w15-words (W15-74's other half), seen on the bench:\n- the budget card title and task reason say 'paused at its budget of CHF 0.00' (budget-card.ts);\n- the started line says '(about CHF 0.00)' (views.ts);\n- 'Session review measured: ... CHF 0.10 spent of a CHF 0.21 estimate' still counts the reviews (fixer's not_done[0]).\nThe session plan's estimate (CHF 0.21) also differs from the Start dialog's sum (CHF 0.13) because retried attempts are added to the plan; that is pre-existing.",
+  "executor chfText now goes through moneyWords everywhere, so a sub-centime web search overshoot would read '... more than the less than CHF 0.01 planned'. This is theoretical: a search alone costs about a centime."
+ ]
+}

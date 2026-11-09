@@ -1,0 +1,5 @@
+5aaaabeb56d97bffb8a98ab39e678b065e821b7e	refs/heads/claude/nifty-knuth-f9udt0-backup/fix-cost
+fff29af65f2f2f46894653d45fe29b45e66476bf	refs/heads/claude/nifty-knuth-f9udt0-backup/fix-credential-chooser
+cce8cbffee8ada67ec2b6c97dd1558df1b417310	refs/heads/claude/nifty-knuth-f9udt0-backup/fix-merge-in-app
+6a1c21a22af8136f4e09e092b35ca52ebc632381	refs/heads/claude/nifty-knuth-f9udt0-backup/fix-merged-copy
+b7c2f5cde23034f4a05721693a8601467232c9a1	refs/heads/claude/nifty-knuth-f9udt0-backup/plan-files

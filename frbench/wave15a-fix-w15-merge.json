@@ -1,0 +1,313 @@
+{
+ "area": "w15-merge",
+ "branch": "fix/w15-merge",
+ "head_sha": "9c50b8a837857b1c3922e94019a18b7657d3d6b5",
+ "commits": [
+  {
+   "sha": "ebe91bb",
+   "subject": "docs: a project never writes into, comments on or lists another project's status or scaffold pull request (W15-01, W15-08, U-087)"
+  },
+  {
+   "sha": "462b080",
+   "subject": "pr-executor: a commit the person makes in a done task's folder is never dropped by a rebuild; the wait is said at the poll (W15-02, U-028)"
+  },
+  {
+   "sha": "41b3141",
+   "subject": "dependent-branches: a chain with a busy middle gets no false conflict; a clean rebuild ends a stale rebuild conflict (W15-03, U-028)"
+  },
+  {
+   "sha": "4a8e758",
+   "subject": "pull-requests: Merge says at once why it waits on its task's folder, and the row shows the folder (W15-05, U-028)"
+  },
+  {
+   "sha": "4d28e7d",
+   "subject": "task: the Tasks tab's Redo answers an open merge card as its own Redo; a stale conflict notice closes (W15-04, U-028)"
+  },
+  {
+   "sha": "b83307a",
+   "subject": "pr-answers: 'I resolved it' and 'Drop the branch' start the work; the rebase-conflict card gets words of its own (W15-06, U-028)"
+  },
+  {
+   "sha": "15ea1f2",
+   "subject": "pr-executor: no ids in a task pull request's text; the ids code reads go in a hidden mark (W15-08, U-028)"
+  },
+  {
+   "sha": "4a1fd7d",
+   "subject": "task-words: a done task's label follows its merge record's outcome, as the Overview row does (W15-55, W15-68, U-028)"
+  },
+  {
+   "sha": "2456c40",
+   "subject": "merge: the head-moved sentence offers what the buttons do, in one place (W15-63, U-028)"
+  },
+  {
+   "sha": "5ef21bf",
+   "subject": "pr-executor: the emptied-branch sentences and the up-to-date comment read as one plain sentence each (W15-64, U-028)"
+  },
+  {
+   "sha": "07be54c",
+   "subject": "githost-watcher: a null mergeable is read again within the poll, so a conflict notice comes and goes in one poll (W15-07, U-028)"
+  },
+  {
+   "sha": "4c01fc3",
+   "subject": "adr 0111: the merge side of live check 2, amended (W15-02 to W15-08, W15-55, W15-63, W15-64, W15-68)"
+  },
+  {
+   "sha": "0c8d880",
+   "subject": "merge, docs: every GitOps whose words are read runs git untranslated (W15-10, U-037)"
+  },
+  {
+   "sha": "4fcf5dc",
+   "subject": "githost, import, docs: folders made before the line-endings pin get it at their next use (W15-11, U-037)"
+  },
+  {
+   "sha": "9c50b8a",
+   "subject": "pr-answers: drop an unused import (W15-04 follow-up)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "W15-01: two projects linked to one repository with the status pull request on. The second project's session pushed its status onto fr/status, which is one branch per repository, so it landed in the first project's open status PR #5. It also commented there, and its Overview listed #5 with Merge. The docs scaffold had the same gap for another project's open fr/docs-scaffold PR.",
+   "u_ids": [
+    "U-087"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts 'w15-merge, wave 15' (4 cases); apps/ui/test/real-daemon.test.ts 'w15-merge, wave 15' (two projects through real sessions on one fake-GitHub repository, then the daemon composed again on the same home; fr/status head moved before the fix)",
+   "how": "Status and scaffold PR bodies now end in a hidden mark `<!-- forerunner:pr project=<id> -->` (forerunnerMarker / readForerunnerMarker). checkout's `ours` option keeps the copy off a branch whose open PR belongs to another project, so nothing is pushed or commented and that status stays in the app with one log line. An unmarked PR counts as a project's only while that project is the one project of the install linked to the repository (soleLinkedProject; it counts every project and fails closed). The Overview docs rows and the Docs tab use the same rule. I built only the safety part: there is no per-project branch and no second PR, because owner question W15-112 is still open.",
+   "check_in_the_app": "Link projects A and B to the same repository, with 'Status pull request' on in both. Run a session in A: its status PR opens. Then run a session in B. On GitHub, A's status PR has no new commit and no comment from B. B's Overview does not list A's status PR or A's docs PR. Bench: the second project's Overview reads 'No pull request waits for you.' while the first lists its own docs PR #1 (steps 01/02)."
+  },
+  {
+   "problem": "W15-02 (data loss): a person who committed in a done task's folder while its rebuild was owed lost that commit at the next poll, with no word said.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-merge, wave 15' > 'a commit the person makes ... never dropped by a rebuild', '... pushed to GitHub, as the sentence offers', and 'a rebuild whose push failed is rebuilt at the next poll'",
+   "how": "folderHold(git, branch, base) holds the rebuild (held: 'commits') whenever the task's branch or the folder's HEAD has a commit that GitHub's branch lacks. Forerunner's own unpushed states are exempt: the base-merge shape and WIP commits. Any commit it cannot identify holds the rebuild, so it fails closed. If Forerunner's own rebuild never reached GitHub, it is put back: immediately when the push fails (putBack), or at the next try after a crash (REBUILD_PENDING_REF / REBUILD_BEFORE_*). The poll writes the wait on the record (DependentBranches.sayFolderWait, last_outcome owed_folder_commits). A plain wait gets its words back once the folder is clean (folderWaitOver).",
+   "check_in_the_app": "Run a chain A <- B on a repository project. Commit a file in B's task folder (the path shown under B's row). Squash-merge A on GitHub. Within one poll, B's Overview row reads '#N waits for a commit made in its task's folder: push it to GitHub or undo it.' and offers no Merge, and `git log` in the folder still has the commit. Push it: the next poll rebuilds B and keeps the commit."
+  },
+  {
+   "problem": "W15-03: in a chain A <- B <- C where B changes A's file, B's folder was busy when A was squash-merged. C got a false rebuild-conflict card and sentence with no Merge, and kept them after B and C were rebuilt cleanly.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-merge, wave 15: a chain with a busy middle (W15-03)'",
+   "how": "A task that comes after one whose rebuild could not run cleanly in this pass (STUCK_REBUILDS: busy, held, failed, conflict, waits) gets result 'waits' and stays owed, so R-lock keeps its merge waiting. It follows once the middle is rebuilt. A clean rebuild with the same own change on a record that says rebuild_conflict restores the plain wait and withdraws the rebuild card (closeRebuildConflictCard). The same conflict tried again does not file a second card.",
+   "check_in_the_app": "Run a chain A <- B <- C where B edits A's file. Keep B running while A is squash-merged on GitHub. C gets no 'could not be rebuilt' card. Once B is rebuilt, C follows, and C's row offers Merge with 'Accepted \u00b7 waiting for you to merge'."
+  },
+  {
+   "problem": "W15-04: Redo on the Tasks row of a task with a conflict notice open resumed the old branch and hit a rebase conflict, which filed a second card. The notice also stayed open after the PR later merged cleanly.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-merge, wave 15: the Tasks tab's Redo on a task with a conflict notice (W15-04)'",
+   "how": "task.reopen of a done task now withdraws its open merge card in the same transaction (redoneMergeCard in loop/merge-mode.ts, which the card's own Redo applyRedo also uses). The next run therefore starts from main, and no rebase-conflict card follows. It starts no session; the owner question on Tasks-row actions is still open. closeStaleNotice closes a notice whose record has moved on once GitHub says the PR merges cleanly. A notice that takes over an earlier notice card keeps that card's earlier words.",
+   "check_in_the_app": "With a 'conflicts with main' notice open in the Inbox for a done task, press Redo on its Tasks row. The notice leaves the Inbox. Start a session: the task runs from main and no second conflict card appears. After its PR merges, no notice stays open."
+  },
+  {
+   "problem": "W15-05: with a file left in B's task folder while B owed a rebuild, the row offered a bare Merge before the press. The press answered 'Merging #23.' and nothing merged, and the sentence never said where the folder is.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w15-merge, wave 15: a merge that waits for its task's folder (W15-05)' (sessions, one poll, press, daemon composed again, folder cleaned, merge goes on); apps/ui/test/project-overview.test.tsx 'w15-merge, wave 15'",
+   "how": "The poll writes the wait on the record (W15-02), so the row says it before any press, with canMerge false. ProjectPullRequestView gains `folder` (ReviewedPrMerge.worktreeOf), which the Overview shows with FolderPath. The press checks the folder at that moment (folderWaitNow), approves (approveInOrder keeps the wait's sentence) and answers with the wait sentence instead of 'Merging #N.'. Once the folder is clean, the next poll rebuilds and the kept approval merges. The fake daemon answers the same way.",
+   "check_in_the_app": "Bench walk (fix-w15-merge, 13/13 checks): a chain A <- B on bench/seeded, notes.txt left in B's folder, A squash-merged. B's Overview row reads '#3 waits for changes left in its task's folder: take them out or redo the task.', shows the folder path with Copy path, and offers no Merge. The Tasks row reads 'Accepted \u00b7 merge waits for you'. After notes.txt was removed, B merged by itself (steps 03-06)."
+  },
+  {
+   "problem": "W15-06: answering the rebase-conflict card 'I resolved it' or 'Drop the branch and retry from scratch' left the task Ready with no session. The card title was its 'why' cut mid-sentence, the Done line was a bare echo, and the last step promised to open a PR that already existed.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'w15-merge, wave 15' > 'the rebase-conflict card with a pull request open says its last step updates it ...' and \"'I resolved it' and 'Drop the branch ...' each start one session ...\"",
+   "how": "applyRebaseAnswer starts or queues a session through resumeWork and records it with recordStart; Cancel starts nothing. request-words.ts gains rebaseConflictCard / rebaseConflictOutcome: title '\"T\" conflicts with main', a body naming the files, one-line explanations per option, and Done lines from the outcome. The step text says 'updates #N' when a PR is open. The card carries pr_number, task_title and again.",
+   "check_in_the_app": "Make a task's branch conflict with main in a way the agent cannot resolve. The Inbox card is titled '\"<task>\" conflicts with main' and names the files. Answer 'I resolved it': the Done line says '\"<task>\" goes on with your resolution: a session started.' and a session runs. The same holds for 'Drop the branch', which does the task again from main."
+  },
+  {
+   "problem": "W15-07: conflict notices appeared and cleared only after about two polls, with Merge still offered in between, because GitHub answers mergeable: null while it works mergeability out.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-merge, wave 15: GitHub works out mergeability lazily (W15-07)'",
+   "how": "GitHostWatcher.readPullRequest reads an open PR whose mergeable is null again after 1, 2, 4 and 8 s of real time (MERGEABLE_REREAD_MS, configurable as deps.mergeableRereadMs). The fake GitHub can now answer lazily as GitHub does (host.ops.lazyMergeability).",
+   "check_in_the_app": "Make a waiting PR conflict with main, for example by merging a conflicting change on GitHub. The conflict notice and the loss of Merge come within one poll (about a minute), not two."
+  },
+  {
+   "problem": "W15-08: task PR bodies ended 'Task <uuid>, session <uuid>. Opened by Forerunner.', and later comments started 'Updated by session <uuid>:'. Status texts also named session ids.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'w15-merge, wave 15' > 'the pull request body and the comment of a later run name the task and the session in words ...'; loop-docs.test.ts 'w15-merge, wave 15' (no UUID in status texts)",
+   "how": "The body now ends 'Opened by Forerunner in the session started 2026-11-09 04:12 UTC.' followed by the hidden mark `<!-- forerunner:pr project=<id> task=<id> session=<id> -->`. Later comments start 'Updated in the session started ...'. The status commit and body name the session by its start time (sessionWords, which falls back to created_at). openedForAnotherTask reads the mark first and still reads the old visible line, so older PRs keep R-branch's guard.",
+   "check_in_the_app": "Open any task PR on GitHub. Its body ends 'Opened by Forerunner in the session started <date> <time> UTC.' and shows no id. Bench: PRs #2 and #3 on bench/seeded show no UUID in the visible text (steps/after-pr-bodies.json)."
+  },
+  {
+   "problem": "W15-55: the Tasks row said 'Accepted \u00b7 waiting for you to merge' for a PR that was closed, whose rebuild conflicted or whose head moved, while the Overview said otherwise and offered no Merge.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/task-words-merge.test.ts 'w15-merge, wave 15'",
+   "how": "task-words.ts LEFT_TO_YOU_LABELS gives one label per merge outcome, in the warn tone, with the record's sentence as the detail. The labels are: closed 'Accepted \u00b7 pull request closed', rebuild_conflict 'Accepted \u00b7 could not be rebuilt', head_moved 'Accepted \u00b7 changed after the review', rebuilt_without/changed 'Accepted \u00b7 rebuilt: look before you merge', checks_failed 'Accepted \u00b7 a check failed', blocked_by_rules/merge_commits_off 'Accepted \u00b7 merge it on GitHub'.",
+   "check_in_the_app": "Close a waiting task PR on GitHub. After the next poll, the task's Tasks row reads 'Accepted \u00b7 pull request closed' with the Overview's sentence under it, not 'waiting for you to merge'."
+  },
+  {
+   "problem": "W15-68: a merge that waited because GitHub did not answer read 'Accepted \u00b7 merges when its checks pass'.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'w15-merge, wave 15: a merge GitHub does not answer (W15-68)'",
+   "how": "ReviewedPrMerge.run()'s catch writes last_outcome 'unreachable' with 'GitHub did not answer about #N: Forerunner tries the merge again.' when GitHub's error is a retryable provider_error. A waiting_checks record with that outcome is labelled 'Accepted \u00b7 merges once GitHub answers'.",
+   "check_in_the_app": "Press Merge while GitHub is unreachable (network off). The Tasks row reads 'Accepted \u00b7 merges once GitHub answers', and the row says GitHub did not answer and that Forerunner tries again."
+  },
+  {
+   "problem": "W15-63: the sentence '#18 changed after the review: look at the new commits, then merge it yourself or send it back.' offered 'send it back', which no button does.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "merge-record.test.ts (head-moved record), dependent-branches-merge.test.ts R-conflict and real-daemon.test.ts leftovers7-merge2. These assert the new words and fail on the old code.",
+   "how": "headMovedWords in loop/merge.ts now holds the sentence once, used by all three sites: '... then merge it yourself or redo the task.'",
+   "check_in_the_app": "Push a commit to a reviewed task's branch on GitHub. After the next poll, the Overview row reads '#N changed after the review: look at the new commits, then merge it yourself or redo the task.'"
+  },
+  {
+   "problem": "W15-64: the emptied-branch sentences and the up-to-date PR comment had a comma splice, an 'It' with no referent, a lower-case start and a dangling opener.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'w15-merge, wave 15' > 'a branch emptied of the task's own change says so in one sentence each ...'",
+   "how": "emptiedSentence now returns 'The redo from main changed nothing, so #4 was closed.', 'The last run changed nothing and #4 held no change, so it was closed.' and 'The main branch already has this change.'. The comment reads 'This task's work no longer changes anything on main, so this pull request is closed. Its branch is kept.'",
+   "check_in_the_app": "Redo a task whose change is already on main. The Overview / Tasks detail reads 'The redo from main changed nothing, so #N was closed.', and the PR's closing comment on GitHub reads 'This task's work no longer changes anything on main, so this pull request is closed. Its branch is kept.'"
+  },
+  {
+   "problem": "W15-10: must()'s credential-prompt detection reads git's English words, but the GitOps in loop/merge.ts and loop/docs.ts ran git in the process language. On a translated git, a missing token was reported in other words.",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "packages/runtime/test/git-untranslated-sites.test.ts (every new GitOps in merge.ts and docs.ts asks for untranslated messages)",
+   "how": "Every GitOps built in loop/merge.ts (update path, conflictsIn, reviewed-change and take-out reads, owed-wait look) and loop/docs.ts (project folder commit, preview merge, status folder) now passes untranslated: true.",
+   "check_in_the_app": "On a computer whose git is translated (for example German), remove the GitHub token and press Merge on a waiting PR. The row says the GitHub sign-in failed in Forerunner's own words, not git's translated text."
+  },
+  {
+   "problem": "W15-11: folders made before the line-endings pin (29e0c81) never got core.autocrlf=false: a reused task worktree, an import's checkout on its fetch path, and a project's own folder until a task ran in it.",
+   "u_ids": [
+    "U-037"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts 'w15-merge, wave 15: folders made before the line-endings pin (W15-11)'",
+   "how": "executeIn pins a reused task worktree after its fetch. The import pins an existing checkout after its fetch. statusInFolder pins an existing project folder before its commit. Each failure is logged and never fatal. capabilities.md names the critic's GitDiffPort and the project checks' scriptsBefore as raw git readers. ADR 0113 has a dated amendment (2026-11-09), and its earlier amendment's date is corrected to 2026-11-08.",
+   "check_in_the_app": "On Windows, with a task or project folder made by an earlier version, run the task again (or the session-end status, or an import fetch). `git -C <folder> config --local core.autocrlf` then reads false."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W15-09 (below the cut line): conflict-marker checks after a resolution",
+   "why": "Not built. Part (a) already holds in the code: only unmerged index paths are checked for markers. Part (b), unstaged edits read through git's text, is not built and goes to a later wave."
+  },
+  {
+   "problem": "W15-73 (below the cut line): two waiting rows that read alike",
+   "why": "No change made. The rows already read '\"title\" \u00b7 pull request #N' and differ by number. Polish wording is w15-words' area if the owner wants more."
+  },
+  {
+   "problem": "A real-daemon case for W15-04, W15-55 and W15-68, and a compose-twice restart for the earlier notice's before_conflict words",
+   "why": "Covered by composed dependent-branches-merge tests and task-words unit tests on the real store. I did not add a full real-daemon or restart case for these, for time."
+  },
+  {
+   "problem": "W15-10 end to end with a translated git",
+   "why": "This machine has no git translations (TM-6's loop-docs case skips here with its reason). The site test pins every GitOps, and the live step stays for the owner's or CI's machine."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check",
+   "result": "exit 0. lint, lint:paths and typecheck clean. Unit: 481 files, 4998 passed, 7 skipped. docs:links ok, secret-scan clean (2080 files). docs:check could not diff origin/main (there is no origin in the worktree), so I ran node scripts/docs-check.mjs --base 931ed52: ok (35 files)."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (live- or Docker-gated); 30 tests passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 87 files, 1025 tests passed (includes real-daemon.test.ts and project-overview.test.tsx)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 35 passed (the local config is git-ignored and not committed)"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "bench fix-w15-merge (--provider bench, --githost 48510, daemon 48500, UI 2100) + walk.cjs",
+   "result": "13/13 checks passed (/tmp/frbench/fix-w15-merge/steps/after-w15-merge.json). Bench stopped with scripts/bench/stop.mjs; its home, browser profile and githost repos are deleted."
+  },
+  {
+   "command": "cargo (desktop shell)",
+   "result": "not run: apps/desktop is untouched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/live2/github/github-a/steps/43-chain2-overview-after-squash-dirty.png",
+   "/tmp/frbench/live2/github/github-a/steps/44-chain2-overview-after-rebuild.png",
+   "/tmp/frbench/live2/github/github-a/steps/45-chain2-inbox-after-rebuild.png",
+   "/tmp/frbench/live2/github/github-a/steps/46-chain2-tasks-after-rebuild.png",
+   "/tmp/frbench/live2/github/github-a/steps/71-tm4-merge23-right-after.png",
+   "/tmp/frbench/live2/github/github-a/steps/74-tm4-merge23-after-12s.png",
+   "/tmp/frbench/live2/github/github-a/steps/82-tm2-and-b2-inbox.png",
+   "/tmp/frbench/live2/github/github-a/steps/84-tm2-answer-markers-after.png",
+   "/tmp/frbench/live2/github/github-a/steps/160-c57-status-p2-overview.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w15-merge/steps/01-after-w15-01-project1-overview-own-docs-pr.png",
+   "/tmp/frbench/fix-w15-merge/steps/02-after-w15-01-project2-overview-no-foreign-docs-pr.png",
+   "/tmp/frbench/fix-w15-merge/steps/03-after-w15-05-overview-folder-wait.png",
+   "/tmp/frbench/fix-w15-merge/steps/04-after-w15-05-tasks-folder-wait.png",
+   "/tmp/frbench/fix-w15-merge/steps/05-after-w15-05-overview-after-clean.png",
+   "/tmp/frbench/fix-w15-merge/steps/06-after-w15-05-tasks-after-clean.png",
+   "/tmp/frbench/fix-w15-merge/steps/after-w15-merge.json",
+   "/tmp/frbench/fix-w15-merge/steps/after-pr-bodies.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/docs-scaffold.test.ts (2 assertions)",
+   "why": "W15-01: once two projects are linked, a second project no longer writes into an unmarked scaffold PR, and the scaffold/status body no longer shows the project id."
+  },
+  {
+   "test": "packages/runtime/test/loop-docs.test.ts (status PR body and comment assertions)",
+   "why": "W15-01/W15-08: the status PR body and comment name the session by its start time, not its id."
+  },
+  {
+   "test": "packages/capabilities/test/pr-executor.test.ts 'clones into a worktree, ...'",
+   "why": "W15-08: the later-run comment now starts 'Updated in the session started ' instead of 'Updated by session <id>'."
+  },
+  {
+   "test": "packages/capabilities/test/pr-executor.test.ts TM-1 and TM-1-sibling cases; packages/runtime/test/dependent-branches-merge.test.ts TM-1 cases",
+   "why": "W15-64: the emptied-branch sentences and the up-to-date comment were reworded."
+  },
+  {
+   "test": "packages/runtime/test/merge-record.test.ts; dependent-branches-merge.test.ts R-conflict; apps/ui/test/real-daemon.test.ts leftovers7-merge2",
+   "why": "W15-63: the head-moved sentence now ends 'or redo the task.' instead of 'or send it back.'"
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts tailmerge TM-4 case",
+   "why": "W15-05: it now asserts the exact answer sentence of a press on a folder wait (before, it checked only 'not refused')."
+  }
+ ],
+ "new_problems": [
+  "packages/runtime/src/session/intake.ts:1339: the refusal 'an intake proposal is open for this project (request ${open.id}); answer it in the inbox before planning from a new brief' puts a request UUID in a sentence that can reach the person (design \u00a75 rule 3). Not my area's file; not changed.",
+  "When a project's status stays in the app because another project's status PR is open on the same repository (W15-01), only the daemon log says so ('status pull request not written: another project's status pull request is open'). The Docs tab (daemon/docs-routes.ts) does not tell the person. A per-project branch is owner question W15-112.",
+  "Bench: after the last task PR merged, the Overview still shows the 'Waiting for you to merge' heading and its 'Merge puts the work into main...' line with no task row under it, only the docs section (/tmp/frbench/fix-w15-merge/steps/05-after-w15-05-overview-after-clean.png). Polish, likely pre-existing."
+ ],
+ "notes_for_other_areas": [
+  "api-types: ProjectPullRequestView gains optional `folder: string | null` (the task's worktree folder for a task row; append-only). SummaryTab shows it under the row with FolderPath (testId 'pr-wait-folder', path 'pr-wait-folder-path'). The fake daemon's merge route answers {state:'queued', sentence: row.merge.sentence} when row.folder is set.",
+  "Sentences changed (for w15-words). head moved: '... then merge it yourself or send it back.' -> '... then merge it yourself or redo the task.' (headMovedWords, loop/merge.ts). emptied: 'Redone from main, it changed nothing, so #4 was closed.' -> 'The redo from main changed nothing, so #4 was closed.'; 'It changed nothing and #4 held no change, so #4 was closed.' -> 'The last run changed nothing and #4 held no change, so it was closed.'; 'main already has this change.' -> 'The main branch already has this change.'. Up-to-date PR comment -> 'This task's work no longer changes anything on main, so this pull request is closed. Its branch is kept.'. PR body -> 'Opened by Forerunner in the session started YYYY-MM-DD HH:MM UTC.' plus a hidden mark; comment -> 'Updated in the session started ...:'. Status commit -> 'docs: status after the session started ...'; status body -> 'Status update of the session started ...:'.",
+  "New sentences and labels: owedCommitSentence '#N waits for a commit made in its task's folder: push it to GitHub or undo it.'; unreachable 'GitHub did not answer about #N: Forerunner tries the merge again.' with Tasks label 'Accepted \u00b7 merges once GitHub answers'; LEFT_TO_YOU_LABELS in daemon/task-words.ts (one label per merge outcome); rebase-conflict card words in daemon/request-words.ts rebaseConflictCard / rebaseConflictOutcome (title '\"T\" conflicts with main').",
+  "Hidden PR mark: forerunnerMarker / readForerunnerMarker / sessionWords are exported from packages/capabilities/src/githost/pr-executor.ts (`<!-- forerunner:pr project=<id> task=<id> session=<id> -->`, URI-encoded). loop/docs.ts exports isProjectDocsPr(project, pr, {soleLinked}), isProjectStatusPr and soleLinkedProject. Anything listing a project's PRs should use them.",
+  "loop/merge-mode.ts new exports: OWED_FOLDER_COMMITS, owedCommitSentence, OWED_FOLDER_OUTCOMES, owedFolderWait(pr, held), waitsForYourMergeSentence, plainWaitForYou, folderWaitOver, MERGE_CARD_KEY, REDO_FROM_BASE, redoneMergeCard(card, nowIso). owedMergeWait now also covers left_to_you records.",
+  "pr-executor: folderHold(git, branch, base) -> 'changes' | 'commits' | null is exported. DependentOutcome has `held` and a new result 'waits' (STUCK_REBUILDS: busy, held, failed, conflict, waits; OWES includes waits). REBUILD_PENDING_REF marks an unpushed rebuild.",
+  "ReviewedPrMerge (loop/merge.ts): public worktreeOf(task) and folderWaitNow(task). run()'s catch writes last_outcome 'unreachable' on a retryable provider_error.",
+  "commands/task.ts: task.reopen of a done task withdraws its open merge card (redoneMergeCard) in the same transaction and starts no session (owner question on Tasks-row actions still open).",
+  "testenv: FakeGitHost `host.ops.lazyMergeability = true` makes the first GET after a head or base change answer mergeable null (a merge always computes it). GitHostWatcher takes deps.mergeableRereadMs (default [1000,2000,4000,8000]).",
+  "packages/runtime/test/git-untranslated-sites.test.ts pins every `new GitOps(` in loop/merge.ts and loop/docs.ts to pass untranslated: true, so a new GitOps site there must pass it too."
+ ]
+}

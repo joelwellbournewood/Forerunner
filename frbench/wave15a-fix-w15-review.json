@@ -1,0 +1,317 @@
+{
+ "area": "w15-review",
+ "branch": "fix/w15-review",
+ "head_sha": "86c2c469f5e114b9f0fc6afd1040a50d10cb52c0",
+ "commits": [
+  {
+   "sha": "160b8f2",
+   "subject": "verification: a command described in words is not run bare (W15-24, U-044)"
+  },
+  {
+   "sha": "e17f0df",
+   "subject": "review: the critic knows the site rule the worker ran under (W15-25, U-044)"
+  },
+  {
+   "sha": "52316c9",
+   "subject": "review: a review reads every page a paused task rested on (W15-26, U-044)"
+  },
+  {
+   "sha": "749d420",
+   "subject": "session: a paused review is reviewed without a second run (W15-27, U-044)"
+  },
+  {
+   "sha": "96dba15",
+   "subject": "review: one notification for a questions card, no sign-off filed first (W15-28, U-022)"
+  },
+  {
+   "sha": "cf19fb0",
+   "subject": "session log: the sent-back line names the blocking finding once (W15-58, U-074)"
+  },
+  {
+   "sha": "159786b",
+   "subject": "review: a 'human' a rule made says the work waits, never \"Accepted:\" (W15-51, U-074)"
+  },
+  {
+   "sha": "49ba970",
+   "subject": "browser: a page try whose browser never starts says so in plain words (W15-49, U-074)"
+  },
+  {
+   "sha": "c59e2c9",
+   "subject": "verification: a checks line never names a package.json that is not there (W15-50, U-074)"
+  },
+  {
+   "sha": "e800058",
+   "subject": "ui: the Tasks tab's Critic column says what is true, never a raw \"accepted\" (W15-42, U-074)"
+  },
+  {
+   "sha": "82b2263",
+   "subject": "research: the brief says today's date, each page when it was read (W15-31, U-044)"
+  },
+  {
+   "sha": "e9a1752",
+   "subject": "ui: a report's table reads as plain lines; each page read is listed once (W15-41, W15-54, U-074)"
+  },
+  {
+   "sha": "6a330db",
+   "subject": "registry: a specialist's default file only when the brief names none (W15-32, U-044)"
+  },
+  {
+   "sha": "9465e50",
+   "subject": "intake: the planner plans no research from memory under a site rule (W15-33, U-044)"
+  },
+  {
+   "sha": "86c2c46",
+   "subject": "user guide: a paused review is reviewed without running the specialist again (W15-27, U-044)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "W15-24: a CLI tool was sent back three times for the usage exit its own criterion asks for. The sentence 'node wc.js on a file containing ...' ran a bare `node wc.js`, and expectsError read only that one sentence.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/verification.test.ts 'w15-review, wave 15' > 'W15-24: live check 2's word counter is Done after one run ...' (before: revise then escalate x3); packages/runtime/test/try-plan.test.ts 'w15-review, wave 15' (three W15-24 cases)",
+   "how": "try-plan.ts now has two word lists. GOES_ON words (verbs and the like) end a command, as before. A CONNECTORS word (on, in, for, with, from, at, by, to, against, using, ...) after a command with no written argument marks it `described`. commandsIn leaves described commands out. A script that listens is still started. 'with no ...' and 'without ...' count as a bare run. A bare run (no args, no stdin) gets expectsError when any sentence of the brief, the criteria or the README says a run with no argument fails (NO_ARGUMENT plus EXPECTS_ERROR). The measured-problem rule (ADR 0104) is unchanged. ADR 0110 amended.",
+   "check_in_the_app": "Bench: create a coder task 'Build wc.js command line word counter' with live check 2's outcome and six criteria (criterion 1: \"node wc.js on a file containing 'hello world foo' prints 3\"; criterion 4: 'Running with no argument prints a usage message to stderr and exits with code 1'), then Start. Expect Done \u00b7 Reviewed and tried after one run. 'See what was checked' should list only 'node wc.js <file>: worked', with no bare 'node wc.js: had a problem'. Live check 3 (step S6): brief 'A command line tool that counts the words in a file. Usage: node wc.js <file>.', Approve and start. Expect Done \u00b7 Reviewed and tried after one run, no 'Sent back: Tried node wc.js' line in the session log, and the dependent test task runs."
+  },
+  {
+   "problem": "W15-25: the critic was not told the project's site rule. It sent back a correct refusal ('probably wrong') and required a fetch the rule forbids, and that order went into the next brief.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/research-web.test.ts 'w15-review, wave 15' > 'W15-25: the run returns the site rule its brief carried' and 'W15-25: after Go ahead without, the next brief holds no order to read a page the site rule refuses'; packages/runtime/test/verification.test.ts > 'W15-25: the critic's review request states the site rule ...'",
+   "how": "The executor returns the 'sites' line its brief carried as TaskExecutionResult.webRule. loop/critic.ts passes it as ReviewEvidence.webRule. evidence.ts renders it right after the brief in its own section, 'Web pages research may read (the project's rule the worker ran under)', with WEB_RULE_TRUST_LINE. critic.md (now 1.3.0) says a refusal under the rule is right and no required action may ask for a refused page. For a web-reading specialist, retryConstraints drops any open finding that names a host the rule refuses (webRuleRefuses, hostsNamedIn) and adds WEB_RULE_WINS_LINE. ADR 0107 amended.",
+   "check_in_the_app": "Live check 3 (step S4): write web_access {mode:'only', only:['10.1.2.3']} into a project's settings in the state DB. Add a researcher task that names an MDN page and Start. In the model-call log, the critic's first request should carry '## Web pages research may read (the project's rule the worker ran under)' with the 10.1.2.3 line. The review should not say 'probably wrong' and no finding should require fetching a developer.mozilla.org page. After 'Go ahead without', the next researcher brief should have no order to read a refused host and should carry 'The project's rule on which websites research may read comes before any finding ...'."
+  },
+  {
+   "problem": "W15-26: a research task paused at its budget after reading pages. After Continue, its review saw none of those pages and was told the evidence was complete.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/review-sources.test.ts 'w15-review, wave 15' (both cases fail before: no '### web page', and the complete line with nothing listed)",
+   "how": "Each run keeps the pages it read, with their text, on its Run row as a separate `reviewSources` artifact (reviewSourcesArtifact; the task drawer never reads it). The critic loop's sourcesOfTask reads the task's other work runs, newest first, via keptSourcesOf. webSourceEvidence lists those pages after the run's own, marked '(read ... by an earlier run of this task)'. A page whose text was not kept (an older row) is listed under 'Evidence not available'. ADR 0107 amended (point 3).",
+   "check_in_the_app": "Live check 3 (step S3): run a research task that reads pages and pauses at its budget, then press Continue. The continued run fetches nothing. In the model-call log, the critic's request should have a '### web page <url> (read ... by an earlier run of this task)' section for each page the paused run read. The task drawer's 'Read:' list should still show addresses and titles only."
+  },
+  {
+   "problem": "W15-27 (TR-15): a review refused at the project's budget paused the task with 'The work is done; its review waits for room in the budget.', but after the budget was raised the specialist ran again before the review.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'w15-review, wave 15' > 'W15-27: after the budget is raised, the paused review is done without running the coder again' and '... the same across a restart between the pause and the raise' (both failed with the old runner). New: '... work that changed while the review waited is done again', and packages/capabilities/test/pr-executor.test.ts 'w15-review, wave 15' prepareReview.",
+   "how": "Built as ADR 0112's TR-15 design. session/review-pending.ts keeps a `reviewPending` entry on the work run's Run row: attempt, specialist, summary, report, changedFiles, PR, branch, webRule, searchSeen, and workHash (a sha256 over the changed files as they are in the workspace). The runner writes it at a budget refusal and also at a credential refusal (same class), via keepForReview. Before execute, reviewOnlyResult takes the latest work run's entry if the attempt is unchanged, executor.prepareReview(task) makes the workspace ready, and workHash matches. The entry is cleared either way. The kept result (reviewOnly: true) goes straight to review: no task.started, task.files, task.finished or onTaskFinished, and heard lines and queue notes are not used up. prepareReview: PrTaskExecutor (one appended method) puts a repo task's worktree back on its branch and returns a project folder as is. LoopTaskExecutor returns its worktree. In a project folder whose session-end commit already took the work, GitDiffPort.diffFor(..., {taskFiles}) diffs the task's files since its last 'Workspace before' snapshot. Anything else falls back to today's rerun. ADR 0112 amended; user guide updated.",
+   "check_in_the_app": "Bench (walked, AFTER screenshots 03, 05, 06): a project with a CHF 0.01 budget and one coder task. Start: the Inbox card reads 'The work is done; its review waits for room in the budget.' Raise the budget to CHF 5 in Settings. The second session's log is only 'The session started ...', 'The critic accepted \"...\"', 'Session over'. The drawer shows one coder run and two critic runs. Live check 3 (step R3): project budget CHF 0.06, one writer task, Start; the review pauses. Restart the daemon, then raise the budget. Only the critic runs: no second 'The writer started' line, and the writer has no new call in the model-call log."
+  },
+  {
+   "problem": "W15-28: one card raised two notifications: a 'needs your sign-off' notification for a sign-off withdrawn a few ms later, then the questions card's own.",
+   "u_ids": [
+    "U-022"
+   ],
+   "failing_test_before": "packages/runtime/test/notifications-wiring.test.ts 'w15-review, wave 15' > 'W15-28: one notification for the questions card, none for a sign-off, and no sign-off request in any status'",
+   "how": "loop/critic.ts decides on reportedQuestions before the review and passes ReviewContext.questionsCardInstead. CriticService then files no task sign-off for a 'human' verdict. The runtime files the questions card as before (askPersonInstead still withdraws a sign-off filed by any other caller).",
+   "check_in_the_app": "Bench: start with FORERUNNER_BENCH_ASK=<title> and FORERUNNER_BENCH_ASK_STYLE=bullets, run the task, and open the Inbox and GET /notifications/recent. Expect one open card '\"<title>\": the specialist asks you', one request_blocking notification for it, and none saying 'needs your sign-off'. Live check 3 (step S7): same, with the real critic."
+  },
+  {
+   "problem": "W15-58: the line 'The critic sent X back:' quoted what passed, not why; it read 'back: Sent back: ...'; and '<file' lost its '>'.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "packages/runtime/test/event-lines.test.ts 'w15-review, wave 15' and packages/critic/test/followup.test.ts 'w15-review, wave 15'",
+   "how": "The critic.verdict event now carries `blocking`, the review's first finding by severity (runner blockingFindingOf). personLine's critic-review case names that finding once. An event written before uses the summary without its own 'Sent back:'. quotedWords now strips only a blockquote marker at the start of a line, so '<file>' stays whole.",
+   "check_in_the_app": "Bench (walked, AFTER screenshot 02): start with FORERUNNER_BENCH_CRITIC_REJECT=<title>. The session log reads 'The critic sent \"<title>\" back: The change does not meet the first acceptance criterion as written. Trying again.', on one line, with no 'Sent back:' inside."
+  },
+  {
+   "problem": "W15-51: the Reviews tab showed 'needs you' above 'Accepted: the changed file matches the brief.' when the asks-person rule turned an accept into 'human'. ruledSummary's human branches were dead code.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "packages/critic/test/critic.test.ts 'w15-review, wave 15' (two cases); apps/ui/test/real-daemon.test.ts 'w15-review, wave 15' > 'W15-51: GET /tasks/:id serves the ruled summary ...'",
+   "how": "critic.ts now applies ruledSummary to a rule's 'human' too, giving 'Waits for you: the report asks you something. <model words>' or 'Waits for your sign-off. <model words>'. Both sign-off cards (CriticService's and followup applyVerdict's) quote the model's own words through ownWords, which drops that lead so the card does not say it twice.",
+   "check_in_the_app": "Bench: run a task whose report ends with 'Questions for the person:' (FORERUNNER_BENCH_ASK_STYLE=bullets) and have the critic accept. The drawer's review and the Reviews tab should read 'Waits for you: the report asks you something. ...', never 'Accepted: ...'."
+  },
+  {
+   "problem": "W15-49: a page try whose browser never starts showed Playwright's raw text 'the browser did not start (browserType.launch: Timeout 60000ms exceeded.)'.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "packages/capabilities/test/try-page.test.ts 'w15-review, wave 15' > 'W15-49: a browser that never starts reads in plain words ...'",
+   "how": "try-page.ts browserDidNotStart now returns 'the browser did not start within a minute; the page was judged from its files' on a timeout and 'the browser did not start; the page was judged from its files' otherwise. The exception text goes to logger.warn. The R-sandbox meaning is unchanged.",
+   "check_in_the_app": "Bench: set FORERUNNER_BROWSER_EXECUTABLE to a binary that never starts, then run a page task. 'See what was checked' should read 'index.html was not tried: the browser did not start within a minute; the page was judged from its files', with no 'browserType' and no 'ms exceeded'."
+  },
+  {
+   "problem": "W15-50: a checks line named a package.json that does not exist: '... that no check ran: its package.json names no test script'.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "packages/runtime/test/try-plan.test.ts 'w15-review, wave 15: the checks line is true now'",
+   "how": "project-checks.ts untestedFiles now says 'there is no package.json to run them' when there is none, 'its package.json names no test script' when it names none, and 'its package.json cannot be read' when it cannot be parsed.",
+   "check_in_the_app": "Bench: run a coder task in a folder project that writes wc.js and wc.test.js and no package.json. 'See what was checked' should end '... (wc.test.js) that no check ran: there is no package.json to run them'."
+  },
+  {
+   "problem": "W15-42: the Tasks tab's Critic column showed a raw lowercase 'accepted' beside a failed task and beside a task marked done anyway.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'w15-review, wave 15' > 'W15-42: the Critic column never shows a raw accepted ...'",
+   "how": "TasksTab.tsx criticColumn: 'Not reviewed' for a task done without a check, 'Failed review' for a failed task the critic sent back, nothing for any other failed or cancelled task, and the critic's last call in words otherwise. The column cell now has data-testid='task-critic'.",
+   "check_in_the_app": "Bench: Mark done anyway on a failed task. Its Critic column reads 'Not reviewed'. A task failed after the ladder reads 'Failed review'. No row reads 'accepted'."
+  },
+  {
+   "problem": "W15-31: a research brief asked for access dates, but nothing told the researcher today's date or when a page was read. The run removed its correct date and needed a Continue.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/research-web.test.ts 'w15-review, wave 15' > 'W15-31: the brief says today's date in the person's time zone, each page says when it was read, and the system prompt does not change'",
+   "how": "Every brief's constraints carry todayLine: \"Today's date is YYYY-MM-DD (<the person's time zone>).\", UTC as fallback. It is in the user message, so the system prompt and its cache are unchanged. web_fetch's answer adds ', read <date> <time> UTC' and its artifacts carry readAt. WebSource.readAt is kept in reviewSources. The critic's input file reads 'web page <url> (read ... UTC)'. The intake request adds 'Today: <date> (UTC)'.",
+   "check_in_the_app": "Live check 3 (step S2): a researcher task whose criteria ask for an access date per source. In the model-call log the brief contains \"Today's date is 2026-11-.. (Europe/Zurich)\", each web_fetch result contains ', read ... UTC', and the system prompt carries no date. The run keeps its access dates without needing a Continue."
+  },
+  {
+   "problem": "W15-41 and W15-54: the task drawer showed raw markdown table rows ('| # | Criterion |...', '|---|'), and its Read list showed the same page twice.",
+   "u_ids": [
+    "U-074"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'w15-review, wave 15' > 'W15-41: a report's markdown table reads as plain lines ...' and 'W15-54: a page read twice is listed once ...'",
+   "how": "RichText drops a table's separator row and renders each row's cells as one line joined by ' \u00b7 '. TaskDrawer's webSourcesOnce lists each page once, in first-read order, with a later read winning over an earlier refusal.",
+   "check_in_the_app": "Open the drawer of a tester task whose report has a coverage table: no '|' or '|---|' appears, and each row reads '1 \u00b7 Criterion \u00b7 ... \u00b7 pass'. A research run that read a page twice lists it once under Read."
+  },
+  {
+   "problem": "W15-32: the researcher's role prompt said 'Write answer.md' while the brief named another file, leaving a stray answer.md. The data analyst, designer and science evaluator had the same pattern.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/registry.test.ts 'w15-review, wave 15' > 'W15-32: a specialist's default output file is the one only when the brief names none'",
+   "how": "All four prompts now say 'Write the file the brief names (`<default>.md` when it names none)'; the researcher's adds 'and no other'. Their output_contract lines are updated the same way and versions bumped to 1.1.0. The registry test fails on any prompt line 'Write `<file>.md`'.",
+   "check_in_the_app": "Live check 3 (step S2): a researcher task whose outcome names mdn-css-2026.md. Files lists only mdn-css-2026.md (no answer.md), and the report does not mention answer.md."
+  },
+  {
+   "problem": "W15-33 (planner text part): under an empty 'only these websites' list the planner still planned research with figures from memory and URLs it would not read.",
+   "u_ids": [
+    "U-044"
+   ],
+   "failing_test_before": "packages/runtime/test/intake.test.ts 'w15-review, wave 15' > 'W15-33: under an only list the planner is told research works from the listed sites and the project's files, never from memory, ...'",
+   "how": "onlyWebsitesLines (empty and listed) now says research works only from the listed sites and the project's files, never from the model's own knowledge, and that a brief needing another site gets a person task for the sources, which the research waits on. NO_WEB_RULE says the same. SMALL_PLAN_RULES now allows that person task. ADR 0107 amended (point 4).",
+   "check_in_the_app": "Bench: POST /projects, write web_access {mode:'only', only:[]} into the state DB, then POST /projects/:id/intake with 'Compare the free tiers of three static site hosts, with sources'. The planning request in the model-call log says 'Research works only from the files the project holds, never from the model's own knowledge ...'. Live check 3: the plan has a person task for the sources instead of research from memory."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W15-33: the plan-card line 'reads no website ... Add websites in Settings or Change the plan' under a researcher task is not built.",
+   "why": "It needs a new PlanTaskView field (an api-types change that w15-run and w15-merge also append to), the fake daemon, the InboxPage render and a real-daemon case. The cut line allows W15-33 to end in not_done. The planner-text part is done and tested."
+  },
+  {
+   "problem": "W15-32: the bench stand-in (testenv/src/bench/role-player.ts) does not yet act on an unconditional default file the way the live model did.",
+   "why": "Time. The prompt fix is guarded by the registry unit test. The live proof is live check 3 step S2."
+  },
+  {
+   "problem": "W15-27: the review-only pass is not offered for a project linked to a folder on the person's own computer, and the session log has no line saying the waiting review went on.",
+   "why": "That project's inner executor has no prepareReview hook, so it falls back to today's rerun (documented in ADR 0112). A new log line would be a new sentence in event-lines outside personLine's critic case, which belongs to w15-words. Today the session's only line is the critic's verdict."
+  },
+  {
+   "problem": "W15-28: the optional re-read guard in compose.ts's notify hook is not built.",
+   "why": "It is not needed once no sign-off is filed: the composed test proves one notification. compose.ts was left untouched."
+  },
+  {
+   "problem": "W15-31: the intake's 'Today' line is the UTC date, not the person's time zone.",
+   "why": "The intake request has no owner time zone at hand. The specialists' briefs use the person's time zone with a UTC fallback."
+  },
+  {
+   "problem": "W15-26: when every page's text is kept, the review request still ends with the 'nothing missing' line, although the acceptance text says the request must never contain it.",
+   "why": "Interpretation. With every page present the evidence is complete, and listing a page as unavailable would be untrue and invite an escalate. When a page's text was not kept, the request lists it under Evidence not available and has no complete line, and a test covers that case."
+  },
+  {
+   "problem": "Bench BEFORE screenshots were not taken on the base code.",
+   "why": "The BEFORE evidence is live check 2's real-model screenshots and texts (/tmp/frbench/live2/research/research-a/steps/80-s4-c1-inbox.png, 81-s4-c1-checked.txt, 54-s2-ip-drawer, 15-s1-paused2-drawer.png; run journey RUN-6). Every fix's test was shown failing on the old code before the fix."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit, docs:check, docs:links, secrets:scan)",
+   "result": "EXIT 0; unit 480 files, 5000 passed, 7 skipped. docs:check without --base found no origin/main ('nothing to check')."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (50 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0; 30 passed, 75 skipped (Postgres-backed tests skip without FORERUNNER_TEST_PG, as expected)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "EXIT 0; 87 files, 1026 passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found"
+  },
+  {
+   "command": "bench fix-w15-review (--provider bench, ports 48502/2102): AFTER walk (scratchpad walk.cjs, walk2.cjs)",
+   "result": "W15-58 sent-back line names the finding; W15-27: one coder run, the second session has only the critic's review; W15-42 column words; bench stopped, home deleted"
+  },
+  {
+   "command": "cargo (desktop shell)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/critic/test/evidence.test.ts 'the registry critic prompt names the sections and the escalation reasons the code acts on'",
+   "why": "The critic prompt is now 1.3.0 (W15-25) and must name the new web-rule section; the test asserted 1.2.0."
+  },
+  {
+   "test": "packages/capabilities/test/try-page.test.ts 'R-sandbox: a timeout is not retried without the sandbox' (both variants)",
+   "why": "It asserted Playwright's raw text in the person's line. W15-49 replaces that with plain words; the raw text goes to the log."
+  },
+  {
+   "test": "packages/runtime/test/research-web.test.ts 'keeps its task on the loop driver, reads the page through web_fetch ...'",
+   "why": "W15-31: the critic's input-file path for a page now names its read time ('web page <url> (read 2026-03-02 09:00 UTC)')."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts TR-5 'names no website and says research reads none'",
+   "why": "W15-33 changed the empty-list planning line to say what to plan instead, never from memory."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts \"'Only these websites' reaches the planner\"",
+   "why": "W15-33 changed the listed-sites planning line; the assertion is split into the unchanged head plus the new sentence."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/live2/research/research-a/steps/80-s4-c1-inbox.png",
+   "/tmp/frbench/live2/research/research-a/steps/81-s4-c1-checked.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w15-review/steps/01-after-w15-42-58-tasks-tab.png",
+   "/tmp/frbench/fix-w15-review/steps/02-after-w15-58-session-log.png",
+   "/tmp/frbench/fix-w15-review/steps/03-after-w15-27-inbox-review-waits.png",
+   "/tmp/frbench/fix-w15-review/steps/04-after-w15-27-tasks-done.png",
+   "/tmp/frbench/fix-w15-review/steps/05-after-w15-27-session-2.png",
+   "/tmp/frbench/fix-w15-review/steps/06-after-w15-27-session-1.png"
+  ]
+ },
+ "new_problems": [
+  "Bench session 1 of the W15-27 walk shows a stray word 'warning' on its own line just before '\"X\" paused before its review: ...' in the session log (/tmp/frbench/fix-w15-review/steps/06-after-w15-27-session-1.txt). It looks like the event's warning label rendered as text; not this area's code (the session log rendering belongs to w15-words).",
+  "W15-25 sibling: a finding whose required action names no host (the live 'Fetch the MDN dialog page and write dialog.md') is still an order in the retry brief. Now the critic knows the rule and the brief says the rule comes before any finding, but nothing in code can recognise such an order.",
+  "Before W15-28, any task 'human' verdict on a report that asked the person filed a sign-off that was then withdrawn. Older databases may still hold withdrawn critic:signoff rows; nothing reads them, but the Answered list may show them."
+ ],
+ "notes_for_other_areas": [
+  "W15-27 LANDED (for w15-words, W15-65): 'review_waits' now means the next session reviews the kept result without running the specialist again, as long as the attempt and the changed files are unchanged. So the card's 'The work is done; its review waits for room in the budget.' (request-words.ts pausedWorkSentence) is true now and needs no rewording for truth. When the files changed, the specialist runs again first. A review refused by a credential is kept the same way.",
+  "runner.ts (w15-run owns recordStep and addCost): this area wrapped executor.execute as `result = kept ?? (await this.deps.executor.execute({...}))`, where `kept` comes from reviewOnlyResult(task) right after the in_progress transition. sayStarted, task.files, task.finished and onTaskFinished are skipped when result.reviewOnly. heard and notes are not consumed by the pass. The critic.verdict emit gains a `blocking` field. TaskExecutionResult gains `webRule?` and `reviewOnly?`. The TaskExecutor interface gains `prepareReview?(task)`. Keep all of these at merge.",
+  "executor.ts (w15-run owns searchPlanFor, the pause rule and cost): this area added `todayLine` to the brief constraints, `webRule` to the returned results (the paused one too, which now also returns webSources and searchSeen), reviewSourcesArtifact beside webSourceArtifact in both drivers' Run artifacts, the retryConstraints `refusesHost` option (webRuleRefuses, hostsNamedIn, WEB_RULE_WINS_LINE) and LoopTaskExecutor.prepareReview.",
+  "pr-executor.ts: only one appended method, PrTaskExecutor.prepareReview(task), at the end of the class (it checks out the task's branch in its worktree if needed; no commit, no push).",
+  "Run row artifacts gain two entries: `reviewSources` (page text kept for later reviews; never served to a screen; runWebSources reads only `webSources`) and `reviewPending` (the kept result for the review-only pass).",
+  "Model-facing texts added (code, test the exact text): critic section 'Web pages research may read (the project's rule the worker ran under)' plus WEB_RULE_TRUST_LINE; critic.md 1.3.0 bullet; WEB_RULE_WINS_LINE in retry briefs; \"Today's date is YYYY-MM-DD (<tz>).\" in every brief; ', read <date> <time> UTC' on web_fetch results; 'Today: <date> (UTC)' in the intake request; review-only artifact 'this review is of the run above, which finished in an earlier session; its review waited for room in the budget, and the work has not changed since'; new onlyWebsitesLines and NO_WEB_RULE texts; specialist prompts 1.1.0 ('Write the file the brief names (`answer.md` when it names none)').",
+  "Person-facing sentences changed (old -> new): (1) event-lines critic.verdict sent back: 'The critic sent \"X\" back: <summary's first 100 chars>. Trying again.' -> 'The critic sent \"X\" back: <the review's blocking finding>. Trying again.' (2) try-page: 'the browser did not start (<Playwright text>)' -> 'the browser did not start within a minute; the page was judged from its files', or 'the browser did not start; the page was judged from its files'. (3) project-checks: '... that no check ran: its package.json names no test script' -> '... : there is no package.json to run them' when there is none, '... : its package.json cannot be read' when it cannot be parsed, unchanged otherwise. (4) critic ruled summary for a rule's 'human': model words -> 'Waits for you: the report asks you something. <model words>' or 'Waits for your sign-off. <model words>'. (5) Tasks tab Critic column: 'accepted' beside failed or marked-done tasks -> 'Not reviewed' / 'Failed review' / '\u2014'. (6) Drawer: markdown table rows -> 'cell \u00b7 cell \u00b7 cell'. (7) user-guide paragraphs on paused reviews and research dates.",
+  "For w15-words: a review-only pass's session log has only the critic's verdict line. If you want a line saying the waiting review went on (e.g. 'The review of \"X\" goes on: its work was done in an earlier session.'), add a payload or event in the event-lines area you own; runner.ts does not emit one today.",
+  "Sentence for w15-words (not written here): the Tasks tab tone for 'Not reviewed' is neutral; you may want the same words in task-display's taskCheck for the drawer (taskCheck itself is unchanged, still null for a task done without review).",
+  "New test files: packages/runtime/test/review-sources.test.ts. New describe blocks 'w15-review, wave 15' in budget-pause.test.ts, pr-executor.test.ts, tasks.test.tsx, real-daemon.test.ts, notifications-wiring.test.ts, research-web.test.ts, verification.test.ts, try-plan.test.ts (two blocks), event-lines.test.ts, critic.test.ts, followup.test.ts, try-page.test.ts, registry.test.ts and intake.test.ts. No route shape changed, so the fake daemon was not touched.",
+  "Files touched outside the spec's files list, smallest change each: packages/critic/src/types.ts (ReviewEvidence.webRule), packages/runtime/src/session/review-pending.ts (new) and the critic.verdict emit in runner.ts reviewTask (the blocking field)."
+ ]
+}

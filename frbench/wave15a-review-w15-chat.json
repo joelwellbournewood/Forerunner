@@ -1,0 +1,90 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran bench \"review-w15-chat\" from my worktree, detached at fix/w15-chat 7fe3220 (--provider bench, daemon 48513, UI 2113). Screenshots and texts are in /tmp/frbench/review-w15-chat/steps/. The bench is stopped and its home and browser profile are deleted.\n\nW15-36 and W15-48: I created \"Old garden\" and then \"Garden club\" from the New project dialog (02, 04). Changes shows one row per creation, \"Created the project \u2026 and made it the active project.\", with the badge \"In the app\". There is no project.switch row, no command name, no \"before / after\", no JSON and no scope badge (05). I restarted the daemon (restart-daemon.mjs) and pressed Undo on the Garden club row. Garden club left Home and Old garden became active again (21, 22). Three problems showed up on this path, listed under blocking:\n- Changes now labels every row of the removed project with its UUID (21).\n- The UUID link still opens the project as if it were live (35).\n- Creating \"Garden club\" again is refused with 'There is already a project called \"Garden club\". Pick another name.' (37).\nBefore the undo, I typed \"go back\" in Talk after New project. It answered \"Not done: there is no previous project to go back to.\" (06).\n\nW15-29: in Garden club's Chat I sent `tool: settings_set` with value {mode:only, only:[developer.mozilla.org]}. No card appeared, and the reply was the settings.set sentence. A second tab with the Overview open changed from \"Research reads: any public website\" to \"only developer.mozilla.org\" without a reload (w29-overview-live-after-narrow.png). Widening to {mode:any} showed a Yes/No read-back. After Yes, the open Overview read \"any public website\" again (09, 10, w29-overview-live-after-widen.png).\n- The model-call log has the \"# Settings\" rule in the system text and \"- Research reads: only developer.mozilla.org\" in \"# Now\".\n- The settings_set definition printed with tsx: web_access reads `Value: {\"mode\": \"any\" | \"only\", \"only\"?: [string], \"never\"?: [string]}`, with examples.\n- Refusals through chat: \"public\" and {allowed:\u2026} name mode, only and never and the shape. 10.0.0.1 keeps its own sentence.\n- memory_record now ends with \"It changes no setting. Undo.\"\n\nW15-34, W15-77, W15-76: I added facebook.com to Old garden's never list through Overview \u2192 Change \u2192 setting dialog. On Changes I pressed Undo. A yellow box showed one line, \"Put web pages research may read for Old garden back to any public website? Research reads any public website \u2026\", with Yes and No and no card rows (14). I left without answering:\n- Home showed \"Old garden: Put web pages research may read for Old garden back to any public website?\" with Answer, and the project line read \"Waiting for you: 1 change to confirm\" (15).\n- The Inbox card had that title and body, Yes \"Makes the change now.\" and No \"Nothing changes.\" (16).\n- The project page also read \"Waiting for you: 1 change to confirm\" (17).\nPressing Yes in the Inbox put the rule back (19, 20).\n\nW15-30: I restarted the daemon with FORERUNNER_BENCH_ASK=e and ASK_STYLE=bullets, then approved a plan in \"Static hosts\". Its task opened a questions card.\n- In Old garden's Chat, \"hello, how is it going?\" sent open_requests \"none in this project; +1 card in Static hosts (another project: bring it up only if the human asks what is pending or names it)\" (23).\n- \"what is pending?\" listed the card in full: \"The specialist said: \\\"\u2026\\\"\", \"Options: Send answers / Go ahead without / Cancel task\", marked \"[card of Static hosts, another project] [blocking] (the human asked)\" (24).\n- In Static hosts' own Chat, the card was in full and marked \"[not yet mentioned in this conversation]\" (25).\n\nW15-37: I added \"Write the guide\" twice through chat. \"redo Write the guide\" answered 'Two tasks are called \"Write the guide\": the older one and the newer one. Say which, for example \"Write the guide, the older one\".'\n- \"pause Write the guide the older one\" and \"\u2026 (the newer one)\" each picked a task.\n- The suggested words with the comma went to the model instead (26).\n\nW15-35: Talk \"set the monthly cap to 0\" asked \"The monthly cap must be more than CHF 0.00: \u2026 Enter the most you want to spend in a month. Which value did you mean?\" (27).\n\nSettings:\n- W15-47: with Advanced open, no line contains USD, and fast mode reads \"about CHF 6.40 / 32.00 \u2026 instead of CHF 3.20 / 16.00\" (28).\n- W15-45: monthly cap 0 shows the new refusal and Apply is disabled (29).\n- W15-44: project budget 12 reads \"CHF 12.00\" on the card and on Changes (30, 31).\n- W15-46: handover reads \"\u2026 from off to on, day 2 at 08:00: each month a fresh agent runs the seeded change \u2026\", the schedule once.\n- New project with a duplicate name shows the new sentence in the dialog (36).\n\nValidation:\n- Every named test passes at the fix head.\n- With the fix's source files checked out to claude/nifty-knuth-f9udt0 and its tests kept, all five real-daemon \"w15-chat, wave 15\" cases fail for the reported reasons (memory.record instead of settings.set; the \"Change: undo: \u2026\" readback; \"budget.set: invalid parameters\"; no Changes row; the 250-character Update). So do the 7 conversation-memory w15 cases, the 5 w15-chat-words cases and the 10 commands w15-chat cases.\n- Suites: pnpm test 481 files / 4998 passed; UI vitest 88 files / 1031 passed; Playwright (local config) 35 passed; pnpm test:e2e 13 files / 25 passed, 1 skipped.\n- pnpm typecheck, docs-check against the base and lint:paths pass. Biome on the changed files gives only two warnings at executor.ts:578 and types.ts:462, outside this area's new code. SettingsPage.tsx shows no warning at the base or at the head.",
+ "blocking": [
+  {
+   "issue": "Regression (requirement Q.3, \"go back\" works): after New project, \"go back\" no longer returns to the project the person was on. W15-36 replaced the dialog's project.switch with project.create(switch: true). project.create only patches active_project and never records project_history, which project.switch kept.",
+   "where": "packages/commands/src/commands/project.ts:193-197 (run) and :209 (undo); apps/ui/src/pages/NewProjectDialog.tsx:61-71",
+   "evidence": "Bench: Old garden was active, then New project \"Garden club\" in the dialog, then Talk \"go back\". The reply was \"Not done: there is no previous project to go back to.\" (/tmp/frbench/review-w15-chat/steps/06-talk-go-back-after-new-project.png). I ran a temporary real-daemon repro at the fix head (deleted afterwards). The base dialog's flow (POST /projects, then project.switch) followed by chat \"go back\" makes Old garden active again: passes. The fix's flow (POST /projects with switch: true) answers \"Not done: there is no previous project to go back to.\" and Garden club stays active: fails. docs/requirements.md Q.3: '\"Switch to PharmaWatch\", \"go back\" \u2026 work'.",
+   "expected": "project.create with switch records the previous active project in project_history, as project.switch does (before/after carry the history, and its Undo restores it). Add a case to the 'w15-chat, wave 15' real-daemon block: New project with switch:true, then chat \"go back\" makes the previous project active."
+  },
+  {
+   "issue": "After the W15-36 Undo of a New project row, Changes labels every row of that project with its raw UUID, linked to the project. This breaks design \u00a75 rule 3 (\"Never a UUID\") on this area's own screen. The link opens the removed project as a live page with Start session.",
+   "where": "apps/ui/src/pages/ChangesPage.tsx:90-91 (projectName falls back to the id; archived projects are not in the store's list)",
+   "evidence": "Bench after the daemon restart, Undo on \"Created the project Garden club and made it the active project.\": four rows show the link text \"01a1c009-d787-72c6-8cb1-4811c44b7727\", including the Undone row and the two chat rows of Garden club (/tmp/frbench/review-w15-chat/steps/21-w36-after-restart-undo-create.png). Following it opens Garden club's page with Create a repository and Start session (35-w36-removed-project-link.png). At the base the dialog's creation was not undoable from Changes, so the main New project path could not reach this state.",
+   "expected": "A removed project's rows name it by its name, for example from the change row's own sentence or a projectName in the view, or say it was removed. No UUID, and no link that presents the removed project as live. Add a UI or real-daemon assertion after the W15-36 Undo."
+  },
+  {
+   "issue": "The W15-36 Undo does not remove the project as the row, the user guide and the acceptance say (\"its Undo removes the project\" / \"deletes the project\"). It archives it, and the name stays taken. Creating a project with the same name afterwards is refused for a project the person cannot see (design \u00a75 rules 4 and 9).",
+   "where": "packages/commands/src/commands/project.ts:142,161 (byName includes archived projects) and :209-221 (undo archives); packages/runtime/src/daemon/create-project.ts:45; docs/user-guide.md (New project paragraph)",
+   "evidence": "Bench: after the Undo above, Home lists only Old garden and Static hosts. New project \"Garden club\" then shows 'There is already a project called \"Garden club\". Pick another name.' in the dialog (/tmp/frbench/review-w15-chat/steps/37-w36-duplicate-name.png).",
+   "expected": "After the creation's Undo, the name can be used again (the undo frees it, or the duplicate check ignores archived projects), or the words say what is true. The real-daemon W15-36 case checks that New project with the same name works after the Undo."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W15-29: settings_set documents each key's value shape (z.toJSONSchema io:'input'); refusals name mode/only/never; '# Settings' rule; '# Now' has 'Research reads:'; memory.record says it changes no setting; narrowing acts at once and widening asks; screens hear chat changes",
+   "holds": true,
+   "note": "Definition printed with tsx; the real-daemon DefinitionReader case and the conversation-memory and commands cases fail at the base and pass at the head; bench steps 08-10 plus both Overview screenshots, and the model-call log. The voice path (voice/bridge.ts) still emits no project.changed (non-blocking)."
+  },
+  {
+   "claim": "W15-30: another project's card is a count by project; listed as that project's with the specialist's reason and the Inbox's options when asked; own project's card in full; per-card marks",
+   "holds": true,
+   "note": "Bench model-call log for steps 23-25; the 4 conversation-memory cases fail at the base."
+  },
+  {
+   "claim": "W15-34/77/76: undo waiting for a yes asks one plain question on Changes, Home and Inbox; Yes 'Makes the change now.', No 'Nothing changes.'; project line '1 change to confirm'; restart-safe",
+   "holds": true,
+   "note": "Bench steps 14-20; the real-daemon case and the w15-chat-words units fail at the base; the commands restart case passes."
+  },
+  {
+   "claim": "W15-35: the schema's own sentence through POST /commands/execute and chat's question",
+   "holds": true,
+   "note": "The real-daemon case fails at the base ('budget.set: invalid parameters'); bench Talk step 27."
+  },
+  {
+   "claim": "W15-36: one Changes row; Undo removes the project and restores the previous active one, also after a restart",
+   "holds": false,
+   "note": "The one row, the active project and the post-restart Undo work (bench 05, 21, 22; real-daemon case). But the Undo only archives: the name stays taken (37), the rows show a UUID (21), and the change breaks \"go back\" (06). See blocking."
+  },
+  {
+   "claim": "W15-37: same-titled tasks are told apart and picked by a word",
+   "holds": true,
+   "note": "Works for #PR and for 'the older one' without a comma. The refusal's own example 'Write the guide, the older one' is split at the comma by the intent parser and goes to the model (bench 26). The chat case covers only #17/#18."
+  },
+  {
+   "claim": "W15-62 notification titles; W15-61 no markdown and 'working on it'; W15-75 one-line Update",
+   "holds": true,
+   "note": "Units fail at the base and pass at the head; W15-75's real-daemon case gives 'Your Yes was not applied: Who merges \u2026 is already Merge automatically after review.' (\u2264140)."
+  },
+  {
+   "claim": "W15-44/45/46/47/48 words",
+   "holds": true,
+   "note": "Bench steps 27-31 and 05; handover via POST /commands/execute; fast mode's card and Settings in CHF; Changes rows without command names or JSON."
+  },
+  {
+   "claim": "Validation green (pnpm test, UI vitest, Playwright 35, e2e, typecheck, docs-check)",
+   "holds": true,
+   "note": "All re-run here and green."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "Every changed assertion follows a deliberate word change: two decimals, 'It changes no setting.', the undo question, no USD (the old fast_mode exclusion is removed, which is stricter), no command names on Changes."
+  }
+ ],
+ "non_blocking": [
+  "W15-37: the refusal suggests 'Write the guide, the older one' (with a comma). In chat, the intent parser splits that into a separate clause and sends the turn to the model; on the stand-in nothing happened (bench step 26). Without the comma it works. The pick's read-back 'Pause \"Write the guide\"?' also does not say which of the two it is.",
+  "W15-29 sibling (validation rule 8): voice turns (packages/runtime/src/voice/bridge.ts ~979) and the phone watcher do not emit project.changed or inbox.changed after a command, so a site rule changed by voice reaches the Overview only after a reload.",
+  "W15-30 security note: cardLine now quotes the specialist's context ('The specialist said: \"\u2026\"', up to 300 characters of model text that can come from web pages) into the chat model's facts, and that model holds command tools. CHAT_OPEN_REQUEST_RULES does not say card text is data, never instructions, and no injection case covers chat facts (evals/injection has none for the conversation). Widening changes still need a Yes.",
+  "W15-30: a project name matches by substring (said.includes(projectName)), so a short project name such as 'Go' lists that project's card on any line containing 'go'.",
+  "Fast mode's undo question and card show raw values: 'Set Opus fast mode for Old garden to true?' and 'from unset to true'. The new undoAsk produces 'Put Opus fast mode for \u2026 back to true?'. The fixer listed this; it needs words from w15-words.",
+  "Inbox Details of an undo card reads 'Undo: This cannot be undone.' (pre-existing); the undo body says 'except the ones listed' when none are listed (webAccessEffect words).",
+  "The undo read-back on Changes for a monthly cap raise ends 'Confirm in the app on a paired device.' while the person is in the desktop app (pre-existing words).",
+  "ZERO_REFUSED.session still reads 'CHF 0' (no decimals, no what to do); W15-44/45 changed only the month.",
+  "Files outside this area's files[] were changed: packages/runtime/src/daemon/server.ts (createAndSwitch, heardChat), settings-view.ts, loop/commands.ts, commands/src/intent.ts, commands/src/types.ts, and api-types.ts (CreateProjectBody.switch is not among the api-types additions shared_files lists). The report discloses most of them; they will need care at the merge.",
+  "25d5239 (W15-35) changes POST /commands/execute's refusal text without a fake-daemon change in the same commit. The fake already returned the sentence for the month's 0, so the drift is small.",
+  "settings_set's definition is now about 5 KB on every chat call (prompt cache helps). calibration's line names 'budget_usd' (model-facing only).",
+  "The fixer's new_problems still hold: the phone shows command names (mobile-changes, mobile-remote); the fake daemon's budget words drift; Settings \u2192 Sources shows 'secret:github_token' and 'fr setup'; chat's project.create makes no brief or plan."
+ ]
+}

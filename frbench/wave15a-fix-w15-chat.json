@@ -1,0 +1,353 @@
+{
+ "area": "w15-chat",
+ "branch": "fix/w15-chat",
+ "head_sha": "7fe322059d948abe7bc8e1caaae83e359c7e5f02",
+ "commits": [
+  {
+   "sha": "3117418",
+   "subject": "chat: Talk changes the site rule and never says a lesson changed a setting (W15-29, U-084)"
+  },
+  {
+   "sha": "cb31eaa",
+   "subject": "chat: a project's chat keeps to its own cards; another project's card is a count (W15-30, U-084)"
+  },
+  {
+   "sha": "f807722",
+   "subject": "cards: an undo waiting for a yes asks one plain question; it is a change to confirm (W15-34, W15-77, W15-76, U-061)"
+  },
+  {
+   "sha": "25d5239",
+   "subject": "commands: a refusal by the parameters' schema reads the schema's own sentence (W15-35)"
+  },
+  {
+   "sha": "08d8458",
+   "subject": "projects: New project makes the project active in the same change, one Changes row (W15-36, U-056)"
+  },
+  {
+   "sha": "59c5704",
+   "subject": "tasks: two tasks with one title are told apart and picked by a word (W15-37)"
+  },
+  {
+   "sha": "76f2619",
+   "subject": "notifications: a title tells same-starting task names apart within 60 characters (W15-62)"
+  },
+  {
+   "sha": "66f3dd0",
+   "subject": "cards: a questions card quotes the specialist without markdown; one task is \"it\" (W15-61)"
+  },
+  {
+   "sha": "d2eef31",
+   "subject": "updates: a Yes the change cannot take any more files a one-line Update (W15-75)"
+  },
+  {
+   "sha": "6c73bfe",
+   "subject": "commands: budget.set writes money with two decimals (W15-44)"
+  },
+  {
+   "sha": "2dbb937",
+   "subject": "settings: the monthly cap's 0 is refused with why and what to do (W15-45)"
+  },
+  {
+   "sha": "fca6f39",
+   "subject": "settings: a monthly job's change names its schedule once (W15-46)"
+  },
+  {
+   "sha": "48ed6b0",
+   "subject": "settings: fast mode's price reads about CHF at the day's rate (W15-47, U-084)"
+  },
+  {
+   "sha": "7c953cb",
+   "subject": "changes: a row shows no command name, no before / after and no JSON (W15-48, U-056)"
+  },
+  {
+   "sha": "fc688a9",
+   "subject": "commands: format the polish-screens test's two-decimal amounts (W15-44, W15-45)"
+  },
+  {
+   "sha": "c68e32a",
+   "subject": "e2e: the voice scenario's budget card reads two decimals (W15-44, U-077)"
+  },
+  {
+   "sha": "7fe3220",
+   "subject": "ui tests: two older cases follow W15-76 and W15-47 (U-061, U-084)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "W15-29: in Talk, 'only read developer.mozilla.org for research' was recorded as a lesson, the reply said the rule changed, and the Overview still read 'any public website'. settings_set reached the model with value {} and no shapes, refusals were bare zod words, and the chat rules sent rules to memory_record.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"settings_set's definition gives each key's value shape; web_access's line names mode, only and never (W15-29)\", \"a web_access value of the wrong shape is refused naming mode, only and never (W15-29)\", \"memory.record's sentence says a lesson changes no setting (W15-29)\"; packages/runtime/test/conversation-memory.test.ts \"w15-chat, wave 15\" > \"a chat turn sends settings_set with web_access's shape, the rule that a setting is never a lesson, and the project's 'Research reads:' line (W15-29)\" and \"the conversation agent's registry prompt sends a setting to settings_set, never to memory_record (W15-29)\"; apps/ui/test/real-daemon.test.ts \"w15-chat, wave 15\" > \"Talk changes the site rule: a narrowing acts at once with no card, a widening asks Yes/No, and the Overview's line follows each (W15-29)\"",
+   "how": "settings.ts: settingsSetDescription() lists each key with scope, value shape (z.toJSONSchema io:'input', so WebAccessSetting's transform renders) and examples; value param described; refusalOf names mode/only/never with an example. agent.ts CHAT_RETRIEVAL_RULES gets a '# Settings' part (a rule the app enforces is a setting, changed with settings_set, never memory_record); '# Now' carries 'Research reads: ...'; conversation-agent.md 1.2.1 action list says the same; memory.record's sentence adds 'It changes no setting.'; POST /chat and /chat/stream emit project.changed/inbox.changed (heardChat), fake daemon too. The narrowing acts at once, a widening asks Yes/No (sites rule unchanged). pnpm test:injection green.",
+   "check_in_the_app": "Open a project (e.g. 'Reading rules'), Chat tab. Type 'only read developer.mozilla.org for research' and send. Expect: no 'Recorded a lesson' line; the reply says the rule changed (narrowing, no card), and Overview's 'Research reads:' line reads 'only developer.mozilla.org' without reload. Then type 'any public website again': a Yes/No card appears ('Put web pages research may read ... back to any public website?' or the settings card); press Yes; Overview reads 'any public website'. LIVE CHECK (real model): the session lead should run these two lines on --provider bench-live and confirm the model calls settings_set with value {mode:'only', only:['developer.mozilla.org'], never:[]} on the first try (no refusal loop) and never memory_record; a lesson, if recorded, must say 'It changes no setting.'"
+  },
+  {
+   "problem": "W15-30: in one project's chat, another project's questions card was listed in full as 'not yet mentioned', without the specialist's reason and with 'this project' unchanged, and the model offered to answer it.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts \"w15-chat, wave 15\" > \"another project's card is a count by project in this project's chat, never 'not yet mentioned' (W15-30)\", \"asked what is pending, another project's card is listed as that project's with the specialist's reason and the Inbox's options (W15-30)\", \"in its own project's chat the card is listed in full, with the specialist's own words (W15-30)\", \"a card already mentioned and one not yet mentioned are marked each by its own state (W15-30)\"",
+   "how": "agent.ts: context scope = conversation's project; openRequestsFact lists this project's cards (and no-project cards) in full, others as a count by project ('none in this project; +1 card in X (another project: bring it up only if the human asks what is pending or names it)'), or in full marked '[card of X, another project]' when the line asks what is pending or names it; per-card mention marks. project-facts.ts cardLine adds 'The specialist said: \"...\"', the Inbox's options via requestWords ('Send answers' for forms), and 'this project' -> 'the X project'. CHAT_OPEN_REQUEST_RULES explain the mark. request_answer still resolves any open card (allOpen). Design 3.9 not edited (owner question W15-148).",
+   "check_in_the_app": "Have two projects, A with an open questions card (e.g. research asks which site), B with none. Open B's Chat, type 'hello, how is it going?'. Expect the reply not to bring up A's card. Type 'what is pending?': the reply names A's card as A's, with the specialist's reason and the Inbox's buttons. Open A's Chat: the card is described in full. LIVE CHECK (real model): run the same three turns on bench-live and confirm the model does not offer to answer A's card from B's chat unless asked."
+  },
+  {
+   "problem": "W15-34: Undo pressed on Changes and left unanswered showed on Home as 'Reading rules: undo', in the Inbox as a card titled 'undo' with raw yes/no buttons, and on Changes as a full change card.",
+   "u_ids": [
+    "U-061"
+   ],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"an undo waiting for a yes asks one plain question, also when its card was made before a restart (W15-34)\"; apps/ui/test/real-daemon.test.ts \"w15-chat, wave 15\" > \"an undo confirmation left on Changes reads in words on Home and the Inbox (W15-34, W15-77, W15-76)\"; apps/ui/test/w15-chat.test.tsx \"Changes: an undo that waits for a yes shows its one question with Yes and No, no card rows (W15-34)\"",
+   "how": "executor.ts undoCardOf: what without 'undo: ', ask = command's own CommandDef.undoAsk (settings.set: 'Put <label> for <project> back to <value>? <Effect>.', read from the change-log row so it survives a restart) else 'Put <what> back to <old>?' else 'Take back \"<change>\"?'. ChangesPage shows only that one line with Yes/No (CommandResult with card:null). Fake daemon mirrors.",
+   "check_in_the_app": "Settings -> a project's 'Web pages research may read' -> add a never site (e.g. facebook.com), save. Open Changes, press Undo on that row. Expect a yellow box with one line 'Put web pages research may read for <project> back to any public website? Research reads any public website ...' and Yes/No, no risk/scope rows. Without answering, go Home: Needs you shows '<project>: Put web pages research may read ... back to any public website?' with Answer. Inbox: the card has that title, body, and buttons Yes ('Makes the change now.') and No ('Nothing changes.'). Press Yes: the rule goes back. LIVE CHECK: same steps on the session lead's live build."
+  },
+  {
+   "problem": "W15-77: the undo card title was cut at the colon after the single word 'undo', and an approval card counted as '1 question' in the project line.",
+   "u_ids": [
+    "U-061"
+   ],
+   "failing_test_before": "packages/runtime/test/w15-chat-words.test.ts \"a one-word lead before a colon is no sentence of its own (W15-77)\" and \"a change waiting for a yes is a change to confirm in the project line, not a question (W15-77)\"",
+   "how": "request-words.ts firstSentenceEnd skips a colon after a single word; project-status.ts cardWord returns 'change to confirm' for a change_card with a command and no key, with plural 'changes to confirm' in cardKindsWords.",
+   "check_in_the_app": "With an undo left waiting (W15-34 steps), open the project's page: the status line reads 'Waiting for you: 1 change to confirm' with Answer, not '1 question'."
+  },
+  {
+   "problem": "W15-76: an approval card's Yes repeated the card's body cut with '...'.",
+   "u_ids": [
+    "U-061"
+   ],
+   "failing_test_before": "packages/runtime/test/w15-chat-words.test.ts \"an approval card's Yes says what Yes does; the body already says what the change means (W15-76)\"",
+   "how": "request-words.ts genericCard: Yes explain 'Makes the change now.' when the body is the consequence; No 'Nothing changes.'.",
+   "check_in_the_app": "In chat type 'resume <a paused task>' (or leave an undo waiting); open Inbox: the card's Yes reads 'Makes the change now.' and No 'Nothing changes.', and the body is not repeated under Yes."
+  },
+  {
+   "problem": "W15-35: budget.set with 0 for the month through POST /commands/execute was refused as 'budget.set: invalid parameters'; chat asked 'budget.set: amountChf: ...'.",
+   "u_ids": [],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"a refusal by the parameters' schema reads the schema's own sentence; chat asks with it, without the command's name (W15-35)\"; apps/ui/test/real-daemon.test.ts \"w15-chat, wave 15\" > \"POST /commands/execute refuses the monthly cap's 0 with the schema's own sentence (W15-35)\"",
+   "how": "registry.ts validate: reason = first zod issue message that is a whole sentence (isSentence), else '<name>: invalid parameters (<path>: <msg>; ...)'; intent.ts invalidQuestion asks '<sentence> Which value did you mean?'. Issues stay in details.issues.",
+   "check_in_the_app": "In Talk type 'set the monthly cap to 0'. Expect the question 'The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month. Which value did you mean?' with no 'budget.set'."
+  },
+  {
+   "problem": "W15-36: Create project wrote two Changes rows (creation, then 'Switched the active project to ...'); the Undo offered was the switch's.",
+   "u_ids": [
+    "U-056"
+   ],
+   "failing_test_before": "apps/ui/test/w15-chat.test.tsx \"New project makes the new project active in one command: one Changes row, no project.switch (W15-36)\"; apps/ui/test/real-daemon.test.ts \"w15-chat, wave 15\" > \"New project writes one Changes row; its Undo removes the project and makes the previous one active again, also after a restart (W15-36)\"",
+   "how": "NewProjectDialog sends switch:true; POST /projects with switch runs project.create (switch) through the registry with createProjectRecord as the command's createProject port (CommandLoop.execute ports option); one row 'Created the project X and made it the active project.'; its Undo archives it and restores the previous active project from the row (restart-safe). Duplicate refusal 'There is already a project called \"X\". Pick another name.'. Fake daemon same commit.",
+   "check_in_the_app": "Home -> New project, name 'Garden club', a goal, Create project. The header shows Garden club active. Open Changes: one new row 'Created the project Garden club and made it the active project.' with Undo, no 'Switched the active project' row. Restart the app, press Undo on that row: the project is gone and the previous project is active."
+  },
+  {
+   "problem": "W15-37: two tasks titled 'Write the guide' could not be told apart: 'Say more of the title', which no words could do.",
+   "u_ids": [],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"two tasks with the same title are told apart by their pull request, state or age, and that word picks one (W15-37)\"; packages/runtime/test/conversation-memory.test.ts \"w15-chat, wave 15\" > \"chat tells two same-titled tasks apart and redoes the one the person names (W15-37)\"",
+   "how": "task.ts findTask: same-titled tasks named by PR ('#17 and #18'), else state ('the done one'), else age ('the older one'); 'Two tasks are called \"X\": #17 and #18. Say which, for example \"X #17\".'; a trailing qualifier picks the task.",
+   "check_in_the_app": "Have two tasks with the same title. In Talk type 'redo Write the guide': the reply names what tells them apart. Type 'redo Write the guide #18' (or 'the older one'): a card for that one task; Yes redoes it."
+  },
+  {
+   "problem": "W15-62: notification titles cut same-starting names alike: '\"Write the...\" and \"Write the...\"'.",
+   "u_ids": [],
+   "failing_test_before": "packages/runtime/test/w15-chat-words.test.ts \"a notification's title tells two tasks apart within 60 characters (W15-62)\"",
+   "how": "producers.ts fit: never cut a name before the word that tells it from the others (keepOf), else name fewer and count the rest ('and 1 more'), only then cut.",
+   "check_in_the_app": "Run a session that finishes two tasks titled 'Write the meeting notes in notes.md' and 'Write the summary in summary.md'; the session notification title tells them apart (e.g. '\"Write the meeting...\" and 1 more') within 60 characters."
+  },
+  {
+   "problem": "W15-61: Inbox questions cards showed markdown (backticks) from the specialist; 'Plan approved: 1 task written; working on them.'",
+   "u_ids": [],
+   "failing_test_before": "packages/runtime/test/w15-chat-words.test.ts \"a questions card quotes the specialist without markdown; one task is 'it' (W15-61)\"",
+   "how": "request-words.ts questionsCard strips backticks, bold/emphasis and list marks before cutting at a word; intakeOutcome 'working on it' for one task.",
+   "check_in_the_app": "Approve a plan with one task: the Done line reads '... 1 task written; working on it.'. A specialist question quoting `node wc.js` shows node wc.js without backticks in the Inbox."
+  },
+  {
+   "problem": "W15-75: an Update for a Yes that could not be applied was ~250 characters with a second sentence.",
+   "u_ids": [],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w15-chat, wave 15\" > \"a Yes in the Inbox the change cannot take any more files a one-line Update (W15-75)\"",
+   "how": "request-words.ts changeNotAppliedWords: one sentence <= 140 characters: 'Your Yes to \"<question>\" was not applied: <first clause of reason>.', falling back to 'Your Yes about <what>' or 'Your Yes'; composed through compose.ts onRefused (not edited).",
+   "check_in_the_app": "Leave a settings change waiting in the Inbox, make the same change in Settings, then press Yes on the Inbox card: Updates shows one line 'Your Yes ... was not applied: ...' of at most 140 characters, no 'ask again' sentence."
+  },
+  {
+   "problem": "W15-44: budget.set wrote whole francs ('from CHF 3 to CHF 12').",
+   "u_ids": [
+    "U-077"
+   ],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"budget.set's sentences, read-backs and values show two decimals (W15-44)\"",
+   "how": "shared.ts chfExact ('CHF 3.00'); budget.ts uses it for sentences, read-backs, card values and refusals; session start read-back keeps chf.",
+   "check_in_the_app": "Settings -> a project's Project budget -> 12 -> confirm: Changes reads 'Set the project budget for <project> from ... to CHF 12.00.'. In Talk 'give <project> 20 francs tonight': the read-back says 'CHF 20.00'."
+  },
+  {
+   "problem": "W15-45: the monthly cap's 0 refusal said why but not what to do.",
+   "u_ids": [],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"the monthly cap's 0 is refused with why and what to do (W15-45)\"",
+   "how": "budget.ts ZERO_REFUSED.month, SettingsPage MONTHLY_CAP_ZERO and the fake daemon: '... cannot be turned off. Enter the most you want to spend in a month.'; 0 stays refused.",
+   "check_in_the_app": "Settings -> Basics -> Monthly cap -> 0 -> Save: the field says 'The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month.' and nothing changes."
+  },
+  {
+   "problem": "W15-46: the handover change sentence said its schedule twice; calibration too.",
+   "u_ids": [],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts \"a monthly job's change names its schedule once (W15-46)\"",
+   "how": "settings.ts handover effect 'each month a fresh agent runs the seeded change and its stuck places become a docs task'; calibration 'each month the critic grades the eval sets'.",
+   "check_in_the_app": "Settings -> Advanced -> a project's Monthly handover test -> on, day 2 at 08:00 -> confirm: Changes reads 'Set the monthly handover test for <project> from off to on, day 2 at 08:00: each month a fresh agent runs the seeded change and its stuck places become a docs task.' (day 2 at 08:00 once)."
+  },
+  {
+   "problem": "W15-47: Settings' fast mode row and card quoted 'USD 8 / 40 per million input / output tokens' (the one USD left in Settings).",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/w15-chat.test.tsx \"Settings shows no USD anywhere, Advanced open; fast mode's price reads about CHF (W15-47)\"; packages/runtime/test/fast-mode.test.ts \"the price reads in CHF at the day's rate, never in USD (W15-47, design \u00a75 rule 7)\"; packages/commands/test/w15-chat.test.ts \"fast mode's card and its undo quote the price in CHF at the day's rate (W15-47)\"; apps/ui/test/real-daemon.test.ts \"a fresh install's monthly cap reads CHF 150.00 through GET /settings (later #28)\" (fast_mode exclusion removed)",
+   "how": "fast-mode.ts fastModeEffect(on, table, chfPerUsd)/fastModeDescription(table, chfPerUsd): 'at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00, a 2x surcharge' (at 0.8); settings-view passes the day's rate; settings.set and its undoAsk pass CommandPorts.chfPerUsd via SettingEffectContext.chfPerUsd (effectContext, only for keys with an effect). Price rows, ledger and factor stay USD. ADR 0057 amended 2026-11-09; user guide and maintainer docs updated. SettingsPage.tsx had no noUselessFragments warning at this head (biome lint clean on the file), nothing to clear.",
+   "check_in_the_app": "Settings -> click Advanced -> Opus fast mode card: reads 'On: ... at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00, a 2x surcharge ... Off: ... at about CHF 3.20 / 16.00 ...'. Search the page (Ctrl+F) for 'USD': none. Press Turn on for a project: the change card quotes the CHF price."
+  },
+  {
+   "problem": "W15-48: Changes rows ended in 'task.transition \u00b7 before / after' over JSON; the header showed stored 'ui' and scope badges.",
+   "u_ids": [
+    "U-056"
+   ],
+   "failing_test_before": "apps/ui/test/w15-chat.test.tsx \"Changes rows show no command name, no 'before / after' and no JSON (W15-48)\"",
+   "how": "ChangesPage.tsx: removed the details/JSON block and the scope badge; source badge via sourceWords ('In the app', 'Chat', 'Voice', 'Email'); intro says 'what changed'. Change log keeps commands/before/after for Undo and GET /changes.",
+   "check_in_the_app": "Pause a task from its page, then open Changes: the row shows 'In the app', the project, the Undo badge, who/when, 'Paused \"<task>\" ...' and Undo; no 'task.transition', no 'before / after', no JSON, no 'session'/'global' badge."
+  }
+ ],
+ "not_done": [],
+ "validation": [
+  {
+   "command": "pnpm lint (biome check .)",
+   "result": "0 errors, 43 warnings, all from before this branch (none in SettingsPage.tsx, so no noUselessFragments)"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1473 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "ok (node packages + apps/ui)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "481 files passed; 4998 tests passed, 7 skipped. Ran at fc688a9; the two commits after it change only tests/e2e and apps/ui tests, which this project does not run"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (59 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (206 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2081 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed, 6 skipped; 30 tests passed, 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed, 1 skipped. The first run failed in 03-voice (the budget card expected whole francs from before W15-44); fixed in c68e32a and green on the rerun"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "88 files, 1031 tests passed. The first run failed 2 older cases pinned to the W15-76 and W15-47 words; updated in 7fe3220, then all green"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (1.2m)"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 59 cases (42 hostile, 17 controls), 0 failed"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "no matches"
+  },
+  {
+   "command": "bench walk (fix-w15-chat, --provider bench): node walk.cjs before / after",
+   "result": "AFTER: one Changes row for New project; the undo left waiting reads 'Put web pages research may read for Reading rules 2 back to any public website?' on Changes, Home and Inbox, with Yes 'Makes the change now.' and No 'Nothing changes.'; the project line reads 'Waiting for you: 1 change to confirm'; the chat system prompt has the '# Settings' rule; '# Now' has 'Research reads: ...'; the other project's chat sees 'none in this project; +1 card in Reading rules 2 (another project ...)'; Settings with Advanced open has no USD; Changes rows read 'In the app' with no command names. Bench stopped with stop.mjs; home and browser profile deleted"
+  }
+ ],
+ "new_problems": [
+  "Fast mode's undo question and card value show the raw boolean: 'Put Opus fast mode for Game back to true?' (settings.set showFor for fast_mode; P7-10 keeps newValue 'true'). Design section 5 says no raw states. packages/commands/src/commands/settings.ts showFor/fast_mode spec; seen in packages/commands/test/w15-chat.test.ts W15-47 case.",
+  "The phone shows raw command names like Changes did: apps/ui/test/mobile-changes.test.tsx:94 expects 'Commands: project.switch \u00b7 PharmaWatch \u2192 Space game', and mobile-remote.test.tsx:33 expects 'Commands: project.switch, budget.set, session.start'. This is W15-48 on the phone; outside this area's files.",
+  "The phone's offline card builder (tests/e2e/src/scenario-phone.ts phoneUnderstands, 09-phone.scenario.test.ts:205) still writes the budget part as 'CHF 15'. The daemon's budget.set card now says 'CHF 15.00' (W15-44). Check whether the mobile card builder needs two decimals too.",
+  "Changes' humanName falls back to the raw human id for a change made by another person (apps/ui/src/pages/ChangesPage.tsx humanName).",
+  "Settings -> Sources shows internals: 'secret:github_token', 'A reference to the vault (secret:<name>)' and 'fr setup' (bench screenshot 15-after-settings-fast-mode.png).",
+  "The bench model-call log stores tool names only, not their definitions, so a bench walk cannot show the exact settings_set definition. It is covered by apps/ui/test/real-daemon.test.ts (DefinitionReader) and the conversation-memory W15-29 case.",
+  "The fake daemon's budget words still use whole francs in places ('monthly hard ceiling'), drifting from the daemon's two decimals.",
+  "The refusal of a session budget of 0 (apps/ui SettingsFields.tsx) says why but not what to do; W15-45 changed only the monthly cap's refusal.",
+  "Chat's project.create still inserts the project directly, without the brief or plan that POST /projects' createProjectRecord makes. Only POST /projects passes the createProject port.",
+  "Inbox question labels in the form card may still show markdown through the UI; W15-61 strips it only from the quoted context."
+ ],
+ "notes_for_other_areas": [
+  "Person-facing sentences changed (old -> new): memory.record 'Recorded a lesson in X's memory for P: \"...\". Undo.' -> '... \"...\". It changes no setting. Undo.' | web_access wrong-shape refusal: bare zod words -> 'That is not a value for web pages research may read (<field>: <issue>). It takes {...}, for example {...}.' | undo card title 'undo' / why 'undo: <what>' -> 'Put <label> for <project> back to <value>? <Effect>.' (settings.set), else 'Put <what> back to <old value>?', else 'Take back \"<change>\"?' | approval card's Yes explain: the body cut with '...' -> 'Makes the change now.'; No 'Nothing changes.' | project line 'Waiting for you: 1 question' (for an approval card) -> '1 change to confirm' / 'N changes to confirm' | registry refusal 'budget.set: invalid parameters' -> the schema's own sentence; chat question 'budget.set: amountChf: ... Which value did you mean?' -> '<sentence> Which value did you mean?' | New project two rows -> one 'Created the project X and made it the active project.'; duplicate 'already exists' -> 'There is already a project called \"X\". Pick another name.' | findTask '2 tasks match ...: \"X\" and \"X\". Say more of the title' -> 'Two tasks are called \"X\": #17 and #18. Say which, for example \"X #17\".' | notification titles: names kept to their distinguishing word, else 'and N more' | questions card context without markdown; 'working on them' -> 'working on it' for one task | changeNotApplied: 'Your Yes to \"<q>\" was not applied: <reason>. Nothing changed; ask again if you still want it.' -> one line of at most 140 characters 'Your Yes to \"<q>\" was not applied: <first clause>.' | budget.set 'CHF 3' -> 'CHF 3.00' | monthly cap 0: '... cannot be turned off.' -> '... cannot be turned off. Enter the most you want to spend in a month.' (CHF 0.00) | handover effect '... on day 2 at 08:00 each month and ...' -> 'each month a fresh agent runs the seeded change and its stuck places become a docs task'; calibration -> 'each month the critic grades the eval sets' | fast mode 'at USD 8 / 40 ... instead of USD 4 / 20' -> 'at about CHF 6.40 / 32.00 ... instead of CHF 3.20 / 16.00' (day's rate) | Changes: source badge 'ui' -> 'In the app' (Chat/Voice/Email); scope badge removed; details 'task.transition \u00b7 before / after' + JSON removed; intro '..., the commands run, before and after, ...' -> '..., what changed, ...'.",
+  "Model-facing: settings_set description and value param rewritten (settingsSetDescription); CHAT_RETRIEVAL_RULES '# Settings' part; CHAT_OPEN_REQUEST_RULES mark rule; '# Now' adds 'Research reads: ...'; open_requests elsewhere count text; conversation-agent.md version 1.2.1. pnpm test:injection green.",
+  "New APIs/fields: CommandDef.undoAsk(params, before, after, ctx) gives an undo's one question; CommandPorts.createProject?(params) is used by project.create when present; CommandLoop.execute(..., {ports}) merges per-call ports; CreateProjectBody.switch (POST /projects switch:true -> project.create through the registry); SettingSpec.examples; SettingEffectContext.chfPerUsd; fastModeEffect/fastModeDescription take chfPerUsd as the third/second argument; registry exports isSentence; ChangesPage exports sourceWords; shared.ts chfExact (two decimals; chf still drops .00 and is used by session start read-backs).",
+  "Shared files touched only in the allowed functions: request-words.ts (firstSentenceEnd, genericCard, questionsCard, intakeOutcome, changeNotAppliedWords), project-status.ts (cardWord plus a CARD_WORD_PLURALS map read by cardKindsWords), task.ts (findTask and helpers). Outside the files list, one argument in packages/runtime/src/daemon/settings-view.ts (fastModeDescription(input.pricing, rate)), and server.ts heardChat/createAndSwitch. compose.ts not edited.",
+  "Fake daemon (apps/ui/test/fake-daemon.ts): heardChat events on chat; undo pending card ask/readback; POST /projects switch row and its undo; month-zero refusal words. It uses fastModeDescription()/fastModeEffect() at the default rate 0.8.",
+  "ADR 0057 amended (2026-11-09) for fast mode's CHF words; docs: commands.md, runtime.md, apps.md, adding-a-specialist.md, notifications.md, user-guide.md."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-w15-chat/steps/01-before-changes-after-new-project.png",
+   "/tmp/frbench/fix-w15-chat/steps/02-before-changes-undo-pending.png",
+   "/tmp/frbench/fix-w15-chat/steps/03-before-home-undo-card.png",
+   "/tmp/frbench/fix-w15-chat/steps/04-before-inbox-undo-card.png",
+   "/tmp/frbench/fix-w15-chat/steps/05-before-chat-only-mozilla.png",
+   "/tmp/frbench/fix-w15-chat/steps/06-before-overview-research-reads.png",
+   "/tmp/frbench/fix-w15-chat/steps/07-before-chat-static-hosts.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w15-chat/steps/08-after-changes-after-new-project.png",
+   "/tmp/frbench/fix-w15-chat/steps/09-after-changes-undo-pending.png",
+   "/tmp/frbench/fix-w15-chat/steps/10-after-home-undo-card.png",
+   "/tmp/frbench/fix-w15-chat/steps/11-after-inbox-undo-card.png",
+   "/tmp/frbench/fix-w15-chat/steps/12-after-chat-only-mozilla.png",
+   "/tmp/frbench/fix-w15-chat/steps/13-after-overview-research-reads.png",
+   "/tmp/frbench/fix-w15-chat/steps/14-after-chat-static-hosts.png",
+   "/tmp/frbench/fix-w15-chat/steps/15-after-settings-fast-mode.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/commands.test.ts, packages/runtime/test/conversation.test.ts, docs-scaffold.test.ts (memory.record sentence)",
+   "why": "W15-29: the lesson sentence now ends 'It changes no setting.'"
+  },
+  {
+   "test": "packages/commands/test/undo.test.ts (undo card what/readback)",
+   "why": "W15-34: the undo card's what no longer starts with 'undo: ', and it asks one question"
+  },
+  {
+   "test": "packages/commands/test/intent.test.ts 'a clause whose parameters fail validation becomes a question'",
+   "why": "W15-35: the question is the schema's own sentence without 'budget.set:'"
+  },
+  {
+   "test": "apps/ui/test/home.test.tsx (POST /projects bodies); packages/commands/test/commands.test.ts duplicate-name refusal",
+   "why": "W15-36: the dialog sends switch:true; the duplicate refusal says 'There is already a project called ...'"
+  },
+  {
+   "test": "packages/runtime/test/writing-rules.test.ts W14-4 not-applied case",
+   "why": "W15-75: the Update is one line of at most 140 characters"
+  },
+  {
+   "test": "commands change-words/commands/executor/polish-screens/scenario/undo tests; runtime conversation.test.ts, voice-route.test.ts; real-daemon polish-screens case; e2e 03-voice (incl. change_card old/new values), 09-phone, phase5-gate",
+   "why": "W15-44: budget.set writes two decimals"
+  },
+  {
+   "test": "apps/ui/test/settings-money.test.tsx; packages/commands/test/polish-screens.test.ts month refusal",
+   "why": "W15-45: the monthly cap's 0 refusal adds what to do, and the amount has two decimals"
+  },
+  {
+   "test": "packages/commands/test/commands.test.ts handover sentence",
+   "why": "W15-46: the schedule is named once"
+  },
+  {
+   "test": "packages/runtime/test/fast-mode.test.ts, fast-mode-wiring.test.ts, daemon.test.ts; packages/commands/test/fast-mode.test.ts; apps/ui/test/fast-mode.test.tsx; apps/ui/test/polish-screens.test.tsx 'no USD in Settings ...' (exclusion removed); apps/ui/test/real-daemon.test.ts polish-screens GET /settings case (exclusion removed)",
+   "why": "W15-47: fast mode's price reads about CHF at the day's rate"
+  },
+  {
+   "test": "apps/ui/test/changes.test.tsx 'lists every change with who asked, the words said, what changed and the source'",
+   "why": "W15-48: a row no longer shows command names or the JSON before/after; the source reads 'Voice'"
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts \"'yes' with nothing waiting says what is true ...\"",
+   "why": "W15-76: the Yes explain is 'Makes the change now.' instead of repeating the body"
+  }
+ ]
+}
