@@ -229,8 +229,9 @@ describe("Project page", () => {
       await waitFor(() =>
         expect(screen.getByTestId("intake-banner")).toHaveAttribute("data-state", "drafting"),
       );
+      // later #30: and how long it usually takes.
       expect(screen.getByTestId("intake-banner")).toHaveTextContent(
-        "Drafting the plan from your brief…",
+        "Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.",
       );
       // The daemon files the plan: the page follows without a reload.
       harness.daemon.state.intake.proj_beacon = intake("pending");
@@ -460,12 +461,14 @@ describe("Project page", () => {
     await screen.findByTestId("summary");
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
+    // later #48: "Contact page" is ready now ("and 1 more"), not one that becomes ready.
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
-      'This session runs "Decide the versioning scheme" (about CHF 2.40) and continues with up to 1 more as they become ready (about CHF 0.80).',
+      'This session runs "Decide the versioning scheme" (about CHF 2.40) and 1 more (about CHF 0.80).',
     );
     const left = within(dialog).getByTestId("start-session-over-budget");
+    // C-45: only "Decide" runs before "About page"; "Contact page" runs after it.
     expect(left).toHaveTextContent(
-      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 3.20 of this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.',
+      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 2.40 of this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.',
     );
     // Not the old sentence, which said 2.40 is more than 4.00.
     expect(left).not.toHaveTextContent("more than this session's work budget");
@@ -499,8 +502,9 @@ describe("Project page", () => {
       'Nothing can run: "Write the migration guide" waits on "Try the old approach", which was cancelled.',
     );
     expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+    // later #69: the state in words, not "(cancelled)".
     expect(within(warning).getByTestId("start-session-waiting")).toHaveTextContent(
-      '"Write the migration guide" waits on "Try the old approach" (cancelled): that will not be done by itself. Change what it waits for on the Tasks tab, or try the failed task again.',
+      '"Write the migration guide" waits on "Try the old approach", which was cancelled, so it cannot run. Change what it waits for on the Tasks tab.',
     );
     expect(within(warning).getByTestId("start-session-over-budget")).toHaveTextContent(
       '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00',
@@ -563,9 +567,15 @@ describe("Project page", () => {
     expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
       "Queued: your agent is in another session. This one starts when that one ends.",
     );
-    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    // P7-16: after a start the dialog has no second Start; a second start opens it again.
+    expect(within(dialog).queryByTestId("confirm-start-session")).toBeNull();
+    await user.click(within(dialog).getByText("Close"));
+    await user.click(screen.getByTestId("start-session"));
+    const again = await screen.findByTestId("start-session-dialog");
+    await waitFor(() => expect(within(again).getByTestId("confirm-start-session")).toBeEnabled());
+    await user.click(within(again).getByTestId("confirm-start-session"));
     await waitFor(() =>
-      expect(within(dialog).getByTestId("start-session-notice")).toHaveTextContent(
+      expect(within(again).getByTestId("start-session-notice")).toHaveTextContent(
         "Queued: your agent is in another session, and 1 other start waits before this one; they run one after the other, in order. This one starts after them.",
       ),
     );

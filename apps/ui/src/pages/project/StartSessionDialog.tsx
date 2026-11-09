@@ -52,23 +52,50 @@ export function startNotice(
   }
 }
 
-/** How the dialog names what a waiting task waits on (U-040), in plain status words. */
+/** A dependency's state as a clause ("which failed"), never the stored status (later #69). */
+function stateClause(status: string | null): string {
+  switch (status) {
+    case "failed":
+      return "which failed";
+    case "cancelled":
+      return "which was cancelled";
+    case "needs_human":
+      return "which needs your answer";
+    case "in_progress":
+    case "claimed":
+      return "which is running";
+    case "in_review":
+      return "which is being reviewed";
+    case "draft":
+      return "which is a draft";
+    case "done":
+      return "which is done";
+    default:
+      return "which has not run yet";
+  }
+}
+
+/**
+ * How the dialog names what a waiting task waits on (U-040), in plain words: '"A", which
+ * failed, and "B", which is a draft'. Before (later #69): '"A" (failed) and "B" (draft)', the
+ * stored statuses in parentheses.
+ */
 export function waitsOnText(waitsOn: StartCheckView["waiting"][number]["waitsOn"]): string {
-  return waitsOn
-    .map((d) =>
-      d.title === null
-        ? "a task that does not exist"
-        : `"${d.title}" (${
-            d.status === "needs_human"
-              ? "needs you"
-              : d.status === "in_progress" || d.status === "claimed"
-                ? "running"
-                : d.status === "in_review"
-                  ? "being reviewed"
-                  : d.status
-          })`,
-    )
-    .join(" and ");
+  const parts = waitsOn.map((d) =>
+    d.title === null ? "a task that does not exist" : `"${d.title}", ${stateClause(d.status)}`,
+  );
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+/** What to do about a stuck task, by what holds it: try the failed one, or answer, or re-wire. */
+function stuckAdvice(w: StartCheckView["waiting"][number]): string {
+  const failed = w.waitsOn.find((d) => d.status === "failed" && d.title !== null);
+  if (failed) return `Try "${failed.title}" again, or change what it waits for on the Tasks tab.`;
+  if (w.waitsOn.some((d) => d.status === "needs_human"))
+    return "Answer it in the Inbox, or change what it waits for on the Tasks tab.";
+  return "Change what it waits for on the Tasks tab.";
 }
 
 /** True when a waiting task waits on one that never finishes by itself (U-040). */
@@ -99,15 +126,25 @@ function about(values: readonly { estimate: MoneyLike }[]): string {
 
 /**
  * What a session started now does (design §3.6): "This session runs "X" (about CHF 0.12) and
- * continues with up to 6 more as they become ready (about CHF 0.80)." Null when nothing runs.
+ * continues with up to 6 more as they become ready (about CHF 0.80)." The tasks ready now are
+ * counted apart from those that become ready ("and 1 more (about CHF 0.40)"): before (later
+ * #48), a task ready now was one of "up to N more as they become ready". Null when nothing runs.
  */
 export function planSentence(check: StartCheckView): string | null {
   const [first, ...rest] = check.runnable;
   if (!first) return null;
-  const more = [...rest, ...check.later];
   const head = `This session runs "${first.title}" (${about([first])})`;
-  if (more.length === 0) return `${head}.`;
-  return `${head} and continues with up to ${more.length} more as they become ready (${about(more)}).`;
+  const now = rest.length > 0 ? ` and ${rest.length} more (${about(rest)})` : "";
+  if (check.later.length === 0) return `${head}${now}.`;
+  return `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)}).`;
+}
+
+/** '"A" (about CHF 6.00) and "B" (about CHF 7.00)'. */
+function namesWithEstimates(tasks: readonly { title: string; estimate: MoneyLike }[]): string {
+  const parts = tasks.map((t) => `"${t.title}" (about ${formatChf(t.estimate.chfMicro)})`);
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 /**
@@ -124,8 +161,7 @@ function BlockerLines({ check }: { check: StartCheckView }) {
       testId: "start-session-waiting",
       node: (
         <>
-          "{w.title}" waits on {waitsOnText(w.waitsOn)}: that will not be done by itself. Change
-          what it waits for on the Tasks tab, or try the failed task again.
+          "{w.title}" waits on {waitsOnText(w.waitsOn)}, so it cannot run. {stuckAdvice(w)}
         </>
       ),
     });
@@ -144,27 +180,49 @@ function BlockerLines({ check }: { check: StartCheckView }) {
     });
   // A task left out is larger than the whole work budget, or (live walk 2, phase C) only does
   // not fit after the tasks that run first: "needs about CHF 1.20, more than this session's work
-  // budget of CHF 2.40" was untrue for the second kind. Each says which it is.
-  const first = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
-  for (const t of check.overBudget)
+  // budget of CHF 2.40" was untrue for the second kind. Each says which it is. C-45: the tasks
+  // larger than the budget are one line (each had its own, saying the same); "the tasks that run
+  // first" is what the check says runs before that task (`ahead`), not every task that runs.
+  const tooBig = check.overBudget.filter((t) => t.estimate.usdMicro > check.workBudget.usdMicro);
+  const [onlyBig] = tooBig;
+  if (onlyBig && tooBig.length === 1)
+    lines.push({
+      key: `b-${onlyBig.taskId}`,
+      testId: "start-session-over-budget",
+      node: (
+        <>
+          "{onlyBig.title}" needs about <Money value={onlyBig.estimate} />, more than this session's
+          work budget of <Money value={check.workBudget} /> (the budget less a fifth kept for
+          reviews). Give the session a larger budget, or the task a smaller one.
+        </>
+      ),
+    });
+  else if (tooBig.length > 1)
+    lines.push({
+      key: "b-too-big",
+      testId: "start-session-over-budget",
+      node: (
+        <>
+          {namesWithEstimates(tooBig)} each need more than this session's work budget of{" "}
+          <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+          session a larger budget, or the tasks smaller ones.
+        </>
+      ),
+    });
+  // An older daemon does not say what runs before a task: every task that runs, as before.
+  const allFirst = check.runnable.reduce((s, r) => s + r.estimate.chfMicro, 0);
+  for (const t of check.overBudget.filter((x) => !tooBig.includes(x)))
     lines.push({
       key: `b-${t.taskId}`,
       testId: "start-session-over-budget",
-      node:
-        t.estimate.usdMicro > check.workBudget.usdMicro ? (
-          <>
-            "{t.title}" needs about <Money value={t.estimate} />, more than this session's work
-            budget of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews).
-            Give the session a larger budget, or the task a smaller one.
-          </>
-        ) : (
-          <>
-            "{t.title}" (about <Money value={t.estimate} />) may be left for next time: the tasks
-            that run first take about {formatChf(first)} of this session's work budget of{" "}
-            <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
-            session a larger budget to be sure it runs.
-          </>
-        ),
+      node: (
+        <>
+          "{t.title}" (about <Money value={t.estimate} />) may be left for next time: the tasks that
+          run first take about {formatChf(t.ahead?.chfMicro ?? allFirst)} of this session's work
+          budget of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews).
+          Give the session a larger budget to be sure it runs.
+        </>
+      ),
     });
   if (lines.length === 0) return null;
   return (
@@ -268,7 +326,7 @@ export function StartSessionDialog({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || !identity || stops || problem) return;
+    if (busy || notice || !identity || stops || problem) return;
     const chf = budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
     setBusy(true);
     setError(null);
@@ -307,89 +365,96 @@ export function StartSessionDialog({
   return (
     <Dialog open={open} onClose={onClose} title="Start a session" testId="start-session-dialog">
       <form onSubmit={submit} className="space-y-3">
-        {plan ? (
-          <p className="text-sm" data-testid="start-session-plan">
-            {plan}
-          </p>
-        ) : null}
-        {blocked ? (
-          <div
-            role="note"
-            className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
-            data-testid={noReadyTask ? "start-session-no-work" : "start-session-cannot-run"}
-          >
-            <p className="font-medium" data-testid="start-session-blocked">
-              {blocked.sentence}
-            </p>
-            {blocked.action ? (
-              blocked.action.kind === "resume" ? (
-                <Button onClick={() => void resume()} data-testid="start-session-unblock">
-                  {blocked.action.label}
-                </Button>
-              ) : (
-                <Link
-                  to={blocked.action.to ?? "/"}
-                  className="text-blue-700 hover:underline dark:text-blue-300"
-                  data-testid="start-session-unblock"
-                  onClick={onClose}
-                >
-                  {blocked.action.label}
-                </Link>
-              )
-            ) : null}
-            {noReadyTask ? (
-              <p className="mt-1">
-                Give your agent work first: add a task on the Tasks tab, click Make ready on a draft
-                there, or ask in Chat, for example "add a task: write the README".
+        {/* After Start only what happened stays (the notice, Open the session, Close): the
+            start check read again still said "This session runs …" for a session that would not
+            start, above a budget and a note nothing would use (review of P7-16). */}
+        {notice ? null : (
+          <>
+            {plan ? (
+              <p className="text-sm" data-testid="start-session-plan">
+                {plan}
               </p>
             ) : null}
-            {noReadyTask && intake === "failed" ? (
-              <p className="mt-1" data-testid="start-session-intake">
-                The plan from your brief could not be drafted; the project page says why and has a
-                Retry.
+            {blocked ? (
+              <div
+                role="note"
+                className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+                data-testid={noReadyTask ? "start-session-no-work" : "start-session-cannot-run"}
+              >
+                <p className="font-medium" data-testid="start-session-blocked">
+                  {blocked.sentence}
+                </p>
+                {blocked.action ? (
+                  blocked.action.kind === "resume" ? (
+                    <Button onClick={() => void resume()} data-testid="start-session-unblock">
+                      {blocked.action.label}
+                    </Button>
+                  ) : (
+                    <Link
+                      to={blocked.action.to ?? "/"}
+                      className="text-blue-700 hover:underline dark:text-blue-300"
+                      data-testid="start-session-unblock"
+                      onClick={onClose}
+                    >
+                      {blocked.action.label}
+                    </Link>
+                  )
+                ) : null}
+                {noReadyTask ? (
+                  <p className="mt-1">
+                    Give your agent work first: add a task on the Tasks tab, click Make ready on a
+                    draft there, or ask in Chat, for example "add a task: write the README".
+                  </p>
+                ) : null}
+                {noReadyTask && intake === "failed" ? (
+                  <p className="mt-1" data-testid="start-session-intake">
+                    The plan from your brief could not be drafted; the project page says why and has
+                    a Retry.
+                  </p>
+                ) : null}
+                {data ? <BlockerLines check={data} /> : null}
+              </div>
+            ) : data && plan ? (
+              <BlockerLines check={data} />
+            ) : null}
+            <Field
+              label="Session budget (CHF)"
+              hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
+                data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
+              }`}
+            >
+              <input
+                className={INPUT_CLASS}
+                value={budget}
+                onChange={(e) => {
+                  setBudget(e.target.value);
+                  setBudgetTouched(true);
+                }}
+                inputMode="decimal"
+                name="budget"
+              />
+            </Field>
+            {problem ? (
+              <p
+                className="text-sm text-red-700 dark:text-red-300"
+                data-testid="start-session-budget-error"
+              >
+                {problem}
               </p>
             ) : null}
-            {data ? <BlockerLines check={data} /> : null}
-          </div>
-        ) : data && plan ? (
-          <BlockerLines check={data} />
-        ) : null}
-        <Field
-          label="Session budget (CHF)"
-          hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
-            data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
-          }`}
-        >
-          <input
-            className={INPUT_CLASS}
-            value={budget}
-            onChange={(e) => {
-              setBudget(e.target.value);
-              setBudgetTouched(true);
-            }}
-            inputMode="decimal"
-            name="budget"
-          />
-        </Field>
-        {problem ? (
-          <p
-            className="text-sm text-red-700 dark:text-red-300"
-            data-testid="start-session-budget-error"
-          >
-            {problem}
-          </p>
-        ) : null}
-        <Field
-          label="Note for this session (optional)"
-          hint="Goes into the brief of every task this session runs."
-        >
-          <input
-            className={INPUT_CLASS}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            name="note"
-          />
-        </Field>
+            <Field
+              label="Note for this session (optional)"
+              hint="Goes into the brief of every task this session runs."
+            >
+              <input
+                className={INPUT_CLASS}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                name="note"
+              />
+            </Field>
+          </>
+        )}
         {!identity ? (
           <p className="text-xs text-neutral-500">Waiting for the daemon to report your agent…</p>
         ) : null}
@@ -427,14 +492,19 @@ export function StartSessionDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>{notice ? "Close" : "Cancel"}</Button>
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={busy || !identity || stops || !!problem}
-            data-testid="confirm-start-session"
-          >
-            {busy ? "Starting…" : "Start"}
-          </Button>
+          {/* After a start the dialog says what happened, with Open the session and Close: no
+              second Start beside "Started: …" (P7-16; a second start is a new opening of the
+              dialog, which then says "Starts after the current session"). */}
+          {notice ? null : (
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={busy || !identity || stops || !!problem}
+              data-testid="confirm-start-session"
+            >
+              {busy ? "Starting…" : "Start"}
+            </Button>
+          )}
         </div>
       </form>
     </Dialog>

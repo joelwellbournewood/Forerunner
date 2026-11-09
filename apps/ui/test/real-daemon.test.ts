@@ -5312,7 +5312,7 @@ describe("the UI client against the real daemon: research on an API key reads th
           },
         },
       ],
-      wordsUsed: "Settings: Web pages research may read to Only these websites: example.com",
+      wordsUsed: "Settings: Web pages research may read to only example.com",
       source: "ui",
       projectId: project.id,
     });
@@ -11942,4 +11942,191 @@ describe("polish-words, wave 13: Cancel on a ready task holding its work so far 
       expect(r ? actionExplain("cancel", r) : "", r?.title).toBe("Drops it.");
     }
   }, 120_000);
+});
+
+/**
+ * polish-screens (wave 13): what the screens it changes read and send, against the real daemon.
+ */
+describe("polish-screens, wave 13", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-polish-screens-"));
+    const clock = new SimulatedClock("2026-11-08T08:00:00Z");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "Done for today." }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("opening a project (the reads its page makes) writes nothing to GET /changes (later #61)", async () => {
+    const a = await client.createProject({ name: "Look A", goal: "One" });
+    const b = await client.createProject({ name: "Look B", goal: "Two" });
+    const before = await client.changes({ limit: 200 });
+    // What Home's link opens: the project page's reads. No project.switch any more.
+    await client.project(b.id);
+    await client.projectSummary(b.id);
+    await client.tasks(b.id);
+    await client.startCheck(b.id);
+    await client.project(a.id);
+    const after = await client.changes({ limit: 200 });
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.some((c) => /Switch project/.test(c.wordsUsed))).toBe(false);
+  });
+
+  it("a fresh install's monthly cap reads CHF 150.00 through GET /settings (later #28)", async () => {
+    const rows = await client.settings();
+    const cap = rows.find((r) => r.key === "human.monthly_cap");
+    // Before: CHF 150.40 (USD 188 read back at the day's rate), while setup said CHF 150.
+    expect((cap?.value as { chfMicro?: number } | undefined)?.chfMicro).toBe(150_000_000);
+    expect(cap?.risk).toBe("medium");
+    expect(cap?.description).toContain("It cannot be 0");
+    // CHF, never USD, in the rows this area words (the calibration's run cap, later #38); fast
+    // mode's price table is quoted as the provider prices it (left as it is, see the report).
+    for (const r of rows.filter((x) => !x.key.endsWith("fast_mode")))
+      expect(`${r.description} ${JSON.stringify(r.value)}`).not.toMatch(/USD/);
+    const calibration = rows.find((r) => r.key === "human.calibration");
+    expect((calibration?.value as { budget_chf?: number } | undefined)?.budget_chf).toBe(8);
+  });
+
+  it("budget.set with 0 on a project is no budget; GET /settings and the sentence say so (later #43)", async () => {
+    const p = await client.createProject({ name: "Zero budget", goal: "One page" });
+    const first = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "project", amountChf: 3, project: p.id } }],
+      wordsUsed: "Settings: Project budget to 3",
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(first.status).toBe("done");
+    const zero = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "project", amountChf: 0, project: p.id } }],
+      wordsUsed: "Settings: Project budget to no budget",
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(zero.status).toBe("done");
+    expect(zero.sentence).toBe(
+      "Set the project budget for Zero budget from CHF 3 to no budget: only the monthly cap limits its spending. Undo.",
+    );
+    const row = (await client.settings()).find(
+      (r) => r.key === "project.budget" && r.scopeId === p.id,
+    );
+    expect((row?.value as { chfMicro?: number } | undefined)?.chfMicro).toBe(0);
+    // The monthly cap's 0 is refused with why.
+    const month = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 0 } }],
+      wordsUsed: "Settings: Monthly spending cap to 0",
+      source: "ui",
+    });
+    // The Settings field refuses it first in words (settings-money.test.tsx); chat asks which
+    // value was meant with the same words (the parameters' issue).
+    expect(month.status).toBe("refused");
+    expect(month.code).toBe("validation");
+  });
+
+  it("a settings.set merge_mode card: its value is the label, what it means is the Inbox card's body (P7-10)", async () => {
+    const p = await client.createProject({ name: "Merging", goal: "Merge words" });
+    const r = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "merge_mode", value: "after_review", project: p.id },
+        },
+      ],
+      wordsUsed: "Settings: Who merges accepted work to Merge automatically after review",
+      source: "ui",
+      projectId: p.id,
+    });
+    expect(r.status).toBe("pending");
+    const card = r.card as { newValue?: string } | undefined;
+    expect(card?.newValue).toBe("Merge automatically after review");
+    const inbox = await client.inbox((await client.me()).id);
+    const request = inbox.requests.find(
+      (q) => q.projectId === p.id && q.status === "open" && q.kind === "approval",
+    );
+    expect(request?.title).toBe(
+      "Set who merges accepted work for Merging to Merge automatically after review?",
+    );
+    expect(request?.body).toMatch(/^Forerunner merges each task's pull request once the critic/);
+    // The site rule's change: one colon in its sentence (P7-31).
+    const sites = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "only", only: ["example.com"], never: [] },
+            project: p.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to only example.com",
+      source: "ui",
+      projectId: p.id,
+    });
+    expect(sites.status).toBe("done");
+    expect(sites.sentence?.split(":")).toHaveLength(2);
+    expect(sites.sentence).toContain("from any public website to only example.com:");
+  });
+
+  it("GET start-check says what runs before a task left out for the budget (C-45)", async () => {
+    const p = await client.createProject({ name: "Ahead", goal: "Three pages" });
+    const task = async (title: string, priority: "high" | "low", budgetUsdMicro: number) =>
+      client.createTask(p.id, {
+        title,
+        outcome: `${title} exists`,
+        acceptanceCriteria: [],
+        priority,
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro,
+        specialist: "coder",
+        riskTier: 0,
+      });
+    await task("Home page", "high", 300_000);
+    await task("About page", "low", 300_000);
+    await task("Contact page", "low", 10_000);
+    // The prices the check gives each task, with room for all three.
+    const wide = await client.startCheck(p.id, { budgetUsdMicro: 100_000_000 });
+    const price = (title: string) =>
+      [...wide.runnable, ...wide.overBudget].find((t) => t.title === title)?.estimate.usdMicro ?? 0;
+    const [home, about, contact] = [price("Home page"), price("About page"), price("Contact page")];
+    expect(contact).toBeLessThan(about);
+    // A work budget one micro-franc short of "Home" and "About": "About" does not fit after
+    // "Home", and "Contact", after it in the order, still does.
+    const work = home + about - 1;
+    const check = await client.startCheck(p.id, { budgetUsdMicro: Math.floor(work / 0.8) });
+    expect(check.runnable.map((t) => t.title)).toEqual(["Home page", "Contact page"]);
+    expect(check.overBudget.map((t) => t.title)).toEqual(["About page"]);
+    // What runs before it is "Home" alone, not "Home" and "Contact" (the dialog's sum before).
+    expect(check.overBudget[0]?.ahead?.usdMicro).toBe(home);
+    expect(check.overBudget[0]?.ahead?.chfMicro).toBeGreaterThan(0);
+  });
 });

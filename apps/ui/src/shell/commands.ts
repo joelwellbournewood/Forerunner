@@ -16,15 +16,26 @@ export interface CommandContext {
   navigate: NavigateFunction;
   setActiveProject: (id: string) => void;
   setTheme: (theme: ThemePreference) => void;
-  toggleKill: () => void;
+  /**
+   * Stop all (design §3.1): opens the question the header's Stop all asks once ("Stops every
+   * running session now. ..."); listed only while something runs (later #59).
+   */
+  askStopAll?: () => void;
+  /** Allow sessions again (design §3.1): listed only while sessions are stopped. */
+  allowSessions?: () => void;
   openNewProject: () => void;
   openShortcuts: () => void;
   /** Opens the conversation and starts a push-to-talk turn (the global hotkey's action). */
   openConversation?: () => void;
   /** The global hotkey as it reads here, shown as the hint; null without one. */
   hotkeyLabel?: string | null;
-  /** Opens the Start session dialog for the active project (U-077). */
+  /**
+   * Opens the Start session dialog (U-077) for the project on screen, else the active project,
+   * as the shell's dialog picks it.
+   */
   openStartSession?: () => void;
+  /** The project on screen (a project page), whose session the palette's Start starts. */
+  viewedProjectId?: string | null;
 }
 
 export function buildCommands(ctx: CommandContext): Command[] {
@@ -118,24 +129,50 @@ export function buildCommands(ctx: CommandContext): Command[] {
       run: ctx.openConversation,
     });
   }
-  const active = state.projects.find((p) => p.id === state.activeProjectId);
-  if (active && ctx.openStartSession) {
+  // The entry names the project its dialog starts: the one on screen, else the active one
+  // (review of later #61: opening a project from Home no longer makes it active, and the entry
+  // read "Start session: Atlas" while its dialog started the project on screen).
+  const onScreen = ctx.viewedProjectId
+    ? state.projects.find((p) => p.id === ctx.viewedProjectId)
+    : undefined;
+  const startProject = onScreen ?? state.projects.find((p) => p.id === state.activeProjectId);
+  if (startProject && ctx.openStartSession) {
     commands.push({
       id: "action.startSession",
-      title: `Start session: ${active.name}`,
-      hint: "the active project",
+      title: `Start session: ${startProject.name}`,
+      hint: onScreen ? "the project on screen" : "the active project",
       group: "Actions",
       run: ctx.openStartSession,
     });
   }
-  commands.push(
-    { id: "action.newProject", title: "New project", group: "Actions", run: ctx.openNewProject },
-    {
-      id: "action.kill",
-      title: state.killActive ? "Resume all sessions" : "Stop all sessions",
+  commands.push({
+    id: "action.newProject",
+    title: "New project",
+    group: "Actions",
+    run: ctx.openNewProject,
+  });
+  // As the header (design §3.1, later #59): Stop all only while something runs, and it asks
+  // first; while sessions are stopped, Allow sessions again. Never a stop that acts at once
+  // from a list where a mistyped Enter picks it.
+  const running = state.projects.filter((p) => p.working).length;
+  if (state.killActive && ctx.allowSessions) {
+    commands.push({
+      id: "action.allowSessions",
+      title: "Allow sessions again",
+      hint: "lets sessions start again",
       group: "Actions",
-      run: ctx.toggleKill,
-    },
+      run: ctx.allowSessions,
+    });
+  } else if (!state.killActive && running > 0 && ctx.askStopAll) {
+    commands.push({
+      id: "action.stopAll",
+      title: `Stop all (${running} running)`,
+      hint: "asks first",
+      group: "Actions",
+      run: ctx.askStopAll,
+    });
+  }
+  commands.push(
     {
       id: "action.theme.dark",
       title: "Theme: dark",

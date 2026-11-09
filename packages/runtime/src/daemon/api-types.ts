@@ -1445,6 +1445,12 @@ export const StartCheckTaskView = z.object({
   taskId: z.string(),
   title: z.string(),
   estimate: Money,
+  /**
+   * `overBudget` only (C-45): what the tasks planned before it take of the work budget, the
+   * reason it does not fit; tasks after it that still fit are not in it. Absent from an older
+   * daemon.
+   */
+  ahead: Money.optional(),
 });
 export type StartCheckTaskView = z.infer<typeof StartCheckTaskView>;
 
@@ -2973,7 +2979,7 @@ export const DAEMON_ROUTES = {
   setTaskDependencies:
     "POST /tasks/:id/dependencies (SetTaskDependenciesBody { version, dependsOn, reason?, note? } -> TaskChangeView: the tasks it waits on, all of them, through the `task.dependencies` command (logged, with its Undo); an id that is no task of the project, the task itself, a cancelled task or a cycle is 409 conflict with cause validation and a message naming it, a stale version 409 conflict, nothing written; 404 for an unknown task; U-040)",
   startCheck:
-    "GET /projects/:id/start-check?budgetUsdMicro= (StartCheckView: what a session started now would plan: the ready tasks it would run, those left out for budget and those waiting on a task not done, priced and cut as the runner does; without a budget the project's session cap; waitingForSandbox: the tier 2+ tasks that wait while the Docker sandbox is not ready, with the step, U-079; 404 for an unknown project; U-040)",
+    "GET /projects/:id/start-check?budgetUsdMicro= (StartCheckView: what a session started now would plan: the ready tasks it would run, those left out for budget (each with `ahead`, what the tasks before it take, C-45) and those waiting on a task not done, priced and cut as the runner does; without a budget the project's session cap; waitingForSandbox: the tier 2+ tasks that wait while the Docker sandbox is not ready, with the step, U-079; 404 for an unknown project; U-040)",
   planProject:
     "POST /projects/:id/plan (ProjectPlanBody -> 201 PlanProjectView: the plan written as milestone and task rows; one milestone and a flat task list in small-project mode, spec B.6, where a later plan joins the project's open milestone (reusedMilestone), which keeps its name and takes the plan's new success criteria and a later target date (merged says what was added; an audit row project.plan carries the plan's reason); an unknown dependency, a cycle, an empty plan or one over the caps is refused as 409 conflict with cause validation (ADR 0025) and nothing is written, while a reason, a task title or a milestone name over its limit is shortened at a sentence or a word, never refused (ADR 0103); 404 for an unknown project)",
   transitionTask: "POST /tasks/:id/transition",

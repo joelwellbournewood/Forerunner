@@ -8,6 +8,11 @@ export interface StartCheckTask {
   taskId: string;
   title: string;
   estimateUsdMicro: number;
+  /**
+   * A task left out for the budget only (C-45): what the tasks planned before it take of the
+   * work budget, the reason it did not fit. Tasks after it that still fit are not counted.
+   */
+  aheadUsdMicro?: number;
 }
 
 /**
@@ -106,6 +111,17 @@ export async function startCheck(
     title: i.title,
     estimateUsdMicro: i.estimateUsdMicro,
   });
+  // C-45: the cut is greedy (a smaller task after a left-out one still runs), so what came
+  // before each left-out task is read in plan order, not as the sum of everything that runs.
+  const aheadOf = new Map<string, number>();
+  {
+    const left = new Set((cut.leftOutForBudget ?? []).map((i) => i.taskId));
+    let before = 0;
+    for (const i of items) {
+      if (left.has(i.taskId)) aheadOf.set(i.taskId, before);
+      else before += i.estimateUsdMicro;
+    }
+  }
   const waiting = await store.task.waitingTasks(projectId);
   // A chain: a waiting task follows once what it waits on runs or follows (fixed point).
   const comes = new Set(cut.items.map((i) => i.taskId));
@@ -133,7 +149,10 @@ export async function startCheck(
     workBudgetUsdMicro,
     ready: ready.length,
     runnable: cut.items.map(named),
-    overBudget: (cut.leftOutForBudget ?? []).map(named),
+    overBudget: (cut.leftOutForBudget ?? []).map((i) => ({
+      ...named(i),
+      aheadUsdMicro: aheadOf.get(i.taskId) ?? 0,
+    })),
     waiting: waiting.map((w) => ({
       taskId: w.task.id,
       title: w.task.title,

@@ -50,8 +50,9 @@ export function Shell() {
   const [startOpen, setStartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [killBusy, setKillBusy] = useState(false);
   const [killError, setKillError] = useState<string | null>(null);
+  // Stop all's question (design §3.1): the header's button and the palette open the same one.
+  const [stopAsking, setStopAsking] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
   // The conversation (spec O.1): `request` counts voice requests (hotkey presses, the palette).
   const [conversation, setConversation] = useState({ open: false, request: 0 });
@@ -97,23 +98,18 @@ export function Shell() {
     [client, store],
   );
 
-  // The palette's "Stop all sessions" / "Allow sessions again"; the header's own buttons ask
-  // once first (ShellBars.tsx).
-  const toggleKill = useCallback(async () => {
-    if (killBusy) return;
-    setKillBusy(true);
+  // The palette's "Allow sessions again" (design §3.1: "Lets sessions start again"), as the
+  // stopped bar's button. Its "Stop all" opens the header's question instead (later #59: it
+  // stopped at once, without asking).
+  const allowSessions = useCallback(async () => {
     setKillError(null);
     try {
-      const result = state.killActive
-        ? await client.resume()
-        : await client.kill({ scope: "all", reason: "stop all from the UI" });
+      const result = await client.resume();
       store.dispatch({ type: "killActive", active: result.killActive });
     } catch (error) {
       setKillError(describeError(error));
-    } finally {
-      setKillBusy(false);
     }
-  }, [client, store, state.killActive, killBusy]);
+  }, [client, store]);
 
   const commands = useMemo(
     () =>
@@ -122,14 +118,16 @@ export function Shell() {
         navigate,
         setActiveProject,
         setTheme,
-        toggleKill: () => void toggleKill(),
+        askStopAll: () => setStopAsking(true),
+        allowSessions: () => void allowSessions(),
         openNewProject: () => setNewProjectOpen(true),
         openShortcuts: () => setHelpOpen(true),
         openConversation: talk,
         hotkeyLabel,
         openStartSession: () => setStartOpen(true),
+        viewedProjectId: viewed?.id ?? null,
       }),
-    [state, navigate, setActiveProject, setTheme, toggleKill, talk, hotkeyLabel],
+    [state, navigate, setActiveProject, setTheme, allowSessions, talk, hotkeyLabel, viewed],
   );
   const palette = paletteShortcut(state.config.platform);
 
@@ -380,7 +378,7 @@ export function Shell() {
             >
               {palette}
             </Button>
-            <StopAll />
+            <StopAll asking={stopAsking} onAsking={setStopAsking} />
             <NavLink
               to="/settings"
               aria-label="Settings"

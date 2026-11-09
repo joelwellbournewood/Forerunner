@@ -21,7 +21,9 @@ describe("small-project mode (B.6)", () => {
     );
     expect(card.what).toBe("small project mode for Game");
     expect(card.oldValue).toBe("false");
-    expect(card.newValue).toBe(`true (${ON})`);
+    // P7-10: the value is the value; what it changes is the read-back's second sentence.
+    expect(card.newValue).toBe("true");
+    expect(card.ask).toContain(ON.slice(1));
     expect(card.sentence).toBe(`Set small project mode for Game from false to true: ${ON}. Undo.`);
     const on = done(
       await w.executor.execute({

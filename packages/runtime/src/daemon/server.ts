@@ -1367,7 +1367,11 @@ export function createDaemonApp(
       workBudget: money(r.workBudgetUsdMicro, rate),
       ready: r.ready,
       runnable: r.runnable.map(named),
-      overBudget: r.overBudget.map(named),
+      // C-45 (polish-screens): what the tasks before each left-out one take.
+      overBudget: r.overBudget.map((t) => ({
+        ...named(t),
+        ...(t.aheadUsdMicro !== undefined ? { ahead: money(t.aheadUsdMicro, rate) } : {}),
+      })),
       later: r.later.map(named),
       blocked,
       busy,

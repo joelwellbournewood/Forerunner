@@ -183,7 +183,6 @@ describe("the palette's talk entry", () => {
       navigate: () => {},
       setActiveProject: () => {},
       setTheme: () => {},
-      toggleKill: () => {},
       openNewProject: () => {},
       openShortcuts: () => {},
     };

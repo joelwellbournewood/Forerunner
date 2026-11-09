@@ -1,16 +1,32 @@
-/** Display helpers for ISO-8601 UTC timestamps. */
+/**
+ * Display helpers for ISO-8601 UTC timestamps, in the computer's time zone. One way of writing a
+ * time on every screen (design §5, P7-9): 24 hours, "04:36", whatever the browser's language
+ * (an en-US browser wrote "04:32:05 AM" in a log beside "Waits until 04:36" from the daemon).
+ */
 
+/** "04:36": hours and minutes, 24 hours. */
+const HH_MM: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+
+/** "3 Nov 2026, 04:36". */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${d.toLocaleTimeString("en-GB", HH_MM)}`;
+}
+
+/**
+ * "04:36" today, "4 Nov, 04:36" another day: a time a person waits for or looks back on, as the
+ * daemon's own sentences write it ("Waits until 04:36", `clockTime`) and Files' copy line
+ * (`copyUpdatedWords`). `now` is injectable for tests.
+ */
+export function formatClock(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString("en-GB", HH_MM);
+  if (d.toDateString() === new Date(now).toDateString()) return time;
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${time}`;
 }
 
 /** Date only, for axes and compact rows. */
@@ -18,7 +34,7 @@ export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 /** Day and month as a sentence names them: "1 Nov" (design §5, "Decision"). */
@@ -29,11 +45,12 @@ export function formatDayMonth(iso: string | null | undefined): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
+/** "16:02": a log line's time, 24 hours, no seconds (design §5, P7-9). */
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleTimeString("en-GB", HH_MM);
 }
 
 /** "3 min ago", "2 h ago", "yesterday"; `now` is injectable for tests. */

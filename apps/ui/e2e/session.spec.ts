@@ -30,7 +30,8 @@ test("start a session from the project page and watch the live view fill over SS
   });
 
   // Real EventSource in the browser: the view must report "live", not the polling fallback.
-  await expect(page.getByTestId("stream-mode")).toHaveText("live");
+  // P7-4: the stream badge in plain words.
+  await expect(page.getByTestId("stream-mode")).toHaveText("Live");
   // The fake claims a task on its second event (400 ms apart under Playwright) and clears it
   // when the run completes; check the header while the task is current.
   await expect(page.getByTestId("event-row").nth(1)).toBeVisible();

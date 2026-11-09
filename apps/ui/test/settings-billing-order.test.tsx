@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { formatDateTime } from "../src/lib/time.ts";
+import { formatClock } from "../src/lib/time.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -57,7 +57,7 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
     expect(within(sub).getByTestId("billing-order-how")).toHaveTextContent("Through Claude Code");
     expect(within(sub).getByTestId("billing-order-status")).toHaveTextContent(
       // U-078: what happens to the work that waits for it.
-      `Resting until ${formatDateTime(resting)} (its usage limit); waiting work starts by itself then`,
+      `Resting until ${formatClock(resting)} (its usage limit); waiting work starts by itself then`,
     );
     expect(within(sub).getByTestId("billing-order-spent")).toHaveTextContent(
       "42% of the allowance used this month",

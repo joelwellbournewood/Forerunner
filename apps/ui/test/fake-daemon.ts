@@ -135,6 +135,7 @@ import {
   cleanSiteList,
   legacyBlocks,
   researchReadsLine,
+  WEB_ACCESS_ROW_WORDS,
   type WebAccess,
   webAccessNarrows,
   webAccessOf,
@@ -849,7 +850,8 @@ function fakeStartCheck(
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
     // U-079: a full-review task waits while the Docker sandbox is not ready.
     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
-    else if (total + estimate > work) overBudget.push(named);
+    // C-45: what the tasks before it take (polish-screens, wave 13).
+    else if (total + estimate > work) overBudget.push({ ...named, ahead: money(total) });
     else {
       runnable.push(named);
       total += estimate;
@@ -3592,7 +3594,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         description: `Autonomy for ${p.name}`,
         risk: "medium",
       }));
-    const rows = [...SETTINGS, ...projectRows].map((s) => {
+    // Like the daemon (settings-view.ts): each project's budget, 0 meaning no budget (later #43;
+    // polish-screens, wave 13).
+    const budgetRows = state.projects.map((p): (typeof SETTINGS)[number] => ({
+      key: "project.budget",
+      label: "Project budget",
+      scope: "project",
+      scopeId: p.id,
+      value: p.budget,
+      description: `The most ${p.name} may spend in all. 0 means no budget: only the monthly cap limits it`,
+      risk: "medium",
+    }));
+    const rows = [...SETTINGS, ...projectRows, ...budgetRows].map((s) => {
       if (s.key === "project.autonomy") {
         const p = state.projects.find((x) => x.id === s.scopeId);
         return p ? { ...s, value: p.autonomyLevel } : s;
@@ -3638,7 +3651,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         scope: "project",
         scopeId: p.id,
         value: webAccessFake(p.id) as never,
-        description: `Any public website (the default, with an optional list of websites it never reads) or only the websites you list, for ${p.name}'s research on both credentials; each website covers its subdomains, and this computer and your home or office network are never read. The agent browser's own site list is separate and changes nothing here`,
+        description: WEB_ACCESS_ROW_WORDS,
         risk: "medium",
       });
     // Like the daemon: one fast-mode row per project, the effect and surcharge both ways.
@@ -4728,6 +4741,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     apply: () => { before: unknown; after: unknown };
   }
   type PlanOutcome = Planned | { refused: { reason: string; code: string } };
+  /** "Set X to b? <Effect>." as settings.set's `askOf`. */
+  const askWith = (what: string, value: string, effect: string) =>
+    `Set ${what} to ${value}? ${effect.charAt(0).toUpperCase()}${effect.slice(1)}.`;
   const refuse = (reason: string, code = "validation"): PlanOutcome => ({
     refused: { reason, code },
   });
@@ -4931,8 +4947,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (name === "budget.set") {
       const scope = typeof params.scope === "string" ? params.scope : "session";
       const amountChf = Number(params.amountChf);
-      if (!Number.isFinite(amountChf) || amountChf <= 0) {
-        return refuse("budget.set: amountChf must be a positive number");
+      if (
+        !Number.isFinite(amountChf) ||
+        amountChf < 0 ||
+        (amountChf === 0 && scope !== "project")
+      ) {
+        return refuse(
+          scope === "month"
+            ? "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off."
+            : scope === "project"
+              ? "budget.set: amountChf must be a number"
+              : "The budget per session must be more than CHF 0: a session plans its work within it.",
+        );
       }
       if (scope === "month") {
         const fromChf = me.monthlyCap.chfMicro / 1_000_000;
@@ -4966,6 +4992,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (!project) return refuse("no such project");
       if (scope === "project") {
         const fromChf = project.budget.chfMicro / 1_000_000;
+        // later #43: 0 is no budget, said so.
+        const words = (chf: number) => (chf <= 0 ? "no budget" : `CHF ${chf}`);
         return {
           name,
           params,
@@ -4974,10 +5002,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             {
               command: name,
               what: `the project budget for ${project.name}`,
-              oldValue: `CHF ${fromChf}`,
-              newValue: `CHF ${amountChf}`,
+              oldValue: words(fromChf),
+              newValue: words(amountChf),
               scope: "project",
-              sentence: `Set the project budget for ${project.name} from CHF ${fromChf} to CHF ${amountChf}. Undo.`,
+              sentence: `Set the project budget for ${project.name} from ${words(fromChf)} to ${words(amountChf)}${amountChf <= 0 ? ": only the monthly cap limits its spending" : ""}. Undo.`,
+              ...(amountChf <= 0
+                ? {
+                    ask: `Remove the project budget for ${project.name}? Only the monthly cap limits its spending then.`,
+                  }
+                : {}),
               projectId: project.id,
               projectName: project.name,
               usesActiveProject: projectRef === undefined,
@@ -5143,7 +5176,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               command: name,
               what,
               oldValue: webAccessWords(before),
-              newValue: `${webAccessWords(value)} (${effect})`,
+              newValue: webAccessWords(value),
+              ask: askWith(what, webAccessWords(value), effect),
               scope: "project",
               sentence: `Set ${what} from ${webAccessWords(before)} to ${webAccessWords(value)}: ${effect}. Undo.`,
               projectId: project.id,
@@ -5178,7 +5212,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               command: name,
               what: `Opus fast mode for ${project.name}`,
               oldValue: shown,
-              newValue: `${value} (${effect})`,
+              newValue: String(value),
+              ask: askWith(`Opus fast mode for ${project.name}`, String(value), effect),
               scope: "project",
               sentence,
               projectId: project.id,
@@ -5218,7 +5253,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               command: name,
               what,
               oldValue: MERGE_MODE_LABELS[before],
-              newValue: `${MERGE_MODE_LABELS[value]} (${effect})`,
+              newValue: MERGE_MODE_LABELS[value],
+              ask: askWith(what, MERGE_MODE_LABELS[value], effect),
               scope: "project",
               sentence: `Set ${what} from ${MERGE_MODE_LABELS[before]} to ${MERGE_MODE_LABELS[value]}: ${effect}. Undo.`,
               projectId: project.id,
@@ -5260,7 +5296,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               command: name,
               what,
               oldValue: onOff(before),
-              newValue: `${onOff(value)} (${effect})`,
+              newValue: onOff(value),
+              ask: askWith(what, onOff(value), effect),
               scope: "project",
               sentence: `Set ${what} from ${onOff(before)} to ${onOff(value)}: ${effect}. Undo.`,
               projectId: project.id,
@@ -5308,7 +5345,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               command: name,
               what,
               oldValue: from === undefined ? "unset" : String(from),
-              newValue: `${value} (${effect})`,
+              newValue: String(value),
+              ask: askWith(what, String(value), effect),
               scope: "project",
               sentence: `Set ${what} from ${from === undefined ? "unset" : from} to ${value}: ${effect}. Undo.`,
               projectId: project.id,
@@ -5607,9 +5645,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const id = nextId("pend");
     const now = new Date();
-    const readback = `${view.what}: ${view.oldValue || "nothing"} to ${view.newValue}. ${
-      decision === "needs_yes" ? "Say yes to confirm." : "Confirm in the app on a paired device."
-    }`;
+    const readback = view.ask
+      ? decision === "needs_device"
+        ? `${view.ask} Confirm in the app on a paired device.`
+        : view.ask
+      : `${view.what}: ${view.oldValue || "nothing"} to ${view.newValue}. ${
+          decision === "needs_yes"
+            ? "Say yes to confirm."
+            : "Confirm in the app on a paired device."
+        }`;
     state.pendingCommands.set(id, {
       card: view,
       decision,

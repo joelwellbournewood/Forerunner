@@ -413,6 +413,8 @@ const ChangeCardBase = z.looseObject({
   usesActiveProject: z.boolean().default(false),
   expiresAt: z.string().nullable().default(null),
   reversible: z.boolean().default(true),
+  /** The read-back question, with what the change does as its second sentence (P7-10). */
+  ask: z.string().optional(),
 });
 /** `parts` carries the cards of a composed plan (one level, spec Q.9). */
 export const ChangeCardView = ChangeCardBase.extend({ parts: z.array(ChangeCardBase).optional() });

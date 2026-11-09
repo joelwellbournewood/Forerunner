@@ -163,7 +163,8 @@ describe("local daemon", () => {
     const settings = await jsonList(await req("/settings"));
     expect(settings.find((s) => s.key === "human.monthly_cap")).toMatchObject({
       scope: "human",
-      risk: "high",
+      // later #99: the row's risk is its card's (lowering it is medium; raising it says so).
+      risk: "medium",
     });
     expect(settings.find((s) => s.key === "project.budget")).toMatchObject({ scope: "project" });
     // Opus fast mode (D.20, ADR 0057): per project, off by default, the surcharge both ways.

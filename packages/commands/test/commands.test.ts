@@ -103,7 +103,8 @@ describe("budget.set", () => {
         confirmation: tap(w.human.id),
       }),
     );
-    expect(p.sentence).toBe("Raised the project budget for Game from CHF 0 to CHF 50. Undo.");
+    // later #43: a project without a budget reads "no budget", never "CHF 0".
+    expect(p.sentence).toBe("Set the project budget for Game from no budget to CHF 50. Undo.");
     expect((await w.store.project.mustGet(w.game.id)).budget_usd_micro).toBe(62_500_000);
     done(await w.executor.undo(p.changeLogId, w.ctx()));
     expect((await w.store.project.mustGet(w.game.id)).budget_usd_micro).toBe(0);
@@ -436,7 +437,8 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       }),
     );
     expect(handover.sentence).toBe(
-      'Set the monthly handover test for Game from unset to {"enabled":true,"day":2,"time":"08:00"}: a fresh agent runs the seeded change on day 2 at 08:00 each month and its stuck places become a docs task. Undo.',
+      // later #30: in words, never JSON.
+      "Set the monthly handover test for Game from off to on, day 2 at 08:00: a fresh agent runs the seeded change on day 2 at 08:00 each month and its stuck places become a docs task. Undo.",
     );
     expect((await w.store.project.mustGet(w.game.id)).settings.handover).toEqual({
       enabled: true,
@@ -454,7 +456,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       }),
     );
     expect(calibration.sentence).toBe(
-      'Set the monthly critic calibration from unset to {"enabled":false}: the critic is no longer graded against the eval sets each month. Undo.',
+      "Set the monthly critic calibration from on, day 1 at 06:00 (the default) to off: the critic is no longer graded against the eval sets each month. Undo.",
     );
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs.calibration).toEqual({
       enabled: false,

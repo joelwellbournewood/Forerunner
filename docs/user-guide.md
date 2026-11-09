@@ -53,12 +53,13 @@ Extensions, Changes, Performance, Updates), and the gear for **Settings**. While
 works, a chip says so: **Alice is working on "Style the page" · 2 min ›**; click it to open the
 session. **Stop all (1 running)** shows only while something runs (see "Kill switch").
 Without a Claude key a bar says "Claude is not connected: planning and tasks need it. You can
-still add tasks." with **Connect**.
+still add tasks." with **Connect** (not on the setup page Connect opens).
 
 Home shows, top to bottom:
 
 - **Needs you**: every card waiting for you in any project, one line each with **Answer**
-  (it opens that card in the Inbox).
+  (it opens that card in the Inbox), or the card's own button when there is nothing to answer
+  (a refused key's **Save a new key**).
 - **Working now**: who works on what in which project, for how long, with **Open**.
 - **Projects**: one row each, with the project's status in one sentence, "3 of 7 done", and
   the one button that fits: **Answer**, **Open running session**, **Continue** (starts a
@@ -99,9 +100,11 @@ again as soon as the service answers.
 ## A project
 
 The project's page starts with its name and its status in one sentence with its button (as on
-Home). **Start session** reads **Open running session** while a session works on it. The tabs
+Home, except a start: **Start session** beside it is the page's one start button).
+**Start session** reads **Open running session** while a session works on it. The tabs
 are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **Docs**,
-**Reviews**, **Costs** and **Data**.
+**Reviews**, **Costs** and **Data**. A tab keeps the Tasks tab's filters, so you find them as you
+left them; an open file or task stays on its own tab.
 
 - **Overview**: where the project stands and what happens next. The cards of this project that
   wait for you, each with **Answer**; **Working now** (the task in flight, for how long, with
@@ -499,7 +502,7 @@ session: it runs those tasks, in that order, and later sessions go by priority.
 
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
-tabs you see where it stands: "Drafting the plan from your brief…", "Waiting for you: approve
+tabs you see where it stands: "Drafting the plan from your brief…" (it usually takes about a minute), "Waiting for you: approve
 the plan" with **Open**, "Planning failed" with what went wrong in words ("Claude did not
 answer (model call failed).", "Claude's plan could not be read. Forerunner asked Claude twice.",
 "Your Claude usage limit is reached. Try again once it resets.") and **Try again**, or "You
@@ -528,10 +531,11 @@ try is one line, and "The writer takes over …" says when another specialist tr
 after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
 adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
 notifications sent), each line's event type, the level filters and the raw output; escalations
-are highlighted. A session
-that has ended
-shows **finished**: its log is complete and the
-page no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
+are highlighted. The page's title says when the session began ("Quote page · session at
+14:05"); every time on it is written in 24 hours, the log's too. While it runs, a badge says
+how the page follows it: **Live**, or **Updates every 5 s** when live updates do not work in
+this window. A session that has ended shows its status only: its log is complete and the page
+no longer waits for events. A session stops cleanly when it reaches 80% of its cap (it finishes the
 current task and starts nothing new), when its wall clock runs out, or when you stop it.
 
 A start while your agent is in another session waits its turn: waiting starts (yours, an
@@ -541,16 +545,20 @@ nothing to run is refused even then: another project's session makes none of its
 so its start would only end at once.
 
 **Start** opens a dialog that says what the session will do: "This session runs "Create
-index.html" (about CHF 0.12) and continues with up to 6 more as they become ready". The budget
+index.html" (about CHF 0.12) and continues with up to 6 more as they become ready", or, with
+tasks that are ready now, "... and 2 more (about CHF 0.40)". The budget
 is filled in with the project's default; 0, a negative amount or more than is left of your
 monthly cap is refused in words. "Note for this session" goes into the brief of every task the
 session runs. When nothing can run, Start is greyed out and the dialog says why in one sentence
 with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up Docker,
-Connect Claude). After Start you stay where you were; **Open the session** opens its page.
-A task that does not fit is named one of two ways: "needs about CHF 3.00, more than this
-session's work budget of CHF 2.40" when it alone is too large, or "(about CHF 1.20) may be left
-for next time: the tasks that run first take about CHF 1.50 of this session's work budget of
-CHF 2.40" when it only does not fit after them. A task with a budget of its own is counted at
+Connect Claude); a task that waits on one that failed or was cancelled is named with it
+('"Write the guide" waits on "Draft the outline", which failed, so it cannot run.'). After Start
+you stay where you were; the dialog says it started, with **Open the session** and **Close**
+(to start another session, open it again). A task that does not fit is named one of two ways:
+"needs about CHF 3.00, more than this session's work budget of CHF 2.40" when it alone is too
+large (several such tasks are one line), or "(about CHF 1.20) may be left for next time: the
+tasks that run first take about CHF 1.50 of this session's work budget of CHF 2.40" when it only
+does not fit after the tasks ordered before it. A task with a budget of its own is counted at
 most at what is left of that budget, since its runs never spend more.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it
@@ -742,7 +750,7 @@ Escape or Cancel) answers it "no", so no confirmation is left waiting in the Inb
 On a Claude subscription, Settings → **Claude subscription allowance** says how much
 API-equivalent use your plan covers a month, in CHF. Forerunner cannot see your plan's real
 usage, so it estimates against this amount and stops subscription work at 95% of it; an API
-key takes over when you have one. The default (USD 50, about CHF 40) is low on purpose: enter
+key takes over when you have one. The default (about CHF 40) is low on purpose: enter
 what your plan covers, or a Max plan's work stops early.
 
 ### Which Claude credential is used first
@@ -790,7 +798,8 @@ says so ("Until then your tasks go on with your API key, which costs money."). C
 setup and reviews use your other credential either way. No task fails because of
 it, and neither does the plan of a new project: its page says "Planning waits for a new API
 key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
-with **Save a new key** on the card or on the project page (the setup assistant): the card
+with **Save a new key** on the card or on the project page (the setup assistant, open on its
+Claude step: "Anthropic refused the saved API key. Paste a new one below."): the card
 closes, the mark goes, and the waiting work starts by itself: the tasks run, and the plan is
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
@@ -1037,7 +1046,8 @@ session only and leave the rest running. Starting a session while sessions are s
 so, with **Allow sessions again**.
 
 The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
-active project.
+project on screen, or for the active project when no project is open. It lists **Stop all** only while something runs, and asks first as the header's
+button does; while sessions are stopped it offers **Allow sessions again**.
 
 ## Links
 
@@ -1108,7 +1118,12 @@ your agents may reach beyond their built-in tools.
   your paired devices, sources, Opus fast mode, models, **Voice** (installing local voice, CPU or
   GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
   mailbox and mode, on the Email page) and the other settings, each project's autonomy among
-  them. Only settings you can change are listed; autonomy is always chosen by its name.
+  them. Only settings you can change are listed; autonomy is always chosen by its name. Money is
+  in CHF, with a point or a comma; only Opus fast mode still quotes Anthropic's price per
+  million tokens in USD. A project's budget can be 0, which means no budget
+  (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
+  stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
+  change card shows the new value in words, with what it changes as the sentence under it.
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice

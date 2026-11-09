@@ -43,7 +43,9 @@ describe("the fast_mode setting (D.20)", () => {
     const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
     expect(card.what).toBe("Opus fast mode for Game");
     expect(card.oldValue).toBe("unset");
-    expect(card.newValue).toBe(`true (${ON})`);
+    // P7-10: the value is the value; what it changes is the read-back's second sentence.
+    expect(card.newValue).toBe("true");
+    expect(card.ask).toContain(ON.slice(1));
     expect(card.sentence).toBe(`Set Opus fast mode for Game from unset to true: ${ON}. Undo.`);
 
     // Medium risk: a yes before anything changes.
@@ -63,7 +65,8 @@ describe("the fast_mode setting (D.20)", () => {
         ctx: w.ctx(),
       }),
     );
-    expect(p2.card.newValue).toBe(`false (${OFF})`);
+    expect(p2.card.newValue).toBe("false");
+    expect(p2.card.ask).toContain(OFF.slice(1));
     const off = done(await w.executor.confirmByText(p2.pendingId, "yes", human));
     expect(off.sentence).toBe(`Set Opus fast mode for Game from true to false: ${OFF}. Undo.`);
     expect((await w.store.project.mustGet(w.game.id)).settings.fast_mode).toBe(false);
@@ -89,7 +92,8 @@ describe("the fast_mode setting (D.20)", () => {
       "Opus runs of this project on an API key are requested in fast mode at USD 30 / 150 per million input / output tokens instead of USD 4 / 20, a 7.5x surcharge; a subscription ignores it (API only)";
     const params = { key: "fast_mode", value: true, project: "game" };
     const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
-    expect(card.newValue).toBe(`true (${corrected})`);
+    expect(card.newValue).toBe("true");
+    expect(card.ask).toContain(corrected.slice(1));
     const p = pending(await w.executor.execute({ name: "settings.set", params, ctx: w.ctx() }));
     const on = done(await w.executor.confirmByText(p.pendingId, "yes", human));
     expect(on.sentence).toBe(`Set Opus fast mode for Game from unset to true: ${corrected}. Undo.`);
@@ -97,7 +101,8 @@ describe("the fast_mode setting (D.20)", () => {
       { name: "settings.set", params: { key: "fast_mode", value: false, project: "game" } },
       w.ctx(),
     );
-    expect(off.newValue).toContain("the fast-mode surcharge (7.5x, USD 30 / 150) stops");
+    expect(off.newValue).toBe("false");
+    expect(off.ask).toContain("the fast-mode surcharge (7.5x, USD 30 / 150) stops");
     await w.store.close();
   });
 });

@@ -18,7 +18,8 @@ describe("money in Settings (design §6)", () => {
     expect(asChf("CHF 5")).toBe(5);
     expect(asChf("0")).toBeNull();
     expect(moneyProblem("0")).toBe("The amount must be more than CHF 0.");
-    expect(moneyProblem("-3")).toBe("The amount must be more than CHF 0.");
+    // later #43: a negative amount is never taken; 0 depends on the field.
+    expect(moneyProblem("-3")).toBe("The amount must be CHF 0 or more.");
     expect(moneyProblem("abc")).toBe("Type an amount in CHF, like 12.30 or 12,30.");
     expect(moneyProblem("150.40")).toBeNull();
     const budget = commandForSetting({
@@ -51,8 +52,9 @@ describe("money in Settings (design §6)", () => {
     expect(input).not.toHaveAttribute("step");
     await user.clear(input);
     await user.type(input, "0");
+    // later #43: the monthly cap's 0 is refused with why (it is the limit enforced in code).
     expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
-      "The amount must be more than CHF 0.",
+      "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.",
     );
     expect(within(dialog).getByTestId("setting-apply")).toBeDisabled();
     await user.clear(input);

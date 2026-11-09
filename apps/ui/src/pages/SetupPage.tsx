@@ -225,6 +225,21 @@ function SecretBox({
   );
 }
 
+/**
+ * A saved credential Anthropic refused (review of later #28): "Save a new key" on the refused
+ * card opens the Claude step, which said "✓ An API key is saved." above "Replace the API key".
+ */
+function Refused({ children }: { children: ReactNode }) {
+  return (
+    <p
+      data-testid="setup-refused"
+      className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+    >
+      {children}
+    </p>
+  );
+}
+
 function Saved({ children }: { children: ReactNode }) {
   return (
     <p
@@ -248,6 +263,21 @@ export function vaultWhere(backend: string | null | undefined): string {
   return "stored in an encrypted file on this computer";
 }
 
+/**
+ * The step the assistant opens on (later #28, wave 7's P-welcome): Welcome on a fresh install
+ * (the daemon still asks for the assistant); reopened later, the first step not done: Claude
+ * while no Claude credential is saved or the saved one was refused (the refused card's "Save a
+ * new key" links here), then GitHub, else Welcome. Before, it always opened on Welcome, whose
+ * Continue needed the name typed again.
+ */
+export function firstStep(s: SetupStatusView, claudeRefused: boolean): Step {
+  if (s.showAssistant) return "Welcome";
+  const claude = s.credentials.anthropicApiKey || s.credentials.subscription;
+  if (!claude || claudeRefused) return "Claude";
+  if (!s.credentials.github) return "GitHub";
+  return "Welcome";
+}
+
 export function SetupPage() {
   const client = useClient();
   const vaultBackend = useUiState((s) => s.connection.health?.vaultBackend ?? null);
@@ -258,6 +288,9 @@ export function SetupPage() {
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [claudeMode, setClaudeMode] = useState<"key" | "subscription">("key");
+  // Which saved Claude credentials Anthropic refused (from the credential order): saved, but
+  // their step is not done.
+  const [refused, setRefused] = useState({ apiKey: false, subscription: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SetupCheckView | null>(null);
@@ -279,6 +312,8 @@ export function SetupPage() {
     [client],
   );
 
+  // The opening step is picked once, from the first read; the person moves on from there.
+  const picked = useRef(false);
   const load = () => {
     setLoadError(null);
     client.setupStatus().then(
@@ -286,6 +321,27 @@ export function SetupPage() {
         setStatus(s);
         setName(s.name);
         setTimezone(s.timezone && s.timezone !== "UTC" ? s.timezone : localTimezone());
+        if (!picked.current) {
+          picked.current = true;
+          // A refused key or sign-in is saved but cannot be used: its step is not done.
+          void client
+            .billingOrder()
+            .then(
+              (o) => {
+                const was = (kind: string) =>
+                  o.sources.some((x) => x.blocked === "refused" && x.kind === kind);
+                return { apiKey: was("api_key"), subscription: was("subscription") };
+              },
+              () => ({ apiKey: false, subscription: false }),
+            )
+            .then((r) => {
+              setRefused(r);
+              if (r.subscription && !r.apiKey && !s.credentials.anthropicApiKey) {
+                setClaudeMode("subscription");
+              }
+              setStep(firstStep(s, r.apiKey || r.subscription));
+            });
+        }
       },
       (e) =>
         setLoadError(
@@ -322,6 +378,9 @@ export function SetupPage() {
     if (r) {
       setResult(r);
       setStatus(r.status);
+      // A new credential that passed its check replaces the refused one.
+      if (r.ok && r.kind === "api_key") setRefused((x) => ({ ...x, apiKey: false }));
+      if (r.ok && r.kind === "subscription") setRefused((x) => ({ ...x, subscription: false }));
     }
   };
 
@@ -468,7 +527,13 @@ export function SetupPage() {
                 <li>Click "Create Key", name it "Forerunner", and copy it.</li>
                 <li>Paste it here. It starts with sk-ant-api.</li>
               </ol>
-              {creds.anthropicApiKey ? <Saved>An API key is saved.</Saved> : null}
+              {creds.anthropicApiKey ? (
+                refused.apiKey ? (
+                  <Refused>Anthropic refused the saved API key. Paste a new one below.</Refused>
+                ) : (
+                  <Saved>An API key is saved.</Saved>
+                )
+              ) : null}
               <SecretBox
                 label={creds.anthropicApiKey ? "Replace the API key" : "API key"}
                 placeholder="sk-ant-api03-…"
@@ -490,7 +555,15 @@ export function SetupPage() {
                 <li>Copy the token it prints. It starts with sk-ant-oat.</li>
                 <li>Paste it here.</li>
               </ol>
-              {creds.subscription ? <Saved>A subscription token is saved.</Saved> : null}
+              {creds.subscription ? (
+                refused.subscription ? (
+                  <Refused>
+                    Anthropic refused the saved subscription token. Paste a new one below.
+                  </Refused>
+                ) : (
+                  <Saved>A subscription token is saved.</Saved>
+                )
+              ) : null}
               <SecretBox
                 label={creds.subscription ? "Replace the subscription token" : "Subscription token"}
                 placeholder="sk-ant-oat01-…"

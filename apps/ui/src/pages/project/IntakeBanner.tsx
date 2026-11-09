@@ -9,6 +9,13 @@ import { useClient, useUiState } from "../../store/context.tsx";
 const NAME_FIRST = /^(Claude|Forerunner|Docker|GitHub|Anthropic)\b/;
 
 /** "Planning failed: <reason in words>." in one line (design §3.3, §5). */
+/**
+ * While the plan is drafted (later #30): how long it usually takes, so 40 seconds of "Drafting…"
+ * is not read as stuck (the live runs took about 42 s).
+ */
+export const DRAFTING_WORDS =
+  "Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.";
+
 export function planningFailedLine(reason: string | null | undefined): string {
   const r = (reason ?? "")
     .replace(/\s+/g, " ")
@@ -97,7 +104,7 @@ export function IntakeBanner({ projectId, pollMs }: { projectId: string; pollMs?
         data-testid="intake-banner"
         data-state="drafting"
       >
-        Drafting the plan from your brief… It lands in your Inbox for you to approve.
+        {DRAFTING_WORDS}
       </output>
     );
   if (view.state === "pending")

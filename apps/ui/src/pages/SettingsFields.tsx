@@ -196,6 +196,11 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v === "api_key" ? CODE_COMMANDS[1].label : CODE_COMMANDS[0].label;
     case "web_access":
       return webAccessWords(v);
+    // later #43: a project's budget of 0 is none.
+    case "budget":
+      return v && typeof v === "object" && (v as { chfMicro?: unknown }).chfMicro === 0
+        ? "no budget"
+        : null;
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":
@@ -216,7 +221,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
     case "calibration": {
       const c = obj(v);
       if (c.enabled === false) return "off";
-      return `on, day ${str(c.day, "1")} at ${str(c.time, "06:00")}, up to USD ${str(c.budget_usd, "10")}, grades the ${reviewLevelName(Number(str(c.tier, "1"))).toLowerCase()}`;
+      const cap = typeof c.budget_chf === "number" ? `, up to CHF ${c.budget_chf.toFixed(2)}` : "";
+      return `on, day ${str(c.day, "1")} at ${str(c.time, "06:00")}${cap}, grades the ${reviewLevelName(Number(str(c.tier, "1"))).toLowerCase()}`;
     }
     case "handover": {
       const h = obj(v);
@@ -236,6 +242,8 @@ export interface StructuredCommand {
   name: "settings.set" | "budget.set" | "autonomy.set";
   /** `sites`: "Web pages research may read" ('sites'), its own control (`WebAccessInput`). */
   inputType: "number" | "text" | "fields" | "money" | "sites";
+  /** Money fields: what 0 means, or why it is refused (later #43; `SettingCommand.zero`). */
+  zero?: { allowed: true; means: string } | { allowed: false; refused: string };
   options?: readonly { value: string; label: string }[];
   fields?: readonly FieldSpec[];
   min?: number;
@@ -281,15 +289,37 @@ const MONTH_FIELDS: readonly FieldSpec[] = [
   { name: "day", label: "Day of the month", kind: "number", min: 1, max: 31, step: 1 },
   { name: "time", label: "Time (your local time)", kind: "time" },
   {
-    name: "budget_usd",
-    label: "Budget for the run (USD)",
+    // CHF, never USD (later #38); sent as the stored `budget_usd` at the day's rate.
+    name: "budget_chf",
+    label: "Budget for the run (CHF)",
     kind: "number",
-    min: 1,
+    min: 0.01,
     max: 1000,
-    step: 1,
+    step: 0.01,
     hint: "The run stops at this amount; it counts against your caps.",
   },
 ];
+
+/**
+ * A monthly job's run cap as the dialog shows it (CHF, `budget_chf` from the daemon's view)
+ * and how many USD one franc is (hidden), so it is sent as `budget_usd` (later #38).
+ */
+function runChfInitial(c: Record<string, unknown>, defaultUsd: number): FieldValues {
+  const usd = Number(str(c.budget_usd, String(defaultUsd)));
+  const chf = Number(str(c.budget_chf, String(Math.round(usd * 80) / 100)));
+  return {
+    budget_chf: chf.toFixed(2),
+    usd_per_chf: String(chf > 0 && usd > 0 ? usd / chf : 1.25),
+  };
+}
+
+/** The run cap typed in CHF as the USD it is stored in; null when it is not 0 < x <= 1000. */
+function runUsdOf(v: FieldValues): number | null {
+  const chf = Number(v.budget_chf);
+  const rate = Number(v.usd_per_chf ?? "1.25");
+  if (!Number.isFinite(chf) || chf <= 0 || chf > 1000 || !(rate > 0)) return null;
+  return Math.round(chf * rate * 100) / 100;
+}
 
 /** The command and control for the settings that need more than a number or free text. */
 export function structuredCommand(s: SettingView): StructuredCommand | null {
@@ -386,6 +416,11 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         name: "budget.set",
         inputType: "money",
         unit: "CHF",
+        zero: {
+          allowed: false,
+          refused:
+            "The budget per session must be more than CHF 0: a session plans its work within it.",
+        },
         initial: (c) => {
           const m = obj(c);
           return typeof m.chfMicro === "number" ? (m.chfMicro / 1_000_000).toFixed(2) : "";
@@ -450,16 +485,16 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
             enabled: c.enabled === false ? "false" : "true",
             day: str(c.day, "1"),
             time: str(c.time, "06:00"),
-            budget_usd: str(c.budget_usd, "10"),
+            ...runChfInitial(c, 10),
             tier: str(c.tier, "1"),
           };
         },
         (v) => {
           const day = int(v.day, 1, 31);
           const tier = int(v.tier, 1, 3);
-          const budget = Number(v.budget_usd);
+          const budget = runUsdOf(v);
           if (day === null || tier === null || !HHMM.test(v.time ?? "")) return null;
-          if (!Number.isFinite(budget) || budget <= 0 || budget > 1000) return null;
+          if (budget === null) return null;
           return {
             key: "calibration",
             value: { enabled: v.enabled === "true", day, time: v.time, budget_usd: budget, tier },
@@ -495,7 +530,7 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
             enabled: h.enabled === true ? "true" : "false",
             day: str(h.day, "1"),
             time: str(h.time, "07:00"),
-            budget_usd: str(h.budget_usd, "5"),
+            ...runChfInitial(h, 5),
             title: str(seed.title, ""),
             outcome: str(seed.outcome, ""),
             criteria: Array.isArray(seed.acceptanceCriteria)
@@ -508,9 +543,9 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         },
         (v) => {
           const day = int(v.day, 1, 31);
-          const budget = Number(v.budget_usd);
+          const budget = runUsdOf(v);
           if (day === null || !HHMM.test(v.time ?? "")) return null;
-          if (!Number.isFinite(budget) || budget <= 0 || budget > 1000) return null;
+          if (budget === null) return null;
           const value: Record<string, unknown> = {
             enabled: v.enabled === "true",
             day,

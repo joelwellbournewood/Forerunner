@@ -525,16 +525,37 @@ export function siteNames(sites: readonly string[], max = 3): string {
   return `${sites.slice(0, max).join(", ")} and ${sites.length - max} more`;
 }
 
-/** The rule in words, for the Settings row, the change card and the change log. */
-export function webAccessWords(value: unknown): string {
+/**
+ * The "Web pages research may read" row (P7-28): two short sentences, the second the one the
+ * owner asked for ('sites'); before, one paragraph with "Static hosts's research" and "on both
+ * credentials".
+ */
+export const WEB_ACCESS_ROW_WORDS =
+  "Any public website, or only the websites you list (with their subdomains); never this computer or your home or office network. The agent browser's own site list is separate and changes nothing here";
+
+/** "a.com", "a.com and b.com", "a.com, b.com and c.com": every site, for "Saved as:". */
+function allSites(sites: readonly string[]): string {
+  return sites.length <= 1
+    ? (sites[0] ?? "")
+    : `${sites.slice(0, -1).join(", ")} and ${sites[sites.length - 1]}`;
+}
+
+/**
+ * The rule in words, for the Settings row, the change card and the change log: "any public
+ * website", "any public website, never a.com", "only example.com", "no website" (an "only"
+ * list the clean-up left empty, R-failopen). Lower case and without a colon, since it stands
+ * inside "Set … from <a> to <b>: <what it changes>" (P7-31: "to Only these websites:
+ * example.com: research reads …"). Up to five sites, then "and N more" (design §5 rule 5);
+ * `all` names every one, for what Settings will save before it is saved (P7-32).
+ */
+export function webAccessWords(value: unknown, opts: { all?: boolean } = {}): string {
   const v = webAccessOf({ [WEB_ACCESS_SETTING]: value as never });
+  const names = (sites: readonly string[]) => (opts.all ? allSites(sites) : siteNames(sites, 5));
   if (v.mode === "only") {
-    const never = v.never.length ? `; never ${siteNames(v.never)}` : "";
-    return `Only these websites: ${v.only.length ? siteNames(v.only, 5) : "none"}${never}`;
+    const never = v.never.length ? `; never ${names(v.never)}` : "";
+    return v.only.length ? `only ${names(v.only)}${never}` : `no website${never}`;
   }
-  return v.never.length
-    ? `Any public website, never ${siteNames(v.never, 5)}`
-    : "Any public website";
+  return v.never.length ? `any public website, never ${names(v.never)}` : "any public website";
 }
 
 /** The project page's line: "Research reads: any public website". */

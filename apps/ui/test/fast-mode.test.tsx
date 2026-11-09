@@ -74,7 +74,9 @@ describe("Settings: Opus fast mode (D.20)", () => {
     expect(pending).toHaveAttribute("data-decision", "needs_yes");
     expect(within(pending).getByTestId("change-card")).toHaveAttribute("data-risk", "medium");
     expect(within(pending).getByTestId("card-old")).toHaveTextContent("false");
-    expect(within(pending).getByTestId("card-new")).toHaveTextContent(`true (${ON})`);
+    // P7-10: the card's value is the value; what it changes is the read-back under it.
+    expect(within(pending).getByTestId("card-new")).toHaveTextContent(/^true$/);
+    expect(within(pending).getByTestId("command-readback")).toHaveTextContent(ON.slice(1));
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
@@ -98,7 +100,8 @@ describe("Settings: Opus fast mode (D.20)", () => {
     expect(within(dialog).getByTestId("setting-value")).toHaveValue("false");
     await user.click(within(dialog).getByTestId("setting-apply"));
     const pending = await within(dialog).findByTestId("command-pending");
-    expect(within(pending).getByTestId("card-new")).toHaveTextContent(`false (${OFF})`);
+    expect(within(pending).getByTestId("card-new")).toHaveTextContent(/^false$/);
+    expect(within(pending).getByTestId("command-readback")).toHaveTextContent(OFF.slice(1));
     await user.click(within(pending).getByTestId("command-yes"));
     const done = await within(dialog).findByTestId("command-done");
     expect(within(done).getByTestId("command-sentence")).toHaveTextContent(

@@ -1459,9 +1459,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           PLACEHOLDER_HUMAN_NAME,
         email: email ?? "",
         timezone: opts.identity?.timezone ?? config?.timezone ?? "UTC",
-        notify_prefs: {},
+        // The default monthly cap, CHF 150, with its CHF figure beside the USD amount as
+        // budget.set stores a cap (later #28: read back at the day's rate it said CHF 150.40
+        // where setup said "CHF 150 a month").
+        notify_prefs: { monthly_cap_chf_micro: 150_000_000 },
         default_autonomy: 2,
-        monthly_cap_usd_micro: Math.round(150 / (opts.chfPerUsd ?? 0.8)) * 1_000_000,
+        monthly_cap_usd_micro: Math.round((150 / (opts.chfPerUsd ?? 0.8)) * 1_000_000),
         locale: "en",
       }),
     ));

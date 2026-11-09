@@ -39,13 +39,28 @@ function isTab(value: string | undefined): value is ProjectTabId {
   return PROJECT_TABS.some((t) => t.id === value);
 }
 
+const TASKS_FILTER_KEYS = ["status", "who", "q"] as const;
+
+/** The Tasks tab's filters (status, who, q) of an address's query, the rest dropped. */
+export function tasksFilters(search: string): string {
+  const from = new URLSearchParams(search);
+  const kept = new URLSearchParams();
+  for (const key of TASKS_FILTER_KEYS) {
+    const v = from.get(key);
+    if (v) kept.set(key, v);
+  }
+  const out = kept.toString();
+  return out ? `?${out}` : "";
+}
+
 /** What Start does, said with the button (design §3.6). */
 const START_EXPLAIN = "Works until nothing more can run, the budget is used, or you stop it.";
 
 /**
  * Project page (design §3.4, spec K.2): `/projects/:id/:tab?`. The header is the project's
- * name, its status in one sentence (design §2) with the one button it offers, and Start
- * session, which reads "Open running session" while a session works on it. The card shown is
+ * name, its status in one sentence (design §2) with the one button it offers (never a second
+ * start: later #56), and Start session, which reads "Open running session" while a session
+ * works on it. The card shown is
  * the store's live copy (it follows `project.changed`, the Inbox and the sessions), so the
  * header never goes stale after a session. Opening a project does not change the active
  * project (U-056); the header's switcher names the project on screen.
@@ -94,8 +109,13 @@ export function ProjectPage() {
         ? "border-b-2 border-blue-600 font-medium"
         : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
     }`;
-  // A tab keeps the address's query (the Tasks tab's filters survive a look at another tab).
-  const tabTo = (t: ProjectTabId) => ({ pathname: `${base}/${t}`, search: location.search });
+  // A tab keeps only the Tasks tab's filters (they survive a look at another tab); a file's
+  // path, an open task or a review belong to the tab they were opened on (later #57: Files
+  // then Tasks gave /tasks?path=script.js).
+  const tabTo = (t: ProjectTabId) => ({
+    pathname: `${base}/${t}`,
+    search: tasksFilters(location.search),
+  });
 
   return (
     <section aria-labelledby="project-title" className="flex h-full flex-col">
@@ -104,13 +124,11 @@ export function ProjectPage() {
           <h1 id="project-title" className="text-xl font-semibold">
             {view.name}
           </h1>
+          {/* The status sentence with its one button, except a start: Start session beside it
+              is the one start button (later #56: "Continue" and "Start session" opened the same
+              dialog). */}
           {planBanner ? null : (
-            <ProjectStatus
-              project={view}
-              onStart={() => setStartOpen(true)}
-              testId="project-status"
-              showAction={!view.working}
-            />
+            <ProjectStatus project={view} testId="project-status" showAction={!view.working} />
           )}
           <div className="ml-auto flex gap-2">
             {view.repos && view.repos.length === 0 ? (

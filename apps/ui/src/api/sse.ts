@@ -264,7 +264,7 @@ function runStream(
           },
           (error: unknown) => {
             if (closed) return;
-            handlers.onNotice?.("poll failed; retrying");
+            handlers.onNotice?.("The last check did not answer; the page tries again.");
             handlers.onDown?.(error);
           },
         )
@@ -285,7 +285,7 @@ function runStream(
   const startSse = () => {
     if (closed) return;
     if (!factory) {
-      startPolling("live stream unavailable in this browser; polling every 5 s");
+      startPolling("Live updates do not work here; the page checks every 5 s instead.");
       return;
     }
     setMode("connecting");
@@ -293,7 +293,7 @@ function runStream(
     try {
       es = factory(sseUrl);
     } catch {
-      startPolling("live stream failed to open; polling every 5 s");
+      startPolling("Live updates did not connect; the page checks every 5 s instead.");
       return;
     }
     source = es;
@@ -313,10 +313,12 @@ function runStream(
       if (closed || source !== es) return;
       sseFailures += 1;
       if (es.readyState === CLOSED || sseFailures >= 3) {
-        startPolling("live stream dropped; polling every 5 s");
+        startPolling(
+          "Live updates stopped; the page checks every 5 s and connects again by itself.",
+        );
       } else {
         setMode("connecting");
-        handlers.onNotice?.("live stream reconnecting");
+        handlers.onNotice?.("Live updates are connecting again.");
       }
     };
   };

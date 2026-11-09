@@ -6,7 +6,7 @@ import { Button, buttonClassName, EmptyState, Loading } from "../components/ui.t
 import { useAsync } from "../lib/use-async.ts";
 import { elapsedWords, useNow } from "../shell/ShellBars.tsx";
 import { useShell } from "../shell/ShellContext.ts";
-import { switchActiveProject, useClient, useUiState, useUiStore } from "../store/context.tsx";
+import { useClient, useUiState } from "../store/context.tsx";
 import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 
 /** What New project does, said with the button (design §3.2). */
@@ -22,8 +22,6 @@ export const NEW_PROJECT_EXPLAIN =
  */
 export function HomePage() {
   const { projects, projectsLoaded, connection } = useUiState((s) => s);
-  const client = useClient();
-  const store = useUiStore();
   const shell = useShell();
   const [starting, setStarting] = useState<ProjectCardView | null>(null);
 
@@ -69,12 +67,7 @@ export function HomePage() {
           data-testid="project-cards"
         >
           {projects.map((p) => (
-            <ProjectRow
-              key={p.id}
-              project={p}
-              onOpen={() => void switchActiveProject(client, store, p.id)}
-              onStart={() => setStarting(p)}
-            />
+            <ProjectRow key={p.id} project={p} onStart={() => setStarting(p)} />
           ))}
         </ul>
       </div>
@@ -90,14 +83,16 @@ export function HomePage() {
   );
 }
 
-/** One project on Home: name, status sentence, "n of m done" and one action (design §3.2). */
+/**
+ * One project on Home: name, status sentence, "n of m done" and one action (design §3.2).
+ * Opening it is a look, not a switch (later #61): it wrote "Switch project: …" to Changes on
+ * every visit. The page names the project on screen; the header's switcher still switches.
+ */
 export function ProjectRow({
   project,
-  onOpen,
   onStart,
 }: {
   project: ProjectCardView;
-  onOpen: () => void;
   onStart: () => void;
 }) {
   const href = `/projects/${encodeURIComponent(project.id)}`;
@@ -108,12 +103,7 @@ export function ProjectRow({
       data-testid="project-card"
       data-project-id={project.id}
     >
-      <Link
-        to={href}
-        onClick={onOpen}
-        className="min-w-40 font-semibold hover:underline"
-        data-testid="open-project"
-      >
+      <Link to={href} className="min-w-40 font-semibold hover:underline" data-testid="open-project">
         {project.name}
       </Link>
       <span className="flex-1">
@@ -126,6 +116,17 @@ export function ProjectRow({
       ) : null}
     </li>
   );
+}
+
+/**
+ * A Needs you row's one button (design §3.2, P7-8): Answer, to the card in the Inbox; a card
+ * with nothing to answer (no choice, no words) and a link of its own offers that link instead,
+ * as the Inbox does (the refused key's "Save a new key" to the setup assistant).
+ */
+export function homeCardAction(r: HumanRequestView): { label: string; to: string } {
+  const own = (r.choices ?? []).length === 0 && r.reply === "none" ? r.links?.[0] : undefined;
+  if (own?.to) return { label: own.label, to: own.to };
+  return { label: "Answer", to: `/inbox#card-${encodeURIComponent(r.id)}` };
 }
 
 /** Design §3.2 "Needs you": every open card of every project, one line each with its button. */
@@ -148,27 +149,30 @@ function NeedsYou() {
     <div data-testid="home-needs-you">
       <h2 className="mb-2 text-lg font-semibold">Needs you</h2>
       <ul className="space-y-1">
-        {open.slice(0, 10).map((r) => (
-          <li
-            key={r.id}
-            className="flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm dark:border-amber-800 dark:bg-amber-950/30"
-            data-testid="home-card"
-          >
-            {r.projectName ? (
-              <span className="font-medium text-neutral-600 dark:text-neutral-300">
-                {r.projectName}:
-              </span>
-            ) : null}
-            <span className="flex-1">{r.title ?? r.why}</span>
-            <Link
-              to={`/inbox#card-${encodeURIComponent(r.id)}`}
-              className={buttonClassName("primary")}
-              data-testid="home-card-answer"
+        {open.slice(0, 10).map((r) => {
+          const action = homeCardAction(r);
+          return (
+            <li
+              key={r.id}
+              className="flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50/50 px-3 py-2 text-sm dark:border-amber-800 dark:bg-amber-950/30"
+              data-testid="home-card"
             >
-              Answer
-            </Link>
-          </li>
-        ))}
+              {r.projectName ? (
+                <span className="font-medium text-neutral-600 dark:text-neutral-300">
+                  {r.projectName}:
+                </span>
+              ) : null}
+              <span className="flex-1">{r.title ?? r.why}</span>
+              <Link
+                to={action.to}
+                className={buttonClassName("primary")}
+                data-testid="home-card-action"
+              >
+                {action.label}
+              </Link>
+            </li>
+          );
+        })}
         {open.length > 10 ? (
           <li className="text-sm">
             <Link to="/inbox" className="text-blue-700 hover:underline dark:text-blue-300">

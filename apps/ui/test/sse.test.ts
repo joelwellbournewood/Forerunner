@@ -180,7 +180,7 @@ describe("subscribeSessionEvents", () => {
     );
     await new Promise((r) => setTimeout(r, 20));
     expect(sub.mode).toBe("polling");
-    expect(notices[0]).toMatch(/polling every 5 s/);
+    expect(notices[0]).toMatch(/checks every 5 s/);
     expect(seen.filter((s) => s.event === "session.event").map((s) => s.seq)).toEqual([4, 5]);
     expect(seen.some((s) => s.event === "session.changed")).toBe(true);
     // The next poll is scheduled 5 s out and SSE retry 30 s out; a second tick repeats nothing.

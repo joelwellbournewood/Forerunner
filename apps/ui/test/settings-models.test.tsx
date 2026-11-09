@@ -232,7 +232,8 @@ describe("Settings: models per agent and specialist", () => {
     // C-57, merge-in-app), and "Web pages research may read" for Atlas and Beacon ('sites'). Rows
     // that change nothing are not listed (design §6, validation rule 7).
     expect(await screen.findAllByTestId("setting-row")).toHaveLength(
-      SETTINGS.filter((s) => commandForSetting(s) !== null).length + 5,
+      // polish-screens: and each project's budget (Atlas and Beacon), as the daemon lists it.
+      SETTINGS.filter((s) => commandForSetting(s) !== null).length + 7,
     );
   });
 });

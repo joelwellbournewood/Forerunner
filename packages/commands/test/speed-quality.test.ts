@@ -39,7 +39,9 @@ describe("speed-versus-quality slider (D.16)", () => {
     const card = await w.executor.plan(set(1), w.ctx());
     expect(card.what).toBe("the speed-versus-quality slider for Game");
     expect(card.oldValue).toBe("unset");
-    expect(card.newValue).toBe(`1 (${SPEED_QUALITY_EFFECT.quality})`);
+    // P7-10: the value is the value; what it changes is the read-back's second sentence.
+    expect(card.newValue).toBe("1");
+    expect(card.ask).toContain(SPEED_QUALITY_EFFECT.quality.slice(1));
     expect(card.impact.risk).toBe("low");
     expect(card.sentence).toBe(
       `Set the speed-versus-quality slider for Game from unset to 1: ${SPEED_QUALITY_EFFECT.quality}. Undo.`,

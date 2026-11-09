@@ -89,7 +89,15 @@ describe("Settings", () => {
     const fields = (v: Record<string, string>) => JSON.stringify(v);
     expect(
       handover?.params(
-        fields({ enabled: "true", day: "2", time: "08:00", budget_usd: "5", title: "" }),
+        // later #38: the run's cap is typed in CHF and sent in the USD it is stored in.
+        fields({
+          enabled: "true",
+          day: "2",
+          time: "08:00",
+          budget_chf: "4",
+          usd_per_chf: "1.25",
+          title: "",
+        }),
       ),
     ).toEqual({
       key: "handover",
@@ -99,7 +107,14 @@ describe("Settings", () => {
     // A half-filled seed is not sent (the daemon would refuse it).
     expect(
       handover?.params(
-        fields({ enabled: "true", day: "2", time: "08:00", budget_usd: "5", title: "Fix it" }),
+        fields({
+          enabled: "true",
+          day: "2",
+          time: "08:00",
+          budget_chf: "4",
+          usd_per_chf: "1.25",
+          title: "Fix it",
+        }),
       ),
     ).toBeNull();
     const calibration = commandForSetting({
@@ -114,12 +129,20 @@ describe("Settings", () => {
       enabled: "true",
       day: "1",
       time: "06:00",
-      budget_usd: "10",
+      budget_chf: "8.00",
+      usd_per_chf: "1.25",
       tier: "1",
     });
     expect(
       calibration?.params(
-        fields({ enabled: "false", day: "1", time: "06:00", budget_usd: "10", tier: "1" }),
+        fields({
+          enabled: "false",
+          day: "1",
+          time: "06:00",
+          budget_chf: "8",
+          usd_per_chf: "1.25",
+          tier: "1",
+        }),
       ),
     ).toEqual({
       key: "calibration",
@@ -128,7 +151,14 @@ describe("Settings", () => {
     // A time that is not HH:MM is not sent.
     expect(
       calibration?.params(
-        fields({ enabled: "true", day: "1", time: "6 am", budget_usd: "10", tier: "1" }),
+        fields({
+          enabled: "true",
+          day: "1",
+          time: "6 am",
+          budget_chf: "8",
+          usd_per_chf: "1.25",
+          tier: "1",
+        }),
       ),
     ).toBeNull();
     // Review levels in words, never a tier number (ADR 0104); no level below the light review.
@@ -143,9 +173,16 @@ describe("Settings", () => {
       ["2", "Full review"],
       ["3", "Full review and your sign-off"],
     ]);
+    // later #38: the run's cap in CHF (the daemon's `budget_chf`), never USD.
     expect(describeSetting({ key: "human.calibration", value: { tier: 2 } })).toBe(
-      "on, day 1 at 06:00, up to USD 10, grades the full review",
+      "on, day 1 at 06:00, grades the full review",
     );
+    expect(
+      describeSetting({
+        key: "human.calibration",
+        value: { tier: 1, budget_usd: 10, budget_chf: 8 },
+      }),
+    ).toBe("on, day 1 at 06:00, up to CHF 8.00, grades the light review");
     expect(
       JSON.stringify(
         [...(calibration?.fields ?? []), ...(handover?.fields ?? [])].map((f) => [
@@ -185,7 +222,8 @@ describe("Settings", () => {
     // Status pull request and Who merges accepted work (a project on a host repository, C-57,
     // merge-in-app), "Web pages research may read" for Atlas and Beacon ('sites'), less the three
     // that change nothing (language, the model provider, chat.model): design §6 hides them.
-    expect(rows).toHaveLength(20);
+    // polish-screens: each project's budget row too (Atlas and Beacon), as the daemon lists it.
+    expect(rows).toHaveLength(22);
     const advanced = screen.getByTestId("settings-advanced");
     for (const row of rows) {
       // Every row under Advanced names its scope; in Basics a project's row names the project

@@ -498,6 +498,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     narrows: (to) => (to as { enabled?: unknown } | null)?.enabled === false,
     description:
       "Monthly critic calibration over the golden eval sets: enabled (default on), day of month, local time, budget_usd cap, tier, specialists.",
+    display: calibrationWords,
     effect: (value) => {
       const v = (value ?? {}) as { enabled?: boolean; day?: number; time?: string };
       return v.enabled === false
@@ -521,6 +522,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     narrows: flagsWithin,
     description:
       "Model watch (ADR 0089): run_evals runs the paid eval sets on every weekly run without asking (default off); allow_process_sandbox lets eval tasks run commands in the process stand-in when no container engine exists (default off).",
+    display: modelWatchWords,
     effect: (value) => {
       const v = (value ?? {}) as { run_evals?: boolean; allow_process_sandbox?: boolean };
       const evals = v.run_evals
@@ -541,6 +543,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     narrows: (to) => (to as { enabled?: unknown } | null)?.enabled !== true,
     description:
       "Monthly handover test on the project: a fresh agent with only the repo and docs makes a seeded change; where it got stuck becomes a docs task. enabled, day, time, budget_usd, seed.",
+    display: handoverWords,
     effect: (value) => {
       const v = (value ?? {}) as { enabled?: boolean; day?: number; time?: string };
       return v.enabled
@@ -573,9 +576,46 @@ const params = z.object({
 });
 export type SettingsSetParams = z.infer<typeof params>;
 
+/**
+ * A value in words when its key has none of its own: never JSON (later #30: "from unset to
+ * {"enabled":false,…}"). An object reads as its fields ("enabled: false, day: 1").
+ */
 function show(v: unknown): string {
   if (v === undefined || v === null) return "unset";
-  return typeof v === "string" ? v : JSON.stringify(v);
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return String(v);
+  if (typeof v === "number") return String(v);
+  if (Array.isArray(v)) return v.length ? v.map(show).join(", ") : "none";
+  if (typeof v === "object")
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, x]) => `${k.replace(/_/g, " ")}: ${show(x)}`)
+      .join(", ");
+  return String(v);
+}
+
+/** The monthly critic calibration in words (later #30): "off", "on, day 1 at 06:00". */
+export function calibrationWords(value: unknown): string {
+  if (value === undefined || value === null) return "on, day 1 at 06:00 (the default)";
+  const v = value as { enabled?: unknown; day?: unknown; time?: unknown };
+  if (v.enabled === false) return "off";
+  return `on, day ${typeof v.day === "number" ? v.day : 1} at ${typeof v.time === "string" ? v.time : "06:00"}`;
+}
+
+/** The monthly handover test in words: "off" (unset is off), "on, day 2 at 08:00". */
+export function handoverWords(value: unknown): string {
+  const v = (value ?? {}) as { enabled?: unknown; day?: unknown; time?: unknown };
+  if (v.enabled !== true) return "off";
+  return `on, day ${typeof v.day === "number" ? v.day : 1} at ${typeof v.time === "string" ? v.time : "07:00"}`;
+}
+
+/** The model watch's two switches in words (later #99). */
+export function modelWatchWords(value: unknown): string {
+  const v = (value ?? {}) as { run_evals?: unknown; allow_process_sandbox?: unknown };
+  return `${v.run_evals === true ? "runs the paid evaluations without asking" : "asks before any paid evaluation"}; ${
+    v.allow_process_sandbox === true
+      ? "evaluations may run without a container"
+      : "evaluations need a container"
+  }`;
 }
 
 interface Target {
@@ -675,10 +715,21 @@ function refuseNoChange(t: Target): void {
   });
 }
 
-/** The card's new value, with what it changes when the key defines an effect. */
+/**
+ * The card's new value is the value in words, never with its effect (P7-10: "Who merges
+ * accepted work" showed the label plus the whole 290-character effect in its monospace value).
+ * The effect is the card's sentence: the change log's ("Set X from a to b: <effect>.") and the
+ * read-back's second sentence (`askOf`), which the Inbox shows as the card's body.
+ */
 function newValueOf(t: Target): string {
-  const { effect } = t;
-  return effect ? `${showFor(t.spec, t.value)} (${effect})` : showFor(t.spec, t.value);
+  return showFor(t.spec, t.value);
+}
+
+/** "Set X to b? <Effect>." (design §3.9: the question, then what it changes). */
+function askOf(t: Target): string {
+  const q = `Set ${t.what} to ${showFor(t.spec, t.value)}?`;
+  const e = t.effect?.trim().replace(/\.$/, "");
+  return e ? `${q} ${e.charAt(0).toUpperCase()}${e.slice(1)}.` : q;
 }
 
 async function write(
@@ -746,8 +797,9 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
       projectId: t.project?.id ?? null,
       projectName: t.project?.name ?? null,
       usesActiveProject: t.usedActive,
-      // The read-back in one line (design §3.9, §5): "Set quiet hours to 12:00–18:00?"
-      ask: `Set ${t.what} to ${showFor(t.spec, t.value)}?`,
+      // The read-back (design §3.9, §5): "Set quiet hours to 12:00–18:00?", then what it
+      // changes when the key says (P7-10).
+      ask: askOf(t),
     });
   },
   async run(p, ctx) {
