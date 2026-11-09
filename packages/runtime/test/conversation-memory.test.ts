@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
@@ -566,5 +567,58 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
     const r = await w.chat("yes");
     expect(r.reply).toMatch(/Started a session on Quote Page/);
     await w.store.close();
+  });
+});
+
+describe("w15-chat, wave 15", () => {
+  // W15-29. Live (2026-11-09, research F2): "only read developer.mozilla.org for research" was
+  // recorded as a lesson ("a fact or rule about the work" went to memory_record), settings_set
+  // reached the model with the key names alone and `"value": {}`, and the chat could not see the
+  // rule in force, so it called its own lesson "the restriction … still in place".
+  it("a chat turn sends settings_set with web_access's shape, the rule that a setting is never a lesson, and the project's 'Research reads:' line (W15-29)", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    await w.chat("only read developer.mozilla.org for research");
+    const req = w.provider.calls[0]?.request;
+    const def = (req?.tools ?? []).find((t) => t.name === "settings_set");
+    expect(def?.description).toContain(
+      '- web_access (per project): What research reads on the web: mode any (any public website, except the never list) or only (only the websites on the only list); each entry covers the site and its subdomains. Never this computer or the local network. Value: {"mode": "any" | "only", "only"?: [string], "never"?: [string]}. For example {"mode":"only","only":["developer.mozilla.org"]} or {"mode":"any","never":["facebook.com"]} or {"mode":"any"}.',
+    );
+    const value = (def?.input_schema as { properties?: Record<string, { description?: string }> })
+      ?.properties?.value;
+    expect(value?.description).toBe(
+      "The new value, in the shape the description gives for the key (an object, a list, a number, true or false, a string or null).",
+    );
+    const lesson = (req?.tools ?? []).find((t) => t.name === "memory_record");
+    expect(lesson?.description).toContain("A lesson changes no setting");
+    // The system rules: a rule the app enforces goes to settings_set, never to memory_record.
+    expect(req?.system).toContain(
+      "A rule the app enforces is a setting, never a lesson: what research may read on the web\n(web_access)",
+    );
+    expect(req?.system).toContain(
+      "Never record such a rule with memory_record instead: a lesson changes no setting.",
+    );
+    expect(req?.system).not.toContain("a fact or rule about the work");
+    // The project's rule in force, in the Overview's words.
+    expect(w.last(0)).toContain("- Research reads: any public website\n");
+    const p = await w.store.project.mustGet(w.quote);
+    await w.store.project.update(w.quote, p.version, {
+      settings: { web_access: { mode: "only", only: ["developer.mozilla.org"], never: [] } },
+    });
+    w.restart([textReply("ok", { ttftMs: 0 })]);
+    await w.chat("what may research read?");
+    expect(w.last(0)).toContain("- Research reads: only developer.mozilla.org\n");
+    await w.store.close();
+  });
+
+  it("the conversation agent's registry prompt sends a setting to settings_set, never to memory_record (W15-29)", () => {
+    const prompt = readFileSync(
+      new URL("../../../evals/registry/principals/conversation-agent.md", import.meta.url),
+      "utf8",
+    );
+    expect(prompt).toContain("change a budget, change a setting)");
+    expect(prompt).toContain(
+      '`web_access` with `{"mode": "only", "only": ["developer.mozilla.org"]}`',
+    );
+    expect(prompt).toContain("a lesson is a note for later sessions and changes no\n     setting");
   });
 });

@@ -1992,6 +1992,23 @@ export function createDaemonApp(
   // reaches the command parser first ("add a task: …" needs no model) and only a line the model
   // must answer is told the key is missing (the agent's own reply). The refusal below is for a
   // composition with no conversation at all, and names the setup assistant, never `fr setup`.
+  /**
+   * What a chat turn changed, said to the screens as `POST /commands/execute` says it (W15-29):
+   * each change's project (its change log row) is `project.changed`, a card waiting for a yes is
+   * `inbox.changed`. Before, a site rule changed in Talk reached the Overview only on a reload.
+   */
+  const heardChat = async (
+    r: Awaited<ReturnType<NonNullable<RuntimeApp["conversation"]>["chat"]>>,
+  ) => {
+    const projects = new Set<string>();
+    for (const a of r.actions) {
+      const row = a.id ? await rt.store.changeLog.get(a.id).catch(() => undefined) : undefined;
+      if (row?.project_id) projects.add(row.project_id);
+    }
+    for (const id of projects) rt.events.emit("project", { id });
+    if (r.pendingConfirmation) rt.events.emit("inbox", {});
+  };
+
   app.post("/chat", async (c) => {
     const body = await parse(c, ChatRequestBody);
     const refused = notYourConversation(c, body.humanId);
@@ -2005,6 +2022,7 @@ export function createDaemonApp(
       text: body.text,
       source: body.source,
     });
+    await heardChat(r);
     return c.json(chatReplyView(r));
   });
 
@@ -2035,6 +2053,7 @@ export function createDaemonApp(
         });
         return;
       }
+      await heardChat(r);
       await stream.writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) });
     });
   });

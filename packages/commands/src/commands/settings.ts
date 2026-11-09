@@ -74,6 +74,11 @@ export interface SettingSpec {
   writeAlso?: (settings: ProjectRow["settings"]) => Record<string, JsonValue | undefined>;
   /** The schema's messages are whole sentences: the refusal shows them without the key. */
   plainRefusals?: boolean;
+  /**
+   * Values the chat model is shown as examples in `settings_set`'s definition (W15-29), where
+   * the shape alone does not say how a person's words map to it ('sites': only and never).
+   */
+  examples?: JsonValue[];
 }
 
 /** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
@@ -375,6 +380,11 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
       "What research reads on the web: mode any (any public website, except the never list) or only (only the websites on the only list); each entry covers the site and its subdomains. Never this computer or the local network.",
     display: webAccessWords,
     effect: (value) => webAccessEffect(value),
+    examples: [
+      { mode: "only", only: ["developer.mozilla.org"] },
+      { mode: "any", never: ["facebook.com"] },
+      { mode: "any" },
+    ],
   },
   shared_with: {
     key: "shared_with",
@@ -450,6 +460,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     description:
       "No notifications and no non-manual session starts between start and end (local time).",
     display: quietHoursWords,
+    examples: [{ start: "22:00", end: "07:00" }, null],
   },
   notify_channel: {
     key: "notify_channel",
@@ -569,10 +580,98 @@ export function settingSpec(key: string): SettingSpec {
   return spec;
 }
 
+/** One JSON Schema node, as `z.toJSONSchema` writes it. */
+type SchemaNode = {
+  type?: string;
+  enum?: unknown[];
+  const?: unknown;
+  anyOf?: SchemaNode[];
+  properties?: Record<string, SchemaNode>;
+  required?: string[];
+  items?: SchemaNode;
+  minimum?: number;
+  maximum?: number;
+  pattern?: string;
+};
+
+/**
+ * A value's shape in one short line for the chat model (W15-29): `{"mode": "any" | "only",
+ * "only"?: [string]}`, `integer from -1 to 1`, `"HH:MM"`. Before, `settings_set` reached the
+ * model as `{"key": string, "value": {}}` with the key names alone, and the live model sent
+ * "public", then {allowed: "public_websites"}, then "any" for web_access and gave up.
+ */
+function shapeOf(node: SchemaNode): string {
+  if (node.anyOf) return node.anyOf.map(shapeOf).join(" | ");
+  if (node.enum) return node.enum.map((v) => JSON.stringify(v)).join(" | ");
+  if (node.const !== undefined) return JSON.stringify(node.const);
+  switch (node.type) {
+    case "object": {
+      const required = new Set(node.required ?? []);
+      const fields = Object.entries(node.properties ?? {}).map(
+        ([k, v]) => `"${k}"${required.has(k) ? "" : "?"}: ${shapeOf(v)}`,
+      );
+      return `{${fields.join(", ")}}`;
+    }
+    case "array":
+      return `[${node.items ? shapeOf(node.items) : "any"}]`;
+    case "string":
+      return node.pattern === HHMM.source ? '"HH:MM"' : "string";
+    case "integer":
+    case "number": {
+      const range =
+        node.minimum !== undefined && node.maximum !== undefined
+          ? ` from ${node.minimum} to ${node.maximum}`
+          : "";
+      return `${node.type}${range}`;
+    }
+    case "boolean":
+      return "true | false";
+    case "null":
+      return "null";
+    default:
+      return "any JSON value";
+  }
+}
+
+/**
+ * The shape a key's value takes. The input side of the schema: the site rule's transform cleans
+ * the lists after parsing, and the default (output) side cannot be written as JSON Schema.
+ */
+export function settingValueShape(spec: SettingSpec): string {
+  return shapeOf(z.toJSONSchema(spec.schema, { io: "input" }) as SchemaNode);
+}
+
+/** A key's line in `settings_set`'s definition: scope, what it does, its value's shape, examples. */
+export function settingDefinitionLine(spec: SettingSpec): string {
+  const examples = spec.examples?.length
+    ? ` For example ${spec.examples.map((e) => JSON.stringify(e)).join(" or ")}.`
+    : "";
+  const scope = spec.scope === "project" ? "per project" : "for the person";
+  return `- ${spec.key} (${scope}): ${spec.description} Value: ${settingValueShape(spec)}.${examples}`;
+}
+
+/**
+ * `settings_set`'s definition for the chat model: what a setting is (a rule the app enforces,
+ * never a lesson), then every key with its value's shape (W15-29).
+ */
+export function settingsSetDescription(): string {
+  return [
+    "Change a setting by key: a rule the app enforces, such as what research may read on the web (web_access), who merges accepted work, fast mode or quiet hours. Such a rule is a setting: change it here, never record it as a lesson instead (a lesson changes no setting). value takes the shape given for its key. A change that narrows what the app may do acts at once; one that widens it waits for the person's yes. Keys:",
+    ...Object.values(SETTING_SPECS).map(settingDefinitionLine),
+  ].join("\n");
+}
+
 const params = z.object({
-  key: z.string().min(1),
-  value: z.unknown(),
-  project: z.string().optional(),
+  key: z.string().min(1).describe("The setting's key, one of those the description lists."),
+  value: z
+    .unknown()
+    .describe(
+      "The new value, in the shape the description gives for the key (an object, a list, a number, true or false, a string or null).",
+    ),
+  project: z
+    .string()
+    .optional()
+    .describe("For a per-project key: the project's name; without it, the active project."),
 });
 export type SettingsSetParams = z.infer<typeof params>;
 
@@ -618,6 +717,36 @@ export function modelWatchWords(value: unknown): string {
   }`;
 }
 
+/**
+ * A value the key's schema refused, in words the chat model can act on (W15-29). A key whose
+ * messages are whole sentences ('sites': '"10.0.0.1" is this computer or the local network.')
+ * keeps them; a value of the wrong shape ("public", {allowed: …}) names each field that was
+ * wrong and the shape the key takes, with an example. Before, web_access answered "Invalid
+ * input: expected object, received string" and the live model never found `mode`.
+ */
+function refusalOf(spec: SettingSpec, issues: readonly z.core.$ZodIssue[]): ForerunnerError {
+  const fieldOf = (i: z.core.$ZodIssue) => (i.path.length ? `${i.path.join(".")}: ` : "");
+  if (!spec.plainRefusals)
+    return new ForerunnerError(
+      "validation",
+      `${spec.key}: ${issues.map((i) => `${fieldOf(i)}${i.message}`).join("; ")}`,
+      { details: { key: spec.key } },
+    );
+  if (issues.every((i) => i.code === "custom"))
+    return new ForerunnerError("validation", issues.map((i) => i.message).join(" "), {
+      details: { key: spec.key },
+    });
+  const wrong = issues.map((i) => `${fieldOf(i)}${i.message.replace(/[.\s]+$/, "")}`).join("; ");
+  const example = spec.examples?.[0];
+  return new ForerunnerError(
+    "validation",
+    `That is not a value for ${spec.label} (${wrong}). It takes ${settingValueShape(spec)}${
+      example !== undefined ? `, for example ${JSON.stringify(example)}` : ""
+    }.`,
+    { details: { key: spec.key, shape: settingValueShape(spec) } },
+  );
+}
+
 interface Target {
   spec: SettingSpec;
   value: JsonValue;
@@ -633,16 +762,7 @@ interface Target {
 async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target> {
   const spec = settingSpec(p.key);
   const parsed = spec.schema.safeParse(p.value);
-  if (!parsed.success) {
-    const words = parsed.error.issues.map((i) => i.message);
-    throw new ForerunnerError(
-      "validation",
-      spec.plainRefusals ? words.join(" ") : `${p.key}: ${words.join("; ")}`,
-      {
-        details: { key: p.key },
-      },
-    );
-  }
+  if (!parsed.success) throw refusalOf(spec, parsed.error.issues);
   const human = await ctx.store.human.mustGet(ctx.humanId);
   const pricing = ctx.ports.pricingTable?.();
   const effect = spec.effect?.(parsed.data, pricing ? { pricing } : {});
@@ -764,7 +884,9 @@ async function write(
 
 export const settingsSet: CommandDef<SettingsSetParams> = {
   name: "settings.set",
-  description: `Change a setting by key. Keys: ${Object.keys(SETTING_SPECS).join(", ")}.`,
+  // W15-29: each key with its value's shape, so the chat model can fill `value` (before: the key
+  // names alone, and `value` reached the model as `{}`).
+  description: settingsSetDescription(),
   params,
   // 'sites': a key whose narrowing acts at once is judged against the value in force now.
   risk: async (p, ctx) => {

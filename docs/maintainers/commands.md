@@ -96,8 +96,10 @@ agent's own tools are replaced by these in the daemon wiring step.
 the principal's memory: "remember that ...", "lesson: ..." by pattern, or the model's
 `memory_record` tool for the same thing in other words. It is low risk (no limit, no spend,
 nothing outside the human's own memory), so it acts at once and the sentence reads the stored
-text back: `Recorded a lesson in Alice's memory for PharmaWatch: "...". Undo.` (up to 300
-characters). The command refuses a context without a principal agent or an agent the human
+text back: `Recorded a lesson in Alice's memory for PharmaWatch: "...". It changes no setting.
+Undo.` (up to 300 characters; W15-29: the sentence and the tool's description say a lesson
+changes no setting, since live the chat recorded "only read developer.mozilla.org for research"
+as a lesson and told the person the rule had changed). The command refuses a context without a principal agent or an agent the human
 does not own; the port (`MemoryCommandPort`: `recordLesson`, `forgetLesson`) is the runtime's
 `memoryCommandPort(MemoryLoop)`, which also runs the lesson injection screen and the memory
 lint (a text under 20 characters is refused with the lint's reason). Without the port the
@@ -507,6 +509,24 @@ runs alone and at once, and every other clause of the line, understood or not, i
 since a question in the stop's way would leave the session running (and the agent would hand
 the line to it as a said line). A line understood in full still runs every command, the stop
 among them.
+
+### Wave 15 (w15-chat): what the chat model is told and refused
+
+- **`settings_set`'s definition (W15-29).** Live check 2 (2026-11-09) gave the real chat model
+  `settings_set` as "Change a setting by key. Keys: …" with `"value": {}`; it sent "public",
+  then `{allowed: "public_websites"}`, then "any" for `web_access`, and recorded a lesson
+  instead. The description is now `settingsSetDescription()`: what a setting is (a rule the app
+  enforces, never a lesson), then one line per key from `settingDefinitionLine(spec)`: its
+  scope, its `description`, its value's shape (`settingValueShape`, rendered from
+  `z.toJSONSchema(spec.schema, { io: "input" })`, the input side, since `WebAccessSetting`'s
+  transform cannot be written on the output side) and `SettingSpec.examples` where the shape
+  alone does not say how words map to it (`web_access`, `quiet_hours`). `value` carries a
+  `.describe()` so the tool schema no longer reads `{}`. A refused value (`refusalOf`): a key
+  without `plainRefusals` keeps `<key>: <issues>` with each field's path; a `plainRefusals` key
+  keeps its whole sentences (a site it cannot take, an empty "only" list), and a value of the
+  wrong shape is "That is not a value for web pages research may read (<field>: <issue>). It
+  takes {"mode": "any" | "only", "only"?: [string], "never"?: [string]}, for example …".
+  `packages/commands/test/w15-chat.test.ts` asserts the definition's lines and these refusals.
 
 ## How to change it
 

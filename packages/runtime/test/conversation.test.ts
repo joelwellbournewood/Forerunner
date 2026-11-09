@@ -796,7 +796,7 @@ describe("chat context: project docs search and the principal's lessons", () => 
     const r = await w.chat(words);
     expect(w.provider.calls).toHaveLength(0); // deterministic: no model call
     expect(r.reply).toBe(
-      'Recorded a lesson in Alice\'s memory for Game: "the staging deploy needs the VPN switched on". Undo.',
+      'Recorded a lesson in Alice\'s memory for Game: "the staging deploy needs the VPN switched on". It changes no setting. Undo.',
     );
     expect(r.actions[0]).toMatchObject({ kind: "memory.record" });
     expect(r.actions[0]?.undoToken).toBeTruthy();

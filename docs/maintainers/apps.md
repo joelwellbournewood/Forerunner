@@ -714,7 +714,9 @@ runtime's `ImportResultView`, parsed with it (U-006);
 (`beginSession`), replies with the daemon's sentence ("Started a session on Atlas (up to CHF
 5).", action kind `session.start`) and the conversation's turn carries that session's
 `sessionId`, which the turn links (Open the session), as the daemon's conversation view does
-from the start's change log row. The extension routes file a `capability_grant`
+from the start's change log row; like the daemon (W15-29), `POST /chat` and `/chat/stream` emit
+`project.changed` for a turn that changed something and `inbox.changed` for a card waiting for
+a yes, so the Overview follows a change made in Talk. The extension routes file a `capability_grant`
 request in the inbox for pending installs (answering it approves or denies), widen permissions
 into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emits
 `restart.requested` and bumps the version `/health` reports, or, like the daemon (U-070), answers

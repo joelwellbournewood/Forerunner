@@ -3994,6 +3994,27 @@ about either. A lesson the human states by pattern ("remember that ...",
 "lesson: ...") never reaches the model: the parser makes it `memory.record`, which acts at once
 (low risk) and reads the stored text back (see "Memory" under the core loop).
 
+**A setting is never a lesson (W15-29, live check 2).** On 2026-11-09 the real chat model
+(Haiku at low effort) recorded "only read developer.mozilla.org for research" with
+`memory_record`, as `CHAT_RETRIEVAL_RULES` then said ("a fact or rule about the work"), tried
+`settings_set` three times with values its definition did not document, and told the person
+the rule had changed; the Overview went on reading "any public website". Now:
+`CHAT_RETRIEVAL_RULES` sends a lesson's "fact about the work or a preference" to
+`memory_record` and has a `# Settings` part: a rule the app enforces (`web_access`, who merges,
+fast mode, quiet hours, the other keys) is changed with `settings_set` in the shape its
+definition gives (commands.md, "Wave 15"), never recorded as a lesson, and no setting is said to
+have changed unless `settings_set` said so. The registry's `conversation-agent` prompt (1.2.0)
+says the same in its action list. `# Now` carries the project's rule in force, in the
+Overview's words (`- Research reads: only developer.mozilla.org`, `researchReadsLine`).
+`POST /chat` and `/chat/stream` say what a turn changed to the screens as `POST
+/commands/execute` does (`heardChat`: `project.changed` for each change's project,
+`inbox.changed` for a card waiting for a yes), so the Overview's line follows a change made in
+Talk without a reload. Tests: `conversation-memory.test.ts` ("w15-chat, wave 15": the
+definition, the system rules and the `# Now` line the model receives) and `real-daemon.test.ts`
+("w15-chat, wave 15": a chat model that fills `value` only from what the definition documents,
+and records a lesson otherwise, as the live model did: the narrowing acts at once with no card,
+the widening asks Yes/No, and the project card's `researchReads` follows each).
+
 **During a live session (spec O.9, ADR 0078).** Once the deterministic paths have had their
 turn (a yes or no to a pending card, "undo", a parsed command, a parser question, text carrying
 the data envelope: none of these is forwarded), a line that goes to the model is first posted

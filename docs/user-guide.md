@@ -272,7 +272,12 @@ left them; an open file or task stays on its own tab.
   "start working now" (the reply links the session it started), "stop" (stops the running
   session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
-  session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"
+  session, "summary". Chat changes a project's settings too: "only read developer.mozilla.org
+  for research" changes **Web pages research may read** at once (the Overview's line reads
+  "Research reads: only developer.mozilla.org"), and "research may read any public website
+  again" asks your **Yes** first, as the setting's dialog does. A rule like that is a setting,
+  never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
+  changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
   things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
   answered in the Inbox or expired, says so). Under each read-back the conversation says what

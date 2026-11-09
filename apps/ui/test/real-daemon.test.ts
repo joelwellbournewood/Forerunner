@@ -12130,3 +12130,163 @@ describe("polish-screens, wave 13", () => {
     expect(check.overBudget[0]?.ahead?.chfMicro).toBeGreaterThan(0);
   });
 });
+
+/**
+ * A chat model that knows only what the app tells it (W15-29): for "only read <site> for
+ * research" and "… any public website again" it calls settings_set when, and only when,
+ * settings_set's definition documents web_access's value (`"mode": "any" | "only"` and the only
+ * list); otherwise it records the line as a lesson, as the live model did on 2026-11-09. After a
+ * tool result it says the tool's words back.
+ */
+class DefinitionReader {
+  readonly name = "fake";
+  readonly calls: ModelRequest[] = [];
+  constructor(private readonly clock: SystemClock) {}
+  async listModels() {
+    return [{ provider: "fake", id: "fake-haiku", tier: "haiku" as const }];
+  }
+  countTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+  private replyTo(req: ModelRequest): ConstructorParameters<typeof ScriptedProvider>[0][number] {
+    const last = req.messages.at(-1);
+    const blocks = Array.isArray(last?.content) ? last.content : [];
+    const result = blocks.find((b) => (b as { type?: string }).type === "tool_result") as
+      | { content?: unknown }
+      | undefined;
+    if (result) {
+      const said =
+        typeof result.content === "string" ? result.content : JSON.stringify(result.content ?? "");
+      return { text: said.replace(/^Needs confirmation\..*$/s, "").slice(0, 300) };
+    }
+    const text =
+      typeof last?.content === "string"
+        ? last.content
+        : blocks.map((b) => (b as { text?: string }).text ?? "").join("");
+    const line = (text.split("\n\n")[0] ?? "").trim();
+    const def = (req.tools ?? []).find((t) => t.name === "settings_set");
+    const documented = (def?.description ?? "")
+      .split("\n")
+      .find((l) => l.startsWith("- web_access") && l.includes('"mode": "any" | "only"'));
+    const only = /only read (\S+) for research/i.exec(line)?.[1];
+    if (documented && only)
+      return {
+        tools: [
+          {
+            name: "settings_set",
+            input: { key: "web_access", value: { mode: "only", only: [only] } },
+          },
+        ],
+      };
+    if (documented && /any public website/i.test(line))
+      return {
+        tools: [{ name: "settings_set", input: { key: "web_access", value: { mode: "any" } } }],
+      };
+    return { tools: [{ name: "memory_record", input: { text: line } }] };
+  }
+  stream(req: ModelRequest) {
+    this.calls.push({ ...req, messages: structuredClone(req.messages) });
+    return new ScriptedProvider([this.replyTo(req)], this.clock).stream(req);
+  }
+  complete(req: ModelRequest) {
+    return new ScriptedProvider([this.replyTo(req)], this.clock).complete(req);
+  }
+}
+
+describe("w15-chat, wave 15", () => {
+  async function composeW15(
+    over: Partial<ComposeOptions> = {},
+  ): Promise<{ rt: RuntimeApp; client: DaemonClient }> {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-chat-"));
+    const clock = new ShiftedClock("2026-11-09T08:00:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "Done for today." }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+      ...over,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client };
+  }
+
+  // W15-29 (live check 2, research F2): Talk on "Reading rules", "only read
+  // developer.mozilla.org for research". Before: the model got settings_set with key names only
+  // and `"value": {}`, recorded a lesson, said "Recorded: for research in this project, only
+  // developer.mozilla.org gets read", and the Overview went on reading "any public website".
+  it("Talk changes the site rule: a narrowing acts at once with no card, a widening asks Yes/No, and the Overview's line follows each (W15-29)", async () => {
+    const model = new DefinitionReader(new SystemClock());
+    const { rt, client } = await composeW15({ provider: model as never });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Reading rules", goal: "Research" });
+      const changed: string[] = [];
+      rt.events.on("project", (p: { id: string }) => changed.push(p.id));
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const narrowed = await say("only read developer.mozilla.org for research");
+      // settings_set, not memory_record; no card (a narrowing acts at once).
+      expect(narrowed.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+      expect(narrowed.pendingConfirmation).toBeNull();
+      expect(narrowed.reply).toContain(
+        "Set web pages research may read for Reading rules from any public website to only developer.mozilla.org",
+      );
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      // The screens hear it without a reload.
+      expect(changed).toContain(project.id);
+      // The next turn's facts carry the rule in force.
+      const widened = await say("research may read any public website again");
+      const facts = model.calls
+        .map((c) => JSON.stringify(c.messages.at(-1)?.content ?? ""))
+        .find((t) => t.startsWith('"research may read any public website again'));
+      expect(facts).toContain("- Research reads: only developer.mozilla.org");
+      // A widening waits for the person's yes.
+      expect(widened.pendingConfirmation?.readback).toBe(
+        "Set web pages research may read for Reading rules to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.",
+      );
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+      // No lesson was recorded in place of the rule.
+      expect(
+        model.calls.some((c) => JSON.stringify(c.messages).includes("Recorded a lesson")),
+      ).toBe(false);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+});

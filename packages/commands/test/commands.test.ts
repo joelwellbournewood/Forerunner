@@ -579,7 +579,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     // Low risk: no card waits for a yes; the sentence reads the stored text back.
     expect(r.card.impact.risk).toBe("low");
     expect(r.sentence).toBe(
-      'Recorded a lesson in Alice\'s memory for PharmaWatch: "the dosage table is in mg per kg". Undo.',
+      'Recorded a lesson in Alice\'s memory for PharmaWatch: "the dosage table is in mg per kg". It changes no setting. Undo.',
     );
     expect(w.ports.lessons).toEqual([
       expect.objectContaining({
@@ -619,7 +619,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       }),
     );
     expect(r2.sentence).toBe(
-      'Recorded a lesson in Alice\'s memory for every project: "Joel reads mail in the morning". Undo.',
+      'Recorded a lesson in Alice\'s memory for every project: "Joel reads mail in the morning". It changes no setting. Undo.',
     );
     expect(w.ports.lessons[1]).toMatchObject({ projectId: null });
     await w.store.close();

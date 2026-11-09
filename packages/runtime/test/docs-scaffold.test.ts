@@ -320,7 +320,7 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(sent).toContain("star-hop routine");
     const r = await chat("remember that the mount drifts while the dome heater is on");
     expect(r.reply).toBe(
-      'Recorded a lesson in Alice\'s memory for Theta: "the mount drifts while the dome heater is on". Undo.',
+      'Recorded a lesson in Alice\'s memory for Theta: "the mount drifts while the dome heater is on". It changes no setting. Undo.',
     );
     const lessons = await rt.memory.list({
       scope: "agent_private",

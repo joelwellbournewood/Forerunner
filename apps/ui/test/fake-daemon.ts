@@ -3300,15 +3300,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
   app.get("/conversation", (c) => c.json(conversationOf("")));
 
+  // As the daemon (W15-29): what a chat turn changed is heard by the screens, its project as
+  // `project.changed` and a card waiting for a yes as `inbox.changed`.
+  const heardChat = (reply: ChatReplyView, projectId: string | null | undefined) => {
+    if (reply.actions.length && projectId) emit("project.changed", { id: projectId });
+    if (reply.pendingConfirmation) emit("inbox.changed", { blockingCount: blockingCount() });
+  };
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    return c.json(
-      keepTurn(
-        parsed.data,
-        chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
-      ),
+    const reply = keepTurn(
+      parsed.data,
+      chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
     );
+    heardChat(reply, parsed.data.projectId);
+    return c.json(reply);
   });
   app.post("/chat/stream", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
@@ -3317,6 +3323,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       parsed.data,
       chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
     );
+    heardChat(reply, parsed.data.projectId);
     return streamSSE(c, async (stream) => {
       const words = reply.reply.split(/(\s+)/).filter((w) => w.length > 0);
       for (const w of words) {
