@@ -529,6 +529,67 @@ describe("links land where they point (P7-12)", () => {
       Element.prototype.scrollIntoView = had;
     }
   });
+
+  it("a section above that loads after the rows: it lands again, at once; once the person scrolls, it stops", async () => {
+    // Review of P7-12: it scrolled once, smoothly, as the rows came; the subscription allowance,
+    // the credential order and the other sections above loaded afterwards and left "Other
+    // settings" 400 to 1900 px down the page. The real geometry is in e2e/settings-links.spec.ts.
+    // The credential order's rows (or its empty line) are there once it has loaded.
+    const ORDER_LOADED = '[data-testid="billing-order-empty"], [data-testid^="billing-order-row-"]';
+    const calls: { allowance: boolean; order: boolean; options: unknown }[] = [];
+    const scrolled = vi.fn(function (this: Element, options?: unknown) {
+      if (this.id !== "other-settings") return;
+      calls.push({
+        allowance: document.querySelector('[data-testid="plan-allowance-input"]') !== null,
+        order: document.querySelector(ORDER_LOADED) !== null,
+        options,
+      });
+    });
+    const had = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      const harness = createHarness();
+      // The allowance and the credential order answer only when the test lets them.
+      let allowanceNow: () => void = () => {};
+      const allowanceGate = new Promise<void>((r) => {
+        allowanceNow = r;
+      });
+      const planAllowance = harness.client.planAllowance.bind(harness.client);
+      harness.client.planAllowance = async (signal) => {
+        await allowanceGate;
+        return planAllowance(signal);
+      };
+      let orderNow: () => void = () => {};
+      const orderGate = new Promise<void>((r) => {
+        orderNow = r;
+      });
+      const billingOrder = harness.client.billingOrder.bind(harness.client);
+      harness.client.billingOrder = async (signal) => {
+        await orderGate;
+        return billingOrder(signal);
+      };
+      renderApp("/settings#other-settings", harness);
+      await screen.findAllByTestId("setting-row");
+      await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+      expect(calls.every((c) => !c.allowance)).toBe(true);
+      // The allowance loads above the target: the page lands again, without a smooth scroll.
+      allowanceNow();
+      await screen.findByTestId("plan-allowance-input");
+      await waitFor(() => expect(calls.some((c) => c.allowance)).toBe(true));
+      expect(calls.at(-1)?.options).toEqual({ block: "start", behavior: "instant" });
+      expect(calls.some((c) => JSON.stringify(c.options).includes("smooth"))).toBe(false);
+      // The person scrolls: the credential order that loads afterwards no longer moves the page.
+      fireEvent.wheel(document.body, { deltaY: -400 });
+      const before = calls.length;
+      orderNow();
+      await waitFor(() => expect(document.querySelector(ORDER_LOADED)).not.toBeNull());
+      await new Promise((r) => setTimeout(r, 50));
+      expect(calls.length).toBe(before);
+      expect(calls.some((c) => c.order)).toBe(false);
+    } finally {
+      Element.prototype.scrollIntoView = had;
+    }
+  });
 });
 
 describe("the shell's palette and bars (later #59, #63)", () => {
