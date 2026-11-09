@@ -17,7 +17,12 @@ import {
   REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
-import { OWED_FOLDER_CHANGES } from "../loop/merge-mode.ts";
+import {
+  folderWaitOver,
+  OWED_FOLDER_OUTCOMES,
+  owedFolderWait,
+  plainWaitForYou,
+} from "../loop/merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest } from "../loop/ports.ts";
 import type { WatchedPullRequest } from "./githost-watcher.ts";
 
@@ -593,9 +598,10 @@ export class DependentBranches {
     try {
       const record = await store.mergeRecord.forTask(o.taskId);
       if (OWES.has(o.result)) {
-        if (record && record.state !== "merged")
+        if (record && record.state !== "merged") {
           await store.mergeRecord.oweRebuild(o.taskId, dependencyId);
-        else this.owed.set(o.taskId, { projectId, dependencyId });
+          await this.sayFolderWait(o);
+        } else this.owed.set(o.taskId, { projectId, dependencyId });
         return;
       }
       this.owed.delete(o.taskId);
@@ -605,15 +611,38 @@ export class DependentBranches {
         // TM-4: the wait for the folder's changes is over with the owed rebuild; a merge that
         // waited goes on at the next retry and says what came of it.
         const now = await store.mergeRecord.forTask(o.taskId);
-        if (now?.last_outcome === OWED_FOLDER_CHANGES)
-          await store.mergeRecord.move(now.id, now.state, {
-            last_outcome: "rebuild_owed",
-            sentence: "",
-          });
+        if (now && OWED_FOLDER_OUTCOMES.has(now.last_outcome ?? ""))
+          await store.mergeRecord.move(now.id, now.state, folderWaitOver(now));
       }
     } catch (e) {
       this.logger.warn("owed rebuild not recorded", { taskId: o.taskId, error: errorMessage(e) });
     }
+  }
+
+  /**
+   * W15-02, W15-05: a rebuild owed that waits for what the person left in the task's folder
+   * (`held`: changes nobody committed, or a commit GitHub does not have) says so on the record
+   * at this poll, so the Overview's row and the Tasks row say it before any Merge is pressed
+   * (live check 2, F4: the row offered a bare Merge and the click answered "Merging #23."). A
+   * record that waits for the person says it only over a plain wait (its own words, a
+   * rebuild's warning or a conflict, come first); one the person's Merge queued always says it.
+   * A rebuild that could not run for another reason, with the folder clean now, takes it back.
+   */
+  private async sayFolderWait(o: DependentOutcome): Promise<void> {
+    const { store } = this.deps;
+    const record = await store.mergeRecord.forTask(o.taskId);
+    if (!record?.pr_number || record.state === "merged" || record.state === "merging") return;
+    const said = OWED_FOLDER_OUTCOMES.has(record.last_outcome ?? "");
+    if (!o.held) {
+      if (said && o.result !== "busy")
+        await store.mergeRecord.move(record.id, record.state, folderWaitOver(record));
+      return;
+    }
+    const plain = record.state !== "left_to_you" || said || plainWaitForYou(record);
+    const wait = owedFolderWait(record.pr_number, o.held);
+    if (!plain || (record.last_outcome === wait.last_outcome && record.sentence === wait.sentence))
+      return;
+    await store.mergeRecord.move(record.id, record.state, wait);
   }
 
   /**

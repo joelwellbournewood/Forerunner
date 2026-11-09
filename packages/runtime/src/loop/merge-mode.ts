@@ -91,13 +91,84 @@ export function owedFolderSentence(pr: number): string {
   return `#${pr} waits for changes left in its task's folder: take them out or redo the task.`;
 }
 
+/**
+ * W15-02: the record's `last_outcome` while the rebuild its branch owes waits for a commit the
+ * person made in the task's folder that GitHub's branch does not have (the rebuild starts from
+ * GitHub's branch, so it never runs over it).
+ */
+export const OWED_FOLDER_COMMITS = "owed_folder_commits";
+
+/**
+ * W15-02: the one sentence of that wait, with the ways out the code keeps: the commit pushed to
+ * GitHub (the next check rebuilds the branch with it, and the record waits for the person's look,
+ * since the pull request then holds work the review did not read), or undone in the folder (the
+ * next check rebuilds the branch as GitHub has it). Never "redo the task": a redo starts from
+ * GitHub's branch or from main, and the commit would be left on no branch.
+ */
+export function owedCommitSentence(pr: number): string {
+  return `#${pr} waits for a commit made in its task's folder: push it to GitHub or undo it.`;
+}
+
+/** The record outcomes of a rebuild that waits for what the person left in the task's folder. */
+export const OWED_FOLDER_OUTCOMES: ReadonlySet<string> = new Set([
+  OWED_FOLDER_CHANGES,
+  OWED_FOLDER_COMMITS,
+]);
+
+/** The folder wait's outcome and sentence for what holds the folder (W15-02, W15-05). */
+export function owedFolderWait(
+  pr: number,
+  held: "changes" | "commits",
+): { last_outcome: string; sentence: string } {
+  return held === "changes"
+    ? { last_outcome: OWED_FOLDER_CHANGES, sentence: owedFolderSentence(pr) }
+    : { last_outcome: OWED_FOLDER_COMMITS, sentence: owedCommitSentence(pr) };
+}
+
+/** The plain wait for the person's Merge ("You press Merge"), as the merge gate words it. */
+export function waitsForYourMergeSentence(pr: number): string {
+  return `#${pr} waits for you to merge it: press Merge on the Overview.`;
+}
+
+/**
+ * W15-05: whether a record that waits for the person says nothing more than that (no rebuild's
+ * warning, no conflict, no head that moved, no other reason it is left open): the folder's wait
+ * may take its words, and gives them back once the folder is clean.
+ */
+export function plainWaitForYou(record: {
+  last_outcome?: string | null;
+  sentence: string;
+}): boolean {
+  const outcome = record.last_outcome ?? "";
+  if (outcome === "" || outcome === "rebuild_owed" || outcome === "conflict_resolved") return true;
+  return (
+    outcome === "not_allowed" && /press Merge on the Overview\.?$/.test(record.sentence.trim())
+  );
+}
+
+/**
+ * What a record says once the folder's wait is over: a record that waits for the person's
+ * Merge says that again (`waitsForYourMergeSentence`); one the person's Merge queued says
+ * nothing more, and the merge goes on at the next retry (TM-4).
+ */
+export function folderWaitOver(record: { state: string; pr_number: number }): {
+  last_outcome: string;
+  sentence: string;
+} {
+  return record.state === "left_to_you"
+    ? { last_outcome: "not_allowed", sentence: waitsForYourMergeSentence(record.pr_number) }
+    : { last_outcome: "rebuild_owed", sentence: "" };
+}
+
 /** TM-4: the Tasks row's label for that wait (with `owedFolderSentence` as the line under it). */
 export const OWED_FOLDER_LABEL = "Accepted · merge waits for you";
 
 /**
- * TM-4: what a merge that waits for its task folder's changes says (the Overview's row and the
- * Tasks row read it), or null when the record does not wait so. Before, such a merge read
- * "Merging…" and "Accepted · merging" with no reason until the folder was cleaned.
+ * TM-4, W15-02, W15-05: what a merge that waits for what is left in its task's folder says (the
+ * Overview's row and the Tasks row read it), or null when the record does not wait so. Before,
+ * such a merge read "Merging…" and "Accepted · merging" with no reason until the folder was
+ * cleaned, and before the press the row offered a bare Merge (live check 2, F4): the wait is
+ * now written at the poll that finds it, also on a record that waits for the person's Merge.
  */
 export function owedMergeWait(record: {
   state: string;
@@ -105,7 +176,12 @@ export function owedMergeWait(record: {
   last_outcome?: string | null;
   sentence: string;
 }): string | null {
-  if (record.state !== "queued" && record.state !== "waiting_checks") return null;
-  if (!record.rebuild_owed_for || record.last_outcome !== OWED_FOLDER_CHANGES) return null;
+  if (
+    record.state !== "queued" &&
+    record.state !== "waiting_checks" &&
+    record.state !== "left_to_you"
+  )
+    return null;
+  if (!record.rebuild_owed_for || !OWED_FOLDER_OUTCOMES.has(record.last_outcome ?? "")) return null;
   return record.sentence.trim() || null;
 }

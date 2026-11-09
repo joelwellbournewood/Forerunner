@@ -237,6 +237,73 @@ export function depsHeldRef(taskId: string): string {
   return `${DEPS_HELD_PREFIX}${safeSegment(taskId)}`;
 }
 
+/**
+ * W15-02: a rebuild made in a task's folder whose push has not gone through yet names its head
+ * here, and keeps what to put back under `REBUILD_BEFORE_PREFIX` (the marker and the held refs
+ * as they were). Cleared once the push went through or the rebuild was put back; one left by a
+ * stop of the app is undone at the next rebuild of the folder (`undoUnpushedRebuild`).
+ */
+export const REBUILD_PENDING_REF = "refs/forerunner/rebuild-pending";
+export const REBUILD_BEFORE_PREFIX = "refs/forerunner/rebuild-before/";
+
+async function markUnpushedRebuild(
+  git: GitOps,
+  after: string,
+  marker: string | null,
+  heldRefs: readonly { ref: string; sha: string }[],
+): Promise<void> {
+  await clearUnpushedRebuild(git);
+  if (marker) await git.setRef(`${REBUILD_BEFORE_PREFIX}deps-base`, marker);
+  for (const h of heldRefs)
+    await git.setRef(`${REBUILD_BEFORE_PREFIX}${h.ref.slice("refs/forerunner/".length)}`, h.sha);
+  await git.setRef(REBUILD_PENDING_REF, after);
+}
+
+async function clearUnpushedRebuild(git: GitOps): Promise<void> {
+  for (const r of await git.refsUnder(REBUILD_BEFORE_PREFIX)) await git.setRef(r.ref, null);
+  await git.setRef(REBUILD_PENDING_REF, null);
+}
+
+/**
+ * W15-02: what holds a done task's folder from a rebuild, which starts the branch again from
+ * GitHub's: `changes`, files nobody committed; `commits`, a commit on the task's branch (or the
+ * folder's HEAD) that GitHub's branch does not have and that is not Forerunner's own unpushed
+ * step. Forerunner's own: a merge of the base onto GitHub's head (the merge step's update cut
+ * short before its push, `merge.ts` `unpushedBaseMerge`) and work-in-progress commits
+ * (`WIP_SUBJECT`, kept under `wipRef` too); its own rebuild cut short is put back before this
+ * is asked (`REBUILD_PENDING_REF`). Anything else is the person's and is never reset away; a
+ * commit nobody can tell is held, not dropped (fails closed). Null: nothing holds it.
+ */
+export async function folderHold(
+  git: GitOps,
+  branch: string,
+  base: string,
+): Promise<"changes" | "commits" | null> {
+  if ((await git.status()).dirty) return "changes";
+  const host = `origin/${branch}`;
+  const hostHead = await git.resolveRef(host);
+  if (!hostHead) return null;
+  const tips = new Set<string>();
+  for (const ref of [`refs/heads/${branch}`, "HEAD"]) {
+    const sha = await git.resolveRef(ref);
+    if (sha) tips.add(sha);
+  }
+  for (const tip of tips) {
+    if (await git.isAncestor(tip, hostHead)) continue;
+    const parents = await git.parentsOf(tip);
+    if (
+      parents.length === 2 &&
+      parents[0] === hostHead &&
+      (await git.isAncestor(parents[1] as string, `origin/${base}`))
+    )
+      continue;
+    const subjects = await git.subjectsBetween(hostHead, tip);
+    if (subjects.length && subjects.every((s) => s.startsWith(WIP_SUBJECT))) continue;
+    return "commits";
+  }
+  return null;
+}
+
 /** What became of a dependency a dependent branch holds (ADR 0111). */
 export type HeldState =
   /** Its pull request is open and still carries the work held: it stays in the base. */
@@ -304,6 +371,11 @@ export interface DependentOutcome {
   result: "unchanged" | "rebuilt" | "conflict" | "held" | "busy" | "failed";
   rebuild?: DependentRebuild;
   error?: string;
+  /**
+   * `busy` because of what the person left in the task's folder (W15-02, W15-05, `folderHold`):
+   * changes nobody committed, or a commit GitHub does not have. The rebuild waits for them.
+   */
+  held?: "changes" | "commits";
 }
 
 /** What the caller of `rebuildDependents` decides between the rebuild and its push. */
@@ -1811,6 +1883,29 @@ export class PrTaskExecutor implements TaskExecutor {
     }
   }
 
+  /**
+   * W15-02: a rebuild this folder made whose push never went through (the app stopped between
+   * the two) is put back: the branch as GitHub has it, the marker and the held refs as they were.
+   * Only while the branch is still exactly that rebuild and nothing is left uncommitted: a commit
+   * the person made on top of it stays, and `folderHold` holds the rebuild for it.
+   */
+  private async undoUnpushedRebuild(git: GitOps, branch: string): Promise<void> {
+    const pending = await git.resolveRef(REBUILD_PENDING_REF);
+    if (!pending) return;
+    if ((await git.resolveRef(`refs/heads/${branch}`)) !== pending) return;
+    if (!(await git.hasRef(`origin/${branch}`)) || (await git.status()).dirty) return;
+    await git.createBranch(branch, `origin/${branch}`);
+    const before = await git.refsUnder(REBUILD_BEFORE_PREFIX);
+    const marker = before.find((r) => r.ref === `${REBUILD_BEFORE_PREFIX}deps-base`)?.sha ?? null;
+    await git.setRef(DEPS_BASE_REF, marker);
+    for (const h of await git.refsUnder(DEPS_HELD_PREFIX)) await git.setRef(h.ref, null);
+    for (const r of before)
+      if (r.ref !== `${REBUILD_BEFORE_PREFIX}deps-base`)
+        await git.setRef(`refs/forerunner/${r.ref.slice(REBUILD_BEFORE_PREFIX.length)}`, r.sha);
+    await clearUnpushedRebuild(git);
+    this.logger.info("an unpushed rebuild was put back", { branch });
+  }
+
   private async rebuildIn(
     task: TaskRow,
     dir: string,
@@ -1827,6 +1922,9 @@ export class PrTaskExecutor implements TaskExecutor {
     const branch = task.branch;
     if (!target || !branch) return none;
     const git = await this.gitFor(target, dir);
+    // W15-02: a rebuild of this folder that never reached GitHub (the app stopped between the
+    // rebuild and its push) is put back first, markers included, so it is made again below.
+    await this.undoUnpushedRebuild(git, branch);
     // Cheap first: a worktree without the marker, or one whose held refs name none of the
     // dependencies that changed, has nothing to rebuild (a marker made before the held refs is
     // read in full).
@@ -1859,19 +1957,27 @@ export class PrTaskExecutor implements TaskExecutor {
         return found;
       }
     }
-    // Work nobody committed (a person's change after the run) is never swept into a rebuild.
-    // TM-4: said once while the folder stays so (before, a WARN at every poll); the merge step
-    // says it on the pull request's row (`ReviewedPrMerge`, `owedFolderSentence`).
-    if ((await git.status()).dirty) {
-      if (!this.heldByChanges.has(task.id)) {
-        this.heldByChanges.add(task.id);
-        this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
-          taskId: task.id,
-        });
+    // Work nobody committed (a person's change after the run) is never swept into a rebuild,
+    // and a commit of the person's that GitHub does not have is never reset away (W15-02: the
+    // rebuild starts from GitHub's branch, so before it ended on no branch, without a word).
+    // TM-4: said once while the folder stays so (before, a WARN at every poll); the rows say it
+    // (`held`, persisted on the record by the runtime at this poll, W15-05).
+    const held = await folderHold(git, branch, target.base);
+    if (held) {
+      const key = `${task.id}:${held}`;
+      if (!this.heldByChanges.has(key)) {
+        this.heldByChanges.add(key);
+        this.logger.warn(
+          held === "changes"
+            ? "dependent branch not rebuilt: its worktree has uncommitted changes"
+            : "dependent branch not rebuilt: its worktree has a commit GitHub does not have",
+          { taskId: task.id },
+        );
       }
-      return { ...found, result: "busy" };
+      return { ...found, result: "busy", held };
     }
-    this.heldByChanges.delete(task.id);
+    this.heldByChanges.delete(`${task.id}:changes`);
+    this.heldByChanges.delete(`${task.id}:commits`);
     // The branch as the host has it (a person may have pushed to it).
     await git.createBranch(branch, `origin/${branch}`);
     await this.dropStaleMarker(git);
@@ -1885,17 +1991,33 @@ export class PrTaskExecutor implements TaskExecutor {
       await this.syncBuildsOn(target, pr.number, r.kept);
       return { ...found, rebuild: r };
     }
-    const push = (await hooks.beforePush?.(r, { number: pr.number, url: pr.htmlUrl })) ?? true;
-    if (!r.after) return { ...found, result: "conflict", rebuild: r };
-    if (!push) {
-      // Held: the branch and its marker go back to what the host has; the next try rebuilds.
+    /** The branch and its markers back to what the host has: the next try rebuilds again. */
+    const putBack = async () => {
       await git.createBranch(branch, `origin/${branch}`);
       await git.setRef(DEPS_BASE_REF, marker);
       for (const h of await git.refsUnder(DEPS_HELD_PREFIX)) await git.setRef(h.ref, null);
       for (const h of heldRefs) await git.setRef(h.ref, h.sha);
-      return { ...found, result: "held", rebuild: r };
+      await clearUnpushedRebuild(git);
+    };
+    // W15-02: until its push went through, the rebuild is Forerunner's own unpushed state, with
+    // what to put back (a stop of the app between the two is undone at the next try).
+    if (r.after) await markUnpushedRebuild(git, r.after, marker, heldRefs);
+    try {
+      const push = (await hooks.beforePush?.(r, { number: pr.number, url: pr.htmlUrl })) ?? true;
+      if (!r.after) return { ...found, result: "conflict", rebuild: r };
+      if (!push) {
+        // Held: the branch and its marker go back to what the host has; the next try rebuilds.
+        await putBack();
+        return { ...found, result: "held", rebuild: r };
+      }
+      await git.push(branch, { force: true, defaultBranch: target.base });
+    } catch (e) {
+      // A push refused or cut short (or the record's step before it): nothing of the rebuild
+      // stays in the folder, so the next try rebuilds from GitHub's branch with its markers.
+      if (r.after) await putBack().catch(() => undefined);
+      throw e;
     }
-    await git.push(branch, { force: true, defaultBranch: target.base });
+    await clearUnpushedRebuild(git);
     await this.syncBuildsOn(target, pr.number, r.kept);
     this.logger.info("dependent pull request rebuilt", {
       taskId: task.id,

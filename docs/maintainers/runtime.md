@@ -3340,7 +3340,20 @@ next check rebuilds the branch and the record says what came of it: a rebuild wi
 dependency waits for the person again), or a redo (its run sets them aside, as a cut-short
 run's, and does the task again; the critic reviews it and the record waits for the person's
 Merge again). Never "commit them": the rebuild starts from the branch as GitHub has it
-(`rebuildIn`'s `createBranch(branch, origin/<branch>)`), so such a commit would end on no branch.
+(`rebuildIn`'s `createBranch(branch, origin/<branch>)`). **A commit the person made there anyway
+is never dropped** (W15-02): `folderHold` (capabilities) holds the rebuild for a commit on the
+task's branch that GitHub's branch lacks and that is not Forerunner's own unpushed step (a base
+merge the merge step made before its push, `unpushedBaseMerge`'s shape; work-in-progress commits;
+its own rebuild cut short, put back first), and the outcome's `held` says which (`changes` or
+`commits`). **The wait is written at the poll** (W15-05): `DependentBranches.sayFolderWait`
+writes `owedFolderWait(pr, held)` (`owed_folder_changes` with `owedFolderSentence`, or
+`owed_folder_commits` with `owedCommitSentence`: "#8 waits for a commit made in its task's
+folder: push it to GitHub or undo it.") on the record at the poll that finds it, on a queued
+record and on one that waits for the person's Merge with nothing more to say
+(`plainWaitForYou`), so the rows say it before any press; `folderWaitOver` gives a waiting
+record its plain words back ("#8 waits for you to merge it: press Merge on the Overview.") once
+the folder is clean or the rebuild ran, a queued one `rebuild_owed`. `sayOwedWait` reads the
+folder with the same `folderHold`.
 `owedMergeWait(record)` reads it for the Overview's row (`pull-requests.ts` `owedWaitOf`:
 `waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
 and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the

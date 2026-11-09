@@ -3,6 +3,7 @@ import {
   type BranchRules,
   type CheckRunInfo,
   type CommitStatusInfo,
+  folderHold,
   type GitHost,
   type GitIdentity,
   GitOps,
@@ -41,10 +42,11 @@ import { approvalKeyFor, type EnforcementHooks, type RunContext } from "../enfor
 import type { AuditPort } from "../enforcement/ports.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import {
+  folderWaitOver,
   MERGE_MODE_WORDS,
   mergeModeOf,
-  OWED_FOLDER_CHANGES,
-  owedFolderSentence,
+  OWED_FOLDER_OUTCOMES,
+  owedFolderWait,
 } from "./merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports.ts";
 
@@ -1372,7 +1374,7 @@ export class ReviewedPrMerge implements MergePort {
       if (record.rebuild_owed_for) {
         // TM-4: when the rebuild cannot run because the task's folder holds changes nobody
         // committed, the record says so (the rows read it); the merge still waits.
-        return this.outcomeOf(await this.sayOwedWait(record, worktree), "checks_pending");
+        return this.outcomeOf(await this.sayOwedWait(record, task, worktree), "checks_pending");
       }
       const claimed = await store.mergeRecord.claim(record);
       // Another process took it between the read and now: that one merges it.
@@ -1886,32 +1888,38 @@ export class ReviewedPrMerge implements MergePort {
 
   /**
    * TM-4: a merge that waits for a rebuild its branch owes says why when the task's folder
-   * holds changes nobody committed (the rebuild never sweeps them in, so it waits until the
-   * person puts them away): `OWED_FOLDER_CHANGES` with `owedFolderSentence`. A folder that is
+   * holds what the rebuild never runs over (`folderHold`): changes nobody committed, or a commit
+   * GitHub's branch does not have (W15-02), with `owedFolderWait`'s words. A folder that is
    * clean again takes the words back; a busy one (a run, a rebuild) leaves them as they are.
    * Nothing here lets the merge go on: the record still owes the rebuild (R-lock).
    */
   private async sayOwedWait(
     record: MergeRecordRow,
+    task: TaskRow,
     worktree: string | null,
   ): Promise<MergeRecordRow> {
-    if (!worktree) return record;
+    if (!worktree || !task.branch) return record;
+    const branch = task.branch;
     try {
-      const dirty = await tryWorktree(
-        worktree,
-        async () => (await new GitOps({ cwd: worktree }).status()).dirty,
-      );
-      if (dirty === null) return record;
-      if (dirty && record.last_outcome !== OWED_FOLDER_CHANGES)
-        return await this.deps.store.mergeRecord.move(record.id, record.state, {
-          last_outcome: OWED_FOLDER_CHANGES,
-          sentence: owedFolderSentence(record.pr_number),
-        });
-      if (!dirty && record.last_outcome === OWED_FOLDER_CHANGES)
-        return await this.deps.store.mergeRecord.move(record.id, record.state, {
-          last_outcome: "rebuild_owed",
-          sentence: "",
-        });
+      const held = await tryWorktree(worktree, async () => {
+        const git = new GitOps({ cwd: worktree, untranslated: true });
+        const base = await git.remoteDefaultBranch().catch(() => "main");
+        return (await folderHold(git, branch, base)) ?? "none";
+      });
+      if (held === null) return record;
+      const said = OWED_FOLDER_OUTCOMES.has(record.last_outcome ?? "");
+      if (held !== "none") {
+        const wait = owedFolderWait(record.pr_number, held);
+        if (record.last_outcome === wait.last_outcome && record.sentence === wait.sentence)
+          return record;
+        return await this.deps.store.mergeRecord.move(record.id, record.state, wait);
+      }
+      if (said)
+        return await this.deps.store.mergeRecord.move(
+          record.id,
+          record.state,
+          folderWaitOver(record),
+        );
     } catch (e) {
       this.logger.warn("task folder not read for an owed rebuild", {
         taskId: record.task_id,

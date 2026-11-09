@@ -285,8 +285,16 @@ with their milestone.
   host has it, rebuilt,
   `hooks.beforePush(rebuild, pr)` (the runtime settles the merge record there), then a push
   with a lease (never the default branch) and the "Builds on" line updated. A worktree a run or
-  another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one with
-  uncommitted changes. **One lock per task folder** (`githost/worktree-lock.ts`, exported:
+  another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one the person
+  left something in (`folderHold`, W15-02: uncommitted changes, `held: "changes"`, or a commit
+  on the task's branch that GitHub's branch lacks, `held: "commits"`; Forerunner's own unpushed
+  steps, a base merge before its push and work-in-progress commits, do not hold it; a commit
+  nobody can tell holds it, never reset away). A rebuild whose push does not go through is put
+  back at once (the branch as GitHub has it, the marker and held refs as they were), and one a
+  stop of the app cut short is put back at the next try (`REBUILD_PENDING_REF` names its head
+  until the push went through, `REBUILD_BEFORE_PREFIX` keeps what to put back,
+  `undoUnpushedRebuild`); before, the local marker already named the new base, so the next try
+  found nothing to rebuild and the pull request kept the work that went away. **One lock per task folder** (`githost/worktree-lock.ts`, exported:
   `inWorktree` waits, `tryWorktree` skips a busy folder, `worktreeBusy`; keyed by the resolved
   path, in this process): every git step in a task's worktree takes it, the PR executor's run,
   a resolved conflict, a rebuild, setting work aside, and since leftovers7-merge2 (R-lock) the

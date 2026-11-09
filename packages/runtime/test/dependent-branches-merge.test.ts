@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
+import { GitHubHost, GitOps, PrTaskExecutor } from "@forerunner/capabilities";
 import { join, Logger, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
@@ -201,6 +201,12 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     audit,
     writes,
     worktreeRoot,
+    /** The PR executor the session and the rebuilds use (w15-merge: a rebuild cut short). */
+    executor,
+    /** The bare repository behind the fake GitHub (w15-merge: a commit pushed to main). */
+    hostDir: repo.dir,
+    /** The person's token on the fake GitHub (w15-merge: a push from a task's folder). */
+    token,
     fileOf,
     /** One task through one session: the executor (branch, PR), the critic, the merge step. */
     async runTask(
@@ -1462,5 +1468,147 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({ canMerge: true });
     expect(row.label).toBe("Accepted · waiting for you to merge");
     expect((await m.pr(b.id)).merged).toBe(false);
+  });
+});
+
+describe("w15-merge, wave 15", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  /** What the Overview lists (GET /projects/:id/pull-requests) and what the Tasks row says. */
+  const screens = async (m: ChainWorld, taskId: string) => {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    const task = await m.w.store.task.mustGet(taskId);
+    return { waiting: view.waiting, row: taskDisplay(task, ctx) };
+  };
+  /** git in a task's folder as the person (their own name, not Forerunner's). */
+  const asPerson = (dir: string) => (args: string[]) =>
+    run(["git", "-C", dir, "-c", "user.name=Pat", "-c", "user.email=pat@example.test", ...args], {
+      allowFailure: true,
+    });
+  /** A commit on main on the fake GitHub, made by someone else. */
+  async function pushToMain(m: ChainWorld, file: string, content: string) {
+    const dir = mkdtempSync(join(tmpdir(), "fr-w15-main-"));
+    try {
+      await run(["git", "clone", "-q", m.hostDir, dir]);
+      writeFileSync(join(dir, file), content);
+      const g = asPerson(dir);
+      await g(["add", file]);
+      await g(["commit", "-q", "-m", `Add ${file}`]);
+      await g(["push", "-q", "origin", "HEAD:main"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("a commit the person makes in a done task's folder is never dropped by a rebuild: the rebuild waits, the row says so in one sentence with no Merge; undone, the next poll rebuilds (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    // The person commits a file in B's folder (the reviewer's case of wave 13).
+    writeFileSync(join(dir, "notes.txt"), "my notes\n");
+    const g = asPerson(dir);
+    await g(["add", "notes.txt"]);
+    await g(["commit", "-q", "-m", "my notes"]);
+    const mine = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    await m.close(a.id);
+    await m.poll();
+    // Before: the rebuild reset B's branch to GitHub's, the commit was on no branch and
+    // notes.txt was gone from the folder, without a word.
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect((await g(["ls-files", "notes.txt"])).stdout.trim()).toBe("notes.txt");
+    const record = await m.record(b.id);
+    expect(record.rebuild_owed_for).toBe(a.id);
+    const sentence = `#${prB} waits for a commit made in its task's folder: push it to GitHub or undo it.`;
+    expect(record).toMatchObject({ last_outcome: "owed_folder_commits", sentence });
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      canMerge: false,
+      sentence,
+    });
+    expect(row.detail).toBe(sentence);
+    // Polls go on: still held, the commit still there, nothing merged.
+    await m.poll();
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect((await m.pr(b.id)).merged).toBe(false);
+    // The person undoes it: the next poll rebuilds B without the closed #A.
+    await g(["reset", "-q", "--hard", `origin/${branch}`]);
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+  });
+
+  it("the person's commit pushed to GitHub, as the sentence offers: the next poll rebuilds B with it and B waits for the person's look (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    writeFileSync(join(dir, "notes.txt"), "my notes\n");
+    const g = asPerson(dir);
+    await g(["add", "notes.txt"]);
+    await g(["commit", "-q", "-m", "my notes"]);
+    await m.close(a.id);
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("owed_folder_commits");
+    // The person pushes the branch with their token, as the sentence offers.
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prFiles(prB)).toEqual(["notes.txt", m.fileOf("Add footer")].sort());
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("Forerunner's own unpushed base merge (a merge step cut short before its push) still rebuilds: it is not the person's commit (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    await pushToMain(m, "CHANGELOG.md", "# changes\n");
+    // What the merge step's update path leaves when it stops before its push.
+    const forerunner = new GitOps({ cwd: dir, identity, auth: { token: m.token } });
+    await forerunner.fetch();
+    expect(
+      (
+        await forerunner.mergeFrom("origin/main", `Merge main into ${branch}`, {
+          noFastForward: true,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(await forerunner.isAncestor("HEAD", `origin/${branch}`)).toBe(false);
+    await m.close(a.id);
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prCommits(prB)).not.toContain("Add page");
+  });
+
+  it("a rebuild whose push failed is rebuilt at the next poll: Forerunner's own unpushed rebuild is not the person's commit (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    // The rebuild runs and stops before its push (the push refused, the network gone).
+    const cut = await m.executor.rebuildTask(await m.w.store.task.mustGet(b.id), {
+      beforePush: async () => {
+        throw new Error("the push did not go through");
+      },
+    });
+    expect(cut.result).toBe("failed");
+    expect(await m.prCommits(prB)).toContain("Add page");
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prCommits(prB)).toEqual(["Add footer"]);
   });
 });
