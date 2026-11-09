@@ -2871,8 +2871,11 @@ run's entry when the attempt is the same, the executor's `prepareReview(task)` m
 ready (a repository task's worktree on its branch, `PrTaskExecutor.prepareReview`; a project's
 folder in place; `LoopTaskExecutor.prepareReview` the run's worktree) and `workHash` there is the
 kept one; the entry is cleared either way, and the result (`keptResult`, `reviewOnly: true`) goes
-to the critic without a run: no `task.started`, no `task.files`, no `task.finished`, no
-`onTaskFinished`, and the person's heard lines and queue notes wait for a run. The critic's diff of
+to the critic without a run: no `task.files`, no `task.finished`, no `onTaskFinished`, and the
+person's heard lines and queue notes wait for a run. Its only start is a `task.started` with
+`reviewOnly: true` and `specialist: "critic"` (W15B-14, `reviewResumedLine`): "The critic reviews
+\"Notes page\": its work was done in an earlier session." before the verdict (before: nothing until
+the verdict); the coder's start line is never written. The critic's diff of
 a project's folder whose session end committed the work is the task's files since its last
 "Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
 the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
@@ -6324,10 +6327,18 @@ specialist's words, `couldNotWords`, which ends a sentence only at a dot before 
 "index.html" or "data/members.csv" stays whole, C-50) when its report says it could not do the
 work, and `again`. A task's changed files name its pull request, never its branch with the task's
 id (C-59; without a pull request, `branchWords` drops the id part).
+A run that ended `needs_human` reads '<who> has questions for you about "X" (Inbox).' only when it
+asked (the executor's asked-you summary, W15B-79); one that ended waiting without asking (a
+dependency base that could not be built, a folder hold) reads '"X" could not run: <its first
+sentence> (Inbox).', as its cannot-run card says.
 A reviewed run's own line is a detail when it could not do the work or is a retry; the critic's
 line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `specialist`, and
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,
-"Log line"), "… It needs your decision (Inbox).", "… The critic accepted it anyway." or "… Its
+"Log line"), "… It needs your decision (Inbox)." (W15B-14: the verdict's `card`, `cardKindOf` of
+the card it filed, read by the runner's `verdictCardKind`: a questions card "… The specialist asks
+you (Inbox)." and alone '"X": the specialist asks you (Inbox).', a sign-off "… needs your sign-off
+(Inbox).", "needs your decision" only for a decision card or an event without `card`), "… The
+critic accepted it anyway." or "… Its
 review did not run; it waits in the Inbox.". "Could not" is read from the report's first
 sentence only. A sent-back line names why, once (W15-58): `critic.verdict` carries `blocking`,
 the review's first finding by severity (`blockingFindingOf` in the runner), and reads 'The critic

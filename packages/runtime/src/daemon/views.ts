@@ -86,6 +86,7 @@ import {
   plainLine,
   retryWords,
   reviewLevel,
+  reviewResumedLine,
   skipReason,
   verdictWords,
 } from "./event-lines.ts";
@@ -596,6 +597,7 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.plan_approved":
       return `Running the plan you approved (${count("items", "task")}).`;
     case "task.started":
+      if (p.reviewOnly === true) return reviewResumedLine(p);
       return `Started "${s("title")}" with ${s("specialist")} (${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}).`;
     case "task.finished":
       return `Finished "${s("title") || "the task"}": ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${cutAtWord(plainLine(s("summary")), 200)}`;

@@ -18,7 +18,7 @@ import {
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
-import { holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
+import { cardKindOf, holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -1578,6 +1578,15 @@ export class SessionRunner {
           // the specialist again first (live check 2, RUN-6), although its card said the work
           // was done and only its review waited.
           const kept = await this.reviewOnlyResult(task);
+          // W15B-14: the session log says the waiting review goes on (before: nothing until the
+          // verdict, and no "started" line, since the specialist does not run).
+          if (kept)
+            await emit("task.started", {
+              taskId: task.id,
+              title: task.title,
+              specialist: "critic",
+              reviewOnly: true,
+            });
           // The specialist that runs this attempt, known before the log says who started it
           // (U-044): the retry ladder's stand-in after two failed attempts, the plan's name read
           // as the registry's. Before, the log named the plan's specialist for work another one
@@ -3260,6 +3269,12 @@ export class SessionRunner {
     }
   }
 
+  /** W15B-14: `{ card }` of the card a verdict filed, as `cardKindOf` reads it; {} unread. */
+  private async verdictCardKind(requestId: string): Promise<{ card?: string }> {
+    const row = await this.deps.store.humanRequest.get(requestId).catch(() => undefined);
+    return row ? { card: cardKindOf(row) } : {};
+  }
+
   /**
    * W15-27 (TR-15): the kept result of the task's latest run, to review without running the
    * specialist, when the run kept one (`reviewPending`), the attempt is the same, the executor
@@ -3354,6 +3369,11 @@ export class SessionRunner {
         ...(outcome.retry ? { retry: outcome.retry } : {}),
         ...(outcome.nextTier ? { nextTier: outcome.nextTier } : {}),
         ...(outcome.humanRequestId ? { humanRequestId: outcome.humanRequestId } : {}),
+        // W15B-14: the kind of card the verdict filed (questions, sign-off, decision), so the
+        // log's line names it as the card does.
+        ...(outcome.decision === "human" && outcome.humanRequestId
+          ? await this.verdictCardKind(outcome.humanRequestId)
+          : {}),
         ...(outcome.decision === "human" || outcome.retry === "escalate"
           ? { escalation: true }
           : {}),

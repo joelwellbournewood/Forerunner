@@ -1,6 +1,7 @@
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, TaskRow } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
+import { personLine } from "../src/daemon/event-lines.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { leftOpenCardTitle, requestWords } from "../src/daemon/request-words.ts";
 import { startBlocked } from "../src/daemon/start-blocked.ts";
@@ -448,6 +449,85 @@ describe("w15-words, wave 15 run B", () => {
       expect(
         leftOpenCardTitle({ ...card, notice: "conflict", base: "main" }, "Write the page"),
       ).toBe('"Write the page" conflicts with main');
+    });
+  });
+
+  describe("W15B-14 (+W15B-79): the session log's lines name the right card", () => {
+    const verdict = (card: string | undefined, couldNot?: string) =>
+      personLine(
+        "critic.verdict",
+        {
+          taskId: "t1",
+          title: "Write the page",
+          specialist: "writer-marketing",
+          decision: "human",
+          verdict: "revise",
+          ...(card ? { card } : {}),
+          ...(couldNot !== undefined ? { couldNot } : {}),
+        },
+        0.8,
+      );
+
+    it("a questions card reads as its card does; a sign-off as one; a decision as a decision", () => {
+      expect(verdict("questions")).toBe('"Write the page": the specialist asks you (Inbox).');
+      expect(verdict("signoff")).toBe('"Write the page" needs your sign-off (Inbox).');
+      expect(verdict("retry")).toBe('"Write the page" needs your decision (Inbox).');
+      // An event written before the card kind was carried reads as before.
+      expect(verdict(undefined)).toBe('"Write the page" needs your decision (Inbox).');
+      const q = verdict("questions", "The work needs the club's prices.");
+      expect(q).toMatch(/The specialist asks you \(Inbox\)\.$/);
+      expect(q).not.toContain("needs your decision");
+      expect(verdict("retry", "The work needs the club's prices.")).toMatch(
+        /It needs your decision \(Inbox\)\.$/,
+      );
+    });
+
+    it("the review-only pass has one line of its own", () => {
+      expect(
+        personLine(
+          "task.started",
+          { taskId: "t1", title: "Notes page", specialist: "critic", reviewOnly: true },
+          0.8,
+        ),
+      ).toBe('The critic reviews "Notes page": its work was done in an earlier session.');
+      expect(describeEvent("task.started", { title: "Notes page", reviewOnly: true }, 0.8)).toBe(
+        'The critic reviews "Notes page": its work was done in an earlier session.',
+      );
+    });
+
+    it("a run that ended waiting says 'has questions for you' only when it asked", () => {
+      const finished = (summary: string) =>
+        personLine(
+          "task.finished",
+          {
+            taskId: "t1",
+            title: "Write the footer",
+            specialist: "coder",
+            outcome: "needs_human",
+            summary,
+          },
+          0.8,
+        );
+      expect(
+        finished("The coder asked you 2 questions; the task waits for your answers in the Inbox."),
+      ).toBe('The coder has questions for you about "Write the footer" (Inbox).');
+      // A dependency base that could not be built (pr-executor's dependencyConflictWords).
+      expect(
+        finished(
+          'The work it builds on, "Write the page" (pull request #2), conflicts with main in page.html. Resolve that pull request on GitHub, then press Try again.',
+        ),
+      ).toBe(
+        '"Write the footer" could not run: the work it builds on, "Write the page" (pull request #2), conflicts with main in page.html (Inbox).',
+      );
+      // A hold of the kind w15-tail's W15B-01 adds (a commit in the task's folder).
+      const hold = finished(
+        "Its folder holds a commit that is not on GitHub: push it or undo it, then press Try again.",
+      );
+      expect(hold).toBe(
+        '"Write the footer" could not run: its folder holds a commit that is not on GitHub: push it or undo it, then press Try again (Inbox).',
+      );
+      expect(hold).not.toContain("questions");
+      expect(finished("")).toBe('"Write the footer" could not run; its card is in the Inbox.');
     });
   });
 });

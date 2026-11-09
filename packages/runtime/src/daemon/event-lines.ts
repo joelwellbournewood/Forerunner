@@ -63,6 +63,28 @@ function specialistWho(p: Payload): string {
 
 const capital = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
+/** The executor's sentence for a run that asked the person (`summary` of an asked run). */
+const ASKED_YOU = /\basked you (?:a question|\d+ questions)\b/;
+
+/** The first sentence of a text (a dot inside a file name ends none, as in `couldNotWords`). */
+function firstSentence(text: string): string {
+  const t = text.trim();
+  const m = /^(?:[^.!?]|[.!?](?=\S))+[.!?]*/.exec(t);
+  return (m?.[0] ?? t).trim();
+}
+
+/** "The work ..." -> "the work ..." after a colon; a name or a quote keeps its case. */
+function lowerArticle(s: string): string {
+  return /^(?:The|A|An|It|Its|This|That|There|No|Nothing)\b/.test(s)
+    ? s.charAt(0).toLowerCase() + s.slice(1)
+    : s;
+}
+
+/** W15B-14: the review-only pass's line (W15-27), before its verdict. */
+export function reviewResumedLine(p: Payload): string {
+  return `The critic reviews ${taskName(p)}: its work was done in an earlier session.`;
+}
+
 /** "index.html", "a.js and b.js", "a.js, b.js, c.js and 4 more" (design §5 rule 5). */
 export function namedList(items: readonly string[], max = 3): string {
   const shown = items.slice(0, max);
@@ -175,6 +197,8 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         ? `You started the session with a budget of ${chf("budgetCapUsdMicro")}.`
         : `The session started with a budget of ${chf("budgetCapUsdMicro")}.`;
     case "task.started":
+      // W15B-14: the review-only pass (W15-27) says it goes on before its verdict.
+      if (p.reviewOnly === true) return reviewResumedLine(p);
       // Another specialist takes over (the ladder's "split, or with another specialist"), in
       // this session or a later one (U-044: the runner names the specialist that runs).
       if (s("handedFrom") && s("handedFrom") !== s("specialist"))
@@ -214,8 +238,19 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       // U-078: under Details; the person's line is the credential's own sentence.
       if (outcome === "usage_limit")
         return `${capital(taskName(p))} stopped: a Claude credential could not serve it.`;
-      if (outcome === "needs_human")
-        return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;
+      // W15B-79: "has questions for you" only when the run asked (its summary is the executor's
+      // asked-you sentence); a run that ended waiting without asking anything (a dependency base
+      // that could not be built, a folder that holds a commit) says its own first sentence, as
+      // its card says it could not run. Before, every needs_human run "had questions".
+      if (outcome === "needs_human") {
+        if (p.asked === true || ASKED_YOU.test(summary))
+          return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;
+        // The run's own words, plain (a "#2" stays: it names a pull request).
+        const why = cutAtWord(firstSentence(summary.replace(/\s+/g, " ")), 200);
+        return why
+          ? `${capital(taskName(p))} could not run: ${lowerArticle(why.replace(/[.\s]+$/, ""))} (Inbox).`
+          : `${capital(taskName(p))} could not run; its card is in the Inbox.`;
+      }
       const said = couldNotWords(summary);
       if (said !== null) return couldNotLine(p, said);
       return `${capital(who)} finished ${taskName(p)}${cost}.`;
@@ -229,7 +264,13 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       if (typeof p.couldNot === "string") {
         const head = couldNotLine(p, p.couldNot);
         if (decision === "accepted") return `${head} The critic accepted it anyway.`;
-        if (decision === "human") return `${head} It needs your decision (Inbox).`;
+        // W15B-14: the card it filed, named as its card names it.
+        if (decision === "human")
+          return s("card") === "questions"
+            ? `${head} The specialist asks you (Inbox).`
+            : s("card") === "signoff"
+              ? `${head} It needs your sign-off (Inbox).`
+              : `${head} It needs your decision (Inbox).`;
         if (decision === "blocked_by_findings")
           return `${head} It stays in review: an earlier finding is still open.`;
         if (sentBack) return `${head} Trying again.`;
@@ -248,7 +289,14 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
             )
       )?.replace(/[.\s]+$/, "");
       if (decision === "accepted") return `The critic accepted ${taskName(p)}.`;
-      if (decision === "human") return `${capital(taskName(p))} needs your decision (Inbox).`;
+      // W15B-14: a questions card reads as its card does ('"X": the specialist asks you'), a
+      // sign-off as one; "needs your decision" only for a decision card (before: for all three).
+      if (decision === "human")
+        return s("card") === "questions"
+          ? `${capital(taskName(p))}: the specialist asks you (Inbox).`
+          : s("card") === "signoff"
+            ? `${capital(taskName(p))} needs your sign-off (Inbox).`
+            : `${capital(taskName(p))} needs your decision (Inbox).`;
       if (decision === "blocked_by_findings")
         return `${capital(taskName(p))} stays in review: an earlier finding is still open.`;
       if (sentBack)

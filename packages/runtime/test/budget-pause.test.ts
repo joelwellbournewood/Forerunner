@@ -1353,3 +1353,92 @@ describe("w15-review, wave 15", () => {
     expect(said.join(" | ")).toMatch(/The coder started "Prices page"/);
   }, 120_000);
 });
+
+/**
+ * w15-words, wave 15 run B. W15B-14: the review-only pass (W15-27) says in the session log that
+ * the waiting review goes on, before its verdict (before: nothing, and no start line).
+ */
+describe("w15-words, wave 15 run B", () => {
+  const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-words-review-only-"));
+  const fake = new FakeProvider({
+    clock,
+    latency: "none",
+    onNoMatch: "echo",
+    replies: [
+      submitReply({}, { times: Number.POSITIVE_INFINITY }),
+      closingReply(),
+      textReply("Wrote index.html.\n\nLeft to do: nothing", {
+        when: (r: ModelRequest) =>
+          coderOn("Index page")(r) && JSON.stringify(r.messages).includes('"tool_result"'),
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 500, output_tokens: 20 },
+      }),
+      toolReply("write_file", { path: "index.html", content: "<p>Index</p>\n" }, "Writing.", {
+        when: coderOn("Index page"),
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 500, output_tokens: 20 },
+      }),
+    ],
+  });
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("W15B-14: the waiting review's session has one line saying it goes on, then the verdict, and no start of the coder", async () => {
+    const r = await runOne(req, rt, "Index page", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 10_000,
+    });
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    const set = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: r.projectId } },
+        ],
+        wordsUsed: "Settings: Project budget to 5",
+        source: "ui",
+        projectId: r.projectId,
+      }),
+    });
+    let result = (await set.json()) as Json;
+    if (result.status === "pending")
+      result = (await (
+        await req(`/commands/${String(result.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        })
+      ).json()) as Json;
+    expect(result.status, JSON.stringify(result)).toBe("done");
+    await rt.scheduler.tick();
+    const sessions = async () => rt.store.session.forProject(r.projectId);
+    await waitFor(
+      async () => {
+        const t = await rt.store.task.mustGet(r.taskId);
+        const all = await sessions();
+        return all.length === 2 &&
+          ["done", "needs_human"].includes(t.status) &&
+          all.every((s) => ["completed", "stopped", "failed", "killed"].includes(s.status))
+          ? true
+          : undefined;
+      },
+      async () =>
+        `the review and its session to end (${(await rt.store.task.mustGet(r.taskId)).status})`,
+    );
+    const second = (await sessions()).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    const events = (await (await req(`/sessions/${String(second?.id)}/events`)).json()) as Json[];
+    const said = events.filter((e) => e.audience === "person").map((e) => String(e.text ?? ""));
+    const goesOn = 'The critic reviews "Index page": its work was done in an earlier session.';
+    expect(said.filter((l) => l === goesOn)).toHaveLength(1);
+    const accepted = said.indexOf('The critic accepted "Index page".');
+    expect(accepted).toBeGreaterThan(said.indexOf(goesOn));
+    expect(said.join(" | ")).not.toMatch(/The coder started/);
+  }, 120_000);
+});
