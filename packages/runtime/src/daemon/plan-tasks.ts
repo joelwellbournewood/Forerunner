@@ -173,6 +173,9 @@ export async function planTaskViews(
     const person = canonical === PERSON_SPECIALIST;
     const known = canonical && !person && deps.has(canonical) ? canonical : null;
     const estimateUsdMicro = estimateOf(str(t.key), person);
+    // D4: said only when the task is larger than a session (absent otherwise, as from an
+    // older service).
+    const oversized = oversizedNote(estimateUsdMicro);
     out.push({
       key: str(t.key),
       title,
@@ -193,7 +196,7 @@ export async function planTaskViews(
             .catch(() => null)
         : null,
       note: planTaskNote(known, deps),
-      oversized: oversizedNote(estimateUsdMicro),
+      ...(oversized ? { oversized } : {}),
     });
   }
   return onceForThePlan(out);
