@@ -61,7 +61,7 @@ import {
   wentAheadWithout,
 } from "../session/person-questions.ts";
 import { withReviewWait } from "../session/review-refusal.ts";
-import { webSourceEvidence } from "../session/web-sources.ts";
+import { keptSourcesOf, type WebSource, webSourceEvidence } from "../session/web-sources.ts";
 import {
   type CriticPort,
   type LessonCandidate,
@@ -443,11 +443,20 @@ export class CriticLoop implements CriticPort {
     // text the specialist got, as data, and sees which pages could not be read.
     // 'web-search': the search results it saw but did not open are listed beside the pages, and a
     // claim whose only source is one of them is not sourced.
-    const sources = webSourceEvidence(result.webSources, result.searchSeen);
+    // W15-26: and the pages earlier runs of the task read, which the work may rest on (live
+    // check 2, research F6: a run paused at its budget after reading ten pages, the continued
+    // run read none, and its review saw none and was told the evidence was complete).
+    const sources = webSourceEvidence(
+      result.webSources,
+      result.searchSeen,
+      await this.sourcesOfTask(task.id, result.runId),
+    );
     if (sources.inputFiles.length)
       evidence.inputFiles = [...(evidence.inputFiles ?? []), ...sources.inputFiles];
     if (sources.artifacts.length)
       evidence.artifacts = [...(evidence.artifacts ?? []), ...sources.artifacts];
+    if (sources.unavailable.length)
+      evidence.unavailable = [...(evidence.unavailable ?? []), ...sources.unavailable];
     if (tier >= 2 && worktree && changedFiles.length) {
       // Doc drift of the project's standard doc set (spec G.5, memory package); a drift is a
       // non-required check, so it is a low finding the human sees and the PM fixes at session
@@ -1003,6 +1012,21 @@ export class CriticLoop implements CriticPort {
       }
     }
     return [...files];
+  }
+
+  /**
+   * The pages the task's other work runs read, newest first (W15-26): what each kept for a
+   * later review (`keptSourcesOf`; a row written before keeps the addresses only). The run under
+   * review (`currentRunId`) is left out: its own pages come with its result.
+   */
+  private async sourcesOfTask(
+    taskId: string,
+    currentRunId: string | undefined,
+  ): Promise<WebSource[]> {
+    const runs = (await this.deps.store.run.forTask(taskId))
+      .filter((r) => r.id !== currentRunId && r.specialist !== "critic" && !r.parent_run_id)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+    return runs.flatMap((r) => keptSourcesOf(r.artifacts));
   }
 
   /**

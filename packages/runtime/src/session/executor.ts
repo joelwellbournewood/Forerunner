@@ -169,6 +169,7 @@ import {
 } from "./runner.ts";
 import { failureWords, taskContextBlock } from "./task-context.ts";
 import {
+  reviewSourcesArtifact,
   searchSeenOf,
   type WebSource,
   webSourceArtifact,
@@ -1374,7 +1375,9 @@ export class LoopTaskExecutor implements TaskExecutor {
               // The SDK's own list-price figure, kept beside the ledger's per-call estimate.
               sdk_cost_usd_micro: Math.round(r.sdkCostUsd * 1_000_000),
             },
-            ...(webSources.length ? [webSourceArtifact(webSources)] : []),
+            ...(webSources.length
+              ? [webSourceArtifact(webSources), reviewSourcesArtifact(webSources)]
+              : []),
           ],
         };
       } else {
@@ -1462,8 +1465,11 @@ export class LoopTaskExecutor implements TaskExecutor {
             ...(r.injectionReports.length ? [{ injectionReports: r.injectionReports.length }] : []),
             // A fast-mode run says so on its Run row (ADR 0072): it was priced at the fast row.
             ...(fast.kind === "applied" ? [{ speed: "fast" }] : []),
-            // The pages it read, by address (ADR 0107); the text goes to the critic only.
-            ...(webSources.length ? [webSourceArtifact(webSources)] : []),
+            // The pages it read, by address (ADR 0107); the text goes to the critic only, kept
+            // apart for a later review of the task (W15-26).
+            ...(webSources.length
+              ? [webSourceArtifact(webSources), reviewSourcesArtifact(webSources)]
+              : []),
             // Its web searches ('web-search'): the task's cap of ten counts them over its runs.
             ...(r.webSearches ? [{ webSearches: r.webSearches }] : []),
           ],

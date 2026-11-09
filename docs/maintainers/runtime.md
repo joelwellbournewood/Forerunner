@@ -5590,11 +5590,18 @@ pages research may read" (`webAccessOf`, below) read at every call, the loopback
 `ComposeOptions.webReadLoopback`; `ports.audit` takes its refusal rows. The executor wraps the run's `web_fetch` with `withWebSourceLog`: each
 call's address, final address, status, title and text (redacted, at most `MAX_SOURCE_CHARS`
 8,000) or its error in words go into `TaskExecutionResult.webSources`; the Run row's artifacts
-keep `{ webSources: [{ url, status, title } | { url, error }] }` (`webSourceArtifact`, no text).
-The critic port (`loop/critic.ts`) turns them into the review's evidence with
-`webSourceEvidence`: each page read as an input file `web page <address>` (data, up to
-`MAX_SOURCES` 12 pages), each page not read as an artifact line `web page not read: <address>
-(<words>)`. The session log's step line is "read the web page <host><path>" (`stepLine`).
+keep `{ webSources: [{ url, status, title } | { url, error }] }` (`webSourceArtifact`, no text,
+what the task drawer reads) and, for a later review, `{ reviewSources: [...] }`
+(`reviewSourcesArtifact`: the same pages with their text, at most `MAX_SOURCES` with text; never
+served to a screen; W15-26). The critic port (`loop/critic.ts`) turns them into the review's
+evidence with `webSourceEvidence`: each page read as an input file `web page <address>` (data, up
+to `MAX_SOURCES` 12 pages), each page not read as an artifact line `web page not read: <address>
+(<words>)`. The pages the task's other work runs read come after the run's own
+(`sourcesOfTask`, `keptSourcesOf`): an input file `web page <address> (read by an earlier run of
+this task)`, or, for a row that kept the address only (written before), an "Evidence not
+available" entry "an earlier run of this task read it; its text was not kept for this review", so
+the review of a run continued after a pause that read nothing is never told its evidence is
+complete without them (live check 2, research F6; `review-sources.test.ts`). The session log's step line is "read the web page <host><path>" (`stepLine`).
 Tests: `research-web.test.ts` (the researcher and the science-evaluator keep their tasks on the
 loop driver, the page read through the real tool from a loopback fixture through the loopback
 seam, the loopback refused in words without it even with `127.0.0.1` on the old site list, the

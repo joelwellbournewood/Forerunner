@@ -403,3 +403,10 @@ and write dialog.md", and the order was carried into the next brief (live check 
    open finding whose text names a host the rule refuses is no order in the next brief, and the
    brief says once that the rule comes before any finding. An order that names no host (the live
    "Fetch the MDN dialog page") is answered by point 1 and by that line.
+3. **The review reads every page the work rests on (W15-26).** A run paused at its budget after
+   reading ten pages was continued, its next run read none, and the review saw no page and was
+   told the evidence was complete (live check 2, research F6). Each run now keeps the pages it
+   read with their text on its Run row (`reviewSources`, never shown on a screen), and a task's
+   review reads the pages of the task's earlier runs after the run's own, marked as read by an
+   earlier run. A page whose text was not kept (a row written before) is named under "Evidence
+   not available".
