@@ -571,3 +571,26 @@ if (require.main === module) process.exitCode = main(process.argv);
     ]);
   });
 });
+
+describe("w15-review, wave 15: the checks line is true now", () => {
+  it("W15-50: test files with no package.json say there is none to run them; a package.json without a test script says that", () => {
+    expect(untestedFiles(folder({ "wc.js": WC, "wc.test.js": "require('node:test')\n" }))).toBe(
+      "the project has test files (wc.test.js) that no check ran: there is no package.json to run them",
+    );
+    expect(
+      untestedFiles(
+        folder({ "wc.test.js": "require('node:test')\n", "package.json": '{"name":"wc"}' }),
+      ),
+    ).toBe(
+      "the project has test files (wc.test.js) that no check ran: its package.json names no test script",
+    );
+    expect(
+      untestedFiles(
+        folder({
+          "wc.test.js": "require('node:test')\n",
+          "package.json": '{"scripts":{"test":"node --test"}}',
+        }),
+      ),
+    ).toBeNull();
+  });
+});

@@ -2588,7 +2588,8 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   where the checks run", a run that could not get its dependencies (`notRunBecause`) or found no
   tests (exit 5) is not run either, and a run is otherwise a required check (`pytest`,
   `unittest`, `cargo test`, `go test`) in `evidence.checkResults`. `untestedFiles` tells of
-  JavaScript test files no script runs.
+  JavaScript test files no script runs, true now (W15-50): "there is no package.json to run
+  them" in a folder without one, "its package.json names no test script" otherwise.
 - **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
   folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
   confines them to the task's folder.
