@@ -511,10 +511,13 @@ export class EnforcementHooks {
    * were (`keepLines`), so Claude Code's numbered view of a file shows every other line under
    * the number it had. `changed` says whether any string held a value (leftovers7-tailrun TR-1:
    * the Agent SDK path hands this back for Claude Code's built-in tools, whose output it cannot
-   * replace with a bare string). The output came over JSON, so it holds no cycle.
+   * replace with a bare string). The output came over JSON, so it holds no cycle. `keyHeld`: a
+   * key (never changed here, so the shape stays) holds a value; the caller refuses such an
+   * output (W15-12), since its replacement would still carry the value.
    */
-  redactToolOutput(value: unknown): { value: unknown; changed: boolean } {
+  redactToolOutput(value: unknown): { value: unknown; changed: boolean; keyHeld: boolean } {
     let changed = false;
+    let keyHeld = false;
     const walk = (v: unknown): unknown => {
       if (typeof v === "string") {
         const out = this.deps.secrets.redact(v, { keepLines: true });
@@ -524,11 +527,42 @@ export class EnforcementHooks {
       if (!v || typeof v !== "object") return v;
       if (Array.isArray(v)) return v.map(walk);
       const out: Record<string, unknown> = {};
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (this.deps.secrets.redact(k) !== k) keyHeld = changed = true;
+        out[k] = walk(x);
+      }
       return out;
     };
     const out = walk(value);
-    return { value: changed ? out : value, changed };
+    return { value: changed ? out : value, changed, keyHeld };
+  }
+
+  /**
+   * A built-in tool's output refused after it ran (W15-12): it holds a resolved secret and the
+   * scrubbed replacement's shape cannot be confirmed, so Claude Code might keep the original.
+   * One audit row says so, with the reason; it never carries the output.
+   */
+  async refuseToolOutput(
+    ctx: RunContext,
+    tool: ToolSpec,
+    input: unknown,
+    reason: string,
+  ): Promise<void> {
+    const claims = this.deps.tokens.verify(ctx.token, this.deps.clock.now());
+    await this.deps.audit.append({
+      sessionId: claims.sessionId,
+      runId: claims.runId,
+      agentId: claims.agentId,
+      humanId: claims.ownerHumanId,
+      tool: tool.name,
+      inputSummary: this.summary(redactForDisplay(input)),
+      resultSummary: "",
+      allowed: false,
+      deniedReason: `tool_not_allowed: ${reason}`,
+      costUsdMicro: 0,
+      occurredAt: this.deps.clock.nowIso(),
+      tokenId: claims.id,
+    });
   }
 
   /**

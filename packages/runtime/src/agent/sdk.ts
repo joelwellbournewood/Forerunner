@@ -14,6 +14,7 @@ import {
 } from "../provider/usage-limit.ts";
 import { siteCovers, type WebAccess } from "../wiring/web-access.ts";
 import { serverDomainOf } from "../wiring/web-ports.ts";
+import { unconfirmedToolOutput } from "./cc-tool-outputs.ts";
 import type { RunEvent, RunOutcome, RunPricing } from "./loop.ts";
 import type { ToolExecutionContext, ToolRegistry, ToolSpec } from "./tools.ts";
 
@@ -306,6 +307,14 @@ export class SdkAgentDriver {
       due: false,
       sent: false,
     };
+    // W15-12: a built-in tool's output the PostToolUse hook refused (it holds a resolved secret
+    // in a shape the guard cannot confirm): the run stops at once and ends as that error.
+    let withheld: string | null = null;
+    const withhold = (reason: string) => {
+      withheld ??= reason;
+      if (!controller.signal.aborted)
+        controller.abort(new ForerunnerError("tool_not_allowed", reason));
+    };
     const decided = (d: Awaited<ReturnType<EnforcementHooks["beforeModelCall"]>>) => {
       if (d.line) emit({ type: "budget_line", ...d.line });
       if (d.decision === "wrap_up" && wrap.text && !wrap.sent) wrap.due = true;
@@ -513,7 +522,7 @@ export class SdkAgentDriver {
         ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
         ...withoutClaudeCodeAuth(req.env ?? {}),
       };
-      const hooks = this.sdkHooks(ctx, req.tools, emit, wrap, req.webAccess);
+      const hooks = this.sdkHooks(ctx, req.tools, emit, wrap, req.webAccess, withhold);
       const server = serverTools.length
         ? await (this.deps.toolServer ?? sdkToolServer)(
             SDK_TOOL_SERVER,
@@ -595,8 +604,9 @@ export class SdkAgentDriver {
       }
     } catch (e) {
       const code = e instanceof ForerunnerError ? e.code : "internal";
-      outcome =
-        code === "budget_exceeded"
+      outcome = withheld
+        ? "error"
+        : code === "budget_exceeded"
           ? "budget_exceeded"
           : code === "step_cap_exceeded"
             ? "step_cap_exceeded"
@@ -622,6 +632,11 @@ export class SdkAgentDriver {
     } finally {
       cancelTimeout();
       outer?.removeEventListener("abort", onOuterAbort);
+    }
+    if (withheld) {
+      // Whatever Claude Code reported after the refusal, the run ends as the refusal.
+      outcome = "error";
+      error = { code: "tool_not_allowed", message: withheld };
     }
     if (iterator && !exited) {
       // The run stopped while Claude Code still ran: the abort ends it, and every hook refuses
@@ -802,6 +817,7 @@ export class SdkAgentDriver {
     emit: (ev: RunEvent) => void,
     wrap: WrapUpState = { due: false, sent: false },
     webAccess?: WebAccess,
+    withhold: (reason: string) => void = () => undefined,
   ) {
     // PostToolUse reports the input the tool ran with, which is the `updatedInput` PreToolUse
     // returned: the resolved secret values. The audit row must carry the model's input (the
@@ -953,17 +969,59 @@ export class SdkAgentDriver {
           capUsdMicro: ctx.token.claims.budgetUsdMicro,
         });
       }
-      const scrubbed =
-        isMcpTool(toolName) || isExternalCcTool(toolName)
-          ? undefined
-          : this.deps.hooks.redactToolOutput(input.tool_response);
-      const replaced: Record<string, unknown> = isMcpTool(toolName)
-        ? { updatedMCPToolOutput: r.content, updatedToolOutput: r.content }
-        : isExternalCcTool(toolName)
-          ? { updatedToolOutput: builtInOutput(toolName, input.tool_response, r.content) }
-          : scrubbed?.changed
-            ? { updatedToolOutput: scrubbed.value }
-            : {};
+      let replaced: Record<string, unknown> = {};
+      if (isMcpTool(toolName)) {
+        replaced = { updatedMCPToolOutput: r.content, updatedToolOutput: r.content };
+      } else {
+        // A built-in tool (W15-12, the guard of TR-1): Claude Code checks a replacement against
+        // the tool's own output schema and keeps the ORIGINAL output when it does not match, so
+        // an output that holds a resolved secret is replaced only in a shape the guard confirms
+        // (`cc-tool-outputs.ts`). Otherwise it is refused: an audit row with the reason, and
+        // the run stops before any next model call (fail closed); the scrubbed replacement
+        // still goes with the refusal, as a second layer.
+        const original = this.deps.hooks.redactToolOutput(input.tool_response);
+        const proposed = isExternalCcTool(toolName)
+          ? this.deps.hooks.redactToolOutput(
+              builtInOutput(toolName, input.tool_response, r.content),
+            ).value
+          : original.value;
+        const refused = original.changed
+          ? original.keyHeld
+            ? `Claude Code's ${toolName} tool gave an output whose keys hold a secret`
+            : unconfirmedToolOutput(toolName, input.tool_response, proposed)
+          : null;
+        if (refused) {
+          const reason = `${refused}, so the run stopped before the model saw this task's secret.`;
+          await this.deps.hooks
+            .refuseToolOutput(ctx, spec, modelInput, reason)
+            .catch((e: unknown) =>
+              this.logger.error("audit row for a refused tool output failed", {
+                tool: toolName,
+                error: errorMessage(e),
+              }),
+            );
+          emit({
+            type: "tool_denied",
+            id: useId,
+            name: toolName,
+            code: "tool_not_allowed",
+            reason,
+          });
+          withhold(reason);
+          // The scrubbed output goes along only when no key of it still holds the value.
+          return {
+            continue: false,
+            stopReason: reason,
+            ...(original.keyHeld
+              ? {}
+              : {
+                  hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: proposed },
+                }),
+          };
+        }
+        if (isExternalCcTool(toolName) || original.changed)
+          replaced = { updatedToolOutput: proposed };
+      }
       const flaggedFile =
         untrusted?.source === "repo_file" && r.report?.suspicious
           ? repoFileFlaggedNote(untrusted.origin)
