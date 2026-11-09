@@ -12286,7 +12286,14 @@ describe("w15-run, wave 15", () => {
   }, 60_000);
   it("W15-20, W15-21: a running task's spend follows each call, the row and the drawer show what Costs shows, reviews included, and booking never moves the task's version", async () => {
     // The coder's first call is held, then its second: what the screens read in between.
-    const holds = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const held = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const holds = [held(), held()];
     let coderCalls = 0;
     const w = await world(
       [
