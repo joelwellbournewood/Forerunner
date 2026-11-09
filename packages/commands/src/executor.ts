@@ -16,6 +16,7 @@ import {
   mergeCards,
   renderChangeCard,
 } from "./change-card.ts";
+import { removedProjectName } from "./commands/project.ts";
 import {
   type ConfirmationAnswer,
   type ConfirmationDecision,
@@ -919,6 +920,13 @@ export class CommandExecutor {
     }
     if (row.expires_at && Date.parse(row.expires_at) <= this.clock.now()) {
       return "this change already reverted on its own";
+    }
+    // W15-36: a project whose creation was undone is gone for the person; its other changes
+    // offered Undo as if it were there. (The creation's own row is already undone.)
+    if (row.project_id && !stepsOf(row).some((s) => s.name === "project.create")) {
+      const project = await this.store.project.get(row.project_id);
+      const removed = project ? removedProjectName(project) : null;
+      if (removed !== null) return `the project ${removed} was removed`;
     }
     for (const step of stepsOf(row)) {
       const def = this.registry.get(step.name);

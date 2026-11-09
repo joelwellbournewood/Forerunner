@@ -72,6 +72,49 @@ describe("w15-chat, wave 15", () => {
     );
   });
 
+  // W15-36, review of the fix (bench): after Undo on the New project row, Changes labelled the
+  // removed project's rows with its id, as a link that opened it as a live project; and a
+  // change made by another person showed that person's id.
+  it("Changes names a removed project in words, without a link, and every person by name (W15-36)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const created = await harness.client.createProject({
+      name: "Garden club",
+      goal: "A page for the club",
+      switch: true,
+    });
+    const creation = harness.daemon.state.changes[0];
+    harness.daemon.state.changes.unshift({
+      ...(creation as NonNullable<typeof creation>),
+      id: "chg_mara",
+      humanId: "hum_mara",
+      humanName: "Mara",
+      projectId: "proj_atlas",
+      source: "chat",
+      sentence: 'Paused "Write the landing page" on Atlas. Undo.',
+      commands: [{ name: "task.transition", params: {} }],
+    });
+    renderApp("/changes", harness);
+    let rows = await screen.findAllByTestId("change");
+    const row = rows.find((r) => r.dataset.changeId === creation?.id) as HTMLElement;
+    expect(within(row).getByTestId("change-project")).toHaveTextContent(/^Garden club$/);
+    await user.click(within(row).getByTestId("change-undo"));
+    await waitFor(() =>
+      expect(within(row).getByTestId("change-project")).toHaveTextContent(
+        /^Garden club \(removed\)$/,
+      ),
+    );
+    rows = screen.getAllByTestId("change");
+    const removed = rows.find((r) => r.dataset.changeId === creation?.id) as HTMLElement;
+    // Plain words: no link to the removed project, and no id anywhere on the page.
+    expect(within(removed).getByTestId("change-project").closest("a")).toBeNull();
+    expect(document.querySelector(`a[href*="${created.id}"]`)).toBeNull();
+    expect(document.body.textContent ?? "").not.toContain(created.id);
+    const mara = rows.find((r) => r.dataset.changeId === "chg_mara") as HTMLElement;
+    expect(mara).toHaveTextContent(/Mara · /);
+    expect(document.body.textContent ?? "").not.toContain("hum_mara");
+  });
+
   // W15-47 (design §5 rule 7, "Never USD"): fast mode's row and card were the one place in
   // Settings that still quoted USD ("at USD 8 / 40 per million input / output tokens").
   it("Settings shows no USD anywhere, Advanced open; fast mode's price reads about CHF (W15-47)", async () => {

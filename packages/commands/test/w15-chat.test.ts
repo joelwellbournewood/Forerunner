@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ZERO_REFUSED } from "../src/commands/budget.ts";
 import { settingsSet } from "../src/commands/settings.ts";
-import { CommandExecutor, type ExecuteResult, IntentParser } from "../src/index.ts";
+import {
+  ACTIVE_PROJECT_KEY,
+  CommandExecutor,
+  type ExecuteResult,
+  IntentParser,
+} from "../src/index.ts";
 import { world } from "./helpers.ts";
 
 /**
@@ -408,5 +413,143 @@ describe("w15-chat, wave 15", () => {
     expect(undo.card.ask).toContain("Put Opus fast mode for Game back to true?");
     expect(undo.card.ask).toContain("about CHF 7.20 / 36.00");
     expect(JSON.stringify(undo)).not.toMatch(/USD/);
+  });
+
+  // W15-36, review of the fix: the New project dialog's project.create (switch on) set the
+  // active project without the history project.switch keeps, so "go back" answered "there is no
+  // previous project to go back to" (requirements Q.3).
+  it("project.create with switch keeps 'go back': the project you were on is the one go back returns to (W15-36)", async () => {
+    const w = await world();
+    const active = async () =>
+      (await w.store.human.mustGet(w.human.id)).notify_prefs[ACTIVE_PROJECT_KEY];
+    done(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { project: "supplement" },
+        ctx: w.ctx(),
+      }),
+    );
+    // Supplement Site is active, PharmaWatch was before it; New project "Garden club".
+    const created = done(
+      await w.executor.execute({
+        name: "project.create",
+        params: { name: "Garden club", goal: "A page for the club" },
+        ctx: w.ctx({ activeProjectId: w.supplement.id, source: "ui" }),
+      }),
+    );
+    const garden = await w.store.project.byName("Garden club");
+    expect(await active()).toBe(garden?.id);
+    const back = done(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { back: true },
+        ctx: w.ctx({ activeProjectId: garden?.id }),
+      }),
+    );
+    expect(back.sentence).toBe("Switched back to Supplement Site. Undo.");
+    expect(await active()).toBe(w.supplement.id);
+    // Back again from there is Garden club, the project just left (not an older one).
+    const again = done(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { back: true },
+        ctx: w.ctx({ activeProjectId: w.supplement.id }),
+      }),
+    );
+    expect(again.sentence).toBe("Switched back to Garden club. Undo.");
+    // The creation's Undo while Garden club is active: Supplement Site is active again, and
+    // "go back" never returns to the removed project.
+    done(await w.executor.undo(created.changeLogId, w.ctx({ activeProjectId: garden?.id })));
+    expect(await active()).toBe(w.supplement.id);
+    const afterUndo = done(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { back: true },
+        ctx: w.ctx({ activeProjectId: w.supplement.id }),
+      }),
+    );
+    expect(afterUndo.sentence).toBe("Switched back to PharmaWatch. Undo.");
+    await w.store.close();
+  });
+
+  // W15-36, review of the fix: the creation's Undo archived the project under its own name, so
+  // New project with that name was refused ('There is already a project called "Garden club".')
+  // for a project the person can no longer see.
+  it("the creation's Undo frees the name: the removed project reads '<name> (removed)' and the name can be used again (W15-36)", async () => {
+    const w = await world();
+    const create = async () =>
+      done(
+        await w.executor.execute({
+          name: "project.create",
+          params: { name: "Garden club", goal: "A page for the club" },
+          ctx: w.ctx({ source: "ui" }),
+        }),
+      );
+    const first = await create();
+    const firstId = (await w.store.project.byName("Garden club"))?.id as string;
+    done(await w.executor.undo(first.changeLogId, w.ctx({ activeProjectId: firstId })));
+    const removed = await w.store.project.mustGet(firstId);
+    expect(removed.status).toBe("archived");
+    expect(removed.name).toBe("Garden club (removed)");
+    // The same name again works, and its Undo frees it once more without a clash.
+    const second = await create();
+    const secondId = (await w.store.project.byName("Garden club"))?.id as string;
+    expect(secondId).not.toBe(firstId);
+    done(await w.executor.undo(second.changeLogId, w.ctx({ activeProjectId: secondId })));
+    expect((await w.store.project.mustGet(secondId)).name).toBe("Garden club (removed 2)");
+    done(await create());
+    // A name a live project has is still refused.
+    expect(
+      refused(
+        await w.executor.execute({
+          name: "project.create",
+          params: { name: "Garden club" },
+          ctx: w.ctx(),
+        }),
+      ).reason,
+    ).toBe('There is already a project called "Garden club". Pick another name.');
+    await w.store.close();
+  });
+
+  // W15-36, review of the fix: after the creation's Undo, the removed project's own changes
+  // still offered Undo on Changes, as if the project were there, and its open cards stayed in
+  // the Inbox.
+  it("a removed project's other changes cannot be undone and say why; its open cards leave the Inbox (W15-36)", async () => {
+    const w = await world();
+    const created = done(
+      await w.executor.execute({
+        name: "project.create",
+        params: { name: "Garden club", goal: "A page for the club" },
+        ctx: w.ctx({ source: "ui" }),
+      }),
+    );
+    const id = (await w.store.project.byName("Garden club"))?.id as string;
+    const asked = await w.executor.execute({
+      name: "budget.set",
+      params: { scope: "project", amountChf: 5, project: id },
+      ctx: w.ctx({ activeProjectId: id, source: "ui" }),
+    });
+    if (asked.status !== "pending") throw new Error(`expected pending, got ${asked.status}`);
+    const budget = done(
+      await w.executor.confirmByText(asked.pendingId, "yes", { kind: "human", id: w.human.id }),
+    );
+    const card = await w.store.humanRequest.insert({
+      kind: "approval",
+      why: "Approve the plan for Garden club?",
+      options: ["Approve and start", "Change the plan", "Reject"],
+      human_id: w.human.id,
+      project_id: id,
+      risk: "low",
+    });
+    done(await w.executor.undo(created.changeLogId, w.ctx({ activeProjectId: id })));
+    const row = await w.store.changeLog.mustGet(budget.changeLogId);
+    expect(await w.executor.undoBlockedReason(row, w.ctx())).toBe(
+      "the project Garden club was removed",
+    );
+    expect(refused(await w.executor.undo(budget.changeLogId, w.ctx())).reason).toMatch(
+      /Garden club was removed/,
+    );
+    expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("withdrawn");
+    await w.store.close();
   });
 });

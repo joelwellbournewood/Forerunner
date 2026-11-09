@@ -2477,10 +2477,47 @@ export function createDaemonApp(
       limit: intQuery(c, "limit", 100, 1000),
     });
     const now = rt.clock.nowIso();
+    // W15-36: each row's project and people in words, read once per id (design §5 rule 3:
+    // Changes showed a removed project's and another person's id); a removed project is the
+    // archived row its creation's Undo renamed "<name> (removed)".
+    const nameOf = new Map<string, Promise<{ name: string; removed: boolean } | null>>();
+    const lookup = (
+      key: string,
+      read: () => Promise<{ name: string; removed: boolean } | null>,
+    ) => {
+      let found = nameOf.get(key);
+      if (!found) {
+        found = read().catch(() => null);
+        nameOf.set(key, found);
+      }
+      return found;
+    };
+    const projectOf = (id: string) =>
+      lookup(`p:${id}`, async () => {
+        const p = await rt.store.project.get(id);
+        return p ? { name: p.name, removed: p.status === "archived" } : null;
+      });
+    const humanOf = (id: string) =>
+      lookup(`h:${id}`, async () => {
+        const h = await rt.store.human.get(id);
+        return h ? { name: h.name, removed: false } : null;
+      });
+    const agentOf = (id: string) =>
+      lookup(`a:${id}`, async () => {
+        const a = await rt.store.agent.get(id);
+        return a ? { name: a.name, removed: false } : null;
+      });
     // U-061: Undo is offered only when it would work; otherwise the row says why.
     const views = await Promise.all(
       rows.map(async (row) => {
-        const view = changeLogView(row, now);
+        const project = row.project_id ? await projectOf(row.project_id) : null;
+        const view = {
+          ...changeLogView(row, now),
+          projectName: project?.name ?? null,
+          projectRemoved: project?.removed === true,
+          humanName: row.human_id ? ((await humanOf(row.human_id))?.name ?? null) : null,
+          agentName: row.agent_id ? ((await agentOf(row.agent_id))?.name ?? null) : null,
+        };
         if (!view.undoable) return view;
         const blocked = await rt.commands.undoBlocked(row);
         return blocked ? { ...view, undoable: false, undoBlockedReason: blocked } : view;

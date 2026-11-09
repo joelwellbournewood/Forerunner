@@ -2367,6 +2367,17 @@ export const ChangeLogView = z.object({
   undoBlockedReason: z.string().nullable().optional(),
   createdAt: z.string(),
   version: z.number().int(),
+  /**
+   * W15-36: the row's project and people in words (design §5 rule 3: never an id). The
+   * project's name as it is now: a removed project (its creation undone) reads "<name>
+   * (removed)", with `projectRemoved` true, and is shown without a link. Absent from an older
+   * daemon; a screen then shows no project rather than its id.
+   */
+  projectName: z.string().nullable().optional(),
+  projectRemoved: z.boolean().optional(),
+  /** Who asked: the person's name (`humanId`), else the agent's (`agentId`). */
+  humanName: z.string().nullable().optional(),
+  agentName: z.string().nullable().optional(),
 });
 export type ChangeLogView = z.infer<typeof ChangeLogView>;
 

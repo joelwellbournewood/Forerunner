@@ -80,7 +80,10 @@ the work as it happens: no reload needed.
 plan for you to approve. The project starts at your default autonomy (Settings → Basics; each
 project's own autonomy is under Settings → Advanced, by name) and becomes the active project.
 Changes lists the creation once ("Created the project … and made it the active project."); its
-**Undo** removes the project and makes the project you had before the active one again.
+**Undo** removes the project and makes the project you had before the active one again. "Go
+back" in chat returns to the project you were on before New project. After the Undo the name is
+free for a new project, the project's open cards leave the Inbox, and Changes shows its rows as
+"… (removed)", without Undo.
 The goal is optional when you write a brief: left empty, the brief's first sentence is the goal.
 Without a repository link, a brief of a sentence or two (under 200 characters, no list) gets a
 small plan: one milestone of one to three tasks and two short documents (if the agent plans

@@ -25,6 +25,44 @@ function historyOf(prefs: Record<string, JsonValue>): string[] {
   return Array.isArray(h) ? h.filter((x): x is string => typeof x === "string") : [];
 }
 
+/**
+ * The history after making `targetId` the active project: the project left (`currentId`) is the
+ * last one, so "go back" returns to it, also when it was in the history before (it was kept at
+ * its old place, and "go back" went to an older project); the target is not in it. Shared by
+ * `project.switch` and `project.create` with `switch` (W15-36: the New project dialog's
+ * creation kept no history, so "go back" found "no previous project").
+ */
+function historyAfterSwitch(
+  history: string[],
+  currentId: string | null,
+  targetId: string,
+): string[] {
+  const next = history.filter((id) => id !== targetId && id !== currentId);
+  if (currentId && currentId !== targetId) next.push(currentId);
+  return next.slice(-HISTORY_MAX);
+}
+
+/**
+ * The name a removed project keeps (W15-36): the Undo of its creation archives it and frees its
+ * name for a new project, renaming it "<name> (removed)" (or "(removed 2)", … when that is
+ * taken too); the name it had is kept in its settings for the words that say it was removed.
+ */
+const REMOVED_NAME_KEY = "removed_name";
+
+/** The name a project had before its creation was undone, or null for a project still there. */
+export function removedProjectName(project: ProjectRow): string | null {
+  if (project.status !== "archived") return null;
+  const kept = project.settings[REMOVED_NAME_KEY];
+  return typeof kept === "string" && kept ? kept : project.name;
+}
+
+async function freedName(store: StateStore, name: string): Promise<string> {
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${name} (removed)` : `${name} (removed ${n})`;
+    if (!(await store.project.byName(candidate))) return candidate;
+  }
+}
+
 const switchParams = z
   .object({
     /** Project name or id. */
@@ -45,12 +83,13 @@ async function targetOf(
   const current = currentId ? ((await ctx.store.project.get(currentId)) ?? null) : null;
   const history = historyOf(human.notify_prefs);
   if (params.back) {
-    const previousId = [...history].reverse().find((id) => id !== currentId);
-    const previous = previousId ? await ctx.store.project.get(previousId) : undefined;
-    if (!previous) {
-      throw new ForerunnerError("validation", "there is no previous project to go back to");
+    // The latest project left that is still there: never a removed one (W15-36).
+    for (const id of [...history].reverse()) {
+      if (id === currentId) continue;
+      const previous = await ctx.store.project.get(id);
+      if (previous && previous.status !== "archived") return { target: previous, current, history };
     }
-    return { target: previous, current, history };
+    throw new ForerunnerError("validation", "there is no previous project to go back to");
   }
   const { project } = await resolveProject(ctx, params.project);
   return { target: project, current, history };
@@ -88,9 +127,7 @@ export const projectSwitch: CommandDef<ProjectSwitchParams> = {
   },
   async run(params, ctx) {
     const { target, current, history } = await targetOf(params, ctx);
-    const next = [...history.filter((id) => id !== target.id)];
-    if (current && current.id !== target.id) next.push(current.id);
-    const trimmed = [...new Set(next)].slice(-HISTORY_MAX);
+    const trimmed = historyAfterSwitch(history, current?.id ?? null, target.id);
     await patchHumanPrefs(ctx.store, ctx.humanId, {
       [ACTIVE_PROJECT_KEY]: target.id,
       [PROJECT_HISTORY_KEY]: trimmed,
@@ -192,35 +229,71 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
     }
     const previousActive =
       (human.notify_prefs[ACTIVE_PROJECT_KEY] as string | undefined) ?? ctx.activeProjectId ?? null;
+    // Made active, the project left goes on the history as with project.switch, so "go back"
+    // returns to it (requirements Q.3; W15-36: the New project dialog's creation kept none).
+    const history = historyOf(human.notify_prefs);
+    const nextHistory = params.switch
+      ? historyAfterSwitch(history, previousActive, project.id)
+      : history;
     if (params.switch) {
-      await patchHumanPrefs(ctx.store, ctx.humanId, { [ACTIVE_PROJECT_KEY]: project.id });
+      await patchHumanPrefs(ctx.store, ctx.humanId, {
+        [ACTIVE_PROJECT_KEY]: project.id,
+        [PROJECT_HISTORY_KEY]: nextHistory,
+      });
     }
     return {
-      before: { project_id: null, active_project: previousActive },
+      before: { project_id: null, active_project: previousActive, project_history: history },
       after: {
         project_id: project.id,
         active_project: params.switch ? project.id : previousActive,
+        project_history: nextHistory,
       },
       sentence: createSentence(params),
       projectId: project.id,
       activeProjectId: params.switch ? project.id : undefined,
     };
   },
+  /**
+   * W15-36: the project goes. It is archived (its tasks, cards and changes keep their rows) and
+   * its name is freed for a new project: it becomes "<name> (removed)", the words Changes shows
+   * for its rows. Its open cards leave the Inbox (nothing can be done for a removed project).
+   * The project you were on before is active again when the removed one was the active one;
+   * "go back" never returns to it. Everything is read from the row and the store, so the same
+   * after a restart.
+   */
   async undo(_params, before, after, ctx) {
     const a = asObject(after);
     const b = asObject(before);
-    if (typeof a.project_id === "string") {
-      const row = await ctx.store.project.get(a.project_id);
-      if (row) {
+    const createdId = typeof a.project_id === "string" ? a.project_id : null;
+    if (createdId) {
+      const row = await ctx.store.project.get(createdId);
+      if (row && row.status !== "archived") {
         await ctx.store.project.update(row.id, row.version, {
           status: "archived",
           active: false,
+          name: await freedName(ctx.store, row.name),
+          settings: { ...row.settings, [REMOVED_NAME_KEY]: row.name },
           ...authorOf(ctx),
         });
       }
+      for (const card of await ctx.store.humanRequest.list({
+        project_id: createdId,
+        status: "open",
+      })) {
+        await ctx.store.humanRequest.withdraw(card.id, card.version);
+      }
     }
-    await patchHumanPrefs(ctx.store, ctx.humanId, {
-      [ACTIVE_PROJECT_KEY]: typeof b.active_project === "string" ? b.active_project : null,
-    });
+    const human = await ctx.store.human.mustGet(ctx.humanId);
+    const activeNow = human.notify_prefs[ACTIVE_PROJECT_KEY];
+    const patch: Record<string, JsonValue> = {
+      [PROJECT_HISTORY_KEY]: historyOf(human.notify_prefs).filter((id) => id !== createdId),
+    };
+    // Another project made active since stays active: the undo takes back the creation.
+    if (activeNow === undefined || activeNow === null || activeNow === createdId) {
+      const previous =
+        typeof b.active_project === "string" ? await ctx.store.project.get(b.active_project) : null;
+      patch[ACTIVE_PROJECT_KEY] = previous && previous.status !== "archived" ? previous.id : null;
+    }
+    await patchHumanPrefs(ctx.store, ctx.humanId, patch);
   },
 };

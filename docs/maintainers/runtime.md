@@ -3644,7 +3644,9 @@ switch through the registry, its port `createProject` for that one call being
 `createProjectRecord` itself (`createAndSwitch` in `server.ts`, `CommandLoop.execute`'s `ports`
 option), so the creation and the active project are one change log row whose Undo archives the
 project and puts the previous active project back, from the row alone (tested after a restart:
-real-daemon "w15-chat, wave 15"). With a
+real-daemon "w15-chat, wave 15"). The switch keeps the history "go back" reads, as
+`project.switch` does; the Undo frees the name (the archived row becomes "X (removed)", so New
+project "X" works again) and withdraws the project's open cards (commands.md, `project.create`). With a
 repository it clones or fetches `<worktrees>/docs/<project id>` (the install's token scoped
 to the clone URL's http(s) origin by `gitAuthFor`, ADR 0069; a local or ssh remote gets no
 token), checks out `fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold`
@@ -5222,7 +5224,9 @@ change card and one change log row; `source` is `text`, `voice`, `phone` or `ui`
 /commands/:id/cancel`, `GET /changes?projectId=&undoable=` (`ChangeLogView[]`; a row the
 registry still calls `undoable` but whose undo would not work now, `CommandLoop.undoBlocked`,
 answers `undoable: false` with `undoBlockedReason` in plain words, and `undoable=true` leaves it
-out, U-061) and `POST /changes/:id/undo` (the Changes screen's, the settings dialog's and the
+out, U-061; each row carries its project and people in words, W15-36, design §5 rule 3:
+`projectName` (the name as it is now; a removed project reads "X (removed)" with
+`projectRemoved: true`), `humanName` and `agentName`, read once per id in the route) and `POST /changes/:id/undo` (the Changes screen's, the settings dialog's and the
 email page's Undo, logged with source `ui`; an undo that raises a limit answers `pending` with
 its undo card like a forward change and is confirmed on `/commands/:id/confirm`, U-057, ADR
 0099). The Tasks tab's changes (design §3.5, ADR 0102) each run a registry command with the

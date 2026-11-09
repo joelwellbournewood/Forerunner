@@ -12481,4 +12481,115 @@ describe("w15-chat, wave 15", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // W15-36, review of the fix (bench: Old garden active, New project "Garden club", Talk "go
+  // back" answered "Not done: there is no previous project to go back to."): the creation set
+  // the active project without the history "go back" reads (requirements Q.3).
+  it("after New project, 'go back' in Talk makes the project you were on active again (W15-36)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const old = await client.createProject({ name: "Old garden", goal: "A garden page" });
+      await client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: old.id } }],
+        wordsUsed: "Switch project: Old garden",
+        source: "ui",
+      });
+      // What the New project dialog sends.
+      const created = await client.createProject({
+        name: "Garden club",
+        goal: "A page for the club",
+        switch: true,
+      });
+      expect((await client.me()).activeProjectId).toBe(created.id);
+      const reply = await client.chat({ humanId: me.id, agentId, text: "go back", source: "text" });
+      expect(reply.reply).not.toMatch(/no previous project/);
+      expect(reply.reply).toContain("Switched back to Old garden.");
+      expect((await client.me()).activeProjectId).toBe(old.id);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-36, review of the fix (bench, after a restart, Undo on "Created the project Garden club
+  // and made it the active project."): Changes labelled every row of the removed project with
+  // its UUID, linked to a live-looking project page; its other rows still offered Undo; and New
+  // project "Garden club" was refused ('There is already a project called "Garden club".').
+  it("after the New project row's Undo, Changes names the removed project in words with no Undo, and the name can be used again, also after a restart (W15-36)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-removed-project-"));
+    const env = { FORERUNNER_HOME: home };
+    const persisted = {
+      env,
+      dirs: appDirs({ env }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    };
+    let { rt, client } = await composeW15(persisted);
+    try {
+      const me = await client.me();
+      const old = await client.createProject({ name: "Old garden", goal: "A garden page" });
+      await client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: old.id } }],
+        wordsUsed: "Switch project: Old garden",
+        source: "ui",
+      });
+      const created = await client.createProject({
+        name: "Garden club",
+        goal: "A page for the club",
+        switch: true,
+      });
+      // A change of the new project's own (a narrowing: done at once).
+      const narrowed = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: {
+              key: "web_access",
+              value: { mode: "only", only: ["developer.mozilla.org"] },
+              project: created.id,
+            },
+          },
+        ],
+        wordsUsed: "Settings: Web pages research may read to only developer.mozilla.org",
+        source: "ui",
+        projectId: created.id,
+      });
+      expect(narrowed.status).toBe("done");
+      const creation = (await client.changes({ limit: 200 })).find((c) =>
+        c.sentence.startsWith("Created the project Garden club"),
+      );
+      // While the project is there, its rows name it.
+      expect(creation?.projectName).toBe("Garden club");
+      expect(creation?.projectRemoved).toBe(false);
+      expect(creation?.humanName).toBe(me.name);
+      await rt.close();
+      ({ rt, client } = await composeW15(persisted));
+      expect((await client.undoChange(creation?.id ?? "")).status).toBe("done");
+      const rows = (await client.changes({ limit: 200 })).filter((c) => c.projectId === created.id);
+      expect(rows.length).toBeGreaterThanOrEqual(2);
+      for (const row of rows) {
+        // In words, never the id; and the project is said to be gone.
+        expect(row.projectName).toBe("Garden club (removed)");
+        expect(row.projectRemoved).toBe(true);
+        expect(row.undoable).toBe(false);
+      }
+      const setting = rows.find((r) => r.id === narrowed.changeLogId);
+      expect(setting?.undoBlockedReason).toBe("the project Garden club was removed");
+      // The name is free again: New project "Garden club" works, also after a restart.
+      await rt.close();
+      ({ rt, client } = await composeW15(persisted));
+      const again = await client.createProject({
+        name: "Garden club",
+        goal: "A page for the club, again",
+        switch: true,
+      });
+      expect(again.id).not.toBe(created.id);
+      expect((await client.projects()).map((p) => p.name)).toEqual(
+        expect.arrayContaining(["Old garden", "Garden club"]),
+      );
+      expect((await client.me()).activeProjectId).toBe(again.id);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

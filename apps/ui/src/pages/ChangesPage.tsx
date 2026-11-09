@@ -87,9 +87,19 @@ export function ChangesPage() {
   // An undo that raises a limit waits for its confirmation like the change itself (U-057).
   const [asking, setAsking] = useState<CommandResultJson | null>(null);
   const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
-  const projectName = (id: string | null) =>
-    id ? (projects.find((p) => p.id === id)?.name ?? id) : null;
-  const humanName = (id: string | null) => (id && me && id === me.id ? me.name : id);
+  // W15-36 (design §5 rule 3, never an id): the project and the person in words, from the view
+  // (a removed project reads "<name> (removed)" and has no link: it opened the project's page as
+  // if it were there), else from the store; a row with neither shows no project.
+  const projectOf = (c: ChangeLogView): { name: string; removed: boolean } | null => {
+    if (!c.projectId) return null;
+    if (c.projectRemoved) return c.projectName ? { name: c.projectName, removed: true } : null;
+    const name = projects.find((p) => p.id === c.projectId)?.name ?? c.projectName ?? null;
+    return name ? { name, removed: false } : null;
+  };
+  const whoOf = (c: ChangeLogView): string =>
+    c.humanName ??
+    (c.humanId && me && c.humanId === me.id ? me.name : null) ??
+    (c.humanId ? "another person" : (c.agentName ?? "the agent"));
 
   /** What an undo or its confirmation answered, as the page says it (U-061: never "Undone" for nothing). */
   const show = (r: CommandResultJson) => {
@@ -220,14 +230,26 @@ export function ChangesPage() {
               <Badge tone="info" testId="change-source">
                 {sourceWords(c.source)}
               </Badge>
-              {c.projectId ? (
-                <Link
-                  to={`/projects/${encodeURIComponent(c.projectId)}`}
-                  className="text-blue-700 hover:underline dark:text-blue-300"
-                >
-                  {projectName(c.projectId)}
-                </Link>
-              ) : null}
+              {(() => {
+                const project = projectOf(c);
+                if (!project || !c.projectId) return null;
+                return project.removed ? (
+                  <span
+                    className="text-neutral-600 dark:text-neutral-400"
+                    data-testid="change-project"
+                  >
+                    {project.name}
+                  </span>
+                ) : (
+                  <Link
+                    to={`/projects/${encodeURIComponent(c.projectId)}`}
+                    className="text-blue-700 hover:underline dark:text-blue-300"
+                    data-testid="change-project"
+                  >
+                    {project.name}
+                  </Link>
+                );
+              })()}
               {(() => {
                 const badge = undoBadge(c);
                 return badge ? (
@@ -237,7 +259,7 @@ export function ChangesPage() {
                 ) : null;
               })()}
               <span className="ml-auto text-xs text-neutral-500">
-                {humanName(c.humanId) ?? c.agentId ?? "agent"} · {formatDateTime(c.createdAt)}
+                {whoOf(c)} · {formatDateTime(c.createdAt)}
               </span>
             </div>
             <p className="mt-2 font-medium" data-testid="change-sentence">
