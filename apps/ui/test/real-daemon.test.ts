@@ -35,6 +35,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
 import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
+import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
 import { saidByName } from "../../../packages/critic/src/followup.ts";
 import {
   AcceptingCriticProvider,
@@ -4365,9 +4366,10 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     // §3.8, §3.9), not the change card's object ('the task "Write the FAQ"').
     expect(card?.title).toBe('Resume "Write the FAQ"?');
     expect(card?.body).toBe("It is ready again; the next session can run it.");
-    // Its buttons say Yes and No with what each does (wave 2: "yes"/"no" with no line).
+    // Its buttons say Yes and No with what each does (wave 2: "yes"/"no" with no line); the
+    // Yes no longer repeats the body under it (W15-76: "Makes the change now.").
     expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
-      ["Yes", "It is ready again; the next session can run it."],
+      ["Yes", "Makes the change now."],
       ["No", "Nothing changes."],
     ]);
     // The answer is what the No button sends.
@@ -12014,16 +12016,19 @@ describe("polish-screens, wave 13", () => {
   });
 
   it("a fresh install's monthly cap reads CHF 150.00 through GET /settings (later #28)", async () => {
+    // A project, so its rows (fast mode's among them) are read too.
+    await client.createProject({ name: "Fast price", goal: "One page" });
     const rows = await client.settings();
     const cap = rows.find((r) => r.key === "human.monthly_cap");
     // Before: CHF 150.40 (USD 188 read back at the day's rate), while setup said CHF 150.
     expect((cap?.value as { chfMicro?: number } | undefined)?.chfMicro).toBe(150_000_000);
     expect(cap?.risk).toBe("medium");
     expect(cap?.description).toContain("It cannot be 0");
-    // CHF, never USD, in the rows this area words (the calibration's run cap, later #38); fast
-    // mode's price table is quoted as the provider prices it (left as it is, see the report).
-    for (const r of rows.filter((x) => !x.key.endsWith("fast_mode")))
-      expect(`${r.description} ${JSON.stringify(r.value)}`).not.toMatch(/USD/);
+    // CHF, never USD, in every row (the calibration's run cap, later #38; fast mode's price at
+    // the day's rate, W15-47: no row is left out).
+    expect(rows.some((r) => r.key.endsWith("fast_mode"))).toBe(true);
+    for (const r of rows) expect(`${r.description} ${JSON.stringify(r.value)}`).not.toMatch(/USD/);
+    expect(rows.find((r) => r.key.endsWith("fast_mode"))?.description).toContain("about CHF");
     const calibration = rows.find((r) => r.key === "human.calibration");
     expect((calibration?.value as { budget_chf?: number } | undefined)?.budget_chf).toBe(8);
   });
@@ -12045,7 +12050,7 @@ describe("polish-screens, wave 13", () => {
     });
     expect(zero.status).toBe("done");
     expect(zero.sentence).toBe(
-      "Set the project budget for Zero budget from CHF 3 to no budget: only the monthly cap limits its spending. Undo.",
+      "Set the project budget for Zero budget from CHF 3.00 to no budget: only the monthly cap limits its spending. Undo.",
     );
     const row = (await client.settings()).find(
       (r) => r.key === "project.budget" && r.scopeId === p.id,
@@ -13184,4 +13189,462 @@ describe("w15-review, wave 15", () => {
     );
     expect(detail.review?.summary).not.toMatch(/^Accepted/);
   });
+});
+
+/**
+ * A chat model that knows only what the app tells it (W15-29): for "only read <site> for
+ * research" and "… any public website again" it calls settings_set when, and only when,
+ * settings_set's definition documents web_access's value (`"mode": "any" | "only"` and the only
+ * list); otherwise it records the line as a lesson, as the live model did on 2026-11-09. After a
+ * tool result it says the tool's words back.
+ */
+class DefinitionReader {
+  readonly name = "fake";
+  readonly calls: ModelRequest[] = [];
+  constructor(private readonly clock: SystemClock) {}
+  async listModels() {
+    return [{ provider: "fake", id: "fake-haiku", tier: "haiku" as const }];
+  }
+  countTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+  private replyTo(req: ModelRequest): ConstructorParameters<typeof ScriptedProvider>[0][number] {
+    const last = req.messages.at(-1);
+    const blocks = Array.isArray(last?.content) ? last.content : [];
+    const result = blocks.find((b) => (b as { type?: string }).type === "tool_result") as
+      | { content?: unknown }
+      | undefined;
+    if (result) {
+      const said =
+        typeof result.content === "string" ? result.content : JSON.stringify(result.content ?? "");
+      return { text: said.replace(/^Needs confirmation\..*$/s, "").slice(0, 300) };
+    }
+    const text =
+      typeof last?.content === "string"
+        ? last.content
+        : blocks.map((b) => (b as { text?: string }).text ?? "").join("");
+    const line = (text.split("\n\n")[0] ?? "").trim();
+    const def = (req.tools ?? []).find((t) => t.name === "settings_set");
+    const documented = (def?.description ?? "")
+      .split("\n")
+      .find((l) => l.startsWith("- web_access") && l.includes('"mode": "any" | "only"'));
+    const only = /only read (\S+) for research/i.exec(line)?.[1];
+    if (documented && only)
+      return {
+        tools: [
+          {
+            name: "settings_set",
+            input: { key: "web_access", value: { mode: "only", only: [only] } },
+          },
+        ],
+      };
+    if (documented && /any public website/i.test(line))
+      return {
+        tools: [{ name: "settings_set", input: { key: "web_access", value: { mode: "any" } } }],
+      };
+    return { tools: [{ name: "memory_record", input: { text: line } }] };
+  }
+  stream(req: ModelRequest) {
+    this.calls.push({ ...req, messages: structuredClone(req.messages) });
+    return new ScriptedProvider([this.replyTo(req)], this.clock).stream(req);
+  }
+  complete(req: ModelRequest) {
+    return new ScriptedProvider([this.replyTo(req)], this.clock).complete(req);
+  }
+}
+
+describe("w15-chat, wave 15", () => {
+  async function composeW15(
+    over: Partial<ComposeOptions> = {},
+  ): Promise<{ rt: RuntimeApp; client: DaemonClient }> {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-chat-"));
+    const clock = new ShiftedClock("2026-11-09T08:00:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "Done for today." }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+      ...over,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client };
+  }
+
+  // W15-29 (live check 2, research F2): Talk on "Reading rules", "only read
+  // developer.mozilla.org for research". Before: the model got settings_set with key names only
+  // and `"value": {}`, recorded a lesson, said "Recorded: for research in this project, only
+  // developer.mozilla.org gets read", and the Overview went on reading "any public website".
+  it("Talk changes the site rule: a narrowing acts at once with no card, a widening asks Yes/No, and the Overview's line follows each (W15-29)", async () => {
+    const model = new DefinitionReader(new SystemClock());
+    const { rt, client } = await composeW15({ provider: model as never });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Reading rules", goal: "Research" });
+      const changed: string[] = [];
+      rt.events.on("project", (p: { id: string }) => changed.push(p.id));
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const narrowed = await say("only read developer.mozilla.org for research");
+      // settings_set, not memory_record; no card (a narrowing acts at once).
+      expect(narrowed.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+      expect(narrowed.pendingConfirmation).toBeNull();
+      expect(narrowed.reply).toContain(
+        "Set web pages research may read for Reading rules from any public website to only developer.mozilla.org",
+      );
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      // The screens hear it without a reload.
+      expect(changed).toContain(project.id);
+      // The next turn's facts carry the rule in force.
+      const widened = await say("research may read any public website again");
+      const facts = model.calls
+        .map((c) => JSON.stringify(c.messages.at(-1)?.content ?? ""))
+        .find((t) => t.startsWith('"research may read any public website again'));
+      expect(facts).toContain("- Research reads: only developer.mozilla.org");
+      // A widening waits for the person's yes.
+      expect(widened.pendingConfirmation?.readback).toBe(
+        "Set web pages research may read for Reading rules to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.",
+      );
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+      // No lesson was recorded in place of the rule.
+      expect(
+        model.calls.some((c) => JSON.stringify(c.messages).includes("Recorded a lesson")),
+      ).toBe(false);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-34 (live check 2, research F13): Undo pressed on Changes for a site rule change and left
+  // unanswered showed on Home as "Reading rules: undo" and in the Inbox as a card titled "undo"
+  // with raw "yes"/"no", and the project read "Waiting for you: 1 question".
+  it("an undo confirmation left on Changes reads in words on Home and the Inbox (W15-34, W15-77, W15-76)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const project = await client.createProject({ name: "Reading rules", goal: "Research" });
+      const set = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: {
+              key: "web_access",
+              value: { mode: "any", only: [], never: ["facebook.com"] },
+              project: project.id,
+            },
+          },
+        ],
+        wordsUsed:
+          "Settings: Web pages research may read to any public website, never facebook.com",
+        source: "ui",
+        projectId: project.id,
+        confirm: "tap",
+      });
+      expect(set.status).toBe("done");
+      // Changes' Undo: putting "any public website" back widens the rule, so it asks.
+      const asked = await client.undoChange(set.changeLogId ?? "");
+      const QUESTION =
+        "Put web pages research may read for Reading rules back to any public website?";
+      expect(asked.status).toBe("pending");
+      expect(asked.readback).toBe(
+        `${QUESTION} Research reads any public website except the ones listed, on the API key and on the subscription.`,
+      );
+      // The person leaves Changes. Home and the Inbox read the card the Inbox route serves.
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      expect(card?.title).toBe(QUESTION);
+      expect(card?.body).toBe(
+        "Research reads any public website except the ones listed, on the API key and on the subscription.",
+      );
+      expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
+        ["Yes", "Makes the change now."],
+        ["No", "Nothing changes."],
+      ]);
+      // The project line: a change to confirm, not a question.
+      expect((await client.project(project.id)).statusLine?.text).toBe(
+        "Waiting for you: 1 change to confirm",
+      );
+      // Yes in the Inbox (the label the Inbox shows) undoes it.
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: card?.choices?.[0]?.label ?? "",
+      });
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-35 (wave 13 polish-screens): POST /commands/execute with budget.set 0 for the month
+  // answered "budget.set: invalid parameters"; the schema's sentence was in details.issues only.
+  it("POST /commands/execute refuses the monthly cap's 0 with the schema's own sentence (W15-35)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const month = await client.executeCommands({
+        commands: [{ name: "budget.set", params: { scope: "month", amountChf: 0 } }],
+        wordsUsed: "Monthly spending cap to 0",
+        source: "ui",
+      });
+      expect(month.status).toBe("refused");
+      expect(month.code).toBe("validation");
+      expect(month.reason).toBe(ZERO_REFUSED.month);
+      expect(month.reason).not.toMatch(/budget\.set|invalid parameters/);
+      // The cap is as it was.
+      expect((await client.me()).monthlyCap.chfMicro).toBe(150_000_000);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-36 (wave 13 polish-screens): New project wrote the creation (no row) and then a
+  // project.switch row, "Switched the active project to …", whose Undo only switched back.
+  it("New project writes one Changes row; its Undo removes the project and makes the previous one active again, also after a restart (W15-36)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-new-project-"));
+    const env = { FORERUNNER_HOME: home };
+    const persisted = {
+      env,
+      dirs: appDirs({ env }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    };
+    let { rt, client } = await composeW15(persisted);
+    try {
+      const old = await client.createProject({ name: "Old garden", goal: "A garden page" });
+      const switched = await client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: old.id } }],
+        wordsUsed: "Switch project: Old garden",
+        source: "ui",
+      });
+      expect(switched.status).toBe("done");
+      const before = (await client.changes({ limit: 200 })).map((c) => c.id);
+      // What the New project dialog sends.
+      const created = await client.createProject({
+        name: "New garden",
+        goal: "A garden club page",
+        switch: true,
+      });
+      const rows = (await client.changes({ limit: 200 })).filter((c) => !before.includes(c.id));
+      expect(rows.map((r) => r.sentence)).toEqual([
+        "Created the project New garden and made it the active project. Undo.",
+      ]);
+      expect(rows[0]?.projectId).toBe(created.id);
+      expect((await client.me()).activeProjectId).toBe(created.id);
+      // The project is the dashboard's: its folder is scaffolded as at any creation.
+      expect((await client.project(created.id)).folder).toContain(created.id);
+      // The daemon starts again on the same home; the row's Undo still works.
+      await rt.close();
+      ({ rt, client } = await composeW15(persisted));
+      const row = (await client.changes({ limit: 200 })).find((c) => c.id === rows[0]?.id);
+      expect(row?.undoable).toBe(true);
+      const undone = await client.undoChange(rows[0]?.id ?? "");
+      expect(undone.status).toBe("done");
+      expect((await client.projects()).map((p) => p.name)).not.toContain("New garden");
+      expect((await client.me()).activeProjectId).toBe(old.id);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  // W15-75 (wave 13 review of polish-words): a Yes the registry refused filed an Update of about
+  // 250 characters (changeNotAppliedWords, wired in compose's onRefused).
+  it("a Yes in the Inbox the change cannot take any more files a one-line Update (W15-75)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const project = await client.createProject({ name: "Merging", goal: "Merge words" });
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "merge_mode", value: "after_review", project: project.id },
+          },
+        ],
+        wordsUsed: "Settings: Who merges accepted work to Merge automatically after review",
+        source: "ui",
+        projectId: project.id,
+      });
+      expect(asked.status).toBe("pending");
+      // Meanwhile the setting is already so: the card's change has nothing left to do.
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.update(project.id, row.version, {
+        settings: { ...row.settings, merge_mode: "after_review" },
+      } as never);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "Yes",
+      });
+      let update: string | undefined;
+      await eventually(
+        async () => {
+          update = (await client.inbox(me.id)).messages
+            .map((m) => m.body)
+            .find((b) => /was not applied/.test(b));
+          return !!update;
+        },
+        "the Update of the Yes not applied",
+        async () => JSON.stringify((await client.inbox(me.id)).messages.map((m) => m.body)),
+        15_000,
+      );
+      // One line (design §5 rule 1): the question and why, no second sentence.
+      // Before: "Your Yes to "Set who merges …?" was not applied: Who merges … is already Merge
+      // automatically after review. Nothing changed; ask again if you still want it." (227).
+      expect(update).toBe(
+        "Your Yes was not applied: Who merges accepted work for Merging is already Merge automatically after review.",
+      );
+      expect(update?.length).toBeLessThanOrEqual(140);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-36, review of the fix (bench: Old garden active, New project "Garden club", Talk "go
+  // back" answered "Not done: there is no previous project to go back to."): the creation set
+  // the active project without the history "go back" reads (requirements Q.3).
+  it("after New project, 'go back' in Talk makes the project you were on active again (W15-36)", async () => {
+    const { rt, client } = await composeW15();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const old = await client.createProject({ name: "Old garden", goal: "A garden page" });
+      await client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: old.id } }],
+        wordsUsed: "Switch project: Old garden",
+        source: "ui",
+      });
+      // What the New project dialog sends.
+      const created = await client.createProject({
+        name: "Garden club",
+        goal: "A page for the club",
+        switch: true,
+      });
+      expect((await client.me()).activeProjectId).toBe(created.id);
+      const reply = await client.chat({ humanId: me.id, agentId, text: "go back", source: "text" });
+      expect(reply.reply).not.toMatch(/no previous project/);
+      expect(reply.reply).toContain("Switched back to Old garden.");
+      expect((await client.me()).activeProjectId).toBe(old.id);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // W15-36, review of the fix (bench, after a restart, Undo on "Created the project Garden club
+  // and made it the active project."): Changes labelled every row of the removed project with
+  // its UUID, linked to a live-looking project page; its other rows still offered Undo; and New
+  // project "Garden club" was refused ('There is already a project called "Garden club".').
+  it("after the New project row's Undo, Changes names the removed project in words with no Undo, and the name can be used again, also after a restart (W15-36)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-removed-project-"));
+    const env = { FORERUNNER_HOME: home };
+    const persisted = {
+      env,
+      dirs: appDirs({ env }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    };
+    let { rt, client } = await composeW15(persisted);
+    try {
+      const me = await client.me();
+      const old = await client.createProject({ name: "Old garden", goal: "A garden page" });
+      await client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: old.id } }],
+        wordsUsed: "Switch project: Old garden",
+        source: "ui",
+      });
+      const created = await client.createProject({
+        name: "Garden club",
+        goal: "A page for the club",
+        switch: true,
+      });
+      // A change of the new project's own (a narrowing: done at once).
+      const narrowed = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: {
+              key: "web_access",
+              value: { mode: "only", only: ["developer.mozilla.org"] },
+              project: created.id,
+            },
+          },
+        ],
+        wordsUsed: "Settings: Web pages research may read to only developer.mozilla.org",
+        source: "ui",
+        projectId: created.id,
+      });
+      expect(narrowed.status).toBe("done");
+      const creation = (await client.changes({ limit: 200 })).find((c) =>
+        c.sentence.startsWith("Created the project Garden club"),
+      );
+      // While the project is there, its rows name it.
+      expect(creation?.projectName).toBe("Garden club");
+      expect(creation?.projectRemoved).toBe(false);
+      expect(creation?.humanName).toBe(me.name);
+      await rt.close();
+      ({ rt, client } = await composeW15(persisted));
+      expect((await client.undoChange(creation?.id ?? "")).status).toBe("done");
+      const rows = (await client.changes({ limit: 200 })).filter((c) => c.projectId === created.id);
+      expect(rows.length).toBeGreaterThanOrEqual(2);
+      for (const row of rows) {
+        // In words, never the id; and the project is said to be gone.
+        expect(row.projectName).toBe("Garden club (removed)");
+        expect(row.projectRemoved).toBe(true);
+        expect(row.undoable).toBe(false);
+      }
+      const setting = rows.find((r) => r.id === narrowed.changeLogId);
+      expect(setting?.undoBlockedReason).toBe("the project Garden club was removed");
+      // The name is free again: New project "Garden club" works, also after a restart.
+      await rt.close();
+      ({ rt, client } = await composeW15(persisted));
+      const again = await client.createProject({
+        name: "Garden club",
+        goal: "A page for the club, again",
+        switch: true,
+      });
+      expect(again.id).not.toBe(created.id);
+      expect((await client.projects()).map((p) => p.name)).toEqual(
+        expect.arrayContaining(["Old garden", "Garden club"]),
+      );
+      expect((await client.me()).activeProjectId).toBe(again.id);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

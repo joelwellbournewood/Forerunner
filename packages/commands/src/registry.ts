@@ -60,17 +60,30 @@ export class CommandRegistry {
     return [...this.defs.keys()].sort();
   }
 
-  /** Parse and validate parameters; throws ForerunnerError("validation") with the issues. */
+  /**
+   * Parse and validate parameters; throws ForerunnerError("validation") with the issues. The
+   * reason is the schema's own sentence when it has one (W15-35: "The monthly cap must be more
+   * than CHF 0.00: …" for budget.set with 0 for the month; before, every client that is not
+   * chat read "budget.set: invalid parameters" with the words hidden in `details.issues`), else
+   * the command and each field's issue.
+   */
   validate(name: string, params: unknown): unknown {
     const def = this.mustGet(name);
     const parsed = def.params.safeParse(params ?? {});
     if (!parsed.success) {
-      throw new ForerunnerError("validation", `${name}: invalid parameters`, {
-        details: {
-          name,
-          issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-        },
-      });
+      const issues = parsed.error.issues.map((i) => ({
+        path: i.path.join("."),
+        message: i.message,
+      }));
+      const said = issues.find((i) => isSentence(i.message))?.message;
+      throw new ForerunnerError(
+        "validation",
+        said ??
+          `${name}: invalid parameters (${issues
+            .map((i) => (i.path ? `${i.path}: ${i.message}` : i.message))
+            .join("; ")})`,
+        { details: { name, issues } },
+      );
     }
     return parsed.data;
   }
@@ -100,6 +113,16 @@ export class CommandRegistry {
     }
     return rows;
   }
+}
+
+/**
+ * A schema's own message written for a person: a whole sentence (a capital first, a full stop,
+ * "!" or "?" last), as `ZERO_REFUSED` is; zod's defaults ("Invalid input: expected number,
+ * received string") end without one.
+ */
+export function isSentence(message: string): boolean {
+  const t = message.trim();
+  return /^["“A-Z]/.test(t) && /[.!?]["”]?$/.test(t);
 }
 
 /** The risk shown for a command before its parameters are known. */

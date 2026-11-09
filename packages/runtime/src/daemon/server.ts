@@ -17,7 +17,7 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import type { ZodType } from "zod";
+import type { ZodType, z } from "zod";
 import { cardFate } from "../conversation/card-fate.ts";
 import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
@@ -881,13 +881,65 @@ export function createDaemonApp(
     return c.json(await Promise.all(rows.map((p) => projectCardOf(p.id))));
   });
 
+  /**
+   * W15-36: the New project dialog's create as one change: `project.create` (switch on) in the
+   * registry, whose port is this route's own creation, so the change log has one row ("Created
+   * the project X and made it the active project.") and its Undo archives the project and puts
+   * the previous active project back, from the row alone (after a restart too).
+   */
+  const createAndSwitch = async (
+    body: z.infer<typeof CreateProjectBody>,
+  ): Promise<Awaited<ReturnType<typeof createProjectRecord>>> => {
+    const turn: CommandTurn = {
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      activeProjectId: (await rt.commands.activeProject(rt.human.id)) ?? null,
+      sessionId: await conversationSessionId(rt),
+      source: "ui",
+      wordsUsed: `New project: ${body.name}`,
+      deviceId: null,
+    };
+    let made: Awaited<ReturnType<typeof createProjectRecord>> | null = null;
+    const r = await rt.commands.execute(
+      {
+        name: "project.create",
+        params: { name: body.name, goal: body.goal, repos: body.repos ?? [], switch: true },
+      },
+      turn,
+      {
+        ports: {
+          createProject: async () => {
+            made = await createProjectRecord(rt, body);
+            return made;
+          },
+        },
+      },
+    );
+    if (r.status !== "done" || !made)
+      throw new ForerunnerError(
+        (r.code as ErrorCode | undefined) ?? "validation",
+        r.reason ?? "The project was not created.",
+        {
+          details: {
+            ...(r.reason?.startsWith("There is already a project called")
+              ? { cause: "duplicate_name" }
+              : {}),
+          },
+        },
+      );
+    return made;
+  };
+
   app.post("/projects", async (c) => {
     const body = await parse(c, CreateProjectBody);
     // The same path an accepted source proposal takes, and the chat's `project.create` through
     // its port (create-project.ts, spec A.4, G.5): the row, the brief, and the standard doc
     // set as a pull request on the linked repository or the project's workspace (deferred to
     // the intake's approval with `intake: true`); the creation never fails on the docs.
-    const p = await createProjectRecord(rt, body);
+    // W15-36: `switch: true` (the New project dialog) makes it the active project in the same
+    // change: `project.create` in the change log, this creation as its port, one row whose Undo
+    // removes it and makes the previous project active again (also after a restart).
+    const p = body.switch ? await createAndSwitch(body) : await createProjectRecord(rt, body);
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
     // the inbox; the card answers now. A failure is recorded on the project (the status route).
     // The card is read first, saying the plan is being drafted, so the draft starts as the
@@ -1999,6 +2051,23 @@ export function createDaemonApp(
   // reaches the command parser first ("add a task: …" needs no model) and only a line the model
   // must answer is told the key is missing (the agent's own reply). The refusal below is for a
   // composition with no conversation at all, and names the setup assistant, never `fr setup`.
+  /**
+   * What a chat turn changed, said to the screens as `POST /commands/execute` says it (W15-29):
+   * each change's project (its change log row) is `project.changed`, a card waiting for a yes is
+   * `inbox.changed`. Before, a site rule changed in Talk reached the Overview only on a reload.
+   */
+  const heardChat = async (
+    r: Awaited<ReturnType<NonNullable<RuntimeApp["conversation"]>["chat"]>>,
+  ) => {
+    const projects = new Set<string>();
+    for (const a of r.actions) {
+      const row = a.id ? await rt.store.changeLog.get(a.id).catch(() => undefined) : undefined;
+      if (row?.project_id) projects.add(row.project_id);
+    }
+    for (const id of projects) rt.events.emit("project", { id });
+    if (r.pendingConfirmation) rt.events.emit("inbox", {});
+  };
+
   app.post("/chat", async (c) => {
     const body = await parse(c, ChatRequestBody);
     const refused = notYourConversation(c, body.humanId);
@@ -2012,6 +2081,7 @@ export function createDaemonApp(
       text: body.text,
       source: body.source,
     });
+    await heardChat(r);
     return c.json(chatReplyView(r));
   });
 
@@ -2042,6 +2112,7 @@ export function createDaemonApp(
         });
         return;
       }
+      await heardChat(r);
       await stream.writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) });
     });
   });
@@ -2413,10 +2484,47 @@ export function createDaemonApp(
       limit: intQuery(c, "limit", 100, 1000),
     });
     const now = rt.clock.nowIso();
+    // W15-36: each row's project and people in words, read once per id (design §5 rule 3:
+    // Changes showed a removed project's and another person's id); a removed project is the
+    // archived row its creation's Undo renamed "<name> (removed)".
+    const nameOf = new Map<string, Promise<{ name: string; removed: boolean } | null>>();
+    const lookup = (
+      key: string,
+      read: () => Promise<{ name: string; removed: boolean } | null>,
+    ) => {
+      let found = nameOf.get(key);
+      if (!found) {
+        found = read().catch(() => null);
+        nameOf.set(key, found);
+      }
+      return found;
+    };
+    const projectOf = (id: string) =>
+      lookup(`p:${id}`, async () => {
+        const p = await rt.store.project.get(id);
+        return p ? { name: p.name, removed: p.status === "archived" } : null;
+      });
+    const humanOf = (id: string) =>
+      lookup(`h:${id}`, async () => {
+        const h = await rt.store.human.get(id);
+        return h ? { name: h.name, removed: false } : null;
+      });
+    const agentOf = (id: string) =>
+      lookup(`a:${id}`, async () => {
+        const a = await rt.store.agent.get(id);
+        return a ? { name: a.name, removed: false } : null;
+      });
     // U-061: Undo is offered only when it would work; otherwise the row says why.
     const views = await Promise.all(
       rows.map(async (row) => {
-        const view = changeLogView(row, now);
+        const project = row.project_id ? await projectOf(row.project_id) : null;
+        const view = {
+          ...changeLogView(row, now),
+          projectName: project?.name ?? null,
+          projectRemoved: project?.removed === true,
+          humanName: row.human_id ? ((await humanOf(row.human_id))?.name ?? null) : null,
+          agentName: row.agent_id ? ((await agentOf(row.agent_id))?.name ?? null) : null,
+        };
         if (!view.undoable) return view;
         const blocked = await rt.commands.undoBlocked(row);
         return blocked ? { ...view, undoable: false, undoBlockedReason: blocked } : view;

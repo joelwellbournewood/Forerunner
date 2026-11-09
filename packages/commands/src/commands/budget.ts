@@ -14,7 +14,7 @@ import type { CommandContext, CommandDef, CommandOutcome, CommandScope, Risk } f
 import {
   asObject,
   authorOf,
-  chf,
+  chfExact as chf,
   patchHumanPrefs,
   patchProjectSettings,
   type ResolvedProject,
@@ -129,7 +129,7 @@ export async function monthlyCeilingOf(human: HumanRow, ctx: CommandContext): Pr
  */
 export const ZERO_REFUSED: Record<"session" | "month", string> = {
   month:
-    "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.",
+    "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month.",
   session: "The budget per session must be more than CHF 0: a session plans its work within it.",
 };
 

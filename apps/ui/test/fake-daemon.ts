@@ -589,6 +589,11 @@ export interface FakeDaemonState {
   reviews: ReviewView[];
   lessons: LessonView[];
   changes: ChangeLogView[];
+  /**
+   * Projects whose creation was undone (W15-36), by id: the name their rows read ("<name>
+   * (removed)") and the name they had.
+   */
+  removedProjects: Record<string, { name: string; was: string }>;
   consolidation: ConsolidationProposalView[];
   offers: LessonOfferView[];
   promotions: LessonView[];
@@ -1047,6 +1052,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     reviews: clone(REVIEWS),
     lessons: clone(LESSONS),
     changes: clone(CHANGES),
+    removedProjects: {},
     consolidation: clone(CONSOLIDATION),
     offers: clone(OFFERS),
     promotions: clone(PROMOTIONS),
@@ -1600,6 +1606,42 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repos: parsed.data.repos ?? [],
     };
     state.projects.push(project);
+    // As the daemon (W15-36): `switch: true` (the New project dialog) makes it the active
+    // project in the same change, one Changes row whose Undo removes it and puts the previous
+    // active project back.
+    if (parsed.data.switch === true) {
+      const previous = state.projects.find((p) => p.active && p.id !== project.id);
+      for (const p of state.projects) p.active = p.id === project.id;
+      state.changes.unshift({
+        id: nextId("chg"),
+        humanId: ME.id,
+        agentId: "agent_alice",
+        wordsUsed: `New project: ${project.name}`,
+        commands: [
+          {
+            name: "project.create",
+            params: {
+              name: project.name,
+              goal: project.goal,
+              repos: project.repos ?? [],
+              switch: true,
+            },
+          },
+        ],
+        before: { project_id: null, active_project: previous?.id ?? null },
+        after: { project_id: project.id, active_project: project.id },
+        scope: "global",
+        projectId: project.id,
+        expiresAt: null,
+        undoState: "undoable",
+        undoneAt: null,
+        source: "ui",
+        sentence: `Created the project ${project.name} and made it the active project. Undo.`,
+        undoable: true,
+        createdAt: new Date().toISOString(),
+        version: 1,
+      });
+    }
     // As the daemon: a brief with `intake: true` is drafted in the background (U-046).
     if (parsed.data.intake === true)
       state.intake[project.id] = {
@@ -3324,15 +3366,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
   app.get("/conversation", (c) => c.json(conversationOf("")));
 
+  // As the daemon (W15-29): what a chat turn changed is heard by the screens, its project as
+  // `project.changed` and a card waiting for a yes as `inbox.changed`.
+  const heardChat = (reply: ChatReplyView, projectId: string | null | undefined) => {
+    if (reply.actions.length && projectId) emit("project.changed", { id: projectId });
+    if (reply.pendingConfirmation) emit("inbox.changed", { blockingCount: blockingCount() });
+  };
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    return c.json(
-      keepTurn(
-        parsed.data,
-        chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
-      ),
+    const reply = keepTurn(
+      parsed.data,
+      chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
     );
+    heardChat(reply, parsed.data.projectId);
+    return c.json(reply);
   });
   app.post("/chat/stream", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
@@ -3341,6 +3389,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       parsed.data,
       chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
     );
+    heardChat(reply, parsed.data.projectId);
     return streamSSE(c, async (stream) => {
       const words = reply.reply.split(/(\s+)/).filter((w) => w.length > 0);
       for (const w of words) {
@@ -4978,7 +5027,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ) {
         return refuse(
           scope === "month"
-            ? "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off."
+            ? "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month."
             : scope === "project"
               ? "budget.set: amountChf must be a number"
               : "The budget per session must be more than CHF 0: a session plans its work within it.",
@@ -5800,6 +5849,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   /** As the daemon's `undoBlocked` (U-061): why a still-undoable row's Undo would not work. */
   const undoBlocked = (ch: ChangeLogView): string | null => {
     const name = (ch.commands[0] as { name?: string } | undefined)?.name;
+    // As the daemon (W15-36): a removed project's other changes say so instead of an Undo.
+    const removed = ch.projectId ? state.removedProjects[ch.projectId] : undefined;
+    if (removed && name !== "project.create") return `the project ${removed.was} was removed`;
+    // …and a switch is never undone back to a removed project.
+    const left = (ch.before as { active_project?: unknown } | null)?.active_project;
+    const leftRemoved = typeof left === "string" ? state.removedProjects[left] : undefined;
+    if (name === "project.switch" && leftRemoved)
+      return `the project ${leftRemoved.was} was removed`;
     const after = (ch.after ?? {}) as {
       task_id?: string;
       status?: string;
@@ -5883,8 +5940,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const onlyUndoable = c.req.query("undoable") === "true";
     const limit = Math.min(1000, Number(c.req.query("limit") ?? 100));
     const now = new Date().toISOString();
+    // As the daemon (W15-36): each row's project and people in words; a removed project reads
+    // "<name> (removed)".
+    const named = (ch: ChangeLogView): ChangeLogView => {
+      const live = ch.projectId ? state.projects.find((p) => p.id === ch.projectId) : undefined;
+      const removed = ch.projectId ? state.removedProjects[ch.projectId] : undefined;
+      const agent = ch.agentId ? state.agents.find((a) => a.id === ch.agentId) : undefined;
+      return {
+        ...ch,
+        projectName: removed?.name ?? live?.name ?? ch.projectName ?? null,
+        projectRemoved: !!removed,
+        humanName: ch.humanName ?? (ch.humanId === me.id ? me.name : null),
+        agentName: ch.agentName ?? agent?.name ?? null,
+      };
+    };
     const rows = state.changes
-      .map((ch) => withUndoable(ch, now))
+      .map((ch) => named(withUndoable(ch, now)))
       .filter((ch) => (!projectId || ch.projectId === projectId) && (!onlyUndoable || ch.undoable));
     return c.json(rows.slice(0, limit > 0 ? limit : 100));
   });
@@ -5912,21 +5983,26 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const at = new Date();
       const expiresAt = new Date(at.getTime() + 10 * 60_000).toISOString();
       const what = entry.sentence.replace(/ Undo\.$/, "");
-      const undoCard = card(
-        {
-          command: "undo",
-          what: `undo: ${what}`,
-          oldValue: "as it is now",
-          newValue: "as it was before this change",
-          scope: entry.scope,
-          sentence: `Undo ${what}.`,
-          projectId: entry.projectId,
-        },
-        risk,
-      );
-      const readback = `${undoCard.what}. ${
-        decision === "needs_yes" ? "Say yes to confirm." : "Confirm in the app on a paired device."
-      }`;
+      // As the daemon (W15-34): one plain question, 'Take back "<the change>"?' for a change
+      // the fake has no words of its own for; the card's `what` is the change, never "undo: …".
+      const ask = `Take back "${(what.split(/:\s/)[0] ?? what).replace(/[.\s]+$/, "")}"?`;
+      const undoCard = {
+        ...card(
+          {
+            command: "undo",
+            what,
+            oldValue: "as it is now",
+            newValue: "as it was before this change",
+            scope: entry.scope,
+            sentence: `Undo ${what}.`,
+            projectId: entry.projectId,
+          },
+          risk,
+        ),
+        ask,
+      };
+      const readback =
+        decision === "needs_yes" ? ask : `${ask} Confirm in the app on a paired device.`;
       state.pendingCommands.set(id, {
         card: undoCard,
         decision,
@@ -5962,6 +6038,23 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       unknown
     > | null;
     const project = state.projects.find((p) => p.id === entry.projectId);
+    // W15-36: the New project dialog's create: the project goes, the previous one is active.
+    if (first?.name === "project.create" && project) {
+      state.projects = state.projects.filter((p) => p.id !== project.id);
+      // As the daemon: the name is free again; its rows read "<name> (removed)".
+      const taken = new Set(Object.values(state.removedProjects).map((r) => r.name));
+      let n = 1;
+      while (taken.has(n === 1 ? `${project.name} (removed)` : `${project.name} (removed ${n})`))
+        n += 1;
+      state.removedProjects[project.id] = {
+        name: n === 1 ? `${project.name} (removed)` : `${project.name} (removed ${n})`,
+        was: project.name,
+      };
+      const back = typeof before?.active_project === "string" ? before.active_project : null;
+      // Another project made active since stays active.
+      if (project.active) for (const p of state.projects) p.active = p.id === back;
+      emit("project.changed", { id: project.id });
+    }
     if (first?.name === "autonomy.set" && project && typeof before?.autonomyLevel === "number") {
       project.autonomyLevel = before.autonomyLevel;
       emit("project.changed", { id: project.id });

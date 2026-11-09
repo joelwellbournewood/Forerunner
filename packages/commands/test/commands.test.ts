@@ -41,13 +41,13 @@ describe("budget.set", () => {
       w.ctx(),
     );
     expect(card.sentence).toBe(
-      "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo.",
+      "Raised tonight's session budget for PharmaWatch from CHF 5.00 to CHF 20.00, until 06:00. Undo.",
     );
     expect(card).toMatchObject({
       command: "budget.set",
       what: "tonight's session budget for PharmaWatch",
-      oldValue: "CHF 5",
-      newValue: "CHF 20",
+      oldValue: "CHF 5.00",
+      newValue: "CHF 20.00",
       scope: "session",
       scopeLabel: "this session",
       duration: "until 06:00",
@@ -83,7 +83,7 @@ describe("budget.set", () => {
         confirmation: deviceOk(w.phone.id),
       }),
     );
-    expect(r.sentence).toBe("Raised the monthly cap from CHF 150 to CHF 200. Undo.");
+    expect(r.sentence).toBe("Raised the monthly cap from CHF 150.00 to CHF 200.00. Undo.");
     expect(r.card.scope).toBe("global");
     const human = await w.store.human.mustGet(w.human.id);
     expect(human.monthly_cap_usd_micro).toBe(250_000_000);
@@ -103,8 +103,8 @@ describe("budget.set", () => {
         confirmation: tap(w.human.id),
       }),
     );
-    // later #43: a project without a budget reads "no budget", never "CHF 0".
-    expect(p.sentence).toBe("Set the project budget for Game from no budget to CHF 50. Undo.");
+    // later #43: a project without a budget reads "no budget", never "CHF 0.00".
+    expect(p.sentence).toBe("Set the project budget for Game from no budget to CHF 50.00. Undo.");
     expect((await w.store.project.mustGet(w.game.id)).budget_usd_micro).toBe(62_500_000);
     done(await w.executor.undo(p.changeLogId, w.ctx()));
     expect((await w.store.project.mustGet(w.game.id)).budget_usd_micro).toBe(0);
@@ -118,7 +118,7 @@ describe("budget.set", () => {
       }),
     );
     expect(s.sentence).toBe(
-      "Lowered the session budget for PharmaWatch from CHF 5 to CHF 2.50. Undo.",
+      "Lowered the session budget for PharmaWatch from CHF 5.00 to CHF 2.50. Undo.",
     );
     const project = await w.store.project.mustGet(w.pharma.id);
     expect(project.settings[SESSION_CAP_KEY]).toBe(3_125_000);
@@ -438,7 +438,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     );
     expect(handover.sentence).toBe(
       // later #30: in words, never JSON.
-      "Set the monthly handover test for Game from off to on, day 2 at 08:00: a fresh agent runs the seeded change on day 2 at 08:00 each month and its stuck places become a docs task. Undo.",
+      "Set the monthly handover test for Game from off to on, day 2 at 08:00: each month a fresh agent runs the seeded change and its stuck places become a docs task. Undo.",
     );
     expect((await w.store.project.mustGet(w.game.id)).settings.handover).toEqual({
       enabled: true,
@@ -579,7 +579,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     // Low risk: no card waits for a yes; the sentence reads the stored text back.
     expect(r.card.impact.risk).toBe("low");
     expect(r.sentence).toBe(
-      'Recorded a lesson in Alice\'s memory for PharmaWatch: "the dosage table is in mg per kg". Undo.',
+      'Recorded a lesson in Alice\'s memory for PharmaWatch: "the dosage table is in mg per kg". It changes no setting. Undo.',
     );
     expect(w.ports.lessons).toEqual([
       expect.objectContaining({
@@ -619,7 +619,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       }),
     );
     expect(r2.sentence).toBe(
-      'Recorded a lesson in Alice\'s memory for every project: "Joel reads mail in the morning". Undo.',
+      'Recorded a lesson in Alice\'s memory for every project: "Joel reads mail in the morning". It changes no setting. Undo.',
     );
     expect(w.ports.lessons[1]).toMatchObject({ projectId: null });
     await w.store.close();
@@ -1456,7 +1456,8 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
           ctx: w.ctx(),
         }),
       ).reason,
-    ).toMatch(/already exists/);
+      // W15-36: the dashboard's words for a name another project has.
+    ).toBe('There is already a project called "Game". Pick another name.');
 
     done(
       await w.executor.execute({

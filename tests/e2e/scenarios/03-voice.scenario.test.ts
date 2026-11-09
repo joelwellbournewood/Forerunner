@@ -40,7 +40,7 @@ const STATUS_REPLY =
   "The session on Sample service completed: Shared config module is done and its pull request is open. One request is waiting for you: merge that pull request.";
 const ASK = "Give it 20 francs tonight.";
 const SENTENCE =
-  "Raised tonight's session budget for Sample service from CHF 5 to CHF 20, until 06:00. Undo.";
+  "Raised tonight's session budget for Sample service from CHF 5.00 to CHF 20.00, until 06:00. Undo.";
 
 describe("scenario 3: voice", () => {
   let w: ScenarioWorld;
@@ -127,7 +127,7 @@ describe("scenario 3: voice", () => {
     // The read-back is one question (design §3.9, §5): what changes, to what, until when, by
     // name; no "Risk:" or "Scope:" lines. The parser named the active project in the command.
     expect(card?.readback).toBe(
-      "Raise tonight's session budget for Sample service to CHF 20 until 06:00? Say yes or no.",
+      "Raise tonight's session budget for Sample service to CHF 20.00 until 06:00? Say yes or no.",
     );
     // He heard the whole read-back, once, and nothing else.
     expect(ask.heard).toBe(card?.readback);
@@ -149,8 +149,8 @@ describe("scenario 3: voice", () => {
       command: "budget.set",
       decision: "needs_yes",
       words_used: ASK,
-      oldValue: "CHF 5",
-      newValue: "CHF 20",
+      oldValue: "CHF 5.00",
+      newValue: "CHF 20.00",
       expiresAt: UNTIL,
     });
     expect(pendingRows[0]?.options).toEqual(["yes", "no"]);

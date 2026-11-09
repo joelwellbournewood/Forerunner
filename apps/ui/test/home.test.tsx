@@ -152,6 +152,8 @@ describe("Home", () => {
       brief: "A longer brief",
       repos: ["https://example.test/org/gamma"],
       intake: true,
+      // W15-36: the active project in the same change, one Changes row.
+      switch: true,
     });
     await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Gamma"));
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Gamma");
@@ -289,6 +291,7 @@ describe("Home", () => {
       goal: "A page that shows a random quote",
       brief: "A page that shows a random quote. It should look calm.",
       intake: true,
+      switch: true,
     });
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Quote page");
   });

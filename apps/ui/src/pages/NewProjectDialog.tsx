@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { describeError } from "../api/client.ts";
 import { Dialog } from "../components/Dialog.tsx";
 import { Button, ErrorBanner, Field, INPUT_CLASS } from "../components/ui.tsx";
-import { refreshProjects, switchActiveProject, useClient, useUiStore } from "../store/context.tsx";
+import { refreshProjects, useClient, useUiStore } from "../store/context.tsx";
 
 /** Longest goal taken from a brief's first sentence. */
 const GOAL_FROM_BRIEF_CHARS = 160;
@@ -58,16 +58,23 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
     try {
       const repos = repo.trim() ? [repo.trim()] : undefined;
       // A brief asks for the PM intake (spec A.2): the proposal lands in the inbox.
+      // The new project is the active one for chat, voice and the phone too (U-056), in the
+      // same change as the creation (W15-36: one Changes row, whose Undo removes the project
+      // and makes the previous one active again; before, a project.switch followed it).
       const project = await client.createProject({
         name: name.trim(),
         goal: goalText,
         brief: brief.trim() || undefined,
         repos,
         ...(brief.trim() ? { intake: true } : {}),
+        switch: true,
       });
       store.dispatch({ type: "project.upsert", project });
-      // The new project is the active one for chat, voice and the phone too (U-056).
-      void switchActiveProject(client, store, project.id);
+      store.dispatch({ type: "activeProject", id: project.id });
+      void client
+        .me()
+        .then((me) => store.dispatch({ type: "me", me }))
+        .catch(() => {});
       void refreshProjects(client, store).catch(() => {});
       reset();
       onClose();

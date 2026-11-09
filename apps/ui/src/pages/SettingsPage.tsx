@@ -188,7 +188,7 @@ export const PROJECT_BUDGET_ZERO = {
 export const MONTHLY_CAP_ZERO = {
   allowed: false,
   refused:
-    "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.",
+    "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month.",
 } as const;
 
 const asInt = (value: string): number | null => {

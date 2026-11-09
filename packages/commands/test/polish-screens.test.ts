@@ -96,7 +96,9 @@ describe("money fields and 0 (later #43; design §6)", () => {
       w.ctx(),
     );
     expect(first.oldValue).toBe("no budget");
-    expect(first.sentence).toBe("Set the project budget for Game from no budget to CHF 12. Undo.");
+    expect(first.sentence).toBe(
+      "Set the project budget for Game from no budget to CHF 12.00. Undo.",
+    );
     await yes(
       await w.executor.execute({
         name: "budget.set",
@@ -112,7 +114,7 @@ describe("money fields and 0 (later #43; design §6)", () => {
     );
     const d = await yes(await w.executor.execute({ name: "budget.set", params, ctx: w.ctx() }));
     expect(d.sentence).toBe(
-      "Set the project budget for Game from CHF 12 to no budget: only the monthly cap limits its spending. Undo.",
+      "Set the project budget for Game from CHF 12.00 to no budget: only the monthly cap limits its spending. Undo.",
     );
     expect((await w.store.project.mustGet(w.game.id)).budget_usd_micro).toBe(0);
   });
@@ -120,7 +122,10 @@ describe("money fields and 0 (later #43; design §6)", () => {
   it("the monthly cap's 0 is refused in words saying why; a session's too", async () => {
     const w = await world();
     for (const [scope, said] of [
-      ["month", "The monthly cap must be more than CHF 0: it is the limit that stops all spending"],
+      [
+        "month",
+        "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending",
+      ],
       ["session", "The budget per session must be more than CHF 0"],
     ] as const) {
       const r = await w.executor

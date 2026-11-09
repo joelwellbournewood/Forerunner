@@ -362,7 +362,7 @@ describe("conversation agent over the command registry", () => {
     expect(r2.actions[0]?.undoToken).toBeTruthy();
     expect(r2.reply).toContain("Switched the active project to PharmaWatch. Undo.");
     expect(r2.reply).toContain(
-      "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo.",
+      "Raised tonight's session budget for PharmaWatch from CHF 5.00 to CHF 20.00, until 06:00. Undo.",
     );
     expect(r2.activeProjectId).toBe(w.pharma);
     expect(w.agent.getActiveProject(w.human)).toBe(w.pharma);
@@ -796,7 +796,7 @@ describe("chat context: project docs search and the principal's lessons", () => 
     const r = await w.chat(words);
     expect(w.provider.calls).toHaveLength(0); // deterministic: no model call
     expect(r.reply).toBe(
-      'Recorded a lesson in Alice\'s memory for Game: "the staging deploy needs the VPN switched on". Undo.',
+      'Recorded a lesson in Alice\'s memory for Game: "the staging deploy needs the VPN switched on". It changes no setting. Undo.',
     );
     expect(r.actions[0]).toMatchObject({ kind: "memory.record" });
     expect(r.actions[0]?.undoToken).toBeTruthy();

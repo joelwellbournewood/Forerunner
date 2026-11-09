@@ -80,9 +80,19 @@ export interface ProjectStatusInput {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** The plural of a card word that is not its word with an "s" (W15-77). */
+const CARD_WORD_PLURALS: Readonly<Record<string, string>> = {
+  "change to confirm": "changes to confirm",
+};
+
 /** What a card asks of the person, in a word the status line counts (L-13a). */
 function cardWord(card: { change_card?: unknown }): string {
-  const key = (card.change_card as { key?: unknown } | null | undefined)?.key;
+  const cc = card.change_card as { key?: unknown; command?: unknown } | null | undefined;
+  const key = cc?.key;
+  // W15-77: a change waiting for a yes (the registry's card: a command, no card key) is a
+  // change to confirm; it read "1 question" (live check 2, an undo left on Changes).
+  if (typeof cc?.command === "string" && cc.command && key === undefined)
+    return "change to confirm";
   switch (cardKindOf(card)) {
     case "signoff":
       return "sign-off";
@@ -107,7 +117,7 @@ function cardKindsWords(cards: readonly { change_card?: unknown }[]): string {
     const w = cardWord(c);
     counts.set(w, (counts.get(w) ?? 0) + 1);
   }
-  const parts = [...counts.entries()].map(([w, n]) => plural(n, w));
+  const parts = [...counts.entries()].map(([w, n]) => plural(n, w, CARD_WORD_PLURALS[w]));
   if (parts.length <= 1) return parts.join("");
   if (parts.length <= 3) return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
   const rest = [...counts.values()].slice(3).reduce((a, b) => a + b, 0);

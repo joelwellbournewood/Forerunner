@@ -17,9 +17,12 @@
 import {
   type BillingSourceKind,
   BUILTIN_PRICING,
+  DEFAULT_CHF_PER_USD,
   fastModeBillable,
   fastModeVariantId,
+  formatAmount,
   type PricingTable,
+  usdToChfMicro,
 } from "@forerunner/billing";
 import type { JsonObject } from "@forerunner/state";
 import type { ModelProvider, ModelTier, SpeedMode } from "../provider/types.ts";
@@ -122,17 +125,24 @@ export function fastModeAuditLine(d: Exclude<FastModeDecision, { kind: "off" }>)
 /** The default Opus rung on the Anthropic ladder, the model the Settings text prices. */
 const OPUS_MODEL = DEFAULT_LADDER.find((r) => r.tier === "opus")?.models.anthropic ?? "";
 
-function usd(n: number): string {
-  return String(Math.round(n * 1_000_000) / 1_000_000);
+/** A price per million tokens, in USD as the provider lists it, as CHF at `rate`: "6.40". */
+function chfPerMillion(usdPerMtok: number, rate: number): string {
+  return formatAmount(usdToChfMicro(Math.round(usdPerMtok * 1_000_000), rate), { decimals: 2 });
 }
 
 /**
  * What switching the flag changes, both ways, with the surcharge from the price table in
  * force (the standard and the variant row of the default Opus rung). Used for the change
  * card's new value and the change log sentence (`SettingSpec.effect`, ADR 0051 item 4) and
- * for the Settings row's description.
+ * for the Settings row's description. The provider prices in USD; the person reads CHF at
+ * the day's rate (`chfPerUsd`, the default rate without it), hence "about" (design §5 rule
+ * 7, W15-47; the USD table stays in ADR 0057).
  */
-export function fastModeEffect(on: boolean, table: PricingTable = BUILTIN_PRICING): string {
+export function fastModeEffect(
+  on: boolean,
+  table: PricingTable = BUILTIN_PRICING,
+  chfPerUsd: number = DEFAULT_CHF_PER_USD,
+): string {
   const standard = table[OPUS_MODEL];
   const fast = table[fastModeVariantId(OPUS_MODEL)];
   if (!standard || !fast) {
@@ -140,18 +150,23 @@ export function fastModeEffect(on: boolean, table: PricingTable = BUILTIN_PRICIN
       ? "Opus runs of this project on an API key are requested in fast mode once a fast-mode price row exists; a subscription ignores it (API only)"
       : "Opus runs of this project go back to the standard speed";
   }
-  const std = `USD ${usd(standard.input_per_mtok_usd)} / ${usd(standard.output_per_mtok_usd)}`;
-  const fst = `USD ${usd(fast.input_per_mtok_usd)} / ${usd(fast.output_per_mtok_usd)}`;
+  const pair = (input: number, output: number) =>
+    `${chfPerMillion(input, chfPerUsd)} / ${chfPerMillion(output, chfPerUsd)}`;
+  const std = pair(standard.input_per_mtok_usd, standard.output_per_mtok_usd);
+  const fst = pair(fast.input_per_mtok_usd, fast.output_per_mtok_usd);
   const factor =
     standard.output_per_mtok_usd > 0
       ? `${Math.round((fast.output_per_mtok_usd / standard.output_per_mtok_usd) * 100) / 100}x`
       : "a";
   return on
-    ? `Opus runs of this project on an API key are requested in fast mode at ${fst} per million input / output tokens instead of ${std}, a ${factor} surcharge; a subscription ignores it (${FAST_MODE_API_ONLY})`
-    : `Opus runs of this project go back to the standard speed at ${std} per million input / output tokens; the fast-mode surcharge (${factor}, ${fst}) stops`;
+    ? `Opus runs of this project on an API key are requested in fast mode at about CHF ${fst} per million input / output tokens instead of CHF ${std}, a ${factor} surcharge; a subscription ignores it (${FAST_MODE_API_ONLY})`
+    : `Opus runs of this project go back to the standard speed at about CHF ${std} per million input / output tokens; the fast-mode surcharge (${factor}, about CHF ${fst}) stops`;
 }
 
 /** The Settings row's description: what the flag is, and its effect both ways. */
-export function fastModeDescription(table: PricingTable = BUILTIN_PRICING): string {
-  return `Opus fast mode for urgent work (API only, priced separately). On: ${fastModeEffect(true, table)}. Off: ${fastModeEffect(false, table)}.`;
+export function fastModeDescription(
+  table: PricingTable = BUILTIN_PRICING,
+  chfPerUsd: number = DEFAULT_CHF_PER_USD,
+): string {
+  return `Opus fast mode for urgent work (API only, priced separately). On: ${fastModeEffect(true, table, chfPerUsd)}. Off: ${fastModeEffect(false, table, chfPerUsd)}.`;
 }

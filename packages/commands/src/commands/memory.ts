@@ -99,8 +99,16 @@ async function target(
   };
 }
 
+/**
+ * W15-29: the sentence says a lesson changes no setting. Live (2026-11-09) the chat recorded
+ * "only read developer.mozilla.org for research" as a lesson and told the person "Recorded: for
+ * research in this project, only developer.mozilla.org gets read", while research went on
+ * reading any website.
+ */
+export const LESSON_CHANGES_NO_SETTING = "It changes no setting.";
+
 function sentenceOf(agentName: string, project: ProjectRow | null, text: string): string {
-  return `Recorded a lesson in ${agentName}'s memory for ${project ? project.name : "every project"}: ${quote(text, READBACK_MAX)}. Undo.`;
+  return `Recorded a lesson in ${agentName}'s memory for ${project ? project.name : "every project"}: ${quote(text, READBACK_MAX)}. ${LESSON_CHANGES_NO_SETTING} Undo.`;
 }
 
 /** `human:<id>;<source>:<conversation session>`: who said it, and in which chat. */
@@ -113,7 +121,7 @@ function sourceOf(ctx: CommandContext): string {
 export const memoryRecord: CommandDef<MemoryRecordParams> = {
   name: "memory.record",
   description:
-    "Record a lesson the human states (a fact or rule to remember for later sessions) in the private memory of the human's principal agent, for the active or named project.",
+    "Record a lesson the human states (a fact about the work or a preference to remember for later sessions) in the private memory of the human's principal agent, for the active or named project. A lesson changes no setting: a rule the app enforces (what research may read on the web, who merges, fast mode, quiet hours, a budget) is changed with settings_set or budget_set, never recorded here instead.",
   params,
   risk: "low",
   scope: "project",

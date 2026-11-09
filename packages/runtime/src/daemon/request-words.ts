@@ -148,15 +148,19 @@ function afterDone(waiting: readonly string[]): string {
 /**
  * Where a text's first sentence ends: after the first ".", "!", "?" or ":" followed by a space
  * or the end, outside double quotes (P7-26: a quoted task title with ": " in it, 'Change "Write
- * the README: how to open it"', was cut inside the quotes). -1 when there is none.
+ * the README: how to open it"', was cut inside the quotes). -1 when there is none. A colon after
+ * a single word ends no sentence (W15-77: "undo: web pages research may read …" was titled
+ * "undo"): the word is a label of what follows.
  */
 function firstSentenceEnd(t: string): number {
   let quoted = false;
   for (let i = 0; i < t.length; i++) {
     const c = t[i] as string;
     if (c === '"') quoted = !quoted;
-    else if (!quoted && ".!?:".includes(c) && i > 0 && (i + 1 === t.length || t[i + 1] === " "))
+    else if (!quoted && ".!?:".includes(c) && i > 0 && (i + 1 === t.length || t[i + 1] === " ")) {
+      if (c === ":" && !/\s/.test(t.slice(0, i).trim())) continue;
       return i;
+    }
   }
   return -1;
 }
@@ -351,8 +355,15 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   const planned = !offersGoAheadWithout(card);
   // Why it asks, in its own words (L-12). A card filed before 2026-11-02 may hold the report's
   // first words with the heading's colon (': I made no edits…'): the quote starts at a word.
+  // W15-61 (design §5 rule 6): the specialist's words without their markdown (live: "a bare
+  // `node wc.js`", "**Summary**"), backticks, emphasis and list marks dropped.
   const context = str(card.context)
-    ?.replace(/^[\s:;,.\-–—*]+/, "")
+    ?.replace(/`+([^`]*)`+/g, "$1")
+    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
+    .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|[.,;:!?]|$)/g, "$1$2")
+    .replace(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g, "$1")
+    .replace(/^[\s:;,.\-–—*]+/, "")
+    .replace(/\s+/g, " ")
     .trim();
   const body =
     [
@@ -529,16 +540,18 @@ function intakeOutcome(card: JsonObject): string | null {
   const started = startWords(card.start);
   if (card.outcome === "approved") {
     const n = Array.isArray(card.task_ids) ? card.task_ids.length : null;
+    // W15-61: one task is "it" ("1 task written; working on it"; live: "working on them").
+    const them = n === 1 ? "it" : "them";
     return `Plan approved: ${n === null ? "its tasks" : n === 1 ? "1 task" : `${n} tasks`} written${
       started === "a session started"
-        ? "; working on them"
+        ? `; working on ${them}`
         : started
           ? `; ${started}`
           : // Nothing could run because the work waits on the person's answers (live L-11): Start
             // would run nothing either.
             card.start === "nothing_to_run" && plansPersonTask(card)
             ? "; the work starts once you answer its questions in the Inbox"
-            : "; press Start on the project to work on them"
+            : `; press Start on the project to work on ${them}`
     }.`;
   }
   if (card.outcome === "rejected")
@@ -889,20 +902,31 @@ function rebuildTitle(card: JsonObject, taskTitle: string): string | null {
  * never by a kind name a person never saw ('the change card "a GitHub repository for X"').
  */
 export function changeNotAppliedWords(card: Record<string, unknown>, reason: string): string {
-  const ask = typeof card.ask === "string" ? card.ask.trim() : "";
+  // W15-75 (design §5 rule 1: an Update is one line): one sentence of at most
+  // `NOT_APPLIED_MAX` characters, the card named by its question when that fits, else by what it
+  // changes, else not at all when the reason names it already; the reason's first clause. Before,
+  // about 250 characters with "Nothing changed; ask again if you still want it." after it.
+  const ask = typeof card.ask === "string" ? firstSentence(card.ask.trim(), 120) : "";
   const what = typeof card.what === "string" ? card.what.trim() : "";
-  const about = ask
-    ? `Your Yes to "${firstSentence(ask, 120).replace(/"/g, "'")}"`
-    : what
-      ? `Your Yes about ${what}`
-      : "Your Yes";
   const why =
-    reason
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/[.\s]+$/, "") || "it was refused";
-  return `${about} was not applied: ${why}. Nothing changed; ask again if you still want it.`;
+    (reason.replace(/\s+/g, " ").trim().split(/;\s/)[0] ?? "").replace(/[.\s]+$/, "") ||
+    "it was refused";
+  const named = what && why.toLowerCase().includes(what.toLowerCase());
+  const abouts = [
+    ask ? `Your Yes to "${ask.replace(/"/g, "'")}"` : null,
+    what && !named ? `Your Yes about ${what}` : null,
+    "Your Yes",
+  ].filter((a): a is string => a !== null);
+  for (const about of abouts) {
+    const line = `${about} was not applied: ${why}.`;
+    if (line.length <= NOT_APPLIED_MAX) return line;
+  }
+  const lead = "Your Yes was not applied: ";
+  return `${lead}${cutWords(why, NOT_APPLIED_MAX - lead.length - 1).replace(/[.\s]+$/, "")}.`;
 }
+
+/** An Update's one line (design §5 rule 1), as long as a notification's body. */
+const NOT_APPLIED_MAX = 140;
 
 /**
  * A left-open card's title (`merge:left_open`), what it is about now: the conflict notice
@@ -1142,20 +1166,21 @@ function genericCard(
   const said = ask ?? r.why;
   // Its Yes and No as buttons say them, each with what it does (wave 2: the stored "yes" and
   // "no" showed in lower case with no line). A click sends "Yes" or "No"; every reader of a
-  // yes/no answer reads either case (`isYes`, `acceptsAnswer`).
+  // yes/no answer reads either case (`isYes`, `acceptsAnswer`). Yes says what Yes does: the
+  // card's body, the question's second sentence, already says what the change means (W15-76:
+  // before, Yes repeated that body cut with "…").
   if (
     ask &&
     labels.length === 2 &&
     /^yes$/i.test(labels[0] ?? "") &&
     /^no$/i.test(labels[1] ?? "")
   ) {
-    const consequence = afterFirstSentence(ask);
     choices.splice(
       0,
       2,
       {
         label: "Yes",
-        explain: consequence ? cutWords(consequence, 100) : "Makes the change now.",
+        explain: "Makes the change now.",
         tone: "primary",
         confirm: null,
         input: null,

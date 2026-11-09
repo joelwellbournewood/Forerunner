@@ -847,13 +847,15 @@ describe("polish-words, wave 13: merge, preview, take-out and page-reader words"
       },
       "Bat count already has a repository (bench/bat-count); one is created only for a project without one",
     );
+    // W15-75: one line of at most 140 characters (before, about 250 with "Nothing changed; ask
+    // again if you still want it."): the question did not fit, so the card's object names it.
     expect(said).toBe(
-      "Your Yes to \"Create the private GitHub repository bench/bat-count for 'Bat count'?\" was not applied: Bat count already has a repository (bench/bat-count); one is created only for a project without one. Nothing changed; ask again if you still want it.",
+      "Your Yes about a GitHub repository for Bat count was not applied: Bat count already has a repository (bench/bat-count).",
     );
     expect(said).not.toMatch(/change card/);
     // A card with no question of its own reads by what it is about.
     expect(changeNotAppliedWords({ what: 'the task "Write the guide"' }, "")).toBe(
-      'Your Yes about the task "Write the guide" was not applied: it was refused. Nothing changed; ask again if you still want it.',
+      'Your Yes about the task "Write the guide" was not applied: it was refused.',
     );
   });
 

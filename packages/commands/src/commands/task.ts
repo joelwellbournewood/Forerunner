@@ -110,6 +110,86 @@ const taskRef = {
 /** A person's note for the agent: it goes into the task's next brief. */
 const noteParam = z.string().trim().max(2000).optional();
 
+/** A title as two tasks are compared by it: trimmed, lower case, one space between words. */
+const sameTitle = (title: string) => title.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** The pull request number of a task's work, when it has one. */
+const prNumberOf = (t: TaskRow): number | null => {
+  const m = /\/pull\/(\d+)\b/.exec(t.pr_url ?? "");
+  return m ? Number(m[1]) : null;
+};
+
+/**
+ * What tells tasks with one title apart (W15-37), as the person reads it and says it back:
+ * their pull requests ("#17"), else their states ("the done one"), else their age ("the older
+ * one", "the first one"); each with the words that pick it.
+ */
+function sameTitleTags(tasks: readonly TaskRow[]): { task: TaskRow; tag: string; says: RegExp }[] {
+  const byAge = [...tasks].sort(
+    (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
+  );
+  const prs = byAge.map(prNumberOf);
+  if (prs.every((n) => n !== null) && new Set(prs).size === prs.length)
+    return byAge.map((task, i) => ({
+      task,
+      tag: `#${prs[i]}`,
+      says: new RegExp(`^#?${prs[i]}$`),
+    }));
+  const states = byAge.map((t) => statusWords(t.status).replace(/^a /, ""));
+  if (new Set(states).size === states.length)
+    return byAge.map((task, i) => ({
+      task,
+      tag: `the ${states[i]} one`,
+      says: new RegExp(`^${states[i]}$`),
+    }));
+  const ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
+  return byAge.map((task, i) => {
+    const word =
+      byAge.length === 2 ? (i === 0 ? "older" : "newer") : (ORDINALS[i] ?? `number ${i + 1}`);
+    const also =
+      byAge.length === 2
+        ? i === 0
+          ? "|oldest|first|1st"
+          : "|newest|latest|last|second|2nd"
+        : i === 0
+          ? "|oldest|1st"
+          : i === byAge.length - 1
+            ? "|newest|latest|last"
+            : "";
+    return { task, tag: `the ${word} one`, says: new RegExp(`^(?:${word}${also})$`) };
+  });
+}
+
+/** The words that pick one of several same-titled tasks: "#17", "the done one", "older". */
+function pickWord(rest: string): string {
+  return rest
+    .toLowerCase()
+    .replace(/^[\s,;:.()\-–—]+|[\s,;:.()\-–—]+$/g, "")
+    .replace(/^(?:the|die|der|das)\s+/, "")
+    .replace(/\s+(?:one|task)$/, "")
+    .trim();
+}
+
+/** "Two tasks are called "X": #17 and #18. Say which, for example "X #17"." (W15-37). */
+function sameTitleRefusal(title: string, tags: readonly { tag: string }[]): ForerunnerError {
+  const named = tags.map((t) => t.tag);
+  const list =
+    named.length === 2
+      ? `${named[0]} and ${named[1]}`
+      : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+  const first = named[0] ?? "";
+  // In brackets, not after a comma: chat splits a line at its commas into separate requests,
+  // so "X, the older one" never reached this command (review of W15-37, bench).
+  const example = first.startsWith("#") ? `${title} ${first}` : `${title} (${first})`;
+  const COUNTS = ["Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+  const count = COUNTS[tags.length - 2] ?? String(tags.length);
+  return new ForerunnerError(
+    "validation",
+    `${count} tasks are called ${quote(title)}: ${list}. Say which, for example ${quote(example)}.`,
+    { details: { candidates: named } },
+  );
+}
+
 async function findTask(
   params: { task: string; project?: string | undefined },
   ctx: CommandContext,
@@ -119,8 +199,26 @@ async function findTask(
   const { project } = await resolveProject(ctx, params.project);
   const tasks = await ctx.store.task.forProject(project.id);
   const needle = params.task.trim().toLowerCase();
+  // W15-37: tasks of one title are told apart by a word after it ("Write the guide #17",
+  // "Write the guide, the done one"), the words the refusal below gives.
+  const said = sameTitle(params.task);
+  const titled = tasks.filter(
+    (t) => said.startsWith(sameTitle(t.title)) && said.length > sameTitle(t.title).length,
+  );
+  const longest = Math.max(0, ...titled.map((t) => sameTitle(t.title).length));
+  const group = titled.filter((t) => sameTitle(t.title).length === longest);
+  if (group.length > 1) {
+    const word = pickWord(said.slice(longest));
+    const tags = sameTitleTags(group);
+    const hit = tags.filter((t) => t.says.test(word));
+    if (hit.length === 1) return (hit[0] as { task: TaskRow }).task;
+  }
   const matches = tasks.filter((t) => t.title.toLowerCase().includes(needle));
   if (matches.length === 1) return matches[0] as TaskRow;
+  if (matches.length > 1 && new Set(matches.map((m) => sameTitle(m.title))).size === 1)
+    throw sameTitleRefusal((matches[0] as TaskRow).title, sameTitleTags(matches));
+  if (matches.length === 0 && group.length > 1)
+    throw sameTitleRefusal((group[0] as TaskRow).title, sameTitleTags(group));
   if (matches.length > 1) {
     // Design §5 rule 8: what went wrong and what to do. The matches by name, up to three, and
     // the words that pick one (wave 2: 'several tasks match "style"' said neither).

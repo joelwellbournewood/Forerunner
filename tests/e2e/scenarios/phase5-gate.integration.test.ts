@@ -301,7 +301,7 @@ describe("phase 5 gate: a simulated week through the UI and the phone (fake prov
     expect(budget?.row.scope).toBe("session");
     expect(budget?.row.expiresAt).toBe("2026-11-05T05:00:00.000Z"); // 06:00 Zurich on Thursday
     expect(budget?.row.sentence).toBe(
-      "Raised tonight's session budget for Sample service from CHF 5 to CHF 20, until 06:00. Undo.",
+      "Raised tonight's session budget for Sample service from CHF 5.00 to CHF 20.00, until 06:00. Undo.",
     );
     const autonomy = report.settings.find((s) => s.change === "autonomy");
     expect(autonomy?.row.sentence).toBe(

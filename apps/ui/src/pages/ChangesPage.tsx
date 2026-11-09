@@ -50,18 +50,23 @@ export function commandNames(commands: unknown[]): string[] {
   });
 }
 
-function Json({ value }: { value: unknown }) {
-  return (
-    <pre className="overflow-auto rounded bg-neutral-100 p-1 text-xs dark:bg-neutral-900">
-      {JSON.stringify(value, null, 1)}
-    </pre>
-  );
+/**
+ * Where a change came from, as a person says it (W15-48, design §5: never the stored "ui" or
+ * "palette"): a click or the palette in the app, chat, voice or email.
+ */
+export function sourceWords(source: ChangeLogView["source"]): string {
+  if (source === "chat") return "Chat";
+  if (source === "voice") return "Voice";
+  if (source === "email") return "Email";
+  return "In the app";
 }
 
 /**
- * Change log (spec Q.10, Q.11): every change with who asked, the words used, the commands run,
- * before and after, and a one-click undo while it is still reversible. The same rows come
- * from the UI, chat, voice and email; only `source` and the words differ.
+ * Change log (spec Q.10, Q.11): every change with who asked, the words used, what changed (the
+ * sentence) and a one-click undo while it is still reversible. The same rows come from the UI,
+ * chat, voice and email; only `source` and the words differ. W15-48: a row shows no command
+ * name ("task.transition"), no "before / after" and no JSON; the stored commands and before
+ * and after stay in the change log for the Undo and the API (GET /changes).
  */
 export function ChangesPage() {
   const client = useClient();
@@ -82,9 +87,19 @@ export function ChangesPage() {
   // An undo that raises a limit waits for its confirmation like the change itself (U-057).
   const [asking, setAsking] = useState<CommandResultJson | null>(null);
   const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
-  const projectName = (id: string | null) =>
-    id ? (projects.find((p) => p.id === id)?.name ?? id) : null;
-  const humanName = (id: string | null) => (id && me && id === me.id ? me.name : id);
+  // W15-36 (design §5 rule 3, never an id): the project and the person in words, from the view
+  // (a removed project reads "<name> (removed)" and has no link: it opened the project's page as
+  // if it were there), else from the store; a row with neither shows no project.
+  const projectOf = (c: ChangeLogView): { name: string; removed: boolean } | null => {
+    if (!c.projectId) return null;
+    if (c.projectRemoved) return c.projectName ? { name: c.projectName, removed: true } : null;
+    const name = projects.find((p) => p.id === c.projectId)?.name ?? c.projectName ?? null;
+    return name ? { name, removed: false } : null;
+  };
+  const whoOf = (c: ChangeLogView): string =>
+    c.humanName ??
+    (c.humanId && me && c.humanId === me.id ? me.name : null) ??
+    (c.humanId ? "another person" : (c.agentName ?? "the agent"));
 
   /** What an undo or its confirmation answered, as the page says it (U-061: never "Undone" for nothing). */
   const show = (r: CommandResultJson) => {
@@ -167,8 +182,8 @@ export function ChangesPage() {
         </Button>
       </div>
       <p className="text-xs text-neutral-500">
-        Every change made here, in chat, by voice or by email: who asked, the words used, the
-        commands run, before and after, and Undo while it is still reversible.
+        Every change made here, in chat, by voice or by email: who asked, the words used, what
+        changed, and Undo while it is still reversible.
       </p>
       {changes.routeMissing ? <RouteMissing route="changes" what="the change log" /> : null}
       {changes.loading && !changes.data ? <Loading what="change log" /> : null}
@@ -186,11 +201,10 @@ export function ChangesPage() {
           className="rounded border border-amber-300 p-3 dark:border-amber-700"
           data-testid="changes-undo-pending"
         >
-          <p className="mb-2 text-sm">
-            Undoing this puts a value back that needs your confirmation, as setting it would.
-          </p>
+          {/* W15-34: the undo's one-line question (its read-back), the same words the Inbox
+              and Home show for it; not the change card's risk, scope and "no undo" rows. */}
           <CommandResult
-            result={asking}
+            result={{ ...asking, card: null }}
             busy={busy !== null}
             onConfirm={(a) => void answer(a === "yes")}
             onDismiss={() => setAsking(null)}
@@ -214,17 +228,28 @@ export function ChangesPage() {
           >
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="info" testId="change-source">
-                {c.source}
+                {sourceWords(c.source)}
               </Badge>
-              <Badge>{c.scope}</Badge>
-              {c.projectId ? (
-                <Link
-                  to={`/projects/${encodeURIComponent(c.projectId)}`}
-                  className="text-blue-700 hover:underline dark:text-blue-300"
-                >
-                  {projectName(c.projectId)}
-                </Link>
-              ) : null}
+              {(() => {
+                const project = projectOf(c);
+                if (!project || !c.projectId) return null;
+                return project.removed ? (
+                  <span
+                    className="text-neutral-600 dark:text-neutral-400"
+                    data-testid="change-project"
+                  >
+                    {project.name}
+                  </span>
+                ) : (
+                  <Link
+                    to={`/projects/${encodeURIComponent(c.projectId)}`}
+                    className="text-blue-700 hover:underline dark:text-blue-300"
+                    data-testid="change-project"
+                  >
+                    {project.name}
+                  </Link>
+                );
+              })()}
               {(() => {
                 const badge = undoBadge(c);
                 return badge ? (
@@ -234,7 +259,7 @@ export function ChangesPage() {
                 ) : null;
               })()}
               <span className="ml-auto text-xs text-neutral-500">
-                {humanName(c.humanId) ?? c.agentId ?? "agent"} · {formatDateTime(c.createdAt)}
+                {whoOf(c)} · {formatDateTime(c.createdAt)}
               </span>
             </div>
             <p className="mt-2 font-medium" data-testid="change-sentence">
@@ -255,25 +280,6 @@ export function ChangesPage() {
             {c.undoneAt ? (
               <p className="text-xs text-neutral-500">Undone {formatDateTime(c.undoneAt)}</p>
             ) : null}
-            <details className="mt-1 text-xs">
-              <summary className="cursor-pointer text-neutral-500">
-                {commandNames(c.commands).join(", ") || "no command"} · before / after
-              </summary>
-              <div className="mt-1 grid gap-2 md:grid-cols-3">
-                <div>
-                  <p className="text-neutral-500">Commands</p>
-                  <Json value={c.commands} />
-                </div>
-                <div>
-                  <p className="text-neutral-500">Before</p>
-                  <Json value={c.before} />
-                </div>
-                <div>
-                  <p className="text-neutral-500">After</p>
-                  <Json value={c.after} />
-                </div>
-              </div>
-            </details>
             {c.undoable ? (
               <div className="mt-2">
                 <Button

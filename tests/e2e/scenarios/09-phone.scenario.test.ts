@@ -390,7 +390,7 @@ describe("scenario 9: from the phone, by talking", () => {
     expect(change?.sentence).toBe(
       [
         "Switched the active project to Space game. Undo.",
-        "Raised tonight's session budget for Space game from CHF 5 to CHF 15, until 06:00. Undo.",
+        "Raised tonight's session budget for Space game from CHF 5.00 to CHF 15.00, until 06:00. Undo.",
         "Started a session on Space game (up to CHF 15).",
       ].join(" "),
     );

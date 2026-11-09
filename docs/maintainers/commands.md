@@ -65,8 +65,8 @@ agent's own tools are replaced by these in the daemon wiring step.
 
 | Command | Scope | Risk | Reversible | Writes |
 | --- | --- | --- | --- | --- |
-| `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back") |
-| `project.create` | global | low | yes (archive) | `project` row, active project; `ports.projectCreated` (the daemon's G.5 scaffold of the standard doc set, in the background; runtime.md "Project docs") |
+| `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back": the latest project left that is still there, never a removed one; the project left is moved to the end of the history, `historyAfterSwitch`, so "go back" returns to it also when it was in the history before; its Undo is refused when the project it would make active again was removed, `undoBlocked`: "the project X was removed", W15-36) |
+| `project.create` | global | low | yes (archive) | `project` row, active project; `ports.projectCreated` (the daemon's G.5 scaffold of the standard doc set, in the background; runtime.md "Project docs"); W15-36: with `ports.createProject` (given for one call by `POST /projects` with `switch: true`, the New project dialog) the row is the route's own creation (brief, plan from the brief or doc set) and `projectCreated` is not called; a name another project has is refused as the dashboard says it, 'There is already a project called "X". Pick another name.'; with `switch` the project left goes on `project_history` as with `project.switch`, so "go back" returns to it (before and after carry the history). Its Undo (W15-36): archives the project and frees its name, renaming it "X (removed)" ("X (removed 2)", … when taken; the name it had in `settings.removed_name`, `removedProjectName`), withdraws its open cards, takes it out of the history and, when it is the active project, makes the previous one active again (another project made active since stays active); the removed project's other rows are not undoable (`undoBlockedReason`: "the project X was removed") |
 | `task.create` | project | low | yes (cancel) | `task` row, **ready** unless `status: draft` is asked for (design §3.9: a draft is planned by no session, so a task made by chat or the app waited silently); `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051), then `riskTierFor(specialist, tier)`: a deploy or a migration (`SIGNOFF_SPECIALISTS`, ADR 0104 decision 4) is stored at the full review at least, a light review asked for included (phase C leftover C-2: before, such a task was stored at the light review, its row read "Light review" and its run used the process sandbox); `priority` is `low`, `medium` (default) or `high` (`TaskPrioritySchema` from `@forerunner/runtime/priority`; an old number is read as its level), stored as the level's number; `depends_on` (ids or titles, checked by `TaskRepo.checkDependencies`), `budget_usd_micro`, `specialist` (a specialist, or `person` for a task only the person can answer) and `milestone_id`. The daemon's `POST /projects/:id/tasks` runs it, so New task is in Changes with its Undo. Sentence: "Added "X" to Atlas, high priority." (U-041) |
 | `task.transition` | project | low; `done`/`cancelled` medium | yes (the status before) | `task.status` through `TaskRepo.transition`; the API route and agents use it, the Tasks tab sends the actions below; a move the status no longer allows (the task finished between the read-back and the yes) is refused in words, `assertMove`: '"X" is already done; nothing changed.', never "task: illegal transition done -> cancelled"; the chat's read-back of a cancel says what Yes does to a task whose run is going: 'Cancel "X"? Drops it. Its run stops and its changes are removed; Undo restores them unless the files changed.' (a task with a pull request: 'Its run stops now; its pull request stays open.'; a paused task: its work so far is set aside; a project linked to the person's own folder: what it wrote stays; a task left in review with no review running is only dropped; phase C leftover C-38, L-7, W6-7, C-37, `moveAsk` below) |
 | `task.pause` | project | low | yes (ready again) | ready → `needs_human` recorded as the person's own (`author_human`), the reason "Paused by you"; on a running task it is Stop: the run is stopped (`ports.stopTask`, and the daemon's route) and the task paused, "Stopped by you". The project does not count it as "needs you" (design §2) |
@@ -96,8 +96,10 @@ agent's own tools are replaced by these in the daemon wiring step.
 the principal's memory: "remember that ...", "lesson: ..." by pattern, or the model's
 `memory_record` tool for the same thing in other words. It is low risk (no limit, no spend,
 nothing outside the human's own memory), so it acts at once and the sentence reads the stored
-text back: `Recorded a lesson in Alice's memory for PharmaWatch: "...". Undo.` (up to 300
-characters). The command refuses a context without a principal agent or an agent the human
+text back: `Recorded a lesson in Alice's memory for PharmaWatch: "...". It changes no setting.
+Undo.` (up to 300 characters; W15-29: the sentence and the tool's description say a lesson
+changes no setting, since live the chat recorded "only read developer.mozilla.org for research"
+as a lesson and told the person the rule had changed). The command refuses a context without a principal agent or an agent the human
 does not own; the port (`MemoryCommandPort`: `recordLesson`, `forgetLesson`) is the runtime's
 `memoryCommandPort(MemoryLoop)`, which also runs the lesson injection screen and the memory
 lint (a text under 20 characters is refused with the lint's reason). Without the port the
@@ -317,7 +319,7 @@ value's risk. A command without `undoRisk` undoes at once. The confirmed undo re
 (`performUndo`), so an undo answered after the row changed is refused.
 
 An undo that cannot work says so (U-061): `undoBlockedReason(row)` is the row state (undone,
-reverted) and each command's `undoBlocked` in plain words, checked before the gate and again
+reverted), a project whose creation was undone ("the project X was removed", W15-36) and each command's `undoBlocked` in plain words, checked before the gate and again
 before the run, and `CommandLoop.undoBlocked` gives it to `GET /changes`, which offers no Undo
 then. `task.create` cannot be undone once the task cannot be cancelled; a task move
 (`task.transition`, `task.pause`, `task.resume`, `task.reopen`) once the task moved on;
@@ -508,6 +510,65 @@ since a question in the stop's way would leave the session running (and the agen
 the line to it as a said line). A line understood in full still runs every command, the stop
 among them.
 
+### Wave 15 (w15-chat): what the chat model is told and refused
+
+- **`settings_set`'s definition (W15-29).** Live check 2 (2026-11-09) gave the real chat model
+  `settings_set` as "Change a setting by key. Keys: …" with `"value": {}`; it sent "public",
+  then `{allowed: "public_websites"}`, then "any" for `web_access`, and recorded a lesson
+  instead. The description is now `settingsSetDescription()`: what a setting is (a rule the app
+  enforces, never a lesson), then one line per key from `settingDefinitionLine(spec)`: its
+  scope, its `description`, its value's shape (`settingValueShape`, rendered from
+  `z.toJSONSchema(spec.schema, { io: "input" })`, the input side, since `WebAccessSetting`'s
+  transform cannot be written on the output side) and `SettingSpec.examples` where the shape
+  alone does not say how words map to it (`web_access`, `quiet_hours`). `value` carries a
+  `.describe()` so the tool schema no longer reads `{}`. A refused value (`refusalOf`): a key
+  without `plainRefusals` keeps `<key>: <issues>` with each field's path; a `plainRefusals` key
+  keeps its whole sentences (a site it cannot take, an empty "only" list), and a value of the
+  wrong shape is "That is not a value for web pages research may read (<field>: <issue>). It
+  takes {"mode": "any" | "only", "only"?: [string], "never"?: [string]}, for example …".
+  `packages/commands/test/w15-chat.test.ts` asserts the definition's lines and these refusals.
+- **An undo waiting for a yes asks one question (W15-34).** `undoCardOf` gives the undo's card
+  an `ask` and the change's own `what` (before: `what: "undo: <what>"` and no question, so the
+  Inbox and Home titled the card "undo", with raw "yes"/"no"). The question is the command's
+  own, `CommandDef.undoAsk(params, before, after, ctx)`, read from the change log row so it is
+  the same after a restart: `settings.set`'s is "Put <label> for <project> back to <old value
+  in words>? <What that value means>." ("Put web pages research may read for Reading rules back
+  to any public website? Research reads any public website …"). Without one: "Put <what> back
+  to <old value>?" from the card kept in memory, else 'Take back "<the change, without its
+  effect>"?' from the row's sentence. The read-back is that question, and Changes shows it
+  alone with Yes and No (no card rows).
+- **A refusal says why in the schema's words (W15-35).** `CommandRegistry.validate` refuses
+  with the parameters' own sentence when an issue carries one (`isSentence`: a capital first, a
+  full stop last; `ZERO_REFUSED` for budget.set's 0 for a session or the month), else
+  "<command>: invalid parameters (<field>: <issue>; …)"; the issues stay in `details.issues`.
+  Before, every client but chat read "budget.set: invalid parameters". The parser's question
+  (`invalidQuestion`) asks with the same sentence and no command name ("The monthly cap must be
+  more than … Which value did you mean?").
+- **Tasks of one title (W15-37).** `findTask` (task.ts) told two tasks titled "Write the guide"
+  apart by nothing: "Say more of the title", which no words could do. Now tasks with the same
+  title are named by what tells them apart (`sameTitleTags`): their pull requests ("#17 and
+  #18") when each has its own, else their states ("the done one and the cancelled one"), else
+  their age ("the older one and the newer one", then "the first one", "the second one" …):
+  'Two tasks are called "Write the guide": #17 and #18. Say which, for example "Write the guide
+  #17".' That word after the title picks one ("Write the guide #17", "Write the notes (the done
+  one)", "… older"), in the UI's commands and in chat ("redo Write the guide #18"). The example
+  puts a state or an age in brackets, never after a comma: chat splits a line at its commas
+  into separate requests, so "Write the guide, the older one" never reached the command (review
+  of W15-37; chat case in `conversation-memory.test.ts`).
+- **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
+  "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
+  (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
+  read-back keeps `chf` ("up to CHF 5"), as the design writes it.
+- **The monthly cap's 0 says what to do (W15-45).** `ZERO_REFUSED.month` (and Settings'
+  `MONTHLY_CAP_ZERO`, the fake daemon's refusal) reads "The monthly cap must be more than CHF
+  0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you
+  want to spend in a month." 0 stays refused for the month (owner question W15-109 open).
+- **A monthly job's schedule, once (W15-46).** The handover test's and the calibration's change
+  sentence named the schedule in the value and again in the effect ("… to on, day 2 at 08:00: a
+  fresh agent runs the seeded change on day 2 at 08:00 each month …"); the effect now says "each
+  month a fresh agent runs the seeded change …" and "each month the critic grades the eval
+  sets".
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`
@@ -533,9 +594,13 @@ back): on, the fast-mode rate against the standard one and "a subscription ignor
 only)"; off, back to the standard rate and the surcharge stopping (`test/fast-mode.test.ts`).
 With the built-in table that is USD 8 / 40 against 4 / 20, a 2x surcharge; the description
 says "(API only, priced separately)" and not "research preview", because Opus 5.5 fast mode is
-generally available (ADR 0057 amendment, 2026-10-25).
-`SettingSpec.effect(value, ctx)` receives `{ pricing }` from the optional
-`CommandPorts.pricingTable()`. The daemon passes the table in force: the built-ins plus
+generally available (ADR 0057 amendment, 2026-10-25). The person reads it in CHF at the day's
+rate, "at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00"
+at 0.8 (W15-47, ADR 0057 amendment 2026-11-09; never USD, design §5 rule 7).
+`SettingSpec.effect(value, ctx)` receives `{ pricing, chfPerUsd }`: the table from the optional
+`CommandPorts.pricingTable()`, and the day's rate from `CommandPorts.chfPerUsd` at the clock's
+time (`effectContext`, read only for a key with an effect; a rate that cannot be read leaves
+the default rate). The undo's question (`undoAsk`) reads the same. The daemon passes the table in force: the built-ins plus
 `<config>/pricing.json` and adopted rows. So the card the human confirms, and the change-log
 sentence, quote the surcharge that runs are charged. The daemon's Settings row uses the same
 table. Without the port, the effect uses the built-in table.

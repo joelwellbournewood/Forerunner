@@ -173,3 +173,31 @@ research preview. Evidence gathered on 2026-10-25:
   correct the 4.6 row.
 - The spec's wording for D.20 ("research preview") predates this; the behaviour (API only,
   priced separately, per project) is unchanged.
+
+## Amendment 2026-11-09: the person reads the price in CHF (W15-47, wave 15)
+
+**Context.** Settings' fast mode row and its change card were the one place in Settings that
+still quoted USD ("at USD 8 / 40 per million input / output tokens instead of USD 4 / 20"),
+against design §5 rule 7 ("Never USD"). The session lead decided: the price reads "about CHF …"
+at the day's rate; the provider's USD table stays here and in the user guide.
+
+**Decision.**
+
+1. `fastModeEffect(on, table, chfPerUsd)` and `fastModeDescription(table, chfPerUsd)` convert
+   each price per million tokens from the table in force to CHF at `chfPerUsd` (the default
+   rate without it), two decimals, with "about": on, "at about CHF 6.40 / 32.00 per million
+   input / output tokens instead of CHF 3.20 / 16.00, a 2x surcharge; a subscription ignores
+   it (API only)"; off, "at about CHF 3.20 / 16.00 per million input / output tokens; the
+   fast-mode surcharge (2x, about CHF 6.40 / 32.00) stops" (at 0.8 CHF per USD). The factor is
+   still computed from the USD rows, so it does not move with the rate.
+2. The daemon's Settings row passes the day's rate it already reads for every other amount
+   (`settingsView`'s `chfPerUsd`). `settings.set` passes `CommandPorts.chfPerUsd` at the
+   clock's time through `SettingEffectContext.chfPerUsd`, read only for a key with an effect;
+   a rate that cannot be read leaves the default rate. The undo's question uses the same.
+3. The provider's table is unchanged and stays in USD: the price rows in `@forerunner/billing`
+   (8 / 40 and 4 / 20 for Opus 5.5), their notes, this ADR and the user guide. Runs are still
+   priced and booked from the USD rows; only the words the person reads change.
+
+**Consequences.** No USD remains anywhere in Settings (the UI test opens Advanced and checks
+the whole page; the real-daemon GET /settings case no longer leaves out the fast mode row). A
+rate change moves the CHF figures from one day to the next, hence "about".

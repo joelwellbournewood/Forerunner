@@ -227,9 +227,17 @@ export class CommandLoop implements ConversationCommands {
   async execute(
     call: CommandCallLike,
     turn: CommandTurn,
-    opts: { confirmation?: ConfirmationAnswer; actor?: Actor } = {},
+    opts: {
+      confirmation?: ConfirmationAnswer;
+      actor?: Actor;
+      /** Ports for this one call beside the loop's (W15-36: the dialog's `createProject`). */
+      ports?: Partial<CommandPorts>;
+    } = {},
   ): Promise<CommandResultView> {
-    const ctx = await this.contextFor(turn, opts.actor ? { actor: opts.actor } : {});
+    const ctx = await this.contextFor(turn, {
+      ...(opts.actor ? { actor: opts.actor } : {}),
+      ...(opts.ports ? { ports: { ...this.deps.ports, ...opts.ports } } : {}),
+    });
     const r = await this.executor.execute({
       name: call.name,
       params: call.params,

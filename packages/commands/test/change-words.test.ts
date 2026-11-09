@@ -49,7 +49,7 @@ describe("change cards in words", () => {
         ctx: w.ctx(),
       }),
     );
-    expect(budget.reason).toBe("The session budget for PharmaWatch is already CHF 5.");
+    expect(budget.reason).toBe("The session budget for PharmaWatch is already CHF 5.00.");
     expect((await w.store.changeLog.list()).length).toBe(0);
     await w.store.close();
   });
@@ -100,7 +100,7 @@ describe("change cards in words", () => {
     expect(r.card.scopeLabel).toBe("every session of PharmaWatch");
     expect(renderChangeCard(r.card)).toContain("Scope: every session of PharmaWatch");
     expect(renderChangeCard(r.card)).not.toContain("this session");
-    expect(r.readback).toBe("Raise the session budget for PharmaWatch to CHF 15?");
+    expect(r.readback).toBe("Raise the session budget for PharmaWatch to CHF 15.00?");
     expect(r.readback).not.toMatch(/Risk|Undo|Scope/);
     await w.store.close();
   });

@@ -54,7 +54,7 @@ describe("money in Settings (design §6)", () => {
     await user.type(input, "0");
     // later #43: the monthly cap's 0 is refused with why (it is the limit enforced in code).
     expect(within(dialog).getByTestId("setting-value-problem")).toHaveTextContent(
-      "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.",
+      "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month.",
     );
     expect(within(dialog).getByTestId("setting-apply")).toBeDisabled();
     await user.clear(input);

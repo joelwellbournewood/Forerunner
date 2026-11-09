@@ -31,7 +31,12 @@ evals/registry/                      (forerunner-registry has the same layout at
                                      session, the open cards; and the read-only tools; phase E:
                                      a card's reference is for request_answer only, never said;
                                      1.1.2: "skip the README" cancels that task, as the parser
-                                     does, L-10; "skip it for now" pauses it)
+                                     does, L-10; "skip it for now" pauses it; 1.2.0, W15-29: a
+                                     rule the app enforces is a setting, changed with
+                                     settings_set in its definition's shape, never recorded as
+                                     a lesson; # Now names the project's "Research reads:"; 1.2.1,
+                                     W15-30: this project's cards in full, other projects'
+                                     cards as a count)
   critic/critic.md                   the independent reviewer prompt
   evals/<name>/NNN-<slug>.json       golden tasks (20 each for coder and researcher today)
   evals/README.md                    task format and how to add a task

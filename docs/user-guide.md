@@ -79,6 +79,11 @@ the work as it happens: no reload needed.
 **New project** asks for a name, a goal, a short brief and a repository link; the agent drafts a
 plan for you to approve. The project starts at your default autonomy (Settings → Basics; each
 project's own autonomy is under Settings → Advanced, by name) and becomes the active project.
+Changes lists the creation once ("Created the project … and made it the active project."); its
+**Undo** removes the project and makes the project you had before the active one again. "Go
+back" in chat returns to the project you were on before New project. After the Undo the name is
+free for a new project, the project's open cards leave the Inbox, and Changes shows its rows as
+"… (removed)", without Undo.
 The goal is optional when you write a brief: left empty, the brief's first sentence is the goal.
 Without a repository link, a brief of a sentence or two (under 200 characters, no list) gets a
 small plan: one milestone of one to three tasks and two short documents (if the agent plans
@@ -272,7 +277,12 @@ left them; an open file or task stays on its own tab.
   "start working now" (the reply links the session it started), "stop" (stops the running
   session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
-  session, "summary". A change to a task is read back once in one line ('Make "Write the FAQ"
+  session, "summary". Chat changes a project's settings too: "only read developer.mozilla.org
+  for research" changes **Web pages research may read** at once (the Overview's line reads
+  "Research reads: only developer.mozilla.org"), and "research may read any public website
+  again" asks your **Yes** first, as the setting's dialog does. A rule like that is a setting,
+  never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
+  changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
   things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
   answered in the Inbox or expired, says so). Under each read-back the conversation says what
@@ -1066,7 +1076,10 @@ set to fable runs fable only in a project whose highest model is fable.
 words used, what changed, and **Undo** while it can still be taken back. An undo needs the same
 confirmation as the change it makes: undoing a lowered monthly cap raises it, so it waits for
 your confirmation on this PC (or the phone with biometric), and so does putting back a wider
-email mode; undoing a raise acts at once. When an undo cannot work any more (the task was
+email mode; undoing a raise acts at once. An undo that waits for your yes asks one question,
+on Changes, on Home and in the Inbox alike ("Put web pages research may read for Reading rules
+back to any public website?" with **Yes** and **No**), and the project counts it as a change to
+confirm. When an undo cannot work any more (the task was
 finished since, a session already read the note, the session a start began has ended), the
 change reads **Cannot be undone** and says why instead of offering Undo, and nothing ever says
 "Undone" when nothing changed. Each change says **Can be undone**, **Undone**, **Reverted** (a
@@ -1163,8 +1176,9 @@ your agents may reach beyond their built-in tools.
   GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
   mailbox and mode, on the Email page) and the other settings, each project's autonomy among
   them. Only settings you can change are listed; autonomy is always chosen by its name. Money is
-  in CHF, with a point or a comma; only Opus fast mode still quotes Anthropic's price per
-  million tokens in USD. A project's budget can be 0, which means no budget
+  in CHF, with a point or a comma. Opus fast mode quotes Anthropic's price per million tokens
+  in CHF at the day's rate ("about CHF 6.40 / 32.00 per million input / output tokens instead
+  of CHF 3.20 / 16.00"); Anthropic lists it as USD 8 / 40 against USD 4 / 20, a 2x surcharge. A project's budget can be 0, which means no budget
   (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
   stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
   change card shows the new value in words, with what it changes as the sentence under it.

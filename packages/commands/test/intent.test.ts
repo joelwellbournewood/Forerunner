@@ -541,8 +541,11 @@ describe("IntentParser: a budget clause never loses its tail", () => {
   it("a clause whose parameters fail validation becomes a question, not an exception", async () => {
     const r = await parser.parse("give it 0 francs", ctx());
     expect(r.commands).toEqual([]);
-    expect(r.question?.text).toMatch(/^budget\.set: /);
-    expect(r.question?.text).toMatch(/amountChf/);
+    // W15-35: the schema's own sentence, without the command's or the field's name.
+    expect(r.question?.text).toBe(
+      "The budget per session must be more than CHF 0: a session plans its work within it. Which value did you mean?",
+    );
+    expect(r.question?.text).not.toMatch(/budget\.set|amountChf/);
     expect(r.matched).toBe("pattern");
   });
 

@@ -12,6 +12,7 @@ import type {
   ChangeSource,
   HumanRequestRow,
   JsonValue,
+  ProjectRow,
   RiskLevel,
   StateStore,
 } from "@forerunner/state";
@@ -309,6 +310,13 @@ export interface CommandPorts {
    */
   projectCreated?(projectId: string): Promise<void>;
   /**
+   * W15-36: the New project dialog's creation, as `POST /projects` makes it (the brief, the
+   * plan from the brief or the standard doc set, the members): given for one call by that route,
+   * so the dialog's create is one `project.create` with one Changes row. Absent: the command
+   * inserts the row itself and calls `projectCreated`.
+   */
+  createProject?(params: { name: string; goal: string; repos: string[] }): Promise<ProjectRow>;
+  /**
    * The price table in force (built-ins plus `<config>/pricing.json` and adopted rows), for a
    * setting whose effect quotes a price (`fast_mode`, spec D.20, ADR 0057). Default: the
    * built-in table.
@@ -472,6 +480,17 @@ export interface CommandDef<P = unknown> {
   ): Promise<string | null>;
   /** The sentence of a done undo, when "<what> is back to <old value>" would not be true. */
   undoSentence?(params: P, before: JsonValue, after: JsonValue): string;
+  /**
+   * The one-line question an undo that waits for a yes asks (W15-34): "Put <what> back to
+   * <old value>? <What that means>." from the change log row alone, so it reads the same after a
+   * restart. Absent: the executor asks from the change's card, else from its sentence.
+   */
+  undoAsk?(
+    params: P,
+    before: JsonValue,
+    after: JsonValue,
+    ctx: CommandContext,
+  ): Promise<string | null>;
 }
 
 export interface CommandCall {

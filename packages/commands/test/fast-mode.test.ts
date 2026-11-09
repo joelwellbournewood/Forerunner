@@ -10,9 +10,9 @@ import { world } from "./helpers.ts";
  * switching it changes and what it costs, both ways (ADR 0051 item 4).
  */
 const ON =
-  "Opus runs of this project on an API key are requested in fast mode at USD 8 / 40 per million input / output tokens instead of USD 4 / 20, a 2x surcharge; a subscription ignores it (API only)";
+  "Opus runs of this project on an API key are requested in fast mode at about CHF 6.40 / 32.00 per million input / output tokens instead of CHF 3.20 / 16.00, a 2x surcharge; a subscription ignores it (API only)";
 const OFF =
-  "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (2x, USD 8 / 40) stops";
+  "Opus runs of this project go back to the standard speed at about CHF 3.20 / 16.00 per million input / output tokens; the fast-mode surcharge (2x, about CHF 6.40 / 32.00) stops";
 
 function done(r: ExecuteResult): Extract<ExecuteResult, { status: "done" }> {
   if (r.status !== "done") throw new Error(`expected done, got ${r.status}: ${JSON.stringify(r)}`);
@@ -89,7 +89,7 @@ describe("the fast_mode setting (D.20)", () => {
     w.ports.pricingTable = () => table;
     const human = { kind: "human" as const, id: w.human.id };
     const corrected =
-      "Opus runs of this project on an API key are requested in fast mode at USD 30 / 150 per million input / output tokens instead of USD 4 / 20, a 7.5x surcharge; a subscription ignores it (API only)";
+      "Opus runs of this project on an API key are requested in fast mode at about CHF 24.00 / 120.00 per million input / output tokens instead of CHF 3.20 / 16.00, a 7.5x surcharge; a subscription ignores it (API only)";
     const params = { key: "fast_mode", value: true, project: "game" };
     const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
     expect(card.newValue).toBe("true");
@@ -102,7 +102,7 @@ describe("the fast_mode setting (D.20)", () => {
       w.ctx(),
     );
     expect(off.newValue).toBe("false");
-    expect(off.ask).toContain("the fast-mode surcharge (7.5x, USD 30 / 150) stops");
+    expect(off.ask).toContain("the fast-mode surcharge (7.5x, about CHF 24.00 / 120.00) stops");
     await w.store.close();
   });
 });

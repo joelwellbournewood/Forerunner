@@ -38,7 +38,7 @@ describe("Change log", () => {
     ).toBeNull();
   });
 
-  it("lists every change with who asked, the words said, the commands, before/after and the source", async () => {
+  it("lists every change with who asked, the words said, what changed and the source", async () => {
     renderApp("/changes");
     const rows = await screen.findAllByTestId("change");
     expect(rows).toHaveLength(2);
@@ -53,8 +53,10 @@ describe("Change log", () => {
       "give Atlas 20 francs tonight",
     );
     expect(first).toHaveTextContent("Alice");
-    expect(first).toHaveTextContent("budget.set");
-    expect(first).toHaveTextContent('"sessionBudgetChf": 5');
+    expect(within(first).getByTestId("change-source")).toHaveTextContent("Voice");
+    // W15-48: what changed is the sentence; no command name, no before / after as JSON.
+    expect(first).not.toHaveTextContent("budget.set");
+    expect(first).not.toHaveTextContent('"sessionBudgetChf": 5');
     expect(within(first).getByTestId("change-undo-state")).toHaveTextContent("Can be undone");
     expect(within(first).getByTestId("change-undo")).toBeInTheDocument();
     const second = rows[1];
