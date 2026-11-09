@@ -32,6 +32,7 @@ import {
   unlockChallengeOf,
 } from "../lib/runner-unlock.ts";
 import { browserStorage, type KeyValueStore } from "../lib/storage.ts";
+import { specialistName } from "../lib/task-actions.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useScrollToHash } from "../lib/use-hash-scroll.ts";
@@ -371,7 +372,8 @@ function IntakeCard({
                 ·{" "}
                 {isPerson(t)
                   ? "you: answer its questions"
-                  : (t.specialist ?? "the agent chooses who")}
+                  : // W15-43: the specialist in words ("writer"), never the registry's key.
+                    (specialistName(t.specialist) ?? "the agent chooses who")}
                 {isPerson(t)
                   ? ""
                   : cost !== undefined

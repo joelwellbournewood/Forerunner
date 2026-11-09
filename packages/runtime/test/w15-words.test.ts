@@ -16,13 +16,14 @@ import { describeEvent } from "../src/daemon/views.ts";
 import { headMovedSentence, leftOpenSteps } from "../src/loop/merge.ts";
 import { OWED_FOLDER_LABEL } from "../src/loop/merge-mode.ts";
 import { budgetStopTitle, continueLabel } from "../src/session/budget-card.ts";
-import { wrapUpSentWords } from "../src/session/budget-pause.ts";
+import { limitWords, wrapUpSentWords } from "../src/session/budget-pause.ts";
 import {
   nothingRunsYetSentence,
   startKeepsWaitSentence,
   waitSentence,
   waitThenStartSentence,
 } from "../src/session/credential-wait.ts";
+import { flaggedSearchNote } from "../src/session/executor.ts";
 import { aboutWords } from "../src/session/money-words.ts";
 import { sessionResultLines, stopWords } from "../src/session/result.ts";
 import { blockedOfHandoff, endedStatusText } from "../src/session/stop-words.ts";
@@ -751,6 +752,35 @@ describe("w15-words, wave 15 run B", () => {
         null,
         null,
       ]);
+    });
+  });
+  describe("W15-43 (+W15B-78): a specialist is named in words, never by its registry key", () => {
+    it("the budget card, the limit, the wrap-up note and the flagged-search note", () => {
+      const stop = {
+        capUsdMicro: 500_000,
+        source: "specialist_limit" as const,
+        specialist: "writer-marketing",
+      };
+      expect(budgetStopTitle({ title: "Write the flyer" }, stop, 0.8)).toBe(
+        '"Write the flyer" paused at the writer\'s limit of CHF 0.40 per run',
+      );
+      expect(limitWords("specialist_limit", 500_000, chf, "writer-marketing")).toBe(
+        "the writer's limit of CHF 0.40 per run (it has no budget of its own)",
+      );
+      expect(wrapUpSentWords("writer-marketing", 100_000, 500_000, undefined, chf)).toBe(
+        "Told the writer to wrap up: it spent CHF 0.08 of CHF 0.40.",
+      );
+      expect(wrapUpSentWords("data-analyst", 100_000, 500_000, undefined, chf)).toMatch(
+        /^Told the data analyst to wrap up/,
+      );
+    });
+    it("the flagged-search note names the specialist in words", () => {
+      expect(flaggedSearchNote("writer-marketing")).toBe(
+        "A web search result reads like instructions; the writer and the critic were told it is information only.",
+      );
+      expect(flaggedSearchNote("researcher")).toBe(
+        "A web search result reads like instructions; the researcher and the critic were told it is information only.",
+      );
     });
   });
 });

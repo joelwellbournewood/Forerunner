@@ -800,7 +800,8 @@ describe("Inbox", () => {
       "Build the quote page · coder · about CHF 0.64",
       'Test the pick logic and page rendering · tester · about CHF 0.40 · after "Build the quote page"',
       "Human decisions: hosting, repository, quote source · you: answer its questions",
-      'Publish the page and write the runbook · ops-deploy · cost not known · after "Human decisions: hosting, repository, quote source", "Test the pick logic and page rendering" · Needs Docker',
+      // W15-43 (w15-words): the specialist in words, never its registry key (before: "ops-deploy").
+      'Publish the page and write the runbook · deployment specialist · cost not known · after "Human decisions: hosting, repository, quote source", "Test the pick logic and page rendering" · Needs Docker',
     ]);
     expect(within(card).getByTestId("intake-total")).toHaveTextContent(
       "About CHF 1.04 for 2 of the 3 tasks the agent does; the other one has no estimate yet.",

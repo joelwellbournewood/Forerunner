@@ -263,10 +263,15 @@ export function reviewLevelChoices(dockerReady: boolean | null): { tier: number;
 export const WHO_AGENT = "";
 export const WHO_PERSON = "person";
 
+/**
+ * Who does a task, as the Tasks tab's column, its filter and the drawer name it: "Agent's
+ * choice", "You", or the specialist in words (W15-43: "writer", never "writer-marketing", the
+ * registry's key; `specialistName`).
+ */
 export function whoName(specialist: string | null | undefined): string {
   if (!specialist) return "Agent's choice";
   if (specialist === WHO_PERSON) return "You";
-  return specialist;
+  return specialistName(specialist) ?? specialist;
 }
 
 /**

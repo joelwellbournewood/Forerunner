@@ -192,4 +192,91 @@ describe("w15-words, wave 15 run B", () => {
       }
     });
   });
+  describe("W15-43: a specialist is named in words on the Tasks tab and the plan card", () => {
+    /** A plan card as the daemon files it, with two tasks and their first-session estimates. */
+    const planCard = (
+      tasks: { key: string; title: string; specialist?: string; usd: number }[],
+    ) => ({
+      id: "req_intake",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: "sess_9",
+      kind: "approval",
+      why: 'Intake for "Atlas"',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Launch",
+                successCriteria: [],
+                targetDate: null,
+                tasks: tasks.map((t) => ({
+                  key: t.key,
+                  title: t.title,
+                  outcome: "done",
+                  acceptanceCriteria: [],
+                  priority: 5,
+                  dependsOn: [],
+                  ...(t.specialist ? { specialist: t.specialist } : {}),
+                })),
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "First.",
+            items: tasks.map((t) => ({ key: t.key, estimateUsdMicro: t.usd })),
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+
+    it("the plan card says 'writer', never 'writer-marketing'", async () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(
+        planCard([
+          { key: "a", title: "Write the flyer", specialist: "writer-marketing", usd: 250_000 },
+          { key: "b", title: "Build the page", specialist: "coder", usd: 400_000 },
+        ]) as never,
+      );
+      renderApp("/inbox", harness);
+      const card = await screen.findByTestId("intake-card");
+      const tasks = within(card).getAllByTestId("intake-task");
+      expect(tasks[0]).toHaveTextContent("Write the flyer · writer · about CHF 0.20");
+      expect(card).not.toHaveTextContent("writer-marketing");
+    });
+
+    it("the Who column, its filter and the drawer say 'writer'", async () => {
+      const harness = createHarness();
+      addTask(harness, "t_flyer", "Write the flyer", {
+        status: "ready",
+        specialist: "writer-marketing",
+      });
+      renderApp("/projects/proj_atlas/tasks?task=t_flyer", harness);
+      const row = await rowOf("t_flyer");
+      expect(within(row).getByText("writer")).toBeInTheDocument();
+      expect(row).not.toHaveTextContent("writer-marketing");
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(drawer).not.toHaveTextContent("writer-marketing");
+      const options = Array.from(document.querySelectorAll("option")).map((o) => o.textContent);
+      expect(options).not.toContain("writer-marketing");
+    });
+  });
 });

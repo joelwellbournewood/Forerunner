@@ -2059,7 +2059,9 @@ budget-stop; the owner's decision of 2026-11-02).**
   before that step.", and "Told the coder to wrap up: it spent CHF 0.02 of CHF 0.15, and its next
   step could take it past CHF 0.07." (W15-16: the start line said "at CHF 0.07" and the run was
   told at CHF 0.02; both lines now name the real trigger, spend plus the next step's worst
-  case). `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
+  case). `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
+  (`flaggedSearchNote`, executor.ts) name the specialist in words (`saidByName`: "the writer", never "writer-marketing"; W15-43, W15B-78).
+  `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
   centime as "less than CHF 0.01" (W15-16). No
   "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
   "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end

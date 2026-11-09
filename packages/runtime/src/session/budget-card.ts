@@ -1,4 +1,5 @@
 import { chfToUsdMicro, DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
+import { saidByName } from "@forerunner/critic";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   HumanRequestRow,
@@ -93,7 +94,8 @@ export function budgetStopTitle(
     case "task_budget":
       return `${title} paused at its budget of ${chf}`;
     case "specialist_limit":
-      return `${title} paused at the ${stop.specialist}'s limit of ${chf} per run`;
+      // W15-43: the specialist in words ("the writer"), never its registry key.
+      return `${title} paused at the ${saidByName(stop.specialist) ?? "specialist"}'s limit of ${chf} per run`;
     case "session":
       return `${title} paused at this session's budget of ${chf}`;
     case "project":
