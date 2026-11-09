@@ -743,4 +743,30 @@ describe("w15-chat, wave 15", () => {
     expect(sent).not.toContain("(not yet mentioned in this conversation)");
     await w.store.close();
   });
+
+  // W15-37: with two tasks titled "Write the guide", "redo Write the guide" in chat asked to
+  // "say more of the title", which no words could do.
+  it("chat tells two same-titled tasks apart and redoes the one the person names (W15-37)", async () => {
+    const w = await setup();
+    const first = await task(w, "Write the guide", {
+      status: "done",
+      pr_url: "https://github.com/o/quote/pull/17",
+    } as never);
+    w.clock.advance(60_000);
+    const second = await task(w, "Write the guide", {
+      status: "done",
+      pr_url: "https://github.com/o/quote/pull/18",
+    } as never);
+    const asked = await w.chat("redo Write the guide");
+    expect(asked.reply).toBe(
+      'Two tasks are called "Write the guide": #17 and #18. Say which, for example "Write the guide #17".',
+    );
+    expect(w.provider.calls).toHaveLength(0);
+    const readBack = await w.chat("redo Write the guide #18");
+    expect(readBack.pendingConfirmation?.readback).toMatch(/^Redo "Write the guide"\?/);
+    await w.chat("yes");
+    expect((await w.store.task.mustGet(second.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(first.id)).status).toBe("done");
+    await w.store.close();
+  });
 });

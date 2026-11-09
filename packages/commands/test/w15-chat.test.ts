@@ -194,4 +194,104 @@ describe("w15-chat, wave 15", () => {
     expect(parsed.question?.text).toBe(`${ZERO_REFUSED.month} Which value did you mean?`);
     expect(parsed.question?.text).not.toContain("budget.set");
   });
+
+  // W15-37 (wave 13 polish-words W14-7; live check 2 made two same-titled tasks): "redo Write
+  // the guide" with two tasks of that title asked to "say more of the title", which cannot help.
+  it("two tasks with the same title are told apart by their pull request, state or age, and that word picks one (W15-37)", async () => {
+    const w = await world();
+    const task = (over: Record<string, unknown>) =>
+      w.store.task.insert({
+        project_id: w.game.id,
+        title: "Write the guide",
+        status: "done",
+        ...over,
+      } as never);
+    const a = await task({ pr_url: "https://github.com/o/game/pull/17" });
+    w.clock.advance(60_000);
+    const b = await task({ pr_url: "https://github.com/o/game/pull/18" });
+    const redo = (words: string) =>
+      w.executor.execute({
+        name: "task.reopen",
+        params: { task: words, project: "Game" },
+        ctx: w.ctx({ source: "ui" }),
+      });
+    const asked = refused(await redo("Write the guide"));
+    expect(asked.reason).toBe(
+      'Two tasks are called "Write the guide": #17 and #18. Say which, for example "Write the guide #17".',
+    );
+    expect(asked.reason).not.toMatch(/more of the title/);
+    // The word the sentence gave picks that one.
+    const picked = await redo("Write the guide #17");
+    expect(picked.status).toBe("done");
+    expect((await w.store.task.mustGet(a.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(b.id)).status).toBe("done");
+    // Through chat's words, as the parser hands them on.
+    const parsed = await new IntentParser(w.registry).parse("redo Write the guide #18", {
+      source: "chat",
+      timezone: "Europe/Zurich",
+      now: w.clock.now(),
+      activeProjectId: w.game.id,
+      projects: [{ id: w.game.id, name: "Game" }],
+    });
+    expect(parsed.commands).toEqual([
+      { name: "task.reopen", params: { task: "Write the guide #18" } },
+    ]);
+    expect(
+      (await w.executor.compose(parsed.commands, w.ctx({ activeProjectId: w.game.id }))).status,
+    ).not.toBe("refused");
+
+    // Without pull requests: the state tells them apart ("the done one").
+    const w2 = await world();
+    const t2 = (status: string) =>
+      w2.store.task.insert({ project_id: w2.game.id, title: "Write the notes", status } as never);
+    const done2 = await t2("done");
+    await t2("cancelled");
+    const again = refused(
+      await w2.executor.execute({
+        name: "task.reopen",
+        params: { task: "Write the notes", project: "Game" },
+        ctx: w2.ctx({ source: "ui" }),
+      }),
+    );
+    expect(again.reason).toBe(
+      'Two tasks are called "Write the notes": the done one and the cancelled one. Say which, for example "Write the notes, the done one".',
+    );
+    const pickedDone = await w2.executor.execute({
+      name: "task.reopen",
+      params: { task: "Write the notes, the done one", project: "Game" },
+      ctx: w2.ctx({ source: "ui" }),
+    });
+    expect(pickedDone.status).toBe("done");
+    expect((await w2.store.task.mustGet(done2.id)).status).toBe("ready");
+
+    // Same state, no pull request: their age ("the older one").
+    const w3 = await world();
+    const older = await w3.store.task.insert({
+      project_id: w3.game.id,
+      title: "Write the intro",
+      status: "done",
+    } as never);
+    w3.clock.advance(60_000);
+    await w3.store.task.insert({
+      project_id: w3.game.id,
+      title: "Write the intro",
+      status: "done",
+    } as never);
+    const third = refused(
+      await w3.executor.execute({
+        name: "task.reopen",
+        params: { task: "Write the intro", project: "Game" },
+        ctx: w3.ctx({ source: "ui" }),
+      }),
+    );
+    expect(third.reason).toBe(
+      'Two tasks are called "Write the intro": the older one and the newer one. Say which, for example "Write the intro, the older one".',
+    );
+    await w3.executor.execute({
+      name: "task.reopen",
+      params: { task: "Write the intro, the older one", project: "Game" },
+      ctx: w3.ctx({ source: "ui" }),
+    });
+    expect((await w3.store.task.mustGet(older.id)).status).toBe("ready");
+  });
 });

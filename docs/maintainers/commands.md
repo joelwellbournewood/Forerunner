@@ -544,6 +544,14 @@ among them.
   Before, every client but chat read "budget.set: invalid parameters". The parser's question
   (`invalidQuestion`) asks with the same sentence and no command name ("The monthly cap must be
   more than … Which value did you mean?").
+- **Tasks of one title (W15-37).** `findTask` (task.ts) told two tasks titled "Write the guide"
+  apart by nothing: "Say more of the title", which no words could do. Now tasks with the same
+  title are named by what tells them apart (`sameTitleTags`): their pull requests ("#17 and
+  #18") when each has its own, else their states ("the done one and the cancelled one"), else
+  their age ("the older one and the newer one", then "the first one", "the second one" …):
+  'Two tasks are called "Write the guide": #17 and #18. Say which, for example "Write the guide
+  #17".' That word after the title picks one ("Write the guide #17", "Write the notes, the done
+  one", "… older"), in the UI's commands and in chat ("redo Write the guide #18").
 
 ## How to change it
 
