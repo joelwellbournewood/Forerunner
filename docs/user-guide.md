@@ -83,7 +83,13 @@ Changes lists the creation once ("Created the project … and made it the active
 **Undo** removes the project and makes the project you had before the active one again. "Go
 back" in chat returns to the project you were on before New project. After the Undo the name is
 free for a new project, the project's open cards leave the Inbox, and Changes shows its rows as
-"… (removed)", without Undo.
+"… (removed)", without Undo. A removed project starts nothing, by itself or by a press: its page
+(from an old notification or a bookmark) says "This project was removed." with no Start session,
+a start asked for anyway is refused with 'The project "…" was removed, so nothing of it runs.',
+work that waited for a Claude credential or a monthly handover of it no longer starts, and a
+plan still being drafted when you pressed Undo is never filed. While a session of the project
+runs, its Undo waits: Changes says "Cannot be undone now: a session of … is running. Stop it
+first."
 The goal is optional when you write a brief: left empty, the brief's first sentence is the goal.
 Without a repository link, a brief of a sentence or two (under 200 characters, no list) gets a
 small plan: one milestone of one to three tasks and two short documents (if the agent plans

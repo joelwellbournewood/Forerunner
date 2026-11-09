@@ -93,8 +93,13 @@ export function ProjectPage() {
     return <ErrorBanner message={project.error ?? "Project not found."} onRetry={project.reload} />;
 
   const base = `/projects/${encodeURIComponent(id)}`;
+  // W15B-02: a project whose creation was undone (GET /projects/:id says `archived`) starts
+  // nothing: its page says so and offers no start, no repository and no plan's Retry (an old
+  // notification or a bookmark still opens it; the daemon refuses any start of it anyway).
+  const removed = view.status === "archived";
   // The plan banner says "Drafting the plan…" / "Waiting for you: approve the plan" itself.
   const planBanner =
+    !removed &&
     (view.progress?.total ?? 0) === 0 &&
     (intake === "drafting" ||
       intake === "pending" ||
@@ -127,11 +132,18 @@ export function ProjectPage() {
           {/* The status sentence with its one button, except a start: Start session beside it
               is the one start button (later #56: "Continue" and "Start session" opened the same
               dialog). */}
-          {planBanner ? null : (
+          {removed ? (
+            <p
+              className="text-sm text-neutral-600 dark:text-neutral-400"
+              data-testid="project-removed"
+            >
+              This project was removed.
+            </p>
+          ) : planBanner ? null : (
             <ProjectStatus project={view} testId="project-status" showAction={!view.working} />
           )}
           <div className="ml-auto flex gap-2">
-            {view.repos && view.repos.length === 0 ? (
+            {!removed && view.repos && view.repos.length === 0 ? (
               <Button
                 variant="ghost"
                 onClick={() => setRepoOpen(true)}
@@ -149,7 +161,7 @@ export function ProjectPage() {
               >
                 Open running session
               </Link>
-            ) : (
+            ) : removed ? null : (
               <Button
                 variant="primary"
                 onClick={() => setStartOpen(true)}
@@ -167,7 +179,7 @@ export function ProjectPage() {
         ) : null}
       </header>
       {/* U-046: the plan from the brief, drafting, waiting in the Inbox or failed with a Retry. */}
-      <IntakeBanner projectId={id} />
+      {removed ? null : <IntakeBanner projectId={id} />}
       <nav
         className="mb-3 flex items-end gap-1 overflow-x-auto border-b border-neutral-200 dark:border-neutral-800"
         aria-label="Project tabs"
@@ -212,7 +224,7 @@ export function ProjectPage() {
           <ChatTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
         ) : null}
       </div>
-      {repoOpen ? (
+      {repoOpen && !removed ? (
         <CreateRepoDialog
           open={repoOpen}
           onClose={() => setRepoOpen(false)}
@@ -222,7 +234,7 @@ export function ProjectPage() {
         />
       ) : null}
       <StartSessionDialog
-        open={startOpen}
+        open={startOpen && !removed}
         onClose={() => setStartOpen(false)}
         projectId={id}
         reference={view.budget}

@@ -2550,6 +2550,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // W15B-02, as the daemon: a removed project (its creation undone) starts nothing, refused in
+    // one sentence with its name before the removal (the daemon keeps it in the settings; the
+    // fake's card has only "<name> (removed)").
+    const removed = state.projects.find(
+      (p) => p.id === parsed.data.projectId && p.status === "archived",
+    );
+    if (removed)
+      return errorBody(
+        c,
+        409,
+        "conflict",
+        `The project "${removed.name.replace(/ \(removed(?: \d+)?\)$/, "")}" was removed, so nothing of it runs.`,
+      );
     // As the daemon (later #38): nothing a session could run is refused with the start check's
     // sentence, whoever asks (the Start dialog, Continue where it stopped, the phone).
     if (parsed.data.projectId) {

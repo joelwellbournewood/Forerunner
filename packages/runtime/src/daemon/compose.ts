@@ -37,6 +37,7 @@ import {
   scheduleMirror,
   web,
 } from "@forerunner/capabilities";
+import { removedProjectRefusal } from "@forerunner/commands";
 import { criticSettingsOf } from "@forerunner/critic";
 import {
   type AppDirs,
@@ -3255,6 +3256,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     runSession: async ({ agentId, projectId, taskId, budgetCapUsdMicro }) => {
       await schemaSync.assertCanSync("session.start");
       if (!provider) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
+      // W15B-02: `fr jobs handover` runs the job without `startSession`; a removed project's
+      // handover is refused here too.
+      await refuseRemovedProject(projectId);
       const project = await store.project.mustGet(projectId);
       await refreshCapabilities();
       // No memory anywhere in the session (spec P.15 "only the repo and docs", ADR 0060):
@@ -3291,11 +3295,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       time: cal.time,
       enabled: cal.enabled,
     });
-    const projects = await store.project.list({}, { limit: 1000 });
+    // W15B-02: a removed project (its creation undone) has no handover: its schedule goes.
+    const projects = (await store.project.list({}, { limit: 1000 })).filter(
+      (p) => p.status !== "archived",
+    );
     return {
       calibration: cal.enabled,
       handover: syncHandoverSchedules(target, projects, h.timezone),
     };
+  };
+  /**
+   * W15B-02: every start passes here (a press, the chat, an answer's resume, a plan's Approve, a
+   * credential's wake, a budget's resume, a handover job), so a removed project starts nothing
+   * from any of them: the start is refused in one sentence before any session row or spend.
+   */
+  const refuseRemovedProject = async (projectId: string | undefined | null) => {
+    if (!projectId) return;
+    const project = await store.project.get(projectId);
+    const refusal = project ? removedProjectRefusal(project) : null;
+    if (refusal)
+      throw new ForerunnerError("validation", refusal, {
+        details: { cause: "project_removed", projectId },
+      });
   };
   const startSession = async (req: StartRequest) => {
     // The model watch, the memory consolidation and the monthly jobs are local jobs (this
@@ -3305,6 +3326,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (isModelWatchReminderRequest(req)) return modelWatch.fileDueReminders();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
     if (isCalibrationRequest(req)) return calibrationJob.run();
+    await refuseRemovedProject(req.projectId);
     if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
     return runSession(req);
   };
@@ -3557,6 +3579,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // R-refusedstays: a project kept on a source that cannot serve is taken too when another
       // credential serves its work now (a subscription saved while the only key is refused).
       const ready = await taskBilling.takeReady(async (projectId) => {
+        // W15B-02: a removed project's wait is taken (and dropped below) even while the
+        // credential still cannot serve, so it never waits on the source again.
+        const project = await store.project.get(projectId).catch(() => undefined);
+        if (project && removedProjectRefusal(project)) return true;
         const work = await store.task.readyTasks(projectId, { limit: 1 }).catch(() => []);
         return work.length > 0 && (await runNowProbe(projectId)).runs;
       });
@@ -3565,7 +3591,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       for (const projectId of [...new Set(ready.map((w) => w.projectId))]) {
         const entry = ready.find((w) => w.projectId === projectId);
         const project = await store.project.get(projectId).catch(() => undefined);
-        if (!entry || !project) continue;
+        // W15B-02: a removed project's wait was taken above and is not kept: nothing of it
+        // starts, and no later tick tries it again.
+        if (!entry || !project || removedProjectRefusal(project)) continue;
         const plan = await intake.status(projectId).catch(() => null);
         if (plan?.state === "waiting") {
           plans.push({ projectId, sourceId: entry.sourceId, agentId: entry.agentId });
@@ -3743,6 +3771,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // session.start refuses in words what the Start dialog refuses (design §3.6, §3.9).
       startBlocked: async (projectId, budgetUsdMicro) => {
         const project = await store.project.mustGet(projectId);
+        // W15B-02: the chat says at once that a removed project starts nothing (the start
+        // itself is refused in `startSession`, whatever asks for it).
+        const removed = removedProjectRefusal(project);
+        if (removed) return removed;
         const check = await startCheck(
           { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
           project.id,

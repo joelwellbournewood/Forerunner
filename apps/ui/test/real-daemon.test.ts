@@ -12,7 +12,14 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
+import {
+  appDirs,
+  errorMessage,
+  join,
+  run,
+  SimulatedClock,
+  SystemClock,
+} from "@forerunner/platform";
 import { WRAP_UP_MARK } from "@forerunner/runtime/agent/loop";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import {
@@ -22,6 +29,7 @@ import {
 } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { planEstimateUsdMicro } from "@forerunner/runtime/estimates/model";
+import { handoverAgentId } from "@forerunner/runtime/jobs/handover";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
@@ -13807,4 +13815,352 @@ describe("w15-tail, wave 15 run B", () => {
       await world.host.stop();
     }
   }, 240_000);
+});
+
+describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", () => {
+  const REMOVED = 'The project "Garden club" was removed, so nothing of it runs.';
+  /** A call the test holds: `reached` once the stand-in got it, nothing answers until `release`. */
+  function gate() {
+    let reached!: () => void;
+    let release!: () => void;
+    const was = new Promise<void>((r) => {
+      reached = r;
+    });
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    return { reached: was, arrive: () => reached(), released, release: () => release() };
+  }
+  type Gate = ReturnType<typeof gate>;
+  /** The stand-in model with the first intake or specialist call held at a gate. */
+  function gatedPlayer(gates: { intake?: Gate; specialist?: Gate }) {
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(mkdtempSync(join(tmpdir(), "fr-w15-tail-")), "c.jsonl") }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      const role = detectRole(req).role;
+      const g = role === "intake" || role === "specialist" ? gates[role] : undefined;
+      if (!g) return stream(req);
+      gates[role as "intake" | "specialist"] = undefined;
+      return (async function* () {
+        g.arrive();
+        await g.released;
+        yield* stream(req);
+      })();
+    };
+    return player;
+  }
+  /** A daemon on one home (sqlite on disk), composed again at will. */
+  function persistedHome() {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-tail-removed-"));
+    const env = { FORERUNNER_HOME: home };
+    return {
+      env,
+      dirs: appDirs({ env }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    };
+  }
+  /** New project as the dialog sends it, and the Changes row whose Undo removes it. */
+  async function newProject(client: DaemonClient, extra: { brief?: string } = {}) {
+    const before = (await client.changes({ limit: 200 })).map((c) => c.id);
+    const created = await client.createProject({
+      name: "Garden club",
+      goal: "A page for the garden club",
+      ...(extra.brief ? { brief: extra.brief, intake: true } : {}),
+      switch: true,
+    });
+    const row = (await client.changes({ limit: 200 })).find(
+      (c) => !before.includes(c.id) && c.projectId === created.id,
+    );
+    if (!row) throw new Error("no Changes row for the creation");
+    return { project: created, creation: row };
+  }
+  const sessionsOf = async (rt: RuntimeApp, projectId: string) =>
+    (await rt.store.session.list({ project_id: projectId } as never)).filter(
+      (s) => s.summary !== "conversation" && !(s.plan as { intake?: unknown } | null)?.intake,
+    );
+
+  it("(a) the creation's Undo while the plan from the brief is being drafted: the plan is never filed for the removed project, also after a restart", async () => {
+    const home = persistedHome();
+    const intake = gate();
+    let { rt, client } = await composeWithRolePlayer(
+      {},
+      { ...home, provider: gatedPlayer({ intake }) as never },
+    );
+    try {
+      const me = (await client.me()).id;
+      const { project, creation } = await newProject(client, {
+        brief: "A one-page site for the garden club with the opening hours.",
+      });
+      await intake.reached;
+      // The planning call is no session of the project's: the Undo goes through.
+      const undone = await client.undoChange(creation.id);
+      expect(undone.status).toBe("done");
+      intake.release();
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+      const plans = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests.filter((r) => r.projectId === project.id);
+      // Before: the plan card was filed after the Undo, for a project that is gone.
+      expect(await plans(client)).toEqual([]);
+      expect(await rt.store.humanRequest.list({ project_id: project.id } as never)).toEqual([]);
+      await rt.close();
+      ({ rt, client } = await composeWithRolePlayer({}, home));
+      expect(await plans(client)).toEqual([]);
+      expect((await client.project(project.id)).status).toBe("archived");
+    } finally {
+      intake.release();
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(b) POST /sessions on a removed project is refused in one sentence before any session row, also after a restart; the chat's start says the same", async () => {
+    const home = persistedHome();
+    let { rt, client } = await composeWithRolePlayer({}, home);
+    try {
+      const me = (await client.me()).id;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      expect((await client.project(project.id)).status).toBe("archived");
+      // Before: the session started (and spent) on the removed project.
+      await expect(client.startSession({ agentId, projectId: project.id })).rejects.toThrow(
+        REMOVED,
+      );
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      // The chat's "start a session" on it (by its id) says the same at once.
+      const said = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: project.id } }],
+        source: "ui",
+      });
+      expect(said.status).toBe("refused");
+      expect(said.reason).toBe(REMOVED);
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      await rt.close();
+      ({ rt, client } = await composeWithRolePlayer({}, home));
+      await expect(client.startSession({ agentId, projectId: project.id })).rejects.toThrow(
+        REMOVED,
+      );
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      expect(me).toBeTruthy();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(c) a removed project's kept credential wait: the wake starts nothing of it and drops the wait from the key, after a restart", async () => {
+    const key = ["sk-ant-api03-", "w15tail", "6".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-11-09T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-tail-wake-"));
+    const compose = async () => {
+      const model = createRolePlayer(
+        benchOptionsFromEnv(
+          { FORERUNNER_BENCH_DELAY_MS: "0" },
+          new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+        ),
+      );
+      const standIn = messagesApiStandIn({ model, clock, answerFor: keyRule({}) });
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({ anthropic_api_key: key }),
+        fetchImpl: standInFetch(standIn, {
+          fallback: async () => new Response("not here", { status: 404 }),
+        }),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    let { rt, client } = await compose();
+    const waitsOnKey = async () => {
+      const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+        (s) => s.kind === "api_key",
+      );
+      const list = Array.isArray(src?.limits.waiting) ? src.limits.waiting : [];
+      return (list as { projectId: string }[]).map((w) => w.projectId);
+    };
+    try {
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the note",
+        outcome: "The note is written",
+        acceptanceCriteria: ["it is written"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      // The only key rests until 08:30 UTC; a session meets the wait and keeps it on the key.
+      const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+        (s) => s.kind === "api_key",
+      );
+      if (!src) throw new Error("no api_key source");
+      await rt.store.billingSource.patch(src.id, {
+        limits: { ...src.limits, restingUntil: "2026-11-09T08:30:00Z" },
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = first.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session that met the wait to end (at least 20 s)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      expect(await waitsOnKey()).toEqual([project.id]);
+      // The creation's Undo removes the project; its task stays ready, its wait on the key.
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      await rt.close();
+      ({ rt, client } = await compose());
+      // At the reset, the scheduler's tick wakes what waited: nothing of the removed project.
+      clock.set(Date.parse("2026-11-09T08:31:00Z"));
+      // Before: 1 (a session of the removed project started by itself and spent).
+      expect(await rt.billing.waits.wake()).toBe(0);
+      expect((await sessionsOf(rt, project.id)).map((s) => s.trigger)).toEqual(["manual"]);
+      expect(await waitsOnKey()).toEqual([]);
+      // The next tick finds nothing to try again.
+      expect(await rt.billing.waits.wake()).toBe(0);
+    } finally {
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false }).catch(() => undefined);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(d) a removed project's handover schedule goes at the next tick, and a start from any trigger (its handover job, a credential's return) is refused with no session row, also after a restart", async () => {
+    const home = persistedHome();
+    let { rt, client } = await composeWithRolePlayer({}, { ...home, startServices: false });
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...row.settings, handover: { enabled: true, day: 28, time: "23:00" } },
+      });
+      const handovers = () =>
+        rt.scheduler
+          .list()
+          .filter((s) => s.id.startsWith("handover:"))
+          .map((s) => s.projectId);
+      await rt.scheduler.tick();
+      expect(handovers()).toEqual([project.id]);
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      await rt.scheduler.tick();
+      // Before: the archived row kept its monthly handover, which ran a session by itself.
+      expect(handovers()).toEqual([]);
+      const refused = async (req: Parameters<RuntimeApp["scheduler"]["requestStart"]>[0]) => {
+        const entry = await rt.scheduler.requestStart(req);
+        const outcome = await rt.scheduler.runOutcome(entry.id);
+        return outcome && !outcome.ok ? errorMessage(outcome.error) : "ran";
+      };
+      expect(
+        await refused({
+          agentId: handoverAgentId(project.id),
+          projectId: project.id,
+          trigger: "schedule",
+          reason: "monthly handover",
+        }),
+      ).toBe(REMOVED);
+      expect(
+        await refused({
+          agentId,
+          projectId: project.id,
+          trigger: "budget_reset",
+          reason: "a Claude credential it waited for can serve again",
+        }),
+      ).toBe(REMOVED);
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      await rt.close();
+      ({ rt, client } = await composeWithRolePlayer({}, { ...home, startServices: false }));
+      await rt.scheduler.tick();
+      expect(handovers()).toEqual([]);
+      expect(
+        await refused({ agentId, projectId: project.id, trigger: "message", reason: "chat" }),
+      ).toBe(REMOVED);
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(e) the creation's Undo while a session of that project runs is refused with its sentence and changes nothing; once it ended, the Undo goes through", async () => {
+    const home = persistedHome();
+    const specialist = gate();
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      { ...home, provider: gatedPlayer({ specialist }) as never },
+    );
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await specialist.reached;
+      const reason = "a session of Garden club is running. Stop it first";
+      // Changes says why before any press; the press is refused with it.
+      const listed = (await client.changes({ limit: 200 })).find((c) => c.id === creation.id);
+      expect(listed?.undoable).toBe(false);
+      expect(listed?.undoBlockedReason).toBe(reason);
+      const refused = await client.undoChange(creation.id);
+      expect(refused.status).toBe("refused");
+      expect(refused.reason).toBe(reason);
+      const still = await client.project(project.id);
+      expect([still.status, still.name]).toEqual(["active", "Garden club"]);
+      expect((await client.me()).activeProjectId).toBe(project.id);
+      specialist.release();
+      await eventually(
+        async () => (await client.session(sessionId)).status !== "running",
+        "the session to end (at least 60 s)",
+        async () => (await client.session(sessionId)).status,
+        60_000,
+      );
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      expect((await client.project(project.id)).status).toBe("archived");
+    } finally {
+      specialist.release();
+      await rt.close();
+    }
+  }, 120_000);
 });

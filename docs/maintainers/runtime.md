@@ -3791,7 +3791,25 @@ option), so the creation and the active project are one change log row whose Und
 project and puts the previous active project back, from the row alone (tested after a restart:
 real-daemon "w15-chat, wave 15"). The switch keeps the history "go back" reads, as
 `project.switch` does; the Undo frees the name (the archived row becomes "X (removed)", so New
-project "X" works again) and withdraws the project's open cards (commands.md, `project.create`). With a
+project "X" works again) and withdraws the project's open cards (commands.md, `project.create`).
+W15B-02: a removed project (status `archived`) starts nothing, by itself or by a press (fail
+closed: money). One guard where every start passes, compose.ts `startSession`
+(`refuseRemovedProject`, after the local jobs, before the handover job and `runSession`): a
+`POST /sessions`, the chat's `session.start`, an Inbox answer's resume, a plan approval's start,
+a credential's wake, a budget's resume, a pull request comment and the handover job are refused
+there with `removedProjectRefusal` ('The project "X" was removed, so nothing of it runs.',
+`ForerunnerError` `validation`, `details.cause: "project_removed"`) before any session row;
+`HandoverJob`'s own `runSession` asks too (`fr jobs handover` runs it without `startSession`).
+`POST /sessions` refuses at once with the same sentence before the scheduler is asked; the chat
+says it through `ports.startBlocked`. `credentialWaits.wake` takes a removed project's wait off
+its source (also while the credential still cannot serve) and starts nothing of it, so no later
+tick tries it again; `refreshJobSchedules` schedules no handover for it. The intake refuses to
+draft for it (`propose`) and reads the status again right before it files the plan card, so a
+plan drafted while the creation was undone is never filed (the call made is not given back; the
+background job records no failure on the removed project). The creation's Undo is refused while
+a session of the project runs (commands.md). Tests: real-daemon "w15-tail, wave 15 run B: a
+removed project starts nothing (W15B-02)" (each case also after a restart where state is kept).
+With a
 repository it clones or fetches `<worktrees>/docs/<project id>` (the install's token scoped
 to the clone URL's http(s) origin by `gitAuthFor`, ADR 0069; a local or ssh remote gets no
 token), checks out `fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold`

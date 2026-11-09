@@ -9,6 +9,7 @@ import {
   type RepoRef,
   resolveGitToken,
 } from "@forerunner/capabilities";
+import { removedProjectRefusal } from "@forerunner/commands";
 import { docFile, renderStandardDoc, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
 import {
   type Clock,
@@ -108,6 +109,19 @@ export const intakeKey = (projectId: string): string => `${INTAKE_KEY_PREFIX}${p
 export const isIntakeKey = (key: string): boolean => key.startsWith(INTAKE_KEY_PREFIX);
 /** `tool` of the audit rows the intake writes: the proposal filed, the answer applied. */
 export const INTAKE_AUDIT_TOOL = "project.intake";
+/**
+ * W15B-02: a removed project (its creation undone) gets no plan: the draft is refused in the
+ * same sentence a start is (`removedProjectRefusal`), before the model call and again right
+ * before its card would be filed.
+ */
+function refuseRemoved(project: ProjectRow): void {
+  const removed = removedProjectRefusal(project);
+  if (removed)
+    throw new ForerunnerError("validation", removed, {
+      details: { cause: "project_removed", projectId: project.id },
+    });
+}
+
 /** Why an intake cannot run on this install: no Claude key or subscription (`unavailable`). */
 export const INTAKE_NEEDS_A_MODEL = `Planning from the brief needs a Claude key or subscription. Add one in the app: ${SETUP_ASSISTANT_PATH}, then retry.`;
 /**
@@ -1207,6 +1221,11 @@ export class IntakeService {
     const copy = this.copyWhileDrafting(projectId);
     const job = this.propose(projectId, opts)
       .catch(async (e: unknown) => {
+        // W15B-02: the project was removed meanwhile: nothing to record on it.
+        if (e instanceof ForerunnerError && e.details?.cause === "project_removed") {
+          this.logger.info("no plan filed: its project was removed", { projectId });
+          throw e;
+        }
         const wait = await this.waitFor(e, projectId);
         if (wait) {
           // U-078: no failure and no Try again (it cannot work while the credential is refused
@@ -1342,6 +1361,8 @@ export class IntakeService {
   async propose(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
     const { store } = this.deps;
     const project = await store.project.mustGet(projectId);
+    // W15B-02: a removed project (its creation undone) gets no plan: no call, no card.
+    refuseRemoved(project);
     const open = await this.pendingFor(project.id);
     const changes = (opts.changes ?? []).map((c) => c.trim()).filter(Boolean);
     if (open) {
@@ -1411,6 +1432,9 @@ export class IntakeService {
     const docPaths = Object.keys(proposal.docs);
     const n = sizes(proposal, shaped);
     const estimate = estimateOf(proposal);
+    // W15B-02: the creation's Undo may have come while the model drafted (the call made is not
+    // given back): read again right before the card is filed, so a removed project gets none.
+    refuseRemoved(await store.project.mustGet(project.id));
     const row = await store.humanRequest.insert({
       human_id: this.deps.human.id,
       project_id: project.id,

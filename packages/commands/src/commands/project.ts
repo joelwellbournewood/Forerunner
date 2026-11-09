@@ -56,6 +56,34 @@ export function removedProjectName(project: ProjectRow): string | null {
   return typeof kept === "string" && kept ? kept : project.name;
 }
 
+/**
+ * W15B-02: what refuses anything that would start work on a removed project (a start from any
+ * trigger, the intake's plan, a credential's wake), in one sentence; null for a project still
+ * there. A removed project starts nothing, by itself or by a press (fail closed: money).
+ */
+export function removedProjectRefusal(project: ProjectRow): string | null {
+  const name = removedProjectName(project);
+  return name === null ? null : `The project "${name}" was removed, so nothing of it runs.`;
+}
+
+/**
+ * W15B-02: whether a session of the project runs now (running, paused or about to run), never
+ * counting the intake's planning call or the chat's own row. The creation's Undo is refused while
+ * one runs: removing the project under a working session would leave it spending on a project
+ * that is gone.
+ */
+async function runningSessionOf(store: StateStore, projectId: string): Promise<boolean> {
+  const rows = await store.session.list({
+    project_id: projectId,
+    status: ["running", "paused", "planned"],
+  } as never);
+  return rows.some((s) => {
+    if (s.summary === "conversation") return false;
+    const plan = s.plan as { intake?: unknown } | null;
+    return !(plan && typeof plan === "object" && !Array.isArray(plan) && plan.intake);
+  });
+}
+
 async function freedName(store: StateStore, name: string): Promise<string> {
   for (let n = 1; ; n++) {
     const candidate = n === 1 ? `${name} (removed)` : `${name} (removed ${n})`;
@@ -260,6 +288,20 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
       projectId: project.id,
       activeProjectId: params.switch ? project.id : undefined,
     };
+  },
+  /**
+   * W15B-02: never while a session of the project runs (its planning call does not count: the
+   * plan it drafts is not filed for a removed project). The person stops it first; the Undo
+   * stays offered.
+   */
+  async undoBlocked(params, _before, after, ctx) {
+    const a = asObject(after);
+    const createdId = typeof a.project_id === "string" ? a.project_id : null;
+    if (!createdId) return null;
+    const row = await ctx.store.project.get(createdId);
+    if (!row || row.status === "archived") return null;
+    if (!(await runningSessionOf(ctx.store, createdId))) return null;
+    return `a session of ${row.name || params.name} is running. Stop it first`;
   },
   /**
    * W15-36: the project goes. It is archived (its tasks, cards and changes keep their rows) and
