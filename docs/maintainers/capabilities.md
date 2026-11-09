@@ -365,7 +365,7 @@ with their milestone.
   nothing more failed "no changes" although its branch held that work. A pull request open on
   the branch is now closed instead (`closeEmptied`: one comment saying why, then the close;
   the branch on the host stays as it was) and the result's summary is one sentence
-  (`emptiedSentence`: "Redone from main, it changed nothing, so #4 was closed."); a close the
+  (`emptiedSentence`: "The redo from main changed nothing, so #4 was closed."; W15-64); a close the
   host refuses leaves the pull request and the old summary. The same reading runs again after
   the branch is brought up to date with the base (the rebase or the merge before the push) and
   in `continueResolved` before its push (TM-1's sibling, the review fix-up): a branch whose
@@ -374,7 +374,7 @@ with their milestone.
   pull request is closed (`endUpToDate`, `closeEmptied` with `up_to_date`: "Brought up to date
   with main, this task's work no longer changes anything, so this pull request is closed. Its
   branch is kept.") and the task fails in one sentence ("#4 no longer changes anything on
-  main, so it was closed.", or "main already has this change." with no pull request). Before,
+  main, so it was closed.", or "The main branch already has this change." with no pull request). Before,
   a Tasks-tab Redo or a rework of a task whose change had reached main force-pushed main's head
   to its pull request, which the critic accepted and the Overview offered for Merge, and a fresh
   task's push opened an empty pull request. A task without a repository runs in the folder `workspaceFor` names

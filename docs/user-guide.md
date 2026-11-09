@@ -407,7 +407,7 @@ task's own commit on top of the default branch. If that redo pauses before its r
 a question), its next run continues the work done since the redo, never the old branch. If that
 redo changes nothing (the default
 branch already has what the task asks for), the task fails as any task with no change does
-("Failed: Redone from main, it changed nothing, so #8 was closed.", with **Try again**, **Mark
+("Failed: The redo from main changed nothing, so #8 was closed.", with **Try again**, **Mark
 done anyway** and **Cancel task** on its card): #8 is closed on GitHub with a comment saying why,
 its branch is kept, and nothing empty is offered for Merge. The same holds for any redo or
 rework whose change the default branch already has by the time it is pushed (someone made the

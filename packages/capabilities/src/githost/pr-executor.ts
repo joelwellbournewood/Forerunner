@@ -651,7 +651,7 @@ export type EmptiedWhy = "redone" | "empty" | "up_to_date";
 /**
  * TM-1 (leftovers7-tailmerge): the failed task's one sentence when its branch holds no change of
  * its own and the pull request open on it was closed (`closeEmptied`): after a redo from the
- * base ("Redone from main, it changed nothing, so #4 was closed."), a pull request that held no
+ * base ("The redo from main changed nothing, so #4 was closed."), a pull request that held no
  * change either, or one that no longer changes anything once brought up to date. `prNumber` is
  * null when no pull request was closed: only `up_to_date` has its own words then ("main already
  * has this change."). Polish owns the words.
@@ -659,11 +659,11 @@ export type EmptiedWhy = "redone" | "empty" | "up_to_date";
 export function emptiedSentence(prNumber: number | null, why: EmptiedWhy, base = "main"): string {
   if (why === "up_to_date")
     return prNumber === null
-      ? `${base} already has this change.`
+      ? `The ${base} branch already has this change.`
       : `#${prNumber} no longer changes anything on ${base}, so it was closed.`;
   return why === "redone"
-    ? `Redone from ${base}, it changed nothing, so #${prNumber} was closed.`
-    : `It changed nothing and #${prNumber} held no change, so #${prNumber} was closed.`;
+    ? `The redo from ${base} changed nothing, so #${prNumber} was closed.`
+    : `The last run changed nothing and #${prNumber} held no change, so it was closed.`;
 }
 
 /** The first words of a work-in-progress commit's subject. */
@@ -1305,7 +1305,7 @@ export class PrTaskExecutor implements TaskExecutor {
       why === "redone"
         ? `Forerunner did this task again from ${target.base} and it changed nothing, so this pull request is closed. Its branch is kept.`
         : why === "up_to_date"
-          ? `Brought up to date with ${target.base}, this task's work no longer changes anything, so this pull request is closed. Its branch is kept.`
+          ? `This task's work no longer changes anything on ${target.base}, so this pull request is closed. Its branch is kept.`
           : "Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.";
     try {
       await this.deps.host.commentOnPullRequest(target.repo, pr.number, said);
@@ -1339,7 +1339,7 @@ export class PrTaskExecutor implements TaskExecutor {
    * no longer holds any change of its own is not pushed. The pull request open on it is closed
    * (`closeEmptied`, `up_to_date`), its branch on the host kept as it was, and the task fails in
    * one sentence, as a task with no change does ("#4 no longer changes anything on main, so it
-   * was closed.", or "main already has this change." when no pull request was closed).
+   * was closed.", or "The main branch already has this change." when no pull request was closed).
    */
   private async endUpToDate(
     task: TaskRow,

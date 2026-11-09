@@ -19,6 +19,7 @@ import { GitOps } from "../src/githost/git.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
 import {
   DEPS_BASE_REF,
+  emptiedSentence,
   openedForAnotherTask,
   PrTaskExecutor,
   readForerunnerMarker,
@@ -1993,7 +1994,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     // Before: no commit, but an open pull request, so main's head was force-pushed to the branch
     // and the task went to review with an empty pull request that the app then offered for Merge.
     expect(redo.outcome, redo.summary).toBe("failed");
-    expect(redo.summary).toBe(`Redone from main, it changed nothing, so #${pr.number} was closed.`);
+    expect(redo.summary).toBe(`The redo from main changed nothing, so #${pr.number} was closed.`);
     expect(redo.prUrl).toBeUndefined();
     const after = await s.w.host.getPullRequest(s.repo, pr.number);
     expect([after.state, after.merged]).toEqual(["closed", false]);
@@ -2155,7 +2156,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     expect(await s.lines(["rev-parse", branch])).toEqual(held);
     const said = await s.w.host.listPullRequestComments(s.repo, pr.number);
     expect(said.map((c) => c.body.split(/\r?\n/)[0])).toEqual([
-      "Brought up to date with main, this task's work no longer changes anything, so this pull request is closed. Its branch is kept.",
+      "This task's work no longer changes anything on main, so this pull request is closed. Its branch is kept.",
     ]);
     await s.w.store.close();
   });
@@ -2173,7 +2174,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
       .execute(await s.ctx());
     // Before: the branch was pushed as main's head and the pull request call failed on it.
     expect(fresh.outcome, fresh.summary).toBe("failed");
-    expect(fresh.summary).toBe("main already has this change.");
+    expect(fresh.summary).toBe("The main branch already has this change.");
     expect(await s.w.host.listPullRequests(s.repo, { state: "all" })).toEqual([]);
     await s.w.store.close();
   });
@@ -2385,5 +2386,28 @@ describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
     for (const c of await w.host.listPullRequestComments({ owner: "o", name: "sample" }, pr.number))
       expect(visible(c.body)).not.toMatch(uuid);
     await w.store.close();
+  });
+
+  it("a branch emptied of the task's own change says so in one sentence each, with no comma splice and no number twice (W15-64)", () => {
+    expect(emptiedSentence(4, "redone")).toBe(
+      "The redo from main changed nothing, so #4 was closed.",
+    );
+    expect(emptiedSentence(4, "empty")).toBe(
+      "The last run changed nothing and #4 held no change, so it was closed.",
+    );
+    expect(emptiedSentence(4, "up_to_date")).toBe(
+      "#4 no longer changes anything on main, so it was closed.",
+    );
+    expect(emptiedSentence(null, "up_to_date")).toBe("The main branch already has this change.");
+    for (const s of [
+      emptiedSentence(4, "redone"),
+      emptiedSentence(4, "empty"),
+      emptiedSentence(4, "up_to_date"),
+      emptiedSentence(null, "up_to_date"),
+    ]) {
+      expect(s.length).toBeLessThanOrEqual(100);
+      expect(s[0]).toBe(s[0]?.toUpperCase());
+      expect(s.match(/#4/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    }
   });
 });

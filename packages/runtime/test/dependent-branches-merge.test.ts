@@ -1164,7 +1164,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     const after = await redoChangingNothing(m, b.id);
     // Before: the run committed nothing, main's head was force-pushed to the open pull request,
     // the task was accepted and the empty pull request waited for the person's Merge.
-    const sentence = `Redone from main, it changed nothing, so #${prB} was closed.`;
+    const sentence = `The redo from main changed nothing, so #${prB} was closed.`;
     expect([after.status, after.reason]).toEqual(["failed", sentence]);
     const pr = await m.pr(b.id);
     expect([pr.state, pr.merged]).toEqual(["closed", false]);
@@ -1362,7 +1362,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     if (!rows[0] || !drop) throw new Error("no rebase conflict card");
     expect((await answer(m, rows[0], drop.label)).dropped).toBe(1);
     const after = await redoChangingNothing(m, b.id);
-    const sentence = `Redone from main, it changed nothing, so #${prB} was closed.`;
+    const sentence = `The redo from main changed nothing, so #${prB} was closed.`;
     expect([after.status, after.reason]).toEqual(["failed", sentence]);
     expect((await m.pr(b.id)).state).toBe("closed");
     await m.poll();
