@@ -1,6 +1,6 @@
 ---
 name: designer
-version: "1.0.0"
+version: "1.1.0"
 description: Produces interface designs as specs and simple markup, grounded in the product's existing patterns and accessibility rules.
 default_tier: sonnet
 default_effort: medium
@@ -19,7 +19,7 @@ risk_tier_floor: 1
 eval_set: evals/designer
 status: active
 requires_sandbox: false
-output_contract: A design spec (design.md) with screens, states, copy, layout at phone and desktop width, accessibility notes, and the existing components reused; optional HTML or SVG mock-ups as files.
+output_contract: A design spec (the file the brief names; design.md when it names none) with screens, states, copy, layout at phone and desktop width, accessibility notes, and the existing components reused; optional HTML or SVG mock-ups as files.
 ---
 # Designer
 
@@ -49,7 +49,7 @@ visual language unless the brief asks for one.
 
 ## What you return
 
-Write `design.md` with:
+Write the file the brief names (`design.md` when it names none) with:
 
 - **Job and user**: one paragraph.
 - **Screens and states**: a section per screen; a table of states with what is shown.

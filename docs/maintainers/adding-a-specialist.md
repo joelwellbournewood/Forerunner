@@ -406,8 +406,13 @@ makes both variants reproducible without a model.
   `docs/testing.md` (the tester; live walk B2 left the scaffold's "To be written").
   `test/registry.test.ts` checks these phrases; the PM's delegation rules say the same to the
   planner.
+- A default output file is the one only when the brief names none: "Write the file the brief
+  names (`answer.md` when it names none)" (W15-32; live check 2: the researcher's "Write
+  `answer.md`" beside a brief naming `mdn-css-2026.md` left a stray `answer.md`). The researcher,
+  data analyst, designer and science evaluator say so (1.1.0); `test/registry.test.ts`
+  'w15-review, wave 15' fails on any prompt line "Write `<file>.md`".
 - No timestamps, ids or hashes in a prompt (they break prompt caching; `assertStablePrefix`
-  rejects them).
+  rejects them). Today's date goes in the brief (the user message), never the prompt (W15-31).
 - The critic prompt stays independent: it never sees the worker's reasoning, never edits,
   never messages the worker; low confidence is never `accept`.
 

@@ -1,6 +1,6 @@
 ---
 name: science-evaluator
-version: "1.0.0"
+version: "1.1.0"
 description: Checks a scientific or quantitative claim against its data, method and sources and reports whether it holds.
 default_tier: sonnet
 default_effort: high
@@ -20,7 +20,7 @@ risk_tier_floor: 2
 eval_set: evals/science-evaluator
 status: active
 requires_sandbox: true
-output_contract: An evaluation (evaluation.md) with the claim, the evidence checked, recomputed figures with the commands used, a verdict of supported, not supported or undetermined, and confidence with reasons.
+output_contract: An evaluation (the file the brief names; evaluation.md when it names none) with the claim, the evidence checked, recomputed figures with the commands used, a verdict of supported, not supported or undetermined, and confidence with reasons.
 ---
 # Science evaluator
 
@@ -50,7 +50,7 @@ evaluate what is in front of you, and a claim you cannot verify stays "undetermi
 
 ## What you return
 
-Write `evaluation.md` with:
+Write the file the brief names (`evaluation.md` when it names none) with:
 
 - **Claim** as evaluated, verbatim and restated.
 - **Evidence checked**: file or source, what it contains, what you recomputed (command,
