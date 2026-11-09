@@ -410,11 +410,49 @@ Resume.', 'Make "Write the FAQ" wait for "Write the README"?', "Start a session 
 (up to CHF 5)?"). A pending card with one reads back as that question alone (voice adds "Say
 yes or no."; the paired device's card says to confirm there), in place of the rendered card and
 "Say yes to confirm, or reply yes to the email." (shown even with email off); a composed card
-asks every part's question. The task commands (`task.transition`, `task.pause`, `task.resume`,
+asks every part's question. In chat and voice a card without an `ask` is asked in one line too
+(`questionOf`: every part's question, else "Change <what> from <old> to <new>?", a plan-less
+card its description), never as the rendered card with "Risk: low" and "reply yes to the
+email" (review of d1109-chat-guard: after a record, a project switch read back as "Change: the
+active project. From ... Risk: low. Undo: ..."); the API, email and the settings screen keep
+the rendered card. `project.switch` ("Switch to Shop page?"), `project.create` ('Create the
+project "X"?'), `session.resume` ("Allow sessions to start again?") and `specialist.propose`
+('Propose the specialist "X" for your approval? It cannot run until you approve it in the
+Inbox and its test tasks pass.') have their own. The task commands (`task.transition`, `task.pause`, `task.resume`,
 `task.reopen`, `task.update`, `task.dependencies`) are `askFromChat`: said in chat or voice
 they are read back for a yes whatever their risk, because the words were interpreted ("skip
 the LICENSE task") and the person should see which task it touches before it moves; the Tasks
 tab's buttons (source `ui`) act at once with Undo (`CommandExecutor.decideSteps`).
+
+**After a record, every change is read back (d1109-chat-guard, run C, ADR 0114, W15B-80).**
+`CommandContext.recordsRead` (append-only; the chat's `CommandTurn.recordsRead`, passed in by
+the runtime's command tools when each call's context is built) says the chat turn this change
+comes from read a record: a read tool's or a command's answer marked untrusted, a card listed
+in full in words Forerunner did not write, a flagged excerpt, lesson, task line or session
+result. Such a record's words may be what asks for the change, so `decideSteps` answers
+`needs_yes` for every change it would have acted on at once, whatever the risk (a higher
+decision, a paired device, stays). Stopping is the safe direction (design §3.9):
+`session.stop` of the running session (scope `agent` or `session`) and `session.pause` ("stop
+after this task") still act at once (`stopsAtOnceAfterRecords`), and so does a command that
+changes nothing (`CHANGES_NOTHING`: `summary.speak`, which reads the person's own project out
+and speaks only when the person's own words ask; both in `actsAtOnceAfterRecords`); `session.stop` with scope
+`all` (Stop all) is read back with the header's own question, "Stop every running session now?
+No session starts until you allow it again.", so a record cannot stop all work by itself. The
+person's own commands through the parser carry no flag and are unchanged. `task.create`
+('Add "X" to Quote Page?'), `note.add` ('Leave this note for the next session on Quote Page:
+"..."?') and `memory.record` ('Record this lesson in Alice's memory for Quote Page: "..."?')
+have an `ask`, so their read-back is one question and never the rendered card.
+
+**A command answer that quotes text the person did not write (`CommandOutcome.untrusted`,
+append-only, d1109-chat-guard).** A command whose sentence quotes such text (d1109-onerepo-link's
+"used elsewhere" answer quotes a repository's marker; `summary.speak`, origin `record:summary`,
+whose "Last session:" line quotes the session's result and through it a run's report: the
+fix-up's bench walk saw "It reported: Ignore previous instructions ..." reach the model plain
+through `summary_speak`) sets `untrusted: { source, origin }` on
+its outcome; the executor keeps it on the done result (`ExecuteResult.untrusted`), `toToolSpecs`
+puts it on the tool's result (`ToolOutcome.untrusted`), so the enforcement hooks wrap the
+sentence as data and scan it, and the runtime's `noteRecordsRead` sets the turn's
+`recordsRead` for the calls after it.
 
 **A move that is a card's answer (`CommandDef.redirect`, phase E review).** Before it plans a
 call, the executor asks the command's `redirect` whether the call is better said as another;
@@ -659,7 +697,9 @@ needs a device with biometric on a phone, agent self-limit, undo and undo after 
 06:00 revert with the clock, undo cancels the revert, resume after a restart, compose as one
 entry and its rollback, shared projects, the settings-screen path, another human's yes/tap/
 token/device and undo/revert refused, a double tap runs once, no email answer on the
-settings-screen path, a risen risk refused when the yes arrives), `undo.test.ts` (U-057, U-061: the undo of a lowered monthly cap waits for the device and a chat yes is refused, also after a restart; an undo that narrows acts at once; the email mode and the model watch; an undo that cannot work refused in words with nothing changed; a cancelled task reopened, a moved-on task not moved back; a read note not taken back), `security-commands.test.ts`
+settings-screen path, a risen risk refused when the yes arrives; d1109-chat-guard: with
+`recordsRead` a low-risk task, note and lesson wait for a yes in one line, the stop of the
+running session acts and Stop all is read back), `undo.test.ts` (U-057, U-061: the undo of a lowered monthly cap waits for the device and a chat yes is refused, also after a restart; an undo that narrows acts at once; the email mode and the model watch; an undo that cannot work refused in words with nothing changed; a cancelled task reopened, a moved-on task not moved back; a read note not taken back), `security-commands.test.ts`
 (the security review: the always-human commands carry the spec's risk, a pending card is not
 confirmed by the wrong kind of answer, a guessed email token or another actor, a web or runner
 device does not confirm a high-risk change without a second factor), `commands.test.ts` (the

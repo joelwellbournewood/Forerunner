@@ -4,7 +4,8 @@
 //   bench/seeded  one commit (README.md) on main
 // Run with tsx; writes { url, token, login, repos } to --out and serves until it is ended.
 //   node --import tsx scripts/bench/githost-server.ts --root <dir> --port <p> --out <file>
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "@forerunner/platform";
 import { FakeGitHost } from "../../testenv/src/githost/index.ts";
 
 function arg(name: string): string {
@@ -50,7 +51,25 @@ writeFileSync(
   ),
 );
 console.log(`fake git host on ${host.baseUrl}: bench/empty, bench/seeded`);
+// Every request the app made, one JSON line each (method, path, status, when; never a token),
+// beside --out as githost-requests.jsonl: a walk reads when the app called GitHub (d1109-chat-guard:
+// a chat turn's first model call is made before any GitHub request).
+const requestLog = join(dirname(out), "githost-requests.jsonl");
+writeFileSync(requestLog, "");
+let logged = 0;
+const flush = () => {
+  const all = host.requests();
+  for (const r of all.slice(logged))
+    appendFileSync(
+      requestLog,
+      `${JSON.stringify({ at: r.at, method: r.method, path: r.path, query: r.query, status: r.status })}\n`,
+    );
+  logged = all.length;
+};
+const flusher = setInterval(flush, 100);
 const stop = async () => {
+  clearInterval(flusher);
+  flush();
   await host.stop();
   process.exit(0);
 };

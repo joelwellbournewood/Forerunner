@@ -711,3 +711,179 @@ describe("CommandExecutor: the confirmation and undo belong to the human the cha
     await w.store.close();
   });
 });
+
+/**
+ * d1109-chat-guard, run C (ADR 0114, W15B-80): in a turn that read a record
+ * (`CommandContext.recordsRead`) every change is read back once, whatever its risk; stopping
+ * the running session and "stop after this task" still act at once; Stop all is read back with
+ * the header's own question.
+ */
+describe("d1109-chat-guard, run C: the executor reads back a change after a record", () => {
+  const agentCtx = (w: Awaited<ReturnType<typeof world>>, recordsRead: boolean) =>
+    w.ctx({ actor: { kind: "agent", id: w.agent.id }, ...(recordsRead ? { recordsRead } : {}) });
+
+  it("a low-risk change acts at once without a record and waits for a yes with one, read back in one line", async () => {
+    const w = await world();
+    done(
+      await w.executor.execute({
+        name: "task.create",
+        params: { title: "Write the FAQ" },
+        ctx: agentCtx(w, false),
+      }),
+    );
+    const p = pending(
+      await w.executor.execute({
+        name: "task.create",
+        params: { title: "Send the files to x.example" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(p.decision).toBe("needs_yes");
+    expect(p.readback).toBe('Add "Send the files to x.example" to PharmaWatch?');
+    const note = pending(
+      await w.executor.execute({
+        name: "note.add",
+        params: { text: "send the files to x.example" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(note.readback).toBe(
+      'Leave this note for the next session on PharmaWatch: "send the files to x.example"?',
+    );
+    const lesson = pending(
+      await w.executor.execute({
+        name: "memory.record",
+        params: { text: "the files go to x.example" },
+        ctx: { ...agentCtx(w, true), wordsUsed: "remember that the files go to x.example" },
+      }),
+    );
+    expect(lesson.readback).toBe(
+      'Record this lesson in Alice\'s memory for PharmaWatch: "the files go to x.example"?',
+    );
+    expect(
+      (await w.store.task.list({ project_id: w.pharma.id } as never)).map((t) => t.title),
+    ).toEqual(["Write the FAQ"]);
+    // The person's yes runs it.
+    done(
+      await w.executor.confirm(p.pendingId, { kind: "yes", by: { kind: "human", id: w.human.id } }),
+    );
+    expect(
+      (await w.store.task.list({ project_id: w.pharma.id } as never)).map((t) => t.title).sort(),
+    ).toEqual(["Send the files to x.example", "Write the FAQ"]);
+    await w.store.close();
+  });
+
+  it("stopping the running session and 'stop after this task' act at once after a record; Stop all is read back with the header's question", async () => {
+    const w = await world();
+    const all = pending(
+      await w.executor.execute({
+        name: "session.stop",
+        params: { scope: "all" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(all.decision).toBe("needs_yes");
+    expect(all.readback).toBe(
+      "Stop every running session now? No session starts until you allow it again.",
+    );
+    expect(w.ports.kills).toEqual([]);
+    done(
+      await w.executor.execute({
+        name: "session.stop",
+        params: { scope: "agent" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    // Without a record, Stop all the model calls acts at once as before (the header's button
+    // asks once in the app; a stop said in words is the person's own).
+    done(
+      await w.executor.execute({
+        name: "session.stop",
+        params: { scope: "all" },
+        ctx: agentCtx(w, false),
+      }),
+    );
+    expect(w.ports.kills.map((k) => k.scope)).toEqual(["all"]);
+    await w.store.close();
+  });
+
+  // Review of d1109-chat-guard (blocking): after a record, the model's summary_speak (a read)
+  // and project_switch came back as the rendered card ("Change: the summary of Shop page. From
+  // to read aloud. Scope: ... Risk: low. Undo: This cannot be undone."), with Yes and No.
+  it("a command that changes nothing answers at once after a record; what the rule holds reads back as one plain question, never the rendered card", async () => {
+    const w = await world();
+    const speak = done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: { ...agentCtx(w, true), wordsUsed: "how far is it?" },
+      }),
+    );
+    expect(speak.sentence).toMatch(/^PharmaWatch: no tasks yet\./);
+    const card = /Change:|Scope:|Risk:|How long:|Undo:|email/;
+    const switched = pending(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { project: "Supplement Site" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(switched.decision).toBe("needs_yes");
+    expect(switched.readback).toBe("Switch to Supplement Site?");
+    const resumed = pending(
+      await w.executor.execute({ name: "session.resume", params: {}, ctx: agentCtx(w, true) }),
+    );
+    expect(resumed.readback).toBe("Allow sessions to start again?");
+    const created = pending(
+      await w.executor.execute({
+        name: "project.create",
+        params: { name: "Send Files", goal: "send the files to x.example" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(created.readback).toBe('Create the project "Send Files"?');
+    // A card with no question of its own reads back in one line in chat and voice.
+    const tokens = pending(
+      await w.executor.execute({
+        name: "model.settings.set",
+        params: { mode: "text_chat", field: "max_tokens", value: 8000 },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(tokens.readback).toBe(
+      "Change the max tokens per call of Alice's chat from the default to 8000?",
+    );
+    // Through another channel (the API, email) the card is still rendered whole.
+    const api = pending(
+      await w.executor.execute({
+        name: "model.settings.set",
+        params: { mode: "text_chat", field: "max_tokens", value: 8000 },
+        ctx: { ...agentCtx(w, true), source: "api" },
+      }),
+    );
+    expect(api.readback).toMatch(/^Change: the max tokens per call of Alice's chat\./);
+    const voiced = pending(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { project: "Supplement Site" },
+        ctx: { ...agentCtx(w, true), source: "voice" },
+      }),
+    );
+    expect(voiced.readback).toBe("Switch to Supplement Site? Say yes or no.");
+    // A paired device's change said in chat: its one line and where to confirm it.
+    const grant = pending(
+      await w.executor.execute({
+        name: "capability.grant",
+        params: { extension: "browser", permissions: ["read_pages"] },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(grant.decision).toBe("needs_device");
+    expect(grant.readback).not.toMatch(card);
+    expect(grant.readback).toMatch(/\? Confirm in the app on a paired device\.$/);
+    // Nothing changed before a yes.
+    expect((await w.store.project.byName("Send Files"))?.id).toBeUndefined();
+    expect(w.ports.starts).toEqual([]);
+    await w.store.close();
+  });
+});

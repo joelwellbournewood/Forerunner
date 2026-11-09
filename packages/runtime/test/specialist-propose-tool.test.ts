@@ -236,11 +236,15 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
       commands: ["specialist.propose"],
       decision: "needs_yes",
     });
-    expect(asked.pendingConfirmation?.readback).toContain('a proposed specialist "localizer"');
+    // The card's one question (design §3.9, §5), not the rendered card with its tool names,
+    // "USD 1 per run" and "risk tier floor 1" (review of d1109-chat-guard).
+    expect(asked.pendingConfirmation?.readback).toBe(
+      'Propose the specialist "localizer" for your approval? It cannot run until you approve it in the Inbox and its test tasks pass.',
+    );
     expect(asked.pendingConfirmation?.readback).not.toContain("Translate what the brief names");
     // The model's text, then the card read back for the yes.
-    expect(asked.reply).toMatch(
-      /^I proposed a localizer; say yes to file it for your approval\. Change: the specialist registry\. From no specialist "localizer" to a proposed specialist "localizer" \(haiku; tools cc:Read, cc:Write; USD 1 per run; risk tier floor 1\) waiting for your approval in the inbox\./,
+    expect(asked.reply).toBe(
+      'I proposed a localizer; say yes to file it for your approval. Propose the specialist "localizer" for your approval? It cannot run until you approve it in the Inbox and its test tasks pass.',
     );
     expect(existsSync(proposedDir("localizer"))).toBe(false);
     expect(await specialistRequests("localizer")).toEqual([]);

@@ -294,6 +294,15 @@ export interface CommandTurn {
   deviceId?: string | null;
   /** The previous chat message, for "make this a task" (looked up from the log when absent). */
   lastMessage?: string;
+  /**
+   * d1109-chat-guard (ADR 0114): this turn read a record. Set by the chat when the facts list a
+   * card in full in words Forerunner did not write or carry a flagged excerpt, lesson or task
+   * line, and by `noteRecordsRead` when a tool's result carries the untrusted mark (a read
+   * tool, a command answer that quotes such text). The command tools pass it into each call's
+   * `CommandContext`, so every change after it is read back (stops of the running session
+   * excepted). Mutable on purpose: a lookup earlier in the turn counts for the calls after it.
+   */
+  recordsRead?: boolean;
 }
 
 export interface CommandCallLike {

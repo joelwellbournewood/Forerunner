@@ -486,6 +486,7 @@ export const sessionResume: CommandDef<SessionResumeParams> = {
       risk: "low",
       sentence: "Sessions can start again.",
       reversible: false,
+      ask: "Allow sessions to start again?",
     });
   },
   async run(_p, ctx): Promise<CommandOutcome> {

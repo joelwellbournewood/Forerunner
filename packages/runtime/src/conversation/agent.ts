@@ -9,7 +9,8 @@ import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { LOCAL_BUDGET_SOURCE, SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { wrapUntrusted } from "../injection/scan.ts";
+import { scanForInjection, wrapUntrusted } from "../injection/scan.ts";
+import { noteRecordsRead } from "../loop/commands.ts";
 import type {
   CommandResultView,
   CommandTurn,
@@ -48,12 +49,15 @@ import {
   lastSessionBlock,
   type PlanState,
   planBlock,
+  quotesOthersWords,
   replyNames,
   repositoryFacts,
   tasksBlock,
+  todayLine,
   workingNowBlock,
 } from "./project-facts.ts";
 import { readTools } from "./read-tools.ts";
+import { scopeOf } from "./scope.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
@@ -163,8 +167,9 @@ export interface ConversationDeps {
   docsDirs?: (projectId: string) => Promise<readonly string[]>;
   /**
    * The addresses of a repository project's pull requests that are open on the host now (L-17),
-   * so `# Your files` says which done tasks' PRs wait and which are merged; null when the host
-   * did not answer (the block then says their state is not known). Absent: as null.
+   * asked only when the model calls files_list (d1109-chat-guard: no turn waits on GitHub; the
+   * facts' `# Your files` reads the app's merge records); null when the host did not answer
+   * (files_list then says their state is not known). Absent: as null.
    */
   openPullRequests?: (projectId: string) => Promise<readonly string[] | null>;
   /**
@@ -545,6 +550,20 @@ function openRequestsFact(
 /** The project's status doc, left out of the docs a chat turn retrieves. */
 const STATUS_DOC_RE = /^docs\/status\.md$/i;
 
+/** The data envelope's origin of the lessons a chat turn carries (d1109-chat-guard). */
+const LESSONS_ORIGIN = "lessons";
+
+/**
+ * Instruction-like text the injection scan found in what a chat turn read (d1109-chat-guard,
+ * ADR 0114): `where` names the record (a read tool's name, "lessons", "docs", "card", "tasks",
+ * "last session"), `rules` the scan's rules that fired. The turn's `chat.reply` row keeps them
+ * as `injection`, so the turn says what it was shown that read like instructions.
+ */
+export interface RecordFlag {
+  where: string;
+  rules: string[];
+}
+
 const UNDO_RE = /^\s*(undo|rückgängig|r[üu]ckg[äa]ngig machen)\s*[.!]?\s*$/i;
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
 /** Said before the stop's own sentence when the stop cancelled a card waiting for a yes. */
@@ -795,18 +814,26 @@ export class ConversationAgent {
       provider,
       conversationProject,
     );
+    // d1109-chat-guard: facts that carry a record's words (a card in full in words Forerunner did
+    // not write, a flagged excerpt, lesson or task line) read back every change of this turn.
+    if (context.recordsRead) turn.recordsRead = true;
     const results: CommandResultView[] = [];
     const tools = new ToolRegistry();
     for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
       tools.register(t);
+    // d1109-chat-guard: a record read sets the turn's read-back for the changes after it.
     for (const t of readTools({
       store,
       projectId,
+      // d1109-chat-guard: a project a call names is one of this person's (`scopeOf`).
+      humanId: req.humanId,
       ...(this.deps.sandboxReady ? { sandboxReady: this.deps.sandboxReady } : {}),
       ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
       folderOf: (id) => this.folderOf(id),
+      // d1109-chat-guard: files_list asks the host for the open pull requests when called.
+      ...(this.deps.openPullRequests ? { openPullRequests: this.deps.openPullRequests } : {}),
     }))
-      tools.register(t);
+      tools.register(noteRecordsRead(t, turn));
     // The chat mode's tier, effort and target from the tables in force (ADR 0039).
     const modelConfig = this.deps.modelConfig?.();
     // Then the principal's own chat settings (spec D.4, ADR 0072: `model_config.modes.text_chat`).
@@ -916,6 +943,9 @@ export class ConversationAgent {
     });
     let ttft: number | null = null;
     const events: RunEvent[] = [];
+    // d1109-chat-guard: what read like instructions in the records this turn was shown (the
+    // facts' lessons and excerpts, then each tool result the hooks scanned), kept on its row.
+    const injection: RecordFlag[] = [...context.flagged];
     // A spoken turn's text reaches the speaker one complete sentence at a time: the unfinished
     // rest of a model call is held until the call ends, and dropped when the call was cut off
     // at max_tokens, so a broken sentence is never spoken (the real-audio run of 2026-10-26).
@@ -946,6 +976,8 @@ export class ConversationAgent {
       protected: true,
       onEvent: (ev) => {
         events.push(ev);
+        if (ev.type === "injection_flagged")
+          injection.push({ where: ev.tool, rules: ev.report.matches.map((m) => m.rule) });
         if (ev.type === "text_delta") {
           if (gate) gate.push(ev.text);
           else req.onToken?.(ev.text);
@@ -1045,6 +1077,7 @@ export class ConversationAgent {
           lessons: context.sources.lessons,
         },
         retrieval: context.retrieval,
+        ...(injection.length ? { injection } : {}),
       } as never,
       result.costUsdMicro,
     );
@@ -1287,11 +1320,24 @@ export class ConversationAgent {
     shownRequests: { id: string; names: string[] }[];
     sources: ChatSources;
     retrieval: { docs: RetrievalStats; lessons: RetrievalStats };
+    /** Instruction-like text the scan found in the records the facts carry (d1109-chat-guard). */
+    flagged: RecordFlag[];
+    /**
+     * The facts carry a record's words (d1109-chat-guard): a card listed in full that quotes
+     * words Forerunner did not write, or a flagged lesson, doc excerpt, task line or last
+     * session result. The turn then reads back every change (`CommandTurn.recordsRead`).
+     */
+    recordsRead: boolean;
   }> {
     const agentId = agent.id;
     const { store, clock } = this.deps;
     const chf = this.deps.chfPerUsd?.() ?? 1;
-    const projects = await store.project.active({ limit: 20 });
+    // d1109-chat-guard (sibling of D3-17): this person's projects only (`scopeOf`); before, the
+    // system part named every active project on the store, another person's too.
+    const mine = new Set((await scopeOf(store, humanId)).map((p) => p.id));
+    const projects = (await store.project.active({ limit: 200 }))
+      .filter((p) => mine.has(p.id))
+      .slice(0, 20);
     // Projects by name and goal only: what each one stands at is in the volatile blocks below,
     // computed now (before, a 160-character cut of a stale summary sat here).
     const stable = projects
@@ -1344,9 +1390,28 @@ export class ConversationAgent {
     // `request.answer` resolves a reference among them all.
     const allOpen = (await store.humanRequest.open({ humanId }, { limit: 500 })).map((r) => r.id);
     const openRequests = openRequestsFact(listed, conv, query, ownCards.length, allOpen, elsewhere);
-    const project = projectId ? await store.project.get(projectId) : undefined;
+    // d1109-chat-guard: the cards this turn lists in full (read from openRequestsFact's output,
+    // which is unchanged). One that quotes words Forerunner did not write is a record in the
+    // facts: the turn reads every change back; what reads like instructions is recorded.
+    const flagged: RecordFlag[] = [];
+    let recordsRead = false;
+    const shownIds = new Set(openRequests.shown.map((s) => s.id));
+    for (const card of listed.filter((r) => shownIds.has(r.row.id) && quotesOthersWords(r.row))) {
+      recordsRead = true;
+      const scan = scanForInjection(card.line, "agent_output");
+      if (scan.suspicious) flagged.push({ where: "card", rules: scan.matches.map((m) => m.rule) });
+    }
+    // d1109-chat-guard: the facts of a project this person may read only (`scopeOf`); a turn
+    // sent with another person's project (the chat route does not check it) gets none of its
+    // tasks, results, files or documents.
+    const project =
+      projectId && mine.has(projectId) ? await store.project.get(projectId) : undefined;
+    // d1109-chat-guard (D3-6): the person's own day and time beside the UTC now ("yesterday",
+    // "last week" and "on Monday" are their days); volatile, so the cached prefix holds.
+    const zone = (await store.human.get(humanId))?.timezone ?? "UTC";
     const volatile = volatilePreamble({
       now: clock.nowIso(),
+      today: todayLine(zone, clock.now()),
       active_project: project ? project.name : "none",
       unread_messages: unread.length,
       // In full once per conversation, when asked, or while blocking; else a count.
@@ -1379,15 +1444,26 @@ export class ConversationAgent {
     }
     if (project) {
       try {
-        blocks.push(
-          await tasksBlock(store, project.id, {
-            sandboxReady: this.deps.sandboxReady?.() ?? null,
-            heading: `# Tasks of ${project.name}`,
-            empty: emptyTasksLine(plan),
-          }),
-        );
+        const tasks = await tasksBlock(store, project.id, {
+          sandboxReady: this.deps.sandboxReady?.() ?? null,
+          heading: `# Tasks of ${project.name}`,
+          empty: emptyTasksLine(plan),
+        });
+        blocks.push(tasks);
         const last = lastSessionBlock(project, chf);
         if (last) blocks.push(last);
+        // d1109-chat-guard: a task's reason and the last session's result quote what agents
+        // reported; when the scan finds instructions there, the turn reads every change back.
+        for (const [where, block] of [
+          ["tasks", tasks],
+          ["last session", last],
+        ] as const) {
+          const scan = block ? scanForInjection(block, "agent_output") : null;
+          if (scan?.suspicious) {
+            recordsRead = true;
+            flagged.push({ where, rules: scan.matches.map((m) => m.rule) });
+          }
+        }
       } catch (e) {
         this.logger.warn("chat tasks not read", { projectId, error: errorMessage(e) });
       }
@@ -1397,23 +1473,25 @@ export class ConversationAgent {
     );
     if (working) blocks.push(working);
     if (project) {
-      const open = await (this.deps.openPullRequests?.(project.id) ?? Promise.resolve(null)).catch(
-        () => null,
-      );
+      // d1109-chat-guard (D3-5): the merges that wait come from the app's own merge records, so
+      // no turn waits on GitHub before its first model call; files_list asks GitHub on demand.
       const files = filesBlock(
         await this.folderOf(project.id),
-        await repositoryFacts(store, project, open).catch(() => null),
+        await repositoryFacts(store, project).catch(() => null),
       );
       if (files) blocks.push(files);
     }
     void conversationProject;
-    const retrieved = await this.retrieve(humanId, agent, projectId, query, provider);
+    const retrieved = await this.retrieve(humanId, agent, project?.id ?? null, query, provider);
     return {
       stable: `# Projects\n${stable || "(none)"}`,
       volatile: [volatile, ...blocks, ...retrieved.blocks].join("\n\n"),
       sources: retrieved.sources,
       retrieval: retrieved.stats,
       shownRequests: openRequests.shown,
+      flagged: [...flagged, ...retrieved.flagged],
+      // A flagged lesson or doc excerpt counts like a card in full (d1109-chat-guard).
+      recordsRead: recordsRead || retrieved.flagged.length > 0,
     };
   }
 
@@ -1472,12 +1550,15 @@ export class ConversationAgent {
     blocks: string[];
     sources: ChatSources;
     stats: { docs: RetrievalStats; lessons: RetrievalStats };
+    /** What the scan flagged in the lessons or the doc excerpts sent (`RecordFlag`). */
+    flagged: RecordFlag[];
   }> {
     const count = (t: string) => provider.countTokens(t);
     const lessonsBudget = this.deps.retrieval?.lessonsMaxTokens ?? DEFAULT_CHAT_LESSONS_TOKENS;
     const docsBudget = this.deps.retrieval?.docsMaxTokens ?? DEFAULT_CHAT_DOCS_TOKENS;
     const blocks: string[] = [];
     const sources: ChatSources = { docs: [], lessons: [] };
+    const flagged: RecordFlag[] = [];
     const stats = {
       lessons: { budget: lessonsBudget, tokens: 0, hits: 0, dropped: 0 },
       docs: { budget: docsBudget, tokens: 0, hits: 0, dropped: 0 },
@@ -1487,19 +1568,34 @@ export class ConversationAgent {
       (agent.kind === "principal" || agent.kind === "conversation");
     if (this.deps.memory && speaksFor && lessonsBudget > 0 && query.trim()) {
       try {
-        const r = await this.deps.memory.recall({
-          agentId: agent.id,
-          kind: "principal",
-          projectId,
-          query,
-          maxTokens: lessonsBudget,
-          countTokens: count,
-        });
-        const tokens = r.block ? count(r.block) : 0;
-        if (r.block && tokens <= lessonsBudget) {
-          blocks.push(r.block);
-          sources.lessons = [...r.lessonIds];
-          stats.lessons = { ...stats.lessons, tokens, hits: r.lessonIds.length };
+        // d1109-chat-guard (ADR 0114): the lessons travel inside the data envelope like the doc
+        // excerpts (an agent wrote most of them, from sessions whose pages it read), and the
+        // envelope counts against their budget: recall under what is left of it, then measure
+        // the wrapped block, taking an overshoot off once more. Before (7d6b34a) they followed
+        // the facts as they came, unscanned.
+        let inner =
+          lessonsBudget - count(wrapUntrusted("", "agent_output", LESSONS_ORIGIN).content);
+        for (let attempt = 0; attempt < 2 && inner > 0; attempt++) {
+          const r = await this.deps.memory.recall({
+            agentId: agent.id,
+            kind: "principal",
+            projectId,
+            query,
+            maxTokens: inner,
+            countTokens: count,
+          });
+          if (!r.block) break;
+          const wrapped = wrapUntrusted(r.block, "agent_output", LESSONS_ORIGIN);
+          const tokens = count(wrapped.content);
+          if (tokens <= lessonsBudget) {
+            blocks.push(wrapped.content);
+            sources.lessons = [...r.lessonIds];
+            stats.lessons = { ...stats.lessons, tokens, hits: r.lessonIds.length };
+            if (wrapped.report.suspicious)
+              flagged.push({ where: "lessons", rules: wrapped.report.matches.map((m) => m.rule) });
+            break;
+          }
+          inner -= tokens - lessonsBudget;
         }
       } catch (e) {
         this.logger.warn("chat lessons not retrieved", { error: errorMessage(e) });
@@ -1524,11 +1620,13 @@ export class ConversationAgent {
           const wrapped = wrapUntrusted(found.block, "repo_file", "project docs");
           const tokens = count(wrapped.content);
           if (tokens <= docsBudget) {
-            if (wrapped.report.suspicious)
+            if (wrapped.report.suspicious) {
               this.logger.warn("instruction-like text in the project docs sent as data", {
                 projectId,
                 rules: wrapped.report.matches.map((m) => m.rule),
               });
+              flagged.push({ where: "docs", rules: wrapped.report.matches.map((m) => m.rule) });
+            }
             blocks.push(wrapped.content);
             sources.docs = found.hits.map((h) => ({ path: h.path, heading: h.heading }));
             stats.docs = {
@@ -1545,7 +1643,7 @@ export class ConversationAgent {
         this.logger.warn("chat docs not searched", { projectId, error: errorMessage(e) });
       }
     }
-    return { blocks, sources, stats };
+    return { blocks, sources, stats, flagged };
   }
 
   describeError(e: unknown): string {

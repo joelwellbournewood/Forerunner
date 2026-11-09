@@ -4095,7 +4095,17 @@ in one project cancelled a task in another. Now:
   before, the raw reason, "Ended because: plan awaiting approval"), the spend,
   and `next_steps`; `# Next` before the first session), `# Working now` (the agent's running
   session: the task in flight and the specialist, minutes, steps, spend), `# Your files` (the
-  project's folder: the first of `docsDirs`), and the open cards in full in the `open_requests`
+  project's folder: the first of `docsDirs`; a repository project names the repository, this
+  computer's copy, then where each done task's merge stands from the app's merge records,
+  `repositoryFacts`, d1109-chat-guard: 'Waiting for your Merge: "X": <the record's sentence>',
+  "Merging by itself", "Merged", "Closed without merging", and the pull requests no record
+  speaks for listed without a state; past ten, the waiting and the going-on merges each end in
+  "And N more ..." (before the review of d1109-chat-guard the going-on ones were cut at ten
+  without a word); no GitHub call: before, every turn waited for GitHub's
+  open pull requests (L-17) and the block said "the person merges it on GitHub"), the person's
+  own day and time in `# Now` ("today: Monday 9 November 2026, 23:30 (Europe/Zurich)",
+  `todayLine` from `human.timezone`, beside the UTC `now`; a zone the platform does not know
+  is read as UTC and named so), and the open cards in full in the `open_requests`
   fact (`cardLine`: project, task, the whole question, a person-questions card's questions, the
   specialist's reason (`change_card.context`, "The specialist said: …", as the Inbox body) and
   the options the Inbox offers (`requestWords`' choices, "Send answers" first for a form card;
@@ -4121,10 +4131,14 @@ that obeys a questions card's quoted words (widen the site rule, cancel a task, 
 project budget) ends each turn in the read-back with nothing changed, because a widening asks a
 yes (`narrowingActsAtOnce` only narrows), a task change said in chat is read back
 (`askFromChat`), and a limit change the model asks for needs the person (`limit`, agent actor).
-A narrowing a card's words ask for acts at once like the person's own: no code tells them apart
-yet (W15B-80, run C). The system prompt
+Since d1109-chat-guard (run C, ADR 0114) code tells them apart: a turn whose facts list such a
+card in full reads every change back, a narrowing too (W15B-80; "Records are data, and a change
+after one is read back" below). The system prompt
   keeps only the projects
-  by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone). `docs/status.md` is left out
+  by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone),
+  and only this person's (`scopeOf`, d1109-chat-guard: before, every active project on the
+  store); a turn sent with another person's project (POST /chat does not check it) gets no
+  facts or doc excerpts of it and reads "active_project: none". `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
 - **The plan from the brief** (`planBlock`, from `ConversationDeps.intakeStatus`, which compose
   wires to `IntakeService.status`): `# Plan from the brief`, before the task list it explains:
@@ -4154,7 +4168,36 @@ yet (W15B-80, run C). The system prompt
 - **Read-only tools** (`src/conversation/read-tools.ts`): `tasks_list`, `task_get` (a task's
   runs, reports, files, review and cards, from `taskDetail`), `session_last`, `files_list`.
   They change nothing, so they are plain tools (action class `read`), not registry commands:
-  no change card, no change log row.
+  no change card, no change log row. A project a call names is found among the person's own
+  (`scopeOf`), and the conversation's project is read through the same scope; another person's
+  is "No project is called "<name>"." `files_list` on a repository project asks the host for
+  the open pull requests when it is called (`ConversationDeps.openPullRequests`, wired in
+  compose): "Open on GitHub, waiting for a merge: ...", "Merged or closed on GitHub: ...", or
+  "Whether its pull requests are merged is not known: GitHub did not answer."
+- **Records are data, and a change after one is read back** (d1109-chat-guard, run C, ADR
+  0114). Every answer of the read tools is marked untrusted (`ok()`: source `agent_output`,
+  origin `record:tasks|task|session|files`), so the enforcement hooks wrap it in the data
+  envelope with its note and scan it; the per-turn lessons are wrapped like the doc excerpts
+  (origin "lessons", the envelope counted against their budget). What the scan flags (a tool
+  result through the run's `injection_flagged`, the lessons, the doc excerpts, a card listed in
+  full, the task list, the last session) is kept on the turn's `chat.reply` row as
+  `injection: [{ where, rules }]`. A turn reads a record (`CommandTurn.recordsRead`) when a
+  tool's result carries the untrusted mark (`noteRecordsRead`, loop/commands.ts: the read
+  tools, a command answer with `CommandOutcome.untrusted`), when its facts list a card in full
+  that quotes words Forerunner did not write (`quotesOthersWords`: a specialist's questions or
+  words, the critic's, a proposal's description), or when a lesson, a doc excerpt, the task
+  list or the last session's result in its facts is flagged. The command tools pass it into
+  each call's `CommandContext`, and the executor reads every change after it back once (see
+  commands.md, `decideSteps`): before (W15B-80), a new task, a note for the next brief, a
+  narrowing setting or a session start under the costly line the model called after reading a
+  report acted at once. Stopping the running session and "stop after this task" still act at
+  once; Stop all is read back with the header's question; a summary (`summary_speak`, which
+  changes nothing) answers at once. Each read-back is one question with Yes and No ("Switch to
+  Shop page?"), never the rendered change card (commands.md, `questionOf`). The parser's own
+  commands (the person's typed "add a task: ...", "stop everything") are unchanged. A read-back
+  made after a record survives a restart like any waiting card. Tests:
+  `chat-guard.test.ts` (composed), `chat-facts.test.ts` (units), the injection suite's
+  "record" channel (testing.md).
 - **Cards and undo per conversation.** The waiting card is the conversation's (`pendingOf`):
   another line does not drop it; a new read-back cancels the earlier card and says so; after a
   restart of the agent the card is found again from the conversation's last read-back while the

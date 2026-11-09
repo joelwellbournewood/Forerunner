@@ -35,6 +35,8 @@ export const noteAdd: CommandDef<NoteAddParams> = {
       scope: "project",
       risk: "low",
       sentence: sentenceOf(p, project.name),
+      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
+      ask: `Leave this ${p.kind} for the next session on ${project.name}: ${quote(p.text)}?`,
       reversible: true,
       projectId: project.id,
       projectName: project.name,

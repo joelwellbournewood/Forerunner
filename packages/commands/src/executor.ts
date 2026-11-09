@@ -56,6 +56,8 @@ export type ExecuteResult =
       /** The change log id while the change is undoable, for the one-click undo. */
       undoToken: string | null;
       sentence: string;
+      /** The sentence quotes text the person did not write (`CommandOutcome.untrusted`). */
+      untrusted?: CommandOutcome["untrusted"];
     }
   | {
       status: "partial";
@@ -64,6 +66,7 @@ export type ExecuteResult =
       undoToken: string | null;
       sentence: string;
       note: string;
+      untrusted?: CommandOutcome["untrusted"];
     }
   | {
       status: "pending";
@@ -134,6 +137,23 @@ export interface StoredCardContext {
   sessionId: string | null;
 }
 
+/**
+ * A card as one question, for chat and voice when the card has no `ask` of its own (design
+ * §3.9: a change is read back once, in one line; §5: no "Risk: low", no change-card text): its
+ * own question, every part's question for a composed card, else "Change <what> from <old> to
+ * <new>?". A card built without a plan (a command with none, `genericCard`) asks its
+ * description, never its parameters as JSON.
+ */
+function questionOf(card: ChangeCard): string {
+  if (card.ask) return card.ask;
+  if (card.parts && card.parts.length > 1) return card.parts.map(questionOf).join(" ");
+  const what = card.what.trim().replace(/\.$/, "");
+  const to = card.newValue.trim();
+  if (/^[[{]/.test(to)) return `${what}?`;
+  const from = card.oldValue.trim();
+  return `Change ${what}${from ? ` from ${from}` : ""} to ${to}?`;
+}
+
 /** The read-back of a pending card (design §5): its one question, else the rendered card. */
 function readbackOf(
   card: ChangeCard,
@@ -141,13 +161,17 @@ function readbackOf(
   source: CommandSource,
 ): string {
   // A card with its one question reads back as that question (design §5: "Start a session on
-  // Quote page (up to CHF 5)?"); the chat shows Yes and No, voice asks for the word.
-  if (card.ask)
+  // Quote page (up to CHF 5)?"); the chat shows Yes and No, voice asks for the word. In chat
+  // and voice a card without one is asked in one line too (review of d1109-chat-guard: after a
+  // record, a project switch read back as "Change: the active project. From ... Risk: low.
+  // Undo: ..." with "reply yes to the email" while email was off).
+  const ask = card.ask ?? (source === "chat" || source === "voice" ? questionOf(card) : null);
+  if (ask)
     return decision === "needs_device"
-      ? `${card.ask} Confirm in the app on a paired device.`
+      ? `${ask} Confirm in the app on a paired device.`
       : source === "voice"
-        ? `${card.ask} Say yes or no.`
-        : card.ask;
+        ? `${ask} Say yes or no.`
+        : ask;
   return `${renderChangeCard(card, { voice: true })} ${
     decision === "needs_device"
       ? "Confirm in the app on a paired device; on the phone with biometric."
@@ -162,6 +186,32 @@ interface Step {
   risk: Risk;
   /** Said in words as a command that is read back first (`askFromChat`), then redirected. */
   askedAs?: boolean;
+}
+
+/**
+ * The changes that still act at once in a turn that read a record (d1109-chat-guard): stopping
+ * the running session (`session.stop`, scope agent or session) and "stop after this task"
+ * (`session.pause`). Stop all (`session.stop` with scope all) is not one of them.
+ */
+function stopsAtOnceAfterRecords(step: Step): boolean {
+  if (step.def.name === "session.pause") return true;
+  if (step.def.name !== "session.stop") return false;
+  const scope = (step.params as { scope?: unknown } | null)?.scope;
+  return scope !== "all";
+}
+
+/**
+ * The commands that change nothing the person keeps: they read a project out (review of
+ * d1109-chat-guard: after a record, "how far is it?" answered by the model's summary_speak
+ * waited for a Yes). `summary.speak` reads the person's own project only (`ownProject`) and
+ * speaks only when the person's own words ask for it (`wantsAloud` reads `wordsUsed`, which a
+ * record cannot write).
+ */
+const CHANGES_NOTHING: ReadonlySet<string> = new Set(["summary.speak"]);
+
+/** What still acts at once in a turn that read a record: a read, or a stop of the running work. */
+function actsAtOnceAfterRecords(step: Step): boolean {
+  return CHANGES_NOTHING.has(step.def.name) || stopsAtOnceAfterRecords(step);
 }
 
 interface DoneStep {
@@ -293,6 +343,15 @@ export class CommandExecutor {
       (ctx.source === "chat" || ctx.source === "voice") &&
       steps.some((s) => s.def.askFromChat === true || s.askedAs === true)
     )
+      return "needs_yes";
+    // d1109-chat-guard (ADR 0114, W15B-80): in a turn that read a record, the record's words may
+    // be what asks for the change, so every change is read back once, whatever its risk: before,
+    // a new task, a note for the next brief, a narrowing setting or a session start under the
+    // costly line acted at once. Stopping is the safe direction (design §3.9): a stop of the
+    // running session and "stop after this task" still act at once; Stop all is read back with
+    // the header's own question, so a record cannot stop all work by itself. A command that
+    // changes nothing (summary.speak) answers at once as before.
+    if (decision === "act" && ctx.recordsRead && !steps.every(actsAtOnceAfterRecords))
       return "needs_yes";
     return decision;
   }
@@ -640,12 +699,15 @@ export class CommandExecutor {
       projectId: projectId ?? null,
       kind: "change",
     });
+    // A step whose sentence quotes text the person did not write keeps its mark (d1109-chat-guard).
+    const untrusted = done.map((d) => d.outcome.untrusted).find((u) => !!u);
     return {
       status: "done",
       card,
       changeLogId: row.id,
       undoToken: reversible ? row.id : null,
       sentence,
+      ...(untrusted ? { untrusted } : {}),
     };
   }
 

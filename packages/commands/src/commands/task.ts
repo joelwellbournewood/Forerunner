@@ -852,6 +852,8 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       scope: "project",
       risk: "low",
       sentence: createSentence(params, project.name),
+      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
+      ask: `Add ${quote(params.title)} to ${project.name}?`,
       reversible: true,
       projectId: project.id,
       projectName: project.name,

@@ -4118,8 +4118,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const project = await store.project.get(projectId);
       return project ? docs.docsDirsFor(project) : [];
     },
-    // L-17: which done tasks' pull requests are still open, read from the host per turn, so the
-    // chat never calls a merged one waiting.
+    // L-17: which done tasks' pull requests are still open on the host, asked only when the
+    // chat's files_list is called (d1109-chat-guard: no turn waits on GitHub; the facts read the
+    // app's merge records).
     openPullRequests: async (projectId) => {
       const project = await store.project.get(projectId);
       const first = project?.repos[0]?.trim() ?? "";

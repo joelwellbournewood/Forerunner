@@ -18,6 +18,13 @@ import { type ResolvedProject, resolveProject } from "./shared.ts";
  * project on a shared state is refused as the daemon's speak route refuses it (`ownsProject`).
  */
 
+/**
+ * The summary quotes records (d1109-chat-guard, ADR 0114): the last session's result, which
+ * quotes a run's report ("It reported: ..."), and the next tasks' titles. The chat model gets
+ * the answer inside the data envelope, scanned, and the rest of its turn reads changes back.
+ */
+const SUMMARY_IS_A_RECORD = { source: "agent_output", origin: "record:summary" } as const;
+
 /** The fields of a project row the spoken summary reads. */
 export type SpokenSummaryProject = Pick<ProjectRow, "name" | "goal" | "stage" | "summary_cache">;
 
@@ -156,6 +163,7 @@ export const summarySpeak: CommandDef<SummarySpeakParams> = {
         after: { project_id: project.id, spoken: false, via: "text", speak_id: null },
         sentence: await chatProjectSummary(ctx, project),
         projectId: project.id,
+        untrusted: SUMMARY_IS_A_RECORD,
       };
     }
     // A voice session speaks its reply itself: the text is the sentence, nothing else plays.
@@ -187,6 +195,7 @@ export const summarySpeak: CommandDef<SummarySpeakParams> = {
       after,
       sentence,
       projectId: project.id,
+      untrusted: SUMMARY_IS_A_RECORD,
     };
   },
 };

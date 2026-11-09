@@ -151,6 +151,9 @@ export const specialistPropose: CommandDef<SpecialistProposeParams> = {
       risk: "medium",
       sentence: sentenceOf(p, state),
       reversible: true,
+      // The read-back in one line (design §3.9, §5): before, chat read back the rendered card,
+      // its tool names, "USD 1 per run" and "risk tier floor 1".
+      ask: `Propose the specialist "${p.name}" for your approval? It cannot run until you approve it in the Inbox and its test tasks pass.`,
     });
   },
   async run(p, ctx) {
