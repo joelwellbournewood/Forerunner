@@ -10,7 +10,7 @@ import {
   type ReviewCommentInfo,
   type ReviewInfo,
 } from "@forerunner/capabilities";
-import { type Clock, dirname, errorMessage, log } from "@forerunner/platform";
+import { type Clock, dirname, errorMessage, log, SystemClock } from "@forerunner/platform";
 import type { StateStore, TaskRow, TaskStatus } from "@forerunner/state";
 import {
   DATA_ENVELOPE_CLOSE,
@@ -364,16 +364,26 @@ export interface GitHostWatcherDeps {
   /**
    * W15-07: the waits before reading an open pull request again whose `mergeable` GitHub has
    * not worked out yet (null: GitHub computes it after a change, and the first read starts it).
-   * Default 1, 2, 4 and 8 s (15 s in all, real time); `[]` reads once.
+   * Default 1, 2, 4 and 8 s; `[]` reads once. W15B-05: their sum (15 s by default) is what one
+   * poll waits in all, whatever the number of pull requests.
    */
   mergeableRereadMs?: readonly number[];
+  /**
+   * W15B-05: the clock the re-reads wait on. Default real time (GitHub works mergeability out in
+   * real time, whatever the app's clock in a test says); a test gives a simulated one. The wait
+   * is cancelled by `stop()`.
+   */
+  rereadClock?: Pick<Clock, "sleep">;
 }
 
 /** W15-07: how long the watcher waits before each re-read of a null `mergeable` (15 s in all). */
 export const MERGEABLE_REREAD_MS: readonly number[] = [1000, 2000, 4000, 8000];
 
-/** A wait in real time (the watcher's re-read follows GitHub, not the app's clock). */
-const realDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** W15B-05: one poll's re-reads: the time they may still wait, and the poll's stop. */
+interface RereadBudget {
+  leftMs: number;
+  signal: AbortSignal;
+}
 
 export class GitHostWatcher {
   private readonly logger = log("githost-watcher");
@@ -382,10 +392,14 @@ export class GitHostWatcher {
   private cancel: (() => void) | null = null;
   private running: Promise<GitHostPollResult> | null = null;
   private selfLogin: string | null = null;
+  /** W15B-05: the clock the null-mergeable re-reads wait on, and the running poll's stop. */
+  private readonly rereadClock: Pick<Clock, "sleep">;
+  private pollStop: AbortController | null = null;
 
   constructor(private readonly deps: GitHostWatcherDeps) {
     this.cursorStore = deps.cursorStore ?? memoryCursorStore();
     this.pollMs = deps.pollMs ?? DEFAULT_GITHOST_POLL_MS;
+    this.rereadClock = deps.rereadClock ?? new SystemClock();
   }
 
   get intervalMs(): number {
@@ -409,9 +423,14 @@ export class GitHostWatcher {
     this.cancel = this.deps.clock.setTimeout(tick, this.pollMs);
   }
 
+  /**
+   * Ends the polling: the next tick is cancelled, and a poll that runs stops where it is
+   * (W15B-05: its re-read wait ends, and nothing more is asked of GitHub or fired by it).
+   */
   stop(): void {
     this.cancel?.();
     this.cancel = null;
+    this.pollStop?.abort();
   }
 
   /** One poll; a poll asked for while one runs answers that poll's result. */
@@ -440,7 +459,15 @@ export class GitHostWatcher {
     result.baseline = baseline;
     const now = this.deps.clock.now();
     const self = prs.length ? await this.self() : null;
+    // W15B-05: the re-reads of this poll wait about 15 s in all, and `stop()` ends them.
+    const stop = new AbortController();
+    this.pollStop = stop;
+    const reread: RereadBudget = {
+      leftMs: (this.deps.mergeableRereadMs ?? MERGEABLE_REREAD_MS).reduce((a, b) => a + b, 0),
+      signal: stop.signal,
+    };
     for (const pr of prs) {
+      if (stop.signal.aborted) break;
       const key = prKey(pr.repo, pr.number);
       if (cursor.prs[key]?.closed) continue;
       // A baseline only records: it reads every PR, quiet or not, so nothing old fires later.
@@ -450,7 +477,9 @@ export class GitHostWatcher {
         continue;
       }
       try {
-        const events = await this.readPullRequest(pr, cursor, self);
+        const events = await this.readPullRequest(pr, cursor, self, reread);
+        // Stopped during its re-read: its cursor is as it was, and the poll ends here.
+        if (!events) break;
         result.checked++;
         const pc = cursor.prs[key];
         // The baseline of a PR completes only once its comments were read too.
@@ -467,9 +496,14 @@ export class GitHostWatcher {
         this.logger.warn("pull request poll failed", { pr: key, error: errorMessage(e) });
       }
     }
-    if (baseline) cursor.initializedAt = new Date(now).toISOString();
+    if (this.pollStop === stop) this.pollStop = null;
+    // A baseline cut short by a stop is not complete: the next poll records it again.
+    const stopped = stop.signal.aborted;
+    if (baseline && !stopped) cursor.initializedAt = new Date(now).toISOString();
     // Saved before anything fires: an event is asked for at most once, also across a restart.
     this.cursorStore.save(cursor);
+    // W15B-05: stopped (Quit), the poll asks GitHub nothing more and fires nothing.
+    if (stopped) return result;
     if (result.deferred) this.logger.info("quiet hours: PRs deferred", { count: result.deferred });
     await this.reportDefaultHeads();
     await this.retryWaitingMerges();
@@ -551,22 +585,35 @@ export class GitHostWatcher {
     return this.selfLogin;
   }
 
-  /** New events on one PR; advances its cursor in place. */
+  /**
+   * New events on one PR; advances its cursor in place. Null when the watcher was stopped during
+   * the PR's re-read: its cursor is left as it was and nothing more is read.
+   */
   private async readPullRequest(
     pr: WatchedPullRequest,
     cursor: GitHostCursor,
     self: string | null,
-  ): Promise<GitHostEvent[]> {
+    reread: RereadBudget,
+  ): Promise<GitHostEvent[] | null> {
     const key = prKey(pr.repo, pr.number);
     const pc: PrCursor = { ...emptyPrCursor(), ...cursor.prs[key] };
     let info = await this.deps.host.getPullRequest(pr.repo, pr.number);
     // W15-07: GitHub answers `mergeable: null` while it works it out after a change (the first
-    // read starts it); read again a few seconds apart, at most about 15 s in all, so a conflict
-    // (or its end) is said in this poll. Before, it waited for the next poll, and with a 60 s poll
-    // a notice came and went about two minutes late (live check 2, F5).
+    // read starts it); read again a few seconds apart, so a conflict (or its end) is said in this
+    // poll. Before, it waited for the next poll, and with a 60 s poll a notice came and went about
+    // two minutes late (live check 2, F5). W15B-05: about 15 s in all per poll, shared by its
+    // pull requests (before, 15 s each, one after another), on a wait `stop()` ends.
     for (const ms of this.deps.mergeableRereadMs ?? MERGEABLE_REREAD_MS) {
       if (info.state !== "open" || info.mergeable !== null) break;
-      await realDelay(ms);
+      const wait = Math.min(ms, reread.leftMs);
+      if (wait <= 0) break;
+      reread.leftMs -= wait;
+      try {
+        await this.rereadClock.sleep(wait, reread.signal);
+      } catch {
+        return null;
+      }
+      if (reread.signal.aborted) return null;
       info = await this.deps.host.getPullRequest(pr.repo, pr.number);
     }
     // What it read, reported before a PR is marked closed (dependent-branches, ADR 0111): a

@@ -1082,6 +1082,79 @@ export class GitOps {
   }
 
   /**
+   * W15B-01: the commits `rev` has that nothing in `keep` reaches, oldest first, each with its
+   * parents and subject: what moving a branch away from `rev` would leave on no branch. `keep`
+   * goes to `git log <rev> --not ...` as given (commits, refs, `--remotes`, `--exclude=<name>`
+   * then `--branches`). Null when there are more than `max` of them (the caller holds, never
+   * reads a part as the whole).
+   */
+  async commitsOnlyIn(
+    rev: string,
+    keep: readonly string[],
+    max = 200,
+  ): Promise<{ sha: string; parents: string[]; subject: string }[] | null> {
+    const out = this.must(
+      await this.git([
+        "log",
+        "--no-color",
+        "--topo-order",
+        "--reverse",
+        `--max-count=${max + 1}`,
+        "--format=%H%x09%P%x09%s",
+        rev,
+        "--not",
+        ...keep,
+        "--",
+      ]),
+      "log --not",
+    )
+      .stdout.split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => {
+        const [sha = "", parents = "", ...subject] = l.split("\t");
+        return { sha, parents: parents.split(" ").filter(Boolean), subject: subject.join("\t") };
+      });
+    return out.length > max ? null : out;
+  }
+
+  /**
+   * W15B-01: whether the two-parent merge commit `rev` holds nothing of its own: its tree is
+   * the one a clean merge of its parents makes (`git merge-tree --write-tree`), so dropping it
+   * loses nothing its parents do not keep. False for a merge with a hand-made resolution, a
+   * changed file or more than two parents; null when this git cannot tell (before 2.38).
+   */
+  async mergeAddsNothing(rev: string): Promise<boolean | null> {
+    const parents = await this.parentsOf(rev);
+    if (parents.length !== 2) return false;
+    const r = await this.git([
+      "merge-tree",
+      "--write-tree",
+      "--no-messages",
+      parents[0] as string,
+      parents[1] as string,
+    ]);
+    // 1: the parents conflict, so the commit holds someone's resolution.
+    if (r.code === 1) return false;
+    if (r.code !== 0) return null;
+    const merged = r.stdout.split(/\r?\n/)[0]?.trim();
+    const own = this.must(
+      await this.git(["rev-parse", `${rev}^{tree}`]),
+      "rev-parse tree",
+    ).stdout.trim();
+    return !!merged && merged === own;
+  }
+
+  /**
+   * W15B-01: the commits `ref` named before, newest first, as this checkout's reflog has them
+   * (a remote-tracking branch records each fetch and push); empty without a reflog.
+   */
+  async formerTips(ref: string, max = 50): Promise<string[]> {
+    const r = await this.git(["log", "-g", "--no-color", `--max-count=${max}`, "--format=%H", ref]);
+    if (r.code !== 0) return [];
+    return [...new Set(r.stdout.split(/\r?\n/).filter(Boolean))];
+  }
+
+  /**
    * Removes `branch` from the remote (a cancelled task's pushed work in progress,
    * budget-resume). Never the default branch: refused like a force-push of it. False when the
    * remote has no such branch or refused.

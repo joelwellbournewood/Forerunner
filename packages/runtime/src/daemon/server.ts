@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { formatChf, monthWindow, usdToChfMicro } from "@forerunner/billing";
 import { email as agentEmail, cloudflare, desktop, web } from "@forerunner/capabilities";
+import { removedProjectRefusal } from "@forerunner/commands";
 import {
   type ErrorCode,
   errorMessage,
@@ -39,6 +40,8 @@ import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
+import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
+import { needsOf } from "../session/credential-choice.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { isPersonTask } from "../session/person-questions.ts";
 import {
@@ -1518,6 +1521,17 @@ export function createDaemonApp(
   // before its session begins (the kill switch, no model credential) answers that error.
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
+    // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
+    // sentence, before the scheduler is asked, so no session row is made (`startSession`
+    // refuses any other start of it too).
+    if (body.projectId) {
+      const project = await rt.store.project.get(body.projectId);
+      const removed = project ? removedProjectRefusal(project) : null;
+      if (removed)
+        throw new ForerunnerError("validation", removed, {
+          details: { cause: "project_removed", projectId: body.projectId },
+        });
+    }
     // A budget above what is left this month is refused in words (design §3.6); 0 and negative
     // amounts never pass the body's schema.
     if (body.budgetUsdMicro !== undefined) {
@@ -1861,6 +1875,17 @@ export function createDaemonApp(
       const planTasks = await planTaskViews(row, {
         has: (name) => rt.specialists(name) !== undefined,
         forTask: (input) => chooseFor(input),
+        // W15B-07: who reads web pages, as the credential chooser reads the registry entry.
+        readsWeb: (name) => {
+          const spec = rt.specialists(name);
+          return (
+            !!spec &&
+            needsOf({
+              registryTools: spec.registryTools ?? spec.allowedTools,
+              codeCommands: CODE_COMMANDS_DEFAULT,
+            }).hard.includes("webRead")
+          );
+        },
         ...(planProject
           ? {
               estimate: {

@@ -12,7 +12,14 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
+import {
+  appDirs,
+  errorMessage,
+  join,
+  run,
+  SimulatedClock,
+  SystemClock,
+} from "@forerunner/platform";
 import { WRAP_UP_MARK } from "@forerunner/runtime/agent/loop";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import {
@@ -22,6 +29,7 @@ import {
 } from "@forerunner/runtime/daemon/compose";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { planEstimateUsdMicro } from "@forerunner/runtime/estimates/model";
+import { handoverAgentId } from "@forerunner/runtime/jobs/handover";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
@@ -7500,6 +7508,8 @@ describe("the UI client against the real daemon: the credential chooser says whe
           // carries the figure the Start dialog will show; none here).
           estimateUsdMicro: null,
           runsOn: null,
+          // W15B-07: no limit of the project's to say.
+          note: null,
         },
         // The plan's "Coder" is the registry's coder; on the API key alone nothing is said.
         {
@@ -7509,6 +7519,7 @@ describe("the UI client against the real daemon: the credential chooser says whe
           unknown: null,
           estimateUsdMicro: null,
           runsOn: { kind: "api_key", line: null },
+          note: null,
         },
       ]);
     } finally {
@@ -13647,4 +13658,773 @@ describe("w15-chat, wave 15", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+describe("w15-tail, wave 15 run B", () => {
+  /**
+   * A daemon on the stand-in model with the fake GitHub as its GitHub (one repository), composed
+   * again on the same home at will, as the W15-05 case does.
+   */
+  async function githubWorld(name: string) {
+    const work = mkdtempSync(join(tmpdir(), `fr-ui-real-w15-tail-${name}-`));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name,
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": `# ${name}\n` },
+    });
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          tryIt: false,
+          githostWatch: { enabled: true, pollMs: 86_400_000 },
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        },
+      );
+    };
+    return { host, token, compose, repo: `alice/${name}` };
+  }
+
+  /** git in a task's folder as the person (their own name, never Forerunner's). */
+  const asPerson = (dir: string, args: string[]) =>
+    run(["git", "-C", dir, "-c", "user.name=Pat", "-c", "user.email=pat@example.test", ...args]);
+
+  /** Starts a session on the project and waits until it ends (at least 60 s). */
+  async function sessionOn(client: DaemonClient, projectId: string, what: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const statuses = async () =>
+      (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, await statuses()).not.toBe("");
+    await eventually(
+      async () => (await client.session(sessionId)).status !== "running",
+      `${what} (at least 60 s)`,
+      statuses,
+      60_000,
+    );
+  }
+
+  it("W15B-01: the Tasks row's Redo of a done task with a commit the person made in its folder holds it before any run: the commit stays, nothing is pushed, the row and the Inbox card say why with Try again; after a restart, pushed, the card's Try again goes on from the branch that holds it", async () => {
+    // Review of fix/w15-merge (non-blocking 6) and its fix-up: a resume of a branch whose pull
+    // request is open reset the task's folder to GitHub's branch, so a commit the person made
+    // there was dropped without a word (bench: four model calls spent on the redo, commit gone).
+    const world = await githubWorld("w15tailredo");
+    let { rt, client } = await world.compose();
+    try {
+      const me = (await client.me()).id;
+      const project = await client.createProject({
+        name: "Redo keeps my commit",
+        goal: "A page",
+        repos: [world.repo],
+      });
+      const t = await client.createTask(project.id, {
+        title: "Write the page in page.html",
+        outcome: "page.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await sessionOn(client, project.id, "the first session to end");
+      const done = await rt.store.task.mustGet(t.id);
+      expect(done.status).toBe("done");
+      expect(done.pr_url).toMatch(/\/pull\/\d+$/);
+      const branch = done.branch ?? "";
+      const folder = join(rt.dirs.worktrees, t.id);
+      writeFileSync(join(folder, "mine.txt"), "my own notes\n");
+      await asPerson(folder, ["add", "mine.txt"]);
+      await asPerson(folder, ["commit", "-q", "-m", "my own notes"]);
+      const mine = (await asPerson(folder, ["rev-parse", "HEAD"])).stdout.trim();
+      // The Tasks row's Redo, as the row sends it; another task waits for the same session.
+      const row = (await client.tasks(project.id)).find((x) => x.id === t.id);
+      const redo = await client.taskAction(t.id, { version: row?.version ?? 0, action: "redo" });
+      expect(redo.status).toBe("ready");
+      const other = await client.createTask(project.id, {
+        title: "Write the notes in notes.md",
+        outcome: "notes.md holds the notes",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const runsBefore = (await rt.store.run.list({ task_id: t.id } as never)).length;
+      await sessionOn(client, project.id, "the session after the Redo to end");
+      const sentence =
+        "Its task folder has a commit that is not on GitHub: push it or undo it, then press Try again.";
+      const tasks = await client.tasks(project.id);
+      const held = tasks.find((x) => x.id === t.id);
+      expect(held?.status).toBe("needs_human");
+      expect(held?.display?.label).toBe("Needs your decision: it could not run");
+      expect(tasks.find((x) => x.id === other.id)?.status).toBe("done");
+      expect((await rt.store.run.list({ task_id: t.id } as never)).length).toBe(runsBefore);
+      expect((await asPerson(folder, ["branch", "--contains", mine])).stdout).toContain(branch);
+      expect((await rt.store.task.mustGet(t.id)).reason).toBe(sentence);
+      const cardOf = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests.find((r) => r.taskId === t.id && r.status === "open");
+      const card = await cardOf(client);
+      expect(card?.title).toBe('"Write the page in page.html" could not run');
+      expect(card?.body).toContain(sentence);
+      expect(card?.options).toEqual(["Try again", "Cancel task"]);
+
+      // The daemon starts again on the same home; the person pushes the commit, then answers.
+      await rt.close();
+      ({ rt, client } = await world.compose());
+      const again = await cardOf(client);
+      expect(again?.id).toBe(card?.id);
+      await new GitOps({ cwd: folder, auth: { token: world.token } }).push(branch);
+      const before = (await client.sessions({ projectId: project.id })).length;
+      await client.answerRequest(again?.id ?? "", {
+        version: again?.version ?? 0,
+        answer: again?.options[0] ?? "",
+      });
+      await eventually(
+        async () => {
+          const all = await client.sessions({ projectId: project.id });
+          return all.length > before && all.every((s) => s.status !== "running");
+        },
+        "the session the Try again started to end (at least 60 s)",
+        async () =>
+          (await client.tasks(project.id)).map((x) => `${x.title}=${x.status}`).join(", "),
+        60_000,
+      );
+      expect((await rt.store.task.mustGet(t.id)).status).toBe("done");
+      const folderGit = new GitOps({ cwd: folder, auth: { token: world.token } });
+      await folderGit.fetch();
+      expect(await folderGit.isAncestor(mine, `origin/${branch}`)).toBe(true);
+    } finally {
+      await rt.close();
+      await world.host.stop();
+    }
+  }, 240_000);
+
+  it("W15B-01 (review of fix/w15-tail): the failed card's Try again of a task whose run opened no pull request, with a commit the person made in its folder, holds it before any run: the commit stays, the card says why; after a restart, kept on another branch, the card's Try again does the task again from main", async () => {
+    // Review of fix/w15-tail (blocking 1): the start from main of a task whose earlier run
+    // failed before any pull request reset its branch, which kept its name, with `checkout -B`,
+    // so the person's commit was dropped and a run spent (bench walk 3: faq.md lost).
+    const world = await githubWorld("w15tailfailed");
+    let { rt, client, bench } = await world.compose();
+    try {
+      const me = (await client.me()).id;
+      const project = await client.createProject({
+        name: "Try again keeps my commit",
+        goal: "A FAQ",
+        repos: [world.repo],
+      });
+      const title = "Write the faq in faq.md";
+      bench.fail = [title];
+      const t = await client.createTask(project.id, {
+        title,
+        outcome: "faq.md holds the answers",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await sessionOn(client, project.id, "the session whose run fails to end");
+      const failed = await rt.store.task.mustGet(t.id);
+      expect(failed.status).toBe("failed");
+      expect(failed.pr_url ?? null).toBeNull();
+      const branch = failed.branch ?? "";
+      expect(branch).not.toBe("");
+      const folder = join(rt.dirs.worktrees, t.id);
+      const folderGit = new GitOps({ cwd: folder, auth: { token: world.token } });
+      await folderGit.fetch();
+      // GitHub has no branch of it: nothing was pushed.
+      expect(await folderGit.hasRef(`origin/${branch}`)).toBe(false);
+      writeFileSync(join(folder, "faq.md"), "my own answers\n");
+      await asPerson(folder, ["add", "faq.md"]);
+      await asPerson(folder, ["commit", "-q", "-m", "My FAQ by hand"]);
+      const mine = (await asPerson(folder, ["rev-parse", "HEAD"])).stdout.trim();
+      bench.fail = [];
+      const cardOf = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests.find((r) => r.taskId === t.id && r.status === "open");
+      const statuses = async () =>
+        (await client.tasks(project.id)).map((x) => `${x.title}=${x.status}`).join(", ");
+      /** Answers the open card with its own option and waits until the session it started ended. */
+      const answerAndWait = async (option: string, what: string) => {
+        const card = await cardOf(client);
+        expect(card?.options).toContain(option);
+        const before = (await client.sessions({ projectId: project.id })).length;
+        await client.answerRequest(card?.id ?? "", { version: card?.version ?? 0, answer: option });
+        await eventually(
+          async () => {
+            const all = await client.sessions({ projectId: project.id });
+            return all.length > before && all.every((s) => s.status !== "running");
+          },
+          `${what} (at least 60 s)`,
+          statuses,
+          60_000,
+        );
+      };
+      const runsBefore = (await rt.store.run.list({ task_id: t.id } as never)).length;
+      await answerAndWait("Try again", "the session the failed card's Try again started to end");
+      const sentence =
+        "Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.";
+      const held = (await client.tasks(project.id)).find((x) => x.id === t.id);
+      expect(held?.status).toBe("needs_human");
+      expect(held?.display?.label).toBe("Needs your decision: it could not run");
+      expect((await rt.store.task.mustGet(t.id)).reason).toBe(sentence);
+      expect((await rt.store.run.list({ task_id: t.id } as never)).length).toBe(runsBefore);
+      expect((await asPerson(folder, ["branch", "--contains", mine])).stdout).toContain(branch);
+      expect(readFileSync(join(folder, "faq.md"), "utf8")).toBe("my own answers\n");
+      await folderGit.fetch();
+      expect(await folderGit.hasRef(`origin/${branch}`)).toBe(false);
+      const card = await cardOf(client);
+      expect(card?.title).toBe(`"${title}" could not run`);
+      expect(card?.body).toContain(sentence);
+      expect(card?.options).toEqual(["Try again", "Cancel task"]);
+
+      // The daemon starts again on the same home; the person keeps the commit on another branch,
+      // as the card says, and answers Try again: the task is done again from main.
+      await rt.close();
+      ({ rt, client, bench } = await world.compose());
+      expect((await cardOf(client))?.id).toBe(card?.id);
+      await asPerson(folder, ["branch", "my-faq"]);
+      await answerAndWait(
+        "Try again",
+        "the session the cannot-run card's Try again started to end",
+      );
+      const done = await rt.store.task.mustGet(t.id);
+      expect(done.status).toBe("done");
+      expect(done.pr_url).toMatch(/\/pull\/\d+$/);
+      await folderGit.fetch();
+      expect(await folderGit.hasRef(`origin/${branch}`)).toBe(true);
+      expect(await folderGit.isAncestor(mine, `origin/${branch}`)).toBe(false);
+      expect((await asPerson(folder, ["rev-parse", "my-faq"])).stdout.trim()).toBe(mine);
+    } finally {
+      await rt.close();
+      await world.host.stop();
+    }
+  }, 240_000);
+});
+
+describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", () => {
+  const REMOVED = 'The project "Garden club" was removed, so nothing of it runs.';
+  /** A call the test holds: `reached` once the stand-in got it, nothing answers until `release`. */
+  function gate() {
+    let reached!: () => void;
+    let release!: () => void;
+    const was = new Promise<void>((r) => {
+      reached = r;
+    });
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    return { reached: was, arrive: () => reached(), released, release: () => release() };
+  }
+  type Gate = ReturnType<typeof gate>;
+  /** The stand-in model with the first intake or specialist call held at a gate. */
+  function gatedPlayer(gates: { intake?: Gate; specialist?: Gate }) {
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(mkdtempSync(join(tmpdir(), "fr-w15-tail-")), "c.jsonl") }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      const role = detectRole(req).role;
+      const g = role === "intake" || role === "specialist" ? gates[role] : undefined;
+      if (!g) return stream(req);
+      gates[role as "intake" | "specialist"] = undefined;
+      return (async function* () {
+        g.arrive();
+        await g.released;
+        yield* stream(req);
+      })();
+    };
+    return player;
+  }
+  /** A daemon on one home (sqlite on disk), composed again at will. */
+  function persistedHome() {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-tail-removed-"));
+    const env = { FORERUNNER_HOME: home };
+    return {
+      env,
+      dirs: appDirs({ env }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    };
+  }
+  /** New project as the dialog sends it, and the Changes row whose Undo removes it. */
+  async function newProject(client: DaemonClient, extra: { brief?: string } = {}) {
+    const before = (await client.changes({ limit: 200 })).map((c) => c.id);
+    const created = await client.createProject({
+      name: "Garden club",
+      goal: "A page for the garden club",
+      ...(extra.brief ? { brief: extra.brief, intake: true } : {}),
+      switch: true,
+    });
+    const row = (await client.changes({ limit: 200 })).find(
+      (c) => !before.includes(c.id) && c.projectId === created.id,
+    );
+    if (!row) throw new Error("no Changes row for the creation");
+    return { project: created, creation: row };
+  }
+  const sessionsOf = async (rt: RuntimeApp, projectId: string) =>
+    (await rt.store.session.list({ project_id: projectId } as never)).filter(
+      (s) => s.summary !== "conversation" && !(s.plan as { intake?: unknown } | null)?.intake,
+    );
+
+  it("(a) the creation's Undo while the plan from the brief is being drafted: the plan is never filed for the removed project, also after a restart", async () => {
+    const home = persistedHome();
+    const intake = gate();
+    let { rt, client } = await composeWithRolePlayer(
+      {},
+      { ...home, provider: gatedPlayer({ intake }) as never },
+    );
+    try {
+      const me = (await client.me()).id;
+      const { project, creation } = await newProject(client, {
+        brief: "A one-page site for the garden club with the opening hours.",
+      });
+      await intake.reached;
+      // The planning call is no session of the project's: the Undo goes through.
+      const undone = await client.undoChange(creation.id);
+      expect(undone.status).toBe("done");
+      intake.release();
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+      const plans = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests.filter((r) => r.projectId === project.id);
+      // Before: the plan card was filed after the Undo, for a project that is gone.
+      expect(await plans(client)).toEqual([]);
+      expect(await rt.store.humanRequest.list({ project_id: project.id } as never)).toEqual([]);
+      await rt.close();
+      ({ rt, client } = await composeWithRolePlayer({}, home));
+      expect(await plans(client)).toEqual([]);
+      expect((await client.project(project.id)).status).toBe("archived");
+    } finally {
+      intake.release();
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(b) POST /sessions on a removed project is refused in one sentence before any session row, also after a restart; the chat's start says the same", async () => {
+    const home = persistedHome();
+    let { rt, client } = await composeWithRolePlayer({}, home);
+    try {
+      const me = (await client.me()).id;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      expect((await client.project(project.id)).status).toBe("archived");
+      // Before: the session started (and spent) on the removed project.
+      await expect(client.startSession({ agentId, projectId: project.id })).rejects.toThrow(
+        REMOVED,
+      );
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      // The chat's "start a session" on it (by its id) says the same at once.
+      const said = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: project.id } }],
+        source: "ui",
+      });
+      expect(said.status).toBe("refused");
+      expect(said.reason).toBe(REMOVED);
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      await rt.close();
+      ({ rt, client } = await composeWithRolePlayer({}, home));
+      await expect(client.startSession({ agentId, projectId: project.id })).rejects.toThrow(
+        REMOVED,
+      );
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      expect(me).toBeTruthy();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(c) a removed project's kept credential wait: the wake starts nothing of it and drops the wait from the key, after a restart", async () => {
+    const key = ["sk-ant-api03-", "w15tail", "6".repeat(40)].join(""); // not-a-secret
+    const clock = new SimulatedClock("2026-11-09T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-tail-wake-"));
+    const compose = async () => {
+      const model = createRolePlayer(
+        benchOptionsFromEnv(
+          { FORERUNNER_BENCH_DELAY_MS: "0" },
+          new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+        ),
+      );
+      const standIn = messagesApiStandIn({ model, clock, answerFor: keyRule({}) });
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({ anthropic_api_key: key }),
+        fetchImpl: standInFetch(standIn, {
+          fallback: async () => new Response("not here", { status: 404 }),
+        }),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    let { rt, client } = await compose();
+    const waitsOnKey = async () => {
+      const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+        (s) => s.kind === "api_key",
+      );
+      const list = Array.isArray(src?.limits.waiting) ? src.limits.waiting : [];
+      return (list as { projectId: string }[]).map((w) => w.projectId);
+    };
+    try {
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the note",
+        outcome: "The note is written",
+        acceptanceCriteria: ["it is written"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      // The only key rests until 08:30 UTC; a session meets the wait and keeps it on the key.
+      const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+        (s) => s.kind === "api_key",
+      );
+      if (!src) throw new Error("no api_key source");
+      await rt.store.billingSource.patch(src.id, {
+        limits: { ...src.limits, restingUntil: "2026-11-09T08:30:00Z" },
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = first.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session that met the wait to end (at least 20 s)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      expect(await waitsOnKey()).toEqual([project.id]);
+      // The creation's Undo removes the project; its task stays ready, its wait on the key.
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      await rt.close();
+      ({ rt, client } = await compose());
+      // At the reset, the scheduler's tick wakes what waited: nothing of the removed project.
+      clock.set(Date.parse("2026-11-09T08:31:00Z"));
+      // Before: 1 (a session of the removed project started by itself and spent).
+      expect(await rt.billing.waits.wake()).toBe(0);
+      expect((await sessionsOf(rt, project.id)).map((s) => s.trigger)).toEqual(["manual"]);
+      expect(await waitsOnKey()).toEqual([]);
+      // The next tick finds nothing to try again.
+      expect(await rt.billing.waits.wake()).toBe(0);
+    } finally {
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false }).catch(() => undefined);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(d) a removed project's handover schedule goes at the next tick, and a start from any trigger (its handover job, a credential's return) is refused with no session row, also after a restart", async () => {
+    const home = persistedHome();
+    let { rt, client } = await composeWithRolePlayer({}, { ...home, startServices: false });
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...row.settings, handover: { enabled: true, day: 28, time: "23:00" } },
+      });
+      const handovers = () =>
+        rt.scheduler
+          .list()
+          .filter((s) => s.id.startsWith("handover:"))
+          .map((s) => s.projectId);
+      await rt.scheduler.tick();
+      expect(handovers()).toEqual([project.id]);
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      await rt.scheduler.tick();
+      // Before: the archived row kept its monthly handover, which ran a session by itself.
+      expect(handovers()).toEqual([]);
+      const refused = async (req: Parameters<RuntimeApp["scheduler"]["requestStart"]>[0]) => {
+        const entry = await rt.scheduler.requestStart(req);
+        const outcome = await rt.scheduler.runOutcome(entry.id);
+        return outcome && !outcome.ok ? errorMessage(outcome.error) : "ran";
+      };
+      expect(
+        await refused({
+          agentId: handoverAgentId(project.id),
+          projectId: project.id,
+          trigger: "schedule",
+          reason: "monthly handover",
+        }),
+      ).toBe(REMOVED);
+      expect(
+        await refused({
+          agentId,
+          projectId: project.id,
+          trigger: "budget_reset",
+          reason: "a Claude credential it waited for can serve again",
+        }),
+      ).toBe(REMOVED);
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+      await rt.close();
+      ({ rt, client } = await composeWithRolePlayer({}, { ...home, startServices: false }));
+      await rt.scheduler.tick();
+      expect(handovers()).toEqual([]);
+      expect(
+        await refused({ agentId, projectId: project.id, trigger: "message", reason: "chat" }),
+      ).toBe(REMOVED);
+      expect(await sessionsOf(rt, project.id)).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(e) the creation's Undo while a session of that project runs is refused with its sentence and changes nothing; once it ended, the Undo goes through", async () => {
+    const home = persistedHome();
+    const specialist = gate();
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      { ...home, provider: gatedPlayer({ specialist }) as never },
+    );
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      await client.createTask(project.id, {
+        title: "Write the page in index.html",
+        outcome: "index.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await specialist.reached;
+      const reason = "a session of Garden club is running. Stop it first";
+      // Changes says why before any press; the press is refused with it.
+      const listed = (await client.changes({ limit: 200 })).find((c) => c.id === creation.id);
+      expect(listed?.undoable).toBe(false);
+      expect(listed?.undoBlockedReason).toBe(reason);
+      const refused = await client.undoChange(creation.id);
+      expect(refused.status).toBe("refused");
+      expect(refused.reason).toBe(reason);
+      const still = await client.project(project.id);
+      expect([still.status, still.name]).toEqual(["active", "Garden club"]);
+      expect((await client.me()).activeProjectId).toBe(project.id);
+      specialist.release();
+      await eventually(
+        async () => (await client.session(sessionId)).status !== "running",
+        "the session to end (at least 60 s)",
+        async () => (await client.session(sessionId)).status,
+        60_000,
+      );
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      expect((await client.project(project.id)).status).toBe("archived");
+    } finally {
+      specialist.release();
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("(e, stopping after its task) the creation's Undo while a session of that project stops after its task says so; stopped now, the Undo goes through (review of fix/w15-tail)", async () => {
+    // Review of fix/w15-tail (non-blocking): the line said "is running" for a session that was
+    // stopping after its task (status paused, the session page's "Stopping after this task").
+    // No restart here: a daemon that starts again ends the sessions the last one left (recovery).
+    const { rt, client } = await composeWithRolePlayer({}, persistedHome());
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const { project, creation } = await newProject(client);
+      // A session of the project told "Stop after this task", as `session.pause` leaves it.
+      const paused = await rt.store.session.insert({
+        agent_id: agentId,
+        project_id: project.id,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 1_000_000,
+        step_cap: 100,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "paused",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      const reason =
+        "a session of Garden club is stopping after its task. Stop it now, or wait for it to end";
+      const listed = (await client.changes({ limit: 200 })).find((c) => c.id === creation.id);
+      expect(listed?.undoable).toBe(false);
+      expect(listed?.undoBlockedReason).toBe(reason);
+      const refused = await client.undoChange(creation.id);
+      expect(refused.status).toBe("refused");
+      expect(refused.reason).toBe(reason);
+      expect((await client.project(project.id)).status).toBe("active");
+      await client.stopSession(paused.id);
+      expect((await client.undoChange(creation.id)).status).toBe("done");
+      expect((await client.project(project.id)).status).toBe("archived");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("w15-tail, wave 15 run B: the plan card says a research task can read no website (W15B-07)", () => {
+  // W15-33's plan-card line (wave15a-fix-w15-review not_done[0]): under an empty "only these
+  // websites" list the plan card showed a researcher task with no word that it reads nothing.
+  it("GET /inbox: the researcher's plan task carries the note under an empty 'only' list; with a website listed, or for a coder, none", async () => {
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_PLAN: "research" });
+    try {
+      const me = await client.me();
+      const brief =
+        "Compare two static site generators and write a page that summarises them for a club website.";
+      const project = await client.createProject({
+        name: "Club research",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      // Settings → Web pages research may read: "Only these websites", every entry removed.
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...row.settings, web_access: { mode: "only", only: [] } },
+      });
+      const planTasks = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open",
+        )?.planTasks ?? [];
+      const note =
+        'Reads no website: this project\'s "only these websites" list is empty. Add websites in Settings, or Change the plan.';
+      const tasks = await planTasks();
+      expect(tasks.find((t) => t.specialist === "researcher")?.note).toBe(note);
+      expect(tasks.filter((t) => t.specialist !== "researcher").map((t) => t.note ?? null)).toEqual(
+        tasks.filter((t) => t.specialist !== "researcher").map(() => null),
+      );
+      // A website on the list: the researcher reads it, nothing to say.
+      const again = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...again.settings, web_access: { mode: "only", only: ["example.com"] } },
+      });
+      expect((await planTasks()).every((t) => (t.note ?? null) === null)).toBe(true);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("w15-tail, wave 15 run B: run A's owed route cases (W15B-08: W15-55, W15-68)", () => {
+  // The review of w15-merge (non-blocking 7): the Tasks labels of a done task's merge record were
+  // tested on taskDisplay alone. Here they are read through GET /projects/:id/tasks, as the Tasks
+  // tab reads them, on records as the merge step and the poll write them.
+  it("GET /projects/:id/tasks: a closed pull request, a rebuild conflict and a merge GitHub did not answer each have their own label and the record's sentence, never 'waiting for you to merge'", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Merge labels", goal: "Three pages" });
+      const agentId = rt.agent.id;
+      const doneTaskWith = async (
+        title: string,
+        n: number,
+        record: { state: string; last_outcome: string; sentence: string },
+      ) => {
+        const created = await client.createTask(project.id, {
+          title,
+          outcome: `${title} is written`,
+          riskTier: 1,
+          specialist: "coder",
+        });
+        const t = await rt.store.task.mustGet(created.id);
+        await rt.store.task.restoreStatus(t.id, t.version, "done", "accepted by the critic", {
+          agentId,
+        });
+        const prUrl = `https://github.com/o/app/pull/${n}`;
+        await rt.store.task.patch(t.id, { pr_url: prUrl });
+        await rt.store.mergeRecord.insert({
+          task_id: t.id,
+          project_id: project.id,
+          agent_id: agentId,
+          pr_number: n,
+          pr_url: prUrl,
+          reviewed_head_sha: "a".repeat(40),
+          ...record,
+        });
+        return t.id;
+      };
+      const closed = await doneTaskWith("Write the first page", 8, {
+        state: "left_to_you",
+        last_outcome: "closed",
+        sentence: "#8 was closed without merging.",
+      });
+      const conflict = await doneTaskWith("Write the second page", 9, {
+        state: "left_to_you",
+        last_outcome: "rebuild_conflict",
+        sentence:
+          "#9 could not be rebuilt without #4, which was closed: both change index.html. It waits for you: redo the task, or resolve it on GitHub.",
+      });
+      const unreachable = await doneTaskWith("Write the third page", 10, {
+        state: "waiting_checks",
+        last_outcome: "unreachable",
+        sentence: "GitHub did not answer about #10: Forerunner tries the merge again.",
+      });
+      const rows = await client.tasks(project.id);
+      const display = (id: string) => {
+        const d = rows.find((r) => r.id === id)?.display;
+        return { label: d?.label, detail: d?.detail };
+      };
+      expect(display(closed)).toEqual({
+        label: "Accepted · pull request closed",
+        detail: "#8 was closed without merging.",
+      });
+      expect(display(conflict)).toEqual({
+        label: "Accepted · could not be rebuilt",
+        detail:
+          "#9 could not be rebuilt without #4, which was closed: both change index.html. It waits for you: redo the task, or resolve it on GitHub.",
+      });
+      expect(display(unreachable)).toEqual({
+        label: "Accepted · merges once GitHub answers",
+        detail: "GitHub did not answer about #10: Forerunner tries the merge again.",
+      });
+      for (const r of rows)
+        expect(r.display?.label).not.toBe("Accepted · waiting for you to merge");
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

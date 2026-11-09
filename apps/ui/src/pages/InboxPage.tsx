@@ -394,6 +394,15 @@ function IntakeCard({
                   {runsOn}
                 </span>
               ) : null}
+              {/* W15B-07: a limit of this project's the task meets as planned (the daemon's words). */}
+              {here?.note ? (
+                <span
+                  className="block text-xs text-amber-800 dark:text-amber-300"
+                  data-testid="intake-task-note"
+                >
+                  {here.note}
+                </span>
+              ) : null}
             </li>
           );
         })}

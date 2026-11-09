@@ -83,7 +83,13 @@ Changes lists the creation once ("Created the project … and made it the active
 **Undo** removes the project and makes the project you had before the active one again. "Go
 back" in chat returns to the project you were on before New project. After the Undo the name is
 free for a new project, the project's open cards leave the Inbox, and Changes shows its rows as
-"… (removed)", without Undo.
+"… (removed)", without Undo. A removed project starts nothing, by itself or by a press: its page
+(from an old notification or a bookmark) says "This project was removed." with no Start session,
+a start asked for anyway is refused with 'The project "…" was removed, so nothing of it runs.',
+work that waited for a Claude credential or a monthly handover of it no longer starts, and a
+plan still being drafted when you pressed Undo is never filed. While a session of the project
+runs, its Undo waits: Changes says "Cannot be undone now: a session of … is running. Stop it
+first."
 The goal is optional when you write a brief: left empty, the brief's first sentence is the goal.
 Without a repository link, a brief of a sentence or two (under 200 characters, no list) gets a
 small plan: one milestone of one to three tasks and two short documents (if the agent plans
@@ -379,7 +385,16 @@ never repeats work that is already in the default branch:
   the row says "#8 changed after the review: look at the new commits, then merge it yourself or
   redo the task." and offers no Merge, and a Merge you pressed while it waited is dropped, with
   a card that says so) or undo it in the folder (`git reset --hard origin/<branch>`). The same
-  holds for any commit pushed to #8's branch on GitHub: a rebuild never makes it reviewed. In a chain
+  holds for any commit pushed to #8's branch on GitHub: a rebuild never makes it reviewed. A
+  **Redo** or a **Try again** never drops a commit you made in a task's folder either, also for
+  a task whose last run failed before it opened a pull request: when the next run of that task
+  would start its branch again (from GitHub's copy, or from main), it stops before any work and
+  costs nothing; the task's row says "Needs your decision: it could not run" and its Inbox card
+  says why: "Its task folder has a commit that is not on GitHub: push it or undo it, then press
+  Try again." (when the task starts again from main: "…, and doing the task again from main would
+  drop it: undo it or keep it on another branch, then press Try again."). The session goes on
+  with its other tasks. Do what the card says (to keep the commit on another branch: `git branch
+  my-copy` in the folder), then press **Try again** on the card. In a chain
   (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt; while #6 cannot be
   rebuilt yet (its folder is busy, or its rebuild conflicts), #8 waits for it too, with no card
   of its own, and nothing merges #8 meanwhile.
@@ -1012,7 +1027,9 @@ website, a site added to the list, a block taken off) asks for your yes first; o
 read less applies at once. The agent browser's own site list is a separate thing and changes
 nothing research reads. A block list written before this setting existed is shown and enforced
 here too. The plan for a project with "Only these websites" plans no research that needs another
-website; each research run is told the rule and says in its report what it could not read
+website, and when that list has nothing on it the plan card says under each research task:
+'Reads no website: this project's "only these websites" list is empty. Add websites in Settings,
+or Change the plan.'; each research run is told the rule and says in its report what it could not read
 because of it, and a refused page says which rule refused it. The review of a research task is
 told the same rule, so a page research rightly did not read is never held against the work, and
 it reads every page the work rests on, also those read before a pause.

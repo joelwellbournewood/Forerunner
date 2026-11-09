@@ -811,6 +811,12 @@ export const HumanRequestView = z.object({
          * older service (the card then shows the plan's own figure).
          */
         estimateUsdMicro: z.number().int().nullable().optional(),
+        /**
+         * W15B-07: a limit of this project's that leaves the task unable to do its work as
+         * planned, in one sentence for the card ("Reads no website: this project's "only these
+         * websites" list is empty. ..."); null when none. Absent from an older service.
+         */
+        note: z.string().nullable().optional(),
       }),
     )
     .nullable()

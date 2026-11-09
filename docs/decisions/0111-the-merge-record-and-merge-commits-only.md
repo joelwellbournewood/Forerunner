@@ -465,3 +465,38 @@ after the review is never merged by Forerunner.
    withdrawn."), and its Undo puts the task back to done and the same card back in the Inbox,
    without the Redo's mark. Before, the Undo left the conflict notice withdrawn for good (it is
    said once, so no later poll brought it back) and the Redo's line did not mention the card.
+
+## Amendment: a Redo or a Try again holds for the person's commit too ('w15-tail', 2026-11-09)
+
+Point 3 of the wave 15 amendment held only the rebuild. A task's next run reset its branch with
+`checkout -B` at two places that never asked: the resume of a branch whose pull request is open
+(the branch as GitHub has it; a Tasks-row Redo of a done task, a Try again) and the start from
+main, which runs over the task's local branch whenever its name is kept: the redo from main while
+the pull request is open (a Redo that closed a merge card, "Drop the branch and retry from
+scratch"), and a Try again of a task whose earlier run opened no pull request at all (it failed,
+timed out, changed nothing or its push was refused; the review of fix/w15-tail found this one on
+the bench). A commit the person made in the task's folder was dropped without a word, and the run
+spent model calls on work the person had not asked to drop.
+
+1. **Hold, never reset and never bring the commit along unasked.** Before either reset, the run
+   reads whether it would leave a commit of the person's on no branch (of the task's local
+   branch, and of the folder's HEAD while it is on that branch or on no branch). Not at risk is
+   what something else still holds: any branch on GitHub, also as the task's branch was before a
+   later push replaced it there, the folder's other branches, and Forerunner's own unpushed
+   states (its task commit whose push did not go through, named by `refs/forerunner/run-unpushed`
+   from the commit until the push went through; its rebuild; the base its work builds on). Of the
+   rest, work in progress and a merge that holds nothing of its own (a base or dependency merge)
+   are Forerunner's. Anything else holds the run (fails closed).
+2. **What the person sees.** The run ends before any model call: nothing reset, nothing pushed,
+   no spend. The task waits on the cannot-run card ('"X" could not run. Its task folder has a
+   commit that is not on GitHub: push it or undo it, then press Try again.'; for any start from
+   main: '…, and doing the task again from main would drop it: undo it or keep it on another
+   branch, then press Try again.'), with Try again and Cancel task; the Tasks row reads "Needs
+   your decision: it could not run". The session goes on with its other tasks. Once the person
+   did what the card says, Try again goes on: a resume from the branch that holds the pushed
+   commit, a start from main from main again (a commit kept on another branch stays there).
+3. **Not changed.** Changes nobody committed are still set aside under the failed-run ref at a
+   run's start (kept, not said). A Tasks-row action still starts no session, and the hold is said
+   at the run, not at the Redo itself (the owner's answer D6 of 2026-11-09 changes what Redo
+   does; run C). Bringing the person's commit into the run instead of holding is an open owner
+   question.

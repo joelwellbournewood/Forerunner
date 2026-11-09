@@ -56,6 +56,50 @@ export function removedProjectName(project: ProjectRow): string | null {
   return typeof kept === "string" && kept ? kept : project.name;
 }
 
+/**
+ * W15B-02: what refuses anything that would start work on a removed project (a start from any
+ * trigger, the intake's plan, a credential's wake), in one sentence; null for a project still
+ * there. A removed project starts nothing, by itself or by a press (fail closed: money).
+ */
+export function removedProjectRefusal(project: ProjectRow): string | null {
+  const name = removedProjectName(project);
+  return name === null ? null : `The project "${name}" was removed, so nothing of it runs.`;
+}
+
+/**
+ * W15B-02: the state of a session of the project that runs now (running, paused or about to
+ * run; running first), never counting the intake's planning call or the chat's own row; null
+ * when none does. The creation's Undo is refused while one runs: removing the project under a
+ * working session would leave it spending on a project that is gone.
+ */
+async function runningSessionOf(
+  store: StateStore,
+  projectId: string,
+): Promise<"running" | "paused" | "planned" | null> {
+  const rows = await store.session.list({
+    project_id: projectId,
+    status: ["running", "paused", "planned"],
+  } as never);
+  const work = rows.filter((s) => {
+    if (s.summary === "conversation") return false;
+    const plan = s.plan as { intake?: unknown } | null;
+    return !(plan && typeof plan === "object" && !Array.isArray(plan) && plan.intake);
+  });
+  for (const state of ["running", "paused", "planned"] as const)
+    if (work.some((s) => s.status === state)) return state;
+  return null;
+}
+
+/**
+ * W15B-02 (review of fix/w15-tail): the session's state and what to do, true for each (§5 rule
+ * 9; the session page's own words: a paused session is one stopping after its task).
+ */
+const SESSION_STATE_WORDS = {
+  running: "is running. Stop it first",
+  paused: "is stopping after its task. Stop it now, or wait for it to end",
+  planned: "is starting. Stop it first",
+} as const;
+
 async function freedName(store: StateStore, name: string): Promise<string> {
   for (let n = 1; ; n++) {
     const candidate = n === 1 ? `${name} (removed)` : `${name} (removed ${n})`;
@@ -260,6 +304,21 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
       projectId: project.id,
       activeProjectId: params.switch ? project.id : undefined,
     };
+  },
+  /**
+   * W15B-02: never while a session of the project runs (its planning call does not count: the
+   * plan it drafts is not filed for a removed project). The person stops it first; the Undo
+   * stays offered.
+   */
+  async undoBlocked(params, _before, after, ctx) {
+    const a = asObject(after);
+    const createdId = typeof a.project_id === "string" ? a.project_id : null;
+    if (!createdId) return null;
+    const row = await ctx.store.project.get(createdId);
+    if (!row || row.status === "archived") return null;
+    const state = await runningSessionOf(ctx.store, createdId);
+    if (!state) return null;
+    return `a session of ${row.name || params.name} ${SESSION_STATE_WORDS[state]}`;
   },
   /**
    * W15-36: the project goes. It is archived (its tasks, cards and changes keep their rows) and

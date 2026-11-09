@@ -709,3 +709,32 @@ describe("leftovers7-tailrun, wave 13: Start while a plan is drafted (TR-12)", (
     expect(dialog).not.toHaveTextContent("your agent is in another session");
   });
 });
+
+/**
+ * w15-tail, wave 15 run B (W15B-02): a removed project (its creation undone) still offered Start
+ * session and Create a repository on its page (from an old notification or a bookmark), and the
+ * start went through and spent.
+ */
+describe("w15-tail, wave 15 run B: a removed project's page (W15B-02)", () => {
+  it("says the project was removed and offers no Start session, no Create a repository and no status button; a start sent anyway is refused in one sentence", async () => {
+    const harness = createHarness();
+    const beacon = harness.daemon.state.projects.find((p) => p.id === "proj_beacon");
+    if (!beacon) throw new Error("no proj_beacon fixture");
+    // As GET /projects/:id answers it after the creation's Undo (W15-36).
+    beacon.status = "archived";
+    beacon.name = "Beacon (removed)";
+    renderApp("/projects/proj_beacon", harness);
+    expect(await screen.findByTestId("project-removed")).toHaveTextContent(
+      /^This project was removed\.$/,
+    );
+    const header = screen.getByTestId("project-header");
+    expect(within(header).queryByTestId("start-session")).toBeNull();
+    expect(within(header).queryByTestId("create-repo")).toBeNull();
+    expect(within(header).queryByTestId("project-status")).toBeNull();
+    expect(within(header).queryByRole("button")).toBeNull();
+    // What the daemon answers a start on it from any client (the fake as the real one).
+    await expect(
+      harness.client.startSession({ agentId: "agent_alice", projectId: "proj_beacon" }),
+    ).rejects.toThrow('The project "Beacon" was removed, so nothing of it runs.');
+  });
+});
