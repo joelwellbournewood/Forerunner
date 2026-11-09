@@ -47,6 +47,7 @@ import {
   mergeModeOf,
   OWED_FOLDER_OUTCOMES,
   owedFolderWait,
+  owedMergeWait,
 } from "./merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports.ts";
 
@@ -1172,7 +1173,11 @@ export class ReviewedPrMerge implements MergePort {
         await store.mergeRecord.move(record.id, "queued", {
           approval: "person",
           approved_by: humanId,
-          sentence: `${prName(record.pr_number)} merges now: you pressed Merge.`,
+          // W15-05: a merge that waits for what is left in its task's folder keeps saying so;
+          // the approval is kept and the merge goes on once the folder is clean.
+          sentence:
+            owedMergeWait({ ...record, state: "queued" }) ??
+            `${prName(record.pr_number)} merges now: you pressed Merge.`,
         }),
       );
     }
@@ -1929,7 +1934,23 @@ export class ReviewedPrMerge implements MergePort {
     return record;
   }
 
-  private worktreeOf(task: TaskRow): string | null {
+  /**
+   * W15-05: what a task's merge that owes a rebuild waits for in its folder, looked at now (the
+   * person's Merge asks it before its answer, so a wait no poll has seen yet is said too), and
+   * written on the record as `sayOwedWait` does; null when it does not wait for its folder.
+   */
+  async folderWaitNow(task: TaskRow): Promise<string | null> {
+    const record = await this.deps.store.mergeRecord.forTask(task.id);
+    if (!record?.rebuild_owed_for || record.state === "merged" || record.state === "merging")
+      return null;
+    return owedMergeWait(await this.sayOwedWait(record, task, this.worktreeOf(task)));
+  }
+
+  /**
+   * The task's folder on this computer (its worktree under the worktree root), or null when it
+   * has none; the Overview's row names it while the merge waits for what is left in it (W15-05).
+   */
+  worktreeOf(task: Pick<TaskRow, "id">): string | null {
     if (!this.deps.worktreeRoot) return null;
     const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
     return existsSync(join(dir, ".git")) ? dir : null;

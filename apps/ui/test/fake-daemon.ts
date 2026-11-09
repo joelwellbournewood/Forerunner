@@ -6951,6 +6951,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sentence: `#${number} does not wait to be merged: it may be merged or closed already.`,
         order: [],
       });
+    // W15-05: a merge that waits for what is left in its task's folder (the row names the
+    // folder) keeps the press and answers with why it waits; the row stays as it is.
+    if (row.folder && row.merge?.sentence)
+      return c.json({
+        state: "queued",
+        sentence: row.merge.sentence,
+        order: [...row.merge.first, number],
+      });
     if (row.merge && !row.merge.canMerge)
       return c.json({
         state: "refused",

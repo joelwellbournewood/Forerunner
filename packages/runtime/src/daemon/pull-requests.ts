@@ -93,7 +93,8 @@ async function reviewOf(
 export type InAppMergePort = Pick<
   ReviewedPrMerge,
   "approveInOrder" | "mergeApproved" | "mergeAsIs"
->;
+> &
+  Partial<Pick<ReviewedPrMerge, "worktreeOf" | "folderWaitNow">>;
 
 export interface ProjectPullRequestsDeps {
   store: StateStore;
@@ -377,11 +378,13 @@ export class ProjectPullRequests {
       if (task) {
         if (task.status !== "done") continue;
         const record = await store.mergeRecord.forTask(task.id);
-        const own = mergeOfRecord(
-          record?.pr_number === pr.number ? record : undefined,
-          pr.number,
-          mode,
-        );
+        const ofThisPr = record?.pr_number === pr.number ? record : undefined;
+        const own = mergeOfRecord(ofThisPr, pr.number, mode);
+        // W15-05: the folder the merge waits on, with Open folder on the row.
+        const folder =
+          ofThisPr && owedMergeWait(ofThisPr)
+            ? (this.deps.merge?.worktreeOf?.(task) ?? null)
+            : null;
         taskOfRow.set(pr.number, task);
         rows.push({
           kind: "task",
@@ -394,6 +397,7 @@ export class ProjectPullRequests {
           merge: ruleSentence
             ? { state: "blocked", canMerge: false, sentence: ruleSentence, first: [] }
             : own,
+          ...(folder ? { folder } : {}),
         });
       } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr, { soleLinked })) {
         // Only this project's docs PRs (L-16, W15-01): live, another project's stale scaffold PR
@@ -582,7 +586,12 @@ export class ProjectPullRequests {
       return refused(
         `${prName(number)} does not wait to be merged: it may be merged or closed already.`,
       );
-    if (!row.merge?.canMerge)
+    // W15-05: a merge that waits for what is left in its task's folder takes the press (the
+    // approval is kept and the merge goes on once the folder is clean) and answers with why it
+    // waits; before, the row offered a bare Merge and the press answered "Merging #23." while
+    // nothing could merge (live check 2, F4).
+    const folderWait = row.kind === "task" ? await this.folderWaitOf(row.taskId) : null;
+    if (!row.merge?.canMerge && !folderWait)
       return refused(
         row.merge?.sentence ??
           (row.merge?.state === "waiting_checks" ||
@@ -612,14 +621,19 @@ export class ProjectPullRequests {
         order: [number],
       };
     }
-    const order = [...row.merge.first, number];
+    const order = [...(row.merge?.first ?? []), number];
     const chain: TaskRow[] = [];
     let asItIs = false;
+    // W15-05: the first in the order whose merge waits for its task's folder says why.
+    let waits: string | null = null;
     for (const n of order) {
       const r = view.waiting.find((w) => w.number === n);
       const task = r?.taskId ? await store.task.get(r.taskId) : undefined;
       if (!task) continue;
-      if (!(await store.mergeRecord.forTask(task.id))?.reviewed_head_sha) asItIs = true;
+      const record = await store.mergeRecord.forTask(task.id);
+      if (!record?.reviewed_head_sha) asItIs = true;
+      // The folder looked at now, so a wait no poll has seen yet is said too.
+      waits ??= (await merge.folderWaitNow?.(task)) ?? (record ? owedMergeWait(record) : null);
       chain.push(task);
     }
     // The person's approval is on the records before the answer: a restart finishes them.
@@ -629,13 +643,21 @@ export class ProjectPullRequests {
     return {
       state: "queued",
       sentence:
-        order.length > 1
+        waits ??
+        (order.length > 1
           ? `Merging ${names} in order.`
           : asItIs
             ? `Merging ${names} as it is on GitHub now.`
-            : `Merging ${names}.`,
+            : `Merging ${names}.`),
       order,
     };
+  }
+
+  /** W15-05: the sentence of a task's merge that waits for what is left in its folder, or null. */
+  private async folderWaitOf(taskId: string | null): Promise<string | null> {
+    if (!taskId) return null;
+    const record = await this.deps.store.mergeRecord.forTask(taskId);
+    return record ? owedMergeWait(record) : null;
   }
 
   /** Every merge started here has ended (tests, the daemon's close). */

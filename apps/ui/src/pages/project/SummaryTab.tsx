@@ -580,6 +580,13 @@ function RepositoryFiles({
                             {pr.merge.sentence}
                           </span>
                         ) : null}
+                        {pr.folder ? (
+                          // W15-05: the task's folder the merge waits on, with Open folder, so
+                          // the sentence's way out ("take them out") can be done from here.
+                          <span className="basis-full text-xs" data-testid="pr-wait-folder">
+                            <FolderPath path={pr.folder} testId="pr-wait-folder-path" />
+                          </span>
+                        ) : null}
                         <PreviewOfRow
                           pr={pr}
                           preview={previewOf(pr)}

@@ -3358,7 +3358,7 @@ record and on one that waits for the person's Merge with nothing more to say
 (`plainWaitForYou`), so the rows say it before any press; `folderWaitOver` gives a waiting
 record its plain words back ("#8 waits for you to merge it: press Merge on the Overview.") once
 the folder is clean or the rebuild ran, a queued one `rebuild_owed`. `sayOwedWait` reads the
-folder with the same `folderHold`.
+folder with the same `folderHold`. **The press on such a row** (W15-05, live check 2 F4: "Merging #23." while nothing could merge): `ProjectPullRequests.merge` looks at the folder now (`ReviewedPrMerge.folderWaitNow`, which writes the wait as `sayOwedWait` does), approves the chain as before, and answers with the first wait in the order instead of "Merging #N."; a row whose record waits so offers no Merge but still takes a press (a screen older than the poll), and `approveInOrder` keeps the wait's sentence on the record. The row names the folder (`folder` on `ProjectPullRequestView`, from `ReviewedPrMerge.worktreeOf`), shown with Open folder.
 `owedMergeWait(record)` reads it for the Overview's row (`pull-requests.ts` `owedWaitOf`:
 `waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
 and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the

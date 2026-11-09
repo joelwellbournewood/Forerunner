@@ -1111,6 +1111,13 @@ export const ProjectPullRequestView = z.object({
    * one at a time, and it goes when the pull request is merged or closed.
    */
   preview: z.object({ folder: z.string(), sentence: z.string() }).nullable().optional(),
+  /**
+   * W15-05 (w15-merge, wave 15): the task's folder on this computer while the merge waits for
+   * what is left in it (the row's sentence says so: "#8 waits for changes left in its task's
+   * folder: …"), shown with Open folder; absent (or null) otherwise. A Merge pressed on such a
+   * row is kept and answered with that sentence; it goes on once the folder is clean.
+   */
+  folder: z.string().nullable().optional(),
 });
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
 

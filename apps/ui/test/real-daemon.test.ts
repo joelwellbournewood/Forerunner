@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -11069,6 +11070,10 @@ describe("leftovers7-tailmerge, wave 13", () => {
     // The person presses Merge on B's row: the answer comes at once, the merge waits (R-lock).
     const answer = await client.mergePullRequest(project.id, b.pr.number);
     expect(answer.state).not.toBe("refused");
+    // W15-05: the answer says why it waits, never "Merging #N." (live check 2, F4).
+    expect(answer.sentence).toBe(
+      `#${b.pr.number} waits for changes left in its task's folder: take them out or redo the task.`,
+    );
     await eventually(
       async () =>
         (await rt.store.mergeRecord.forTask(b.task.id))?.last_outcome === "owed_folder_changes",
@@ -12258,6 +12263,145 @@ describe("w15-merge, wave 15", () => {
       expect(await docsRows(client, b.id)).toEqual([]);
     } finally {
       await rt.close();
+    }
+  }, 240_000);
+});
+
+describe("w15-merge, wave 15: a merge that waits for its task's folder (W15-05)", () => {
+  it("after one poll and before any press the row says why with the folder and offers no Merge; Merge answers that sentence and is kept; the same after the daemon starts again; once the folder is clean the next poll rebuilds and merges it", async () => {
+    // Live check 2 (F4): Merge answered "Merging #23." while the merge waited on changes left in
+    // the task's folder, the row offered a bare Merge before the press, and the sentence did not
+    // say where the folder is.
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-folder-"));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name: "w15folder",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# w15folder\n" },
+    });
+    const REPO = { owner: "alice", name: "w15folder" };
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          tryIt: false,
+          githostWatch: { enabled: true, pollMs: 86_400_000 },
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        },
+      );
+    };
+    let { rt, client } = await compose();
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({
+        name: "Folder wait",
+        goal: "A page and its footer",
+        repos: ["alice/w15folder"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write the page in page.html",
+        outcome: "page.html holds the page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write the footer in footer.html",
+        outcome: "footer.html holds the footer",
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [a.id],
+      });
+      const statuses = async () =>
+        (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, await statuses()).not.toBe("");
+      await eventually(
+        async () => (await client.session(sessionId)).status !== "running",
+        "the session to end (at least 60 s)",
+        statuses,
+        60_000,
+      );
+      const taskA = await rt.store.task.mustGet(a.id);
+      const taskB = await rt.store.task.mustGet(b.id);
+      expect(taskB.status, await statuses()).toBe("done");
+      const prA = Number(/\/pull\/(\d+)/.exec(taskA.pr_url ?? "")?.[1]);
+      const prB = Number(/\/pull\/(\d+)/.exec(taskB.pr_url ?? "")?.[1]);
+      const folder = join(rt.dirs.worktrees, taskB.id);
+      // Someone left a file in B's folder; A is squash-merged on GitHub; one poll.
+      writeFileSync(join(folder, "notes.txt"), "my notes\n");
+      expect((await github.mergePullRequest(REPO, prA, { method: "squash" })).merged).toBe(true);
+      await rt.githostWatcher?.pollOnce();
+      const sentence = `#${prB} waits for changes left in its task's folder: take them out or redo the task.`;
+      const rowOf = async (c: DaemonClient) =>
+        (await c.projectPullRequests(project.id)).waiting.find((w) => w.number === prB);
+      // Before any press: the sentence and the folder, no Merge.
+      expect(await rowOf(client)).toMatchObject({
+        folder,
+        merge: { canMerge: false, sentence },
+      });
+      const taskRow = (await client.tasks(project.id)).find((t) => t.id === b.id);
+      expect(taskRow?.display).toMatchObject({
+        label: "Accepted · merge waits for you",
+        detail: sentence,
+      });
+      // The press answers why it waits, never "Merging #N."; the approval is kept.
+      const answer = await client.mergePullRequest(project.id, prB);
+      expect(answer.sentence).toBe(sentence);
+      expect(answer.state).toBe("queued");
+      await rt.pullRequests.idle();
+      const kept = await rt.store.mergeRecord.forTask(b.id);
+      expect(kept).toMatchObject({ approval: "person", last_outcome: "owed_folder_changes" });
+      expect((await github.getPullRequest(REPO, prB)).merged).toBe(false);
+
+      // The daemon starts again on the same home: the same row, the approval still kept.
+      await rt.close();
+      ({ rt, client } = await compose());
+      expect(await rowOf(client)).toMatchObject({
+        folder,
+        merge: { canMerge: false, sentence },
+      });
+      expect((await rt.store.mergeRecord.forTask(b.id))?.approval).toBe("person");
+
+      // The file taken out: the next poll rebuilds B onto main and the kept Merge goes on.
+      rmSync(join(folder, "notes.txt"));
+      // The rebuild runs at the next poll's sweep, the kept merge at a retry pass after it.
+      for (let i = 0; i < 4 && !(await github.getPullRequest(REPO, prB)).merged; i++) {
+        await rt.githostWatcher?.pollOnce();
+        await rt.pullRequests.idle();
+      }
+      expect(
+        (await github.getPullRequest(REPO, prB)).merged,
+        JSON.stringify(await rt.store.mergeRecord.forTask(b.id)),
+      ).toBe(true);
+    } finally {
+      await rt.close();
+      await host.stop();
     }
   }, 240_000);
 });

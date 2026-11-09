@@ -897,3 +897,36 @@ describe("leftovers7-tailrun, wave 13: the 'Research reads:' line shows a restor
     );
   }, 30_000);
 });
+
+describe("w15-merge, wave 15", () => {
+  it("a merge that waits for what is left in its task's folder says so on its row with the folder and Open folder, and offers no bare Merge (W15-05)", async () => {
+    const harness = createHarness();
+    const sentence =
+      "#8 waits for changes left in its task's folder: take them out or redo the task.";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        {
+          kind: "task",
+          taskId: "task_8",
+          title: "Write the footer",
+          number: 8,
+          url: "https://example.test/org/atlas/pull/8",
+          branch: "fr/8",
+          review: "critic",
+          merge: { state: "waiting_checks", canMerge: false, sentence, first: [] },
+          folder: "/home/pat/.forerunner/worktrees/task_8",
+        },
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const row = await within(files).findByTestId("pr-waiting");
+    expect(within(row).getByTestId("pr-merge-sentence")).toHaveTextContent(sentence);
+    expect(within(row).getByTestId("pr-wait-folder-path")).toHaveTextContent(
+      "/home/pat/.forerunner/worktrees/task_8",
+    );
+    expect(within(row).queryByTestId("pr-merge")).toBeNull();
+    expect(within(row).queryByTestId("pr-merging")).toBeNull();
+  });
+});

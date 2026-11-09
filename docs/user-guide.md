@@ -359,7 +359,9 @@ never repeats work that is already in the default branch:
   changed file back as it was): the rebuild runs at the next check and the row then says what
   came of it (rebuilt without a closed pull request, it waits for your Merge again). Or press
   **Redo**: the task is done again without them, reviewed again, and waits for your Merge. The
-  row says this at the check that finds them, before you press Merge. If you commit in that
+  row says this at the check that finds them, before you press Merge, and shows the folder with
+  **Open folder**; Merge pressed then is kept: once the folder is clean and #8 is rebuilt, it
+  merges, unless the rebuild dropped work its review read (then the row says so and waits for you). If you commit in that
   folder, Forerunner never drops your commit: the rebuild waits and the row says "#8 waits for
   a commit made in its task's folder: push it to GitHub or undo it." Push it (the next check
   rebuilds #8 with your commit, and #8 waits for your look, since the review did not read it)
