@@ -326,7 +326,8 @@ describe("the credential chooser with both credentials, the subscription first (
     expect(r.reason).toContain("subscription lacks commands, which only makes the work better");
     expect(await rt.chooser.forTask({ specialist: "coder", projectId })).toEqual({
       kind: "subscription",
-      line: "On your subscription its tests will not run: it cannot run commands there.",
+      // W15-86 (w15-words): one subject per clause.
+      line: "On your subscription this task's tests will not run: commands cannot run there.",
     });
     // "Code tasks that need commands: the API key".
     const prefs = (await rt.store.human.get(rt.human.id))?.notify_prefs ?? {};

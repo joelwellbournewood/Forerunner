@@ -681,7 +681,8 @@ describe("polish-words, wave 13: the Inbox cards' words (design §5)", () => {
 describe("polish-words, wave 13: the plan card's runs-on lines", () => {
   it("'its tests will not run' is said once for the plan, under the first task (P7-14)", async () => {
     const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
-    const line = "On your subscription its tests will not run: it cannot run commands there.";
+    // W15-86 (w15-words): one subject (before: "its tests will not run: it cannot run commands").
+    const line = "On your subscription this task's tests will not run: commands cannot run there.";
     const views = await planTaskViews(
       {
         status: "open",
@@ -707,12 +708,14 @@ describe("polish-words, wave 13: the plan card's runs-on lines", () => {
             : { kind: "subscription", line: null },
       },
     );
+    // W15-86 (w15-words): the line names the tasks (design §5 rule 5), up to three, then "and N
+    // more"; naming them takes it past the 100 characters a consequence line keeps (before: "the
+    // tests of 2 tasks", which named none).
     expect(views?.map((v) => v.runsOn?.line ?? null)).toEqual([
-      "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
+      'On your subscription the tests of "Build the page" and "Add the script" will not run: commands cannot run there.',
       null,
       null,
     ]);
-    expect(views?.[0]?.runsOn?.line?.length).toBeLessThanOrEqual(100);
   });
 
   it("research on the API key without search says so within 100 characters (P7-15)", async () => {

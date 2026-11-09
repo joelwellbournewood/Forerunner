@@ -152,14 +152,35 @@ export async function planTaskViews(
 }
 
 /**
- * A runs-on line the same for several tasks ("On your subscription its tests will not run: it
- * cannot run commands there.") is said once, under the first of them, for all of them (P7-14:
- * the plan card repeated it under every code task).
+ * A runs-on line the same for several tasks ("On your subscription this task's tests will not
+ * run: commands cannot run there.") is said once, under the first of them, for all of them, and
+ * names them (W15-86: up to three titles, then "and N more"; before, "the tests of 2 tasks"
+ * named none). P7-14: the plan card repeated it under every code task.
  */
+/** '"A", "B" and "C"', or '"A", "B", "C" and 2 more' (design §5 rule 5), titles cut at a word. */
+function namedTasks(titles: readonly string[]): string {
+  const q = (t: string) => {
+    const s = t.replace(/\s+/g, " ").trim();
+    if (s.length <= 40) return `"${s}"`;
+    const cut = s.slice(0, 39);
+    const space = cut.lastIndexOf(" ");
+    return `"${(space > 20 ? cut.slice(0, space) : cut).trimEnd()}…"`;
+  };
+  const shown = titles.slice(0, 3).map(q);
+  if (titles.length > 3) return `${shown.join(", ")} and ${titles.length - 3} more`;
+  return shown.length <= 1
+    ? (shown[0] ?? "")
+    : `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
+}
+
 function onceForThePlan(tasks: PlanTaskView[]): PlanTaskView[] {
   const count = new Map<string, number>();
+  const titles = new Map<string, string[]>();
   for (const t of tasks)
-    if (t.runsOn?.line) count.set(t.runsOn.line, (count.get(t.runsOn.line) ?? 0) + 1);
+    if (t.runsOn?.line) {
+      count.set(t.runsOn.line, (count.get(t.runsOn.line) ?? 0) + 1);
+      titles.set(t.runsOn.line, [...(titles.get(t.runsOn.line) ?? []), t.title]);
+    }
   const said = new Set<string>();
   return tasks.map((t) => {
     const line = t.runsOn?.line;
@@ -171,11 +192,11 @@ function onceForThePlan(tasks: PlanTaskView[]): PlanTaskView[] {
       ...t,
       runsOn: {
         ...t.runsOn,
-        // "it" was the one task's specialist: with several tasks it named no one (the review
-        // of polish-words).
-        line: line
-          .replace(/\bits tests will not run\b/, `the tests of ${n} tasks will not run`)
-          .replace(/: it cannot run commands there\./, ": commands cannot run there."),
+        // "this task" is one: with several the line names them (W15-86).
+        line: line.replace(
+          /\bthis task's tests will not run\b/,
+          `the tests of ${namedTasks(titles.get(line) ?? [])} will not run`,
+        ),
       },
     };
   });

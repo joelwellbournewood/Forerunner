@@ -620,7 +620,7 @@ describe("Inbox", () => {
     // The subscription first (no order chosen): the coder stays on it, and its tests will not run.
     await waitFor(() =>
       expect(within(card).getAllByTestId("intake-task-runs-on")[0]).toHaveTextContent(
-        "On your subscription its tests will not run: it cannot run commands there.",
+        "On your subscription this task's tests will not run: commands cannot run there.",
       ),
     );
     // C-68: a specialist this install does not have: the task will wait for the person.

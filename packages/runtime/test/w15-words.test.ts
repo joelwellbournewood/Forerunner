@@ -703,4 +703,54 @@ describe("w15-words, wave 15 run B", () => {
       });
     });
   });
+  describe("W15-86: the plan card's subscription line names its tasks, one subject per clause", () => {
+    it("the single-task lines", async () => {
+      const { choiceLine } = await import("../src/session/credential-choice.ts");
+      expect(
+        choiceLine(
+          { kind: "subscription", lacks: [], hard: [], onlyIt: [], lost: ["commands"] } as never,
+          { specialist: "coder", dependencies: true },
+        ),
+      ).toBe("On your subscription this task's tests will not run: commands cannot run there.");
+      const hard = choiceLine(
+        {
+          kind: "subscription",
+          lacks: ["commands"],
+          hard: ["commands"],
+          onlyIt: [],
+          lost: [],
+        } as never,
+        { specialist: "coder", dependencies: true },
+      );
+      expect(hard).toMatch(/, where commands cannot run: this task's tests will not run\.$/);
+    });
+
+    it("the merged line names up to three tasks, then 'and N more'", async () => {
+      const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
+      const line =
+        "On your subscription this task's tests will not run: commands cannot run there.";
+      const titles = ["Build the page", "Add the script", "Style the page", "Check every link"];
+      const views = await planTaskViews(
+        {
+          status: "open",
+          project_id: "p",
+          change_card: {
+            key: "intake:p",
+            proposal: {
+              plan: {
+                tasks: titles.map((title, i) => ({ key: `t${i}`, title, specialist: "coder" })),
+              },
+            },
+          } as never,
+        },
+        { has: () => true, forTask: async () => ({ kind: "subscription", line }) },
+      );
+      expect(views?.map((v) => v.runsOn?.line ?? null)).toEqual([
+        'On your subscription the tests of "Build the page", "Add the script", "Style the page" and 1 more will not run: commands cannot run there.',
+        null,
+        null,
+        null,
+      ]);
+    });
+  });
 });

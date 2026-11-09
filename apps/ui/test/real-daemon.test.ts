@@ -7406,15 +7406,21 @@ describe("the UI client against the real daemon: the credential chooser says whe
       const withDeps = await client.modelSettings(undefined, project.id);
       expect(withDeps.specialists.find((s) => s.name === "coder")?.runsOn).toEqual({
         kind: "subscription",
-        line: "On your subscription its tests will not run: it cannot run commands there.",
+        // W15-86 (w15-words): one subject per clause.
+        line: "On your subscription this task's tests will not run: commands cannot run there.",
       });
       const plan = (await client.inbox(me.id)).requests.find((r) => r.id === card.id);
       // P7-14 (polish-words): the plan card says a shared runs-on line once, for the plan, under
       // the first task it holds for ("the tests of 2 tasks"), not under every code task.
       const said = (plan?.planTasks ?? []).map((t) => t.runsOn?.line).filter(Boolean);
-      expect(said.filter((l) => /tests .*will not run/.test(l ?? ""))).toEqual([
-        "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
-      ]);
+      // W15-86 (w15-words): the line names the tasks it holds for (before: "the tests of 2 tasks").
+      const shared = said.filter((l) => /tests .*will not run/.test(l ?? ""));
+      expect(shared).toHaveLength(1);
+      expect(shared[0]).toMatch(
+        /^On your subscription the tests of ".+" and ".+" will not run: commands cannot run there\.$/,
+      );
+      for (const t of (plan?.planTasks ?? []).filter((x) => x.specialist === "coder"))
+        expect(shared[0]).toContain(t.title.slice(0, 15));
       // "Code tasks that need commands: the API key", as the Settings dialog sends it (a yes).
       const asked = await client.executeCommands({
         commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],

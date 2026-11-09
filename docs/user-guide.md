@@ -688,7 +688,7 @@ The cards you meet most:
   costs ("cost not known" where the plan has no estimate), "Needs Docker" beside a task that
   needs a full review while Docker is not running, under a task where it runs and why when
   that is worth knowing ("Runs on your API key: only it can ask you questions while it works
-  here.", "On your subscription its tests will not run: it cannot run commands there."; New task says the same
+  here.", "On your subscription this task's tests will not run: commands cannot run there."; New task says the same
   when you pick who does it),
   "No specialist here is named ..." beside a task whose specialist this install does not have
   (it would wait for you: change who does it after you approve), the total and what it covers ("About CHF 1.04
@@ -895,7 +895,7 @@ ends with a small table, **What each can do here**:
 - **Code tasks** stay on your first choice. On a subscription they cannot run commands, so
   their own tests do not run, and on a project whose dependencies must be installed the
   project's own checks cannot run before the review either; the plan card then says "On your
-  subscription its tests will not run: it cannot run commands there." The setting **Code tasks
+  subscription this task's tests will not run: commands cannot run there." The setting **Code tasks
   that need commands** (Settings → Advanced, Other settings) sends them to the API key instead
   ("The API key (runs their tests; costs money)"; Forerunner asks you to confirm).
 

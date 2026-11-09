@@ -5825,7 +5825,7 @@ dialog's"), New task and Settings
 show (`choiceLine`: "Runs on your API key: it reads web pages here but cannot search, so it reads
 known addresses." (within 100 characters, P7-15, polish-words) when the key's search is off, "Runs on your API key: only it can read web
 pages here.", "Runs on your API key: only it can ask you questions while it works here.", "On your
-subscription its tests will not run: it cannot run commands there."); `chooser.table()` is
+subscription this task's tests will not run: commands cannot run there."); `chooser.table()` is
 Settings' "What each can do here" (`abilityTable`). Tests: `credential-chooser.test.ts` (research
 with no search on the key and no pages on the subscription runs on the key with the plan card's
 sentence; with both on, the order decides; a task that needs the person's answers runs on the
