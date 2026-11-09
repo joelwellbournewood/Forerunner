@@ -360,6 +360,23 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     expect(within(dialog).getByText("Close")).toBeInTheDocument();
     expect(postedCalls(harness, "/sessions")).toHaveLength(1);
   });
+
+  it("after Start, what Start would do and its fields go: only what happened stays", async () => {
+    // Review of P7-16: after Start the dialog read the start check again and still said "This
+    // session runs …" for a session that would not start, above a budget and a note that
+    // nothing would use.
+    const harness = createHarness({ eventDelayMs: 10 });
+    const { user, dialog } = await openDialog(harness);
+    await within(dialog).findByTestId("start-session-plan");
+    await waitFor(() => expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled());
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    await within(dialog).findByTestId("start-session-notice");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
+    expect(within(dialog).queryByLabelText(/Session budget/)).toBeNull();
+    expect(within(dialog).queryByLabelText(/Note for this session/)).toBeNull();
+    expect(within(dialog).getByTestId("start-session-open")).toHaveTextContent("Open the session");
+  });
 });
 
 describe("Settings says what is true (later #43, P7-32, W14-8)", () => {

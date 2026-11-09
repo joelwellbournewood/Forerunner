@@ -346,89 +346,96 @@ export function StartSessionDialog({
   return (
     <Dialog open={open} onClose={onClose} title="Start a session" testId="start-session-dialog">
       <form onSubmit={submit} className="space-y-3">
-        {plan ? (
-          <p className="text-sm" data-testid="start-session-plan">
-            {plan}
-          </p>
-        ) : null}
-        {blocked ? (
-          <div
-            role="note"
-            className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
-            data-testid={noReadyTask ? "start-session-no-work" : "start-session-cannot-run"}
-          >
-            <p className="font-medium" data-testid="start-session-blocked">
-              {blocked.sentence}
-            </p>
-            {blocked.action ? (
-              blocked.action.kind === "resume" ? (
-                <Button onClick={() => void resume()} data-testid="start-session-unblock">
-                  {blocked.action.label}
-                </Button>
-              ) : (
-                <Link
-                  to={blocked.action.to ?? "/"}
-                  className="text-blue-700 hover:underline dark:text-blue-300"
-                  data-testid="start-session-unblock"
-                  onClick={onClose}
-                >
-                  {blocked.action.label}
-                </Link>
-              )
-            ) : null}
-            {noReadyTask ? (
-              <p className="mt-1">
-                Give your agent work first: add a task on the Tasks tab, click Make ready on a draft
-                there, or ask in Chat, for example "add a task: write the README".
+        {/* After Start only what happened stays (the notice, Open the session, Close): the
+            start check read again still said "This session runs …" for a session that would not
+            start, above a budget and a note nothing would use (review of P7-16). */}
+        {notice ? null : (
+          <>
+            {plan ? (
+              <p className="text-sm" data-testid="start-session-plan">
+                {plan}
               </p>
             ) : null}
-            {noReadyTask && intake === "failed" ? (
-              <p className="mt-1" data-testid="start-session-intake">
-                The plan from your brief could not be drafted; the project page says why and has a
-                Retry.
+            {blocked ? (
+              <div
+                role="note"
+                className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+                data-testid={noReadyTask ? "start-session-no-work" : "start-session-cannot-run"}
+              >
+                <p className="font-medium" data-testid="start-session-blocked">
+                  {blocked.sentence}
+                </p>
+                {blocked.action ? (
+                  blocked.action.kind === "resume" ? (
+                    <Button onClick={() => void resume()} data-testid="start-session-unblock">
+                      {blocked.action.label}
+                    </Button>
+                  ) : (
+                    <Link
+                      to={blocked.action.to ?? "/"}
+                      className="text-blue-700 hover:underline dark:text-blue-300"
+                      data-testid="start-session-unblock"
+                      onClick={onClose}
+                    >
+                      {blocked.action.label}
+                    </Link>
+                  )
+                ) : null}
+                {noReadyTask ? (
+                  <p className="mt-1">
+                    Give your agent work first: add a task on the Tasks tab, click Make ready on a
+                    draft there, or ask in Chat, for example "add a task: write the README".
+                  </p>
+                ) : null}
+                {noReadyTask && intake === "failed" ? (
+                  <p className="mt-1" data-testid="start-session-intake">
+                    The plan from your brief could not be drafted; the project page says why and has
+                    a Retry.
+                  </p>
+                ) : null}
+                {data ? <BlockerLines check={data} /> : null}
+              </div>
+            ) : data && plan ? (
+              <BlockerLines check={data} />
+            ) : null}
+            <Field
+              label="Session budget (CHF)"
+              hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
+                data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
+              }`}
+            >
+              <input
+                className={INPUT_CLASS}
+                value={budget}
+                onChange={(e) => {
+                  setBudget(e.target.value);
+                  setBudgetTouched(true);
+                }}
+                inputMode="decimal"
+                name="budget"
+              />
+            </Field>
+            {problem ? (
+              <p
+                className="text-sm text-red-700 dark:text-red-300"
+                data-testid="start-session-budget-error"
+              >
+                {problem}
               </p>
             ) : null}
-            {data ? <BlockerLines check={data} /> : null}
-          </div>
-        ) : data && plan ? (
-          <BlockerLines check={data} />
-        ) : null}
-        <Field
-          label="Session budget (CHF)"
-          hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
-            data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
-          }`}
-        >
-          <input
-            className={INPUT_CLASS}
-            value={budget}
-            onChange={(e) => {
-              setBudget(e.target.value);
-              setBudgetTouched(true);
-            }}
-            inputMode="decimal"
-            name="budget"
-          />
-        </Field>
-        {problem ? (
-          <p
-            className="text-sm text-red-700 dark:text-red-300"
-            data-testid="start-session-budget-error"
-          >
-            {problem}
-          </p>
-        ) : null}
-        <Field
-          label="Note for this session (optional)"
-          hint="Goes into the brief of every task this session runs."
-        >
-          <input
-            className={INPUT_CLASS}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            name="note"
-          />
-        </Field>
+            <Field
+              label="Note for this session (optional)"
+              hint="Goes into the brief of every task this session runs."
+            >
+              <input
+                className={INPUT_CLASS}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                name="note"
+              />
+            </Field>
+          </>
+        )}
         {!identity ? (
           <p className="text-xs text-neutral-500">Waiting for the daemon to report your agent…</p>
         ) : null}
