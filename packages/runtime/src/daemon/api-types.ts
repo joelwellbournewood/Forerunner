@@ -817,6 +817,13 @@ export const HumanRequestView = z.object({
          * websites" list is empty. ..."); null when none. Absent from an older service.
          */
         note: z.string().nullable().optional(),
+        /**
+         * D4 (d1109-oversize-start): the task's figure alone is more than the project's session
+         * work budget, in one sentence for the card ("More than a session's work budget (CHF
+         * 4.00): it pauses with its work kept and asks you to continue."); null when it fits.
+         * Absent from an older service.
+         */
+        oversized: z.string().nullable().optional(),
       }),
     )
     .nullable()

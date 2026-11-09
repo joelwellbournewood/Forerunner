@@ -15210,6 +15210,51 @@ describe("d1109-oversize-start, run C", () => {
     }
   }, 60_000);
 
+  it("OS-5: GET /inbox: the plan card notes a task above the project's session work budget; a task that fits has none", async () => {
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_PLAN: "research" });
+    try {
+      const me = await client.me();
+      const brief =
+        "Compare two static site generators and write a page that summarises them for a club website.";
+      const project = await client.createProject({
+        name: "Club plan",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const planTasks = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open",
+        )?.planTasks ?? [];
+      // Under the default session budget (CHF 5.00) every task fits: no note.
+      const first = await planTasks();
+      expect(first.length).toBeGreaterThan(1);
+      expect(first.every((t) => (t.oversized ?? null) === null)).toBe(true);
+      // A session budget between the research task's figure and the others': the research
+      // task (about ten times the others) is larger than a session's work budget.
+      const research = first.find((t) => t.specialist === "researcher");
+      const others = first.filter((t) => t !== research && (t.estimateUsdMicro ?? 0) > 0);
+      const big = research?.estimateUsdMicro ?? 0;
+      const small = Math.max(...others.map((t) => t.estimateUsdMicro ?? 0));
+      expect(big).toBeGreaterThan(small);
+      const work = Math.floor((big + small) / 2);
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...row.settings, session_cap_usd_micro: Math.ceil(work / 0.8) },
+      });
+      const after = await planTasks();
+      const workChf = Math.round(Math.floor(Math.ceil(work / 0.8) * 0.8) * 0.8);
+      const note = `More than a session's work budget (CHF ${(workChf / 1_000_000).toFixed(2)}): it pauses with its work kept and asks you to continue.`;
+      expect(after.find((t) => t.specialist === "researcher")?.oversized).toBe(note);
+      expect(
+        after.filter((t) => t.specialist !== "researcher").map((t) => t.oversized ?? null),
+      ).toEqual(after.filter((t) => t.specialist !== "researcher").map(() => null));
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
   it("OS-6: 'start a session' in the chat reads the warning back with its question, and Yes starts the session (never refused)", async () => {
     const { rt, client } = await composeWithRolePlayer({});
     try {

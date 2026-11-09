@@ -2867,6 +2867,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             },
             of: (t) => Math.round(t.est_cost_usd_micro * (state.planEstimateRatio ?? 1)),
           },
+          // D4 (d1109-oversize-start), as the daemon: the project's session work budget (the
+          // fake's default session cap less the fifth kept for reviews).
+          workBudget: { usdMicro: Math.floor(FAKE_SESSION_CAP_USD_MICRO * 0.8), chfPerUsd: 0.8 },
         },
       );
       if (planTasks) r.planTasks = planTasks;

@@ -118,6 +118,80 @@ describe("d1109-oversize-start, run C: the Start dialog warns and starts a task 
     expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled();
   });
 
+  it("OS-5: the plan card says under a task larger than a session's work budget that it pauses with its work kept; a task that fits says nothing", async () => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift({
+      id: "req_intake_shop",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Atlas": 2 tasks and a first-session plan.',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 0,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [],
+            tasks: [
+              {
+                key: "shop",
+                title: "Build the shop",
+                outcome: "shop.html",
+                acceptanceCriteria: [],
+                priority: "high",
+                dependsOn: [],
+                specialist: "coder",
+              },
+              {
+                key: "about",
+                title: "Write the about page",
+                outcome: "about.html",
+                acceptanceCriteria: [],
+                priority: "medium",
+                dependsOn: [],
+                specialist: "coder",
+              },
+            ],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "The shop first.",
+            items: [
+              // USD 7.50 (CHF 6.00): more than the default session's work budget (CHF 4.00).
+              { key: "shop", estimateUsdMicro: 7_500_000 },
+              { key: "about", estimateUsdMicro: 150_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    await waitFor(() => expect(within(card).getAllByTestId("intake-task")).toHaveLength(2));
+    const notes = within(card)
+      .getAllByTestId("intake-task")
+      .map((t) => within(t).queryByTestId("intake-task-oversized")?.textContent ?? null);
+    expect(notes).toEqual([
+      "More than a session's work budget (CHF 4.00): it pauses with its work kept and asks you to continue.",
+      null,
+    ]);
+  });
+
   it("OS-6: the chat's Yes/No card for 'start a session' reads the warning; Yes starts the session", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

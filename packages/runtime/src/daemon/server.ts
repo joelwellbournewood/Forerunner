@@ -1897,6 +1897,12 @@ export function createDaemonApp(
                 project: planProject,
                 of: (t) => planEstimateUsdMicro(rt.estimates, t as TaskRow),
               },
+              // D4 (d1109-oversize-start): the project's session work budget, as the Start
+              // dialog's default: a task larger than it is noted under the task.
+              workBudget: {
+                usdMicro: (await rt.startCheck(planProject.id)).workBudgetUsdMicro,
+                chfPerUsd: chf(),
+              },
             }
           : {}),
       });
