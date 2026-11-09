@@ -14270,4 +14270,44 @@ describe("w15-words, wave 15 run B", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("W15B-79: a specialist that asked reads 'has questions for you' in the session log (the executor's sentence, as it is)", async () => {
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_ASK: "Choose the colours",
+    });
+    try {
+      const project = await client.createProject({ name: "Colours", goal: "A club page" });
+      const task = await client.createTask(project.id, {
+        title: "Choose the colours in colours.md",
+        outcome: "colours.md names the club's colours",
+        acceptanceCriteria: ["colours.md exists"],
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => (await rt.store.task.mustGet(task.id)).status,
+        20_000,
+      );
+      expect((await rt.store.task.mustGet(task.id)).status).toBe("needs_human");
+      const said = (await client.sessionEvents(sessionId))
+        .filter((e) => e.audience === "person")
+        .map((e) => e.text);
+      expect(said).toContain(
+        'The coder has questions for you about "Choose the colours in colours.md" (Inbox).',
+      );
+      expect(said.join(" | ")).not.toContain("could not run");
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

@@ -6351,7 +6351,12 @@ id (C-59; without a pull request, `branchWords` drops the id part).
 A run that ended `needs_human` reads '<who> has questions for you about "X" (Inbox).' only when it
 asked (the executor's asked-you summary, W15B-79); one that ended waiting without asking (a
 dependency base that could not be built, a folder hold) reads '"X" could not run: <its first
-sentence> (Inbox).', as its cannot-run card says.
+sentence> (Inbox).', as its cannot-run card says, and a task only the person can do (U-022, the
+executor's "Waiting for your answers in the Inbox ...") reads '"X" waits for your answers
+(Inbox).' (fixup-w15-words; before: 'could not run: Waiting for your answers ...'). Only the
+summary decides (`ASKED_YOU`, `PERSON_TASK_WAITS`): `real-daemon.test.ts` 'w15-words, wave 15
+run B' runs a specialist that asks and reads its line, so a change to the executor's sentence
+fails there.
 A reviewed run's own line is a detail when it could not do the work or is a retry; the critic's
 line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `specialist`, and
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,

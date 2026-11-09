@@ -151,12 +151,6 @@ export async function planTaskViews(
   return onceForThePlan(out);
 }
 
-/**
- * A runs-on line the same for several tasks ("On your subscription this task's tests will not
- * run: commands cannot run there.") is said once, under the first of them, for all of them, and
- * names them (W15-86: up to three titles, then "and N more"; before, "the tests of 2 tasks"
- * named none). P7-14: the plan card repeated it under every code task.
- */
 /** '"A", "B" and "C"', or '"A", "B", "C" and 2 more' (design §5 rule 5), titles cut at a word. */
 function namedTasks(titles: readonly string[]): string {
   const q = (t: string) => {
@@ -173,6 +167,12 @@ function namedTasks(titles: readonly string[]): string {
     : `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
 }
 
+/**
+ * A runs-on line the same for several tasks ("On your subscription this task's tests will not
+ * run: commands cannot run there.") is said once, under the first of them, for all of them, and
+ * names them (W15-86: up to three titles, then "and N more"; before, "the tests of 2 tasks"
+ * named none). P7-14: the plan card repeated it under every code task.
+ */
 function onceForThePlan(tasks: PlanTaskView[]): PlanTaskView[] {
   const count = new Map<string, number>();
   const titles = new Map<string, string[]>();

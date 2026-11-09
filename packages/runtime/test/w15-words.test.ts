@@ -536,6 +536,24 @@ describe("w15-words, wave 15 run B", () => {
       expect(hold).not.toContain("questions");
       expect(finished("")).toBe('"Write the footer" could not run; its card is in the Inbox.');
     });
+
+    it("a task only you can do waits for your answers; it never 'could not run' (fixup)", () => {
+      // The executor's summary of a person task (U-022): its questions went to the Inbox.
+      const line = personLine(
+        "task.finished",
+        {
+          taskId: "t2",
+          title: "Confirm the colours with the human",
+          specialist: "person",
+          outcome: "needs_human",
+          summary: "Waiting for your answers in the Inbox (2 question(s)); no specialist ran.",
+        },
+        0.8,
+      );
+      // Before: '"Confirm the colours with the human" could not run: Waiting for your answers in
+      // the Inbox (2 questions); no specialist ran (Inbox).'
+      expect(line).toBe('"Confirm the colours with the human" waits for your answers (Inbox).');
+    });
   });
 
   describe("W15-57: the budget card quotes the run's note in plain words, each item ending at a word", () => {

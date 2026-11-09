@@ -64,8 +64,16 @@ function specialistWho(p: Payload): string {
 
 const capital = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-/** The executor's sentence for a run that asked the person (`summary` of an asked run). */
+/**
+ * The executor's sentence for a run that asked the person (`summary` of an asked run, "The coder
+ * asked you 2 questions; ..."). Read from the summary alone: `real-daemon.test.ts` 'w15-words,
+ * wave 15 run B' runs a specialist that asks and reads the log's line, so a change to the
+ * executor's sentence fails there.
+ */
 const ASKED_YOU = /\basked you (?:a question|\d+ questions)\b/;
+
+/** The executor's summary of a task only the person can do (U-022): no specialist ran. */
+const PERSON_TASK_WAITS = /^Waiting for your answers in the Inbox\b/;
 
 /** The first sentence of a text (a dot inside a file name ends none, as in `couldNotWords`). */
 function firstSentence(text: string): string {
@@ -245,8 +253,12 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       // that could not be built, a folder that holds a commit) says its own first sentence, as
       // its card says it could not run. Before, every needs_human run "had questions".
       if (outcome === "needs_human") {
-        if (p.asked === true || ASKED_YOU.test(summary))
+        if (ASKED_YOU.test(summary))
           return `${capital(who)} has questions for you about ${taskName(p)} (Inbox).`;
+        // A task only the person can do (U-022): its questions went to the Inbox and no
+        // specialist ran (before: 'could not run: Waiting for your answers ...').
+        if (PERSON_TASK_WAITS.test(summary))
+          return `${capital(taskName(p))} waits for your answers (Inbox).`;
         // The run's own words, plain (a "#2" stays: it names a pull request).
         const why = cutAtWord(firstSentence(summary.replace(/\s+/g, " ")), 200);
         return why
