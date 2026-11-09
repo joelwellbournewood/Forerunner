@@ -6,6 +6,7 @@ import {
   CACHE_TTL_MARGIN_MS,
   LoopAgentDriver,
   type RunEvent,
+  WRAP_UP_TEXT,
   WRITE_MAX_TOKENS_PER_CALL,
 } from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
@@ -249,5 +250,244 @@ describe("agent loop: a long write gets its tokens the first time (cost, L-15)",
   it("a run without a file-writing tool keeps the usual cap", async () => {
     const r = await once({ runCap: 5_000_000, withWrite: false });
     expect(r.maxTokens).toBe(4096);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-13, live check 2's RUN-1 and F8): a file-writing run's output cap and the
+ * cut-off retry follow one rule, the one web search follows: a call is paid only from the money
+ * below the run's wrap-up line. Before, the write cap was a flat tenth of the run's cap (on
+ * Sonnet 5.5 that is the 4,096 floor for any run under about USD 1.70), so the first long write
+ * was cut; the cut reply, its complete write_file calls included, was thrown away; and the retry
+ * asked four times the limit with no room check and kept it as the floor of every later call.
+ * Its worst case passed the line, so a CHF 0.20 coder heard "about a fifth is left" after
+ * spending CHF 0.05 and paused with nothing written.
+ */
+describe("w15-run, wave 15: the write cap and the cut-off retry are paid from the money below the line (W15-13)", () => {
+  const coderTools = (written: string[]) => {
+    const read: ToolSpec<{ path: string }> = {
+      name: "read_file",
+      description: "read a file",
+      schema: z.object({ path: z.string() }),
+      actionClass: "read",
+      risk: "low",
+      async execute(input) {
+        return { content: `contents of ${input.path}`.repeat(20) };
+      },
+    };
+    const write: ToolSpec<{ path: string; content: string }> = {
+      name: "write_file",
+      description: "write a file",
+      schema: z.object({ path: z.string(), content: z.string() }),
+      actionClass: "routine_reversible",
+      risk: "low",
+      async execute(input) {
+        written.push(input.path);
+        return { content: `wrote ${input.path}` };
+      },
+    };
+    return new ToolRegistry().register(read).register(write);
+  };
+  const FILES = ["src/elo.js", "src/swiss.js", "test/elo.test.js", "test/swiss.test.js"];
+  const writeCall = (path: string) => ({
+    name: "write_file",
+    input: { path, content: "x".repeat(500) },
+  });
+
+  async function coderRun(replies: ScriptedReply[], runCap: number) {
+    const h = harness();
+    const written: string[] = [];
+    const p = provider(h, replies);
+    const events: RunEvent[] = [];
+    const res = await new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }).run({
+      token: issue(h, { allowedTools: ["read_file", "write_file"], budgetUsdMicro: runCap }),
+      budget: budget("sess-1", 6_250_000, h.clock),
+      provider: p,
+      model: MODEL,
+      billingSourceId: "bs",
+      system: "You are the coder. ".repeat(150),
+      messages: [{ role: "user", content: "Write the Swiss pairing tool with tests." }],
+      tools: coderTools(written),
+      pricing: pricingFor(MODEL),
+      timeoutMs: 3_600_000,
+      wrapUp: WRAP_UP_TEXT,
+      onEvent: (e) => events.push(e),
+    });
+    const line = events.find((e) => e.type === "budget_line");
+    const lineUsd = line?.type === "budget_line" ? line.lineUsdMicro : 0;
+    // Each call's spend before it plus its worst case, while the run has not been told to wrap up.
+    const before: { spent: number; estimate: number }[] = [];
+    let spent = 0;
+    for (const e of events) {
+      if (e.type === "model_call_start") before.push({ spent, estimate: e.estimateUsdMicro });
+      if (e.type === "model_call_end") spent += e.costUsdMicro;
+    }
+    const maxTokens = p.calls.map((c) => c.request.max_tokens);
+    const heard = p.calls.map((c) =>
+      JSON.stringify(c.request.messages).includes(WRAP_UP_TEXT.slice(0, 30)),
+    );
+    return { res, events, written, lineUsd, before, maxTokens, heard, p };
+  }
+
+  it("RUN-1: the first write after reading gets the room below the line, so four files are not cut and no wrap-up comes", async () => {
+    // A reply of four files needs about 6,000 output tokens: cut below that, whole above.
+    const replies: ScriptedReply[] = [
+      {
+        reply: {
+          text: "reading",
+          toolCalls: [{ name: "read_file", input: { path: "README.md" } }],
+        },
+      },
+      {
+        when: (r) => r.max_tokens < 6_000,
+        reply: {
+          toolCalls: FILES.map(writeCall),
+          stopReason: "max_tokens",
+          usage: { output_tokens: 4_096 },
+        },
+      },
+      { reply: { toolCalls: FILES.map(writeCall), usage: { output_tokens: 6_000 } } },
+      { reply: { text: "Wrote the four files.\n\nWhere I stopped: done.\n\nLeft to do: nothing" } },
+    ];
+    // CHF 0.20, the live task's budget.
+    const r = await coderRun(replies, 250_000);
+    expect(r.res.outcome).toBe("completed");
+    expect(r.written.sort()).toEqual([...FILES].sort());
+    expect(r.events.some((e) => e.type === "warning" && e.message.includes("cut off"))).toBe(false);
+    expect(r.events.some((e) => e.type === "wrap_up_sent")).toBe(false);
+    expect(r.heard.some(Boolean)).toBe(false);
+    // The write call asked more than the floor, and every call stayed below the run's line.
+    expect(r.maxTokens[1]).toBeGreaterThanOrEqual(6_000);
+    expect(r.lineUsd).toBeGreaterThan(0);
+    for (const c of r.before) expect(c.spent + c.estimate).toBeLessThanOrEqual(r.lineUsd);
+  });
+
+  it("a cut reply keeps its complete writes; the retry asks more only from the money below the line, once", async () => {
+    // The run's first call writes (its cap keeps to half the fifth kept to wrap up: 4,096 here),
+    // and is cut inside the fourth write.
+    const replies: ScriptedReply[] = [
+      {
+        when: (r) => r.max_tokens <= 4_096,
+        reply: {
+          toolCalls: FILES.map(writeCall),
+          stopReason: "max_tokens",
+          usage: { output_tokens: 4_096 },
+        },
+      },
+      {
+        when: (r) => JSON.stringify(r.messages).includes("so that call did not run"),
+        reply: { toolCalls: [writeCall("test/swiss.test.js")], usage: { output_tokens: 2_000 } },
+      },
+      { reply: { text: "Wrote the four files.\n\nWhere I stopped: done.\n\nLeft to do: nothing" } },
+    ];
+    const r = await coderRun(replies, 250_000);
+    expect(r.res.outcome).toBe("completed");
+    // The three complete writes of the cut reply ran once; the cut one ran only when asked again.
+    expect(r.written).toEqual(FILES);
+    const asked = r.p.calls[1]?.request.messages.at(-1);
+    expect(JSON.stringify(asked)).toContain(
+      "Your last reply was cut off at the output limit (4096 tokens) inside a write_file call, so that call did not run; the calls before it ran. Make it again on its own.",
+    );
+    // The retry asked more than the cut call, less than 16,384, and below the line; the call
+    // after it is fitted again (no raised floor kept), and no wrap-up came.
+    expect(r.maxTokens[0]).toBe(4_096);
+    expect(r.maxTokens[1]).toBeGreaterThan(4_096);
+    expect(r.maxTokens[1]).toBeLessThan(WRITE_MAX_TOKENS_PER_CALL);
+    expect(r.maxTokens[2]).toBeLessThanOrEqual(r.maxTokens[1] ?? 0);
+    expect(r.events.some((e) => e.type === "wrap_up_sent")).toBe(false);
+    for (const c of r.before) expect(c.spent + c.estimate).toBeLessThanOrEqual(r.lineUsd);
+  });
+
+  it("F8: a CHF 0.48 research run that has read pages writes its 8 KB file in one call, never cut", async () => {
+    const h = harness();
+    const pages = [PAGE.slice(0, 48_000), PAGE.slice(0, 48_000), PAGE.slice(0, 48_000)];
+    const read: ToolSpec<{ path: string }> = {
+      name: "read_file",
+      description: "read a page",
+      schema: z.object({ path: z.string() }),
+      actionClass: "read",
+      risk: "low",
+      async execute() {
+        return { content: pages.shift() ?? "" };
+      },
+    };
+    let writes = 0;
+    const write: ToolSpec<{ path: string; content: string }> = {
+      name: "write_file",
+      description: "write a file",
+      schema: z.object({ path: z.string(), content: z.string() }),
+      actionClass: "routine_reversible",
+      risk: "low",
+      async execute(input) {
+        writes++;
+        return { content: `wrote ${input.path}` };
+      },
+    };
+    const tools = new ToolRegistry().register(read).register(write);
+    const replies: ScriptedReply[] = [
+      readStep("a"),
+      readStep("b"),
+      readStep("c"),
+      {
+        // The 8 KB file and what the reply says around it need about 6,000 tokens.
+        when: (r) => r.max_tokens < 8_000,
+        reply: {
+          toolCalls: [{ name: "write_file", input: { path: "comparison.md", content: "half" } }],
+          stopReason: "max_tokens",
+          usage: { output_tokens: 4_096 },
+        },
+      },
+      {
+        reply: {
+          toolCalls: [{ name: "write_file", input: { path: "comparison.md", content: "whole" } }],
+          usage: { output_tokens: 3_801 },
+        },
+      },
+      { reply: { text: "Wrote comparison.md." } },
+    ];
+    const p = provider(h, replies);
+    const r = await run(h, p, tools, {
+      runCap: 600_000,
+      allowedTools: ["read_file", "write_file"],
+    });
+    expect(r.res.outcome).toBe("completed");
+    expect(writes).toBe(1);
+    expect(r.events.some((e) => e.type === "warning" && e.message.includes("cut off"))).toBe(false);
+    // Every call was paid from below the line and none asked more than a whole file's room.
+    const line = r.events.find((e) => e.type === "budget_line");
+    const lineUsd = line?.type === "budget_line" ? line.lineUsdMicro : 0;
+    let spent = 0;
+    for (const e of r.events) {
+      if (e.type === "model_call_start")
+        expect(spent + e.estimateUsdMicro).toBeLessThanOrEqual(lineUsd);
+      if (e.type === "model_call_end") spent += e.costUsdMicro;
+    }
+    for (const c of p.calls)
+      expect(c.request.max_tokens).toBeLessThanOrEqual(WRITE_MAX_TOKENS_PER_CALL);
+    // Every call billed was a reply that was used: one per step, nothing thrown away.
+    expect(p.calls).toHaveLength(5);
+  });
+
+  it("a retry the money below the line cannot raise is asked again with a note to send less, never at four times the limit", async () => {
+    // USD 0.13: the line leaves no room above the cut call's own limit.
+    const replies: ScriptedReply[] = [
+      {
+        when: (r) => !JSON.stringify(r.messages).includes("Send less in one reply"),
+        reply: {
+          toolCalls: [writeCall("src/elo.js")],
+          stopReason: "max_tokens",
+          usage: { output_tokens: 4_096 },
+        },
+      },
+      { reply: { toolCalls: [writeCall("src/elo.js")], usage: { output_tokens: 1_000 } } },
+      { reply: { text: "Wrote src/elo.js.\n\nLeft to do: nothing" } },
+    ];
+    const r = await coderRun(replies, 130_000);
+    expect(r.res.outcome).toBe("completed");
+    expect(r.maxTokens[1]).toBeLessThanOrEqual(r.maxTokens[0] ?? 0);
+    expect(JSON.stringify(r.p.calls[1]?.request.messages.at(-1))).toContain(
+      "Your last reply was cut off at the output limit (4096 tokens) inside a write_file call, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.",
+    );
+    expect(r.written).toEqual(["src/elo.js"]);
   });
 });

@@ -1,7 +1,13 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
-import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
+import {
+  FakeProvider,
+  messagesApiStandIn,
+  standInFetch,
+  textReply,
+  toolReply,
+} from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRAP_UP_TEXT } from "../src/agent/loop.ts";
@@ -10,6 +16,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
 import { handoffOf } from "../src/session/budget-pause.ts";
+import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -848,5 +855,126 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     expect((await rt.store.review.latestForTask(r.taskId))?.verdict).toBe("accept");
     expect((await rt.store.task.mustGet(r.taskId)).attempt).toBe(0);
     expect((await cardsOf(r.taskId)).map((q) => q.status)).toEqual(["withdrawn"]);
+  }, 120_000);
+});
+
+/**
+ * w15-run, wave 15 (W15-13, live check 2's RUN-1): through the composed runtime on an API key (the
+ * Messages API stand-in, so the runtime prices Sonnet 5.5 as it does live), a CHF 0.20 coder task
+ * whose four files need more than the usual 4,096-token cap. Before, the write call kept the flat
+ * write room of a tenth of the budget (the 4,096 floor), the reply was cut, every write in it was
+ * thrown away, and the retry at 16,384 tokens passed the run's line: the coder heard "about a
+ * fifth of this task's budget is left" after spending CHF 0.05, wrote nothing and paused.
+ */
+describe("w15-run, wave 15: a coder's multi-file write is paid from below its line and the task is done (W15-13)", () => {
+  const KEY = ["sk-ant-api03-", "w15-run-", "7".repeat(40)].join(""); // not-a-secret
+  const TITLE = "Write the Swiss pairing tool with tests";
+  const FILES = ["src/elo.js", "src/swiss.js", "test/elo.test.js", "test/swiss.test.js"];
+  const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-run-write-"));
+  const isCoder = (r: ModelRequest) =>
+    (r.system ?? "").includes("You are the coder specialist") &&
+    JSON.stringify(r.messages).includes(TITLE);
+  const heard = (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_TEXT.slice(0, 30));
+  const writes = FILES.map((path) => ({
+    name: "write_file",
+    input: { path, content: `// ${path}\n${"export const x = 1;\n".repeat(20)}` },
+  }));
+  const model = new FakeProvider({
+    clock,
+    latency: "none",
+    onNoMatch: "echo",
+    replies: [
+      submitReply({}, { times: Number.POSITIVE_INFINITY }),
+      closingReply(),
+      // What the live model did once told to wrap up: start nothing new, list the files left.
+      textReply(
+        "Read the project.\n\nWhere I stopped: nothing is written yet.\n\nLeft to do:\n- write src/elo.js\n- write src/swiss.js\n- write the tests",
+        { when: (r: ModelRequest) => isCoder(r) && heard(r), times: Number.POSITIVE_INFINITY },
+      ),
+      toolReply("list_dir", { path: "." }, "Looking at the project first.", {
+        when: (r: ModelRequest) =>
+          isCoder(r) && !JSON.stringify(r.messages).includes("tool_result"),
+      }),
+      // The four files need about 6,000 output tokens: below that the reply is cut in the fourth.
+      {
+        when: (r: ModelRequest) => isCoder(r) && r.max_tokens < 6_000,
+        reply: { toolCalls: writes, stopReason: "max_tokens", usage: { output_tokens: 4_096 } },
+        times: Number.POSITIVE_INFINITY,
+      },
+      {
+        when: (r: ModelRequest) => isCoder(r) && !JSON.stringify(r.messages).includes("wrote "),
+        reply: { toolCalls: writes, usage: { output_tokens: 6_000 } },
+        times: Number.POSITIVE_INFINITY,
+      },
+      textReply(
+        "Wrote the pairing tool and its tests.\n\nWhere I stopped: every file is written.\n\nLeft to do: nothing",
+        { when: isCoder, times: Number.POSITIVE_INFINITY },
+      ),
+    ],
+  });
+  const seen: ModelRequest[] = [];
+  const stream = model.stream.bind(model);
+  model.stream = (r) => {
+    seen.push({ ...r, messages: structuredClone(r.messages) });
+    return stream(r);
+  };
+  const standIn = messagesApiStandIn({ model, clock });
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ [SECRET_NAMES.anthropic]: KEY }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("CHF 0.20: the four files are written in one call, no wrap-up comes before them, and the task is reviewed and done", async () => {
+    const r = await runOne(req, rt, TITLE, { budgetUsdMicro: 250_000 });
+    const coder = seen.filter(isCoder);
+    // The write call asked enough for the four files; no request carried the wrap-up.
+    expect(coder.length).toBeGreaterThanOrEqual(3);
+    expect(coder[1]?.max_tokens).toBeGreaterThanOrEqual(6_000);
+    expect(coder.some((b) => JSON.stringify(b.messages).includes(WRAP_UP_TEXT.slice(0, 30)))).toBe(
+      false,
+    );
+    // Done and reviewed, its files written; never "paused before its budget".
+    const task = await rt.store.task.mustGet(r.taskId);
+    expect(task.status, lines(r.events).join(" | ")).toBe("done");
+    expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+    expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+    expect(lines(r.events).join(" | ")).not.toMatch(
+      /paused before its budget|Told the coder to wrap up/,
+    );
+    // The drawer lists the four files the run wrote.
+    const detail = JSON.stringify(await (await req(`/tasks/${r.taskId}`)).json());
+    for (const f of FILES) expect(detail).toContain(f);
   }, 120_000);
 });

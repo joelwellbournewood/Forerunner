@@ -314,3 +314,24 @@ names the model. A model the price table does not know is priced as the run's mo
    place), since the critic's project checks and its tries run in that workspace; (d) a restart
    test (compose twice: the review-only pass after a restart, the model-call log showing one
    specialist call in all). A changed head or attempt falls back to today's rerun.
+
+## Amendment 2026-11-09 (wave 15, the run side: 'w15-run')
+
+1. **One rule for the write cap and the cut-off retry (W15-13; amends point 3 of the 'cost'
+   amendment and U-085).** Live check 2 found a CHF 0.20 coder told "about a fifth of this task's
+   budget is left" after spending CHF 0.05, pausing with nothing written (RUN-1), and a CHF 0.48
+   research run paying for a reply that was thrown away (F8). The write cap was a flat tenth of
+   the run's cap on every call (on Sonnet 5.5 the 4,096 floor for any run under about USD 1.70),
+   so the first long write was cut; the cut reply, its complete `write_file` calls included, was
+   discarded; and the retry asked four times the limit with no room check and kept it as the
+   floor of every later call, whose worst case then passed the line. Now a file-writing run's
+   call and the call after a cut are paid only from the money below the run's wrap-up line, as
+   web search is (ADR 0107's amendment of 2026-11-08), after the call's searches: once the first
+   call fixed the line, the cap is fitted to `line - spent - searches`, so a larger cap never
+   brings a wrap-up the floor would not. The first call keeps to half the fifth kept to wrap up,
+   since its own worst case fixes the reserve ("a small budget keeps 4,096" holds for that call
+   only). The raised limit is the retried call's only. A cut reply's complete tool calls before
+   the cut one are kept and run (a cut call never runs; a reply with server blocks goes back only
+   whole, so nothing of it is kept), and the next request says the cut call did not run; when the
+   money below the line cannot raise the limit, it says to send less in one reply. After the
+   wrap-up the reserve pays, as it does every call of a run that finishes.

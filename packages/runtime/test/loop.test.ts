@@ -493,8 +493,9 @@ describe("agent loop: the stop reason and the thinking request", () => {
     const res = await cutOffRun(h, provider, events);
     expect(res.outcome).toBe("completed");
     expect(res.finalText).toBe("Wrote the site.");
-    // The cut call was asked again with four times the limit, and later calls keep it.
-    expect(provider.calls.map((c) => c.request.max_tokens)).toEqual([1024, 4096, 4096]);
+    // The cut call was asked again with four times the limit; later calls go back to their own
+    // (W15-13: the raised limit is the retried call's only, so later worst cases do not grow).
+    expect(provider.calls.map((c) => c.request.max_tokens)).toEqual([1024, 4096, 1024]);
     // The cut tool call never ran and is not in the conversation; the complete one ran once.
     const ran = h.audit.entries.filter((a) => a.tool === "echo");
     expect(ran).toHaveLength(1);

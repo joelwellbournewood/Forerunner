@@ -246,10 +246,17 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
   API that rejects a subscription token costs one round trip per few minutes, not one per
   review; a read cut short by the caller's signal is not kept. Without the option every call
   asks for `maxTokensPerCall`, as before, and none of these reads happen.
-- A reply cut off at `max_tokens` inside a tool call, or before any text (U-085), is not used:
-  its tool input is incomplete. The call is asked again with four times its `max_tokens`
-  (clamped to `CUT_OFF_MAX_TOKENS`, 32 000, and the model's limit), and that raised floor holds
-  for the rest of the run; a `warning` event says so. After `CUT_OFF_RETRIES` (2) the run ends
+- A reply cut off at `max_tokens` inside a tool call, or before any text (U-085): the call being
+  written when the limit came (the reply's last block) never runs. Its complete tool calls
+  before it are kept and run (W15-13: a paid reply is not thrown away; a reply with server
+  blocks goes back only whole, so nothing of it is kept), and the next request says after the
+  tool results that the cut call did not run (`cutOffNote`). The next call asks up to four
+  times the cut call's `max_tokens` (clamped to `CUT_OFF_MAX_TOKENS`, 32 000, and the model's
+  limit), that call only, and only as far as the money below the run's wrap-up line pays (the
+  rule of the write cap below); when that money cannot raise it, the request says to send less
+  in one reply. Before, the raised limit was asked with no room check and kept as the floor of
+  every later call, so its worst case passed the line and brought the wrap-up at about a fifth
+  of the budget (live check 2, RUN-1 and F8). With nothing kept, after `CUT_OFF_RETRIES` (2) the run ends
   as `error` with "The reply was cut off at the output limit (N tokens) inside a <tool> call,
   K time(s); nothing from it was used. Work this large has to be written in smaller parts.",
   which the task's summary carries. Every call is billed, the cut ones included. A reply cut off
@@ -4038,8 +4045,12 @@ added since; billing's `estimateUsdMicro` prices the cached part at the read pri
 at the write price (`loop-cache.test.ts`: every call's estimate is at least its bill on a fake
 provider that plays the cache). A run that can write files (`write_file`) and names no
 `maxTokensCeiling` may ask up to `WRITE_MAX_TOKENS_PER_CALL` (16,384) output tokens a call, fitted
-to the hooks' room and to half the fifth of its cap kept to wrap up (ADR 0112), so a small
-budget keeps the 4,096 floor and its reserve does not grow. The Agent SDK driver prices its
+to the hooks' room and paid only from the money below the run's wrap-up line, after the call's
+searches (W15-13, one rule with web search and the cut-off retry): a larger cap never brings a
+wrap-up the 4,096 floor would not. The first call fixes the line from its own worst case, so it
+keeps to half the fifth of its cap kept to wrap up (ADR 0112) and the reserve does not grow;
+after the wrap-up the reserve pays. Before, every call kept that flat tenth of the cap, which on
+Sonnet 5.5 is the floor for any run under about USD 1.70, so the first long write was cut. The Agent SDK driver prices its
 first call from the brief plus `CLAUDE_CODE_PROMPT_TOKENS` (Claude Code's own prompt, about
 20,000) and each next call from the whole prompt its last call sent (cached) and its reply
 (`sdk-driver.test.ts`). The provider
