@@ -590,4 +590,16 @@ describe("w15-words, wave 15 run B", () => {
       );
     });
   });
+  describe("W15-40: the Docs tab says no zero count", () => {
+    it("with no drifted doc there is no '0 drifted' (project-tabs.test.tsx reads '1 drifted')", async () => {
+      const harness = createHarness();
+      const docs = harness.daemon.state.docs.proj_atlas ?? [];
+      for (const d of docs) d.drift = false;
+      renderApp("/projects/proj_atlas/docs", harness);
+      const tab = await screen.findByTestId("docs");
+      expect(within(tab).getByTestId("docs-present")).toHaveTextContent("7 of 8 present");
+      expect(tab).not.toHaveTextContent("0 drifted");
+      expect(within(tab).queryByTestId("docs-drift")).toBeNull();
+    });
+  });
 });
