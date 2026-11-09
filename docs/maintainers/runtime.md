@@ -2020,19 +2020,27 @@ budget-stop; the owner's decision of 2026-11-02).**
   both are the whole estimate. `lineFor(runId, cap, firstCallUsdMicro, phase)` reads the run's
   line, or the one its first call would fix, without fixing it.
 - *The message.* Only a run that asks for it hears it (`RunRequest.wrapUp` /
-  `SdkRunRequest.wrapUp`: the executor sets `WRAP_UP_TEXT` for a task's run, never chat,
-  planning or reviews). The loop appends it as one text block after the last tool results of
+  `SdkRunRequest.wrapUp`: the executor sets `wrapUpText` for a task's run, never chat,
+  planning or reviews; W15-16: a function worded when the wrap-up is sent, "Wrap up now: this
+  task has used 13% of its budget, and its next step could take it past the share kept to
+  finish. ...", since it comes before the step that could pass the line, often with much of the
+  budget left; "About a fifth of this task's budget is left" was not true; `WRAP_UP_MARK` is its
+  fixed start, which the bench's stand-in hears). The loop appends it as one text block after the last tool results of
   that request (`appendText`, a new message object, never inside a tool result); the SDK path
   returns it once as PostToolUse's `additionalContext` with the next tool result. Both emit
   `budget_line` (cap, reserve, line, the first call's worst case, `saveOnly`) at the first call
   and `wrap_up_sent`, and report `wrapUpSent`. The executor turns both into session-log lines
   (`TaskStep` `note` → `task.step`, Details; `budgetLineWords`, `wrapUpSentWords`): "This run may
-  spend CHF 0.40: at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
+  spend CHF 0.40: before a step that could take it past CHF 0.32 it is told to wrap up, keeping a
+  reserve of CHF 0.08 to finish.",
   "... too little to wrap up (two steps may cost CHF 0.02): it pauses at its budget and keeps its
   work.", "This run may spend
   CHF 0.02, less than its first step may cost (CHF 0.05): it pauses at its budget
-  before that step.", and "Told the coder to wrap up: it spent CHF 0.30 of CHF 0.40, and the
-  last CHF 0.08 is kept to finish." (it said "about a fifth is left" while about 40% was). No
+  before that step.", and "Told the coder to wrap up: it spent CHF 0.02 of CHF 0.15, and its next
+  step could take it past CHF 0.07." (W15-16: the start line said "at CHF 0.07" and the run was
+  told at CHF 0.02; both lines now name the real trigger, spend plus the next step's worst
+  case). `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
+  centime as "less than CHF 0.01" (W15-16). No
   "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
   "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
   line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for

@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
-import { WRAP_UP_TEXT } from "@forerunner/runtime/agent/loop";
+import { WRAP_UP_MARK } from "@forerunner/runtime/agent/loop";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import {
   type ComposeOptions,
@@ -7877,7 +7877,7 @@ describe("the UI client against the real daemon: a budget stop is a clean pause 
     const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
     expect(
       lines.some((l) =>
-        /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
+        /^This run may spend CHF [\d.]+: before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
           l,
         ),
       ),
@@ -9459,7 +9459,7 @@ describe("the UI client against the real daemon: research searches the web on th
       // Offering search leaves the run's wrap-up line where it is (review of 'web-search': ten
       // searches' worst case had moved it to CHF 0.77, a reserve of CHF 1.23).
       expect(lines).toContain(
-        "This run may spend CHF 2.00: at CHF 1.60 it is told to wrap up, keeping a reserve of CHF 0.40 to finish.",
+        "This run may spend CHF 2.00: before a step that could take it past CHF 1.60 it is told to wrap up, keeping a reserve of CHF 0.40 to finish.",
       );
       expect(lines.some((l) => l?.startsWith("Told the researcher to wrap up"))).toBe(false);
       // The run's cost holds the search's USD 0.01, and its row counts the task's searches.
@@ -12223,7 +12223,7 @@ describe("w15-run, wave 15", () => {
   const isRole = (role: string) => (r: ModelRequest) =>
     (r.system ?? "").includes(`You are the ${role} specialist`);
   const heardWrapUp = (r: ModelRequest) =>
-    JSON.stringify(r.messages.at(-1) ?? "").includes(WRAP_UP_TEXT.slice(0, 30));
+    JSON.stringify(r.messages.at(-1) ?? "").includes(WRAP_UP_MARK);
 
   it("W15-14: a researcher at Budget 0.15 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
     const report = [

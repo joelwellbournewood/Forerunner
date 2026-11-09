@@ -10,12 +10,20 @@ import {
 } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { WRAP_UP_TEXT } from "../src/agent/loop.ts";
+import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
-import { handoffOf, parseHandoff, WRAP_UP_BRIEF_LINE } from "../src/session/budget-pause.ts";
+import {
+  budgetLineWords,
+  handoffOf,
+  limitWords,
+  parseHandoff,
+  pauseSentence,
+  WRAP_UP_BRIEF_LINE,
+  wrapUpSentWords,
+} from "../src/session/budget-pause.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
@@ -34,7 +42,7 @@ import { closingReply, submitReply } from "./loop-helpers.ts";
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
 type Json = Record<string, unknown>;
-const WRAP = "About a fifth of this task's budget is left";
+const WRAP = WRAP_UP_MARK;
 
 const textOf = (m: ChatMessage) =>
   typeof m.content === "string"
@@ -254,7 +262,15 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     const last = mine[first]?.messages.at(-1);
     const blocks = Array.isArray(last?.content) ? last.content : [];
     expect(blocks.map((b) => b.type)).toEqual(["tool_result", "text"]);
-    expect(blocks.filter((b) => b.type === "text")).toEqual([{ type: "text", text: WRAP_UP_TEXT }]);
+    // W15-16: worded when it is sent, with the share of the budget really used.
+    expect(blocks.filter((b) => b.type === "text")).toEqual([
+      {
+        type: "text",
+        text: expect.stringMatching(
+          /^Wrap up now: this task has used \d+% of its budget, and its next step could take it past the share kept to finish\./,
+        ),
+      },
+    ]);
     expect(mine.slice(0, first).some(heardWrapUp)).toBe(false);
     // Paused: the task waits on its card, no critic reviewed it, no try was counted.
     const task = await rt.store.task.mustGet(r.taskId);
@@ -282,7 +298,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     const said = lines(r.events);
     expect(
       said.some((l) =>
-        /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
+        /^This run may spend CHF [\d.]+: before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
           l,
         ),
       ),
@@ -291,7 +307,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     // CHF 0.04)" was not what was left, since the call that would pass the line brings it).
     expect(
       said.some((l) =>
-        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.24, and the last CHF 0\.05 is kept to finish\.$/.test(
+        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.24, and its next step could take it past CHF 0\.19\.$/.test(
           l,
         ),
       ),
@@ -396,9 +412,11 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     // run may spend the session's work budget, USD 1.60 (CHF 1.28), not the whole USD 2. (The
     // Start dialog's check needs the work budget to hold the coder's estimate of USD 1.50.)
     const r = await runOne(req, rt, "Big report", { sessionBudgetUsdMicro: 2_000_000 });
-    expect(lines(r.events).some((l) => l.startsWith("This run may spend CHF 1.28: at CHF "))).toBe(
-      true,
-    );
+    expect(
+      lines(r.events).some((l) =>
+        l.startsWith("This run may spend CHF 1.28: before a step that could take it past CHF "),
+      ),
+    ).toBe(true);
     // It heard the wrap-up inside the work budget, finished, and the critic reviewed it.
     expect(coderCalls("Big report").some(heardWrapUp)).toBe(true);
     expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
@@ -875,7 +893,7 @@ describe("w15-run, wave 15: a coder's multi-file write is paid from below its li
   const isCoder = (r: ModelRequest) =>
     (r.system ?? "").includes("You are the coder specialist") &&
     JSON.stringify(r.messages).includes(TITLE);
-  const heard = (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_TEXT.slice(0, 30));
+  const heard = (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_MARK);
   const writes = FILES.map((path) => ({
     name: "write_file",
     input: { path, content: `// ${path}\n${"export const x = 1;\n".repeat(20)}` },
@@ -962,9 +980,7 @@ describe("w15-run, wave 15: a coder's multi-file write is paid from below its li
     // The write call asked enough for the four files; no request carried the wrap-up.
     expect(coder.length).toBeGreaterThanOrEqual(3);
     expect(coder[1]?.max_tokens).toBeGreaterThanOrEqual(6_000);
-    expect(coder.some((b) => JSON.stringify(b.messages).includes(WRAP_UP_TEXT.slice(0, 30)))).toBe(
-      false,
-    );
+    expect(coder.some((b) => JSON.stringify(b.messages).includes(WRAP_UP_MARK))).toBe(false);
     // Done and reviewed, its files written; never "paused before its budget".
     const task = await rt.store.task.mustGet(r.taskId);
     expect(task.status, lines(r.events).join(" | ")).toBe("done");
@@ -1035,7 +1051,7 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
   });
 
   it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
-    expect(WRAP_UP_TEXT).toContain(
+    expect(wrapUpText(10_000, 100_000)).toContain(
       "Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
     );
     expect(WRAP_UP_BRIEF_LINE).toContain(
@@ -1091,5 +1107,59 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
       );
       expect(cards).toEqual([]);
     }, 60_000);
+  });
+});
+
+/**
+ * w15-run, wave 15 (W15-16, live check 2's F4 and RUN-1): the wrap-up's words were not true. The
+ * log said "at CHF 0.07 it is told to wrap up" and the run was told at CHF 0.02 (the wrap-up comes
+ * before the step whose worst case could pass the line); the model heard "About a fifth of this
+ * task's budget is left" with 87% left; and an amount under a centime read "CHF 0.00".
+ */
+describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () => {
+  const line = {
+    capUsdMicro: 187_500,
+    reserveUsdMicro: 100_000,
+    lineUsdMicro: 87_500,
+    firstCallUsdMicro: 50_000,
+    saveOnly: false,
+  };
+  const chf = (usdMicro: number) => `CHF ${((usdMicro * 0.8) / 1_000_000).toFixed(2)}`;
+
+  it("the start line names the real trigger, and the told line agrees with it", () => {
+    expect(budgetLineWords(line, chf)).toBe(
+      "This run may spend CHF 0.15: before a step that could take it past CHF 0.07 it is told to wrap up, keeping a reserve of CHF 0.08 to finish.",
+    );
+    expect(wrapUpSentWords("researcher", 29_045, 187_500, line, chf)).toBe(
+      "Told the researcher to wrap up: it spent CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07.",
+    );
+  });
+
+  it("the model hears the share it really used, not 'about a fifth is left'", () => {
+    expect(wrapUpText(29_045, 187_500)).toBe(
+      "Wrap up now: this task has used 15% of its budget, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+    );
+    expect(wrapUpText(1_000, 300_000)).toMatch(
+      /^Wrap up now: this task has used under 1% of its budget,/,
+    );
+    expect(wrapUpText(29_045, 187_500)).not.toMatch(/a fifth/);
+  });
+
+  it("amounts under a centime read 'less than CHF 0.01', never 'CHF 0.00'", () => {
+    expect(limitWords("task_budget", 4_000, chf, "coder")).toBe("its budget of less than CHF 0.01");
+    expect(wrapUpSentWords("coder", 3_000, 6_000, { ...line, lineUsdMicro: 4_000 }, chf)).toBe(
+      "Told the coder to wrap up: it spent less than CHF 0.01 of less than CHF 0.01, and its next step could take it past less than CHF 0.01.",
+    );
+    expect(
+      pauseSentence(
+        { stopped: "", leftToDo: [], stoppedBy: "budget" },
+        limitWords("task_budget", 4_000, chf, "coder"),
+        3_000,
+        4_000,
+        chf,
+      ),
+    ).toBe(
+      "The run stopped at its budget of less than CHF 0.01: it spent less than CHF 0.01, and its next step would have gone over.",
+    );
   });
 });

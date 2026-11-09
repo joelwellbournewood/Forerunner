@@ -519,7 +519,7 @@ describe("live steps (design §4.14)", () => {
       {
         kind: "note",
         text: expect.stringMatching(
-          /^This run may spend CHF [\d.]+: at CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/,
+          /^This run may spend CHF [\d.]+: before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/,
         ),
       },
       { kind: "model", costUsdMicro: expect.any(Number) },

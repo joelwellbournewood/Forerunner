@@ -13,7 +13,8 @@ import {
   LoopAgentDriver,
   MAX_PAUSE_CONTINUATIONS,
   type RunEvent,
-  WRAP_UP_TEXT,
+  WRAP_UP_MARK,
+  wrapUpText,
 } from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
 import { WEB_SEARCH_MAX_USES_PER_CALL } from "../src/enforcement/budget.ts";
@@ -442,7 +443,7 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
       tools,
       pricing: PRICING,
       timeoutMs: 3_600_000,
-      wrapUp: WRAP_UP_TEXT,
+      wrapUp: wrapUpText,
       ...(opts.search ? { webSearch: { limit: 10 } } : {}),
       onEvent: (ev) => events.push(ev),
     });
@@ -490,7 +491,7 @@ describe("the agent loop with web search on the API key ('web-search')", () => {
     // USD 0.103 a call against a USD 1.00 cap: the line (USD 0.80) is reached after eight calls.
     const replies: ScriptedReply[] = [
       {
-        when: { lastUserIncludes: "About a fifth of this task's budget is left" },
+        when: { lastUserIncludes: WRAP_UP_MARK },
         reply: {
           text: "Where I stopped: two hosts compared.\nLeft to do:\n- the third host",
           usage: usageOf(50_000, 300),
@@ -589,7 +590,7 @@ describe("w15-run, wave 15: the web search offer is fixed for the run, so the ca
     const model = new FakeProvider({
       replies: [
         {
-          when: (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_TEXT.slice(0, 30)),
+          when: (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_MARK),
           reply: {
             text: "Where I stopped: three hosts compared.\nLeft to do: nothing",
             usage: { output_tokens: 300 },
@@ -656,7 +657,7 @@ describe("w15-run, wave 15: the web search offer is fixed for the run, so the ca
       tools: new ToolRegistry().register(page),
       pricing: PRICING,
       timeoutMs: 3_600_000,
-      wrapUp: WRAP_UP_TEXT,
+      wrapUp: wrapUpText,
       webSearch: { limit },
       onEvent: (ev) => events.push(ev),
     });

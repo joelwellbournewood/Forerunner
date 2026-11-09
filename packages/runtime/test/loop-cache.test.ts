@@ -6,8 +6,9 @@ import {
   CACHE_TTL_MARGIN_MS,
   LoopAgentDriver,
   type RunEvent,
-  WRAP_UP_TEXT,
+  WRAP_UP_MARK,
   WRITE_MAX_TOKENS_PER_CALL,
+  wrapUpText,
 } from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
 import { WRAP_UP_CALLS, WRAP_UP_SHARE } from "../src/enforcement/budget.ts";
@@ -310,7 +311,7 @@ describe("w15-run, wave 15: the write cap and the cut-off retry are paid from th
       tools: coderTools(written),
       pricing: pricingFor(MODEL),
       timeoutMs: 3_600_000,
-      wrapUp: WRAP_UP_TEXT,
+      wrapUp: wrapUpText,
       onEvent: (e) => events.push(e),
     });
     const line = events.find((e) => e.type === "budget_line");
@@ -323,9 +324,7 @@ describe("w15-run, wave 15: the write cap and the cut-off retry are paid from th
       if (e.type === "model_call_end") spent += e.costUsdMicro;
     }
     const maxTokens = p.calls.map((c) => c.request.max_tokens);
-    const heard = p.calls.map((c) =>
-      JSON.stringify(c.request.messages).includes(WRAP_UP_TEXT.slice(0, 30)),
-    );
+    const heard = p.calls.map((c) => JSON.stringify(c.request.messages).includes(WRAP_UP_MARK));
     return { res, events, written, lineUsd, before, maxTokens, heard, p };
   }
 

@@ -348,3 +348,15 @@ names the model. A model the price table does not know is priced as the run's mo
    longer offered fewer searches call by call as it nears its line: its fixed offer stands while
    the money below the line covers it whole, then goes for the rest of the run (ADR 0107's
    amendment of 2026-11-09, point 2).
+4. **The wrap-up's words say what is true (W15-16; amends points 3 and 4).** The wrap-up comes
+   before the step that could take the run past its line (its spend plus that step's worst
+   case), so on a small budget it can come early: the log said "at CHF 0.07 it is told to wrap
+   up" and the run was told at CHF 0.02, and the model heard "About a fifth of this task's budget
+   is left" with 87% left (live check 2, F4). The start line now reads "This run may spend CHF
+   0.15: before a step that could take it past CHF 0.07 it is told to wrap up, keeping a reserve
+   of CHF 0.08 to finish.", the told line "Told the researcher to wrap up: it spent CHF 0.02 of
+   CHF 0.15, and its next step could take it past CHF 0.07.", and the model hears "Wrap up now:
+   this task has used 15% of its budget, and its next step could take it past the share kept to
+   finish. Start nothing new, ..." (`wrapUpText`, worded when it is sent; the brief's line says
+   "If Forerunner tells you to wrap up"). The trigger itself is unchanged. An amount under a
+   centime in these sentences and in the pause and stop sentences reads "less than CHF 0.01".

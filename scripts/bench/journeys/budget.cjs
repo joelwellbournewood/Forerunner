@@ -31,7 +31,7 @@ const TINY_CHF = arg("--tiny-chf", 0.004);
 const BELOW_CHF = arg("--below-chf", 0);
 // The bench's rate (compose's default): CHF 0.80 per USD.
 const usdMicro = (chf) => Math.round((chf / 0.8) * 1_000_000);
-const WRAP_UP = "About a fifth of this task's budget is left";
+const WRAP_UP = "Wrap up now:";
 
 const result = { label: LABEL, checks: [], tasks: {} };
 const out = (s) => console.log(`[budget ${LABEL}] ${s}`);
@@ -228,7 +228,7 @@ async function main() {
   check(
     "the wrap-up's log line says what was spent and the reserve kept",
     lines.some((l) =>
-      /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF [\d.]+, and the last CHF [\d.]+ is kept to finish\.$/.test(
+      /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF [\d.]+, and its next step could take it past CHF [\d.]+\.$/.test(
         l,
       ),
     ) && !lines.some((l) => /a fifth of this task's budget is left/.test(l)),

@@ -74,9 +74,10 @@ export interface SdkRunRequest {
   signal?: AbortSignal;
   /**
    * A task's run: the text it hears once, as PostToolUse's `additionalContext`, after its next
-   * call would take it past its wrap-up line (`WRAP_UP_TEXT`, ADR 0112).
+   * call would take it past its wrap-up line (`wrapUpText`, ADR 0112), or the function that
+   * words it from the run's spend and cap when it is sent (W15-16).
    */
-  wrapUp?: string;
+  wrapUp?: string | ((spentUsdMicro: number, capUsdMicro: number) => string);
   /**
    * The project's "Web pages research may read" ('sites'): Claude Code's WebSearch is given it
    * through PreToolUse's `updatedInput` (`webSearchInputFor`). Absent: any public website.
@@ -116,7 +117,7 @@ export interface SdkRunResult {
 
 /** The wrap-up of one SDK run: due once the hooks said so, given by the next PostToolUse. */
 interface WrapUpState {
-  text?: string;
+  text?: string | ((spentUsdMicro: number, capUsdMicro: number) => string);
   due: boolean;
   sent: boolean;
 }
@@ -959,13 +960,19 @@ export class SdkAgentDriver {
       // shape, with the value scrubbed out of its strings and the lines kept where they were.
       // The wrap-up (ADR 0112) goes with the first result after the hooks said so, once, as
       // context beside the result, never inside it.
-      const wrapUp = wrap.due && wrap.text && !wrap.sent ? wrap.text : undefined;
+      const spentNow = ctx.budget.spentByRunId(ctx.token.claims.runId);
+      const wrapUp =
+        wrap.due && wrap.text && !wrap.sent
+          ? typeof wrap.text === "function"
+            ? wrap.text(spentNow, ctx.token.claims.budgetUsdMicro)
+            : wrap.text
+          : undefined;
       if (wrapUp) {
         wrap.due = false;
         wrap.sent = true;
         emit({
           type: "wrap_up_sent",
-          spentUsdMicro: ctx.budget.spentByRunId(ctx.token.claims.runId),
+          spentUsdMicro: spentNow,
           capUsdMicro: ctx.token.claims.budgetUsdMicro,
         });
       }

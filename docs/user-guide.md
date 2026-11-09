@@ -886,11 +886,14 @@ or cancel in the Inbox.", with Answer (the card), Edit (set another budget yours
 Cancel.
 
 A budget stop is a pause, not a failure. Before a task's run reaches its budget, the agent is
-told once that about a fifth of its budget is left: it starts nothing new, leaves the files
-working and ends its report with "Where I stopped:" and "Left to do:". The reserve for that is a
-fifth of the run's budget, or the cost of two calls when that is more; the session's log
+told once to wrap up, with how much of its budget it has used: it starts nothing new, leaves the
+files working and ends its report with "Where I stopped:" and "Left to do:". The reserve for that
+is a fifth of the run's budget, or the cost of two calls when that is more; the session's log
 (Details) says at the start of each run where its wrap-up comes ("This run may spend CHF 0.40:
-at CHF 0.32 it is told to wrap up, keeping a reserve of CHF 0.08 to finish."). A budget too small
+before a step that could take it past CHF 0.32 it is told to wrap up, keeping a reserve of CHF
+0.08 to finish."). Since one step can cost a lot (a long file, a large page), the wrap-up can come
+before the run has spent that much, and the log says so ("Told the researcher to wrap up: it spent
+CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A budget too small
 for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
 smaller than a single step's cost says so and pauses before that step. A run that stopped at a
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,

@@ -84,15 +84,28 @@ export const CACHE_TTL_MARGIN_MS = 30_000;
  * driver, PostToolUse's `additionalContext` on the Agent SDK path. The brief says what the two
  * headings are for (`session/executor.ts`).
  */
+/** How the wrap-up starts, whatever it says after (the bench's stand-in hears it by this). */
+export const WRAP_UP_MARK = "Wrap up now:";
+
+/**
+ * The wrap-up a task's run hears (ADR 0112), with what is true when it is sent (W15-16): how much
+ * of the run's budget it used, and why now. The wrap-up comes before the step that could take the
+ * run past its wrap-up line (its spend and that step's worst case), so it may come with much of
+ * the budget left; "About a fifth of this task's budget is left" was told to a run that had
+ * spent 13% of it (live check 2, F4).
+ */
+export function wrapUpText(spentUsdMicro: number, capUsdMicro: number): string {
+  const share = capUsdMicro > 0 ? (Math.max(0, spentUsdMicro) / capUsdMicro) * 100 : 100;
+  const used = spentUsdMicro > 0 && share < 1 ? "under 1%" : `${Math.min(100, Math.round(share))}%`;
+  return `${WRAP_UP_MARK} this task has used ${used} of its budget, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).`;
+}
+
 /**
  * How often in a row a run continues a turn the provider paused (`pause_turn`, a long web search;
  * 'web-search'). Each continuation is a model call, counted against the run's and the session's
  * step caps like any other; past this the run ends with an error that says so.
  */
 export const MAX_PAUSE_CONTINUATIONS = 5;
-
-export const WRAP_UP_TEXT =
-  "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).";
 
 export interface RunPricing {
   /**
@@ -191,9 +204,10 @@ export interface RunRequest {
   headroomUsed?: boolean;
   /**
    * A task's run: the text it hears once when its next call would take it past its wrap-up
-   * line (`WRAP_UP_TEXT`, ADR 0112). Absent (chat, planning, reviews): it never hears one.
+   * line (`wrapUpText`, ADR 0112), or the function that words it from the run's spend and cap
+   * when it is sent (W15-16). Absent (chat, planning, reviews): it never hears one.
    */
-  wrapUp?: string;
+  wrapUp?: string | ((spentUsdMicro: number, capUsdMicro: number) => string);
   /**
    * Anthropic's web search ('web-search', the owner's decision of 2026-11-02): offered on each
    * call while the run's token grants `web_search`, the provider runs it
@@ -672,7 +686,12 @@ export class LoopAgentDriver {
         ) {
           wrapUpSent = true;
           finishCurrent = true;
-          appendText(messages, req.wrapUp);
+          appendText(
+            messages,
+            typeof req.wrapUp === "function"
+              ? req.wrapUp(req.budget.spentByRunId(claims.runId), claims.budgetUsdMicro)
+              : req.wrapUp,
+          );
           emit({
             type: "wrap_up_sent",
             spentUsdMicro: req.budget.spentByRunId(claims.runId),

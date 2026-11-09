@@ -26,8 +26,8 @@ import {
   type RunEvent,
   type RunOutcome,
   type RunPricing,
-  WRAP_UP_TEXT,
   wholeMs,
+  wrapUpText,
 } from "../agent/loop.ts";
 import type { SdkAgentDriver, SdkRunRequest } from "../agent/sdk.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
@@ -150,6 +150,7 @@ import {
 } from "./credential-wait.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
+import { moneyWords } from "./money-words.ts";
 import { renderQueueNotes } from "./next-session.ts";
 import {
   ASK_PERSON_TOOL,
@@ -690,7 +691,12 @@ export class LoopTaskExecutor implements TaskExecutor {
   /** An amount in micro-USD as a person reads it: "CHF 0.01" at the day's rate. */
   private chfText(usdMicro: number): string {
     const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
-    return formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate));
+    // W15-16: an amount under a centime reads "less than CHF 0.01", never "CHF 0.00" (the run's
+    // pause and stop sentences: "stopped at its budget of CHF 0.00: it spent CHF 0.00").
+    return moneyWords(
+      formatChf(usdToChfMicro(Math.max(0, Math.round(usdMicro)), rate)),
+      Math.max(0, usdMicro),
+    );
   }
 
   /** `execute`; `routed` is set on the second pass after a web-routing hand-over (U-044). */
@@ -1299,7 +1305,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           // before the run registers with the kill switch (U-039).
           signal: ctx.signal,
           // ADR 0112: a task's run hears the wrap-up once, at its line.
-          wrapUp: WRAP_UP_TEXT,
+          wrapUp: wrapUpText,
         });
         result = {
           outcome: r.outcome,
@@ -1361,7 +1367,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           // before the run registers with the kill switch (U-039).
           signal: ctx.signal,
           // ADR 0112: a task's run hears the wrap-up once, at its line.
-          wrapUp: WRAP_UP_TEXT,
+          wrapUp: wrapUpText,
           // 'web-search': the task's searches left and the project's lists in the server's form.
           ...(search
             ? {

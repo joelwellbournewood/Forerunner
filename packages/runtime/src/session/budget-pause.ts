@@ -42,7 +42,7 @@ export interface RunHandoff {
  * wrap-up ends its report with them.
  */
 export const WRAP_UP_BRIEF_LINE =
-  "If Forerunner tells you that about a fifth of this task's budget is left, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras): the run that continues this task starts from them.";
+  "If Forerunner tells you to wrap up, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras): the run that continues this task starts from them.";
 
 const MAX_STOPPED_CHARS = 600;
 const MAX_ITEMS = 20;
@@ -55,7 +55,7 @@ const MAX_ITEM_CHARS = 200;
  * tests pass" are items: a qualifier counts only when it is about the criteria or says done.
  */
 const NOTHING =
-  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;]*?(?:criteri|brief|task|scope|requirement|deliverable)[^.;]*|\s*[:;,(\u2013\u2014-]\s*[^]*?(?:criteri|complete|done|finished|\bmet\b)[^]*)?[\s.!)]*$/i;
+  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;]*?(?:criteri|brief|task|scope|requirement|deliverable)[^.;]*|\s*[:;,(\u2013\u2014-]\s*[\s\S]*?(?:criteri|complete|done|finished|\bmet\b)[\s\S]*)?[\s.!)]*$/i;
 /** An optional extra ("Optionally, ...", "(optional) ...", "Nice to have: ..."): never work left. */
 const OPTIONAL =
   /^(?:\(?optional(?:ly)?\)?\b|nice[- ]to[- ]have\b|if (?:you|the person) (?:want|wish|like)s?\b|(?:maybe|perhaps|possibly)\b|could also\b)|\(optional\)[\s.]*$/i;
@@ -179,9 +179,11 @@ export function stopEndsSession(source: BudgetStopSource): boolean {
 export function limitWords(
   source: BudgetStopSource,
   capUsdMicro: number,
-  chf: (usdMicro: number) => string,
+  chfOf: (usdMicro: number) => string,
   specialist: string,
 ): string {
+  // W15-16: a limit under a centime reads "less than CHF 0.01", never "CHF 0.00".
+  const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   switch (source) {
     case "task_budget":
       return `its budget of ${chf(capUsdMicro)}`;
@@ -261,24 +263,25 @@ export function budgetLineWords(line: RunWrapUpLine, chfOf: (usdMicro: number) =
       : `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses at its budget before that step.`;
   return line.saveOnly
     ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses at its budget and keeps its work.`
-    : `This run may spend ${chf(line.capUsdMicro)}: at ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
+    : `This run may spend ${chf(line.capUsdMicro)}: before a step that could take it past ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
 }
 
 /**
  * The session log's line when the run is told to wrap up (ADR 0112): what it spent of what it
- * may spend, and the reserve kept to finish. The call that would pass the line brings the
- * wrap-up, so more than a fifth is usually left: "about a fifth ... is left (it spent CHF 0.02
- * of CHF 0.04)" was not true (review of budget-stop).
+ * may spend, and why now, as the start line names it (W15-16): the step it was about to take
+ * could pass the line, so it may hear it well before its spend reaches the line ("at CHF 0.07 it
+ * is told to wrap up" was followed by "it spent CHF 0.02": live check 2, F4).
  */
 export function wrapUpSentWords(
   specialist: string,
   spentUsdMicro: number,
   capUsdMicro: number,
   line: RunWrapUpLine | undefined,
-  chf: (usdMicro: number) => string,
+  chfOf: (usdMicro: number) => string,
 ): string {
+  const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   return line
-    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and the last ${chf(line.reserveUsdMicro)} is kept to finish.`
+    ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and its next step could take it past ${chf(line.lineUsdMicro)}.`
     : `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
 }
 
