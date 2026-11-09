@@ -149,8 +149,8 @@ describe("scenario 3: voice", () => {
       command: "budget.set",
       decision: "needs_yes",
       words_used: ASK,
-      oldValue: "CHF 5",
-      newValue: "CHF 20",
+      oldValue: "CHF 5.00",
+      newValue: "CHF 20.00",
       expiresAt: UNTIL,
     });
     expect(pendingRows[0]?.options).toEqual(["yes", "no"]);
