@@ -247,7 +247,8 @@ with their milestone.
   kept on this computer; `builtOnBy`, `loop/critic.ts` and `loop/project-checks.ts` read them).
   A run that changed no file fails with "The run changed no file. It reported: …" in plain words
   (`emptyChangeSummary`, L-18, polish-words; before, the raw report and "(no changes were made in
-  the worktree)").
+  the worktree)"), with only the report's first sentence, cut at a word past 160 characters: two
+  sentences in all, which the failed-task card quotes (W15-52: it quoted the whole report).
   **One branch per task** (R-branch, leftovers7-merge): the branch is
   `taskBranchName(task)`, `fr/<the id's last 8 hex characters>-<title>`, stored on the task at
   its first run. Before, it took the id's first 8 characters, which are a UUIDv7's creation

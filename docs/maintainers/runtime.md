@@ -1009,7 +1009,7 @@ session stopped after 7 s, or one that planned nothing, threw the person's brief
 
 **The result (`session/result.ts`, design §5).** `sessionResultLines` writes at most three
 lines, from the tasks as they stand at the end (`collectEndState`): what needs the person ("X"
-needs your decision (Inbox); "X" failed: <reason>; Waiting for Docker: "X"), what happened (Did
+needs your decision (Inbox); "X" failed: <reason> (a reason cut at a word ends in its "…", never "….", W15-52); Waiting for Docker: "X"), what happened (Did
 N tasks: names; "X" waits for review; Merged N pull requests; Nothing could run: "X" waits on
 "Y", which failed; Nothing could run: "X" needs about CHF 1.20, more than this session's work
 budget of CHF 0.32, when the plan left every ready task out for its estimate (W6-23: before, "no

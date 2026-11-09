@@ -523,13 +523,22 @@ export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: 
 }
 
 /**
- * A run that changed no file (L-18, polish-words): "The run changed no file." first, then its own
- * report, plain (no markdown) and on one line, which the reason and the failed-task card cut at
- * a word.
+ * A run that changed no file (L-18, polish-words): "The run changed no file." first, then the
+ * first sentence of its own report, plain (no markdown), cut at a word past 160 characters: two
+ * sentences in all (W15-52: the failed-task card's body was the whole report, six sentences).
  */
 export function emptyChangeSummary(report: string): string {
   const said = plainReport(report).replace(/\s+/g, " ").trim();
-  return said ? `The run changed no file. It reported: ${said}` : "The run changed no file.";
+  if (!said) return "The run changed no file.";
+  // A sentence ends at ".", "!" or "?" before white space and a capital: "README.md" is a word.
+  const first = said.split(/(?<=[.!?])\s+(?=["'(\p{Lu}])/u)[0] ?? said;
+  let line = first;
+  if (first.length > 160) {
+    const cut = first.slice(0, 159);
+    const space = cut.lastIndexOf(" ");
+    line = `${(space > 80 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
+  }
+  return `The run changed no file. It reported: ${line}`;
 }
 
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */

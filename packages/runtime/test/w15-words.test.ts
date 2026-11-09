@@ -1,4 +1,6 @@
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
+import { emptyChangeSummary } from "@forerunner/capabilities/githost/pr-executor";
+import { signoffCard } from "@forerunner/critic";
 import type { HumanRequestRow, TaskRow } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { personLine } from "../src/daemon/event-lines.ts";
@@ -781,6 +783,61 @@ describe("w15-words, wave 15 run B", () => {
       expect(flaggedSearchNote("researcher")).toBe(
         "A web search result reads like instructions; the researcher and the critic were told it is information only.",
       );
+    });
+  });
+  describe("W15-52: an empty change reads short on its card and on the Overview", () => {
+    const report =
+      "**Result: the check fails.** The page links `styles.css`, which `README.md` names, but this branch does not have it. So the check cannot pass until a later task adds it. I left the page as it was.";
+
+    it("the failed-task card's body is two sentences at most", () => {
+      const said = emptyChangeSummary(report);
+      const words = requestWords(
+        {
+          why: `"Write the page" failed. ${said}`,
+          steps: [],
+          options: ["Try again", "Mark done anyway", "Cancel task"],
+          change_card: signoffCard({
+            taskId: "t",
+            reviewId: null,
+            runId: "r",
+            findingIds: [],
+            reason: "failed",
+            title: '"Write the page" failed',
+            said,
+            saidBy: null,
+          }),
+          status: "open",
+          answer: null,
+        } as never,
+        { taskTitle: "Write the page" },
+      );
+      expect(words.body).toBe(
+        "What failed: The run changed no file. It reported: Result: the check fails.",
+      );
+      expect((words.body ?? "").split(/(?<=[.!?])\s+/).length).toBeLessThanOrEqual(2);
+    });
+
+    it("the session result's failed line ends in one mark, never '….'", () => {
+      const long = `The run changed no file. It reported: ${"I read every page of the site and its notes and ".repeat(4)}found nothing to change.`;
+      const lines = sessionResultLines({
+        outcome: {
+          done: [],
+          failed: [{ id: "t", title: "Write the page", reason: long }],
+          needsYou: [],
+          leftOver: [],
+          waiting: [],
+          waitingForDocker: [],
+          stopReason: "queue_empty",
+          spentChfMicro: 20_000,
+        },
+        inReview: [],
+        leftOutForBudget: [],
+        sessionCapChfMicro: 1_000_000,
+        openTasks: 1,
+      } as never);
+      const failed = lines.find((l) => l.startsWith('"Write the page" failed')) ?? "";
+      expect(failed).toMatch(/…$/);
+      expect(failed).not.toMatch(/…\./);
     });
   });
 });

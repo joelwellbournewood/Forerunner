@@ -218,7 +218,9 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
         // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
         // L-18 (polish-words): plain (no markdown) and cut at a word, as the Tasks row reads it.
         const reason = plainReason(f0.reason, 160).replace(/\s*\(\s*\)/g, "");
-        return [`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`];
+        const said = lowerFirst(noDot(reason)) || "no reason given";
+        // W15-52: a reason cut at a word ends in its "…", never "….".
+        return [`"${f0.title}" failed: ${said}${said.endsWith("…") ? "" : "."}`];
       }
       return o.failed.length > 1 ? [`${namesOf(titlesOf(o.failed))} failed.`] : [];
     },
