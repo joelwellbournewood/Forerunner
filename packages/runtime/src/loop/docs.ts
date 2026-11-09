@@ -12,6 +12,7 @@ import {
   ensureBaseBranch,
   ensureWorkspaceGitignore,
   excludeNeverPushed,
+  forerunnerMarker,
   type GitAuth,
   type GitHost,
   GitOps,
@@ -23,9 +24,12 @@ import {
   LOCAL_ONLY_TRACKED_LINE,
   localOnlyTakenLine,
   NEVER_PUSHED,
+  type PullRequestInfo,
   type RepoRef,
+  readForerunnerMarker,
   regularFilesUnder,
   resolveGitToken,
+  sessionWords,
   TRY_DIR,
   WORKSPACE_IDENTITY,
 } from "@forerunner/capabilities";
@@ -124,26 +128,44 @@ export function isDocsBranch(branch: string): boolean {
   );
 }
 
-/** The line a scaffold pull request's body ends with, naming the project it is for (L-16). */
+/**
+ * The visible line a scaffold pull request's body ended with before wave 15, naming the project
+ * it is for (L-16). Still read, so a scaffold pull request an earlier version opened stays its
+ * project's; new pull requests carry the hidden mark instead (`docsPrMarker`, W15-08: no id in
+ * what a person reads).
+ */
 export function scaffoldProjectLine(project: Pick<ProjectRow, "id">): string {
   return `Forerunner project ${project.id}.`;
 }
 
+/** The hidden mark of a project's docs pull request (status, scaffold): the project's id. */
+export function docsPrMarker(project: Pick<ProjectRow, "id">): string {
+  return forerunnerMarker({ project: project.id });
+}
+
 /**
- * Whether one of Forerunner's docs pull requests on the repository is this project's (L-16):
- * live, the Overview listed another project's stale scaffold PR ("The project's standard docs ·
- * pull request #1", from an earlier project on the same repository) as this one's. The intake's
- * set is on a branch named for the project; the status PR is this project's only while its
- * status pull request is on (C-57); a scaffold PR names its project in its body (since L-16;
- * before, by name in its first line).
+ * Whether one of Forerunner's docs pull requests on the repository is this project's (L-16,
+ * W15-01). Live, the Overview listed another project's stale scaffold PR ("The project's
+ * standard docs · pull request #1"); and a second project with its status pull request on wrote
+ * its status into the first project's open status PR on the shared `fr/status` branch and listed
+ * it with Merge (live check 2). The intake's set is on a branch named for the project; a status
+ * or scaffold PR names its project in its hidden mark (`docsPrMarker`, wave 15); a scaffold PR an
+ * earlier version opened names it in a visible line (`scaffoldProjectLine`, L-16) or was recorded
+ * at creation. A status or scaffold PR that names no project (an earlier version's, or one a
+ * person opened on that branch) is a project's only while it is the one project on this install
+ * linked to the repository (`soleLinked`, `soleLinkedProject`); with two linked it is neither's
+ * (fails closed). The status PR is listed only while the project's status pull request is on
+ * (C-57).
  */
 export function isProjectDocsPr(
   project: Pick<ProjectRow, "id" | "name" | "settings"> &
     Partial<Pick<ProjectRow, "summary_cache">>,
   pr: { head: { ref: string }; body: string; htmlUrl?: string },
+  opts: { soleLinked?: boolean } = {},
 ): boolean {
   const ref = pr.head.ref;
-  if (ref === STATUS_BRANCH) return statusPullRequestOn(project);
+  if (ref === STATUS_BRANCH)
+    return statusPullRequestOn(project) && isProjectStatusPr(project, pr, opts);
   const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
   if (intake) return intake[1] === safeSegment(project.id, "project");
   if (ref === DOCS_SCAFFOLD_BRANCH) {
@@ -151,11 +173,49 @@ export function isProjectDocsPr(
     const recorded = (project.summary_cache?.docs as { pr_url?: unknown } | undefined)?.pr_url;
     if (pr.htmlUrl && recorded === pr.htmlUrl) return true;
     const body = pr.body ?? "";
+    const marked = readForerunnerMarker(body)?.project;
+    if (marked) return marked === project.id;
     if (body.includes(scaffoldProjectLine(project))) return true;
     if (/Forerunner project \S+\./.test(body)) return false;
-    return body.startsWith(`Standard project docs for ${project.name} (spec G.5)`);
+    return opts.soleLinked === true;
   }
   return false;
+}
+
+/**
+ * Whether the open status pull request on `fr/status` is this project's (W15-01), whatever its
+ * setting: its hidden mark names it, or it names no project and this project is the one on this
+ * install linked to the repository (an earlier version's PR). One with another project's mark,
+ * or an unmarked one while two projects are linked, is never written to, commented on or listed.
+ */
+export function isProjectStatusPr(
+  project: Pick<ProjectRow, "id">,
+  pr: { body: string },
+  opts: { soleLinked?: boolean } = {},
+): boolean {
+  const marked = readForerunnerMarker(pr.body)?.project;
+  if (marked) return marked === project.id;
+  return opts.soleLinked === true;
+}
+
+/**
+ * Whether `project` is the one project on this install linked to `repo` (W15-01: who an earlier
+ * version's unmarked docs pull request belongs to). Every project row counts, archived ones too:
+ * an unmarked pull request one of them opened is not another's to take.
+ */
+export async function soleLinkedProject(
+  store: Pick<StateStore, "project">,
+  project: Pick<ProjectRow, "id">,
+  repo: RepoRef,
+): Promise<boolean> {
+  const same = (r: RepoRef | null) =>
+    !!r &&
+    r.owner.toLowerCase() === repo.owner.toLowerCase() &&
+    r.name.toLowerCase() === repo.name.toLowerCase();
+  const linked = (await store.project.list({} as never, { limit: 5000 })).filter((p) =>
+    same(repositoryOf(p)),
+  );
+  return linked.length === 1 && linked[0]?.id === project.id;
 }
 
 /** A doc of the set that is not on the default branch yet: the pull request it waits in. */
@@ -705,7 +765,23 @@ export class ProjectDocs implements ProjectDocsPort {
   ): Promise<DocsScaffoldOutcome> {
     const info = { name: project.name, goal: project.goal, repos: project.repos };
     const branch = DOCS_SCAFFOLD_BRANCH;
-    const { git, dir, existingPr, first } = await this.checkout(project, target, branch);
+    const soleLinked = await soleLinkedProject(this.deps.store, project, target.repo);
+    const { git, dir, existingPr, first, foreign } = await this.checkout(project, target, branch, {
+      // W15-01: another project's open scaffold PR is never written to or commented on.
+      ours: (pr) => isProjectDocsPr(project, pr, { soleLinked }),
+    });
+    if (foreign) {
+      this.logger.info(
+        "standard docs not scaffolded: another project's docs pull request is open",
+        {
+          projectId: project.id,
+          branch,
+          prUrl: foreign.htmlUrl,
+        },
+      );
+      await this.settle(git, dir, target);
+      return { location: "repo", branch, prUrl: null, created: [], existing: [] };
+    }
     if (first) {
       // An empty repository: the set went in as its first commit on the default branch.
       await this.settle(git, dir, target);
@@ -722,13 +798,8 @@ export class ProjectDocs implements ProjectDocsPort {
     const res = await scaffoldDocs(dir, info);
     const marker = await this.mark(project, dir);
     const written = [...res.created, ...(marker.status === "created" ? [marker.path] : [])];
-    // An open scaffold PR this project adds nothing to and that is not its own (another
-    // project's on the same repository) is never recorded as its docs PR (L-16): the
-    // Overview listed one as "The project's standard docs".
-    let prUrl =
-      existingPr && (written.length > 0 || isProjectDocsPr(project, existingPr))
-        ? existingPr.htmlUrl
-        : null;
+    // An open scaffold PR is this project's here (`foreign` above, W15-01): its docs PR.
+    let prUrl = existingPr ? existingPr.htmlUrl : null;
     if (written.length) {
       const list = written.map((p) => `- ${p}`).join("\n");
       const markerNote =
@@ -746,7 +817,8 @@ export class ProjectDocs implements ProjectDocsPort {
       } else {
         const pr = await this.deps.host.createPullRequest(target.repo, {
           title: "docs: scaffold the standard project doc set",
-          body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner. ${scaffoldProjectLine(project)}`,
+          // The project it is for in the hidden mark (W15-01, W15-08), never as visible text.
+          body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner.\n\n${docsPrMarker(project)}`,
           head: branch,
           base: target.base,
         });
@@ -775,14 +847,90 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!target) return this.statusInFolder(project, session, update);
     // C-57: unless the person turned the status pull request on, a repository project's status
     // stays in the app: one PR to merge after every session was noise, even for one task.
-    if (!statusPullRequestOn(project)) {
-      const dir = this.statusInAppDir(project.id);
-      mkdirSync(dir, { recursive: true });
+    if (!statusPullRequestOn(project)) return this.statusInApp(project, update);
+    // Forerunner's own status branch, never a task's: the critic accepted the task's branch,
+    // and a commit after the review would put a file it never saw into the reviewed PR. Under
+    // the copy's lock (merged-copy): a refresh never moves the clone off the branch mid-write.
+    const branch = STATUS_BRANCH;
+    // W15-01: `fr/status` is one branch per repository, so another project on the same
+    // repository may have its status pull request open there; that one is never written to or
+    // commented on (live check 2: a second project's session pushed its status into the first
+    // project's PR). Its own is told by the hidden mark, or an unmarked one by being the one
+    // project linked (an earlier version's PR). One PR at a time (owner question W15-112).
+    const soleLinked = await soleLinkedProject(this.deps.store, project, target.repo);
+    const written = await this.withCopy(project.id, async () => {
+      const { git, dir, existingPr, foreign } = await this.checkout(project, target, branch, {
+        // A status PR that was merged or closed: the branch starts again from the default one.
+        fresh: async (open) => !open,
+        ours: (pr) => isProjectStatusPr(project, pr, { soleLinked }),
+      });
+      if (foreign) {
+        await this.settle(git, dir, target);
+        return { foreign, commit: null, prUrl: null, res: null };
+      }
       const res = await writeStatusUpdate(dir, update);
-      // The status write was also what kept this computer's copy of the repository current;
-      // without it a project made from a brief had no copy at all (its Docs tab said README.md
-      // was missing, its Files tab "Nothing written yet") and a merge never showed (review of
-      // fix/decisions, 2026-11-02). The copy is refreshed here, with nothing pushed.
+      // The session by when it started, never its id (W15-08: no ids in what a person reads).
+      const named = sessionWords(session.started_at);
+      const commit = await git.commitAll(`docs: status after ${named}`);
+      let prUrl = existingPr?.htmlUrl ?? null;
+      if (commit.committed) {
+        // The branch is Forerunner's alone; without an open PR it was started again from the
+        // default branch, so the host's old copy (a merged or closed PR's) is replaced.
+        await git.push(branch, { force: !existingPr, defaultBranch: target.base });
+        const body = `Status update of ${named}:\n\n- Done: ${line(update.done)}\n- In flight: ${line(update.inFlight)}\n- Blocked: ${line(update.blocked)}\n- Next: ${line(update.next)}`;
+        if (existingPr) {
+          await this.deps.host.commentOnPullRequest(target.repo, existingPr.number, body);
+        } else {
+          const pr = await this.deps.host.createPullRequest(target.repo, {
+            title: "docs: project status",
+            body: `${body}\n\nForerunner keeps docs/status.md on this branch and adds each session's update to this pull request until it is merged. Opened by Forerunner.\n\n${docsPrMarker(project)}`,
+            head: branch,
+            base: target.base,
+          });
+          prUrl = pr.htmlUrl;
+        }
+      }
+      await this.settle(git, dir, target);
+      return { foreign: null, commit, prUrl, res };
+    });
+    const { foreign, commit, prUrl, res } = written;
+    if (foreign || !commit || !res) {
+      // Its status stays in the app this time (C-57's place for it); the next session's end
+      // tries the pull request again.
+      this.logger.info(
+        "status pull request not written: another project's status pull request is open",
+        { projectId: project.id, branch, prUrl: foreign?.htmlUrl ?? null },
+      );
+      return this.statusInApp(project, update, { refresh: false });
+    }
+    this.logger.info("status update written", {
+      projectId: project.id,
+      sessionId: session.id,
+      branch,
+      prUrl,
+      committed: commit.committed,
+    });
+    return { location: "repo", branch, prUrl, path: STATUS_DOC, created: res.created };
+  }
+
+  /**
+   * A repository project's status kept in the app (`STATUS_IN_APP_DIR`, C-57), where the Docs
+   * tab reads it: its status pull request is off, or another project's is open on `fr/status`
+   * (W15-01). `refresh`: the copy is refreshed here too (nothing pushed).
+   */
+  private async statusInApp(
+    project: ProjectRow,
+    update: StatusUpdate,
+    opts: { refresh?: boolean } = {},
+  ): Promise<SessionStatusOutcome> {
+    const dir = this.statusInAppDir(project.id);
+    mkdirSync(dir, { recursive: true });
+    const res = await writeStatusUpdate(dir, update);
+    // The status write was also what kept this computer's copy of the repository current;
+    // without it a project made from a brief had no copy at all (its Docs tab said README.md
+    // was missing, its Files tab "Nothing written yet") and a merge never showed (review of
+    // fix/decisions, 2026-11-02). The copy is refreshed here, with nothing pushed.
+    if (opts.refresh !== false) {
       try {
         await this.refreshCopy(project);
       } catch (e) {
@@ -792,48 +940,8 @@ export class ProjectDocs implements ProjectDocsPort {
           error: errorMessage(e),
         });
       }
-      return { location: "app", dir, path: res.path, created: res.created };
     }
-    // Forerunner's own status branch, never a task's: the critic accepted the task's branch,
-    // and a commit after the review would put a file it never saw into the reviewed PR. Under
-    // the copy's lock (merged-copy): a refresh never moves the clone off the branch mid-write.
-    const branch = STATUS_BRANCH;
-    const { commit, prUrl, res } = await this.withCopy(project.id, async () => {
-      const { git, dir, existingPr } = await this.checkout(project, target, branch, {
-        // A status PR that was merged or closed: the branch starts again from the default one.
-        fresh: async (open) => !open,
-      });
-      const res = await writeStatusUpdate(dir, update);
-      const commit = await git.commitAll(`docs: status after session ${session.id}`);
-      let prUrl = existingPr?.htmlUrl ?? null;
-      if (commit.committed) {
-        // The branch is Forerunner's alone; without an open PR it was started again from the
-        // default branch, so the host's old copy (a merged or closed PR's) is replaced.
-        await git.push(branch, { force: !existingPr, defaultBranch: target.base });
-        const body = `Status update of session ${session.id} (${update.endedAt}):\n\n- Done: ${line(update.done)}\n- In flight: ${line(update.inFlight)}\n- Blocked: ${line(update.blocked)}\n- Next: ${line(update.next)}`;
-        if (existingPr) {
-          await this.deps.host.commentOnPullRequest(target.repo, existingPr.number, body);
-        } else {
-          const pr = await this.deps.host.createPullRequest(target.repo, {
-            title: "docs: project status",
-            body: `${body}\n\nForerunner keeps docs/status.md on this branch and adds each session's update to this pull request until it is merged. Opened by Forerunner.`,
-            head: branch,
-            base: target.base,
-          });
-          prUrl = pr.htmlUrl;
-        }
-      }
-      await this.settle(git, dir, target);
-      return { commit, prUrl, res };
-    });
-    this.logger.info("status update written", {
-      projectId: project.id,
-      sessionId: session.id,
-      branch,
-      prUrl,
-      committed: commit.committed,
-    });
-    return { location: "repo", branch, prUrl, path: STATUS_DOC, created: res.created };
+    return { location: "app", dir, path: res.path, created: res.created };
   }
 
   /**
@@ -884,10 +992,11 @@ export class ProjectDocs implements ProjectDocsPort {
     const target = await this.deps.repoFor(project);
     if (!target) return [];
     if (!existsSync(join(this.copyDir(project.id), ".git"))) return [];
-    // Only this project's docs PRs (L-16): another project's on the same repository is not
-    // where this project's docs wait.
+    // Only this project's docs PRs (L-16, W15-01): another project's on the same repository is
+    // not where this project's docs wait.
+    const soleLinked = await soleLinkedProject(this.deps.store, project, target.repo);
     const prs = (await this.deps.host.listPullRequests(target.repo, { state: "open" })).filter(
-      (p) => isDocsBranch(p.head.ref) && isProjectDocsPr(project, p),
+      (p) => isDocsBranch(p.head.ref) && isProjectDocsPr(project, p, { soleLinked }),
     );
     // The fetch under the copy's lock (merged-copy): never beside a refresh or a docs write.
     return this.withCopy(project.id, async (dir) => {
@@ -931,12 +1040,18 @@ export class ProjectDocs implements ProjectDocsPort {
    * the host (an open PR's, an earlier scaffold), else from the default branch; `fresh` starts
    * it from the default branch whatever the host has. An empty repository first gets the doc
    * set as its first commit on the default branch (`first` says what went in, ADR 0106).
+   * `ours` (W15-01): an open pull request on the branch that is not this project's makes the
+   * branch another project's for now: the copy is not switched to it and `foreign` names it, so
+   * the caller writes nothing there (a push to the branch would land in that pull request).
    */
   private async checkout(
     project: ProjectRow,
     target: ProjectRepoTarget,
     branch: string,
-    opts: { fresh?: (openPr: boolean) => Promise<boolean> } = {},
+    opts: {
+      fresh?: (openPr: boolean) => Promise<boolean>;
+      ours?: (pr: PullRequestInfo) => boolean;
+    } = {},
   ) {
     const dir = join(this.deps.worktreeRoot, safeSegment(project.id, "project"));
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
@@ -968,9 +1083,20 @@ export class ProjectDocs implements ProjectDocsPort {
         return `docs: start the repository with the standard doc set\n\nThe repository was empty; Forerunner made this first commit so the project's work has a branch to start from:\n${res.created.map((p) => `- ${p}`).join("\n")}`;
       },
     });
-    const existingPr =
-      (await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch }))[0] ??
-      null;
+    const open = await this.deps.host.listPullRequests(target.repo, {
+      state: "open",
+      head: branch,
+    });
+    const foreign = opts.ours ? (open.find((pr) => !opts.ours?.(pr)) ?? null) : null;
+    if (foreign)
+      return {
+        git,
+        dir,
+        existingPr: null,
+        foreign,
+        first: first as { created: string[]; marker: InstallMarkerWrite | null } | null,
+      };
+    const existingPr = open[0] ?? null;
     const fresh = opts.fresh ? await opts.fresh(!!existingPr) : false;
     const from =
       !fresh && (await git.hasRef(`origin/${branch}`))
@@ -981,6 +1107,7 @@ export class ProjectDocs implements ProjectDocsPort {
       git,
       dir,
       existingPr,
+      foreign: null as PullRequestInfo | null,
       first: first as { created: string[]; marker: InstallMarkerWrite | null } | null,
     };
   }

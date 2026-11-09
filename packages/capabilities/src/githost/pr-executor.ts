@@ -353,11 +353,84 @@ export function taskBranchName(task: Pick<TaskRow, "id" | "title">): string {
 }
 
 /**
- * Whether a pull request Forerunner opened names another task than `taskId` (its body ends
- * "Task <id>, session <id>. Opened by Forerunner."): that pull request is never this task's.
+ * What Forerunner's hidden mark in a pull request body names (W15-01, W15-08): the project whose
+ * pull request it is, and for a task's the task and the session that opened it. Code reads it;
+ * the person never sees it (design §5 rule 3: no ids in what a person reads).
+ */
+export interface ForerunnerMark {
+  project?: string;
+  task?: string;
+  session?: string;
+}
+
+const MARK_START = "<!-- forerunner:pr ";
+const MARK_KEYS = ["project", "task", "session"] as const;
+
+/**
+ * The hidden mark of a pull request Forerunner opens (an HTML comment, as `AGENT_TEXT_MARKER`:
+ * GitHub does not render it): `<!-- forerunner:pr project=<id> task=<id> session=<id> -->`.
+ * Values are URI-encoded, so no id can end the comment early.
+ */
+export function forerunnerMarker(mark: ForerunnerMark): string {
+  const fields = MARK_KEYS.flatMap((k) => {
+    const v = mark[k]?.trim();
+    return v ? [`${k}=${encodeURIComponent(v)}`] : [];
+  });
+  return `${MARK_START}${fields.join(" ")} -->`;
+}
+
+/** The mark a body carries (the first), or null when it has none. */
+export function readForerunnerMarker(body: string | null | undefined): ForerunnerMark | null {
+  const text = body ?? "";
+  const at = text.indexOf(MARK_START);
+  if (at < 0) return null;
+  const end = text.indexOf("-->", at);
+  if (end < 0) return null;
+  const out: ForerunnerMark = {};
+  for (const part of text
+    .slice(at + MARK_START.length, end)
+    .trim()
+    .split(/\s+/)) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq) as (typeof MARK_KEYS)[number];
+    if (!MARK_KEYS.includes(key)) continue;
+    try {
+      const value = decodeURIComponent(part.slice(eq + 1));
+      if (value) out[key] = value;
+    } catch {
+      // A value that is not URI text names nothing.
+    }
+  }
+  return out;
+}
+
+/**
+ * When a session started, as the text Forerunner writes on GitHub names it (W15-08: a session is
+ * named by its start time, never its id): "2026-11-09 04:12 UTC". Null when it is not known.
+ */
+export function sessionWhen(startedAt: string | null | undefined): string | null {
+  if (!startedAt) return null;
+  const t = Date.parse(startedAt);
+  if (!Number.isFinite(t)) return null;
+  const iso = new Date(t).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+/** "the session started 2026-11-09 04:12 UTC", or "a session" when its start is not known. */
+export function sessionWords(startedAt: string | null | undefined): string {
+  const when = sessionWhen(startedAt);
+  return when ? `the session started ${when}` : "a session";
+}
+
+/**
+ * Whether a pull request Forerunner opened names another task than `taskId`: its hidden mark
+ * (W15-08), or the visible line earlier versions ended its body with ("Task <id>, session <id>.
+ * Opened by Forerunner."). That pull request is never this task's.
  */
 export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: string): boolean {
   const named =
+    readForerunnerMarker(pr.body)?.task ??
     /\bTask ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}), session /i.exec(
       pr.body ?? "",
     )?.[1];

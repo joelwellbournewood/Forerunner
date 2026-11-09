@@ -206,19 +206,20 @@ describe("standard doc set at project creation (G.5)", () => {
       existing: ["README.md", "docs/overview.md"],
     });
     expect(row.summary_cache.docs).toMatchObject({ marker: { status: "created" } });
-    // A second creation against the same repository finds nothing to add, and the marker of
-    // the first project is reported, never overwritten.
+    // A second creation against the same repository writes nothing: the open scaffold PR names
+    // no project and two projects are now linked to the repository, so it is neither's to
+    // write into (W15-01); the first project's marker is never overwritten.
     const again = await req("/projects", {
       method: "POST",
       body: JSON.stringify({ name: "Delta 2", goal: "Same repo", repos: ["o/delta"] }),
     });
     expect(again.status).toBe(201);
     const row2 = await rt.store.project.mustGet(String((await json(again)).id));
-    expect(row2.summary_cache.docs).toMatchObject({
-      location: "repo",
-      created: [],
-      marker: { path: INSTALL_MARKER_FILE, status: "other_project", project: row.id },
-    });
+    expect(row2.summary_cache.docs).toMatchObject({ location: "repo", created: [] });
+    expect((row2.summary_cache.docs as { pr_url?: unknown }).pr_url).toBeNull();
+    expect(
+      (await host.listPullRequestComments({ owner: "o", name: "delta" }, existingPr.number)).length,
+    ).toBe(1);
     expect(
       parseInstallMarker((await show(bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
         ?.project,
@@ -404,7 +405,10 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(await show(gammaBare, "main", "docs/status.md")).toBeNull();
     const prs = await host.listPullRequests({ owner: "o", name: "gamma" }, { state: "open" });
     expect(prs.map((p) => p.head.ref).sort()).toEqual([DOCS_SCAFFOLD_BRANCH, branch].sort());
-    expect(prs.find((p) => p.head.ref === branch)?.body).toContain(result.sessionId);
+    // W15-08: the session by when it started, never its id; the project in the hidden mark.
+    const statusBody = prs.find((p) => p.head.ref === branch)?.body ?? "";
+    expect(statusBody).toContain("Status update of the session started 2026-03-05");
+    expect(statusBody).not.toContain(result.sessionId);
     const session = await rt.store.session.mustGet(result.sessionId);
     expect((session.handoff as { docs?: { branch?: string } }).docs?.branch).toBe(branch);
   });

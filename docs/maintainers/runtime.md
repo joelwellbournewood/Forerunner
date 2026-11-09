@@ -3668,11 +3668,22 @@ holds the file, and the docs routes read `docs/status.md` from it first (`DocsRo
 the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
 status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
 `GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
-repository and the setting on it is committed as `docs: status after session <id>` on Forerunner's own status
-branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
+repository and the setting on it is committed as `docs: status after the session started <time>` (W15-08: the
+session by its start time, `sessionWords`, never its id) on Forerunner's own status
+branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status",
+its body ending in the project's hidden mark `docsPrMarker`, `<!-- forerunner:pr project=<id> -->`):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is
 merged or closed the branch starts again from the default branch (pushed with a lease) and a
-new PR opens. It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
+new PR opens. `fr/status` is one branch per repository, so two projects on one repository share
+it (W15-01, live check 2: the second project's session pushed into and commented on the first
+one's open status PR, and its Overview listed it with Merge): `checkout`'s `ours` makes an open
+PR on the branch that is not this project's (`isProjectStatusPr`: its mark names another
+project, or it has no mark while another project of this install is linked to the repository,
+`soleLinkedProject`) the branch's for now, so nothing is pushed or commented and the status
+goes to the app folder (`statusInApp`) with one info line "status pull request not written:
+another project's status pull request is open"; the scaffold (`scaffoldInCopy`) skips another
+project's open `fr/docs-scaffold` PR the same way. No per-project branch and no second PR: two
+would change one `docs/status.md` (owner question W15-112). It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
 and the status commit pushed onto it after the review put a file the critic never saw into the
 reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
 in the same commit. Without a repository the file in the project's folder is updated and the
@@ -3686,9 +3697,11 @@ After each write the docs clone is back on the default branch (`backToBase`), so
 sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
 in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
 `fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
-project's (`isProjectDocsPr`, L-16: the status PR while its setting is on, the intake branch named
-for the project, a scaffold PR whose body ends "Forerunner project <id>." or that the project's
-scaffold wrote onto, `summary_cache.docs.pr_url`; an older body naming the project by name), the
+project's (`isProjectDocsPr`, L-16 and W15-01: the status PR while its setting is on and it is
+this project's, the intake branch named for the project, a status or scaffold PR whose hidden
+mark names it, a scaffold PR whose body ends "Forerunner project <id>." (before wave 15) or that
+the project's scaffold wrote onto, `summary_cache.docs.pr_url`; an unmarked one only while this
+is the one project of the install linked to the repository, `soleLinked`), the
 same filter `projectPullRequests` (`daemon/pull-requests.ts`) applies to the Overview's docs
 group, and the scaffold records another project's open scaffold PR it added nothing to as no PR
 of its own. The result is the

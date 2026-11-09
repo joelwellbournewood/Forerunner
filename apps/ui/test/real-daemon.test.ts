@@ -12130,3 +12130,134 @@ describe("polish-screens, wave 13", () => {
     expect(check.overBudget[0]?.ahead?.chfMicro).toBeGreaterThan(0);
   });
 });
+
+describe("w15-merge, wave 15", () => {
+  it("two projects on one repository with Status pull request on: the second never writes into, comments on or lists the first one's status or scaffold pull request; each Overview lists only its own; the same after the daemon starts again (W15-01)", async () => {
+    // Live check 2 (forerunner-sandbox, 2026-11-09): a second project's session pushed its
+    // status onto `fr/status`, into the first project's open status pull request #5, commented
+    // on it, and its Overview listed #5 with Merge.
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-status-"));
+    const bare = join(work, "shared.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(work, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(work, "seed", "README.md"), "# shared\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "w15shared" };
+    await host.createRepo({ ...repo, private: true, cloneUrl: bare });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const compose = () =>
+      composeWithRolePlayer(
+        {},
+        {
+          gitHost: host,
+          tryIt: false,
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      );
+    const statusHead = async () =>
+      (await run(["git", "--git-dir", bare, "rev-parse", "fr/status"])).stdout.trim();
+    const docsRows = async (c: DaemonClient, projectId: string) =>
+      (await c.projectPullRequests(projectId)).waiting
+        .filter((w) => w.kind === "docs")
+        .map((w) => `${w.branch} #${w.number}`);
+
+    let { rt, client } = await compose();
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = async (name: string) => {
+        const p = await client.createProject({
+          name,
+          goal: `${name}'s notes`,
+          repos: ["o/w15shared"],
+        });
+        const on = await client.executeCommands({
+          commands: [
+            {
+              name: "settings.set",
+              params: { key: "status_pull_request", value: true, project: p.id },
+            },
+          ],
+          source: "ui",
+        });
+        expect(on.status).toBe("done");
+        return p;
+      };
+      const session = async (projectId: string, title: string) => {
+        await client.createTask(projectId, {
+          title,
+          outcome: `${title} is written`,
+          riskTier: 1,
+          specialist: "coder",
+        });
+        const before = (await client.sessions({ projectId })).length;
+        const started = await client.startSession({ agentId, projectId });
+        expect(started.session?.id).toBeDefined();
+        await eventually(
+          async () => {
+            const all = await client.sessions({ projectId });
+            return all.length > before && all.every((s) => s.status !== "running");
+          },
+          `the session of ${title} to end`,
+          async () =>
+            (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+          60_000,
+        );
+      };
+      const a = await project("Shared A");
+      const b = await project("Shared B");
+      await session(a.id, "Write the notes in a-notes.md");
+      const [prA] = await host.listPullRequests(repo, { state: "open", head: "fr/status" });
+      expect(prA?.body).toContain(`<!-- forerunner:pr project=${a.id} -->`);
+      const [scaffold] = await host.listPullRequests(repo, {
+        state: "open",
+        head: "fr/docs-scaffold",
+      });
+      expect(scaffold?.body).toContain(`<!-- forerunner:pr project=${a.id} -->`);
+      const headA = await statusHead();
+      const commentsA = (await host.listPullRequestComments(repo, prA?.number ?? 0)).length;
+      const scaffoldComments = (await host.listPullRequestComments(repo, scaffold?.number ?? 0))
+        .length;
+
+      await session(b.id, "Write the notes in b-notes.md");
+      // B wrote no commit onto fr/status, no comment on A's pull request and opened none.
+      expect(await statusHead()).toBe(headA);
+      expect((await host.listPullRequestComments(repo, prA?.number ?? 0)).length).toBe(commentsA);
+      expect((await host.listPullRequestComments(repo, scaffold?.number ?? 0)).length).toBe(
+        scaffoldComments,
+      );
+      expect(
+        (await host.listPullRequests(repo, { state: "open" }))
+          .filter((p) => p.head.ref.startsWith("fr/status") || p.head.ref === "fr/docs-scaffold")
+          .map((p) => p.number),
+      ).toEqual([scaffold?.number, prA?.number].sort((x, y) => (x ?? 0) - (y ?? 0)));
+      // Each Overview lists only its own docs pull requests.
+      expect((await docsRows(client, a.id)).sort()).toEqual(
+        [`fr/docs-scaffold #${scaffold?.number}`, `fr/status #${prA?.number}`].sort(),
+      );
+      expect(await docsRows(client, b.id)).toEqual([]);
+      // B's Docs tab does not say its docs wait in A's pull requests.
+      for (const d of await client.docs(b.id))
+        expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
+
+      // The daemon starts again on the same home: the ownership is read from the bodies.
+      await rt.close();
+      ({ rt, client } = await compose());
+      expect((await docsRows(client, a.id)).sort()).toEqual(
+        [`fr/docs-scaffold #${scaffold?.number}`, `fr/status #${prA?.number}`].sort(),
+      );
+      expect(await docsRows(client, b.id)).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 240_000);
+});

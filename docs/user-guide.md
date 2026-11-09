@@ -316,7 +316,10 @@ Advanced, Other settings): each session then adds its update to one pull request
 "docs: project status", which you merge when you like; it never goes into a task's reviewed
 pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this
 project's docs pull requests are listed, never one another project left on the same
-repository.
+repository. Two projects on one repository share that status branch: while one project's
+status pull request is open, the other project never adds to it, comments on it or lists it,
+and keeps its own status under **Docs** in the app until that pull request is merged or closed.
+The same goes for the pull request of the standard docs.
 A task that waits for another whose pull request you have not merged yet starts from that work:
 its branch includes it, so a check finds the page it checks. Its own pull request still goes to
 the default branch and says so in its first lines ("Builds on #4 (not merged yet): this pull

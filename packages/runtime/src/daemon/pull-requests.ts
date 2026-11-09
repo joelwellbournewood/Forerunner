@@ -8,6 +8,7 @@ import {
   isProjectDocsPr,
   parseRepoRef,
   STATUS_BRANCH,
+  soleLinkedProject,
 } from "../loop/docs.ts";
 import { buildsOnSentence, type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
 import {
@@ -321,6 +322,11 @@ export class ProjectPullRequests {
       };
     }
     const blockedBy = await this.rulesOf(ref, prs);
+    // W15-01: an unmarked docs PR (an earlier version's) is a project's only while it is the one
+    // project on this install linked to the repository; asked only when a docs PR is open.
+    const soleLinked = prs.some((p) => isDocsBranch(p.head.ref))
+      ? await soleLinkedProject(store, project, ref)
+      : false;
     const tasks = await store.task.list({ project_id: project.id } as never, { limit: 2000 });
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const rows: ProjectPullRequestView[] = [];
@@ -389,9 +395,10 @@ export class ProjectPullRequests {
             ? { state: "blocked", canMerge: false, sentence: ruleSentence, first: [] }
             : own,
         });
-      } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr)) {
-        // Only this project's docs PRs (L-16): live, another project's stale scaffold PR on the
-        // same repository was listed as "The project's standard docs".
+      } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr, { soleLinked })) {
+        // Only this project's docs PRs (L-16, W15-01): live, another project's stale scaffold PR
+        // on the same repository was listed as "The project's standard docs", and another
+        // project's open status PR as this one's, with Merge (live check 2).
         const clicked = this.docs.get(pr.htmlUrl);
         rows.push({
           kind: "docs",
