@@ -364,7 +364,9 @@ never repeats work that is already in the default branch:
   a commit made in its task's folder: push it to GitHub or undo it." Push it (the next check
   rebuilds #8 with your commit, and #8 waits for your look, since the review did not read it)
   or undo it in the folder (`git reset --hard origin/<branch>`). In a chain
-  (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt.
+  (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt; while #6 cannot be
+  rebuilt yet (its folder is busy, or its rebuild conflicts), #8 waits for it too, with no card
+  of its own, and nothing merges #8 meanwhile.
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a
 task's open pull request, Forerunner says so once: the Overview row shows "#8 conflicts with main

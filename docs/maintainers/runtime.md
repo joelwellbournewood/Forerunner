@@ -3320,7 +3320,12 @@ no longer done (redone, cancelled) from the done tasks waiting for it (store rea
 only, unless a rebuild is due). **Owed rebuilds survive a restart** (R-owed, leftovers7-merge2):
 `rebuildFor` marks each done dependent's merge record (`merge_record.rebuild_owed_for`, migration
 0008, `MergeRecordRepo.oweRebuild` / `owedRebuilds`) before the rebuild starts, and settles it from
-the outcome: `busy`/`held`/`failed` stays owed, a rebuild or a conflict read every dependency the
+the outcome: `busy`/`held`/`failed`/`waits` stays owed (`waits`, W15-03: a task after one in a
+chain that could not be rebuilt cleanly in the pass is not rebuilt onto its old head), a
+rebuild conflict already said in the same words files no second card, and a clean rebuild
+with the same own change ends a stale `rebuild_conflict` (the record waits for the person's
+Merge again, `folderWaitOver`, and its rebuild card is withdrawn,
+`closeRebuildConflictCard`); a rebuild or a conflict read every dependency the
 branch holds and clears it, "unchanged" clears only what was owed for this dependency (a record
 that owes one keeps it when a second dependency changes). `sweep` reads the owed records at every
 poll, also the first after a restart (A merged and known by then, so nothing else would catch B),

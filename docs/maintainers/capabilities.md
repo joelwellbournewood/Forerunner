@@ -281,7 +281,10 @@ with their milestone.
   middle of a chain could not be rebuilt at first, the third had been rebuilt onto the middle's
   old head, which still held the first task's pre-squash commits, and nothing rebuilt it again);
   `rebuildDependents` passes each task it rebuilt in the pass on to the tasks after it
-  (`rebuildTask(task, hooks, onlyIfHolding)` takes one id or several). Each: the branch as the
+  (`rebuildTask(task, hooks, onlyIfHolding)` takes one id or several). A task after one whose
+  rebuild could not run cleanly in the pass (`STUCK_REBUILDS`: busy, held, failed, conflict) is
+  not looked at (`waits`, W15-03): it still holds that one's old head, and rebuilding it onto
+  that head merged into main gave a false add/add conflict and a card (live check 2, F1). Each: the branch as the
   host has it, rebuilt,
   `hooks.beforePush(rebuild, pr)` (the runtime settles the merge record there), then a push
   with a lease (never the default branch) and the "Builds on" line updated. A worktree a run or

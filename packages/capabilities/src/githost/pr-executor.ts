@@ -368,7 +368,11 @@ export interface DependentOutcome {
   /** Its pull request (open), when it has one. */
   prNumber: number | null;
   prUrl: string | null;
-  result: "unchanged" | "rebuilt" | "conflict" | "held" | "busy" | "failed";
+  /**
+   * `waits` (W15-03): not looked at, because a task it builds on could not be rebuilt cleanly
+   * in the same pass (`STUCK_REBUILDS`); it still holds that one's old head and stays owed.
+   */
+  result: "unchanged" | "rebuilt" | "conflict" | "held" | "busy" | "failed" | "waits";
   rebuild?: DependentRebuild;
   error?: string;
   /**
@@ -377,6 +381,15 @@ export interface DependentOutcome {
    */
   held?: "changes" | "commits";
 }
+
+/** The rebuild outcomes after which a task still holds the work that went away (W15-03). */
+export const STUCK_REBUILDS: ReadonlySet<DependentOutcome["result"]> = new Set([
+  "busy",
+  "held",
+  "failed",
+  "conflict",
+  "waits",
+]);
 
 /** What the caller of `rebuildDependents` decides between the rebuild and its push. */
 export interface RebuildHooks {
@@ -1848,9 +1861,23 @@ export class PrTaskExecutor implements TaskExecutor {
     // R-chain: a task rebuilt here is a change for the tasks after it too (they hold its old
     // head), so a later one is looked at when it holds any of them.
     const changed = [changedDependencyTaskId];
+    // W15-03: a task whose own rebuild could not run cleanly in this pass (busy, held, failed,
+    // conflicted) still holds the work that went away; a task after it is not rebuilt onto that
+    // old head (live check 2: with the middle of a chain busy, the third was rebuilt onto the
+    // middle's old head merged into main, which conflicted with the squash of the first, and
+    // got a card for a conflict that was not there). It waits as owed (`waits`) until the one
+    // before it was rebuilt.
+    const stuck = new Set<string>();
     for (const { task } of todo) {
+      const before = (await this.dependencyTasks(task)).find((d) => stuck.has(d.id));
+      if (before) {
+        stuck.add(task.id);
+        out.push({ taskId: task.id, prNumber: null, prUrl: null, result: "waits" });
+        continue;
+      }
       const o = await this.rebuildTask(task, hooks, changed);
       if (o.result === "rebuilt") changed.push(task.id);
+      if (STUCK_REBUILDS.has(o.result)) stuck.add(task.id);
       out.push(o);
     }
     return out;

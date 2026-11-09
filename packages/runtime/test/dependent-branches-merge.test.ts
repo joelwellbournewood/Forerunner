@@ -17,7 +17,12 @@ import {
   MemoryLedger,
   NoSecrets,
 } from "../src/enforcement/ports.ts";
-import { MERGE_PR_TOOL, ReviewedPrMerge } from "../src/loop/merge.ts";
+import {
+  fileLeftOpenRequest,
+  MERGE_PR_TOOL,
+  REBUILD_CARD_OPTIONS,
+  ReviewedPrMerge,
+} from "../src/loop/merge.ts";
 import type { MergeMode } from "../src/loop/merge-mode.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
 import { GitHostWatcher } from "../src/session/githost-watcher.ts";
@@ -1610,5 +1615,118 @@ describe("w15-merge, wave 15", { timeout: 240_000 }, () => {
     const after = await m.record(b.id);
     expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
     expect(await m.prCommits(prB)).toEqual(["Add footer"]);
+  });
+});
+
+describe("w15-merge, wave 15: a chain with a busy middle (W15-03)", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  const screens = async (m: ChainWorld, taskId: string) => {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    const task = await m.w.store.task.mustGet(taskId);
+    return { waiting: view.waiting, row: taskDisplay(task, ctx) };
+  };
+
+  it("a chain of three whose middle changes the first one's file and whose folder is busy when the first is squash-merged: the third gets no false conflict and waits as owed; once the middle is free, both are rebuilt cleanly, with no card, and merge in order (live check 2, F1)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const v1 = "<ul>\n<li>Spring</li>\n<li>Night</li>\n</ul>\n";
+    const v2 = "<ul>\n<li>Spring</li>\n<li>Night</li>\n<li>Autumn</li>\n</ul>\n";
+    m.writes.set("Write events", { "src/events.html": v1 });
+    const a = await m.runTask("Write events");
+    m.writes.set("Add a third event", { "src/events.html": v2 });
+    const b = await m.runTask("Add a third event", { dependsOn: [a.id] });
+    m.writes.set("Link events", { "src/index.html": '<a href="events.html">Events</a>\n' });
+    const c = await m.runTask("Link events", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.poll();
+    // B's folder is busy: something left in it nobody committed.
+    const scratch = join(m.worktreeRoot, safeSegment(b.id), "scratch.txt");
+    writeFileSync(scratch, "trying something\n");
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    // Before: C was rebuilt onto B's old head merged into main (A's events.html twice, an
+    // add/add conflict): a rebuild_conflict card and sentence, no Merge, for a conflict that
+    // was not there.
+    expect(await m.cards(c.id)).toEqual([]);
+    const owed = await m.record(c.id);
+    expect(owed.rebuild_owed_for).toBe(a.id);
+    expect(owed.last_outcome).not.toBe("rebuild_conflict");
+    const during = await screens(m, c.id);
+    expect(during.waiting.find((w) => w.number === prC)?.merge?.sentence ?? "").not.toMatch(
+      /could not be rebuilt|conflicts/,
+    );
+    expect(during.row.label).not.toMatch(/conflict/i);
+    // The person's Merge on C waits (it owes a rebuild): nothing merges.
+    expect((await m.mergeByPerson(c.id)).status).not.toBe("merged");
+    expect((await m.pr(c.id)).merged).toBe(false);
+
+    // The folder is free again: the next poll rebuilds B, then C onto B's new head.
+    rmSync(scratch);
+    await m.poll();
+    expect(await m.prCommits(prB)).toEqual(["Add a third event"]);
+    expect(await m.prCommits(prC)).not.toContain("Write events");
+    expect(await m.prFiles(prC)).toEqual(["src/events.html", "src/index.html"]);
+    expect(await m.cards(c.id)).toEqual([]);
+    for (const t of [b, c]) {
+      const r = await m.record(t.id);
+      expect(r.rebuild_owed_for, t.title).toBeNull();
+      expect(r.last_outcome, t.title).not.toBe("rebuild_conflict");
+      expect(r.reviewed_head_sha, t.title).toBe((await m.pr(t.id)).head.sha);
+    }
+    const after = await screens(m, c.id);
+    expect(after.waiting.find((w) => w.number === prC)?.merge).toMatchObject({ canMerge: true });
+    expect(after.row.label).toBe("Accepted · waiting for you to merge");
+    // B then C merge, each change once on main.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    await m.poll();
+    const last = await m.mergeByPerson(c.id);
+    expect(last.status).toBe("merged");
+    expect(await m.hostGit("show", "main:src/events.html")).toBe(v2.trimEnd());
+  });
+
+  it("a stale rebuild_conflict record is cleared by a clean rebuild with the same own change: its sentence and card go, Merge is offered again (W15-03)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    // What an earlier pass left: B's record and card say its rebuild conflicted.
+    const sentence = `#${prB} could not be rebuilt without #1, which was merged: both change src/add-page.ts. It waits for you: redo the task, or resolve it on GitHub.`;
+    const stale = await m.record(b.id);
+    await m.w.store.mergeRecord.move(stale.id, "left_to_you", {
+      sentence,
+      last_outcome: "rebuild_conflict",
+    });
+    await fileLeftOpenRequest(m.w.store, {
+      task: await m.w.store.task.mustGet(b.id),
+      sessionId: null,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      outcome: {
+        taskId: b.id,
+        prUrl: (await m.w.store.task.mustGet(b.id)).pr_url ?? "",
+        status: "conflict",
+        reason: `PR left open for you: ${sentence}`,
+        sentence,
+      },
+      card: { rebuild: "conflict", without: [1] },
+      options: [...REBUILD_CARD_OPTIONS.conflict],
+    });
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // A is squash-merged: B's rebuild onto main is clean, with the same own change.
+    await m.github.mergePullRequest(REPO, await m.prNumber(a.id), { method: "squash" });
+    await m.poll();
+    const r = await m.record(b.id);
+    expect(r.last_outcome).not.toBe("rebuild_conflict");
+    expect(r.sentence).not.toContain("could not be rebuilt");
+    expect(await m.cards(b.id)).toEqual([]);
+    const { waiting } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({ canMerge: true });
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
   });
 });

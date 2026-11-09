@@ -135,7 +135,7 @@ export function rebuildConflictSentence(
 }
 
 /** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
-const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed"]);
+const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed", "waits"]);
 
 export class DependentBranches {
   private readonly logger = log("dependent-branches");
@@ -504,6 +504,14 @@ export class DependentBranches {
     });
   }
 
+  /** W15-03: the open card of a rebuild that conflicted, withdrawn once a clean rebuild ran. */
+  private async closeRebuildConflictCard(taskId: string): Promise<void> {
+    const open = await this.openMergeCard(taskId);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (open && card.rebuild === "conflict")
+      await this.deps.store.humanRequest.withdraw(open.id, open.version);
+  }
+
   /** The open card of the task's merge that said a conflict, closed: it no longer needs the person. */
   private async closeConflictCard(task: TaskRow): Promise<void> {
     const open = await this.openMergeCard(task.id);
@@ -661,6 +669,9 @@ export class DependentBranches {
     const task = await store.task.get(r.taskId);
     if (!r.after) {
       const sentence = rebuildConflictSentence(pr.number, r.dropped, r.conflicts);
+      // Said once (W15-03): a rebuild tried again at a later poll that conflicts the same way
+      // files no second card, also once the person answered the first.
+      if (record?.last_outcome === "rebuild_conflict" && record.sentence === sentence) return true;
       if (record)
         await store.mergeRecord.move(record.id, "left_to_you", {
           sentence,
@@ -681,10 +692,18 @@ export class DependentBranches {
     }
     if (r.ownBefore && r.ownAfter && r.ownBefore === r.ownAfter) {
       // Only what main already has was dropped: the same reviewed change on the new head.
+      // W15-03: a rebuild conflict an earlier pass said is over (its sentence, its card): the
+      // record waits for the person's Merge again (live check 2: it kept "could not be rebuilt"
+      // and no Merge after a clean rebuild, while the Tasks row said "waiting for you to merge").
+      const stale = record.last_outcome === "rebuild_conflict";
       await store.mergeRecord.move(record.id, record.state, {
         reviewed_head_sha: r.after,
         own_change_id: r.ownAfter,
+        ...(stale && record.pr_number
+          ? folderWaitOver({ state: "left_to_you", pr_number: record.pr_number })
+          : {}),
       });
+      if (stale) await this.closeRebuildConflictCard(r.taskId);
       return true;
     }
     const sentence = rebuiltChangedSentence(pr.number, r.dropped);
