@@ -61,7 +61,7 @@ import {
   wentAheadWithout,
 } from "../session/person-questions.ts";
 import { withReviewWait } from "../session/review-refusal.ts";
-import { webSourceEvidence } from "../session/web-sources.ts";
+import { keptSourcesOf, type WebSource, webSourceEvidence } from "../session/web-sources.ts";
 import {
   type CriticPort,
   type LessonCandidate,
@@ -195,7 +195,16 @@ export interface DiffResult {
 }
 
 export interface DiffPort {
-  diffFor(task: TaskRow, worktree: string | undefined): Promise<DiffResult | null>;
+  /**
+   * `taskFiles` (the review-only pass, W15-27): in a project's folder whose work was committed
+   * since its run (the session's commit at its end), the task's files as they changed since the
+   * task's last snapshot ("Workspace before ...").
+   */
+  diffFor(
+    task: TaskRow,
+    worktree: string | undefined,
+    opts?: { taskFiles?: readonly string[] },
+  ): Promise<DiffResult | null>;
 }
 
 /** Setting key for the project's check commands the critic runs at tiers 0, 2 and 3. */
@@ -253,7 +262,11 @@ export class GitDiffPort implements DiffPort {
     private readonly worktreeRoot?: string,
   ) {}
 
-  async diffFor(task: TaskRow, worktree: string | undefined): Promise<DiffResult | null> {
+  async diffFor(
+    task: TaskRow,
+    worktree: string | undefined,
+    opts: { taskFiles?: readonly string[] } = {},
+  ): Promise<DiffResult | null> {
     const dir =
       worktree ?? (this.worktreeRoot ? join(this.worktreeRoot, safeSegment(task.id)) : undefined);
     if (!dir) return null;
@@ -286,6 +299,33 @@ export class GitDiffPort implements DiffPort {
       for (const f of pendingNames.stdout.split(/\r?\n/)) if (f.trim()) files.add(f.trim());
       const untracked = await git(["ls-files", "--others", "--exclude-standard"]);
       for (const f of untracked.stdout.split(/\r?\n/)) if (f.trim()) files.add(f.trim());
+      // W15-27: a review of work an earlier session kept, in a project's folder whose end
+      // committed it: the task's files since its last snapshot, so the critic reads its change.
+      if (!range && !parts.length && opts.taskFiles?.length) {
+        const base = (
+          await git([
+            "log",
+            "-n",
+            "1",
+            "--format=%H",
+            "--all-match",
+            "--grep=^Workspace before ",
+            `--grep=(task ${task.id})`,
+          ])
+        ).stdout.trim();
+        if (/^[0-9a-f]{7,64}$/.test(base)) {
+          const since = await git([
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            base,
+            "--",
+            ...opts.taskFiles,
+          ]);
+          if (since.code === 0 && since.stdout.trim()) parts.push(since.stdout);
+          for (const f of opts.taskFiles) files.add(f);
+        }
+      }
       let diff = parts.join("\n");
       if (diff.length > MAX_DIFF_CHARS)
         diff = `${diff.slice(0, MAX_DIFF_CHARS)}\n[... diff cut at ${MAX_DIFF_CHARS} characters; ${files.size} file(s) changed]`;
@@ -364,7 +404,11 @@ export class CriticLoop implements CriticPort {
       (this.deps.worktreeRoot ? join(this.deps.worktreeRoot, safeSegment(task.id)) : undefined);
 
     // Evidence: the diff and the changed files, the project's checks, the standard-doc drift.
-    const diff = await this.diffPort.diffFor(task, worktree);
+    const diff = await this.diffPort.diffFor(
+      task,
+      worktree,
+      result.reviewOnly && result.changedFiles?.length ? { taskFiles: result.changedFiles } : {},
+    );
     const runFiles = result.changedFiles?.length ? result.changedFiles : (diff?.changedFiles ?? []);
     // What the task changed over all its attempts, this run's files first (ADR 0104, the review
     // of 2026-11-02): the review checks the task's work, not the last run's diff. On the bench a
@@ -408,11 +452,17 @@ export class CriticLoop implements CriticPort {
       : { commands: [], servers: [], notTried: [] };
     const report = result.finalReport ?? result.summary;
     const questions = listedQuestions(report);
+    // U-022: a report that asks the person gets the questions card, unless the critic accepts;
+    // decided before the review files anything, so no sign-off is filed only to be withdrawn
+    // (W15-28: two notifications for one card).
+    const asksPerson = reportedQuestions(report);
     const evidence: ReviewEvidence = {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
         : [outcomeCriterion(task.outcome)],
       brief: `${task.title}: ${task.outcome}`,
+      // W15-25: the site rule the run read pages under, which the critic judges a refusal by.
+      ...(result.webRule ? { webRule: result.webRule } : {}),
       finalReport: report,
       ...(questions.length ? { questionsForPerson: questions } : {}),
       notChecked: [
@@ -427,6 +477,12 @@ export class CriticLoop implements CriticPort {
       ...(result.runId ? { runId: result.runId } : {}),
       artifacts: [
         `attempt ${task.attempt + 1} by ${req.item.specialist}`,
+        // W15-27: reviewed without a run; the work is what that run did.
+        ...(result.reviewOnly
+          ? [
+              "this review is of the run above, which finished in an earlier session; its review waited for room in the budget, and the work has not changed since",
+            ]
+          : []),
         ...(runFiles.length === 0 && changedFiles.length
           ? [
               `attempt ${task.attempt + 1} changed no file; the changed files listed are what the task's earlier attempts changed, and its checks and tries ran on them again`,
@@ -441,11 +497,20 @@ export class CriticLoop implements CriticPort {
     // text the specialist got, as data, and sees which pages could not be read.
     // 'web-search': the search results it saw but did not open are listed beside the pages, and a
     // claim whose only source is one of them is not sourced.
-    const sources = webSourceEvidence(result.webSources, result.searchSeen);
+    // W15-26: and the pages earlier runs of the task read, which the work may rest on (live
+    // check 2, research F6: a run paused at its budget after reading ten pages, the continued
+    // run read none, and its review saw none and was told the evidence was complete).
+    const sources = webSourceEvidence(
+      result.webSources,
+      result.searchSeen,
+      await this.sourcesOfTask(task.id, result.runId),
+    );
     if (sources.inputFiles.length)
       evidence.inputFiles = [...(evidence.inputFiles ?? []), ...sources.inputFiles];
     if (sources.artifacts.length)
       evidence.artifacts = [...(evidence.artifacts ?? []), ...sources.artifacts];
+    if (sources.unavailable.length)
+      evidence.unavailable = [...(evidence.unavailable ?? []), ...sources.unavailable];
     if (tier >= 2 && worktree && changedFiles.length) {
       // Doc drift of the project's standard doc set (spec G.5, memory package); a drift is a
       // non-required check, so it is a low finding the human sees and the PM fixes at session
@@ -626,6 +691,7 @@ export class CriticLoop implements CriticPort {
           cwd: worktree,
           signal: req.signal,
           humanId: owner,
+          ...(asksPerson ? { questionsCardInstead: true } : {}),
           ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
         },
       );
@@ -661,8 +727,7 @@ export class CriticLoop implements CriticPort {
     // missing) asks once more, in its own words, but without offering Go ahead without again
     // (live L-3: the second card offered it again, which only ran the same ask, a run's cost
     // each time).
-    const reported =
-      output.verdict === "accept" ? null : reportedQuestions(result.finalReport ?? result.summary);
+    const reported = output.verdict === "accept" ? null : asksPerson;
     let askedPerson: string | undefined;
     if (reported) {
       askedPerson = await this.askPersonInstead({
@@ -1001,6 +1066,21 @@ export class CriticLoop implements CriticPort {
       }
     }
     return [...files];
+  }
+
+  /**
+   * The pages the task's other work runs read, newest first (W15-26): what each kept for a
+   * later review (`keptSourcesOf`; a row written before keeps the addresses only). The run under
+   * review (`currentRunId`) is left out: its own pages come with its result.
+   */
+  private async sourcesOfTask(
+    taskId: string,
+    currentRunId: string | undefined,
+  ): Promise<WebSource[]> {
+    const runs = (await this.deps.store.run.forTask(taskId))
+      .filter((r) => r.id !== currentRunId && r.specialist !== "critic" && !r.parent_run_id)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+    return runs.flatMap((r) => keptSourcesOf(r.artifacts));
   }
 
   /**

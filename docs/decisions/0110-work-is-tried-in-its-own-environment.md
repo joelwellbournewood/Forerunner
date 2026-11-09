@@ -185,3 +185,34 @@ and dropped the sandbox (TR-8). `sandboxRefusalOf` now reads every line without 
 escape codes (`stripAnsi`, 7-bit and 8-bit), so the filter, Playwright's first line and the
 markers are judged on the plain text, and the reason it says carries no escape codes. The
 `unavailable` reasons' first lines (the agent browser's and the tried page's) are plain text too.
+
+## Amendment 2026-11-09 (wave 15, 'w15-review'): a command described in words is not run bare
+
+Point 1 says only what is said exactly is run, but a sentence's command ended at any of a list of
+words, connectors among them, so "node wc.js on a file containing 'hello world foo' prints 3" ran
+a bare `node wc.js`. The tool did what criterion 4 asked ("Running with no argument prints a
+usage message to stderr and exits with code 1"), the try called its exit 1 a problem, and the
+measured-problem rule (ADR 0104) sent correct work back three times and on to the person (live
+check 2, research F1: CHF 0.24 for a CHF 0.03 task). The rule stays; what is tried changes:
+
+1. **What a command is given, said in words, is not run.** A sentence's command still ends at a
+   word that goes on with what it does ("prints", "exits", "and") or says where or how it runs
+   ("in a terminal", "from the command line", "to print", "at the prompt", "by itself", "alone"):
+   that is the command as written, run as before. Only a word that may introduce an input ("on",
+   "with", "for", "against", "using", "given", "passing"), after a command with no argument
+   written and followed within a few words by the name of an input ("a file containing …", "a
+   file path", "any text file", "your name"), means its arguments are described in words: a
+   command line tool is not run from that sentence (`commandsIn` leaves it out), and a script
+   that listens is still started, since a server needs no argument. The same words followed by
+   anything else ("on its own", "on the command line", "with Node 22") end the command, and "with
+   no arguments" and "without a file" are a bare run, as said. A tool whose input is only
+   described and that no written command runs is told in "See what was checked" ("wc.js was not
+   tried: an acceptance criterion says in words what it is given, not the command to run"),
+   never left out without a word. (The fix-up of 2026-11-09: the first version took every
+   connector as a description, so commands of tools that take no argument and bare runs said in
+   words stopped being tried.)
+2. **A bare run another sentence expects to fail expects the error.** A command with no argument
+   and no standard input `expectsError` when any sentence of the brief, the criteria or the
+   README says a run with no argument fails ("Running with no argument … exits with code 1"). A
+   command with arguments is never excused by such a sentence.
+

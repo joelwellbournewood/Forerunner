@@ -11,11 +11,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MAX_EFFORT_TOKENS_CEILING,
   REVIEW_TOKENS_PER_CALL,
+  ruledSummary,
   VERDICT_ADJUSTED_AUDIT_TOOL,
 } from "../src/critic.ts";
 import { SIGNOFF_KEY } from "../src/followup.ts";
 import { DEFAULT_DEEP_REVIEW_TIMEOUT_MS } from "../src/model.ts";
-import { ESCALATE_RULE } from "../src/rules.ts";
+import { ASKS_PERSON_RULE, ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
 import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
 import type { ReviewEvidence, ReviewInput } from "../src/types.ts";
@@ -1289,5 +1290,81 @@ describe("CriticService: a max-effort review finishes inside its budget (D.15 li
     } finally {
       await w.close();
     }
+  });
+});
+
+describe("w15-review, wave 15", () => {
+  it("W15-51: when the asks-person rule turns an accept into 'human', the shown summary says the work waits for the person, never 'Accepted:'", async () => {
+    const w = await world({
+      replies: [
+        submitReply({ grade: 92, summary: "Accepted: the changed file matches the brief." }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          1,
+          baseEvidence({ questionsForPerson: ["Which hosting provider should the site use?"] }),
+        ),
+        w.ctx(),
+      );
+      expect(out.verdict).toBe("human");
+      expect(out.summary).toBe(
+        "Waits for you: the report asks you something. The changed file matches the brief.",
+      );
+      // The sign-off card (filed when no questions card takes its place) says it waits for the
+      // person in its title, and quotes the critic's own words without saying it again.
+      const card = (
+        await w.store.humanRequest.list({ task_id: w.ids.task } as never, {
+          limit: 5,
+        })
+      ).find((r) => (r.change_card as { key?: string } | null)?.key === SIGNOFF_KEY);
+      expect(card?.why).toContain('The critic said: "The changed file matches the brief."');
+      expect(card?.why).not.toContain("Waits for");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("W15-51: a sign-off the model asked for itself keeps its own words; a sign-off a rule asked for says so first", async () => {
+    const w = await world({
+      replies: [
+        submitReply({ grade: 95, summary: "Accepted: the migration runs and its tests pass." }),
+        closingReply(),
+      ],
+    });
+    try {
+      // Tier 3: the human signs off whatever the grade (a rule turned the accept into 'human').
+      const out = await w.critic.review(taskInput(w.ids.task, 3), w.ctx());
+      expect(out.verdict).toBe("human");
+      expect(out.summary).toBe("Waits for your sign-off. The migration runs and its tests pass.");
+      expect(out.summary).not.toMatch(/^Accepted/);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("W15-51: a summary that starts with a tag ('[stand-in model] Accepted: …') loses its verdict word too, so 'Accepted:' never follows 'Waits for you'", () => {
+    // The fix-up's bench walk: the stand-in's summary starts with its tag, and the shown text
+    // read "Waits for you: the report asks you something. Accepted: the changed file matches …".
+    const shown = ruledSummary(
+      "human",
+      ASKS_PERSON_RULE,
+      [],
+      "[stand-in model] Accepted: the changed file matches the brief.",
+    );
+    expect(shown).toBe(
+      "Waits for you: the report asks you something. [stand-in model] The changed file matches the brief.",
+    );
+    expect(shown).not.toContain("Accepted");
+    // Without a tag the same; with a tag but no verdict word, its words start with a capital.
+    expect(ruledSummary("human", ASKS_PERSON_RULE, [], "Accepted: it works.")).toBe(
+      "Waits for you: the report asks you something. It works.",
+    );
+    expect(ruledSummary("accept", undefined, [], "[stand-in model] the page loads.")).toBe(
+      "Accepted. [stand-in model] The page loads.",
+    );
   });
 });

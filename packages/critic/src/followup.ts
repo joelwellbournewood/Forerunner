@@ -93,9 +93,12 @@ export function quotedWords(text: string | null | undefined, max = 160): string 
   let t = text
     .replace(/\*\*\s*(?:summary|criteria|report)\s*:?\s*\*\*\s*[:\-–—]?/gi, " ")
     .split(/\n\s*(?:\*\*criteria\*\*|#+\s|criteria:)/i)[0] as string;
+  // W15-58: only a blockquote marker at a line's start goes; a "<file>" in the words stays whole
+  // (before, every ">" was stripped: "node wc.js <file").
   t = t
     .replace(/\[stand-in model\]\s*/gi, "")
-    .replace(/[*`#>]+/g, "")
+    .replace(/^[ \t]*>+[ \t]?/gm, "")
+    .replace(/[*`#]+/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^[:;,.\-–—]+\s*/, "");
@@ -182,6 +185,20 @@ export async function triedTimes(
   const runs = await store.run.forTask(taskId, { limit: 1000 });
   const work = runs.filter((r) => r.specialist !== "critic" && !r.parent_run_id).length;
   return work > 0 ? work : fallback;
+}
+
+/** The leads `ruledSummary` puts before the model's words when a rule made the verdict 'human'. */
+const WAITS_LEADS = [
+  "Waits for you: the report asks you something.",
+  "Waits for your sign-off.",
+  "Waits for you: the critic was not sure.",
+];
+
+/** A summary without the lead a rule put before the model's words (the sign-off card's quote). */
+export function ownWords(summary: string): string {
+  for (const lead of WAITS_LEADS)
+    if (summary.startsWith(lead)) return summary.slice(lead.length).trim() || summary;
+  return summary;
 }
 
 /** The words of the critic's sign-off card: the title names the task, the body the critic. */
@@ -350,13 +367,13 @@ async function signoffRequest(
   // work (a retry card) or the critic's (a sign-off), never the ladder's jargon.
   const said =
     reason === "verdict"
-      ? quotedWords(review.summary)
+      ? quotedWords(ownWords(review.summary))
       : (quotedWords(ctx.workReport) ?? quotedWords(review.summary));
   const saidBy =
     reason === "verdict" || !quotedWords(ctx.workReport) ? "critic" : saidByName(ctx.specialist);
   const words =
     reason === "verdict"
-      ? signoffCardWords({ title: task.title, summary: review.summary })
+      ? signoffCardWords({ title: task.title, summary: ownWords(review.summary) })
       : retryCardWords({ title: task.title, attempts, said, saidBy });
   const req = await ctx.store.humanRequest.insert({
     human_id: ctx.humanId ?? null,

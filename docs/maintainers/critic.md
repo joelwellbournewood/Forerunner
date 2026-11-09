@@ -126,6 +126,15 @@ Verification (ADR 0104, `types.ts`):
 - **Questions for the person.** `evidence.questionsForPerson` (the report's "Questions for the
   person:" list) is rendered as such, and `rules.ts` turns an accept into `human`
   (`ASKS_PERSON_RULE`): work that waits for the person is never accepted.
+- **The site rule the worker ran under** (W15-25). `evidence.webRule` is the "Web pages research
+  may read" line the run's brief carried (the executor returns it with the result,
+  `TaskExecutionResult.webRule`), rendered right after the brief under its own section
+  (`EVIDENCE_SECTIONS.webRule`, never `limits`, which is an escalation ground) with
+  `WEB_RULE_TRUST_LINE`: a page the rule refuses was rightly not read, and no required action
+  asks for one. The registry prompt (critic 1.3.0) says the same. Live check 2 (research F7): a
+  review that saw the rule only inside the worker's report called a correct refusal "probably
+  wrong" and ordered a fetch the rule forbids. Test: `packages/runtime/test/verification.test.ts`
+  "W15-25: the critic's review request states the site rule".
 - **Not checked.** `evidence.notChecked` (what could not be run or tried, and why) is rendered
   with the artifacts.
 - **For the person.** A task review's output carries `verification` (`VerificationRecord`:
@@ -236,11 +245,16 @@ evidence, so a light read grades the diff by reading. The section titles are con
 ### Rules in code (`rules.ts`)
 
 Applied to every verdict, tier 0 included, and recorded as `adjustments` so the review shows
-what the model said and what the code made of it. When a rule changes the verdict to a revise
-or an escalate, the shown summary says why first and the model's words follow without the verdict
-word they no longer carry (`ruledSummary`, C-19, polish-words: 'Sent back: the check "test"
-failed. 1 changed file matches the brief.', not "Accepted: …" under a sent-back review; a
-sign-off's card says itself that it waits):
+what the model said and what the code made of it. When a rule changes the verdict (a revise,
+an escalate, or a `human`: the report asks the person, a sign-off the tier needs), the shown
+summary says why first and the model's words follow without the verdict word they no longer
+carry (`ruledSummary`, C-19, polish-words: 'Sent back: the check "test" failed. 1 changed file
+matches the brief.', "Waits for you: the report asks you something. The changed file matches
+the brief.", never "Accepted: …" under a review that did not accept; W15-51 made the `human`
+branches live, and `GET /tasks/:id` serves that summary; a tag before the model's words, such
+as the bench stand-in's "[stand-in model]", stays and the verdict word after it goes too). A
+sign-off card says itself that it
+waits and quotes the model's own words (`ownWords` drops the lead):
 
 0. `escalate_needs_reason` (ADR 0042): an `escalate` must stand on a ground the code can see,
    checked by `rules.ts#escalationCheck` in this order: a critical or high finding (verified or
@@ -335,6 +349,10 @@ the proposal on any other completed verdict (`human` included; `rejected_by:<rev
 source) and tells the human why in one warning message (runtime.md "Cross-project sharing";
 ADR 0059 amendment of 2026-10-25), and leaves it pending when the run did not complete.
 
+`ReviewContext.questionsCardInstead` (W15-28): the runtime files the person's questions card
+for this task when the verdict is not an accept (the worker's report asks the person, U-022), so
+a task's `human` verdict files no sign-off; the person hears once, of the card that asks them.
+
 Every sign-off request (the one `CriticService.review` files for a `human` verdict on a task or
 session subject, the one `applyVerdict` files when the ladder ends, and the runtime loop's own
 after a last-rung revise) names its task in the `why`, in the person's words (design §3.8,
@@ -346,7 +364,8 @@ reads `"<title>" failed 4 times. The <specialist> said: "<its report>"` (`retryC
 `quotedWords` of the run's final report passed in `FollowupContext.workReport`, the critic's
 summary only when the run reported nothing; a heading's own punctuation goes with the heading,
 so "**Summary**: I made …" is quoted from "I made", never as ": I made …" (live L-12,
-2026-11-02); no ladder, ceiling or "attempt(s)") with
+2026-11-02); only a blockquote marker at a line's start is dropped, so "node wc.js <file>" stays
+whole, W15-58; no ladder, ceiling or "attempt(s)") with
 `RETRY_CARD_OPTIONS` (Try again, Mark done anyway, Cancel task; `signoffOptionsFor(reason)`).
 The specialist is named by `saidByName`, which the session log uses too: "writer-marketing" is
 "the writer", "migration-specialist" "the migration specialist", "data-analyst" "the data

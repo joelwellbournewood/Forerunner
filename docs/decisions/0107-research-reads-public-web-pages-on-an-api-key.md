@@ -421,3 +421,41 @@ rewritten.
    code (ADR 0112's "a search never eats the reserve kept to finish" holds); `WEB_SEARCH_LINE`
    says to read pages by their address once search is no longer offered. The prompt-cache
    stand-in plays these rules, so a test sees a rewrite.
+
+## Amendment 2026-11-09 (wave 15, 'w15-review'): the critic knows the rule the work ran under
+
+Point 7's rule line reached the worker's brief only. The review's request carried the brief as
+the task's title and outcome, so the critic saw "only 10.1.2.3" only inside the worker's report;
+it called the researcher's correct refusal "probably wrong", required "Fetch the MDN dialog page
+and write dialog.md", and the order was carried into the next brief (live check 2, research F7).
+
+1. **The run returns the rule line its brief carried** (`TaskExecutionResult.webRule`), and the
+   critic's request states it in its own section, "Web pages research may read (the project's
+   rule the worker ran under)", with the line that a page it refuses was rightly not read and
+   that no required action may ask for one. It is the rule the run ran under, never one changed
+   later. The critic's registry prompt (1.3.0) says the same.
+2. **A retry brief carries no order to read a page the rule refuses.** For a specialist that
+   reads web pages, every open finding still reaches the next brief (design §4.6), but a
+   required action that orders a page of a host the rule refuses ("Fetch https://…", "then open
+   …", "Cite …", "Verify … against …", "Take … from …", the host after the order in the same
+   clause) is replaced by a line saying the page is one the rule refuses and to meet the finding
+   from what the rule allows or say what the rule kept out; the brief says once that the rule
+   comes before any finding. A host named anywhere else ("Remove the vercel.com figures", a
+   library such as "socket.io", a host in the finding's description) is no reason to change a
+   finding: the first version dropped such findings whole, and a retry under an "only" list went
+   on blind (the fix-up of 2026-11-09). An order that names no host (the live "Fetch the MDN
+   dialog page") is answered by point 1 and by that line.
+3. **The review reads every page the work rests on (W15-26).** A run paused at its budget after
+   reading ten pages was continued, its next run read none, and the review saw no page and was
+   told the evidence was complete (live check 2, research F6). Each run now keeps the pages it
+   read with their text on its Run row (`reviewSources`, never shown on a screen), and a task's
+   review reads the pages of the task's earlier runs after the run's own, marked as read by an
+   earlier run. A page whose text was not kept (a row written before) is named under "Evidence
+   not available".
+4. **The planner is told what to plan instead (W15-33).** Under an empty "only" list the plan
+   offered research "from the researcher's own knowledge" with addresses it would not read (live
+   check 2, research F11). The planning lines now say research works only from the listed sites
+   and the project's files, never from the model's own knowledge, and that a brief needing
+   another site gets a task for the person to give the sources, which the research waits on.
+   Not built: a plan-card line under such a researcher task ("reads no website ... Add websites
+   in Settings or Change the plan").

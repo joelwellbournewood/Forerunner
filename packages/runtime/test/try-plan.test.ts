@@ -444,3 +444,218 @@ describe("the scripts that judge the work are the ones before the task (L-5)", (
     expect(await scriptsBefore(root, "T-2", run)).toBeNull();
   });
 });
+
+describe("w15-review, wave 15", () => {
+  /** The tool the real model wrote in live check 2 (research F1): a usage line and exit 1 without a file. */
+  const LIVE_WC = `#!/usr/bin/env node
+'use strict';
+const fs = require('fs');
+function main(argv) {
+  const file = argv[2];
+  if (!file) { console.error('Usage: node wc.js <file>'); return 1; }
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (err) { console.error("wc.js: cannot read '" + file + "'"); return 1; }
+  console.log(String((text.match(/\\S+/g) || []).length));
+  return 0;
+}
+if (require.main === module) process.exitCode = main(process.argv);
+`;
+  /** Live check 2's brief and criteria (research F1, model-calls-final.jsonl seq 64). */
+  const LIVE_BRIEF = {
+    title: "Build wc.js command line word counter",
+    outcome:
+      "A wc.js file in the project root that, run as node wc.js <file>, prints the word count of the file. Words are runs of non-whitespace characters separated by whitespace. It uses only Node built-ins.",
+    criteria: [
+      "node wc.js on a file containing 'hello world foo' prints 3",
+      "An empty file, or one with only whitespace, prints 0",
+      "Words separated by multiple spaces, tabs or newlines are counted correctly",
+      "Running with no argument prints a usage message to stderr and exits with code 1",
+      "A nonexistent file prints a clear error message to stderr and exits with code 1",
+      "No third-party dependencies are used",
+    ],
+  };
+
+  it("W15-24: a command whose arguments are described in words ('node wc.js on a file containing …') is not run bare", () => {
+    expect(commandsIn("node wc.js on a file containing 'hello world foo' prints 3")).toEqual([]);
+    for (const text of [
+      "node wc.js with a file path prints its count",
+      "Run node wc.js against any text file and it prints the count",
+      "node wc.js for a file of 3 words prints 3",
+    ])
+      expect(commandsIn(text).map((c) => c.target)).toEqual([]);
+    // A bare run said as one is still a bare run, and its own sentence expects the error.
+    expect(
+      commandsIn("node wc.js with no arguments prints a usage message").map((c) => c.target),
+    ).toEqual(["node wc.js"]);
+    expect(commandsIn("node wc.js without a file exits with code 1").map((c) => c.target)).toEqual([
+      "node wc.js",
+    ]);
+    // A command that ends at a verb is the same as before.
+    expect(commandsIn("node wc.js <file> prints the count.").map((c) => c.target)).toEqual([
+      "node wc.js <file>",
+    ]);
+  });
+
+  it("W15-24: live check 2's brief and criteria try only `node wc.js <file>`, never a bare `node wc.js`", () => {
+    const root = folder({
+      "wc.js": LIVE_WC,
+      "README.md":
+        "# Word count\n\nUsage: `node wc.js <file>`\n\nIt prints the number of words in the file.\n\nTests: `node --test`\n",
+    });
+    const plan = planTries({ changedFiles: ["wc.js", "README.md"], root, brief: LIVE_BRIEF });
+    expect(plan.commands.map((c) => [c.target, c.expectsError])).toEqual([
+      ["node wc.js <file>", false],
+    ]);
+    expect(plan.notTried).toEqual([]);
+  });
+
+  it("W15-24: a bare run that another criterion expects to fail ('Running with no argument … exits with code 1') expects an error", () => {
+    const root = folder({ "wc.js": LIVE_WC });
+    const plan = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Write wc.js",
+        outcome: "Counts the words of a file",
+        criteria: [
+          "`node wc.js` reads the file named on its command line",
+          "Running with no argument prints a usage message to stderr and exits with code 1",
+        ],
+      },
+    });
+    expect(plan.commands.map((c) => [c.target, c.argv.slice(2), c.expectsError])).toEqual([
+      ["node wc.js", [], true],
+    ]);
+    // Nothing says a bare run fails: a bare run is judged as any other.
+    const plain = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Write wc.js",
+        outcome: "Counts the words of a file",
+        criteria: ["`node wc.js` reads the file named on its command line"],
+      },
+    });
+    expect(plain.commands.map((c) => c.expectsError)).toEqual([false]);
+    // A run with arguments is never excused by a sentence about a bare one.
+    const withArgs = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Write wc.js",
+        outcome: "Counts the words of a file",
+        criteria: [
+          "`node wc.js <file>` prints the count",
+          "Running with no argument exits with code 1",
+        ],
+      },
+    });
+    expect(withArgs.commands.map((c) => [c.target, c.expectsError])).toEqual([
+      ["node wc.js <file>", false],
+    ]);
+  });
+
+  it("W15-24: a server whose start is said in words ('node server.js on port 3000') is still started", () => {
+    const root = folder({ "server.js": SERVER });
+    const plan = planTries({
+      changedFiles: ["server.js"],
+      root,
+      brief: {
+        title: "Write server.js",
+        outcome: "node server.js on port 3000 answers GET /health",
+        criteria: [],
+      },
+    });
+    expect(plan.servers.map((s) => [s.target, s.source, s.expected])).toEqual([
+      ["node server.js", "the brief", true],
+    ]);
+  });
+
+  it("W15-24: a command said with where or how it runs, not what it is given, is tried as before", () => {
+    // The fixup's probe: each of these ran on the base and silently stopped running.
+    for (const [text, target] of [
+      ["Running node hello.js in a terminal prints Hello, world", "node hello.js"],
+      ["node hello.js from the command line prints Hello, world", "node hello.js"],
+      ["node hello.js on the command line prints Hello, world", "node hello.js"],
+      ["node greet.js to print a greeting", "node greet.js"],
+      ["node hello.js at the prompt prints the time", "node hello.js"],
+      ["node hello.js with Node 22 prints Hello", "node hello.js"],
+      ["node app.js by itself exits with code 1", "node app.js"],
+      ["node wc.js on its own exits with code 1", "node wc.js"],
+      ["node wc.js alone exits with code 1", "node wc.js"],
+    ] as const)
+      expect(
+        commandsIn(text).map((c) => c.target),
+        text,
+      ).toEqual([target]);
+    // What a command is given, said in words, is still not run bare.
+    for (const text of [
+      "node wc.js on a file containing 'hello world foo' prints 3",
+      "node wc.js using a CSV file prints the rows",
+      "node greet.js with your name prints a greeting",
+      "node wc.js given a text file prints its count",
+    ])
+      expect(commandsIn(text), text).toEqual([]);
+  });
+
+  it("W15-24: a tool that takes no argument is tried from a sentence that says where it runs; a bare run said in words expects its error", () => {
+    const hello = folder({ "hello.js": 'console.log("Hello, world");\n', "wc.js": LIVE_WC });
+    const plan = planTries({
+      changedFiles: ["hello.js", "wc.js"],
+      root: hello,
+      brief: {
+        title: "Write hello.js and wc.js",
+        outcome: "Two small command line tools",
+        criteria: [
+          "Running node hello.js from the command line prints Hello, world",
+          "node wc.js on its own exits with code 1",
+        ],
+      },
+    });
+    expect(plan.commands.map((c) => [c.target, c.argv.slice(2), c.expectsError])).toEqual([
+      ["node hello.js", [], false],
+      ["node wc.js", [], true],
+    ]);
+    expect(plan.notTried).toEqual([]);
+  });
+
+  it("W15-24: a tool whose input is only described, and that no written command runs, is told as not tried, never silently left out", () => {
+    const root = folder({ "wc.js": LIVE_WC });
+    const plan = planTries({
+      changedFiles: ["wc.js"],
+      root,
+      brief: {
+        title: "Write wc.js",
+        outcome: "Counts the words of a file",
+        criteria: ["node wc.js on a file containing 'hello world foo' prints 3"],
+      },
+    });
+    expect(plan.commands).toEqual([]);
+    expect(plan.notTried).toEqual([
+      "wc.js was not tried: an acceptance criterion says in words what it is given, not the command to run",
+    ]);
+  });
+});
+
+describe("w15-review, wave 15: the checks line is true now", () => {
+  it("W15-50: test files with no package.json say there is none to run them; a package.json without a test script says that", () => {
+    expect(untestedFiles(folder({ "wc.js": WC, "wc.test.js": "require('node:test')\n" }))).toBe(
+      "the project has test files (wc.test.js) that no check ran: there is no package.json to run them",
+    );
+    expect(
+      untestedFiles(
+        folder({ "wc.test.js": "require('node:test')\n", "package.json": '{"name":"wc"}' }),
+      ),
+    ).toBe(
+      "the project has test files (wc.test.js) that no check ran: its package.json names no test script",
+    );
+    expect(
+      untestedFiles(
+        folder({
+          "wc.test.js": "require('node:test')\n",
+          "package.json": '{"scripts":{"test":"node --test"}}',
+        }),
+      ),
+    ).toBeNull();
+  });
+});

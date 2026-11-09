@@ -124,6 +124,8 @@ describe("renderEvidence: what the critic is given (ADR 0042)", () => {
     expect(prompt).toContain(
       "A deliverable the brief or a criterion asks for that is not there is never met",
     );
-    expect(CRITIC_PROMPT.promptVersion).toMatch(/^critic@1\.2\.0\+[0-9a-f]{8}$/);
+    // W15-25: the prompt names the site rule's section and says a refusal under it is right.
+    expect(prompt).toContain(EVIDENCE_SECTIONS.webRule);
+    expect(CRITIC_PROMPT.promptVersion).toMatch(/^critic@1\.3\.0\+[0-9a-f]{8}$/);
   });
 });

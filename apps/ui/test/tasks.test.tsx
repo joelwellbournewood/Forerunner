@@ -1680,3 +1680,108 @@ describe("w15-run, wave 15: one figure per task (W15-20)", () => {
     await waitFor(() => expect(drawer).toHaveTextContent(`spent ${shown}`));
   });
 });
+
+describe("w15-review, wave 15", () => {
+  it("W15-42: the Critic column never shows a raw 'accepted' beside a failed task or a task marked done without review", async () => {
+    const harness = createHarness();
+    addTask(harness, "task_failed", "Write the club rules page", {
+      status: "failed",
+      reason: "failed 4 times",
+    });
+    addTask(harness, "task_marked", "Write the club prices page", {
+      status: "done",
+      reason: "accepted without review (Mark done anyway)",
+    });
+    addTask(harness, "task_sentback_failed", "Write the club map page", {
+      status: "failed",
+      reason: "failed 4 times",
+    });
+    const run = (id: string, taskId: string, verdict: string) => ({
+      ...(RUNS[1] as (typeof RUNS)[number]),
+      id,
+      taskId,
+      verdict,
+      createdAt: "2026-11-09T04:30:00.000Z",
+    });
+    harness.daemon.state.runs.push(
+      run("run_failed", "task_failed", "accept"),
+      run("run_marked", "task_marked", "accept"),
+      run("run_sentback", "task_sentback_failed", "revise"),
+    );
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const critic = async (id: string) => {
+      const row = await rowOf(id);
+      return within(row).getByTestId("task-critic").textContent ?? "";
+    };
+    // Before: "accepted" beside each.
+    expect(await critic("task_failed")).toBe("—");
+    expect(await critic("task_marked")).toBe("Not reviewed");
+    expect(await critic("task_sentback_failed")).toBe("Failed review");
+    for (const cell of screen.getAllByTestId("task-critic"))
+      expect(cell.textContent).not.toMatch(/\baccepted\b/);
+  });
+
+  it("W15-42: a person's own task that is done shows nothing in the Critic column: the critic never reviews it, and 'Not reviewed' would read as a warning", async () => {
+    const harness = createHarness();
+    addTask(harness, "task_me_done", "Send the club logo", {
+      specialist: "person",
+      status: "done",
+    });
+    addTask(harness, "task_marked_2", "Write the club hours page", {
+      status: "done",
+      reason: "accepted without review (Mark done anyway)",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const critic = async (id: string) =>
+      within(await rowOf(id)).getByTestId("task-critic").textContent ?? "";
+    expect(await critic("task_me_done")).toBe("—");
+    expect(await critic("task_marked_2")).toBe("Not reviewed");
+  });
+
+  const workRunOf = async (drawer: HTMLElement) =>
+    (await within(drawer).findAllByTestId("drawer-run")).find(
+      (r) => r.getAttribute("data-kind") === "work",
+    ) as HTMLElement;
+
+  it("W15-41: a report's markdown table reads as plain lines in the drawer, never pipes and dashes", async () => {
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work)
+      work.report = [
+        "Wrote the footer test.",
+        "| # | Criterion | Test | Result |",
+        "|---|---|---|---|",
+        "| 1 | The footer names the club | footer.test.js | pass |",
+      ].join("\n");
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const run = await workRunOf(drawer);
+    await waitFor(() => expect(run).toHaveTextContent("Wrote the footer test."));
+    expect(run).toHaveTextContent("# · Criterion · Test · Result");
+    expect(run).toHaveTextContent("1 · The footer names the club · footer.test.js · pass");
+    expect(run.textContent).not.toContain("|");
+    expect(run.textContent).not.toContain("---");
+  });
+
+  it("W15-54: a page read twice is listed once in the drawer's Read list", async () => {
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work)
+      work.webSources = [
+        { url: "https://www.netlify.com/pricing/", title: "Pricing", refused: null },
+        { url: "https://pages.cloudflare.com/", title: "Pages", refused: null },
+        { url: "https://www.netlify.com/pricing/", title: "Pricing", refused: null },
+      ];
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const web = await within(await workRunOf(drawer)).findByTestId("drawer-web");
+    expect(
+      within(web)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      "Read: Pricing (https://www.netlify.com/pricing/)",
+      "Read: Pages (https://pages.cloudflare.com/)",
+    ]);
+  });
+});

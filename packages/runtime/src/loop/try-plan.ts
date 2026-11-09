@@ -122,14 +122,45 @@ const LISTENS =
 /** Code that reads its command line: a command line tool. */
 const READS_ARGS =
   /^#!|\bprocess\.argv\b|\bsys\.argv\b|\bargparse\b|\bparseArgs\s*\(|\bcommander\b|\byargs\b/m;
-/** Words that end a command written in a sentence ("node wc.js <file> prints the count"). */
-const STOP_WORDS = new Set(
-  "prints print outputs output shows show returns return writes write answers answer lists list counts count says say exits exit should must will can and or then to with which that it gives give displays display reports report logs log on in for as is are when where so from at by listens listen serves serve starts start runs run opens open accepts accept reads read takes take expects expect uses use needs need creates create makes make builds build generates generate converts convert computes compute calculates calculate greets greet responds respond replies reply handles handle sorts sort finds find adds add prompts prompt asks ask".split(
+/**
+ * Words that end a command written in a sentence and go on with what it does ("node wc.js
+ * <file> prints the count", "node wc.js exits with code 1"): the command ends there, as written.
+ */
+const GOES_ON = new Set(
+  "prints print outputs output shows show returns return writes write answers answer lists list counts count says say exits exit should must will can and or then which that it gives give displays display reports report logs log as is are when where so listens listen serves serve starts start runs run opens open accepts accept reads read takes take expects expect uses use needs need creates create makes make builds build generates generate converts convert computes compute calculates calculate greets greet responds respond replies reply handles handle sorts sort finds find adds add prompts prompt asks ask in from at to by into onto through about over alone".split(
     " ",
   ),
 );
+/**
+ * Words that may say in words what a command is given ("node wc.js on a file containing …",
+ * "node wc.js with a file path"). After a command with no argument written out, and followed by
+ * the name of an input (`INPUT_NOUN`), its arguments are described, not written, so it is not
+ * run (ADR 0110 point 1; live check 2, research F1: the bare `node wc.js` was run and its usage
+ * exit sent correct work back three times). Followed by anything else ("on its own", "with
+ * Node 22", "on the command line") the command ends there and is run as written, as words of
+ * where or how it runs ("in a terminal", "from the command line", "by itself") always end it
+ * (`GOES_ON`). After an argument they end the command, as a verb does ("node wc.js <file> on
+ * any text file").
+ */
+const INTRODUCES_INPUT = new Set("on with against using given passing for".split(" "));
+/** What a described input is called: "a file", "any text", "two numbers", "your name". */
+const INPUT_NOUN =
+  /^(?:files?|file(?:name|path)s?|paths?|texts?|inputs?|arguments?|args?|strings?|words?|numbers?|values?|folders?|director(?:y|ies)|dirs?|csv|json|data|lists?|documents?|names?|urls?|address(?:es)?|sentences?|flags?|options?|parameters?|samples?|logs?)$/i;
+/** "with no arguments", "without a file": a bare run said as one. */
+const BARE_SAID = /^(?:no|zero|none|nothing)$/i;
 const TEST_FILE =
   /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]s$|(^|\/)test_[^/]*\.py$|_test\.py$/i;
+/** A sentence that expects a command to fail: "exits with code 1", "prints a usage message". */
+const EXPECTS_ERROR =
+  /\bexit(?:s|ing)?\s+(?:with\s+)?(?:code\s+|status\s+)?[1-9]|\bnon-?zero\b|\b(?:an?|the)\s+(?:error|usage)\b|\bfails?\b|\berrors?\s+(?:out|message)\b/i;
+/** A sentence about a run with no argument: "with no argument", "without a file", "no file given". */
+const NO_ARGUMENT =
+  /\b(?:with\s+no|without(?:\s+(?:an?|any))?|no)\s+(?:command[- ]line\s+)?(?:arguments?|args?|parameters?|options?|input(?:\s+file)?|file\s*(?:name|path)s?|files?|paths?)\b|\b(?:argument|file\s*(?:name|path)?)\s+is\s+(?:missing|not\s+given|omitted)\b|\bmissing\s+(?:argument|file\s*(?:name|path)?)\b/i;
+
+/** A text's sentences and lines, for what one of them says. */
+function sentencesOf(text: string): string[] {
+  return text.split(/\n|(?<=[.!?;])\s+/).filter((s) => s.trim());
+}
 
 /** What is tried of a task's work besides its pages (ADR 0110). */
 export function planTries(input: {
@@ -151,16 +182,25 @@ export function planTries(input: {
   const readmeText = readme ? readText(root, readme) : null;
   if (readme && readmeText !== null) texts.push({ text: readmeText, source: readme });
 
+  // Another sentence says a run with no argument fails ("Running with no argument prints a
+  // usage message and exits with code 1"): a bare run of the tool expects that error.
+  const bareRunFails = texts.some(({ text }) =>
+    sentencesOf(text).some((s) => NO_ARGUMENT.test(s) && EXPECTS_ERROR.test(s)),
+  );
   const seen = new Set<string>();
+  // Scripts a sentence runs with its input said only in words, and where (W15-24).
+  const describedOnly = new Map<string, string>();
   for (const { text, source } of texts) {
-    for (const found of commandsIn(text)) {
+    for (const found of foundIn(text)) {
       const key = found.words.join(" ");
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (!found.described) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       const script = found.words[1] ?? "";
       const abs = normalize(join(root, ...script.split("/")));
       if (!isInside(root, abs) || !isFile(abs)) {
-        if (plan.notTried.length < 3)
+        if (plan.notTried.length < 3 && !found.described)
           plan.notTried.push(
             `${found.target} was not tried: ${script} is not in the task's folder`,
           );
@@ -172,8 +212,13 @@ export function planTries(input: {
           plan.servers.push(serverTry(root, script, found.words, found.target, source, texts));
         continue;
       }
+      // A tool whose arguments are only described is not run from that sentence (ADR 0110).
+      if (found.described) {
+        if (!describedOnly.has(script)) describedOnly.set(script, source);
+        continue;
+      }
       if (plan.commands.length >= MAX_COMMANDS_TRIED) continue;
-      const made = commandTry(found, source, root);
+      const made = commandTry(found, source, root, bareRunFails);
       if ("unsupported" in made) plan.notTried.push(made.unsupported);
       else plan.commands.push(made);
     }
@@ -190,12 +235,24 @@ export function planTries(input: {
     plan.servers.push(serverTry(root, f, [program, f], `${program} ${f}`, "its code", texts));
   }
 
+  // A tool whose input a sentence says only in words, and that no written command runs: told
+  // as not tried, never left out without a word (W15-24).
+  const written = (f: string) =>
+    plan.commands.some((c) => c.argv[1] === f) ||
+    plan.servers.some((s) => s.file === f) ||
+    [...seen].some((k) => k.split(" ")[1] === f);
+  for (const [script, source] of describedOnly) {
+    if (plan.notTried.length >= 3) break;
+    if (written(script)) continue;
+    plan.notTried.push(
+      `${script} was not tried: ${source} says in words what it is given, not the command to run`,
+    );
+  }
+
   // A command line tool the task wrote that nothing says how to run: told, not guessed at.
   for (const f of files) {
     if (!/\.(m?js|cjs|py)$/i.test(f) || TEST_FILE.test(f)) continue;
-    if (plan.commands.some((c) => c.argv[1] === f) || plan.servers.some((s) => s.file === f))
-      continue;
-    if ([...seen].some((k) => k.split(" ")[1] === f)) continue;
+    if (written(f) || describedOnly.has(f)) continue;
     const code = readText(root, f);
     if (!code || LISTENS.test(code) || !READS_ARGS.test(code)) continue;
     plan.notTried.push(
@@ -209,6 +266,12 @@ export function planTries(input: {
 interface FoundCommand {
   /** The program, the script and the arguments as written. */
   words: string[];
+  /**
+   * Its arguments are described in words, not written ("node wc.js on a file containing …"):
+   * a command line tool is not run from it; a file that listens is still started (a server
+   * needs no argument).
+   */
+  described?: true;
   /** The command as shown: the words joined, with the stdin part. */
   target: string;
   /** `echo "x" |` / `cat <file> |` / `< <file>`: what goes to standard input. */
@@ -219,6 +282,11 @@ interface FoundCommand {
 
 /** The commands a text names: in backticks, in a code block, or in a sentence that ends them. */
 export function commandsIn(text: string): FoundCommand[] {
+  return foundIn(text).filter((c) => !c.described);
+}
+
+/** `commandsIn`, with the commands whose arguments are only described in words. */
+function foundIn(text: string): FoundCommand[] {
   const out: FoundCommand[] = [];
   const exact: string[] = [];
   for (const m of text.matchAll(/```[^\n]*\n([\s\S]*?)```/g))
@@ -280,6 +348,21 @@ function isPlaceholder(w: string): boolean {
   return /^<[^>\s]+>$|^\[[^\]\s]+\]$|^[A-Z][A-Z_]{2,}$/.test(w);
 }
 
+/**
+ * The words after "on", "with", "for" … name what a command is given ("a file containing …",
+ * "your name"), not where or how it runs ("its own", "Node 22", "the command line"). Read up to
+ * the word that goes on the sentence, at most six words.
+ */
+function describesInput(rest: readonly string[]): boolean {
+  if (BARE_SAID.test(rest[0] ?? "")) return false; // "with no arguments": a bare run
+  for (const w of rest.slice(0, 6)) {
+    const plain = w.replace(/[.,;:!?)]+$/, "");
+    if (INPUT_NOUN.test(plain)) return true;
+    if (plain !== w || GOES_ON.has(plain.toLowerCase())) return false;
+  }
+  return false;
+}
+
 function parseCommand(raw: string, sentence: string, exact: boolean): FoundCommand | null {
   let line = raw.trim();
   let stdin: FoundCommand["stdin"];
@@ -310,6 +393,7 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
   const script = (all[1] ?? "").replace(/^\.\//, "");
   if (script.split("/").includes("..")) return null;
   let args = all.slice(2);
+  let described = false;
   if (args.some((a) => /^[|;&>]/.test(a))) {
     const cut = args.findIndex((a) => /^[|;&>]/.test(a));
     if (!exact) args = args.slice(0, cut);
@@ -319,7 +403,7 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
     // In a sentence, the command ends at its last argument-looking word; the next word must
     // be one that goes on the sentence ("prints", "and"), else where it ends is a guess.
     const kept: string[] = [];
-    for (const a of args) {
+    for (const [i, a] of args.entries()) {
       // "<file>, then ...": the command ended at its placeholder, where the sentence goes on.
       if (/^[.,;:!?)]+$/.test(a)) break;
       const bare = a.replace(/[.,;:)]+$/, "");
@@ -327,7 +411,14 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
         kept.push(bare);
         if (bare !== a) break;
       } else {
-        if (!STOP_WORDS.has(bare.toLowerCase())) return null;
+        const word = bare.toLowerCase();
+        if (word === "without") break; // "node wc.js without a file": a bare run
+        if (INTRODUCES_INPUT.has(word)) {
+          // "node wc.js on a file containing …": what it is given is described, not written.
+          if (!kept.length && describesInput(args.slice(i + 1))) described = true;
+          break;
+        }
+        if (!GOES_ON.has(word)) return null;
         break;
       }
     }
@@ -340,7 +431,13 @@ function parseCommand(raw: string, sentence: string, exact: boolean): FoundComma
       : stdin && "file" in stdin
         ? `${command.join(" ")} < ${stdin.file}`
         : command.join(" ");
-  return { words: command, target: shown, ...(stdin ? { stdin } : {}), sentence };
+  return {
+    words: command,
+    target: shown,
+    ...(stdin ? { stdin } : {}),
+    ...(described ? { described: true as const } : {}),
+    sentence,
+  };
 }
 
 const SAMPLE_TEXT = "the quick brown fox\njumps over the lazy dog\n";
@@ -371,6 +468,7 @@ function commandTry(
   found: FoundCommand,
   source: string,
   root: string,
+  bareRunFails = false,
 ): CommandTry | { unsupported: string } {
   const samples: TrySample[] = [];
   const argv: string[] = [found.words[0] ?? "node", found.words[1] ?? ""];
@@ -446,10 +544,8 @@ function commandTry(
       });
     }
   }
-  const expectsError =
-    /\bexit(?:s|ing)?\s+(?:with\s+)?(?:code\s+|status\s+)?[1-9]|\bnon-?zero\b|\b(?:an?|the)\s+(?:error|usage)\b|\bfails?\b|\berrors?\s+(?:out|message)\b/i.test(
-      found.sentence,
-    );
+  const bare = found.words.length === 2 && !found.stdin;
+  const expectsError = EXPECTS_ERROR.test(found.sentence) || (bare && bareRunFails);
   const keepsRunning =
     /\bwatch(?:es|ing)?\b|\bkeeps?\s+running\b|\buntil\s+(?:you\s+|the\s+person\s+)?(?:stop|press|quit|interrupt|close)|\bctrl[- +]?c\b|\bruns?\s+forever\b|\bin\s+the\s+background\b/i.test(
       found.sentence,

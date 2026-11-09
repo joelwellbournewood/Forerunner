@@ -12,12 +12,18 @@ import { MemoryAudit } from "../src/enforcement/ports.ts";
 import { loadRegistry } from "../src/registry/loader.ts";
 import { WEB_FETCH_TOOL } from "../src/registry/tools.ts";
 import {
+  hostsNamedIn,
   LoopTaskExecutor,
   NO_WEB_ACCESS_LINE,
   NO_WEB_SEARCH_LINE,
+  REFUSED_PAGE_ACTION,
+  retryConstraints,
+  WEB_RULE_WINS_LINE,
+  webRuleRefuses,
 } from "../src/session/executor.ts";
 import { stepLine } from "../src/session/runner.ts";
 import { webSourceEvidence } from "../src/session/web-sources.ts";
+import { webAccessOf } from "../src/wiring/web-access.ts";
 import { webReadRulesResolver } from "../src/wiring/web-ports.ts";
 import {
   flatPricing,
@@ -102,11 +108,25 @@ async function world(opts: {
   title?: string;
   /** The reader's development seam (default on: the fixture is on 127.0.0.1). */
   loopback?: boolean;
+  /** The task's attempt (a retry) and the open findings of its last review. */
+  attempt?: number;
+  /** The clock's time when the run starts (W15-31). */
+  clockAt?: string;
+  /** The person's time zone (W15-31). */
+  timezone?: string;
+  findings?: { severity: string; description: string; required_action: string }[];
 }) {
   const h = harness();
+  if (opts.clockAt) await h.clock.set(opts.clockAt);
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
   stores.push(store);
-  const human = (await store.human.insert({ name: "J", email: "j@x.test" })).id;
+  const human = (
+    await store.human.insert({
+      name: "J",
+      email: "j@x.test",
+      ...(opts.timezone ? { timezone: opts.timezone } : {}),
+    })
+  ).id;
   const agent = (await store.agent.insert({ name: "Alice", owner_human_id: human })).id;
   // The fixture runs on this computer: the reader reaches it through the development seam
   // (`loopback`), never through a list ('sites': no list opens this computer).
@@ -130,7 +150,32 @@ async function world(opts: {
     status: "in_progress",
     specialist: opts.specialist,
     budget_usd_micro: 2_000_000,
+    ...(opts.attempt ? { attempt: opts.attempt } : {}),
   });
+  if (opts.findings?.length) {
+    const review = await store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 40,
+      confidence: 0.8,
+      verdict: "revise",
+      evidence: [],
+      summary: "Sent back.",
+      author_agent: agent,
+    });
+    for (const [i, f] of opts.findings.entries())
+      await store.finding.insert({
+        review_id: review.id,
+        task_id: task.id,
+        severity: f.severity as never,
+        description: f.description,
+        required_action: f.required_action,
+        status: "open",
+        fingerprint: `fp-${i}`,
+        author_agent: agent,
+      });
+  }
   const audit = new MemoryAudit();
   const tools = toolsWith(store, audit, h, opts.noWeb ?? false, opts.loopback ?? true);
   const specs = specialistSpecFrom(shipped, { driver: "loop", tools: () => tools.names() });
@@ -211,7 +256,11 @@ describe("the researcher runs on an API key and reads the web (ADR 0107)", () =>
       }),
     ]);
     expect(webSourceEvidence(w.result.webSources).inputFiles).toEqual([
-      { path: `web page ${pageUrl}`, content: expect.stringContaining("Hugo builds") },
+      // W15-31: the critic is told when the page was read.
+      {
+        path: `web page ${pageUrl} (read 2026-03-02 09:00 UTC)`,
+        content: expect.stringContaining("Hugo builds"),
+      },
     ]);
     expect(w.runs[0]?.artifacts).toContainEqual({
       webSources: [{ url: pageUrl, status: 200, title: "Static site generators compared" }],
@@ -316,5 +365,181 @@ describe("the session log names the page a run read (design §3.7)", () => {
         denied: false,
       }),
     ).toBe("read the web page 10.0.0.7 (failed)");
+  });
+});
+
+describe("w15-review, wave 15", () => {
+  const ONLY_IP = { web_access: { mode: "only", only: ["10.1.2.3"], never: [] } };
+  const RULE =
+    "This project's research reads only these websites and their subdomains: 10.1.2.3. Use no other source; say in the report which pages you could not read because of this rule.";
+
+  it("W15-25: the run returns the site rule its brief carried, for the critic", async () => {
+    const w = await world({
+      specialist: "researcher",
+      settings: ONLY_IP,
+      replies: [
+        { text: "The page is on developer.mozilla.org, which this project's rule keeps out." },
+      ],
+    });
+    expect(w.provider.calls[0]?.messages[0]?.content as string).toContain(RULE);
+    expect(w.result.webRule).toBe(RULE);
+    // A project whose research may read any website has no rule to return.
+    const any = await world({ specialist: "researcher", replies: [{ text: "Done." }] });
+    expect(any.result.webRule).toBeUndefined();
+  });
+
+  it("W15-25: after Go ahead without, the next brief holds no order to read a page the site rule refuses", async () => {
+    const w = await world({
+      specialist: "researcher",
+      settings: ONLY_IP,
+      attempt: 1,
+      findings: [
+        {
+          severity: "high",
+          description: "dialog.md is missing; the refusal is probably wrong",
+          required_action:
+            "Fetch https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog and write dialog.md",
+        },
+        {
+          severity: "medium",
+          description: "The summary has four bullets, not five",
+          required_action: "Write five bullets in dialog.md",
+        },
+      ],
+      replies: [{ text: "Nothing I may read covers the dialog element." }],
+    });
+    const brief = w.provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).not.toContain("developer.mozilla.org");
+    expect(brief).not.toContain("Fetch https://");
+    // The order the rule allows stays; the rule wins over any finding, and says so once.
+    expect(brief).toContain(
+      "- [medium] The summary has four bullets, not five -> Write five bullets in dialog.md",
+    );
+    // The finding itself stays (design §4.6): only its order to read a refused page is replaced.
+    expect(brief).toContain(
+      `- [high] dialog.md is missing; the refusal is probably wrong -> ${REFUSED_PAGE_ACTION}`,
+    );
+    expect(brief).toContain(WEB_RULE_WINS_LINE);
+    expect(brief).toContain(RULE);
+  });
+
+  it("W15-25: under a site rule every finding reaches the retry brief; a host in a finding's words or an action that reads no page is no reason to drop it", async () => {
+    // The reviewer's probe (fixup): the first finding names refused hosts in its description,
+    // the second names a library that looks like a host ("socket.io"); neither action asks for
+    // a page. Both were dropped, and the retry got no findings at all.
+    const findings = [
+      {
+        severity: "high",
+        description:
+          "The free-tier figures for vercel.com and netlify.com have no source the run read: they come from memory.",
+        required_action: "Remove those figures or mark them as not verified under Uncertainty.",
+      },
+      {
+        severity: "high",
+        description:
+          "The report says socket.io is required but the brief asks for plain WebSocket.",
+        required_action: "Drop socket.io from the recommendation.",
+      },
+    ];
+    const w = await world({
+      specialist: "researcher",
+      settings: { web_access: { mode: "only", only: ["developer.mozilla.org"], never: [] } },
+      attempt: 2,
+      findings,
+      replies: [{ text: "Removed the figures." }],
+    });
+    const brief = w.provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain("Critic findings to resolve (each must be addressed with evidence):");
+    for (const f of findings)
+      expect(brief).toContain(`- [${f.severity}] ${f.description} -> ${f.required_action}`);
+    expect(brief).toContain(WEB_RULE_WINS_LINE);
+    // The same through the function, for each way an action may ask for a refused page.
+    const refuses = webRuleRefuses(
+      webAccessOf({ web_access: { mode: "only", only: ["developer.mozilla.org"], never: [] } }),
+    );
+    const orders = (required_action: string, description = "The pricing table has no source.") =>
+      retryConstraints(1, [{ severity: "high", description, required_action }], {
+        refusesHost: refuses,
+      }).join("\n");
+    for (const action of [
+      "Fetch https://vercel.com/pricing and add its figures",
+      "Read netlify.com/pricing and cite it",
+      "Cite vercel.com for each figure",
+      "Verify the figures against https://vercel.com/pricing",
+      "Remove the figures; then open vercel.com/pricing and quote its table",
+      "Take the free-tier figures from https://vercel.com/pricing",
+    ])
+      expect(orders(action), action).toContain(
+        `- [high] The pricing table has no source. -> ${REFUSED_PAGE_ACTION}`,
+      );
+    for (const action of [
+      "Remove the vercel.com figures",
+      "Drop socket.io from the recommendation and read notes.md",
+      "Fetch https://developer.mozilla.org/en-US/docs/Web/API/WebSocket and cite it",
+      "Mark the vercel.com figure as not verified",
+      "Remove the quote from vercel.com and the access dates for netlify.com",
+      "Use plain WebSocket instead of socket.io on the server",
+    ])
+      expect(orders(action), action).toContain(
+        `- [high] The pricing table has no source. -> ${action}`,
+      );
+  });
+
+  it("W15-25: a finding naming a host is an order as before where the rule refuses nothing, and for a specialist that reads no pages", () => {
+    const finding = {
+      severity: "high",
+      description: "The link to https://developer.mozilla.org/x is broken",
+      required_action: "Fix the link to developer.mozilla.org",
+    };
+    const refuses = webRuleRefuses(webAccessOf(ONLY_IP));
+    expect(refuses?.("developer.mozilla.org")).toBe(true);
+    expect(refuses?.("10.1.2.3")).toBe(false);
+    expect(webRuleRefuses(webAccessOf({}))).toBeNull();
+    // Fixing a link reads no page: under the rule it stays an order too (fixup of W15-25).
+    expect(retryConstraints(1, [finding], { refusesHost: refuses }).join("\n")).toContain(
+      "Fix the link to developer.mozilla.org",
+    );
+    expect(retryConstraints(1, [finding], { refusesHost: null }).join("\n")).toContain(
+      "Fix the link to developer.mozilla.org",
+    );
+    // File names are not hosts.
+    expect(hostsNamedIn("Write dialog.md and wc.js; see index.html")).toEqual([]);
+    expect(hostsNamedIn("read developer.mozilla.org and http://10.1.2.3/a")).toEqual([
+      "10.1.2.3",
+      "developer.mozilla.org",
+    ]);
+  });
+
+  it("W15-31: the brief says today's date in the person's time zone, each page says when it was read, and the system prompt does not change", async () => {
+    const w = await world({
+      specialist: "researcher",
+      clockAt: "2026-11-09T04:24:00Z",
+      timezone: "Europe/Zurich",
+      replies: [
+        { tools: [{ name: WEB_FETCH_TOOL, input: { url: pageUrl } }] },
+        { text: `Hugo builds 10,000 pages in about 2 seconds (${pageUrl}, accessed 2026-11-09).` },
+      ],
+    });
+    const brief = w.provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain("Today's date is 2026-11-09 (Europe/Zurich).");
+    // The page the model got says when it was read.
+    expect(toolResults(w.provider)).toContain(", read 2026-11-09 04:24 UTC");
+    expect(w.result.webSources?.[0]?.readAt).toBe("2026-11-09T04:24:00.000Z");
+    // The critic's source list says it too.
+    expect(webSourceEvidence(w.result.webSources).inputFiles.map((f) => f.path)).toEqual([
+      `web page ${pageUrl} (read 2026-11-09 04:24 UTC)`,
+    ]);
+    // The system prompt carries no date: the same on another day (prompt caching unchanged).
+    const other = await world({
+      specialist: "researcher",
+      clockAt: "2026-11-10T22:00:00Z",
+      replies: [{ text: "Done." }],
+    });
+    expect(other.provider.calls[0]?.system).toBe(w.provider.calls[0]?.system);
+    expect(String(w.provider.calls[0]?.system)).not.toContain("2026-11-09");
+    // No time zone known: UTC, and late in the UTC day the date is the UTC one.
+    expect(String(other.provider.calls[0]?.messages[0]?.content)).toContain(
+      "Today's date is 2026-11-10 (UTC).",
+    );
   });
 });

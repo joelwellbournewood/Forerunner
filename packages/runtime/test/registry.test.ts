@@ -952,3 +952,21 @@ describe("proposeSpecialist", () => {
     expect(def.promptVersion).toBe(receipt.promptVersion);
   });
 });
+
+describe("w15-review, wave 15", () => {
+  it("W15-32: a specialist's default output file is the one only when the brief names none", () => {
+    // Live check 2 (research F9): "Write `answer.md` ..." beside a brief naming
+    // mdn-css-2026.md left a stray answer.md and report noise.
+    const reg = loadRegistry(REGISTRY);
+    for (const spec of reg.runnableSpecialists()) {
+      const prompt = reg.specialist(spec.name).prompt;
+      for (const m of prompt.matchAll(/^Write `([\w.-]+\.md)`/gm))
+        expect.fail(`${spec.name} writes ${m[1]} whatever the brief names`);
+      for (const m of prompt.matchAll(/\(`?([\w.-]+\.md)`? when it names none\)/g))
+        expect(prompt, `${spec.name}: ${m[1]}`).toContain("the file the brief names");
+    }
+    expect(reg.specialist("researcher").prompt).toContain(
+      "Write the file the brief names (`answer.md` when it names none) in the task directory, and no other,",
+    );
+  });
+});

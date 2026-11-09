@@ -227,6 +227,10 @@ with their milestone.
   since, or from where the branch left the base; the same change made another way keeps it, a
   commit on top changes it; null when it cannot be told). The merge step pins it at the accept;
   the PR executor uses both (dependent branches, below).
+- `PrTaskExecutor.prepareReview(task)` (W15-27, the runner's review-only pass): a repository
+  task's worktree put back on its branch (a local branch only; nothing fetched, committed or
+  pushed), a project's folder as it is; null without a worktree or a branch, or when git refuses
+  the checkout (the specialist then runs again). Test: `pr-executor.test.ts` 'w15-review, wave 15'.
 - `PrTaskExecutor` (`pr-executor.ts`) forwards `chooseSpecialist` to its inner executor (the
   specialist the next attempt runs with, which the runner names on `task.started`; ADR 0108) and
   wraps any task executor in the branch-and-PR flow: clone
@@ -830,8 +834,10 @@ unless `FORERUNNER_WEB_FETCH=off`.
   redirects, a host not found, a timeout are `unavailable` / `not_supported` with one
   sentence. The loop driver returns the message to the model as `ERROR: ...`.
 - **The result.** `renderWebPage`: the final address, status and title, "redirected from" and
-  the cut note when they apply, then the text; `untrusted: { source: "web_page", origin }`;
-  `artifacts` with the address, final address, status, title, type, characters, `truncated`
+  the cut note when they apply, the read time ("read 2026-11-09 04:24 UTC", `readAtWords`,
+  W15-31: a brief that asks for access dates is answered from the page), then the text;
+  `untrusted: { source: "web_page", origin }`; `artifacts` with `readAt` (ISO), the address,
+  final address, status, title, type, characters, `truncated`
   (the executor's source log reads them, `runtime.md` "Web research").
 
 Not here: web search (Anthropic's server tool on an API key, Claude Code's WebSearch on a

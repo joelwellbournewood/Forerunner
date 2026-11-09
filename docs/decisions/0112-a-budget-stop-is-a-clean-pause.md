@@ -378,3 +378,29 @@ names the model. A model the price table does not know is priced as the run's mo
    the drawer and Costs agree. Each model call's cost reaches the task and its Run row as the call
    ends (the rest at the run's end, no double count), and a spend increment does not bump the
    task's version, so a person's action during a run never fails on it.
+
+## Amendment 2026-11-09 (wave 15, 'w15-review'): the review-only pass (TR-15) is built
+
+Point 3 of the amendment of 'leftovers7-tailrun' is built as it designed, for a review refused at a
+budget and, the same class, for one a credential refused (live check 2, RUN-6: after the project's
+budget was raised the writer ran again before the waiting review, although the card said the work
+was done).
+
+1. **The run's result is kept** on its Run row (`artifacts`, a `reviewPending` entry; no
+   migration): the attempt, the specialist, its summary and report, the changed files, the pull
+   request and branch, the site rule it ran under and the search results it saw; the pages it read
+   are kept on the row with their text (`reviewSources`, ADR 0107's amendment of this day). The
+   head is the work itself: a hash of the changed files as they are in the task's workspace, so a
+   session's commit at its end (a project's folder) is no change, and any edit of those files is.
+2. **The next session reviews it without a run** while the attempt and the hash are unchanged and
+   the executor can make the workspace ready (`prepareReview`: a repository task's worktree back on
+   its branch, nothing fetched or pushed; a project's folder in place). The entry is cleared when
+   the pass takes it, whatever the verdict; a review refused again keeps a new one. The log has no
+   start or finished line for the specialist; the critic's verdict is the session's line for it.
+   In a project's folder the critic's diff is the task's files since its last snapshot.
+3. **Anything else falls back to today's rerun**: another attempt, a changed file, a worktree that
+   is gone or on a branch git cannot check out, a project linked to a folder on the person's own
+   computer (its executor offers no `prepareReview`).
+
+The card's "The work is done; its review waits for room in the budget." (TR-14) is now true:
+the specialist does not run again for a review that waited.

@@ -29,6 +29,7 @@ export const EVIDENCE_TOOL_NAME = "critic:evidence";
 /** Section titles the renderer emits; the registry prompt and the tests name them. */
 export const EVIDENCE_SECTIONS = {
   brief: "Brief",
+  webRule: "Web pages research may read (the project's rule the worker ran under)",
   criteria: "Acceptance criteria",
   changedFiles: "Changed files",
   inputFiles: "Input files given to the worker (data)",
@@ -70,6 +71,16 @@ export const PROJECT_FILES_LINE =
   "list_dir. Read what a criterion or a claim depends on (a page the change links, the data a " +
   "chart must use, the file the brief names) before you grade it; do not mark a criterion met " +
   "from the report alone.";
+
+/**
+ * The line under the project's site rule (W15-25, live check 2 research F7: a review that did
+ * not know the rule called a correct refusal "probably wrong" and ordered a fetch it forbids).
+ */
+export const WEB_RULE_TRUST_LINE =
+  "The person set this rule for the project and the runtime enforces it. A page it refuses was " +
+  "rightly not read: a report that says so, or that asks the person about it, keeps to the rule " +
+  "and is right. Never send work back for keeping to it, and never require a page or a site " +
+  "the rule refuses.";
 
 /** What the unavailable section says when nothing is missing. */
 export const EVIDENCE_COMPLETE_LINE =
@@ -165,6 +176,7 @@ export function renderEvidence(
   );
 
   if (e.brief) section(EVIDENCE_SECTIONS.brief, e.brief);
+  if (e.webRule) section(EVIDENCE_SECTIONS.webRule, `${e.webRule}\n${WEB_RULE_TRUST_LINE}`);
   section(
     EVIDENCE_SECTIONS.criteria,
     e.acceptanceCriteria.length

@@ -414,16 +414,21 @@ export function untestedFiles(root: string | undefined): string | null {
       /^(test|tests|__tests__)\/[^/]+\.[cm]?[jt]s$/.test(f),
   );
   if (!files.length) return null;
-  try {
-    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-      scripts?: Record<string, unknown>;
-    };
-    if (realScript("test", pkg.scripts?.test)) return null;
-  } catch {
-    // no package.json, or one that cannot be read: nothing names a test command
-  }
+  // W15-50: true now (design §5 rule 4): a folder with no package.json is told so, never that
+  // "its package.json" names no test script (live check 2, RUN-13).
+  let why = "there is no package.json to run them";
+  if (existsSync(join(root, "package.json")))
+    try {
+      const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      if (realScript("test", pkg.scripts?.test)) return null;
+      why = "its package.json names no test script";
+    } catch {
+      why = "its package.json cannot be read";
+    }
   const shown = files.slice(0, 3).join(", ");
-  return `the project has test files (${shown}${files.length > 3 ? ", ..." : ""}) that no check ran: its package.json names no test script`;
+  return `the project has test files (${shown}${files.length > 3 ? ", ..." : ""}) that no check ran: ${why}`;
 }
 
 /** At most this many paths are listed to the critic; it can list more itself. */

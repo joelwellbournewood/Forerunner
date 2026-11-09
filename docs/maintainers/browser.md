@@ -325,8 +325,10 @@ to the very same address (R-9, `navigationInterruptedRetry`), at most `GOTO_INTE
 Chromium's own sandbox (C-17, ADR 0110): `launchBrowser` starts it with `chromiumSandbox: true`
 (Playwright's default turns it off and adds `--no-sandbox`). Where it cannot start with it
 (Linux as root, no user namespaces: `sandboxRefusalOf` names it, as for the agent browser; any
-other launch failure is `{ unavailable: "the browser did not start (…)" }` for both kinds of
-review, R-sandbox) a light review's page is opened without it and every try's
+other launch failure is `{ unavailable: "the browser did not start; the page was judged from its
+files" }`, "… did not start within a minute; …" when Playwright's start timed out
+(`browserDidNotStart`, `BROWSER_START_TIMEOUT_MS`), for both kinds of review, R-sandbox; W15-49:
+Playwright's own text goes to the log, never the person's line) a light review's page is opened without it and every try's
 output ends "the browser ran without its own sandbox: it could not start with it on this
 computer (<the browser's line>)" (`NO_BROWSER_SANDBOX`); with `requireBrowserSandbox` (a full
 review's page) it is `{ unavailable: "the browser could not start with its own sandbox on this

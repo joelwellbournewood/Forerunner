@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import {
@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
 import {
@@ -1192,4 +1193,161 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
       "The run stopped at its budget of less than CHF 0.01: it spent less than CHF 0.01, and its next step would have gone over.",
     );
   });
+});
+
+/**
+ * w15-review, wave 15. W15-27 (TR-15, ADR 0112; live check 2, RUN-6): a review the project's
+ * budget refused paused the task with "The work is done; its review waits for room in the
+ * budget.", yet once the budget was raised the next session ran the specialist again before the
+ * review. Now the run's result is kept on its Run row and the next session reviews it without a
+ * run, after a restart too; a changed work runs it again.
+ */
+describe("w15-review, wave 15", () => {
+  const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-review-only-"));
+  const calls: ModelRequest[] = [];
+  const writes = (title: string, file: string) => [
+    textReply(`Wrote ${file}.\n\nLeft to do: nothing`, {
+      when: (r: ModelRequest) =>
+        coderOn(title)(r) && JSON.stringify(r.messages).includes('"tool_result"'),
+      times: Number.POSITIVE_INFINITY,
+      usage: { input_tokens: 500, output_tokens: 20 },
+    }),
+    toolReply("write_file", { path: file, content: `<p>${title}</p>\n` }, `Writing ${file}.`, {
+      when: coderOn(title),
+      times: Number.POSITIVE_INFINITY,
+      usage: { input_tokens: 500, output_tokens: 20 },
+    }),
+  ];
+  const fake = (() => {
+    const f = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...writes("Notes page", "notes.html"),
+        ...writes("Rules page", "rules.html"),
+        ...writes("Prices page", "prices.html"),
+      ],
+    });
+    const stream = f.stream.bind(f);
+    f.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    return f;
+  })();
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const critic = (r: ModelRequest) => (r.origin?.label ?? "").startsWith("critic");
+  const workRuns = async (taskId: string) =>
+    (await rt.store.run.forTask(taskId)).filter((x) => x.specialist !== "critic");
+
+  /** The person raises the project's budget in Settings; the next tick goes on with it. */
+  async function raiseAndFinish(projectId: string, taskId: string) {
+    const set = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: projectId } },
+        ],
+        wordsUsed: "Settings: Project budget to 5",
+        source: "ui",
+        projectId,
+      }),
+    });
+    let result = (await set.json()) as Json;
+    if (result.status === "pending")
+      result = (await (
+        await req(`/commands/${String(result.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        })
+      ).json()) as Json;
+    expect(result.status, JSON.stringify(result)).toBe("done");
+    await rt.scheduler.tick();
+    const sessions = async () => rt.store.session.forProject(projectId);
+    await waitFor(
+      async () => {
+        const t = await rt.store.task.mustGet(taskId);
+        const all = await sessions();
+        return all.length === 2 &&
+          ["done", "needs_human"].includes(t.status) &&
+          all.every((s) => ["completed", "stopped", "failed", "killed"].includes(s.status))
+          ? true
+          : undefined;
+      },
+      async () =>
+        `the task to be reviewed and its sessions to end (${(await rt.store.task.mustGet(taskId)).status}, ${(await sessions()).map((s) => s.status).join(", ")})`,
+    );
+    const second = (await sessions()).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    const events = (await (await req(`/sessions/${String(second?.id)}/events`)).json()) as Json[];
+    return lines(events);
+  }
+
+  async function pausedAtItsReview(title: string) {
+    const r = await runOne(req, rt, title, {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 10_000,
+    });
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    expect((await workRuns(r.taskId)).map((x) => x.outcome)).toEqual(["completed"]);
+    expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
+    return r;
+  }
+
+  it("W15-27: after the budget is raised, the paused review is done without running the coder again", async () => {
+    const r = await pausedAtItsReview("Notes page");
+    const coderCalls = calls.filter(coderOn("Notes page")).length;
+    const said = await raiseAndFinish(r.projectId, r.taskId);
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
+    expect((await rt.store.review.latestForTask(r.taskId))?.verdict).toBe("accept");
+    // One run of the coder in all, and no new call of it; the critic reviewed it once.
+    expect((await workRuns(r.taskId)).map((x) => x.outcome)).toEqual(["completed"]);
+    expect(calls.filter(coderOn("Notes page"))).toHaveLength(coderCalls);
+    expect(said.join(" | ")).not.toMatch(/The coder started "Notes page"/);
+    expect(said).toContain('The critic accepted "Notes page".');
+    // The critic read the kept work: the file the run wrote, in its diff.
+    const review = calls.filter(critic).find((c) => JSON.stringify(c.messages).includes(r.taskId));
+    expect(JSON.stringify(review?.messages)).toContain("notes.html");
+    // The entry was taken: nothing is kept for another pass.
+    const [run] = await workRuns(r.taskId);
+    expect(JSON.stringify(run?.artifacts)).not.toContain("reviewPending");
+  }, 120_000);
+
+  it("W15-27: the same across a restart between the pause and the raise", async () => {
+    const r = await pausedAtItsReview("Rules page");
+    const coderCalls = calls.filter(coderOn("Rules page")).length;
+    await rt.close();
+    ({ rt, req } = await compose(home, clock, fake));
+    const said = await raiseAndFinish(r.projectId, r.taskId);
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("done");
+    expect((await workRuns(r.taskId)).map((x) => x.outcome)).toEqual(["completed"]);
+    expect(calls.filter(coderOn("Rules page"))).toHaveLength(coderCalls);
+    expect(said.join(" | ")).not.toMatch(/The coder started "Rules page"/);
+    expect(said).toContain('The critic accepted "Rules page".');
+  }, 120_000);
+
+  it("W15-27: work that changed while the review waited is done again, as before", async () => {
+    const r = await pausedAtItsReview("Prices page");
+    // The person edits the file the run wrote, in the project's folder.
+    const folder = projectWorkspaceDir(
+      join(appDirs({ env: { FORERUNNER_HOME: home } }).data, "projects"),
+      r.projectId,
+    );
+    writeFileSync(join(folder, "prices.html"), "<p>Changed by hand</p>\n");
+    const said = await raiseAndFinish(r.projectId, r.taskId);
+    expect((await workRuns(r.taskId)).map((x) => x.outcome)).toEqual(["completed", "completed"]);
+    expect(said.join(" | ")).toMatch(/The coder started "Prices page"/);
+  }, 120_000);
 });

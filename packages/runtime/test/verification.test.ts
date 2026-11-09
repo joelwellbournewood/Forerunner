@@ -1391,3 +1391,118 @@ describe("verification: a command line tool, an API and a Python project are tri
     await w.close();
   });
 });
+
+describe("w15-review, wave 15", () => {
+  /** The tool the real model wrote in live check 2 (research F1). */
+  const LIVE_WC = [
+    "#!/usr/bin/env node",
+    "'use strict';",
+    "const fs = require('fs');",
+    "function main(argv) {",
+    "  const file = argv[2];",
+    "  if (!file) { console.error('Usage: node wc.js <file>'); return 1; }",
+    "  let text;",
+    "  try { text = fs.readFileSync(file, 'utf8'); } catch { console.error(\"wc.js: cannot read '\" + file + \"'\"); return 1; }",
+    "  console.log(String((text.match(/\\S+/g) || []).length));",
+    "  return 0;",
+    "}",
+    "if (require.main === module) process.exitCode = main(process.argv);",
+    "",
+  ].join("\n");
+
+  /** The real process sandbox on the task's folder, as the daemon opens it for a light review. */
+  const processSandbox = {
+    open: async (req: { worktree: string }) => ({
+      sandbox: await ProcessSandbox.create({
+        worktree: req.worktree,
+        limits: { timeoutMs: 120_000 },
+        network: { mode: "none" },
+      }),
+      engine: "process",
+      warnings: [],
+    }),
+  };
+
+  it("W15-24: live check 2's word counter is Done after one run: the try runs `node wc.js <file>` only, never a bare `node wc.js` whose usage exit a criterion asks for", async () => {
+    const root = taskFolder({
+      "wc.js": LIVE_WC,
+      "README.md":
+        "# Word count\n\nUsage: `node wc.js <file>`\n\nIt prints the number of words in the file.\n",
+    });
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: { sandbox: processSandbox, hasCommand: async () => true },
+    });
+    const task = await w.addTask("Build wc.js command line word counter", {
+      outcome:
+        "A wc.js file in the project root that, run as node wc.js <file>, prints the word count of the file. Words are runs of non-whitespace characters separated by whitespace. It uses only Node built-ins.",
+      acceptance_criteria: [
+        "node wc.js on a file containing 'hello world foo' prints 3",
+        "An empty file, or one with only whitespace, prints 0",
+        "Words separated by multiple spaces, tabs or newlines are counted correctly",
+        "Running with no argument prints a usage message to stderr and exits with code 1",
+        "A nonexistent file prints a clear error message to stderr and exits with code 1",
+        "No third-party dependencies are used",
+      ],
+    });
+    const r = await w.start(
+      w.runner(doneExecutor(w, { worktree: root, changedFiles: ["wc.js", "README.md"] })),
+    );
+    expect(r.reviews.map((x) => x.verdict)).toEqual(["accept"]);
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    const v = await verificationOfTask(w, task.id);
+    expect(v?.tried.map((t) => [t.kind, t.target, t.ok])).toEqual([
+      ["command", "node wc.js <file>", true],
+    ]);
+    expect(v?.tried[0]?.output).toMatch(/exit 0 in \d+ ms\noutput:\n9/);
+    expect(await w.store.finding.list({ task_id: task.id } as never)).toEqual([]);
+    expect(JSON.stringify(reviewCalls(w)[0]?.request.messages)).not.toContain("ran node wc.js (");
+    await w.close();
+  });
+
+  it("W15-25: the critic's review request states the site rule the worker ran under, outside its report, and the critic is told a refusal under it is right", async () => {
+    // Live check 2 (research F7): under "only 10.1.2.3" the researcher rightly did not read MDN
+    // and asked the person; the review named the rule only inside the worker's report, called
+    // the refusal "probably wrong" and required "Fetch the MDN dialog page".
+    const rule =
+      "This project's research reads only these websites and their subdomains: 10.1.2.3. Use no other source; say in the report which pages you could not read because of this rule.";
+    const report = [
+      "I did not write dialog.md: the page is on developer.mozilla.org, which this project's research may not read.",
+      "",
+      "Questions for the person:",
+      "- Can developer.mozilla.org be added to the websites research may read?",
+    ].join("\n");
+    const w = await loopWorld({
+      projectSettings: { web_access: { mode: "only", only: ["10.1.2.3"], never: [] } },
+      replies: [
+        submitReply({ grade: 30, verdict: "revise", summary: "dialog.md is missing" }),
+        closingReply(),
+      ],
+    });
+    await w.addTask("Summarize the MDN page on the dialog element", {
+      outcome: "dialog.md summarizes the MDN page on the dialog element in five bullets",
+      acceptance_criteria: ["Every bullet names the page it was read from"],
+      specialist: "researcher",
+      risk_tier: 1,
+    });
+    const inner = doneExecutor(w, { finalReport: report });
+    await w.start(
+      w.runner({
+        ...inner,
+        execute: async (c) => ({ ...(await inner.execute(c)), webRule: rule }),
+      }),
+    );
+    const call = reviewCalls(w)[0]?.request;
+    const user = String(call?.messages[0]?.content ?? "");
+    const outsideReport = user.replace(/## Worker's final report[\s\S]*?```\n```/, "");
+    expect(outsideReport).toContain(
+      `## Web pages research may read (the project's rule the worker ran under)\n${rule}\n`,
+    );
+    expect(outsideReport).toContain("A page it refuses was rightly not read");
+    expect(String(call?.system ?? "")).toContain(
+      'a report that says so, or asks the person about it, is right,\n  never "probably wrong"',
+    );
+    await w.close();
+  });
+});

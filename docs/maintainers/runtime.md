@@ -1766,8 +1766,12 @@ a sign-off without the questions. One card, three ways in:
   line; it ends at the lesson line, prose or a heading, after a blank line only a question goes
   on, and a list that says it asks nothing ("None", "- n/a") asks nothing. A verdict other than
   accept on such a run (an accept with listed questions is made `human` by the critic's
-  `ASKS_PERSON_RULE`, ADR 0104) withdraws the sign-off the critic filed for a `human` verdict,
-  moves the task `in_review -> needs_human`, files the questions (the report's, else the
+  `ASKS_PERSON_RULE`, ADR 0104) files no sign-off at all: the critic loop decides before the
+  review (`reportedQuestions`) and passes `questionsCardInstead`, so `CriticService.review`
+  files no task sign-off for a `human` verdict and the person hears once, of the questions card
+  (W15-28; before, a "needs your sign-off" notification went out for a sign-off withdrawn a few
+  ms later; `notifications-wiring.test.ts` 'w15-review, wave 15'); a sign-off filed anyway (an
+  older caller) is still withdrawn. It moves the task `in_review -> needs_human`, files the questions (the report's, else the
   task's) and returns decision `human`: `applyVerdict` and the ladder do not run, so there is
   one attempt and one review. The card's `context`, which the Inbox quotes as "The specialist
   said: …", is why it asks (`questionsReason`, live L-12: the "Contact page" card quoted the
@@ -2050,7 +2054,12 @@ budget-stop; the owner's decision of 2026-11-02).**
   "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
   "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
   line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for
-  (`WRAP_UP_BRIEF_LINE`).
+  (`WRAP_UP_BRIEF_LINE`). Every brief also says today's date in the person's time zone
+  (`todayLine`: "Today's date is 2026-11-09 (Europe/Zurich).", UTC when none is known; W15-31),
+  in the user message, so the system prompt and its cache stay as they are; a page read says when
+  (`WebSource.readAt`, kept for a later review), and the critic's input file names it ("web page
+  <address> (read 2026-11-09 04:24 UTC)"). The intake's request says "Today: <date> (UTC)" for a
+  milestone's date.
 - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
   do:", markdown-tolerant, "nothing" is empty, cut; W15-14: "nothing" with what it is about,
@@ -2631,7 +2640,8 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   where the checks run", a run that could not get its dependencies (`notRunBecause`) or found no
   tests (exit 5) is not run either, and a run is otherwise a required check (`pytest`,
   `unittest`, `cargo test`, `go test`) in `evidence.checkResults`. `untestedFiles` tells of
-  JavaScript test files no script runs.
+  JavaScript test files no script runs, true now (W15-50): "there is no package.json to run
+  them" in a folder without one, "its package.json names no test script" otherwise.
 - **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
   folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
   confines them to the task's folder.
@@ -2661,10 +2671,21 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   `node`, `python3` or `python` and whose script is in the folder is a `CommandTry` (placeholders
   become samples under `TRY_FOLDER`, `.forerunner-try/`; a full stop or comma after a
   placeholder is the sentence's, so "Usage: node wc.js <file>." runs `node wc.js <sample>`, and
-  `./wc.js` is `wc.js`; `expectsError` when its sentence expects an error; `keepsRunning` when
-  it says the tool keeps running, "watches" or runs "until you stop it": it is stopped after
-  `COMMAND_KEEPS_RUNNING_MS`, 5 s, and that is no problem); a script that listens, or a file the
-  task wrote that listens, is a `ServerTry` (the ports its code or the brief names, the GET
+  `./wc.js` is `wc.js`; a command with no argument written whose next word may introduce an
+  input (`INTRODUCES_INPUT`: "on", "with", "for", "against", "using", "given", "passing") and is
+  followed within six words by the name of one (`INPUT_NOUN`: "a file containing …", "your
+  name") has its arguments described in words and is not run (`described`; a script that
+  listens is still started; a tool no written command runs gets the not-tried line "wc.js was
+  not tried: an acceptance criterion says in words what it is given, not the command to run"),
+  while words of where or how it runs end the command as written (`GOES_ON`: "in a terminal",
+  "from the command line", "by itself", "alone"; or an input word followed by no input: "on its
+  own", "with Node 22"), and "with no arguments" and "without a file" are a bare run;
+  `expectsError` when its sentence expects an error, or, for a bare run, when any sentence of
+  the brief, the criteria or the README says a run with no argument fails, W15-24;
+  `keepsRunning` when it says the tool keeps running, "watches" or runs "until you stop it": it
+  is stopped after `COMMAND_KEEPS_RUNNING_MS`, 5 s, and that is no problem); a script that
+  listens, or a file the task wrote that listens, is a `ServerTry` (the ports its code or the
+  brief names, the GET
   routes the brief names then the ones its code handles, else `/`; a named route carries what
   its sentence says it answers, `ServerRoute.expect`: a status, "GET /admin answers 401
   without a token", or an error, "refuses", "not found"; `withCredentials` when the
@@ -2717,6 +2738,15 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   (`retryConstraints`) lists the open findings that are orders under "Critic findings to resolve"
   and the notes (`isReviewNote`: `info`, or a measured problem "(not caused by this task)") under
   "Notes from the review, for your information only: …", without their required action (L-4).
+  For a specialist that reads web pages, every order still reaches the brief, but a required
+  action that orders a page of a host the project's site rule refuses (`asksForRefusedPage`: an
+  order to read, "Fetch", "then open", "Cite", "Verify … against", "Take … from", followed in
+  the same clause by such a host; `webRuleRefuses`, `hostsNamedIn`: web addresses, bare host
+  names, IP addresses; file names such as `dialog.md` are not hosts) is replaced by
+  `REFUSED_PAGE_ACTION`, and `WEB_RULE_WINS_LINE` says the rule comes before any finding
+  (W15-25). A host in the finding's description, or in an action that removes, marks or fixes
+  something, changes nothing. The run returns the site rule line its brief carried
+  (`TaskExecutionResult.webRule`), and the critic's request states it (`critic.md`).
 
 | Verdict | What the runner sees | Task |
 | --- | --- | --- |
@@ -2800,9 +2830,26 @@ of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the sessio
 outer limit ends the session there; no try is counted and no ladder card is filed. A
 credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the
 wait's `billing.fallback` sentence (`stoppedRunSentence`), as a run a credential stopped; no
-review-failed card is filed beside the credential's own. Either way the task runs again in the
+review-failed card is filed beside the credential's own. Either way the task goes on in the
 next session (when the limit changed, or the credential serves: `wakeBudgetWaits`,
-`RuntimeApp.billing.waits.wake`) and the critic reviews it once. A credential refusal with
+`RuntimeApp.billing.waits.wake`) and the critic reviews it once. **The review-only pass**
+(W15-27, TR-15 of ADR 0112; `session/review-pending.ts`): at either refusal the runner keeps the
+run's result on its Run row (`keepForReview`: a `reviewPending` artifact with the attempt, the
+specialist, the summary and report, the changed files, the PR and branch, the site rule, the
+search results seen, and `workHash`, a hash of the changed files as they are; the pages are on the
+row already, `reviewSources`). Before `execute`, `reviewOnlyResult` takes the task's latest work
+run's entry when the attempt is the same, the executor's `prepareReview(task)` makes the workspace
+ready (a repository task's worktree on its branch, `PrTaskExecutor.prepareReview`; a project's
+folder in place; `LoopTaskExecutor.prepareReview` the run's worktree) and `workHash` there is the
+kept one; the entry is cleared either way, and the result (`keptResult`, `reviewOnly: true`) goes
+to the critic without a run: no `task.started`, no `task.files`, no `task.finished`, no
+`onTaskFinished`, and the person's heard lines and queue notes wait for a run. The critic's diff of
+a project's folder whose session end committed the work is the task's files since its last
+"Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
+the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
+worktree, a folder linked from the person's own computer, whose executor has no hook) runs the
+specialist again, as before. Test: `budget-pause.test.ts` 'w15-review, wave 15' (one coder run in
+all, across a restart too; a file changed while the review waited runs it again). A credential refusal with
 nothing known to wait for still files the review-failed card. Tests: `budget-pause.test.ts` "a
 review refused at the project's budget pauses the task", `credential-wait-session.test.ts` "a
 review that meets a credential's usage limit waits for it" (the usage limit, and the key
@@ -5699,7 +5746,11 @@ plan writer) is told to plan no web work only when the install has no page reade
 (`IntakeDeps.webSpecialists`, composed as `webFetchOn`; `NO_WEB_RULE`), and is told an
 "Only these websites" list (`onlyWebsitesLines` in the planning request: plan no research that
 needs another website; a list with nothing usable on it, which R-failopen reads as no website,
-says research reads no website instead of naming none, TR-5). Tests: `specialist-handover.test.ts`,
+says research reads no website instead of naming none, TR-5; W15-33: both say research works
+only from the listed sites and the project's files, never from the model's own knowledge, and
+that a brief needing another site gets a task for the person to give the sources, which the
+research waits on; `NO_WEB_RULE` says the same, and `SMALL_PLAN_RULES` allows that person task).
+Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
 
 **Web research (`src/session/web-sources.ts`, `src/wiring/web-ports.ts`, ADR 0107).** The
@@ -5709,11 +5760,18 @@ pages research may read" (`webAccessOf`, below) read at every call, the loopback
 `ComposeOptions.webReadLoopback`; `ports.audit` takes its refusal rows. The executor wraps the run's `web_fetch` with `withWebSourceLog`: each
 call's address, final address, status, title and text (redacted, at most `MAX_SOURCE_CHARS`
 8,000) or its error in words go into `TaskExecutionResult.webSources`; the Run row's artifacts
-keep `{ webSources: [{ url, status, title } | { url, error }] }` (`webSourceArtifact`, no text).
-The critic port (`loop/critic.ts`) turns them into the review's evidence with
-`webSourceEvidence`: each page read as an input file `web page <address>` (data, up to
-`MAX_SOURCES` 12 pages), each page not read as an artifact line `web page not read: <address>
-(<words>)`. The session log's step line is "read the web page <host><path>" (`stepLine`).
+keep `{ webSources: [{ url, status, title } | { url, error }] }` (`webSourceArtifact`, no text,
+what the task drawer reads) and, for a later review, `{ reviewSources: [...] }`
+(`reviewSourcesArtifact`: the same pages with their text, at most `MAX_SOURCES` with text; never
+served to a screen; W15-26). The critic port (`loop/critic.ts`) turns them into the review's
+evidence with `webSourceEvidence`: each page read as an input file `web page <address>` (data, up
+to `MAX_SOURCES` 12 pages), each page not read as an artifact line `web page not read: <address>
+(<words>)`. The pages the task's other work runs read come after the run's own
+(`sourcesOfTask`, `keptSourcesOf`): an input file `web page <address> (read by an earlier run of
+this task)`, or, for a row that kept the address only (written before), an "Evidence not
+available" entry "an earlier run of this task read it; its text was not kept for this review", so
+the review of a run continued after a pause that read nothing is never told its evidence is
+complete without them (live check 2, research F6; `review-sources.test.ts`). The session log's step line is "read the web page <host><path>" (`stepLine`).
 Tests: `research-web.test.ts` (the researcher and the science-evaluator keep their tasks on the
 loop driver, the page read through the real tool from a loopback fixture through the loopback
 seam, the loopback refused in words without it even with `127.0.0.1` on the old site list, the
@@ -6184,7 +6242,11 @@ line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,
 "Log line"), "… It needs your decision (Inbox).", "… The critic accepted it anyway." or "… Its
 review did not run; it waits in the Inbox.". "Could not" is read from the report's first
-sentence only. The four-attempt task now reads in six lines (`session-log-person.test.ts`, and
+sentence only. A sent-back line names why, once (W15-58): `critic.verdict` carries `blocking`,
+the review's first finding by severity (`blockingFindingOf` in the runner), and reads 'The critic
+sent "X" back: <that finding>. Trying again.'; an event written before uses the summary without
+its own "Sent back:" (live check 2: "back: Sent back: …", and a model summary that starts with
+what passed). The four-attempt task now reads in six lines (`session-log-person.test.ts`, and
 the role-played failing task in `apps/ui/test/real-daemon.test.ts`).
 
 A person line comes from `personLine` (`daemon/event-lines.ts`): one line, the task's title in

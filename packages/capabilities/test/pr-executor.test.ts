@@ -2488,3 +2488,70 @@ describe("w15-merge, wave 15: folders made before the line-endings pin (W15-11)"
     await w.store.close();
   });
 });
+
+describe("w15-review, wave 15", { timeout: 120_000 }, () => {
+  it("W15-27: prepareReview puts a repository task's worktree back on its branch, runs nothing and pushes nothing; with no worktree the specialist runs again", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Add health endpoint",
+      outcome: "GET /health works",
+      acceptance_criteria: ["returns 200"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    let runs = 0;
+    const inner = innerWriting({ "health.ts": "export const ok = true;\n" });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: {
+        ...inner,
+        withWorktree: (dir) => {
+          const i = inner.withWorktree(dir);
+          return {
+            execute: async (c) => {
+              runs++;
+              return i.execute(c);
+            },
+          };
+        },
+      },
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    // Nothing ran yet: there is no worktree to review in.
+    expect(await exec.prepareReview(task)).toBeNull();
+    const res = await exec.execute({
+      task,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect(runs).toBe(1);
+    const dir = join(w.root, "wt", task.id);
+    const git = new GitOps({ cwd: dir, identity });
+    const head = await git.headSha();
+    // Someone left the worktree on main: the review puts it back on the task's branch.
+    await git.checkout("main");
+    const after = await w.store.task.mustGet(task.id);
+    expect(await exec.prepareReview(after)).toEqual({ worktree: dir });
+    expect(await git.currentBranch()).toBe(res.branch);
+    expect(await git.headSha()).toBe(head);
+    expect(readFileSync(join(dir, "health.ts"), "utf8")).toBe("export const ok = true;\n");
+    // Nothing ran and nothing new reached the host.
+    expect(runs).toBe(1);
+    expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(1);
+  });
+});
