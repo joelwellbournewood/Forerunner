@@ -160,4 +160,36 @@ describe("w15-words, wave 15 run B", () => {
       expect(finished).not.toHaveTextContent("CHF 0.00");
     });
   });
+  describe("W15B-15: the session log shows no raw level word", () => {
+    it("a warning, an escalation and an error keep their tone, named in words, with no level word on the line", async () => {
+      const harness = createHarness();
+      harness.daemon.state.events.push({
+        id: "ev_err",
+        sessionId: "sess_1",
+        seq: 6,
+        type: "session.error",
+        text: "Claude did not answer (network).",
+        payload: {},
+        cost: money(0),
+        at: "2026-10-19T21:09:30.000Z",
+        level: "error",
+        audience: "person",
+      });
+      renderApp("/sessions/sess_1", harness);
+      const rows = await screen.findAllByTestId("event-row");
+      const of = (level: string) =>
+        rows.find((r) => r.getAttribute("data-level") === level) as HTMLElement;
+      for (const [level, name] of [
+        ["warning", "Worth a look"],
+        ["escalation", "Needs you"],
+        ["error", "Something went wrong"],
+      ] as const) {
+        const row = of(level);
+        expect(row, level).toBeDefined();
+        expect(within(row).getByTestId("level-badge")).toHaveAccessibleName(name);
+        expect(within(row).getByTestId("level-badge")).toHaveTextContent("");
+        expect(row.textContent ?? "", level).not.toMatch(/\b(warning|escalation|error)\b/);
+      }
+    });
+  });
 });

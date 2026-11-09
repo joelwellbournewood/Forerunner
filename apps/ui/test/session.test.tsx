@@ -30,9 +30,11 @@ describe("Live session view", () => {
     const escalation = rows.find((r) => r.getAttribute("data-level") === "escalation");
     expect(escalation).toBeDefined();
     expect(escalation).toHaveTextContent("Deploy to staging needs your approval");
-    expect(within(escalation as HTMLElement).getByTestId("level-badge")).toHaveTextContent(
-      "escalation",
+    // W15B-15 (w15-words): the tone by colour, named in words; never the raw level as text.
+    expect(within(escalation as HTMLElement).getByTestId("level-badge")).toHaveAccessibleName(
+      "Needs you",
     );
+    expect(escalation).not.toHaveTextContent("escalation");
     expect(escalation?.className).toMatch(/border-red-500/);
     const info = rows.find((r) => r.getAttribute("data-level") === "info");
     expect(within(info as HTMLElement).queryByTestId("level-badge")).not.toBeInTheDocument();
