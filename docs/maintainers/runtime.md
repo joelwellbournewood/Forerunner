@@ -6005,7 +6005,7 @@ evidence listed the prompt hash and the run id.
 ### The session's Update (design §3.8, §5.10, §5.11)
 
 `sessionUpdateLine` (`session/result.ts`) gives the Inbox one line of news per session, or
-null: what an open card says is the card's to say, and a line that is only money, how the
+null: what an open card says is the card's to say, and a line that is only money ("Less than CHF 0.01." included, the review of polish-words), how the
 session ended or what waits is no news (`isNewsLine`). The runner builds the Update from
 `SessionResult.news`, the result computed with `sessionResultLines(f, told)` where `told`
 holds the tasks an open card is about (`holdsTask`), whether the project's Docker card is open
@@ -6086,7 +6086,7 @@ card for the phone and the state service). `projectCard` adds, computed when rea
 - `statusLine {kind, text, action}` from the pure `projectStatusLine`, first match wins: the
   plan waiting for approval or an open card ("Waiting for you: approve the plan", 'Waiting for
   you: "X"', "Waiting for you: 2 questions", or the kinds of the cards, "Waiting for you: 1
-  sign-off and 1 paused task" (L-13a), with Answer opening the oldest card,
+  sign-off and 1 paused task" (L-13a; up to three kinds named, then "and N more"), with Answer opening the oldest card,
   `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks

@@ -96,9 +96,10 @@ function cardWord(card: { change_card?: unknown }): string {
 }
 
 /**
- * "2 questions", "1 sign-off and 1 paused task", "2 decisions, 1 question and 1 more" (L-13a:
- * before, every card was counted as a question, a sign-off and a budget card too); the
- * kinds in the order of their oldest card, at most two named.
+ * "2 questions", "1 sign-off and 1 paused task", "2 decisions, 1 question and 1 paused task",
+ * "2 decisions, 1 question, 1 sign-off and 2 more" (L-13a: before, every card was counted as a
+ * question, a sign-off and a budget card too); the kinds in the order of their oldest card, up
+ * to three named (design §5.5; the review of polish-words: a third kind read "and 1 more").
  */
 function cardKindsWords(cards: readonly { change_card?: unknown }[]): string {
   const counts = new Map<string, number>();
@@ -107,9 +108,10 @@ function cardKindsWords(cards: readonly { change_card?: unknown }[]): string {
     counts.set(w, (counts.get(w) ?? 0) + 1);
   }
   const parts = [...counts.entries()].map(([w, n]) => plural(n, w));
-  if (parts.length <= 2) return parts.join(" and ");
-  const rest = [...counts.values()].slice(2).reduce((a, b) => a + b, 0);
-  return `${parts.slice(0, 2).join(", ")} and ${rest} more`;
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length <= 3) return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  const rest = [...counts.values()].slice(3).reduce((a, b) => a + b, 0);
+  return `${parts.slice(0, 3).join(", ")} and ${rest} more`;
 }
 
 /** Status sentence length (design §5 rule 1). */

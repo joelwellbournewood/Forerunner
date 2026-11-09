@@ -171,7 +171,11 @@ function onceForThePlan(tasks: PlanTaskView[]): PlanTaskView[] {
       ...t,
       runsOn: {
         ...t.runsOn,
-        line: line.replace(/\bits tests will not run\b/, `the tests of ${n} tasks will not run`),
+        // "it" was the one task's specialist: with several tasks it named no one (the review
+        // of polish-words).
+        line: line
+          .replace(/\bits tests will not run\b/, `the tests of ${n} tasks will not run`)
+          .replace(/: it cannot run commands there\./, ": commands cannot run there."),
       },
     };
   });

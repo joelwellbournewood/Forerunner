@@ -406,6 +406,39 @@ describe("project status sentence (design §2)", () => {
     expect(c.folder).toBe("/work/quote");
   });
 
+  it("names up to three kinds of cards, then 'and N more' (design §5.5; the review of polish-words)", () => {
+    const kinds = [
+      { key: "critic:signoff", reason: "verdict" },
+      { key: "task:budget_stop", source: "task" },
+      { key: "person:questions" },
+      { key: "findings:blocked" },
+      { key: "findings:blocked" },
+    ];
+    const line = (n: number) =>
+      projectStatusLine({
+        projectId: "p1",
+        tasks: kinds.slice(0, n).map((_, i) => ({
+          id: `t${i}`,
+          title: `Task ${i}`,
+          status: "needs_human",
+          depends_on: [],
+        })),
+        displays: new Map(),
+        cards: kinds.slice(0, n).map((c, i) => ({
+          id: `r${i}`,
+          task_id: `t${i}`,
+          change_card: { task_id: `t${i}`, ...c } as never,
+        })),
+        plan: null,
+        working: null,
+        folder: null,
+      }).text;
+    // Before: "Waiting for you: 1 sign-off, 1 paused task and 1 more" (the bench's three kinds).
+    expect(line(3)).toBe("Waiting for you: 1 sign-off, 1 paused task and 1 question");
+    expect(line(5)).toBe("Waiting for you: 1 sign-off, 1 paused task, 1 question and 2 more");
+    expect(line(5).length).toBeLessThanOrEqual(80);
+  });
+
   it("writes no raw states, ids or zero counts, within 80 characters but for the path", () => {
     const line = projectStatusLine({
       projectId: "p1",

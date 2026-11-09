@@ -696,7 +696,7 @@ describe("polish-words, wave 13: the plan card's runs-on lines", () => {
       },
     );
     expect(views?.map((v) => v.runsOn?.line ?? null)).toEqual([
-      "On your subscription the tests of 2 tasks will not run: it cannot run commands there.",
+      "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
       null,
       null,
     ]);

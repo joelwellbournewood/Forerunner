@@ -446,9 +446,13 @@ export function needsYouSentence(titles: readonly string[]): string {
   return `${namesOf(titles)} ${plural(titles.length, "needs", "need")} your decision (Inbox).`;
 }
 
-/** Money, how the session ended and what waits: not news on their own in an Update. */
+/**
+ * Money, how the session ended and what waits: not news on their own in an Update. A spend
+ * under a centime reads "Less than CHF 0.01." (`moneyWordsFirst`, W14-6): money too (the review
+ * of polish-words: the Update read "Guides: Less than CHF 0.01." and nothing else).
+ */
 const NOT_NEWS =
-  /^(?:(?:CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
+  /^(?:(?:(?:Less than )?CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.)\s*)+$/;
 
 /**
  * Whether a result line is news on its own (design §3.8, §5.10): more than money, how the

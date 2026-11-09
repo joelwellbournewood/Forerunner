@@ -7401,7 +7401,7 @@ describe("the UI client against the real daemon: the credential chooser says whe
       // the first task it holds for ("the tests of 2 tasks"), not under every code task.
       const said = (plan?.planTasks ?? []).map((t) => t.runsOn?.line).filter(Boolean);
       expect(said.filter((l) => /tests .*will not run/.test(l ?? ""))).toEqual([
-        "On your subscription the tests of 2 tasks will not run: it cannot run commands there.",
+        "On your subscription the tests of 2 tasks will not run: commands cannot run there.",
       ]);
       // "Code tasks that need commands: the API key", as the Settings dialog sends it (a yes).
       const asked = await client.executeCommands({
