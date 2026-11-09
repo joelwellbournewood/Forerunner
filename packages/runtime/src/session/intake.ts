@@ -32,6 +32,7 @@ import type {
 import { z } from "zod";
 import { type LoopAgentDriver, type RunPricing, type RunResult, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
+import { withoutIds } from "../daemon/task-words.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { boundedPlanEstimate, taskSizeFactor } from "../estimates/model.ts";
@@ -1193,6 +1194,11 @@ export class IntakeService {
           summary: cut(
             `${s.summary} (failed: the daemon did not finish the planning call by ${new Date(deadline).toISOString()})`,
           ),
+          // d1109-sessions: the row's own failure words, as the Sessions list says them.
+          handoff: {
+            ...((s.handoff as Record<string, unknown> | null) ?? {}),
+            planning: { failure: "Forerunner closed before the plan was drafted." },
+          },
         });
         closed.push(s.id);
         this.logger.warn("intake session left running past its deadline closed", {
@@ -1625,6 +1631,7 @@ export class IntakeService {
     const firstRunId = `intake_${session.id}`;
     let outcome: "completed" | "failed" = "failed";
     let note = "";
+    let failure: unknown = null;
     let costUsdMicro = 0;
     // The first reply, read and shaped, when it was asked for once more only for its size.
     let oversized: IntakeReadReply | null = null;
@@ -1764,12 +1771,22 @@ export class IntakeService {
       }
     } catch (e) {
       note = errorMessage(e);
+      failure = e;
       throw e;
     } finally {
       try {
         const current = await store.session.mustGet(session.id);
         await store.session.setStatus(current.id, current.version, outcome, {
           summary: cut(`intake: ${project.name} (${outcome}${note ? `: ${redact(note)}` : ""})`),
+          // The planning call's own record (d1109-sessions, ADR 0116): why it failed, in the
+          // words the project page shows (`recordFailure`), so the Sessions list and the session
+          // page say it after a restart and after a later plan; never ids or a secret.
+          handoff: {
+            planning:
+              outcome === "failed"
+                ? { failure: withoutIds(redact(cut(intakeFailureWords(failure ?? note)))) }
+                : {},
+          },
         });
       } catch (e) {
         this.logger.warn("intake session not closed", {

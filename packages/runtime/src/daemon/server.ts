@@ -164,6 +164,12 @@ import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
+import {
+  planningFactsOf,
+  projectSessionsView,
+  sessionSpends,
+  sessionTasksView,
+} from "./session-list.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
 import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
@@ -1502,9 +1508,17 @@ export function createDaemonApp(
     );
     const names = new Map<string, string>();
     const out = [];
-    for (const s of rows.filter((r) => r.summary !== "conversation")) {
+    const listed = rows.filter((r) => r.summary !== "conversation");
+    // d1109-sessions: each session's one figure is the ledger's sum (one query for the page),
+    // and a planning call says what became of its plan, never "intake: <name> (completed)".
+    const spends = await sessionSpends(
+      rt.store,
+      listed.map((r) => r.id),
+    );
+    for (const s of listed) {
       if (!names.has(s.agent_id))
         names.set(s.agent_id, (await rt.store.agent.get(s.agent_id))?.name ?? s.agent_id);
+      const spend = spends.get(s.id);
       out.push(
         sessionView(
           s,
@@ -1512,11 +1526,34 @@ export function createDaemonApp(
           chf(),
           null,
           await stillBlocked(rt.store, s.handoff),
+          {
+            ...(spend ? { spend } : {}),
+            ...(isIntakeSession(s) ? { planning: await planningFactsOf(rt.store, s) } : {}),
+          },
         ),
       );
     }
     return c.json(out);
   });
+
+  // A project lists its sessions (the owner's decision D2, d1109-sessions, ADR 0116): what each
+  // did, spent and how it ended, a page at a time, every word and figure the daemon's.
+  app.get("/projects/:id/sessions", async (c) => {
+    const limit = intQuery(c, "limit", 20, 50);
+    const before = c.req.query("before") ?? null;
+    return c.json(
+      await projectSessionsView(rt.store, c.req.param("id"), {
+        limit,
+        before,
+        chfPerUsd: chf(),
+        blockedNow: (handoff) => stillBlocked(rt.store, handoff),
+      }),
+    );
+  });
+  // The session page's "Tasks in this session" (d1109-sessions, U-086): what each task did here.
+  app.get("/sessions/:id/tasks", async (c) =>
+    c.json(await sessionTasksView(rt.store, c.req.param("id"))),
+  );
 
   // The start dialog opens the session it started (U-003): a started run is waited for until its
   // `session.started` (its row exists then), its end, or SESSION_START_WAIT_MS. A run that fails
@@ -1634,7 +1671,12 @@ export function createDaemonApp(
           }
         : null;
     // L-21: "Ended: 1 task needs you" only while that task still waits on the person.
-    return sessionView(s, name, chf(), current, await stillBlocked(rt.store, s.handoff));
+    // d1109-sessions: its one figure (the ledger's sum, read now), and a planning call's words.
+    const spend = (await sessionSpends(rt.store, [s.id])).get(s.id);
+    return sessionView(s, name, chf(), current, await stillBlocked(rt.store, s.handoff), {
+      ...(spend ? { spend } : {}),
+      ...(isIntakeSession(s) ? { planning: await planningFactsOf(rt.store, s) } : {}),
+    });
   };
 
   app.get("/sessions/:id/events", async (c) => {
@@ -1662,7 +1704,10 @@ export function createDaemonApp(
           });
         }
         const row = await rt.store.session.get(id);
-        const key = row ? `${row.status}:${row.steps}:${row.spent_usd_micro}` : "";
+        // The ledger's entries too (d1109-sessions): a booking only the ledger gets (the
+        // critic's review) moves the page's spend, which reads the ledger's sum.
+        const booked = row ? (await rt.store.costLedger.sum({ sessionId: id })).entries : 0;
+        const key = row ? `${row.status}:${row.steps}:${row.spent_usd_micro}:${booked}` : "";
         if (row && key !== shown) {
           const first = shown === "";
           shown = key;

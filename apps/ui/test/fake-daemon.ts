@@ -33,8 +33,10 @@ import type {
   PendingChangeView,
   ProjectCard,
   ProjectPullRequestView,
+  ProjectSessionRowView,
   ReviewsView,
   ReviewView,
+  SessionTaskView,
   SessionView,
   SetupStatusView,
   SourceCandidateView,
@@ -57,6 +59,7 @@ import {
   isStorableSecretName,
   KILL_ACTIVE_START_MESSAGE,
   KillBody,
+  ProjectSessionsView,
   RenameAgentBody,
   RunnerUnlockWrapBody,
   SetTaskDependenciesBody,
@@ -476,6 +479,20 @@ export interface FakeDaemonState {
   /** Screenshots `GET /tasks/:id/evidence?file=` serves, by `<task id>/<file>`, base64. */
   evidenceFiles: Map<string, string>;
   sessions: SessionView[];
+  /**
+   * d1109-sessions (ADR 0116): each project's ended sessions as `GET /projects/:id/sessions`
+   * lists them (newest first), every word as the daemon writes it; the working ones are read
+   * from `sessions` (running, paused, planned) with the project's working sentence. A test
+   * seeds them.
+   */
+  projectSessions: Record<string, ProjectSessionRowView[]>;
+  /** "Chat about this project: CHF 0.03." by project, when chat about it cost anything. */
+  projectSessionsChat: Record<
+    string,
+    { spent: { usdMicro: number; chfMicro: number }; words: string }
+  >;
+  /** `GET /sessions/:id/tasks` by session: the session page's "Tasks in this session". */
+  sessionTasks: Record<string, SessionTaskView[]>;
   events: EventView[];
   requests: HumanRequestView[];
   /**
@@ -1023,6 +1040,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     evidenceFiles: new Map(),
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
+    projectSessions: clone(PROJECT_SESSIONS),
+    projectSessionsChat: {},
+    sessionTasks: clone(SESSION_TASKS),
     events: clone(EVENTS),
     requests: clone(REQUESTS),
     intake: {},
@@ -1222,6 +1242,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.reviewEvidence = new Map();
     state.evidenceFiles = new Map();
     state.sessions = clone(SESSIONS);
+    state.projectSessions = clone(PROJECT_SESSIONS);
+    state.projectSessionsChat = {};
+    state.sessionTasks = clone(SESSION_TASKS);
     state.events = clone(EVENTS);
     state.requests = clone(REQUESTS);
     state.intake = {};
@@ -1762,10 +1785,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           (t) => t.display as NonNullable<TaskView["display"]>,
         )
       : [];
+    // d1109-sessions: the Overview's "All N sessions" counts what the Sessions list holds.
+    const sessionCount =
+      (state.projectSessions[id] ?? []).length +
+      state.sessions.filter(
+        (s) => s.projectId === id && ["running", "paused", "planned"].includes(s.status),
+      ).length;
     return c.json({
       ...base,
       ...(last ? { lastSession: { ...last, ...(since.length ? { since } : {}) } } : {}),
       next,
+      sessionCount,
     });
   });
   // Read aloud (spec A.6, L.6): the daemon reads a summary through its voice provider. The
@@ -2554,6 +2584,55 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           (!status || s.status === status),
       ),
     );
+  });
+  // d1109-sessions (ADR 0116), as the daemon: the project's sessions, the working ones on top
+  // (first page) in the project's working sentence, then the ended ones newest first, a page at
+  // a time with an opaque cursor; 404 "No such project.", 400 for a cursor it cannot read.
+  app.get("/projects/:id/sessions", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 404, "not_found", "No such project.");
+    const rawLimit = Number(c.req.query("limit") ?? "20");
+    const limit = Math.max(1, Math.min(50, Number.isInteger(rawLimit) ? rawLimit : 20));
+    const before = c.req.query("before");
+    const ended = state.projectSessions[id] ?? [];
+    let from = 0;
+    if (before) {
+      const at = fakeSessionsCursorId(before);
+      const index = at === null ? -1 : ended.findIndex((r) => r.id === at);
+      if (index < 0)
+        return errorBody(
+          c,
+          400,
+          "validation",
+          "This list cannot go on from there. Open Sessions again.",
+        );
+      from = index + 1;
+    }
+    const working = before
+      ? []
+      : state.sessions
+          .filter((s) => s.projectId === id && ["running", "paused", "planned"].includes(s.status))
+          .map((s) => fakeWorkingRow(s, projectCardOf(project)));
+    const rows = ended.slice(from, from + limit);
+    const last = rows[rows.length - 1];
+    const next = from + limit < ended.length && last ? fakeSessionsCursor(last) : null;
+    return c.json(
+      ProjectSessionsView.parse({
+        projectId: id,
+        count: working.length + ended.length,
+        working,
+        rows,
+        next,
+        chat: before ? null : (state.projectSessionsChat[id] ?? null),
+      }),
+    );
+  });
+  app.get("/sessions/:id/tasks", (c) => {
+    const id = c.req.param("id");
+    const s = state.sessions.find((x) => x.id === id);
+    if (!s) return errorBody(c, 404, "not_found", "no such session");
+    return c.json({ sessionId: id, projectId: s.projectId, tasks: state.sessionTasks[id] ?? [] });
   });
   app.post("/sessions", async (c) => {
     const parsed = StartSessionBody.safeParse(await c.req.json());
@@ -7517,6 +7596,108 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
 
   return { app, state, token, close, setDesktopControl };
 }
+
+/** The daemon's cursor shape (`sessionsCursor`): the last row's start and id, base64url. */
+function fakeSessionsCursor(row: ProjectSessionRowView): string {
+  return Buffer.from(JSON.stringify([row.startedAt, row.id]), "utf8").toString("base64url");
+}
+
+function fakeSessionsCursorId(cursor: string): string | null {
+  try {
+    const v = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    return Array.isArray(v) && typeof v[1] === "string" ? v[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A working session's row, as the daemon writes it (`workingWords`): the project's own working
+ * sentence ('Working on "X" (2 of 4 done)'), "CHF … so far", no length while it works.
+ */
+function fakeWorkingRow(s: SessionView, project: ProjectCard): ProjectSessionRowView {
+  const text =
+    project.statusLine?.kind === "working" ? project.statusLine.text : "Working on the next task";
+  const chf = (s.spent.chfMicro / 1_000_000).toFixed(2);
+  return {
+    id: s.id,
+    startedAt: s.startedAt,
+    endedAt: null,
+    durationMs: null,
+    working: true,
+    planning: false,
+    gist: text,
+    tasks: { done: 0, failed: 0, paused: 0, needsYou: 0, cancelled: 0, leftForYou: 0 },
+    countsWords: "",
+    endedWords: null,
+    spent: s.spent,
+    spentWords: `CHF ${chf} so far on your API key`,
+    startedBy: null,
+  };
+}
+
+/**
+ * d1109-sessions: Atlas's sessions as the daemon lists them: the fixture's session (sess_1), the
+ * planning call before it. Every word is the daemon's own (`session-list.ts`).
+ */
+const PROJECT_SESSIONS: Record<string, ProjectSessionRowView[]> = {
+  proj_atlas: [
+    {
+      id: "sess_1",
+      startedAt: "2026-10-19T19:00:00.000Z",
+      endedAt: "2026-10-19T21:10:00.000Z",
+      durationMs: 130 * 60_000,
+      working: false,
+      planning: false,
+      gist: 'Did 1 task: "Index the documentation pages".',
+      tasks: { done: 1, failed: 0, paused: 0, needsYou: 1, cancelled: 0, leftForYou: 0 },
+      countsWords: "1 done, 1 needed you",
+      endedWords: "Done",
+      spent: money(7_250_000),
+      spentWords: "CHF 5.80 on your API key",
+      startedBy: null,
+    },
+    {
+      id: "sess_plan_atlas",
+      startedAt: "2026-10-19T18:40:00.000Z",
+      endedAt: "2026-10-19T18:41:00.000Z",
+      durationMs: 60_000,
+      working: false,
+      planning: true,
+      gist: "Drafted a plan of 4 tasks; you approved it.",
+      tasks: { done: 0, failed: 0, paused: 0, needsYou: 0, cancelled: 0, leftForYou: 0 },
+      countsWords: "",
+      endedWords: null,
+      spent: money(50_000),
+      spentWords: "CHF 0.04 on your API key",
+      startedBy: null,
+    },
+  ],
+};
+
+/** The session page's "Tasks in this session" for the fixture's session. */
+const SESSION_TASKS: Record<string, SessionTaskView[]> = {
+  sess_1: [
+    {
+      id: "task_1",
+      title: "Index the documentation pages",
+      projectId: "proj_atlas",
+      here: "Done",
+      now: null,
+      spent: money(2_750_000),
+      spentWords: "CHF 2.20",
+    },
+    {
+      id: "task_2",
+      title: "Add the search box to the header",
+      projectId: "proj_atlas",
+      here: "Needed your answer",
+      now: "Being reviewed",
+      spent: money(4_500_000),
+      spentWords: "CHF 3.60",
+    },
+  ],
+};
 
 export interface RunningFakeDaemon {
   url: string;

@@ -44,10 +44,13 @@ import { runCapOf } from "../session/executor.ts";
 import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
+import { isIntakeSession } from "../session/recovery.ts";
+import type { LastSessionOutcome } from "../session/result.ts";
 import {
   blockedOfHandoff,
   type EndedWaits,
   endedStatusText,
+  planningStatusText,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
@@ -105,6 +108,15 @@ import {
   workingOn,
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
+import {
+  outcomeOfHandoff,
+  type PlanningFacts,
+  planningGist,
+  resultTextNow,
+  type SessionSpend,
+  sessionSpends,
+  spentOf,
+} from "./session-list.ts";
 import { loadTaskDisplayContext, runOrder, taskDisplay, taskHeldWork } from "./task-display.ts";
 import { plainPlurals, withoutIds } from "./task-words.ts";
 
@@ -309,7 +321,13 @@ export async function projectSummary(
 ): Promise<ProjectSummary> {
   const p = await store.project.mustGet(projectId);
   const s = p.summary_cache as {
-    last_session?: { id: string; ended_at: string | null; summary: string; stop_reason: string };
+    last_session?: {
+      id: string;
+      ended_at: string | null;
+      summary: string;
+      stop_reason: string;
+      outcome?: LastSessionOutcome;
+    };
     next_steps?: string[];
     open_questions?: number;
   };
@@ -349,6 +367,19 @@ export async function projectSummary(
         ...(await mergedSinceLine(store, lastRow.handoff)),
       ]
     : [];
+  // One figure per session (d1109-sessions, ADR 0116): the result's cost sentence reads the
+  // ledger's sum for the session when shown, as the session page and the Sessions list do; the
+  // stored text is never rewritten.
+  const lastSpend = lastRow
+    ? (await sessionSpends(store, [lastRow.id])).get(lastRow.id)
+    : undefined;
+  const lastText = s.last_session
+    ? resultTextNow(
+        s.last_session.summary,
+        s.last_session.outcome ?? outcomeOfHandoff(lastRow?.handoff),
+        lastRow ? spentOf(lastSpend, lastRow, chfPerUsd).chfMicro : 0,
+      )
+    : "";
   return {
     goal: p.goal,
     stage: p.stage,
@@ -356,7 +387,7 @@ export async function projectSummary(
       ? {
           id: s.last_session.id,
           endedAt: s.last_session.ended_at,
-          summary: s.last_session.summary,
+          summary: lastRow ? lastText : s.last_session.summary,
           stopReason: s.last_session.stop_reason,
           changedFiles,
           ...(since.length ? { since } : {}),
@@ -367,6 +398,8 @@ export async function projectSummary(
     openQuestions: s.open_questions ?? 0,
     spend: money(spend.usd_micro, chfPerUsd),
     spoken,
+    // The Overview's "All 3 sessions" (d1109-sessions): the Sessions list's own count.
+    sessionCount: await store.session.listedCountForProject(p.id),
   };
 }
 
@@ -487,7 +520,22 @@ export function sessionView(
   current: SessionView["currentTask"] = null,
   /** The tasks it left waiting that still wait now (`stillBlocked`); absent: as it left them. */
   blockedNow?: number | EndedWaits,
+  /**
+   * d1109-sessions (ADR 0116): the ledger's sum for the session (`sessionSpends`), its one
+   * figure, read when shown; and, for a planning call, what became of its plan
+   * (`planningFactsOf`). Absent: the row's own counter, and the planning words from its status.
+   */
+  extra: { spend?: SessionSpend; planning?: PlanningFacts } = {},
 ): SessionView {
+  const spent = spentOf(extra.spend, s, chfPerUsd);
+  const planning = isIntakeSession(s);
+  const planningFacts: PlanningFacts =
+    extra.planning ??
+    (["planned", "running", "paused"].includes(s.status)
+      ? { state: "drafting" }
+      : s.status === "completed"
+        ? { state: "drafted" }
+        : { state: "failed" });
   return {
     id: s.id,
     agentId: s.agent_id,
@@ -498,21 +546,28 @@ export function sessionView(
     startedAt: s.started_at,
     endedAt: s.ended_at,
     budgetCap: money(s.budget_cap_usd_micro, chfPerUsd),
-    spent: money(s.spent_usd_micro, chfPerUsd),
+    spent,
     stepCap: s.step_cap,
     steps: s.steps,
     currentTask: current,
-    summary: s.summary,
+    // A planning call's row says what became of its plan, never "intake: Quote page
+    // (completed)"; a session's result reads its cost sentence from the ledger's sum now.
+    summary: planning
+      ? planningGist(planningFacts)
+      : resultTextNow(s.summary, outcomeOfHandoff(s.handoff), spent.chfMicro),
     handoff: s.handoff,
     runner: s.runner,
     // How it ended, in words (session-engine, design §3.7).
     stopReason: stopReasonOfHandoff(s.handoff),
     // "Ended: 1 task needs you" when it finished with tasks waiting for the person.
-    statusText: endedStatusText(
-      s.status,
-      stopReasonOfHandoff(s.handoff),
-      blockedNow ?? blockedOfHandoff(s.handoff),
-    ),
+    statusText: planning
+      ? planningStatusText(s.status)
+      : endedStatusText(
+          s.status,
+          stopReasonOfHandoff(s.handoff),
+          blockedNow ?? blockedOfHandoff(s.handoff),
+        ),
+    ...(planning ? { planning: true } : {}),
   };
 }
 

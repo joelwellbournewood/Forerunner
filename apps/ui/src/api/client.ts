@@ -110,6 +110,9 @@ import {
   type ProjectPullRequestsView,
   ProjectPullRequestsView as ProjectPullRequestsViewSchema,
   type ProjectPullRequestView,
+  type ProjectSessionRowView,
+  type ProjectSessionsView,
+  ProjectSessionsView as ProjectSessionsViewSchema,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
   type PullRequestMergeAnswer,
@@ -133,6 +136,9 @@ import {
   RunView as RunViewSchema,
   type ScanResultView,
   ScanResultView as ScanResultViewSchema,
+  type SessionTasksView,
+  SessionTasksView as SessionTasksViewSchema,
+  type SessionTaskView,
   type SessionView,
   SessionView as SessionViewSchema,
   type SetTaskDependenciesBody,
@@ -326,6 +332,8 @@ export type {
   ProjectFilesView,
   ProjectPullRequestsView,
   ProjectPullRequestView,
+  ProjectSessionRowView,
+  ProjectSessionsView,
   ProjectSettingsView,
   ProjectSummary,
   PullRequestMergeAnswer,
@@ -339,6 +347,8 @@ export type {
   RunView,
   SandboxStatusView,
   ScanResultView,
+  SessionTasksView,
+  SessionTaskView,
   SessionView,
   SetTaskDependenciesBody,
   SetupCheckView,
@@ -623,6 +633,18 @@ export interface DaemonClient {
   stopSession(id: string, reason?: string): Promise<SessionView>;
   /** `POST /sessions/:id/pause`: Stop after this task (design §3.7). */
   pauseSession(id: string): Promise<SessionView>;
+  /**
+   * `GET /projects/:id/sessions` (d1109-sessions, ADR 0116): the project's Sessions list, the
+   * working ones on top, then the ended ones newest first, a page at a time (`before` is the
+   * page before's `next`).
+   */
+  projectSessions(
+    projectId: string,
+    page?: { before?: string | null; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<ProjectSessionsView>;
+  /** `GET /sessions/:id/tasks`: the session page's "Tasks in this session" (d1109-sessions). */
+  sessionTasks(id: string, signal?: AbortSignal): Promise<SessionTasksView>;
   kill(body: KillBody): Promise<KillResult>;
   resume(): Promise<KillResult>;
   /** `GET /desktop/status`: desktop control's state, with what the indicator shows (S.32). */
@@ -1088,6 +1110,15 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     stopSession: (id, reason) =>
       post(routePath("stopSession", { id }), SessionViewSchema, reason ? { reason } : {}),
     pauseSession: (id) => post(routePath("pauseSession", { id }), SessionViewSchema, {}),
+    projectSessions: (projectId, page, signal) =>
+      get(
+        routePath("projectSessions", { id: projectId }),
+        ProjectSessionsViewSchema,
+        { before: page?.before ?? undefined, limit: page?.limit },
+        signal,
+      ),
+    sessionTasks: (id, signal) =>
+      get(routePath("sessionTasks", { id }), SessionTasksViewSchema, undefined, signal),
     kill: (body) => post(routePath("kill"), KillResult, body),
     resume: () => post(routePath("resume"), KillResult, {}),
     desktopStatus: (signal) =>

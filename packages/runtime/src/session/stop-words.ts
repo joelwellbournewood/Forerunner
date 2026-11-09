@@ -109,8 +109,13 @@ export function stopLimitWords(
 }
 
 /**
- * The session's status in words (the session page's badge, the header chip): "Working",
- * "Done", "Stopped by you", "Interrupted: Forerunner closed", ...
+ * The session's status in words (the session page's badge, the header chip, the Sessions list's
+ * row): "Working", "Done", "Stopped by you", "Interrupted: Forerunner closed", ... One map for
+ * every place (d1109-sessions, ADR 0116): a stop reason past the three live statuses is an
+ * ended session's, so it is said in words that stay true later (design §5 rule 4): "Stopped to
+ * wait for a Claude credential" (it read "Waiting for a Claude credential" after the credential
+ * was back), "Ended with a plan for you to approve" (it read "Waiting for you: approve the plan"
+ * after the plan was approved).
  */
 export function sessionStatusText(status: string, stopReason: string | null | undefined): string {
   if (status === "running") return "Working";
@@ -138,18 +143,31 @@ export function sessionStatusText(status: string, stopReason: string | null | un
     case "timeout":
       return "Stopped: the time limit was reached";
     case "plan_awaiting_approval":
-      return "Waiting for you: approve the plan";
+      return "Ended with a plan for you to approve";
     case "nothing_runnable":
       return "Ended: nothing could run";
-    // U-078: no Claude credential may serve its work now; it starts by itself (the result says when).
+    // U-078: no Claude credential could serve its work then; the result says when it goes on.
     case CREDENTIAL_WAIT_STOP:
-      return "Waiting for a Claude credential";
+      return "Stopped to wait for a Claude credential";
     default:
       break;
   }
   if (status === "completed") return "Done";
   if (status === "failed") return "Failed";
   return "Stopped";
+}
+
+/**
+ * A planning call's status in words (the plan from a brief, ADR 0055; d1109-sessions): its row
+ * is a session of its own, and before it read "Done" or "Failed" beside "intake: Quote page
+ * (completed)". "Drafting the plan" while the call runs, "Plan drafted" once the plan was
+ * filed, "Planning failed" when it ended without one, as the project's status says it.
+ */
+export function planningStatusText(status: string): string {
+  if (status === "running" || status === "planned" || status === "paused")
+    return "Drafting the plan";
+  if (status === "completed") return "Plan drafted";
+  return "Planning failed";
 }
 
 /**

@@ -147,10 +147,22 @@ export async function endDeadSession(
           Math.max(0, Math.round(spentUsdMicro)),
           deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD,
         );
+  // What it did, named, on its own row (d1109-sessions, ADR 0116), and the last moment it
+  // worked: the last line it logged before this end. A session that died on Friday and is ended
+  // on Monday worked until Friday; its length is not the time Forerunner was closed.
+  const outcome = endedOutcome({
+    stopReason: opts.stopReason,
+    done,
+    released: tasks,
+    spentChfMicro,
+  });
+  const lastEvent = (await store.event.list(fresh.id, 0, 100_000).catch(() => [])).at(-1);
   const handoff = {
     ...((fresh.handoff as Record<string, unknown> | null) ?? {}),
     stop_reason: opts.stopReason,
     released: tasks.map((t) => t.id),
+    outcome,
+    last_worked_at: lastEvent?.created_at ?? fresh.started_at ?? fresh.created_at,
   };
   // The row's spend is the ledger's too, as the runner's own end writes it: the live counter
   // misses what only the ledger books (the critic's review), and the session page's "Spent of
@@ -174,19 +186,34 @@ export async function endDeadSession(
     completed: done.length,
     spentUsdMicro,
   } as never);
-  await recordLastSession(deps, ended, {
-    summary,
-    stopReason: opts.stopReason,
-    done,
-    released: tasks,
-    spentChfMicro,
-  }).catch((e: unknown) =>
-    logger.warn("the interrupted session was not recorded as the project's last", {
-      sessionId: fresh.id,
-      error: errorMessage(e),
-    }),
+  await recordLastSession(deps, ended, { summary, stopReason: opts.stopReason, outcome }).catch(
+    (e: unknown) =>
+      logger.warn("the interrupted session was not recorded as the project's last", {
+        sessionId: fresh.id,
+        error: errorMessage(e),
+      }),
   );
   return { session: ended, tasks };
+}
+
+/** What a session a dead process left did: the tasks it finished, those it put back, its spend. */
+function endedOutcome(facts: {
+  stopReason: string;
+  done: readonly TaskRow[];
+  released: readonly TaskRow[];
+  spentChfMicro: number;
+}): LastSessionOutcome {
+  const named = (t: TaskRow) => ({ id: t.id, title: t.title });
+  return {
+    done: facts.done.map(named),
+    failed: [],
+    needsYou: [],
+    leftOver: facts.released.map(named),
+    waiting: [],
+    waitingForDocker: [],
+    stopReason: facts.stopReason,
+    spentChfMicro: facts.spentChfMicro,
+  };
 }
 
 /**
@@ -198,13 +225,7 @@ export async function endDeadSession(
 async function recordLastSession(
   deps: Pick<RecoveryDeps, "store" | "clock">,
   session: SessionRow,
-  facts: {
-    summary: string;
-    stopReason: string;
-    done: readonly TaskRow[];
-    released: readonly TaskRow[];
-    spentChfMicro: number;
-  },
+  facts: { summary: string; stopReason: string; outcome: LastSessionOutcome },
 ): Promise<void> {
   const { store, clock } = deps;
   if (!session.project_id) return;
@@ -215,17 +236,7 @@ async function recordLastSession(
   const lastEnded = typeof last?.ended_at === "string" ? last.ended_at : null;
   // A session of the project that ended after this one started is newer news.
   if (lastEnded && session.started_at && lastEnded > session.started_at) return;
-  const named = (t: TaskRow) => ({ id: t.id, title: t.title });
-  const outcome: LastSessionOutcome = {
-    done: facts.done.map(named),
-    failed: [],
-    needsYou: [],
-    leftOver: facts.released.map(named),
-    waiting: [],
-    waitingForDocker: [],
-    stopReason: facts.stopReason,
-    spentChfMicro: facts.spentChfMicro,
-  };
+  const outcome = facts.outcome;
   await store.project.patch(project.id, {
     summary_cache: {
       ...cache,
