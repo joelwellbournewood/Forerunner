@@ -44,7 +44,12 @@ import { runCapOf } from "../session/executor.ts";
 import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
-import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
+import {
+  blockedOfHandoff,
+  type EndedWaits,
+  endedStatusText,
+  stopReasonOfHandoff,
+} from "../session/stop-words.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { ANSWER_CARD_KEYS, isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
@@ -457,14 +462,23 @@ export function runView(
  * now (L-21): a task the person answered, retried or merged since does not ("Ended: 1 task
  * needs you" stayed on the page after the retry and the merge).
  */
-export async function stillBlocked(store: StateStore, handoff: unknown): Promise<number> {
+export async function stillBlocked(store: StateStore, handoff: unknown): Promise<EndedWaits> {
   const ids = blockedTaskIds(handoff);
-  let n = 0;
+  // W15B-10: a task the session left paused at a budget is said as paused (the log's end line
+  // "Session over: 2 paused."), not as needing the person, while it still waits on its card.
+  const pausedIds = new Set(
+    Array.isArray((handoff as { paused?: unknown } | null)?.paused)
+      ? ((handoff as { paused: unknown[] }).paused.filter((x) => typeof x === "string") as string[])
+      : [],
+  );
+  const out: EndedWaits = { needYou: 0, paused: 0 };
   for (const id of new Set(ids)) {
     const t = await store.task.get(id);
-    if (t && (t.status === "needs_human" || t.status === "failed")) n += 1;
+    if (!t || (t.status !== "needs_human" && t.status !== "failed")) continue;
+    if (pausedIds.has(id) && t.status === "needs_human") out.paused += 1;
+    else out.needYou += 1;
   }
-  return n;
+  return out;
 }
 
 export function sessionView(
@@ -473,7 +487,7 @@ export function sessionView(
   chfPerUsd: number,
   current: SessionView["currentTask"] = null,
   /** The tasks it left waiting that still wait now (`stillBlocked`); absent: as it left them. */
-  blockedNow?: number,
+  blockedNow?: number | EndedWaits,
 ): SessionView {
   return {
     id: s.id,

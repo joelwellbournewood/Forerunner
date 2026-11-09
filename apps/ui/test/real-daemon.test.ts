@@ -13665,6 +13665,59 @@ describe("w15-chat, wave 15", () => {
  * route the screen reads it from.
  */
 describe("w15-words, wave 15 run B", () => {
+  it("W15B-10: a session that paused two tasks at their budget reads 'Ended: 2 paused', also after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-words-paused-"));
+    const env = { FORERUNNER_HOME: home };
+    const compose = () =>
+      composeWithRolePlayer(
+        { FORERUNNER_BENCH_LONG: "Write the guide" },
+        { env, dirs: appDirs({ env }), stateUrl: `sqlite:${join(home, "state.sqlite")}` },
+      );
+    let { rt, client } = await compose();
+    try {
+      const project = await client.createProject({ name: "Two guides", goal: "Guides" });
+      for (const [title, file] of [
+        ["Write the guide for members in members.md", "members.md"],
+        ["Write the guide in guide.md", "guide.md"],
+      ] as const)
+        await client.createTask(project.id, {
+          title,
+          outcome: `${file} explains the club`,
+          acceptanceCriteria: [`${file} exists`],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 5_000,
+          specialist: "coder",
+          riskTier: 1,
+        });
+      const started = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () =>
+          (await client.tasks(project.id)).map((t) => `${t.title}=${t.display?.label}`).join(", "),
+        60_000,
+      );
+      const labels = (await client.tasks(project.id)).map((t) => t.display?.label);
+      expect(labels).toEqual(["Paused at its budget", "Paused at its budget"]);
+      // As the log's end line says it (before: "Ended: 2 tasks need you").
+      expect((await client.session(sessionId)).statusText).toBe("Ended: 2 paused");
+      expect(
+        (await client.sessions({ projectId: project.id })).find((s) => s.id === sessionId)
+          ?.statusText,
+      ).toBe("Ended: 2 paused");
+      await rt.close();
+      ({ rt, client } = await compose());
+      expect((await client.session(sessionId)).statusText).toBe("Ended: 2 paused");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
   describe("W15-56: a task paused before it wrote anything promises no set-aside", () => {
     let rt: RuntimeApp;
     let client: DaemonClient;

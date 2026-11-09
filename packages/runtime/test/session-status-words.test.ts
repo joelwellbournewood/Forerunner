@@ -21,8 +21,9 @@ describe("session status words", () => {
     // A stop says whose it was, whatever is left.
     expect(endedStatusText("killed", "you", 1)).toBe("Stopped by you");
     expect(endedStatusText("running", null, 3)).toBe("Working");
-    expect(blockedOfHandoff({ blocked: ["t1", "t2"] })).toBe(2);
-    expect(blockedOfHandoff(null)).toBe(0);
+    // W15B-10 (w15-words): the paused ones are counted apart.
+    expect(blockedOfHandoff({ blocked: ["t1", "t2"] })).toEqual({ needYou: 2, paused: 0 });
+    expect(blockedOfHandoff(null)).toEqual({ needYou: 0, paused: 0 });
   });
 
   it("the session view carries it", () => {

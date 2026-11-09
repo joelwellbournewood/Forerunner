@@ -6538,7 +6538,11 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   (`endedStatusText`, `blockedOfHandoff` in `session/stop-words.ts`; the routes count only the
   tasks that still wait now, `stillBlocked` in `views.ts`, so a page read after the person
   answered the card or the task moved on no longer says it, L-21, polish-words;
-  `test/session-status-words.test.ts`).
+  `test/session-status-words.test.ts`). A task it left paused at a budget (`handoff.paused`) is
+  said as paused, as the log's end line says it: "Ended: 2 paused", "Ended: 1 task needs you, 2
+  paused" (W15B-10; `stillBlocked` and `blockedOfHandoff` return `{ needYou, paused }`; before,
+  "Ended: 3 tasks need you" beside "Session over: 3 paused."; test `real-daemon.test.ts`
+  "w15-words, wave 15 run B", across a restart).
 
 ### The project's files (design §3.10; `daemon/docs-routes.ts`)
 

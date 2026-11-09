@@ -25,6 +25,7 @@ import {
 } from "../src/session/credential-wait.ts";
 import { aboutWords } from "../src/session/money-words.ts";
 import { sessionResultLines, stopWords } from "../src/session/result.ts";
+import { blockedOfHandoff, endedStatusText } from "../src/session/stop-words.ts";
 
 /** USD micro to CHF text at the test's rate, as the executor's chfText (before moneyWords). */
 const chf = (usdMicro: number) => formatChf(usdToChfMicro(usdMicro, 0.8));
@@ -681,6 +682,25 @@ describe("w15-words, wave 15 run B", () => {
       ).toBe(
         "Session review measured: 1 of 1 planned task done, CHF 0.10 spent of a CHF 0.23 estimate.",
       );
+    });
+  });
+  describe("W15B-10: the session's chip says paused tasks as paused", () => {
+    it("as the log's end line does", () => {
+      expect(endedStatusText("completed", "completed", { needYou: 0, paused: 2 })).toBe(
+        "Ended: 2 paused",
+      );
+      expect(endedStatusText("completed", "completed", { needYou: 1, paused: 2 })).toBe(
+        "Ended: 1 task needs you, 2 paused",
+      );
+      expect(endedStatusText("completed", "completed", { needYou: 2, paused: 0 })).toBe(
+        "Ended: 2 tasks need you",
+      );
+      expect(endedStatusText("completed", "completed", { needYou: 0, paused: 0 })).toBe("Done");
+      // As the session left them (no store): the handoff's paused ids are said apart.
+      expect(blockedOfHandoff({ blocked: ["a", "b", "c"], paused: ["b", "c"] })).toEqual({
+        needYou: 1,
+        paused: 2,
+      });
     });
   });
 });

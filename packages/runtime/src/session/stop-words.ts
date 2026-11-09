@@ -157,21 +157,50 @@ export function sessionStatusText(status: string, stopReason: string | null | un
  * that need an answer or failed, each with its card). A session that "completed" with those is
  * not simply "Done" (wave 1 handoff).
  */
-export function blockedOfHandoff(handoff: unknown): number {
-  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return 0;
-  const b = (handoff as { blocked?: unknown }).blocked;
-  return Array.isArray(b) ? b.length : 0;
+export function blockedOfHandoff(handoff: unknown): EndedWaits {
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff))
+    return { needYou: 0, paused: 0 };
+  const ids = (k: "blocked" | "paused") => {
+    const v = (handoff as Record<string, unknown>)[k];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  };
+  const paused = new Set(ids("paused"));
+  const blocked = ids("blocked");
+  return {
+    needYou: blocked.filter((id) => !paused.has(id)).length,
+    paused: blocked.filter((id) => paused.has(id)).length,
+  };
 }
 
-/** "Ended: 1 task needs you" for a session that finished with tasks waiting for the person. */
+/**
+ * What a finished session left waiting (W15B-10): the tasks that need the person (a card that
+ * asks, a failed task) and those paused at a budget (`handoff.paused`), said apart as the log's
+ * end line says them ("Session over: 2 paused.").
+ */
+export interface EndedWaits {
+  needYou: number;
+  paused: number;
+}
+
+/**
+ * "Ended: 1 task needs you" for a session that finished with tasks waiting for the person;
+ * "Ended: 2 paused" for tasks paused at a budget, "Ended: 1 task needs you, 2 paused" with both
+ * (W15B-10: before, a paused task counted as needing the person, "Ended: 3 tasks need you",
+ * beside the log's "Session over: 3 paused."). A bare number counts them all as needing you.
+ */
 export function endedStatusText(
   status: string,
   stopReason: string | null,
-  blocked: number,
+  waits: number | EndedWaits,
 ): string {
   const text = sessionStatusText(status, stopReason);
-  if (status !== "completed" || blocked === 0 || text !== "Done") return text;
-  return `Ended: ${blocked} ${blocked === 1 ? "task needs" : "tasks need"} you`;
+  const { needYou, paused } = typeof waits === "number" ? { needYou: waits, paused: 0 } : waits;
+  if (status !== "completed" || needYou + paused === 0 || text !== "Done") return text;
+  const parts = [
+    needYou ? `${needYou} ${needYou === 1 ? "task needs" : "tasks need"} you` : null,
+    paused ? `${paused} paused` : null,
+  ].filter(Boolean);
+  return `Ended: ${parts.join(", ")}`;
 }
 
 /** `handoff.stop_reason` of a session row, or null. */
