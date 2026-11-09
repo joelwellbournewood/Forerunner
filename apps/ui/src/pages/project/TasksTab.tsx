@@ -99,13 +99,15 @@ function TaskCap({ task, specialist }: { task: TaskView; specialist: string | nu
 /**
  * The Critic column of a task with no "Reviewed" check (W15-42, design §5 rule 6): what is true
  * of the task, never a raw verdict. A task marked done without a review is "Not reviewed"; a
- * failed task the critic sent back "Failed review", any other failed or cancelled task nothing;
- * otherwise the critic's last call in words.
+ * person's own task, which the critic never reviews, nothing; a failed task the critic sent back
+ * "Failed review", any other failed or cancelled task nothing; otherwise the critic's last call
+ * in words.
  */
 export function criticColumn(
-  task: { status: string },
+  task: { status: string; specialist?: string | null },
   verdict: string | null | undefined,
 ): { label: string; tone: "good" | "warn" | "neutral" } | null {
+  if (task.specialist === WHO_PERSON) return null;
   if (task.status === "done") return { label: "Not reviewed", tone: "neutral" };
   if (task.status === "failed")
     return verdict === "revise" || verdict === "escalate"

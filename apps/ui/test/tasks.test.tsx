@@ -1697,6 +1697,23 @@ describe("w15-review, wave 15", () => {
       expect(cell.textContent).not.toMatch(/\baccepted\b/);
   });
 
+  it("W15-42: a person's own task that is done shows nothing in the Critic column: the critic never reviews it, and 'Not reviewed' would read as a warning", async () => {
+    const harness = createHarness();
+    addTask(harness, "task_me_done", "Send the club logo", {
+      specialist: "person",
+      status: "done",
+    });
+    addTask(harness, "task_marked_2", "Write the club hours page", {
+      status: "done",
+      reason: "accepted without review (Mark done anyway)",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const critic = async (id: string) =>
+      within(await rowOf(id)).getByTestId("task-critic").textContent ?? "";
+    expect(await critic("task_me_done")).toBe("—");
+    expect(await critic("task_marked_2")).toBe("Not reviewed");
+  });
+
   const workRunOf = async (drawer: HTMLElement) =>
     (await within(drawer).findAllByTestId("drawer-run")).find(
       (r) => r.getAttribute("data-kind") === "work",
