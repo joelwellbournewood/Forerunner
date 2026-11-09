@@ -384,7 +384,8 @@ describe("closeout: the PM in code picks the specialist and caps the depth (C.1,
       (session.plan as { items: { specialist: string }[] }).items.map((i) => i.specialist),
     ).toEqual(["tester", "coder"]);
     expect(session.author_agent).toBe(w.alice);
-    expect(session.reason).toBe("2 ready task(s) in priority order");
+    // W15-60: plurals as the number says (before: "task(s)").
+    expect(session.reason).toBe("2 ready tasks in priority order");
   });
 });
 

@@ -497,7 +497,8 @@ describe("session runner", () => {
     expect(res.status).toBe("completed");
     const session = await w.store.session.mustGet(res.sessionId);
     expect((session.plan as { items: unknown[] }).items).toHaveLength(1);
-    expect(session.reason).toBe("1 ready task(s) in priority order");
+    // W15-60: plurals as the number says (before: "task(s)").
+    expect(session.reason).toBe("1 ready task in priority order");
     expect(session.author_agent).toBe(w.alice);
     // The version check itself holds: a write against the version the runner started with is
     // refused as stale, and the plan on the row stays what the runner wrote.

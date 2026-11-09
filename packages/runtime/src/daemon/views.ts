@@ -41,7 +41,7 @@ import { MID_SESSION_LIMIT_SETTING, midSessionLimitOf } from "../session/billing
 import { countsList } from "../session/counts.ts";
 import { CREDENTIAL_REFUSED_KEY } from "../session/credential-wait.ts";
 import { runCapOf } from "../session/executor.ts";
-import { aboutWords } from "../session/money-words.ts";
+import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
@@ -574,6 +574,12 @@ export function describeEvent(
   return plainPlurals(withoutIds(lineOf(type, p, chfPerUsd)));
 }
 
+/** A clause as a sentence of its own: a capital first, a full stop last (W15-60). */
+function sentenceOf(text: string): string {
+  const t = text.trim().replace(/[.\s]+$/, "");
+  return t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}.` : "";
+}
+
 function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): string {
   if (eventAudience(type, p) === "person") {
     const line = personLine(type, p, chfPerUsd);
@@ -589,7 +595,9 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.brief":
       return `State brief ready: ${n("unread")} unread, ${count("ready", "ready task")}${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
     case "session.planned":
-      return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${s("summary") ? ` ${cutAtWord(plainLine(s("summary")), 120)}` : ""}`;
+      // W15-60: the plan's summary is a sentence of its own, with a capital (before: "Plan: 1
+      // task, about CHF 0.02. the first session you approved...").
+      return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${s("summary") ? ` ${sentenceOf(cutAtWord(plainLine(s("summary")), 120))}` : ""}`;
     case "session.paused":
       return `Paused: ${s("reason")}.`;
     case "session.plan_filed":
@@ -598,9 +606,22 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
       return `Running the plan you approved (${count("items", "task")}).`;
     case "task.started":
       if (p.reviewOnly === true) return reviewResumedLine(p);
-      return `Started "${s("title")}" with ${s("specialist")} (${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}).`;
+      // W15-60: a retry's start (a detail) reads as a first attempt's does: "The coder started
+      // "X" (about CHF 0.02)." (before: 'Started "X" with coder (about ...)', the registry key).
+      return (
+        personLine(type, { ...p, again: false }, chfPerUsd) ??
+        `Started "${s("title")}" (${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}).`
+      );
     case "task.finished":
-      return `Finished "${s("title") || "the task"}": ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${cutAtWord(plainLine(s("summary")), 200)}`;
+      // W15-60: a run the person's stop ended (a detail: their stop's own line says it) reads
+      // "Stopped by you during ...", never "killed ... run stopped by its caller"; every other
+      // outcome as the person's line, never the report's text ("Summary: ...").
+      if (s("outcome") === "killed")
+        return `Stopped by you during "${s("title") || "the task"}"${n("costUsdMicro") > 0 ? ` (${moneyWords(chf("costUsdMicro"), n("costUsdMicro"))})` : ""}.`;
+      return (
+        personLine(type, p, chfPerUsd) ??
+        `Finished "${s("title") || "the task"}" (${moneyWords(chf("costUsdMicro"), n("costUsdMicro"))}).`
+      );
     case "task.claims_released":
       return `Put ${count("count", "task")} back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
@@ -643,7 +664,13 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "critic.session_review_metrics": {
       const m = (p.metrics ?? {}) as Record<string, unknown>;
       const k = (key: string) => (typeof m[key] === "number" ? (m[key] as number) : 0);
-      return `Session review measured: ${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done, ${chfOf(k("actualUsdMicro"), chfPerUsd)} spent of a ${chfOf(k("estimateUsdMicro"), chfPerUsd)} estimate.`;
+      const done = `${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done`;
+      const money = (key: string) => moneyWords(chfOf(k(key), chfPerUsd), k(key));
+      // W15B-19: the work against the estimate, the reviews named apart (the estimate is the
+      // work's: W15-18). Before: "CHF 0.10 spent of a CHF 0.23 estimate", reviews included.
+      if (typeof m.workUsdMicro === "number")
+        return `Session review measured: ${done}; the work cost ${money("workUsdMicro")} against an estimate of ${money("estimateUsdMicro")}${k("reviewsUsdMicro") > 0 ? `, and the reviews ${money("reviewsUsdMicro")}` : ""}.`;
+      return `Session review measured: ${done}, ${money("actualUsdMicro")} spent of a ${money("estimateUsdMicro")} estimate.`;
     }
     case "critic.session_review":
       return `Session review: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;

@@ -3775,7 +3775,7 @@ export function cutPlanToBudget(plan: SessionPlan, workBudgetUsdMicro: number): 
     estimateUsdMicro: total,
     summary:
       leftOut.length > 0
-        ? `${plan.summary} (${leftOut.length} item(s) cut to fit the budget)`
+        ? `${plan.summary} (${leftOut.length} ${leftOut.length === 1 ? "item" : "items"} cut to fit the budget)`
         : plan.summary,
     ...(leftOut.length > 0 ? { leftOutForBudget: leftOut, workBudgetUsdMicro } : {}),
   };
@@ -3871,9 +3871,10 @@ export class StaticPlanner implements Planner {
     return {
       items,
       estimateUsdMicro: items.reduce((s, i) => s + i.estimateUsdMicro, 0),
+      // W15-60: plurals as the number says (design §5 rule 6; before: "task(s)").
       summary: first
-        ? `the first session you approved with the project plan: ${items.length} task(s) in its order`
-        : `${items.length} ready task(s) in priority order`,
+        ? `the first session you approved with the project plan: ${items.length} ${items.length === 1 ? "task" : "tasks"} in its order`
+        : `${items.length} ready ${items.length === 1 ? "task" : "tasks"} in priority order`,
     };
   }
 }

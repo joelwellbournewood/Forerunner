@@ -586,4 +586,101 @@ describe("w15-words, wave 15 run B", () => {
       expect(body).toMatch(/, b, c and 2 more\.$/);
     });
   });
+
+  describe("W15-60 (+W15B-19): the session log's Details lines read as a person's", () => {
+    // The events as live check 2 (RUN-11) recorded them, run through the daemon's words.
+    it("a killed run, a retry's start, a finished run with its report, the plan line", () => {
+      expect(
+        describeEvent(
+          "task.finished",
+          {
+            taskId: "t1",
+            title: "Write the notes",
+            specialist: "coder",
+            outcome: "killed",
+            costUsdMicro: 12_500,
+            summary: "run stopped by its caller",
+          },
+          0.8,
+        ),
+      ).toBe('Stopped by you during "Write the notes" (CHF 0.01).');
+      const retry = describeEvent(
+        "task.started",
+        {
+          taskId: "t1",
+          title: "Write the notes",
+          specialist: "coder",
+          estimateUsdMicro: 25_000,
+          again: true,
+        },
+        0.8,
+      );
+      expect(retry).toBe('The coder started "Write the notes" (about CHF 0.02).');
+      const done = describeEvent(
+        "task.finished",
+        {
+          taskId: "t1",
+          title: "Write the notes",
+          specialist: "coder",
+          outcome: "done",
+          costUsdMicro: 75_000,
+          summary: "**Summary**\nWrote notes.md with the three parts.",
+        },
+        0.8,
+      );
+      expect(done).toBe('The coder finished "Write the notes" (CHF 0.06).');
+      expect(done).not.toMatch(/Summary|Wrote notes/);
+      const plan = describeEvent(
+        "session.planned",
+        {
+          items: 1,
+          estimateUsdMicro: 25_000,
+          summary: "the first session you approved with the project plan: 1 task in its order",
+        },
+        0.8,
+      );
+      expect(plan).toBe(
+        "Plan: 1 task, about CHF 0.02. The first session you approved with the project plan: 1 task in its order.",
+      );
+      expect(plan).not.toContain("(s)");
+    });
+
+    it("W15B-19: the session review sets the work against the estimate and names the reviews apart", () => {
+      expect(
+        describeEvent(
+          "critic.session_review_metrics",
+          {
+            metrics: {
+              plannedDoneTasks: 1,
+              plannedTasks: 2,
+              actualUsdMicro: 125_000,
+              workUsdMicro: 62_500,
+              reviewsUsdMicro: 62_500,
+              estimateUsdMicro: 287_500,
+            },
+          },
+          0.8,
+        ),
+      ).toBe(
+        "Session review measured: 1 of 2 planned tasks done; the work cost CHF 0.05 against an estimate of CHF 0.23, and the reviews CHF 0.05.",
+      );
+      // An event written before W15-18 has no split: it reads as before.
+      expect(
+        describeEvent(
+          "critic.session_review_metrics",
+          {
+            metrics: {
+              plannedDoneTasks: 1,
+              plannedTasks: 1,
+              actualUsdMicro: 125_000,
+              estimateUsdMicro: 287_500,
+            },
+          },
+          0.8,
+        ),
+      ).toBe(
+        "Session review measured: 1 of 1 planned task done, CHF 0.10 spent of a CHF 0.23 estimate.",
+      );
+    });
+  });
 });

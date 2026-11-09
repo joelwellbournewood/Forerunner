@@ -6297,7 +6297,14 @@ worded by `moreEventLines` (`daemon/event-lines.ts`: `peers.feed`, `queue.consum
 its type in words and its warning, never JSON. Money is CHF (`chfOf`), the critic's terms are
 words (`reviewLevel`, `verdictWords`, `decisionWords`, `retryWords`: no "tier", "verdict",
 "improve_brief"), the autonomy level is named (`autonomyWords`), and `inbox.message` names the
-sender (the runner adds `fromName`; an older row says "another agent"). Person-facing money
+sender (the runner adds `fromName`; an older row says "another agent"). W15-60: the Details lines read as the person's do: a retry's start "The coder started \"X\"
+(about CHF 0.02)." (`personLine`; before "Started ... with coder"), a run the person's stop
+ended "Stopped by you during \"X\" (CHF 0.01)." (before "killed ... run stopped by its caller"), any other
+finished run without its report (before "... Summary: <report>"), the plan line's summary as a
+sentence of its own with a capital (`sentenceOf`; the runner's summary says "1 task", "2 tasks",
+never "task(s)"), and the session review's measure the work against the estimate with the
+reviews apart (W15B-19: "... the work cost CHF 0.05 against an estimate of CHF 0.23, and the
+reviews CHF 0.05.", from `workUsdMicro` and `reviewsUsdMicro`; an event without them reads as before). Person-facing money
 elsewhere is CHF too: the session summary and the status doc's note use the cost ledger's own
 `chf_micro`; the plan-approval card's estimates use the runner's `chfPerUsd` dep (compose's
 rate); the budget-stop notification the run's `spentChfMicro`; the chat-turn refusal, the
