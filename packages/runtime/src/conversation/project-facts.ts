@@ -306,6 +306,24 @@ export function cardLine(
   return `${where ? `[${where}] ` : ""}${own}`;
 }
 
+/**
+ * Whether a card's line (`cardLine`) quotes words Forerunner did not write (d1109-chat-guard,
+ * ADR 0114): a specialist's questions, why it asks or what it said (`context`, `said`), the
+ * critic's words, a proposed specialist's description, or any card a specialist or the critic
+ * filed. A chat turn whose facts list such a card in full reads every change back first, since
+ * those words may be what asks for it. A card in Forerunner's own words (a budget pause, the
+ * Docker card, a merge left to the person) does not.
+ */
+export function quotesOthersWords(r: Pick<HumanRequestRow, "change_card" | "steps">): boolean {
+  const card = (r.change_card ?? {}) as Record<string, unknown>;
+  const said = (k: string) => typeof card[k] === "string" && (card[k] as string).trim() !== "";
+  if (said("context") || said("said") || said("description")) return true;
+  if (card.source === "specialist" || card.source === "critic") return true;
+  return (
+    typeof card.key === "string" && card.key.startsWith("person_questions:") && r.steps.length > 0
+  );
+}
+
 /** Where the plan from the brief stands, as the chat is told it (`IntakeService.status`). */
 export interface PlanState {
   state: IntakeState;

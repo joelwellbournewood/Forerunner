@@ -56,6 +56,8 @@ export type ExecuteResult =
       /** The change log id while the change is undoable, for the one-click undo. */
       undoToken: string | null;
       sentence: string;
+      /** The sentence quotes text the person did not write (`CommandOutcome.untrusted`). */
+      untrusted?: CommandOutcome["untrusted"];
     }
   | {
       status: "partial";
@@ -64,6 +66,7 @@ export type ExecuteResult =
       undoToken: string | null;
       sentence: string;
       note: string;
+      untrusted?: CommandOutcome["untrusted"];
     }
   | {
       status: "pending";
@@ -162,6 +165,18 @@ interface Step {
   risk: Risk;
   /** Said in words as a command that is read back first (`askFromChat`), then redirected. */
   askedAs?: boolean;
+}
+
+/**
+ * The changes that still act at once in a turn that read a record (d1109-chat-guard): stopping
+ * the running session (`session.stop`, scope agent or session) and "stop after this task"
+ * (`session.pause`). Stop all (`session.stop` with scope all) is not one of them.
+ */
+function stopsAtOnceAfterRecords(step: Step): boolean {
+  if (step.def.name === "session.pause") return true;
+  if (step.def.name !== "session.stop") return false;
+  const scope = (step.params as { scope?: unknown } | null)?.scope;
+  return scope !== "all";
 }
 
 interface DoneStep {
@@ -293,6 +308,14 @@ export class CommandExecutor {
       (ctx.source === "chat" || ctx.source === "voice") &&
       steps.some((s) => s.def.askFromChat === true || s.askedAs === true)
     )
+      return "needs_yes";
+    // d1109-chat-guard (ADR 0114, W15B-80): in a turn that read a record, the record's words may
+    // be what asks for the change, so every change is read back once, whatever its risk: before,
+    // a new task, a note for the next brief, a narrowing setting or a session start under the
+    // costly line acted at once. Stopping is the safe direction (design §3.9): a stop of the
+    // running session and "stop after this task" still act at once; Stop all is read back with
+    // the header's own question, so a record cannot stop all work by itself.
+    if (decision === "act" && ctx.recordsRead && !steps.every(stopsAtOnceAfterRecords))
       return "needs_yes";
     return decision;
   }
@@ -640,12 +663,15 @@ export class CommandExecutor {
       projectId: projectId ?? null,
       kind: "change",
     });
+    // A step whose sentence quotes text the person did not write keeps its mark (d1109-chat-guard).
+    const untrusted = done.map((d) => d.outcome.untrusted).find((u) => !!u);
     return {
       status: "done",
       card,
       changeLogId: row.id,
       undoToken: reversible ? row.id : null,
       sentence,
+      ...(untrusted ? { untrusted } : {}),
     };
   }
 

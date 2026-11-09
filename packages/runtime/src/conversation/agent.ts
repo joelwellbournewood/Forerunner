@@ -9,7 +9,8 @@ import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { LOCAL_BUDGET_SOURCE, SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { wrapUntrusted } from "../injection/scan.ts";
+import { scanForInjection, wrapUntrusted } from "../injection/scan.ts";
+import { noteRecordsRead } from "../loop/commands.ts";
 import type {
   CommandResultView,
   CommandTurn,
@@ -48,6 +49,7 @@ import {
   lastSessionBlock,
   type PlanState,
   planBlock,
+  quotesOthersWords,
   replyNames,
   repositoryFacts,
   tasksBlock,
@@ -809,10 +811,14 @@ export class ConversationAgent {
       provider,
       conversationProject,
     );
+    // d1109-chat-guard: facts that carry a record's words (a card in full in words Forerunner did
+    // not write, a flagged excerpt, lesson or task line) read back every change of this turn.
+    if (context.recordsRead) turn.recordsRead = true;
     const results: CommandResultView[] = [];
     const tools = new ToolRegistry();
     for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
       tools.register(t);
+    // d1109-chat-guard: a record read sets the turn's read-back for the changes after it.
     for (const t of readTools({
       store,
       projectId,
@@ -820,7 +826,7 @@ export class ConversationAgent {
       ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
       folderOf: (id) => this.folderOf(id),
     }))
-      tools.register(t);
+      tools.register(noteRecordsRead(t, turn));
     // The chat mode's tier, effort and target from the tables in force (ADR 0039).
     const modelConfig = this.deps.modelConfig?.();
     // Then the principal's own chat settings (spec D.4, ADR 0072: `model_config.modes.text_chat`).
@@ -1309,6 +1315,12 @@ export class ConversationAgent {
     retrieval: { docs: RetrievalStats; lessons: RetrievalStats };
     /** Instruction-like text the scan found in the records the facts carry (d1109-chat-guard). */
     flagged: RecordFlag[];
+    /**
+     * The facts carry a record's words (d1109-chat-guard): a card listed in full that quotes
+     * words Forerunner did not write, or a flagged lesson, doc excerpt, task line or last
+     * session result. The turn then reads back every change (`CommandTurn.recordsRead`).
+     */
+    recordsRead: boolean;
   }> {
     const agentId = agent.id;
     const { store, clock } = this.deps;
@@ -1366,6 +1378,17 @@ export class ConversationAgent {
     // `request.answer` resolves a reference among them all.
     const allOpen = (await store.humanRequest.open({ humanId }, { limit: 500 })).map((r) => r.id);
     const openRequests = openRequestsFact(listed, conv, query, ownCards.length, allOpen, elsewhere);
+    // d1109-chat-guard: the cards this turn lists in full (read from openRequestsFact's output,
+    // which is unchanged). One that quotes words Forerunner did not write is a record in the
+    // facts: the turn reads every change back; what reads like instructions is recorded.
+    const flagged: RecordFlag[] = [];
+    let recordsRead = false;
+    const shownIds = new Set(openRequests.shown.map((s) => s.id));
+    for (const card of listed.filter((r) => shownIds.has(r.row.id) && quotesOthersWords(r.row))) {
+      recordsRead = true;
+      const scan = scanForInjection(card.line, "agent_output");
+      if (scan.suspicious) flagged.push({ where: "card", rules: scan.matches.map((m) => m.rule) });
+    }
     const project = projectId ? await store.project.get(projectId) : undefined;
     const volatile = volatilePreamble({
       now: clock.nowIso(),
@@ -1401,15 +1424,26 @@ export class ConversationAgent {
     }
     if (project) {
       try {
-        blocks.push(
-          await tasksBlock(store, project.id, {
-            sandboxReady: this.deps.sandboxReady?.() ?? null,
-            heading: `# Tasks of ${project.name}`,
-            empty: emptyTasksLine(plan),
-          }),
-        );
+        const tasks = await tasksBlock(store, project.id, {
+          sandboxReady: this.deps.sandboxReady?.() ?? null,
+          heading: `# Tasks of ${project.name}`,
+          empty: emptyTasksLine(plan),
+        });
+        blocks.push(tasks);
         const last = lastSessionBlock(project, chf);
         if (last) blocks.push(last);
+        // d1109-chat-guard: a task's reason and the last session's result quote what agents
+        // reported; when the scan finds instructions there, the turn reads every change back.
+        for (const [where, block] of [
+          ["tasks", tasks],
+          ["last session", last],
+        ] as const) {
+          const scan = block ? scanForInjection(block, "agent_output") : null;
+          if (scan?.suspicious) {
+            recordsRead = true;
+            flagged.push({ where, rules: scan.matches.map((m) => m.rule) });
+          }
+        }
       } catch (e) {
         this.logger.warn("chat tasks not read", { projectId, error: errorMessage(e) });
       }
@@ -1436,7 +1470,9 @@ export class ConversationAgent {
       sources: retrieved.sources,
       retrieval: retrieved.stats,
       shownRequests: openRequests.shown,
-      flagged: retrieved.flagged,
+      flagged: [...flagged, ...retrieved.flagged],
+      // A flagged lesson or doc excerpt counts like a card in full (d1109-chat-guard).
+      recordsRead: recordsRead || retrieved.flagged.length > 0,
     };
   }
 

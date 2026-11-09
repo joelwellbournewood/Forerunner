@@ -2,6 +2,7 @@ import type { PricingTable } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
 import type {
   ActionClass,
+  ContentSource,
   EffortLevel,
   ProviderCapabilities,
   SpecialistProposal,
@@ -394,6 +395,15 @@ export interface CommandContext {
   deviceId?: string | null;
   /** Session whose event log receives the spoken sentence (the conversation session). */
   sessionId?: string | null;
+  /**
+   * d1109-chat-guard (ADR 0114): the chat turn this change comes from read a record (a read
+   * tool's or a command's answer marked untrusted, a card listed in full in words Forerunner did
+   * not write, a flagged excerpt, lesson or task line in the facts). The executor then reads
+   * every change back once, whatever its risk; stopping the running session and "stop after
+   * this task" still act at once, Stop all is read back (`decideSteps`). Read when the command
+   * tools build each call's context, so a lookup earlier in the turn counts.
+   */
+  recordsRead?: boolean;
 }
 
 export interface CommandOutcome {
@@ -412,6 +422,12 @@ export interface CommandOutcome {
   activeProjectId?: string | null;
   /** Appended to the change log when the run was only partly done. */
   note?: string;
+  /**
+   * d1109-chat-guard (ADR 0114): the sentence quotes text the person did not write (a
+   * repository's marker, a page): the chat model gets it inside the data envelope, scanned, and
+   * the rest of its turn reads every change back (`CommandContext.recordsRead`).
+   */
+  untrusted?: { source: ContentSource; origin?: string };
 }
 
 export type RiskFn<P> = (params: P, ctx: CommandContext) => Risk | Promise<Risk>;

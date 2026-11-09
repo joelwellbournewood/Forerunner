@@ -83,6 +83,23 @@ export const SOURCE_OF: Record<CommandTurn["source"], CommandSource> = {
   ui: "ui",
 };
 
+/**
+ * d1109-chat-guard (ADR 0114): a tool of a chat turn whose result carries the untrusted mark
+ * (a read tool's record, a command answer that quotes text the person did not write) sets
+ * `turn.recordsRead`, so the command tools read back every change the model asks for after it
+ * in the same turn (`CommandContext.recordsRead`, the executor's `decideSteps`).
+ */
+export function noteRecordsRead<T extends ToolSpec>(spec: T, turn: CommandTurn): T {
+  return {
+    ...spec,
+    async execute(input, ctx) {
+      const result = await spec.execute(input, ctx);
+      if (result.untrusted) turn.recordsRead = true;
+      return result;
+    },
+  };
+}
+
 export class CommandLoop implements ConversationCommands {
   private readonly logger = log("command-loop");
   readonly registry: CommandRegistry;
@@ -163,6 +180,9 @@ export class CommandLoop implements ConversationCommands {
       timezone: human?.timezone || "UTC",
       deviceId: turn.deviceId ?? null,
       sessionId: turn.sessionId,
+      // d1109-chat-guard: read when each call's context is built, so a record read earlier in
+      // the turn makes the executor read this change back.
+      ...(turn.recordsRead ? { recordsRead: true } : {}),
       ...over,
     };
   }
@@ -257,7 +277,9 @@ export class CommandLoop implements ConversationCommands {
    * the human stays `humanId`, whose yes confirms (security-command-actor.test.ts).
    */
   tools(turn: CommandTurn, onResult: (r: CommandResultView) => void): ToolSpec[] {
-    return this.commandToolSpecs(turn, onResult).map((spec) => ({ ...spec, gate: "registry" }));
+    return this.commandToolSpecs(turn, onResult).map((spec) =>
+      noteRecordsRead({ ...spec, gate: "registry" }, turn),
+    );
   }
 
   private commandToolSpecs(
@@ -278,7 +300,12 @@ export class CommandLoop implements ConversationCommands {
             ? { status: "refused", reason: r.reason }
             : r.status === "cancelled"
               ? { status: "cancelled" }
-              : { status: r.status, sentence: r.sentence };
+              : {
+                  status: r.status,
+                  sentence: r.sentence,
+                  // A sentence quoting text the person did not write goes to the model as data.
+                  ...(r.untrusted ? { untrusted: r.untrusted } : {}),
+                };
       },
       ctxFor: () => this.contextFor(turn, { actor: { kind: "agent", id: turn.agentId } }),
     });

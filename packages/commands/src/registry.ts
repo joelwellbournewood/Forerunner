@@ -163,6 +163,11 @@ export interface ToolOutcome {
   pendingId?: string;
   /** The card's one-line read-back, for a pending change: what the person is asked. */
   readback?: string;
+  /**
+   * The sentence quotes text the person did not write (`CommandOutcome.untrusted`): the tool's
+   * result carries the mark, so the hooks wrap it as data and scan it (d1109-chat-guard).
+   */
+  untrusted?: ToolResult["untrusted"];
 }
 
 /**
@@ -184,7 +189,10 @@ export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): To
         switch (out.status) {
           case "done":
           case "partial":
-            return { content: out.sentence ?? "done" };
+            return {
+              content: out.sentence ?? "done",
+              ...(out.untrusted ? { untrusted: out.untrusted } : {}),
+            };
           case "pending":
             // What the person is asked, in their words (the card's one-line read-back), never
             // the pending card's id: the model repeated ids to the person (live walk 2 #10,

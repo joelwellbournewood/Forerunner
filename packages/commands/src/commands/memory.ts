@@ -137,6 +137,8 @@ export const memoryRecord: CommandDef<MemoryRecordParams> = {
       scope: "project",
       risk: "low",
       sentence: sentenceOf(t.agentName, t.project, p.text),
+      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
+      ask: `Record this lesson in ${t.agentName}'s memory for ${t.project ? t.project.name : "every project"}: ${quote(p.text, READBACK_MAX)}?`,
       reversible: true,
       projectId: t.project?.id ?? null,
       projectName: t.project?.name ?? null,
