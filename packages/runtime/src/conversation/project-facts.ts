@@ -36,6 +36,42 @@ import { type LastSessionOutcome, stopWords } from "../session/result.ts";
 /** Tasks listed by name in a turn's context at most; the rest are counted. */
 export const CONTEXT_TASKS_MAX = 40;
 
+/** The `en-GB` formatter of one zone, or null when the platform does not know the zone. */
+function dayFormatter(timeZone: string): Intl.DateTimeFormat | null {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The person's own day and time for the chat's `# Now` (d1109-chat-guard, ADR 0114, D3-6):
+ * "Monday 9 November 2026, 23:30 (Europe/Zurich)", from `human.timezone`, beside the UTC `now`
+ * the facts already carry. "Yesterday", "last week" and "on Monday" are the person's days:
+ * before, the facts gave only the UTC timestamp and the stored zone was unused. A zone the
+ * platform does not know is read as UTC and named so. The line goes into the turn's volatile
+ * part, so the cached prefix does not move.
+ */
+export function todayLine(timeZone: string, nowMs: number): string {
+  const zone = timeZone.trim();
+  const fmt = (zone && dayFormatter(zone)) || dayFormatter("UTC");
+  const named = zone && dayFormatter(zone) ? zone : "UTC";
+  const parts = Object.fromEntries(
+    (fmt as Intl.DateTimeFormat).formatToParts(new Date(nowMs)).map((p) => [p.type, p.value]),
+  );
+  return `${parts.weekday} ${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute} (${named})`;
+}
+
 const quote = (s: string) => `"${s.replace(/\s+/g, " ").trim()}"`;
 
 /** One task's line: title, status in words, what it waits for, why it failed or stopped, the critic. */

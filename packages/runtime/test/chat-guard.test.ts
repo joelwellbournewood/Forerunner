@@ -557,6 +557,31 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
   });
 });
 
+describe("d1109-chat-guard, run C: the facts carry the person's own time (CG-5, D3-6)", () => {
+  it("'# Now' says today in the person's zone beside the UTC now; the system part and the tools are the same bytes on the next turn", async () => {
+    const w = await setup({
+      replies: [
+        textReply("It is Monday evening.", { ttftMs: 0 }),
+        textReply("Still Monday.", { ttftMs: 0 }),
+      ],
+    });
+    await w.clock.set("2026-11-09T22:30:00.000Z");
+    await w.chat("what day is it?");
+    // At 7d6b34a the facts carried only the UTC now; Robin's zone (Europe/Zurich) was unused.
+    expect(w.last(0)).toContain(
+      "# Now\n- now: 2026-11-09T22:30:00.000Z\n- today: Monday 9 November 2026, 23:30 (Europe/Zurich)\n",
+    );
+    await w.clock.advance(60_000);
+    await w.chat("and now?");
+    expect(w.last(1)).toContain("- today: Monday 9 November 2026, 23:31 (Europe/Zurich)");
+    // The line is volatile: the cached prefix (system and tools) does not move.
+    const [a, b] = w.provider.calls.map((c) => c.request);
+    expect(b?.system).toBe(a?.system);
+    expect(JSON.stringify(b?.tools)).toBe(JSON.stringify(a?.tools));
+    await w.store.close();
+  });
+});
+
 /**
  * CG-4 (D3-5, D3-8, L-17): on a repository project every chat turn waited for GitHub's list of
  * open pull requests before its first model call (compose.ts openPullRequests, awaited in the

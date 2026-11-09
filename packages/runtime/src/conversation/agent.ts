@@ -53,6 +53,7 @@ import {
   replyNames,
   repositoryFacts,
   tasksBlock,
+  todayLine,
   workingNowBlock,
 } from "./project-facts.ts";
 import { readTools } from "./read-tools.ts";
@@ -1393,8 +1394,12 @@ export class ConversationAgent {
       if (scan.suspicious) flagged.push({ where: "card", rules: scan.matches.map((m) => m.rule) });
     }
     const project = projectId ? await store.project.get(projectId) : undefined;
+    // d1109-chat-guard (D3-6): the person's own day and time beside the UTC now ("yesterday",
+    // "last week" and "on Monday" are their days); volatile, so the cached prefix holds.
+    const zone = (await store.human.get(humanId))?.timezone ?? "UTC";
     const volatile = volatilePreamble({
       now: clock.nowIso(),
+      today: todayLine(zone, clock.now()),
       active_project: project ? project.name : "none",
       unread_messages: unread.length,
       // In full once per conversation, when asked, or while blocking; else a count.
