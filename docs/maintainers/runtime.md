@@ -2056,7 +2056,10 @@ budget-stop; the owner's decision of 2026-11-02).**
   "Nothing for the acceptance criteria." or "None required by the criteria", is empty too, while
   "Nothing works yet" and "None of the tests pass" stay items, and an optional extra ("Optionally,
   ...", "(optional) ...", "Nice to have: ...") goes to `optional`, kept in the handoff as a note,
-  never a reason to pause; the wrap-up and `WRAP_UP_BRIEF_LINE` ask for only what the criteria
+  never a reason to pause; what the "nothing" is about must end the line and the words that say
+  done are whole words, and a "nothing" that goes on to name work ("but", "except", "not",
+  "still", "missing", "incomplete", "fails" ...: `NOT_NOTHING`) stays an item, as does a hedge
+  alone ("Maybe fix the failing build"; review of W15-14); the wrap-up and `WRAP_UP_BRIEF_LINE` ask for only what the criteria
   still need, or nothing) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,

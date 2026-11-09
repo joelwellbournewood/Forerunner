@@ -53,12 +53,26 @@ const MAX_ITEM_CHARS = 200;
  * for the acceptance criteria.", "None required by the criteria", "Nothing left: all criteria
  * are met"), as the live researcher wrote it (W15-14). "Nothing works yet" and "None of the
  * tests pass" are items: a qualifier counts only when it is about the criteria or says done.
+ * What it is about ends the line ("Nothing in the task works yet" is an item), and the words
+ * that say done are whole words ("incomplete" says nothing is done; review of W15-14).
  */
 const NOTHING =
-  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;]*?(?:criteri|brief|task|scope|requirement|deliverable)[^.;]*|\s*[:;,(\u2013\u2014-]\s*[\s\S]*?(?:criteri|complete|done|finished|\bmet\b)[\s\S]*)?[\s.!)]*$/i;
-/** An optional extra ("Optionally, ...", "(optional) ...", "Nice to have: ..."): never work left. */
+  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)|\s*[:;,(\u2013\u2014-]\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$/i;
+/**
+ * A "nothing" that goes on to name work ("Nothing - but the README is incomplete", "Nothing:
+ * the criteria are not met yet", "... except the tests still fail") is work left (review of
+ * W15-14): read as nothing, unfinished work went to review instead of a pause.
+ */
+const NOT_NOTHING =
+  /\b(?:but|except|however|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
+const isNothing = (text: string) => NOTHING.test(text) && !NOT_NOTHING.test(text);
+/**
+ * An optional extra ("Optionally, ...", "(optional) ...", "Nice to have: ..."): never work left.
+ * A hedge alone ("Maybe fix the failing build", "Perhaps the most important: finish the
+ * parser") is work left (review of W15-14).
+ */
 const OPTIONAL =
-  /^(?:\(?optional(?:ly)?\)?\b|nice[- ]to[- ]have\b|if (?:you|the person) (?:want|wish|like)s?\b|(?:maybe|perhaps|possibly)\b|could also\b)|\(optional\)[\s.]*$/i;
+  /^(?:\(?optional(?:ly)?\)?\b|nice[- ]to[- ]have\b|if (?:you|the person) (?:want|wish|like)s?\b|could also\b)|\(optional\)[\s.]*$/i;
 const ITEM = /^\s*(?:[-*•+]|\d+[.)])\s+(.*\S)\s*$/;
 
 /** A heading line of the two ("Where I stopped:", "**Left to do:**", "## Left to do"), or null. */
@@ -113,11 +127,11 @@ export function parseHandoff(
     const items: string[] = [];
     const extras: string[] = [];
     const add = (text: string) => {
-      if (!text || NOTHING.test(text)) return;
+      if (!text || isNothing(text)) return;
       (OPTIONAL.test(text) ? extras : items).push(text);
     };
-    if (h.rest && !NOTHING.test(h.rest)) add(h.rest);
-    if (!h.rest || !NOTHING.test(h.rest)) {
+    if (h.rest && !isNothing(h.rest)) add(h.rest);
+    if (!h.rest || !isNothing(h.rest)) {
       for (let j = i + 1; j < lines.length; j++) {
         const l = lines[j] ?? "";
         if (!l.trim()) {

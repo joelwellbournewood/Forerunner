@@ -1050,6 +1050,34 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
     });
   });
 
+  it("a 'nothing' that goes on to name work, and a hedged item, stay work left (review of W15-14)", () => {
+    const left = (lines: string[]) =>
+      parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+    // Before: 'complete' inside 'incomplete' and 'task' with anything after it read as nothing.
+    for (const line of [
+      "Nothing - but the README is incomplete",
+      "Nothing in the task works yet",
+      "Nothing: the criteria are not met yet",
+      "Nothing for the criteria, except the tests still fail",
+      "None for the task; the parser is missing",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+    // Before: filed as optional extras.
+    for (const line of [
+      "Perhaps the most important: finish the parser",
+      "Maybe fix the failing build",
+    ])
+      expect(left([`- ${line}`]), line).toEqual({ stopped: "here.", leftToDo: [line] });
+    // What reads as nothing still does.
+    for (const line of [
+      "Nothing for the task's acceptance criteria.",
+      "Nothing within the scope of the brief",
+      "Nothing left: the task is complete.",
+      "None; every criterion is met",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+  });
+
   it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
     expect(wrapUpText(10_000, 100_000)).toContain(
       "Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",

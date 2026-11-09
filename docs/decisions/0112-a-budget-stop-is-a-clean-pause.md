@@ -342,7 +342,9 @@ names the model. A model the price table does not know is priced as the run's mo
    an item. "Nothing"/"none" with what it is about (the criteria, the brief, the task) or with a
    reason that says it is done is nothing, and an optional extra goes to the handoff's
    `optional` notes, never a reason to pause; "Nothing works yet" or "None of the tests pass"
-   stays work. The wrap-up and the brief's line ask for only what the criteria still need, as a
+   stays work, and so does a "nothing" that goes on to name work ("Nothing - but the README is
+   incomplete", "Nothing in the task works yet") or a hedge alone ("Maybe fix the failing
+   build"). The wrap-up and the brief's line ask for only what the criteria still need, as a
    list, or "nothing", with no optional extras.
 3. **Searches near the line (W15-15; amends the 'web-search' note in ADR 0107).** A run is no
    longer offered fewer searches call by call as it nears its line: its fixed offer stands while
