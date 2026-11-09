@@ -59,8 +59,14 @@ added at once, and the turn's GitHub request came before its first model call.
    safe direction: a stop of the running session and "stop after this task" act at once; Stop
    all is read back with the header's own question, "Stop every running session now? No
    session starts until you allow it again.", so a record cannot stop all work by itself. The
-   person's own commands through the parser are unchanged. `task.create`, `note.add` and
-   `memory.record` gain a one-line question for their read-back.
+   person's own commands through the parser are unchanged. A command that changes nothing
+   (`summary.speak`: it reads the person's own project out, and speaks only when the person's
+   own words ask for it) answers at once (`actsAtOnceAfterRecords`). Every read-back is one
+   question (design 3.9, 5): `task.create`, `note.add`, `memory.record`, `project.switch`,
+   `project.create`, `session.resume` and `specialist.propose` gain theirs ("Switch to Shop
+   page?", "Allow sessions to start again?"), and in chat and voice a card without one is asked
+   as "Change <what> from <old> to <new>?" (`questionOf`), never as the rendered card with its
+   "Risk: low" and "reply yes to the email".
 3. **The waiting merges come from the app's records.** `# Your files` names the repository and
    this computer's copy, then each done task's merge from its merge record (Merge and the
    watcher keep it): 'Waiting for your Merge: "X": <the record's sentence>', "Merging by

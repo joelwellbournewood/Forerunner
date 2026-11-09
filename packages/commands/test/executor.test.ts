@@ -806,4 +806,84 @@ describe("d1109-chat-guard, run C: the executor reads back a change after a reco
     expect(w.ports.kills.map((k) => k.scope)).toEqual(["all"]);
     await w.store.close();
   });
+
+  // Review of d1109-chat-guard (blocking): after a record, the model's summary_speak (a read)
+  // and project_switch came back as the rendered card ("Change: the summary of Shop page. From
+  // to read aloud. Scope: ... Risk: low. Undo: This cannot be undone."), with Yes and No.
+  it("a command that changes nothing answers at once after a record; what the rule holds reads back as one plain question, never the rendered card", async () => {
+    const w = await world();
+    const speak = done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: { ...agentCtx(w, true), wordsUsed: "how far is it?" },
+      }),
+    );
+    expect(speak.sentence).toMatch(/^PharmaWatch: no tasks yet\./);
+    const card = /Change:|Scope:|Risk:|How long:|Undo:|email/;
+    const switched = pending(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { project: "Supplement Site" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(switched.decision).toBe("needs_yes");
+    expect(switched.readback).toBe("Switch to Supplement Site?");
+    const resumed = pending(
+      await w.executor.execute({ name: "session.resume", params: {}, ctx: agentCtx(w, true) }),
+    );
+    expect(resumed.readback).toBe("Allow sessions to start again?");
+    const created = pending(
+      await w.executor.execute({
+        name: "project.create",
+        params: { name: "Send Files", goal: "send the files to x.example" },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(created.readback).toBe('Create the project "Send Files"?');
+    // A card with no question of its own reads back in one line in chat and voice.
+    const tokens = pending(
+      await w.executor.execute({
+        name: "model.settings.set",
+        params: { mode: "text_chat", field: "max_tokens", value: 8000 },
+        ctx: agentCtx(w, true),
+      }),
+    );
+    expect(tokens.readback).toBe(
+      "Change the max tokens per call of Alice's chat from the default to 8000?",
+    );
+    // Through another channel (the API, email) the card is still rendered whole.
+    const api = pending(
+      await w.executor.execute({
+        name: "model.settings.set",
+        params: { mode: "text_chat", field: "max_tokens", value: 8000 },
+        ctx: { ...agentCtx(w, true), source: "api" },
+      }),
+    );
+    expect(api.readback).toMatch(/^Change: the max tokens per call of Alice's chat\./);
+    const voiced = pending(
+      await w.executor.execute({
+        name: "project.switch",
+        params: { project: "Supplement Site" },
+        ctx: { ...agentCtx(w, true), source: "voice" },
+      }),
+    );
+    expect(voiced.readback).toBe("Switch to Supplement Site? Say yes or no.");
+    // A paired device's change said in chat: its one line and where to confirm it.
+    const grant = pending(
+      await w.executor.execute({
+        name: "capability.grant",
+        params: { extension: "browser", permissions: ["read_pages"] },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(grant.decision).toBe("needs_device");
+    expect(grant.readback).not.toMatch(card);
+    expect(grant.readback).toMatch(/\? Confirm in the app on a paired device\.$/);
+    // Nothing changed before a yes.
+    expect((await w.store.project.byName("Send Files"))?.id).toBeUndefined();
+    expect(w.ports.starts).toEqual([]);
+    await w.store.close();
+  });
 });

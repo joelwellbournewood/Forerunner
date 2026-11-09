@@ -410,7 +410,15 @@ Resume.', 'Make "Write the FAQ" wait for "Write the README"?', "Start a session 
 (up to CHF 5)?"). A pending card with one reads back as that question alone (voice adds "Say
 yes or no."; the paired device's card says to confirm there), in place of the rendered card and
 "Say yes to confirm, or reply yes to the email." (shown even with email off); a composed card
-asks every part's question. The task commands (`task.transition`, `task.pause`, `task.resume`,
+asks every part's question. In chat and voice a card without an `ask` is asked in one line too
+(`questionOf`: every part's question, else "Change <what> from <old> to <new>?", a plan-less
+card its description), never as the rendered card with "Risk: low" and "reply yes to the
+email" (review of d1109-chat-guard: after a record, a project switch read back as "Change: the
+active project. From ... Risk: low. Undo: ..."); the API, email and the settings screen keep
+the rendered card. `project.switch` ("Switch to Shop page?"), `project.create` ('Create the
+project "X"?'), `session.resume` ("Allow sessions to start again?") and `specialist.propose`
+('Propose the specialist "X" for your approval? It cannot run until you approve it in the
+Inbox and its test tasks pass.') have their own. The task commands (`task.transition`, `task.pause`, `task.resume`,
 `task.reopen`, `task.update`, `task.dependencies`) are `askFromChat`: said in chat or voice
 they are read back for a yes whatever their risk, because the words were interpreted ("skip
 the LICENSE task") and the person should see which task it touches before it moves; the Tasks
@@ -425,7 +433,9 @@ result. Such a record's words may be what asks for the change, so `decideSteps` 
 `needs_yes` for every change it would have acted on at once, whatever the risk (a higher
 decision, a paired device, stays). Stopping is the safe direction (design §3.9):
 `session.stop` of the running session (scope `agent` or `session`) and `session.pause` ("stop
-after this task") still act at once (`stopsAtOnceAfterRecords`); `session.stop` with scope
+after this task") still act at once (`stopsAtOnceAfterRecords`), and so does a command that
+changes nothing (`CHANGES_NOTHING`: `summary.speak`, which reads the person's own project out
+and speaks only when the person's own words ask; both in `actsAtOnceAfterRecords`); `session.stop` with scope
 `all` (Stop all) is read back with the header's own question, "Stop every running session now?
 No session starts until you allow it again.", so a record cannot stop all work by itself. The
 person's own commands through the parser carry no flag and are unchanged. `task.create`

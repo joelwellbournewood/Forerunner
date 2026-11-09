@@ -4189,8 +4189,11 @@ after one is read back" below). The system prompt
   commands.md, `decideSteps`): before (W15B-80), a new task, a note for the next brief, a
   narrowing setting or a session start under the costly line the model called after reading a
   report acted at once. Stopping the running session and "stop after this task" still act at
-  once; Stop all is read back with the header's question. The parser's own commands (the
-  person's typed "add a task: ...", "stop everything") are unchanged. Tests:
+  once; Stop all is read back with the header's question; a summary (`summary_speak`, which
+  changes nothing) answers at once. Each read-back is one question with Yes and No ("Switch to
+  Shop page?"), never the rendered change card (commands.md, `questionOf`). The parser's own
+  commands (the person's typed "add a task: ...", "stop everything") are unchanged. A read-back
+  made after a record survives a restart like any waiting card. Tests:
   `chat-guard.test.ts` (composed), `chat-facts.test.ts` (units), the injection suite's
   "record" channel (testing.md).
 - **Cards and undo per conversation.** The waiting card is the conversation's (`pendingOf`):

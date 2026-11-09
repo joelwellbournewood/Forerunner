@@ -349,8 +349,12 @@ describe("conversation agent over the command registry", () => {
     expect(r1.pendingConfirmation).not.toBeNull();
     expect(r1.pendingConfirmation?.commands).toEqual(["project.switch", "budget.set"]);
     expect(r1.pendingConfirmation?.decision).toBe("needs_yes");
-    expect(r1.reply).toContain("Say yes to confirm");
-    expect(r1.reply).toContain("PharmaWatch");
+    // Every part's one question, then voice's "Say yes or no." (design §3.9, §5): before, the
+    // switch had no question, so the plan read back as the rendered card with "Say yes to
+    // confirm, or reply yes to the email." (review of d1109-chat-guard).
+    expect(r1.reply).toBe(
+      "Switch to PharmaWatch? Raise tonight's session budget for PharmaWatch to CHF 20.00 until 06:00? Say yes or no.",
+    );
     expect(r1.actions).toEqual([]);
     // Nothing changed yet.
     expect(

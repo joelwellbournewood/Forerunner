@@ -167,6 +167,8 @@ export const projectSwitch: CommandDef<ProjectSwitchParams> = {
       reversible: true,
       projectId: target.id,
       projectName: target.name,
+      // The read-back in one line when it waits for a yes (a chat turn that read a record).
+      ask: params.back ? `Switch back to ${target.name}?` : `Switch to ${target.name}?`,
     });
   },
   async run(params, ctx) {
@@ -244,6 +246,7 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
       sentence: createSentence(params),
       reversible: true,
       projectName: params.name,
+      ask: `Create the project "${params.name}"?`,
     });
   },
   async run(params, ctx) {

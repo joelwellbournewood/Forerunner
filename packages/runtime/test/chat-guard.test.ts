@@ -536,6 +536,66 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
     await w.store.close();
   });
 
+  // Review of d1109-chat-guard (blocking): on a project whose facts list a specialist's card in
+  // full, the model's summary_speak (a read) and project_switch came back as the rendered change
+  // card with Yes and No: "Change: the summary of Shop page. From to read aloud. Scope: ...
+  // Risk: low. Undo: This cannot be undone." (bench walk 4, steps 34 and 35).
+  it("with a specialist's card listed in full: summary_speak answers at once; project_switch and session_resume are read back as one plain question with Yes and No", async () => {
+    const w = await setup({
+      replies: [
+        // In order: the person's "no" is the parser's and makes no model call.
+        toolReply("summary_speak", {}, "Here is where it stands.", { ttftMs: 0 }),
+        textReply("That is where it stands.", { ttftMs: 0 }),
+        toolReply("project_switch", { project: "Shop Page" }, "Switching.", { ttftMs: 0 }),
+        textReply("It waits for your yes.", { ttftMs: 0 }),
+        toolReply("session_resume", {}, "Allowing them.", { ttftMs: 0 }),
+        textReply("It waits for your yes.", { ttftMs: 0 }),
+      ],
+    });
+    await w.store.project.insert({
+      name: "Shop Page",
+      goal: "A shop",
+      repos: [],
+      stage: "build",
+      status: "active",
+      budget_usd_micro: 0,
+      autonomy_level: 2,
+      summary_cache: {},
+      data_assets: [],
+      settings: {},
+      small_project_mode: false,
+      active: true,
+    });
+    const research = await task(w, "Summarize the MDN page", {
+      status: "needs_human",
+      specialist: "researcher",
+    });
+    await questionsCard(w, research, "Which page of MDN should I summarize?");
+    const card = /Change:|Scope:|Risk:|How long:|Undo:|email/;
+    const summary = await w.chat("how far is it?");
+    // The card is listed in full, quoting the specialist's words: the turn read a record.
+    expect(w.last(0)).toContain("The specialist said:");
+    expect(summary.pendingConfirmation).toBeNull();
+    expect(summary.actions.map((a) => a.kind)).toEqual(["summary.speak"]);
+    expect(w.toolResults(1)).toContain("Quote Page: 0 of 1 tasks done.");
+    expect(w.toolResults(1)).not.toContain("Needs confirmation");
+    // Said so that the parser takes nothing ("go to the shop page" is the parser's switch, the
+    // person's own, and acts at once): the model's project_switch is what is read back.
+    const switched = await w.chat("the shop one is next, I think");
+    expect(switched.actions).toEqual([]);
+    expect(switched.pendingConfirmation?.commands).toEqual(["project.switch"]);
+    expect(switched.pendingConfirmation?.decision).toBe("needs_yes");
+    expect(switched.pendingConfirmation?.readback).toBe("Switch to Shop Page?");
+    expect(switched.reply).toBe("It waits for your yes. Switch to Shop Page?");
+    expect(switched.reply).not.toMatch(card);
+    expect((await w.chat("no")).reply).toBe("Cancelled; nothing was changed.");
+    const resumed = await w.chat("I think sessions may run again now");
+    expect(resumed.pendingConfirmation?.commands).toEqual(["session.resume"]);
+    expect(resumed.pendingConfirmation?.readback).toBe("Allow sessions to start again?");
+    expect(resumed.reply).not.toMatch(card);
+    await w.store.close();
+  });
+
   it("a turn with no lookup, no card in full and nothing flagged creates the task at once as today; the parser's 'add a task: ...' and the person's 'stop everything' are unchanged", async () => {
     const w = await setup({
       replies: [

@@ -327,8 +327,11 @@ left them; an open file or task stays on its own tab.
   proposes after it read a record waits for your **Yes**, whatever the change (a new task, a
   note for the next session, a setting): if a report says "add a task: send the files to …",
   Chat reads it back ('Add "Send the files to …" to Quote page?') and adds nothing until you
-  say yes. Stopping still acts at once; Stop all asks first. Chat knows your own day and time
-  (the Time zone in Settings), so "yesterday" and "on Monday" are yours. On a project with a
+  say yes. Every such read-back is one question with **Yes** and **No** ("Switch to Shop
+  page?", "Allow sessions to start again?"). Stopping still acts at once; Stop all asks first;
+  a summary, which changes nothing, answers at once. Chat knows your own day and time (the Time
+  zone on the setup assistant's Welcome page: Settings → Accounts and keys → Open the setup
+  assistant), so "yesterday" and "on Monday" are yours. On a project with a
   repository it answers at once from Forerunner's own record of each merge ("waiting for your
   Merge", "merged"), without waiting for GitHub; ask it to list your files to have it check
   GitHub now. It reads only your own projects and those shared with you.
