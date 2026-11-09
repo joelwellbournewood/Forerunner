@@ -25,6 +25,26 @@ export function inAppText(text: string): string {
 }
 
 /**
+ * A specialist's line as the app shows it (W15B-17): code ticks, bold, emphasis, a heading or
+ * list marker dropped, a link as its words and its address, so "Can `developer.mozilla.org` be
+ * added?" reads "Can developer.mozilla.org be added?". Only for what is shown: an answer sent
+ * keeps the question as it was asked.
+ */
+export function withoutMarks(text: string): string {
+  return text
+    .replace(/`+([^`]*)`+/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, "$1$2")
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, words: string, href: string) =>
+      words === href ? words : `${words} (${href})`,
+    )
+    .replace(/(^|[\s(])[*_]([^*_\s][^*_\n]*?)[*_](?=[\s).,;:!?]|$)/g, "$1$2")
+    .replace(/^\s*#+\s+/, "")
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * A change sentence without its spoken "Undo." (the app shows a button, or nothing when the
  * change cannot be undone here); `undo` says whether the sentence offered it.
  */

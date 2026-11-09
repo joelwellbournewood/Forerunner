@@ -732,7 +732,8 @@ device), the card stays and says "Choose one of: …" with its options.
 Some work only you can do: choose the stack, the hosting, the repository or the domain, name an
 account, settle a preference. Forerunner never hands that to a specialist, which cannot ask you.
 It asks you in the Inbox instead, on a card that names the task and the project and lists the
-questions, each with its own answer field.
+questions, each with its own answer field. A question reads as plain text, without the marks a
+specialist may write (backticks, stars).
 
 - **A task planned for you** (the plan says it "asks you in the Inbox") is asked as soon as the
   plan is approved, or when Forerunner starts. No specialist runs and nothing is spent.

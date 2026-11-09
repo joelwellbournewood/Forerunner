@@ -279,4 +279,65 @@ describe("w15-words, wave 15 run B", () => {
       expect(options).not.toContain("writer-marketing");
     });
   });
+  describe("W15B-17: the questions card reads without markdown; the answer keeps the question", () => {
+    const asked = [
+      "Can `developer.mozilla.org` be added to the project's websites?",
+      "Which **hosting** should the page use, _Cloudflare Pages_ or GitHub Pages?",
+    ];
+    const seed = () => {
+      const harness = createHarness();
+      addTask(harness, "t_hosts", "Compare the hosts", { status: "needs_human" });
+      addCard(
+        harness,
+        "req_hosts",
+        "t_hosts",
+        {
+          key: "person_questions:t_hosts",
+          task_id: "t_hosts",
+          task_title: "Compare the hosts",
+          questions: asked,
+          source: "specialist",
+          on_answer: "resume",
+          context: "The **researcher** reads only `github.io` pages so far.",
+          applied_at: null,
+        },
+        { kind: "decision", why: '"Compare the hosts" needs your answers.', steps: asked },
+      );
+      return harness;
+    };
+
+    it("the labels and the context are plain; Send answers sends the questions as asked", async () => {
+      const user = userEvent.setup();
+      const harness = seed();
+      renderApp("/inbox", harness);
+      const form = await screen.findByTestId("person-questions");
+      const request = form.closest('[data-testid="request"]') as HTMLElement;
+      expect(
+        within(form).getByText("Can developer.mozilla.org be added to the project's websites?"),
+      ).toBeVisible();
+      expect(
+        within(form).getByText(
+          "Which hosting should the page use, Cloudflare Pages or GitHub Pages?",
+        ),
+      ).toBeVisible();
+      // What the person reads of the card: no tick, no star, no underscore of markdown.
+      expect(request.textContent).not.toMatch(/[`*]|_Cloudflare/);
+      expect(request).toHaveTextContent("The researcher reads only github.io pages so far.");
+      const fields = within(form).getAllByTestId("person-answer");
+      await user.type(fields[0] as HTMLElement, "Yes");
+      await user.type(fields[1] as HTMLElement, "Cloudflare Pages");
+      await user.click(within(form).getByTestId("send-answers"));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/requests/req_hosts/answer")).toHaveLength(1),
+      );
+      expect(postedCalls(harness, "/requests/req_hosts/answer")[0]?.body).toMatchObject({
+        answer: {
+          answers: [
+            { question: asked[0], answer: "Yes" },
+            { question: asked[1], answer: "Cloudflare Pages" },
+          ],
+        },
+      });
+    });
+  });
 });

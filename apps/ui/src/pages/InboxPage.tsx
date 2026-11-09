@@ -22,7 +22,7 @@ import {
   Loading,
 } from "../components/ui.tsx";
 import { aboutChf, chfWords, usdMicroToChfMicro } from "../lib/money.ts";
-import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
+import { inAppText, withoutMarks, withoutUndoWord } from "../lib/plain-words.ts";
 import { decisionLine, planTotalWords } from "../lib/plan-card.ts";
 import {
   daemonRunnerKeys,
@@ -184,6 +184,8 @@ export function personQuestionsOf(card: unknown): PersonQuestionsView | null {
 /**
  * The questions with one answer field each (U-022). The answer is sent as
  * `{ answers: [{ question, answer }] }`, the blank ones left out; at least one must be given.
+ * Each question and the context read without the specialist's markdown (`withoutMarks`,
+ * W15B-17); the answer sent keeps the question as it was asked.
  */
 function PersonQuestionsForm({
   card,
@@ -212,11 +214,16 @@ function PersonQuestionsForm({
       }}
     >
       {showContext && card.context ? (
-        <p className="text-xs text-neutral-600 dark:text-neutral-400">{card.context}</p>
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="person-questions-context"
+        >
+          {withoutMarks(card.context)}
+        </p>
       ) : null}
       {card.questions.map((q, i) => (
         <label key={q} className="block text-sm">
-          <span className="font-medium">{q}</span>
+          <span className="font-medium">{withoutMarks(q)}</span>
           <textarea
             className={`${INPUT_CLASS} mt-1 min-h-12`}
             value={answers[i] ?? ""}
