@@ -11,6 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
+import { requestViews } from "@forerunner/runtime/daemon/views";
+import { syncPrAnswers } from "@forerunner/runtime/session/pr-answers";
 import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { GitOps } from "../src/githost/git.ts";
@@ -2211,5 +2213,147 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     expect(open).toEqual([]);
     expect(await s.gitIn(["status"])).not.toContain("rebase in progress");
     await s.w.store.close();
+  });
+});
+
+describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
+  /** The task done once (its pull request open), main changing the same line, the next run's card. */
+  async function conflictWithOpenPr() {
+    const w = await world();
+    const repo = { owner: "o", name: "sample" };
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Edit the readme",
+      outcome: "the readme says what the task says",
+      acceptance_criteria: ["the readme is edited"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 100_000,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const writes = (
+      file: string,
+      text: string,
+    ): TaskExecutor & {
+      withWorktree: (dir: string) => TaskExecutor;
+    } => ({
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree: (dir) => ({
+        async execute() {
+          writeFileSync(join(dir, file), text);
+          return { outcome: "done", summary: "Wrote it.", costUsdMicro: 1000, checksPassed: true };
+        },
+      }),
+    });
+    const exec = (inner: ReturnType<typeof writes>) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () => ({ clone: w.bare, repo, base: "main" }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async () => {
+      const t = await w.store.task.mustGet(task.id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const first = await exec(writes("README.md", "# sample by the task\n")).execute(await ctx());
+    expect(first.outcome, first.summary).toBe("in_review");
+    await w.store.task.patch(task.id, { branch: first.branch ?? "", pr_url: first.prUrl ?? "" });
+    const seed = new GitOps({ cwd: join(w.root, "seed"), identity });
+    writeFileSync(join(w.root, "seed", "README.md"), "# sample by main\n");
+    await seed.commitAll("main changes README.md");
+    await seed.push("main");
+    const second = await exec(writes("notes.md", "# Notes\n")).execute(await ctx());
+    expect(second.outcome, second.summary).toBe("needs_human");
+    const card = (await w.store.humanRequest.list({ task_id: task.id } as never)).find(
+      (r) => (r.change_card as { key?: string } | null)?.key === "githost:rebase_conflict",
+    );
+    if (!card) throw new Error("no conflict card");
+    const pr = (await w.host.listPullRequests(repo, { state: "open" }))[0];
+    if (!pr) throw new Error("no pull request");
+    return { w, task, card, pr };
+  }
+
+  it("the rebase-conflict card with a pull request open says its last step updates it, and its title is a whole sentence of at most 80 characters (W15-06)", async () => {
+    const { w, task, card, pr } = await conflictWithOpenPr();
+    // Before: "… and opens the pull request" for one that was open (live check 2, F6).
+    expect(card.steps.at(-1)).toBe(
+      `Answer "I resolved it": the agent checks the branch against main and updates #${pr.number}`,
+    );
+    const [view] = await requestViews(w.store, [card]);
+    expect(view?.title).toBe(`"${task.title}" conflicts with main`);
+    expect((view?.title ?? "").length).toBeLessThanOrEqual(80);
+    expect(view?.body).toBe(
+      "Its branch conflicts with main in README.md, and the agent could not resolve it.",
+    );
+    expect(view?.choices?.map((c) => [c.label, c.explain])).toEqual([
+      ["I resolved it", `A session checks your resolution and updates #${pr.number}.`],
+      [
+        "Drop the branch and retry from scratch",
+        "The task is done again from main; a session starts for it.",
+      ],
+      ["Cancel the task", "Cancels the task; nothing more runs for it."],
+    ]);
+    await w.store.close();
+  });
+
+  it("'I resolved it' and 'Drop the branch and retry from scratch' each start one session and say so on the card's Done line; Cancel starts none (W15-06)", async () => {
+    for (const [label, outcome, done] of [
+      [
+        "I resolved it",
+        "resolved",
+        '"Edit the readme" goes on with your resolution: a session started.',
+      ],
+      [
+        "Drop the branch and retry from scratch",
+        "dropped",
+        '"Edit the readme" is done again from main: a session started.',
+      ],
+      ["Cancel the task", "cancelled", '"Edit the readme" was cancelled.'],
+    ] as const) {
+      const { w, task, card } = await conflictWithOpenPr();
+      const t = await w.store.task.mustGet(task.id);
+      await w.store.task.transition(t.id, t.version, "needs_human", "conflict", {
+        agentId: w.session.agent_id,
+      });
+      await w.store.humanRequest.answer(card.id, card.version, label, w.human);
+      const starts: unknown[] = [];
+      await syncPrAnswers({
+        store: w.store,
+        clock: w.clock,
+        humanId: w.human,
+        agentId: w.session.agent_id,
+        start: async (req) => {
+          starts.push(req);
+          return { id: "e1", result: "started" };
+        },
+      });
+      const row = await w.store.humanRequest.mustGet(card.id);
+      expect(row.change_card, label).toMatchObject({ outcome });
+      expect(starts, label).toHaveLength(outcome === "cancelled" ? 0 : 1);
+      if (outcome !== "cancelled")
+        expect((row.change_card as { start?: string }).start, label).toBe("started");
+      const [view] = await requestViews(w.store, [row]);
+      // Before: the bare echo, 'You answered "I resolved it".'
+      expect(view?.outcome, label).toBe(done);
+      await w.store.close();
+    }
   });
 });

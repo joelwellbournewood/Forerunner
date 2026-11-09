@@ -1181,6 +1181,89 @@ function genericCard(
 }
 
 /**
+ * The key of a rebase-conflict card (`REBASE_CONFLICT_KEY` in `@forerunner/capabilities`'s
+ * `pr-executor.ts`), spelled here: this module imports no package that runs git.
+ */
+export const REBASE_CONFLICT_CARD_KEY = "githost:rebase_conflict";
+
+/**
+ * W15-06 (w15-merge): the card of a conflict the agent could not resolve while it worked
+ * (`PrTaskExecutor.conflict`). Before, it had no words of its own: its title was the first
+ * sentence of its why cut at 80 characters ("…conflicts with main in index.html; the agent
+ * could not reso…"), its buttons no one-line explanation, and its Done line the bare echo.
+ */
+function rebaseConflictCard(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "The task");
+  const base = str(card.base) ?? "main";
+  const files = Array.isArray(card.conflicts)
+    ? card.conflicts.filter((f): f is string => typeof f === "string")
+    : [];
+  const where = files.length ? ` in ${fileWords(files)}` : "";
+  const pr = typeof card.pr_number === "number" ? `#${card.pr_number}` : null;
+  const choices: RequestChoiceWords[] = r.options.map(optionLabel).map((label) => {
+    const what = /^i resolved/i.test(label)
+      ? "resolved"
+      : /^drop/i.test(label)
+        ? "drop"
+        : /^cancel/i.test(label)
+          ? "cancel"
+          : null;
+    return {
+      label,
+      explain:
+        what === "resolved"
+          ? `A session checks your resolution and ${pr ? `updates ${pr}` : "opens the pull request"}.`
+          : what === "drop"
+            ? `The task is done again from ${base}; a session starts for it.`
+            : what === "cancel"
+              ? "Cancels the task; nothing more runs for it."
+              : null,
+      tone: what === "resolved" ? "primary" : what === "cancel" ? "danger" : "secondary",
+      confirm:
+        what === "cancel"
+          ? cancelConfirm(ctx.taskTitle ?? str(card.task_title) ?? "the task", ctx.waiting ?? [])
+          : null,
+      input: null,
+    };
+  });
+  return {
+    title: `${task} ${card.again === true ? "still conflicts" : "conflicts"} with ${base}`,
+    body: `Its branch conflicts with ${base}${where}, and the agent could not resolve it.`,
+    choices,
+    links: [],
+    reply: "none",
+    details: [...r.steps],
+    outcome: null,
+  };
+}
+
+/** What came of a rebase-conflict card's answer, with the session it started (W15-06). */
+function rebaseConflictOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "The task");
+  const base = str(card.base) ?? "main";
+  const started = startWords(card.start) ?? "the next session runs it";
+  if (card.outcome === "resolved") return `${task} goes on with your resolution: ${started}.`;
+  if (card.outcome === "dropped") return `${task} is done again from ${base}: ${started}.`;
+  if (card.outcome === "cancelled") return `${task} was cancelled.`;
+  return null;
+}
+
+/** "index.html", "a.md and b.md", "a.md, b.md, c.md and 2 more". */
+function fileWords(files: readonly string[]): string {
+  const shown = files.slice(0, 3);
+  const more = files.length - shown.length;
+  const list =
+    shown.length <= 1
+      ? (shown[0] ?? "")
+      : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+  return more > 0 ? `${list} and ${more} more` : list;
+}
+
+/**
  * The words of a card as the Inbox shows it (design §3.8). Every answer is still sent as the
  * option's words, and every reader reads them (`wiring/request-answers.ts`).
  */
@@ -1234,6 +1317,9 @@ export function requestWords(
   } else if (key?.startsWith(TAKE_OUT_NOTICE_PREFIX)) {
     words = takeOutNoticeCard(r, card);
     outcome = takeOutNoticeOutcome(card);
+  } else if (key === REBASE_CONFLICT_CARD_KEY) {
+    words = rebaseConflictCard(r, card, ctx);
+    outcome = rebaseConflictOutcome(card, ctx);
   } else if (key === CREDENTIAL_REFUSED_KEY) {
     words = refusedCredentialCard(card, ctx);
     // Closed when a new credential was saved (`closeRefusedCards`).

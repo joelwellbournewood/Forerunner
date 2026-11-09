@@ -319,7 +319,11 @@ with their milestone.
   before it starts with no `DEPS_BASE_REF` and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
-  whether it was pushed) with the task outcome `needs_human`. Its first sentence, the card's
+  whether it was pushed; W15-06: the open pull request's `pr_number`, the task's title and
+  `again`) with the task outcome `needs_human`. With a pull request open on the branch its last
+  step says the agent checks the branch and updates #N (before, it promised to open the pull
+  request that already existed, live check 2 F6); the card's Inbox words are
+  `rebaseConflictCard` in the runtime's `daemon/request-words.ts`. Its first sentence, the card's
   title, names the task ('"Write the guide" conflicts with main in README.md'), never the branch
   (W14-5, polish-words: it read "Rebase of fr/e34de89b-… onto main conflicts in …"); the steps
   name the branch, where the person fetches it. Its options each lead somewhere

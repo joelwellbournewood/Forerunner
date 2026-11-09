@@ -4288,7 +4288,17 @@ main ..." and "the rebuilt card's Redo also does the task again from main ..." (
 run; one own commit on main, the same pull request, no conflict card), and
 `rebuild-redo-restart.test.ts` (validation rule 4: the Redo answered, the daemon composed again
 on the same home before the run, and the run still starts from main). A left-open card already
-open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
+open for the task takes the rebuild's options with its sentence. **The rebase-conflict card's
+answers** (W15-06, design §3.8; live check 2 F11): "I resolved it" and "Drop the branch and retry
+from scratch" make the task ready and start (or queue) a session through `resumeWork`, recorded
+on the card (`recordStart`, `change_card.start`), as every Inbox answer that makes a task runnable
+does; before, both left it Ready with no session. Cancel starts nothing. Its words are
+`rebaseConflictCard` in `daemon/request-words.ts` (key `REBASE_CONFLICT_CARD_KEY`, the same as
+`REBASE_CONFLICT_KEY`): the title '"Edit the readme" conflicts with main' ("still conflicts" for
+a second card), the body naming the files, a one-line explanation per option, the steps under
+Details, and a Done line from the outcome and the start ('"Edit the readme" goes on with your
+resolution: a session started.'); before, the title was the why cut mid-sentence and the Done line
+the echo. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
 then the task's next run: the person's resolved branch opened as the PR after a restart with

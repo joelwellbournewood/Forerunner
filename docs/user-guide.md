@@ -394,7 +394,9 @@ continue, or the merge's commit): Forerunner finishes that step with your resolu
 updates the pull request. A file that still holds conflict markers brings the card back, with
 your rebase or merge left as it was. A resolution that keeps only main's side leaves nothing to
 merge: the task fails ("#8 no longer changes anything on main, so it was closed.") and #8 is
-closed with its branch kept, instead of going to review empty.
+closed with its branch kept, instead of going to review empty. **I resolved it** and **Drop the
+branch and retry from scratch** each start a session for the task (or queue one behind the
+session that runs), and the card's Done line says so; **Cancel the task** starts nothing.
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in

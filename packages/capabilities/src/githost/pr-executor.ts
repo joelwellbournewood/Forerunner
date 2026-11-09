@@ -2752,6 +2752,16 @@ export class PrTaskExecutor implements TaskExecutor {
     }
     if (c.superseded) await this.consume(c.superseded);
     const files = conflicts.length ? conflicts.join(", ") : "the conflicting files";
+    // W15-06: with a pull request open on the branch, the last step updates it (before, it
+    // promised to open one that already existed, live check 2 F6).
+    const openPr = (
+      await this.deps.host
+        .listPullRequests(target.repo, { state: "open", head: branch })
+        .catch(() => [] as PullRequestInfo[])
+    )[0];
+    const after = openPr
+      ? `the agent checks the branch against ${target.base} and updates #${openPr.number}`
+      : `the agent checks the branch against ${target.base} and opens the pull request`;
     await this.deps.store.humanRequest.insert({
       human_id: ctx.token.claims.ownerHumanId,
       project_id: task.project_id,
@@ -2763,12 +2773,12 @@ export class PrTaskExecutor implements TaskExecutor {
         ? [
             `Fetch ${branch} from ${repoName} and bring ${target.base} into it (rebase onto ${target.base} or merge ${target.base}), resolving ${files}`,
             `Push ${branch} to ${repoName}`,
-            `Answer "I resolved it": the agent checks the branch against ${target.base} and opens the pull request`,
+            `Answer "I resolved it": ${after}`,
           ]
         : [
             `The branch ${branch} is only on this computer, in ${c.dir}: resolve ${files} there (rebase onto origin/${target.base} or merge it) and commit`,
             `Push ${branch} to ${repoName} if you can`,
-            `Answer "I resolved it": the agent checks the branch against ${target.base} and opens the pull request`,
+            `Answer "I resolved it": ${after}`,
           ],
       options: [...REBASE_CONFLICT_OPTIONS],
       blocking: true,
@@ -2781,6 +2791,9 @@ export class PrTaskExecutor implements TaskExecutor {
         repo: repoName,
         conflicts,
         pushed,
+        ...(openPr ? { pr_number: openPr.number } : {}),
+        task_title: task.title,
+        again: !!c.again,
         applied_at: null,
       },
       author_agent: ctx.session.agent_id,

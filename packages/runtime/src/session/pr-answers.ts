@@ -18,7 +18,7 @@ import {
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
 import { redoneMergeCard } from "../loop/merge-mode.ts";
-import { resumeWork, type StartPort } from "./resume-work.ts";
+import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
 
 /**
  * The answers of the pull-request cards (U-028), applied from `RuntimeApp.syncApprovals` (the
@@ -193,7 +193,7 @@ async function applyRebaseAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Pro
   if (!answer) return skip("unrecognized_answer");
   if (task?.status !== "needs_human") return skip("task_moved_on");
   const branch = task.branch ?? "the task branch";
-  return store.transaction(async (tx) => {
+  const outcome = await store.transaction(async (tx) => {
     let outcome: string;
     if (answer === "cancel") {
       await tx.task.transition(
@@ -228,6 +228,23 @@ async function applyRebaseAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Pro
     });
     return outcome;
   });
+  // W15-06 (design §3.8): an answer that makes the task runnable starts (or queues) a session,
+  // as every Inbox answer does; before, "I resolved it" and "Drop the branch" left the task
+  // Ready with no session (live check 2, F11). Cancel starts nothing.
+  if (outcome === "resolved" || outcome === "dropped")
+    await recordStart(
+      store,
+      row.id,
+      await resumeWork(store, deps.start, {
+        agentId: deps.agentId,
+        projectId: task.project_id,
+        reason:
+          outcome === "resolved"
+            ? `you resolved the conflict of "${task.title}"`
+            : `you asked to do "${task.title}" again from the base`,
+      }),
+    );
+  return outcome;
 }
 
 async function applyMergeAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Promise<string> {
