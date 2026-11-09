@@ -1,0 +1,2337 @@
+{
+ "base": "931ed52",
+ "items_total": 148,
+ "by_decision": {
+  "fix": 37,
+  "words": 41,
+  "already_fixed": 10,
+  "not_a_problem": 20,
+  "model_only": 0,
+  "owner_question": 6,
+  "live_only": 28,
+  "later": 6
+ },
+ "items": [
+  {
+   "id": "W15-01",
+   "sources": [
+    "live2:github:F2",
+    "live2:github:F2 (verified real)",
+    "live2:github:step 'phaseE7-live-extra §6.2 C-57 (setting on)' (fail)"
+   ],
+   "severity": "major (another project's data overwritten)",
+   "decision": "fix",
+   "title": "Status pull request: a project writes into another project's open status PR on the shared fr/status branch and lists it with Merge",
+   "evidence": "/tmp/frbench/live2-result.json github F2; daemon.log 04:49:57 'status update written ... branch fr/status ... pull/5'; git diff 6759c4b..152f5ac on origin/fr/status in /tmp/frbench/live2/github/work/sandbox; /tmp/frbench/live2/github/github-a/steps/160-c57-status-p2-overview.txt",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/loop/docs.ts:100 STATUS_BRANCH = 'fr/status' (one name for every project); docs.ts:800-826 writeSessionStatus starts from the open PR's branch, pushes without force and comments on it (:812, :815); docs.ts:970-973 checkout takes the first open PR by head only; docs.ts:146 isProjectDocsPr counts any fr/status PR as this project's when the setting is on; the status PR body names no project (no scaffoldProjectLine). Sibling: docs.ts:729-746 the scaffold still pushes to and comments on another project's open fr/docs-scaffold PR when it writes files.",
+   "notes": "Model not involved. The setting stays off by default (C-57). Builds only the safety part until the owner answers W15-112: the status and scaffold PR bodies carry a hidden ownership marker (the project's id, one form shared with W15-08); a project never pushes to, comments on or lists another project's status or scaffold PR; while another project's status PR is open on fr/status, this project writes no status PR (its status stays in the app, docs/status.md in its copy as today, and one log line says why); with none open, today's behaviour (fr/status, one PR). A legacy fr/status PR without a marker counts as this project's only when no other project on this install is linked to the repository; with two linked, neither writes to it or lists it. No per-project status branch and no second PR: both would change one docs/status.md and conflict on merge, which is the owner's question (W15-112). Amend ADR 0106 points 3 and 5.",
+   "area": "w15-merge",
+   "check_changes": [
+    "decision narrowed to the safety part (adversarial check spec_problems[0]): the earlier per-project branch fr/status-<project> and 'B has its own status PR' pre-empted owner question W15-112 and made two PRs on one docs/status.md"
+   ]
+  },
+  {
+   "id": "W15-02",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailmerge:blocking[0] (the sentence part fixed by the fix-up)",
+    "wave7g6d-fixup-leftovers7-tailmerge:not_done[0]",
+    "wave7g6d-fixup-leftovers7-tailmerge:new_problems[0]"
+   ],
+   "severity": "data loss (minor reach)",
+   "decision": "fix",
+   "title": "A commit the person makes in a done task's folder is dropped without a word when that branch is rebuilt",
+   "evidence": "Reviewer's scratch case: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/review-tm/exp-out.json and tm4-commit-case.ts.txt (owed null, rebuilt_without, `git branch --contains` empty, file gone from the folder)",
+   "root_cause_at_head": "Holds at 931ed52: packages/capabilities/src/githost/pr-executor.ts:1792-1803 rebuildIn checks only `git.status().dirty`, then `git.createBranch(branch, origin/<branch>)` resets a local commit that is ahead of origin; the commit ends on no branch (reflog only). Forerunner's own unpushed states that must still rebuild: packages/runtime/src/loop/merge.ts:426/:563 unpushedBaseMerge and a rebuild whose push failed.",
+   "notes": "The TM-4 sentence no longer tells the person to commit (fixed in the wave 13 fix-up), but a person who commits anyway still loses the commit silently. Fix must tell a person's commit apart from Forerunner's own unpushed merge/rebuild/WIP commits, or the merge waits forever under the folder sentence.",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-03",
+   "sources": [
+    "live2:github:F1",
+    "live2:github:F1 (verified real)",
+    "live2:github:step 'phaseE7-live §1 second chain + w14 R-chain' (fail)"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "Chain of three with a busy middle: the last PR gets a false conflict card and stays blocked after it was rebuilt cleanly; Tasks and Overview disagree",
+   "evidence": "/tmp/frbench/live2-result.json github F1; /tmp/frbench/live2/github/github-a/steps/43-46; evidence/chain2-after-squash-dirty.json, chain2-after-clean.json; daemon.log 03:57:57-03:59:22; verifier scratch repro /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/f1/f1.test.ts",
+   "root_cause_at_head": "Holds at 931ed52: packages/capabilities/src/githost/pr-executor.ts:1704-1708 rebuildDependents adds a task to `changed` only when 'rebuilt' (a busy middle does not stop its dependents) and :1649-1651 dependencyBase merges B's old head onto main (add/add conflict); packages/runtime/src/session/dependent-branches.ts:633-641 files the rebuild_conflict card; :653-659 the same-own-change path keeps last_outcome 'rebuild_conflict', its sentence and card; :285 conflictNotice takes back only 'conflict', :324-325 skips rebuild_conflict, :506 closeConflictCard skips rebuild cards; packages/runtime/src/daemon/pull-requests.ts:161 NO_CLICK holds rebuild_conflict.",
+   "notes": "Both parts (a: a busy dependency holds its dependents as owed, b: a clean rebuild clears a stale rebuild_conflict) are needed. The Tasks label half (screens disagree) is W15-55 (task-words.ts's merge-state branch, w15-merge). Update capabilities.md and runtime.md (R-chain), ADR 0111.",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-04",
+   "sources": [
+    "live2:github:F3",
+    "live2:github:F3 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Tasks-tab Redo on a task with a conflict notice files a second card, and the notice is never withdrawn once the PR merges cleanly again",
+   "evidence": "/tmp/frbench/live2-result.json github F3; steps/82-tm2-and-b2-inbox.txt; state.sqlite request 01a1be85 still open; daemon.log 04:19:53; verifier scratch /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/f3/repro.test.ts",
+   "root_cause_at_head": "Holds at 931ed52: packages/commands/src/commands/task.ts:93 WAITS_ON_CARDS excludes done and :439-440 personMove withdraws nothing for a done task; taskReopen (~:969-989) does not set REDO_FROM_BASE as applyRedo does (packages/runtime/src/session/pr-answers.ts:319-345); packages/runtime/src/loop/merge.ts:1774 settle overwrites last_outcome 'conflict'; dependent-branches.ts:285 takes the notice back only when last_outcome === 'conflict'; :366 conflictCard takes over a stale notice card as if it were the earlier card.",
+   "notes": "Owner question 'Should a Tasks-row action that makes a task ready start work?' stays open: the fix answers the open merge card as its Redo would (redo from main, card closed 'redone') but starts no session, as today. A stale notice whose Redo is pressed after the task is done again must not redo a mergeable PR.",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-05",
+   "sources": [
+    "live2:github:F4",
+    "live2:github:F4 (verified real)",
+    "wave7g6d-fixup-leftovers7-tailmerge:new_problems[1]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[2]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[3]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[9]",
+    "wave7g6d-fixup-leftovers7-tailmerge:not_done[1]"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Merge answers 'Merging #23.' while the merge waits on changes in the task's folder; before the press the row offers a bare Merge; the sentence does not say where the folder is",
+   "evidence": "/tmp/frbench/live2-result.json github F4; steps/71-tm4-merge23-right-after.txt, 74-tm4-merge23-after-12s.txt; evidence/tm4-merge23-answer.json; bench steps 06 in /tmp/frbench/review-leftovers7-tailmerge/steps",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/daemon/pull-requests.ts:578-629 answers 'Merging #N.' from canMerge alone (:626-629); packages/runtime/src/loop/merge-mode.ts:108-109 owedMergeWait says the wait only for queued/waiting_checks with last_outcome owed_folder_changes; the fact is written only later by merge.ts:1372-1375 / :1894-1916 sayOwedWait; pr-executor.ts:1792-1799 knows it at the poll but keeps it in memory (heldByChanges).",
+   "notes": "Keep the approval (the merge goes on once the folder is clean). Persist the held-by-changes fact on the record at the poll (settleOwed), so the row says it before the press and the route answers with it; show the folder with FolderPath (path + Open folder) under the row. Add the restart case the tailmerge review asked for (last_outcome owed_folder_changes and before_conflict cross a restart).",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-06",
+   "sources": [
+    "live2:github:F11",
+    "live2:github:F11 (verified real)",
+    "live2:github:F6 (words)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "'I resolved it' and 'Drop the branch' leave the task Ready with no session; the rebase-conflict card's title is cut mid-sentence and its step promises to open a PR that already exists",
+   "evidence": "/tmp/frbench/live2-result.json github F11 and F6; steps/82-tm2-and-b2-inbox.txt, 83-details-tm2-b2.png, 84-tm2-answer-markers-after.txt; evidence/tm2-answer-markers-answer.json, tm2-answer-resolved-answer.json",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/pr-answers.ts:201-218 applyRebaseAnswer moves the task to ready and never calls resumeWork/recordStart (only applyRedo does, :342); packages/runtime/src/daemon/request-words.ts has no branch for githost:rebase_conflict, so genericCard titles it firstSentence(why) and the outcome is the bare echo; packages/capabilities/src/githost/pr-executor.ts:2544 and :2549 fixed text 'checks the branch against <base> and opens the pull request'.",
+   "notes": "Design §3.8: every answer that makes a task runnable starts or queues a session (an Inbox answer, not the Tasks-row owner question). U-028. The card's words (title, explains, Done line) are written by w15-merge in one new request-words function (shared_files).",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-07",
+   "sources": [
+    "live2:github:F5",
+    "live2:github:F5 (verified real)",
+    "live2:github:step 'w14 R-conflict' (pass, 1 min 47 s)",
+    "live2:github:step 'tailmerge TM-7' (pass, ~2 min 13 s)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Conflict notices appear and clear only after about two polls (~2 min), with Merge still offered meanwhile",
+   "evidence": "/tmp/frbench/live2-result.json github F5; daemon.log 04:14:10 -> 04:15:57, 04:22:28 -> 04:24:36, 04:24:48 -> 04:27:01; evidence/rb-after.json, chain2-after-squash-dirty.json (GitHub returning null)",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/dependent-branches.ts:277 drops a null mergeable; packages/runtime/src/session/githost-watcher.ts:61 DEFAULT_GITHOST_POLL_MS 60 000 and :395 reschedules only after pollMs; testenv/src/githost/ops.ts:351-373 computeMergeability is eager, so no test ever sees null.",
+   "notes": "A Merge pressed in the window is refused safely (merge.ts conflict sentence), nothing wrong merges. Teach the stand-in GitHub's lazy mergeability so the bench and tests see it.",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-08",
+   "sources": [
+    "live2:github:F9 (words)"
+   ],
+   "severity": "words with a reader",
+   "decision": "fix",
+   "title": "UUIDs in the text Forerunner writes on GitHub (PR bodies, PR comments, the status comment and commit)",
+   "evidence": "/tmp/frbench/live2-result.json github F9; evidence/chain1-before-merge.json (bodies), tm2-after.json (comment), git log origin/fr/status",
+   "root_cause_at_head": "Holds at 931ed52: packages/capabilities/src/githost/pr-executor.ts:2643 'Task <id>, session <id>. Opened by Forerunner.' and :2625 'Updated by session <id>: …'; packages/runtime/src/loop/docs.ts:807 commit 'docs: status after session <id>' and :813 'Status update of session <id>'. The task id is read by code: pr-executor.ts:359-365 openedForAnotherTask parses 'Task <uuid>, session ' (R-branch).",
+   "notes": "Decided 'fix', not 'words': the id is machine-read, so it moves to a hidden marker (an HTML comment) that openedForAnotherTask reads, accepting the old visible form for PRs opened earlier; the visible text names the task title and the session by its start time (design §5 rule 3). Coordinate with W15-01's ownership marker (same marker form).",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-09",
+   "sources": [
+    "wave7g6d-fixup-leftovers7-tailmerge:new_problems[3]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[7]"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "finishUnfinished edge cases: a real line starting '<<<<<<< ' reads as unresolved forever; unstaged edits to other files make the person's rebase fail with git's own text",
+   "evidence": "Review of leftovers7-tailmerge (wave 13), non_blocking; untested",
+   "root_cause_at_head": "Holds at 931ed52: packages/capabilities/src/githost/git.ts:131 (marker test by line prefix) and :540 finishUnfinished (rebase --continue with other unstaged edits; must() throws git's text).",
+   "notes": "Read unresolved state from the index (unmerged entries) rather than line prefixes; on refusal say one sentence with the way out (design §5 rule 8).",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-10",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:new_problems[2]"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "must()'s credential-prompt detection reads git's English words, but several GitOps instances do not ask for untranslated messages",
+   "evidence": "Wave 13 tailmerge fixer's report",
+   "root_cause_at_head": "Holds at 931ed52: packages/capabilities/src/githost/git.ts:343 matches 'could not read Username for' / 'Authentication failed for'; GitOps without `untranslated`: packages/runtime/src/loop/merge.ts:412, :591, :916, :1610, :1680, :1902; packages/runtime/src/loop/docs.ts:546, :856 (only docs.ts:996, base-branch.ts:55 and pr-executor.ts:728 set it).",
+   "notes": "Only the wording changes when no token is configured, on a machine whose git speaks another language (the owner's Windows may). TM-6's live check stays on the owner's checklist.",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-11",
+   "sources": [
+    "copyfix-result:review.non_blocking[1]",
+    "copyfix-result:fix.not_done[2]",
+    "copyfix-result:review.non_blocking[2]",
+    "copyfix-result:review.non_blocking[3]",
+    "copyfix-result:review.non_blocking[4]"
+   ],
+   "severity": "minor (Windows)",
+   "decision": "fix",
+   "title": "Folders made before 29e0c81 are never pinned to core.autocrlf=false (a reused task worktree, an import checkout, a project workspace before its first task run); docs miss the raw-git readers",
+   "evidence": "Review of the copy line-endings fix (29e0c81)",
+   "root_cause_at_head": "Holds at 931ed52: packages/capabilities/src/githost/pr-executor.ts:754-757 reuses an existing worktree with fetch (no pinLineEndings; only clone passes --config core.autocrlf=false, git.ts:372); packages/runtime/src/data/import.ts:582 fetch path; the workspace pin at pr-executor.ts:2247 runs only on a task run, not on statusInFolder/Cancel/Undo first. Raw git readers: packages/runtime/src/loop/critic.ts:261 GitDiffPort and packages/runtime/src/loop/project-checks.ts:188 scriptsBefore (undocumented). ADR 0113 amendment dated 2026-11-09 vs commit 2026-11-08; one 147-character line in docs/maintainers/capabilities.md.",
+   "notes": "Cheap: one pinLineEndings().catch(log) per fetch/existing-folder path. Windows confirmation stays on the owner's checklist.",
+   "area": "w15-merge"
+  },
+  {
+   "id": "W15-12",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[4]"
+   ],
+   "severity": "security guard",
+   "decision": "fix",
+   "title": "TR-1 has no fail-closed fallback: if Claude Code rejects a redacted built-in tool output, it silently passes the unredacted original to the model",
+   "evidence": "Review of leftovers7-tailrun (wave 13)",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/agent/sdk.ts:959-965 returns updatedToolOutput via builtInOutput(); packages/runtime/src/enforcement/hooks.ts:516-532 redactToolOutput walks every string; nothing checks the redacted value against the bundled Claude Code tool output schemas, and no deny path exists for a shape that would not validate.",
+   "notes": "claude-agent-sdk 0.3.304 ships the built-in tools' output shapes only as TypeScript types (sdk-tools.d.ts, ToolOutputSchemas: BashOutput, FileReadOutput, GrepOutput, GlobOutput, FileEditOutput, FileWriteOutput, NotebookEditOutput, WebFetchOutput, WebSearchOutput, TodoWriteOutput, ...), no runtime validators. Check conformance with one hand-written fixture per built-in tool the SDK path allows, typed with `satisfies <Tool>Output` from sdk-tools.d.ts (pnpm typecheck fails when an SDK upgrade changes a shape), asserting that redactToolOutput changes only string values and keeps every key and every non-string value; deny with a clear reason and an audit row when the tool is not on that list, or its output matches none of its shapes, and it holds a resolved secret. Never pass a resolved secret; R-readhook's 'no replacement when nothing is redacted' holds.",
+   "area": "w15-run",
+   "check_changes": [
+    "how conformance is checked made concrete (adversarial check: no runtime schemas in the SDK package; verified in node_modules/@anthropic-ai/claude-agent-sdk 0.3.304, sdk-tools.d.ts only)"
+   ]
+  },
+  {
+   "id": "W15-13",
+   "sources": [
+    "live2:run:RUN-1",
+    "live2:run:RUN-1 (verified real)",
+    "live2:research:F8",
+    "live2:research:F8 (verified real)",
+    "live2:run:step 'phaseE7-live.md §3.1 wrap-up, folder project' (fail)"
+   ],
+   "severity": "major (money; work lost)",
+   "decision": "fix",
+   "title": "A reply cut at the output cap is retried at 4x with no budget check: the wrap-up comes at a fifth of the budget and the task pauses with nothing written; research write calls are cut at the floor and the paid reply is discarded",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-1 (budget2.json, budget3.json, model-calls.jsonl seq 33-43) and research F8 (model-calls-final.jsonl seq 8-12); verifier repros /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/repro-run1.mts and f8/f8.test.ts",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/agent/loop.ts:529-531 cutOffFloor is raised into the floor, so the room fit at :541-552 is skipped when ceiling <= floor; :545-551 the write room is a flat WRAP_UP_SHARE*cap/WRAP_UP_CALLS (collapses to the floor once pages are read); :771-781 the retry asks min(maxOut*4, top) with no room or ceiling check, cutOffFloor is never reset, and the cut reply (complete tool_use blocks included) is discarded; packages/runtime/src/enforcement/budget.ts:212-217 then answers wrap_up on spend + that inflated worst case.",
+   "notes": "One rule for the write cap and the cut-off retry: pay only from the money below the run's wrap-up line (as web search does); apply the raised cap to the retried call only; consider keeping complete tool_use blocks of a cut reply (U-085 amendment). ADR 0112 amendment 3 and loop-cache.test.ts 'a small budget keeps the usual cap' change with it. The misleading lesson the model recorded ('reading first used the budget') is a consequence.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-14",
+   "sources": [
+    "live2:research:F4 (part 1)",
+    "live2:research:F4 (verified real)"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "Finished research is paused at its budget instead of reviewed because 'Left to do: Nothing for the acceptance criteria' and an optional extra count as unfinished",
+   "evidence": "/tmp/frbench/live2-result.json research F4; steps/38-s1-search-inbox.png, 40-s1-search-paused-drawer.png; model-calls-final.jsonl seq 26-29; session 01a1be9f events",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/budget-pause.ts:44 NOTHING matches only a bare 'nothing/none/...'; parseHandoff (:94-110) counts any other line as an item; packages/runtime/src/session/executor.ts:1435 pauses whenever wrapUpSent and leftToDo.length > 0; packages/runtime/src/agent/loop.ts:87-88 WRAP_UP_TEXT asks for 'Left to do: as a list' without saying 'only what the criteria still need, or nothing'.",
+   "notes": "Model-facing prompt text is code: the fix includes WRAP_UP_TEXT/WRAP_UP_BRIEF_LINE asking for criteria-only items or 'nothing', tested on the exact request text.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-15",
+   "sources": [
+    "live2:research:F3",
+    "live2:research:F3 (verified real)",
+    "live2:research:step 'phaseE7-live.md §4.2 cache_read grows' (fail)"
+   ],
+   "severity": "major (money)",
+   "decision": "fix",
+   "title": "Changing the web search offer mid-run (max_uses down, or the tool dropped) voids the prompt cache: a quarter to a third of a research run's cost is cache rewrites",
+   "evidence": "/tmp/frbench/live2-result.json research F3; model-calls-final.jsonl seq 9-10 (read 0, wrote 46,770) and seq 31-34",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/agent/loop.ts:563-583 recomputes maxUses every call from the money below the line; :632-643 leaves webSearch out when 0; packages/runtime/src/provider/anthropic.ts:280-282 appends the tool per call (its comment assumes the tools mark protects the cache); testenv/src/provider/prompt-cache.ts:96-131 ignores req.webSearch, so tests never see the rewrite.",
+   "notes": "Keep the web_search definition (max_uses and the domain lists) byte-identical for the run while it stays affordable, and keep every limit in code: max_uses is fixed once at the run's start from the smaller of the task's searches left (ten over all its runs) and what the money below the run's wrap-up line pays; every call that offers the tool counts the full max_uses in its pre-call worst case; at the first call where the searches left or the money below the line no longer cover it (or the wrap-up was told), the tool is dropped for the rest of the run and never re-added: one cache rewrite, once, instead of one per call. No limit relies on text: a server tool is billed whatever the text says, and ADR 0107's guarantee that a search never eats the reserve kept to finish (fixup-web-search B1, ADR 0112 amendment) holds. Teach PromptCacheSim the API's web-search/max_uses invalidation. Amend ADR 0107 point 9 and the ADR 0112 note on fewer searches near the line. Avoidable waste per run is about USD 0.07-0.11.",
+   "area": "w15-run",
+   "check_changes": [
+    "decision corrected (adversarial check spec_problems: 'enforced in the estimate and in text, never by editing the tools' dropped the code limit of ADR 0107/0112; verified at loop.ts:555-583 and ADR 0107 web-search point 4)"
+   ]
+  },
+  {
+   "id": "W15-16",
+   "sources": [
+    "live2:research:F4 (part 2)",
+    "live2:run:RUN-1 (verified fix_sketch point 3)",
+    "wave7g6d-review-polish-words:non_blocking[2] (part: 'stopped at its budget of CHF 0.00: it spent CHF 0.00')"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "The wrap-up's words are untrue: the log says 'at CHF 0.07 it is told to wrap up' and the run is told at CHF 0.02; the model is told 'About a fifth of this task's budget is left' when most is left",
+   "evidence": "/tmp/frbench/live2-result.json research F4 (session 01a1be9f: line CHF 0.07, told at CHF 0.02; brief task line CHF 0.38, told at CHF 0.29) and run RUN-1",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/budget-pause.ts:237 budgetLineWords promises a spend amount; :36 WRAP_UP_BRIEF_LINE; packages/runtime/src/agent/loop.ts:87-88 WRAP_UP_TEXT fixed 'About a fifth'; the trigger is spend + next call's worst case (packages/runtime/src/enforcement/budget.ts:212-217). Amounts: executor.ts:685-689 chfText (passed to budget-pause.ts budgetLineWords and limitWords) formats with formatChf only, so an amount under a centime reads 'CHF 0.00'.",
+   "notes": "Design §5 rule 9 and rule 4. Either the words name the real trigger ('before a step that could take it past CHF X') or the wrap-up text carries the true share left; a model-facing text, tested on the exact request. Decided 'fix' (its root is how the trigger is described in code and prompt), kept with W15-13/W15-14 in budget-pause.ts and loop.ts. Amend ADR 0112 (it fixes the wording) and user-guide.md:~893. Amounts under a centime in these sentences read 'less than CHF 0.01' (moneyWords in executor.ts's chfText): the budget-pause half of W15-74, kept here so executor.ts and budget-pause.ts stay w15-run's.",
+   "area": "w15-run",
+   "check_changes": [
+    "absorbs the budget-pause/executor half of W15-74 (file ownership)"
+   ]
+  },
+  {
+   "id": "W15-17",
+   "sources": [
+    "live2:research:F5",
+    "live2:research:F5 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "The brief tells the researcher to use web_search when the run's budget lets no call offer it",
+   "evidence": "/tmp/frbench/live2-result.json research F5; model-calls-final.jsonl seq 26-29 (no webSearch; brief holds WEB_SEARCH_LINE); verifier repro /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/f5/f5.test.ts",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/executor.ts:927 searchPlanFor (:1646-1674) has no money check; :965-967 writes WEB_SEARCH_LINE whenever a plan exists; the loop (packages/runtime/src/agent/loop.ts:563-583) pays searches only below the wrap-up line and gives 0 on a small cap.",
+   "notes": "Decide affordability once, before the brief, with the loop's own arithmetic (one shared helper with W15-15's run-start decision): the brief's search line and the run's tool offer come from that one decision. Amend ADR 0107 point 4.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-18",
+   "sources": [
+    "live2:run:RUN-16",
+    "live2:run:RUN-16 (verified real)",
+    "live2:run:step 'phaseE7-live.md §5 Costs' (partial)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Estimates ignore a task's size: a five-file coder task with tests is 'about CHF 0.03' like a one-line change; the session review compares spend with reviews against an estimate without",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-16; steps/52-w02-start-dialog-wrap-up-task.png; budget2.json; state.sqlite session.planned estimateUsdMicro 33,192; verifier repro /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/est/run.ts",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/estimates/model.ts:515-537 estimate from specialist and tier only; :150 STARTING_ESTIMATES_USD_MICRO flat per specialist; :169/:185-196 PLAN_ESTIMATE_BOUND clamps a plan guess to x1.5; :233 kindOfTask tier only; :773 planEstimateUsdMicro passes no outcome or criteria; POST /projects/:id/tasks (server.ts) stores no estimate; packages/critic/src/session-review.ts:450-451 actual includes reviews, estimate does not.",
+   "notes": "A deterministic size factor from the outcome and criteria (files named, tests, 'at least N cases'), the learner fed per unit of size; plan card and Start dialog keep giving the same figure (R-estimates). Record in ADR 0019/0112.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-19",
+   "sources": [
+    "live2:run:RUN-2",
+    "live2:run:RUN-2 (verified real)",
+    "live2:run:step 'phaseE7-live-w12w14.md R-estimates' (fail)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Plan card and Start dialog give different figures for the same task after Stop now (the stop teaches the estimator; a restart moves it back)",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-2; steps/104-r01-inbox-clamp-plan-card.png, 106-r03-start-dialog-after-stop.png; noise2.json; verifier repro /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/repro/repro.mts",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/estimates/model.ts:215-218 NO_SAMPLE_CALL_OUTCOMES lacks 'killed'; :753 observeTaskRuns takes the sample; fed by packages/runtime/src/daemon/compose.ts (~2665) with the runner's killed outcome (runner.ts ~1722/1797).",
+   "notes": "No sample from a killed run of a task that did not finish; the killed run's cost still counts once the task finishes. Same rule in the live feed and the fold (a restart changes no figure).",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-20",
+   "sources": [
+    "live2:run:RUN-3",
+    "live2:run:RUN-3 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A task's cost differs between the Tasks tab and Costs: the Tasks row and drawer leave the critic's reviews out",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-3; /tmp/frbench/live2/run/run-cred/steps/30-k11-club-notes-costs-tab.txt, 32-k12-club-notes-drawer-full.txt; cred3.json",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/runner.ts:1743 adds only the work run's cost to task.actual_cost_usd_micro; the critic's run is booked elsewhere (packages/critic/src/critic.ts Run row with task_id; ledger); packages/runtime/src/daemon/views.ts:382 TaskView.actual = actual_cost_usd_micro vs the Costs by-task view from the ledger by task_id; shown at apps/ui/src/pages/project/TasksTab.tsx:485 and TaskDrawer.tsx:140-141.",
+   "notes": "Keep actual_cost_usd_micro as the work-only budget counter (ADR 0112 point 4); add a `spent` figure from the ledger for display so row, drawer and Costs agree; correct ADR 0112's 2026-11-09 amendment point 1 sentence. Route shape change: real-daemon + fake daemon.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-21",
+   "sources": [
+    "live2:run:RUN-4",
+    "live2:run:RUN-4 (verified real)",
+    "live2:run:step 'phaseE7-live-extra.md §2.1' (partial)",
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[3]"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A running task's spend in the drawer and Tasks row stays CHF 0.00 until the run ends (design §4.14)",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-4; /tmp/frbench/live2/run/run-live/steps/watch/002-005-drawer-in-progress-*.txt; verifier bench /tmp/frbench/verify-run4/steps/04-run4-drawer-3.txt",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/runner.ts:1630-1640 a model step updates only the session's spend; :1743 the task's spend is added after execute returns; packages/runtime/src/session/executor.ts:1095 inserts the Run row at cost 0, :1219 only forwards model_call_end, :1472 writes the cost at the end.",
+   "notes": "Book each call on the task (TaskRepo.addCost, atomic) and on the Run row as it ends, subtract what was booked live at the end (no double count). The tailrun reviewer's note applies more now: addCost bumps the task's version on every call, so a person's drawer action sent with a just-read version can meet version_conflict during a run; make person actions retry on that or keep the spend increment out of the version, and add a runtime.md line.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-22",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[2]"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "credentialWaitNow: the first ready task that gets no billing request (a person's task, an unknown specialist) or an error decides the whole project 'can run'",
+   "evidence": "Review of leftovers7-tailrun (wave 13)",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/daemon/compose.ts:3529-3547 returns null at once when nextRunBillingRequest gives null or throws (`.catch(() => null)`), and on a pick error that is not a credential wait.",
+   "notes": "Skip tasks with no billing request; treat an error as 'unknown' (keep the wait), so the wake never takes a project off a resting source because of one person task or a thrown error. Nothing loops today, so minor.",
+   "area": "w15-run"
+  },
+  {
+   "id": "W15-23",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailrun:new_problems[4]",
+    "wave7g6d-review-polish-screens:non_blocking[2]"
+   ],
+   "severity": "cosmetic",
+   "decision": "fix",
+   "title": "pnpm lint warnings named by wave 13 (useOptionalChain, noNonNullAssertion, noUselessFragments)",
+   "evidence": "Wave 13 reports; wave 13 merge: lint exit 0 with 43 warnings",
+   "root_cause_at_head": "Named at 7d54fff (re-find with pnpm lint at 931ed52): packages/runtime/src/agent/loop.ts (~1166 useOptionalChain), packages/runtime/src/provider/anthropic.ts (~275 noNonNullAssertion), packages/runtime/src/daemon/compose.ts pairingGuideUrl (useOptionalChain), apps/ui/src/pages/SettingsPage.tsx (~738 noUselessFragments).",
+   "notes": "Each area clears the named warnings in the files it owns: loop.ts, anthropic.ts and compose.ts pairingGuideUrl by w15-run; SettingsPage.tsx's noUselessFragments by w15-chat under W15-47 (SettingsPage.tsx is w15-chat's file, shared_files). No new warnings anywhere.",
+   "area": "w15-run",
+   "check_changes": [
+    "SettingsPage.tsx's warning is w15-chat's (W15-47), stated in shared_files (adversarial check file_conflicts)"
+   ]
+  },
+  {
+   "id": "W15-24",
+   "sources": [
+    "live2:research:F1",
+    "live2:research:F1 (verified real)",
+    "live2:research:step 'phaseE7-live-extra.md §7.1 (C-1)' (fail)"
+   ],
+   "severity": "major (money; blocks a dependent)",
+   "decision": "fix",
+   "title": "A command line tool is sent back three times for the usage exit its own criterion requires (a bare 'node wc.js' taken from a criterion), then escalated to Opus and the person: CHF 0.24 for a CHF 0.03 task",
+   "evidence": "/tmp/frbench/live2-result.json research F1; steps/80-s4-c1-inbox.png, 81-s4-c1-checked.png (81-s4-c1-checked.txt:150-171); model-calls-final.jsonl seq 64-94; verifier repro /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/f1/repro.ts",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/loop/try-plan.ts:126-130 STOP_WORDS includes 'on'; the prose path (~:321-333) ends 'node wc.js on a file containing …' with no arguments and keeps the bare command; :449-452 expectsError reads only the command's own sentence, never criterion 4 ('Running with no argument … exits with code 1'). The override itself is by design (packages/critic/src/critic.ts:829-836, rules.ts:205; ADR 0104) and stays.",
+   "notes": "A command whose arguments are described in words is not run (ADR 0110 point 1 already says so); a bare run that another criterion expects to fail is 'expects an error'. Do not loosen the measured-problem rule. The cut '<file' in the log line is W15-58 (w15-review).",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-25",
+   "sources": [
+    "live2:research:F7",
+    "live2:research:F7 (verified real)",
+    "live2:research:step 'phaseE7-live-w12w14.md R-failopen' (partial)"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "The critic is not told the project's research rule: it sends back a correct refusal, calls it 'probably wrong' and orders a fetch the rule forbids; the order is carried into the next brief",
+   "evidence": "/tmp/frbench/live2-result.json research F7; steps/54-s2-ip-drawer-drawer.png; model-calls-final.jsonl seq 39-44; verifier scratch /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/f7/",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/loop/critic.ts:415 the review's brief is `${task.title}: ${task.outcome}` (the worker's brief gets webAccessBriefLine at packages/runtime/src/session/executor.ts:970-973); packages/critic/src/evidence.ts:163-310 has no section for it; evals/registry/critic/critic.md says nothing about the site rule; executor.ts:518-522 retryConstraints carries the forbidden 'Fetch the MDN dialog page' into the next brief.",
+   "notes": "Model-facing prompt and request text are code: test the exact critic request and the next brief. The rule passed is the one the run ran under (returned by the executor), not a later one. Never weaken the site rule; page text never becomes instructions. executor.ts's 'sites' rule line block (:968-973, webAccessBriefLine) and returning that line with the result are w15-review's by shared_files; w15-run keeps :927-967 (searchPlanFor and the search lines).",
+   "area": "w15-review",
+   "check_changes": [
+    "executor.ts :968-973 given to w15-review by shared_files (adversarial check file_conflicts[0])"
+   ]
+  },
+  {
+   "id": "W15-26",
+   "sources": [
+    "live2:research:F6",
+    "live2:research:F6 (verified real)",
+    "live2:research:step 'phaseE7-live.md §4.3 review sources' (partial)"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "After a pause at its budget and Continue, the research task's review sees none of the pages the work rests on and is told the evidence is complete",
+   "evidence": "/tmp/frbench/live2-result.json research F6; model-calls-final.jsonl seq 2-16 (critic request seq 16 has no '### web page' and 'Evidence not available: (nothing: …)'); state.sqlite runs 01a1be8c (paused, 11 webSources) and 01a1be91 (completed, none); steps/21-s1-done-drawer.txt",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/loop/critic.ts:444 webSourceEvidence(result.webSources, result.searchSeen) reads only the last run's result (no sourcesOfTask; compare filesOfTask at :374/:986); packages/runtime/src/session/executor.ts:1242 the WebSource log is dropped on a pause (only addresses reach the Run row's artifacts at :1312/:1401 via web-sources.ts webSourceArtifact); packages/critic/src/evidence.ts:300-307 prints the complete line when the caller lists nothing.",
+   "notes": "Shares 'keep the run's result for a later review' with W15-27 (TR-15): build one keeping mechanism (Run row artifacts), used by both. Fallback for runs without kept text: one 'Evidence not available' entry per page.",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-27",
+   "sources": [
+    "live2:run:RUN-6",
+    "live2:run:RUN-6 (verified real)",
+    "wave7g6d-fix-leftovers7-tailrun:not_done[0] (TR-15)",
+    "wave7g6d-merge:problems_left[2]",
+    "live2:run:step 'phaseE7-live-w12w14.md R-criticbudget / R-sessreview / TR-14' (pass, finding)"
+   ],
+   "severity": "minor (money; promise not kept)",
+   "decision": "fix",
+   "title": "No review-only pass: after the project budget is raised the specialist runs again before the waiting review, although the card says 'The work is done; its review waits for room in the budget.'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-6; raise.json (events2, calls2), criticbudget.json; ADR 0112 amendment of 2026-11-09 point 3 ('Still not built'); verifier scratch /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/run6/",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/runner.ts:2038-2104 the refused-review branch keeps no result (comment at :2044 'The next session runs the task again'); runner.ts ~:1650 every picked ready task goes through executor.execute; packages/runtime/src/session/budget-card.ts:191 review_waits only on the card, :377-429 wakeBudgetWaits sets plain ready.",
+   "notes": "Build TR-15 as ADR 0112's amendment designs it: a review_pending entry in the specialist Run row's artifacts (no migration), the runner reviewing it before execute when attempt and head match, a prepareReview hook (PrTaskExecutor checks the branch out; a folder project is in place), a compose-twice restart test with the model-call log showing one specialist call in all; fall back to today's rerun when anything changed. Share the keeping with W15-26. TR-14's card line 'The work is done; its review waits for room in the budget.' (request-words.ts pausedWorkSentence) is true only once this pass exists: if W15-27 ends in not_done, say so, and w15-words rewords that line (W15-65).",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-28",
+   "sources": [
+    "live2:run:RUN-7",
+    "live2:run:RUN-7 (verified real)",
+    "live2:research:F14",
+    "live2:research:F14 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Two notifications for one card: a 'needs your sign-off' notification for a sign-off withdrawn a few ms later, then the real questions card's",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-7 (GET /notifications/recent; noise2.json) and research F14 (state.sqlite: sign-off created 05:03:16.990, withdrawn .993; session 01a1beae-b3fe events seq 73-74)",
+   "root_cause_at_head": "Holds at 931ed52: packages/critic/src/critic.ts:1030-1063 files a sign-off for every task 'human' verdict; packages/runtime/src/daemon/compose.ts:3070 notifies on every humanRequest insert; packages/runtime/src/loop/critic.ts:664-676 decides on reported questions only after review() returned, and :933-947 askPersonInstead withdraws the sign-off after its notification went.",
+   "notes": "Decide before the review files anything (a review-context flag so the critic files no sign-off when the runtime will file the questions card); an optional re-read guard in the notify hook. Design §4.3 'the person hears once'. U-022, L-2.",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-29",
+   "sources": [
+    "live2:research:F2",
+    "live2:research:F2 (verified real)",
+    "live2:research:step 'phaseE7-live-w12w14.md R-researchreads' (fail)",
+    "live2:research:step 'wave 13 leftovers7-tailrun TR-9' (partial)"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "Chat cannot change 'Web pages research may read', records a lesson instead and says the rule changed",
+   "evidence": "/tmp/frbench/live2-result.json research F2; evidence/s2-researchreads.json, s2-talk2.json; steps/55-59, 62; model-calls-final.jsonl seq 45-51",
+   "root_cause_at_head": "Holds at 931ed52: packages/commands/src/commands/settings.ts:767 settings.set's description lists key names only and :574 `value: z.unknown()` (the model sees `\"value\": {}`); :361 plainRefusals and :636-643 give bare zod words with no field path or shape; packages/runtime/src/conversation/agent.ts:356-361 CHAT_RETRIEVAL_RULES send 'a fact or rule about the work' to memory_record; evals/registry/principals/conversation-agent.md has no setting change in its action list; the chat facts carry no 'Research reads: …' line; packages/commands/src/commands/memory.ts:104-106 does not say a lesson changes no setting.",
+   "notes": "Model-facing tool definitions and prompts are code: assert the exact settings_set definition and system text the model receives. Correction from the verifier: 'only developer.mozilla.org' after 'any, never facebook.com' is a narrowing (acts at once, no card); widening back shows a Yes/No card. z.toJSONSchema needs io:'input' (the WebAccessSetting transform).",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-review -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-30",
+   "sources": [
+    "live2:research:F12",
+    "live2:research:F12 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A project's chat lists other projects' cards in full as 'not yet mentioned', drops the specialist's reason and leaves 'this project' unresolved, so the model suggests a wrong answer for another project's card",
+   "evidence": "/tmp/frbench/live2-result.json research F12; model-calls-final.jsonl seq 46-47; steps/56-s2-rr-02-only-talk.png; verifier repro /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/f12/repro.mts",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/conversation/agent.ts:1253-1256 ranks other projects' cards last but keeps 8 in full; :479 marks the list 'not yet mentioned in this conversation' (also contradicting a per-card 'already mentioned'); :370-379 CHAT_OPEN_REQUEST_RULES ask to bring such cards up; packages/runtime/src/conversation/project-facts.ts:257-271 cardLine drops change_card.context and keeps the specialist's 'this project'; the card line gives only 'Options: Cancel the task.' while the Inbox offers three.",
+   "notes": "Design §3.9 ('the open cards in full') is read as this project's open cards (its Job: 'ask about the project'); other projects' cards become a count by project unless the person asks or names them. Wave 15 does not edit docs/design/core-experience.md: the reading is put to the owner (W15-148); the conversation maintainer doc records it.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-review -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "no design §3.9 rewrite in wave 15; flagged to the owner as W15-148 (adversarial check spec_problems)"
+   ]
+  },
+  {
+   "id": "W15-31",
+   "sources": [
+    "live2:research:F10",
+    "live2:research:F10 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A research brief asks for access dates but nothing tells the researcher today's date or when a page was read; the run removes its (correct) date and needs a Continue",
+   "evidence": "/tmp/frbench/live2-result.json research F10; s1-model-calls.jsonl seq 1-17; steps/11-s1-inbox-paused.txt, 15-s1-paused2-drawer.txt",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/brief.ts:45-63 renderBrief prints no date; packages/runtime/src/session/executor.ts:853-893 brief constraints have none; packages/capabilities/src/web/fetch.ts:434-440 renderWebPage gives no read time; packages/runtime/src/session/web-sources.ts:16-27 WebSource has no readAt.",
+   "notes": "Today's date (person's time zone) in the brief's user message (not the system prompt, cache unchanged), the read time on each fetched page and in the critic's source list; the intake prompt (targetDate) gets today too. Side effect to clean: the unusable lesson 'Record the real access date…' recalled in later briefs.",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-32",
+   "sources": [
+    "live2:research:F9",
+    "live2:research:F9 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "The researcher's role prompt says 'Write answer.md' while the brief names another file: a stray answer.md and report noise (same pattern in data-analyst, designer, science-evaluator)",
+   "evidence": "/tmp/frbench/live2-result.json research F9; s1-model-calls.jsonl seq 18, 21, 29, 34, 38; steps/33-s1-only-done-drawer.txt",
+   "root_cause_at_head": "Holds at 931ed52: evals/registry/specialists/researcher/specialist.md:23 and :51 'Write `answer.md` …' unconditional; evals/registry/specialists/data-analyst/specialist.md:50 analysis.md, designer/specialist.md:52 design.md, science-evaluator/specialist.md:53 evaluation.md; packages/runtime/src/session/executor.ts:854 goal names the outcome's file with no line saying which wins.",
+   "notes": "Model-facing prompts are code: make the default file conditional ('when the brief names no file'), bump each prompt version, optionally one brief line naming the deliverable; a registry unit test that every default output file is conditional; a bench stand-in that writes both files when told unconditionally (as the live model did).",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-33",
+   "sources": [
+    "live2:research:F11",
+    "live2:research:F11 (verified real)",
+    "live2:research:step 'wave 13 leftovers7-tailrun TR-5' (partial)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Under an empty 'only these websites' list the planner still plans research with figures from the model's memory and URLs it will not read",
+   "evidence": "/tmp/frbench/live2-result.json research F11; model-calls-final.jsonl seq 52; steps/65-s3-tr5-inbox.txt; evidence/s3-tr5.json",
+   "root_cause_at_head": "Holds at 931ed52: packages/runtime/src/session/intake.ts:481 'Plan no research that needs a website; where the brief needs one, say in the decision record…' (never says what to plan instead; same opening for a non-empty list near :484); :489-490 NO_WEB_RULE lacks 'never from its own knowledge'; :500-501 SMALL_PLAN_RULES steer away from a person task. The plan card's per-task lines come from packages/runtime/src/daemon/plan-tasks.ts (cannotRunHere, runsOn), rendered by apps/ui/src/pages/InboxPage.tsx; no line says a researcher task may read no website.",
+   "notes": "Planner text is code: tested on the exact planning request. A person task that asks for websites or sources, with research depending on it; plus a plan-card line (beside RW4's 'cannot run here') when a researcher task has nothing it may read. The empty list is reachable only from a stored setting (Settings refuses it), the non-empty wording is reachable. The plan card line is one function in plan-tasks.ts beside cannotRunHere, carried in a field the card already renders; InboxPage.tsx changes only if a new field must be rendered (its plan-task row only, shared_files).",
+   "area": "w15-review"
+  },
+  {
+   "id": "W15-34",
+   "sources": [
+    "live2:research:F13",
+    "live2:research:F13 (verified real)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "An undo confirmation left on Changes shows on Home and in the Inbox as a card titled 'undo' with raw 'yes'/'no' and counts as '1 question'",
+   "evidence": "/tmp/frbench/live2-result.json research F13; steps/60-62, 66; verifier bench /tmp/frbench/f13v/steps/02-f13-home.png, 03-f13-inbox.png",
+   "root_cause_at_head": "Holds at 931ed52: packages/commands/src/executor.ts:1248-1263 undoCardOf builds `what: 'undo: ' + what` with no `ask`; packages/runtime/src/daemon/request-words.ts genericCard titles firstSentence(why) and firstSentenceEnd (:153-162) cuts at ': ' after one word; the choices keep 'yes'/'no' with no explains.",
+   "notes": "Fix the state the words read (undoCardOf gives a plain question in `ask`, e.g. 'Put web pages research may read for Reading rules back to any public website?', and a `what` without the raw prefix); Changes' read-back gets the same one line. The project line's 'question' word for an approval card is W15-77 (w15-chat). The card expires after 10 minutes by design (PENDING_TTL_MS); the stray 'Undone: active project' was the journey script's click. W15-34, W15-76 and W15-77 are now one area's (w15-chat): undoCardOf's question, the approval card's choice explains in request-words.ts genericCard and firstSentenceEnd change together.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "W15-34/76/77 joined in w15-chat (adversarial check file_conflicts: firstSentenceEnd and the choices' explains were split over two areas)"
+   ]
+  },
+  {
+   "id": "W15-35",
+   "sources": [
+    "wave7g6d-fix-polish-screens:new_problems[2]",
+    "wave7g6d-fixup-polish-screens:not_done[2] (2)",
+    "wave7g6d-review-polish-screens:non_blocking (monthly cap 0 refusal)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A refused command through POST /commands/execute reads only '<command>: invalid parameters' (e.g. budget.set 0 for the month), with the words hidden in details.issues",
+   "evidence": "Wave 13 polish-screens fixer and review",
+   "root_cause_at_head": "Holds at 931ed52: packages/commands/src/registry.ts:68 throws ForerunnerError('validation', `${name}: invalid parameters`) and keeps the zod issues only in details.",
+   "notes": "Put the first issue message (the plain sentence the schema carries, e.g. ZERO_REFUSED) in the refusal reason, as design §5 rule 8 asks; chat's question and other clients then show it. Same class as W15-29's refusals.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-36",
+   "sources": [
+    "wave7g6d-fix-polish-screens:new_problems[0]",
+    "wave7g6d-review-polish-screens:non_blocking (New project still runs project.switch)"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Creating a project writes two Changes rows (project.create, then 'Switched the active project to …')",
+   "evidence": "Wave 13 polish-screens fixer (bench) and review; also why the live check scripts' Undo hit a 'Switched the active project' row",
+   "root_cause_at_head": "Holds at 931ed52: apps/ui/src/pages/NewProjectDialog.tsx:70 calls switchActiveProject after create.",
+   "notes": "One click, one row: project.create (packages/commands/src/commands/project.ts:129) takes a switch parameter (U-056 keeps the new project active for chat, voice and the phone); that row's Undo does what project.create's Undo does today and also restores the previous active project. The row's Undo is tested after a restart too (validation rule 4: 'An undo or a Resume is tested after a restart').",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "restart case added (validation.md rule 4)"
+   ]
+  },
+  {
+   "id": "W15-37",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[5] (W14-7, chat part)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Chat cannot pick one of two tasks with identical titles ('redo Write the guide'): it asks to 'say more of the title', which cannot help",
+   "evidence": "Wave 13 polish-words not_done (W14-7); live check 2 made two same-titled tasks (github R-branch step)",
+   "root_cause_at_head": "Holds at 931ed52: packages/commands/src/commands/task.ts:105-131 findTask matches by title substring and on several matches asks for more of the title, even when the titles are equal.",
+   "notes": "When titles are equal, name each by what tells them apart (its state, its PR number, when it was made) and accept that word (e.g. '#17', 'the done one'); unit test at findTask's sentence and a chat case.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-38",
+   "sources": [
+    "live2:run:RUN-17",
+    "wave7g6d-fixup-polish-screens:not_done[2] (1) C-45",
+    "wave7g6d-review-polish-screens:non_blocking (C-45 long list)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Start dialog: the same long 'may be left for next time' sentence once per task left out; the 'each need more than' line names every task with no 'and N more'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-17; /tmp/frbench/live2/run/run-live/steps/117-z06-start-dialog-session-budget-0-04.png, zero2.json",
+   "root_cause_at_head": "apps/ui/src/pages/project/StartSessionDialog.tsx:206 (each need more than …) and :220 (may be left for next time) at 931ed52.",
+   "notes": "Design §5 rules 1 and 5: one line naming up to three tasks, then 'and N more'.",
+   "area": "w15-words",
+   "check_changes": [
+    "area w15-screens -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-39",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[5]",
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[6]",
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[7]",
+    "wave7g6d-merge:problems_left[1] (tailrun's UI sentences)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Start dialog planning lines: 'this session starts once it is ready' ('it' could be the session); the planning notice falls back to 'your agent is in another session' when tasks wait ahead; startNotice's JSDoc orphaned",
+   "evidence": "Review of leftovers7-tailrun (wave 13); tailrun's notes_for_other_areas",
+   "root_cause_at_head": "apps/ui/src/pages/project/StartSessionDialog.tsx PLANNING_WAIT_LINE and startNotice (with { planning }) at 931ed52.",
+   "notes": "'… starts once the plan is ready.'; a planning notice that stays exact with tasks ahead; move the JSDoc back above startNotice.",
+   "area": "w15-words",
+   "check_changes": [
+    "area w15-screens -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-40",
+   "sources": [
+    "live2:github:F7 (words)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Docs tab shows a zero count '0 drifted'",
+   "evidence": "/tmp/frbench/live2-result.json github F7; steps/19-l16-p2-docs.txt:29, 123-c57-docs-after-docs-merge.txt:29",
+   "root_cause_at_head": "apps/ui/src/pages/project/DocsTab.tsx:25-34 renders `{drifted} drifted` whatever the count.",
+   "notes": "Design §5 rule 5: no zero counts.",
+   "area": "w15-words",
+   "check_changes": [
+    "area w15-screens -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-41",
+   "sources": [
+    "live2:github:F8 (words)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Raw markdown table rows ('| # | Criterion |…', '|---|') in the task drawer's report",
+   "evidence": "/tmp/frbench/live2-result.json github F8; steps/23-c49-drawer-add-kite-footer-test.txt",
+   "root_cause_at_head": "apps/ui/src/pages/project/TaskDrawer.tsx:344 renders r.report through RichText (apps/ui/src/components/RichText.tsx), which handles ** but not tables.",
+   "notes": "Design §5 rule 6: render a table as plain lines (or a real table), never pipes and dashes.",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-screens -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-42",
+   "sources": [
+    "wave7g6d-fixup-leftovers7-tailmerge:new_problems[2]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[4]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The Tasks tab's Critic column shows a raw lowercase 'accepted' beside a failed task and a 'Mark done anyway' task",
+   "evidence": "Bench steps 18, 25 (/tmp/frbench/fixup-leftovers7-tailmerge) and review steps 41, 46",
+   "root_cause_at_head": "apps/ui/src/pages/project/TasksTab.tsx:491-502 falls back to verdictLabel(run.verdict) when task.check is null; packages/runtime/src/daemon/task-display.ts:229 taskCheck returns null for any task not done; apps/ui/src/lib/plain-words.ts:55-69 'accepted'.",
+   "notes": "Design §2 / §5 rule 6: a failed task's column says what is true ('Failed review' or nothing), a mark-done task 'Not reviewed'. taskCheck (task-display.ts:225-233) is w15-review's for this item (shared_files).",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-screens -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-43",
+   "sources": [
+    "wave7g6d-fix-polish-words:new_problems[0]",
+    "wave7g6d-fixup-polish-words:not_done[1]",
+    "wave7g6d-review-polish-words:non_blocking[6]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Registry keys on screen ('writer-marketing · …') on the drawer's run rows, the Tasks 'Who does it' column and filter, and the plan card, while other places say 'the writer'",
+   "evidence": "/tmp/frbench/fix-polish-words/after/05-05-quote-style-drawer.txt; review bench 03-03/04-04",
+   "root_cause_at_head": "apps/ui/src/lib/task-actions.ts:263-267 whoName returns the registry id; apps/ui/src/pages/InboxPage.tsx:368-370 prints t.specialist on the plan card.",
+   "notes": "Change whoName itself (call sites unchanged, so TaskDrawer.tsx:140 is not edited by this area) and the plan card's name to specialistName's words.",
+   "area": "w15-words",
+   "check_changes": [
+    "area w15-screens -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-44",
+   "sources": [
+    "wave7g6d-fix-polish-screens:new_problems[1]",
+    "wave7g6d-fixup-polish-screens:not_done[2] (3)",
+    "wave7g6d-review-polish-screens:non_blocking (budget sentences whole francs)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "budget.set sentences write whole francs ('from CHF 3 to CHF 12') against design §5's two decimals",
+   "evidence": "Wave 13 polish-screens fixer and review",
+   "root_cause_at_head": "packages/commands/src/commands/shared.ts chf() helper (whole francs) used by budget.set's sentences.",
+   "notes": "Two decimals everywhere (design §5 rule 7); update the commands tests that quote the old form.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-45",
+   "sources": [
+    "wave7g6d-fixup-polish-screens:not_done[2] (2)",
+    "wave7g6d-review-polish-screens:non_blocking (monthly cap 0 refusal says why not what to do)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The monthly cap's 0 refusal says why but not what to do",
+   "evidence": "Wave 13 polish-screens fixup and review",
+   "root_cause_at_head": "packages/commands/src/commands/budget.ts ZERO_REFUSED and apps/ui/src/pages/SettingsPage.tsx MONTHLY_CAP_ZERO at 931ed52.",
+   "notes": "Design §5 rule 8: add the way out ('enter the most you want to spend in a month'). Keeps today's rule (0 refused for the month) while the owner question on the monthly cap's 0 stays open (W15-109).",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-46",
+   "sources": [
+    "wave7g6d-fixup-polish-screens:not_done[2] (4)",
+    "wave7g6d-review-polish-screens:non_blocking (handover change sentence repeats the schedule)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The handover setting's change sentence repeats the schedule ('…day 2 at 08:00: a fresh agent runs the seeded change on day 2 at 08:00 each month…')",
+   "evidence": "Wave 13 polish-screens review",
+   "root_cause_at_head": "packages/commands/src/commands/settings.ts handover effect sentence (askOf/effect for the handover key) at 931ed52.",
+   "notes": "One mention of the schedule.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-47",
+   "sources": [
+    "wave7g6d-fix-polish-screens:not_done[1]",
+    "wave7g6d-fixup-polish-screens:not_done[0]",
+    "wave7g6d-review-polish-screens:non_blocking (fast mode USD)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Settings' fast mode row and card quote 'USD 8 / 40 per million input / output tokens' (the one USD left in Settings)",
+   "evidence": "Wave 13 polish-screens not_done; the user guide names it as the one place USD remains",
+   "root_cause_at_head": "packages/runtime/src/models/fast-mode.ts:150-151 fastModeEffect quotes the provider's USD table; shown in Settings' fast mode row.",
+   "notes": "Session-lead decision (design §5 rule 7 'Never USD'): show 'about CHF x / y per million' at the day's rate and keep the USD table in ADR 0057 (amend it) and the user guide; update the commands fast-mode tests. Also clear the SettingsPage.tsx noUselessFragments warning (W15-23).",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-48",
+   "sources": [
+    "live2:run:notes (low-severity: Changes page)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The Changes page shows raw command names: 'task.transition · before / after'",
+   "evidence": "/tmp/frbench/live2-result.json run live.notes",
+   "root_cause_at_head": "apps/ui/src/pages/ChangesPage.tsx:260 renders commandNames(c.commands) · 'before / after'.",
+   "notes": "Design §5 rules 3 and 6 (no event or command names): the change's own sentence names it.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-screens -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-49",
+   "sources": [
+    "live2:run:RUN-12 (verified: the copy part only)",
+    "wave7g6d-fix-polish-words:not_done[3] (W14-1: 'the browser did not start (...)')"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A page try whose browser never starts shows Playwright's raw text: 'the browser did not start (browserType.launch: Timeout 60000ms exceeded.)'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-12; steps/128-sb01-drawer-page-try-with-a-browser-that-never-starts.png, sandbox2.json",
+   "root_cause_at_head": "packages/capabilities/src/browser/try-page.ts:224 and :232 append firstLine(e) to the person-facing line (pinned by packages/capabilities/test/try-page.test.ts:148).",
+   "notes": "Design §5 rule 8: plain words for the known cases ('the browser did not start within a minute; the page was judged from its files'), the exception text to logger.warn. The process-left-running claim is not a problem (W15-91).",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-screens -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-50",
+   "sources": [
+    "live2:run:RUN-13 (words)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A checks line names a package.json that does not exist: '…that no check ran: its package.json names no test script'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-13; smoke-result.json (no package.json in the file list)",
+   "root_cause_at_head": "packages/runtime/src/loop/project-checks.ts:426 builds the sentence without checking that package.json exists.",
+   "notes": "True now (design §5 rule 4): 'there is no package.json to run them' when there is none.",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-screens -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-51",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[0]",
+    "wave7g6d-fixup-polish-words:not_done[1] (ruledSummary dead branches; C-19 not tested at GET /tasks/:id)",
+    "wave7g6d-fix-polish-words:not_done[7] (C-19)",
+    "wave7g6d-review-polish-words:non_blocking[11] (C-19 tested at the critic only, not at GET /tasks/:id)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Reviews tab shows 'needs you' above 'Accepted: the changed file matches the brief.' when the asks-person rule turned an accept into 'human'; ruledSummary's asks-person branches are dead code",
+   "evidence": "Bench, Members, /tmp/frbench/fixup-polish-words/steps/31-30-members-reviews.txt",
+   "root_cause_at_head": "packages/critic/src/critic.ts ruledSummary (the guard near :903 keeps its human branches from running) at 931ed52.",
+   "notes": "The shown summary follows the ruled verdict; add the real-daemon case at GET /tasks/:id that C-19 lacked.",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-screens -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "cites review-polish-words non_blocking[11] (adversarial check missing_items)"
+   ]
+  },
+  {
+   "id": "W15-52",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[3]",
+    "wave7g6d-fixup-polish-words:not_done[1] (empty-change failed card body)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "An empty-change failed card's body is ~300 characters and 6 sentences (the whole report), and the Overview's Last result ends 'any….'",
+   "evidence": "Review of polish-words (wave 13), bench",
+   "root_cause_at_head": "packages/capabilities/src/githost/pr-executor.ts:372 emptyChangeSummary embeds the whole report.",
+   "notes": "Design §5 rule 1: card body at most 2 sentences; quote the report's first sentence; no double punctuation. Only emptyChangeSummary's text changes (w15-merge owns the rest of pr-executor.ts; w15-review appends prepareReview).",
+   "area": "w15-words",
+   "check_changes": [
+    "area w15-screens -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-53",
+   "sources": [
+    "copyfix-result:review.non_blocking[8]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The user guide says 'the next merge brings the copy up to date' (the next poll does, within about a minute) and never says an editor saving a file with CRLF counts as a change",
+   "evidence": "Review of the copy line-endings fix",
+   "root_cause_at_head": "docs/user-guide.md:~139 (the copy paragraph).",
+   "notes": "Docs wording only; the U-entry 'Check in the app' note for already-stuck copies is phase G's (W15-139). No test reads the guide's wording: the report quotes the paragraph before and after.",
+   "area": "w15-words",
+   "check_changes": [
+    "area w15-screens -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-54",
+   "sources": [
+    "live2:research:F15 (part: drawer Read list)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The drawer's 'Read' list repeats the same page (the Netlify page twice)",
+   "evidence": "/tmp/frbench/live2-result.json research F15; steps/15-s1-paused2-drawer.png",
+   "root_cause_at_head": "apps/ui/src/pages/project/TaskDrawer.tsx:400-415 lists every read in run order on purpose (comment 'The same page can be read twice').",
+   "notes": "Design §5 rule 5: list each page once (with 'read twice' if useful).",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-screens -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-55",
+   "sources": [
+    "live2:github:F1 (the Tasks label half: 'the screens disagree')",
+    "wave7g6d-fix-leftovers7-tailmerge:new_problems[0]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[10]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The Tasks row says 'Accepted · waiting for you to merge' for a task whose PR was closed, or whose rebuild conflicted, while the Overview says otherwise",
+   "evidence": "/tmp/frbench/live2-result.json github F1 step 46-chain2-tasks-after-rebuild.txt; tailmerge bench step 08 (task 'Write the page in page.html' after PR #2 was closed)",
+   "root_cause_at_head": "packages/runtime/src/daemon/task-words.ts:496-502: the default merge-state branch returns WAITING_FOR_YOUR_MERGE for every left_to_you record except last_outcome 'conflict' (closed, rebuild_conflict, rebuilt_without, head_moved all read 'waiting for you to merge').",
+   "notes": "One label per last_outcome, agreeing with the Overview row (design §2: one map for every screen). Now w15-merge's (task-words.ts's merge-state branch, shared_files), so the label map knows the states W15-03 and W15-05 add (held by the folder's changes, a cleared rebuild_conflict).",
+   "area": "w15-merge",
+   "check_changes": [
+    "area w15-words -> w15-merge (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-56",
+   "sources": [
+    "live2:run:RUN-15 (words)",
+    "live2:run:step 'phaseE7-live.md §3.3 tiny budget' (partial)",
+    "live2:run:step 'phaseE7-live.md §3.4 Cancel with a dependent' (partial)",
+    "wave7g6d-fixup-polish-words:not_done[0]",
+    "wave7g6d-fixup-polish-words:new_problems[0]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A task paused before any step ran: its card says 'its work so far is kept' and Cancel promises 'Its work so far is set aside…' although nothing was written",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-15; steps/36-b06-inbox-tiny-pause-card.png, 39-x01-cancel-dialog-paused-task-with-dependent.png; budget1.json; /tmp/frbench/fixup-polish-words/steps/26-25-paused-drawer.txt",
+   "root_cause_at_head": "packages/runtime/src/daemon/task-words.ts needs_human/budget case sends cancelWork for every paused task; apps/ui/src/lib/task-actions.ts cancelWorkLine falls back to the 'paused' kind; packages/runtime/src/daemon/request-words.ts pausedWorkSentence and the budget card's Cancel explain; packages/runtime/src/daemon/task-display.ts runLeftFiles is used only for ready tasks (P7-20).",
+   "notes": "Apply runLeftFiles to paused tasks; 'Drops it.' when there is no work (as P7-20 does after Reopen); the UI trusts the daemon's display.",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15-57",
+   "sources": [
+    "live2:run:RUN-9 (words)",
+    "live2:research:F15 (part: 'Done: `comparison.md` is complete')"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The budget pause card quotes markdown backticks and bullet dashes and cuts list items mid-word ('rounds(players…')",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-9 (budget2.json, budget3.json, 54-w04, 123-w14) and research F15 (11-s1-inbox-paused.png)",
+   "root_cause_at_head": "packages/runtime/src/daemon/request-words.ts pausedWorkSentence formats the handoff items as given (items come from packages/runtime/src/session/budget-pause.ts parseHandoff, MAX_ITEM_CHARS 200, unformatted).",
+   "notes": "Design §5 rule 6: plain words, items cut at a word, a count for the rest. Formatting in request-words only (parseHandoff is w15-run's).",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15-58",
+   "sources": [
+    "live2:run:RUN-5 (words)",
+    "live2:research:F1 (verified: secondary '<file' cut)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "'The critic sent X back:' quotes what passed, not why; 'back: Sent back: …'; '…<file' loses its '>'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-5 (15-session-1-ended.txt, stops.json) and research F1 (session log line)",
+   "root_cause_at_head": "packages/runtime/src/daemon/event-lines.ts:234-242 uses the review summary's first 100 characters (the model's summary starts with what passed); packages/critic/src/critic.ts:1265 prefixes 'Sent back: '; packages/critic/src/followup.ts:98 `.replace(/[*`#>]+/g, '')` strips every '>'.",
+   "notes": "The line says what failed (the blocking finding), once, in one line; strip only a leading blockquote marker. Now w15-review's: critic.ts :1265 and followup.ts :98 are review files; event-lines.ts personLine's critic-review case (~:228-245) is w15-review's by shared_files.",
+   "area": "w15-review",
+   "check_changes": [
+    "area w15-words -> w15-review (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-59",
+   "sources": [
+    "live2:run:RUN-10 (words)",
+    "wave7g6d-fix-polish-words:not_done[0] (C-39)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A session whose only task the person cancelled during review ends with the result 'CHF 0.01.' and nothing else",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-10; steps/114-z03-session-page-after-cancel-in-review.png, stops.json s4.session",
+   "root_cause_at_head": "packages/runtime/src/session/result.ts has no cancelled list to say; packages/runtime/src/session/runner.ts does not put the tasks the person cancelled during the session in the session outcome.",
+   "notes": "'You cancelled \"X\"; nothing else ran.' w15-run adds the cancelled tasks to the session outcome (runner.ts) and the sentence in session/result.ts.",
+   "area": "w15-run",
+   "check_changes": [
+    "area w15-words -> w15-run (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "path corrected to packages/runtime/src/session/result.ts (daemon/result.ts does not exist; adversarial check spec_problems)"
+   ]
+  },
+  {
+   "id": "W15-60",
+   "sources": [
+    "live2:run:RUN-11 (words)",
+    "live2:research:F15 (part: 'Plan: … the first session' lowercase)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Session log lines in raw words: 'Finished \"…\": killed (CHF 0.01). run stopped by its caller'; a retry's 'Started … with coder'; 'Finished …: done (CHF 0.06). Summary: <report>'; 'Plan: 1 task, about CHF 0.02. the first session you approved…'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-11 (l6.json, cancel-*.json, noise2.json) and research F15 (17-s1-run1-session-details.png)",
+   "root_cause_at_head": "packages/runtime/src/daemon/views.ts:565 'Plan:' line appends the lowercase summary from packages/runtime/src/session/runner.ts:3714; the Finished/Started lines in views.ts / event-lines.ts pass the raw outcome and 'run stopped by its caller' (only task-display.ts:372 maps it).",
+   "notes": "Design §3.7 and §5: 'Stopped by you during …', the same line form for a retry as a first attempt, one line, no report text.",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15-61",
+   "sources": [
+    "live2:research:F15 (part: card backticks and plural)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Inbox cards show backticks ('Can `developer.mozilla.org` be added…', 'a bare `node wc.js`') and 'Done: Plan approved: 1 task written; working on them.'",
+   "evidence": "/tmp/frbench/live2-result.json research F15; steps/52-s2-ip-inbox.png, 80-s4-c1-inbox.png, 10-s1-approved.png",
+   "root_cause_at_head": "packages/runtime/src/daemon/request-words.ts: the questions card quotes the specialist's words with markdown; :534 '; working on them' regardless of count.",
+   "notes": "Design §5 rule 6 and singular for one task.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-words -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-62",
+   "sources": [
+    "live2:run:RUN-8 (words)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Notification titles cut task titles to a word: 'Chess tools: did 2 tasks: \"Write the…\" and \"Write the…\"'",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-8; cancel-*.json, noise2b.json, budget2.json",
+   "root_cause_at_head": "packages/runtime/src/notifications/producers.ts fit()/cut() (~:37-73, :93) cut names at a word 'however short'.",
+   "notes": "Design §5 rules 1 and 3: names a person can tell apart within 60 characters (fewer names, then 'and N more').",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-words -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-63",
+   "sources": [
+    "live2:github:F10 (words)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "'#18 changed after the review: … merge it yourself or send it back.' offers 'send it back' with no button for it",
+   "evidence": "/tmp/frbench/live2-result.json github F10; steps/82-tm2-and-b2-inbox.txt",
+   "root_cause_at_head": "packages/runtime/src/loop/merge.ts:627, :643, :650 at 931ed52.",
+   "notes": "Design §5 rule 9: words that match the buttons ('… or redo the task'), as W14-3 did for the rebuilt-without sentence. Text only, in w15-merge's merge.ts.",
+   "area": "w15-merge",
+   "check_changes": [
+    "area w15-words -> w15-merge (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-64",
+   "sources": [
+    "wave7g6d-merge:problems_left[1] (tailmerge's sentences never reviewed)",
+    "wave7g6d-fix-leftovers7-tailmerge:notes_for_other_areas[0]",
+    "wave7g6d-fixup-leftovers7-tailmerge:notes_for_other_areas[0]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[5] (comma splice)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Wave 13 tailmerge sentences never checked against design §5: 'Redone from main, it changed nothing, so #4 was closed.' (comma splice), 'main already has this change.' (lowercase start), the closeEmptied PR comments, owedFolderSentence",
+   "evidence": "Wave 13 merge problems_left; tailmerge notes",
+   "root_cause_at_head": "Checked against design §5 at 931ed52. Fail: packages/capabilities/src/githost/pr-executor.ts:501-508 emptiedSentence: 'Redone from main, it changed nothing, so #4 was closed.' (comma splice), 'It changed nothing and #4 held no change, so #4 was closed.' ('It' without a referent, '#4' twice), 'main already has this change.' (a task reason starting lower case); pr-executor.ts:1150 the up_to_date PR comment 'Brought up to date with main, this task's work no longer changes anything, ...' (dangling opener). Pass, unchanged: '#4 no longer changes anything on main, so it was closed.', the other two closeEmptied comments (:1148, :1151), loop/merge-mode.ts:90-91 owedFolderSentence ('#8 waits for changes left in its task's folder: take them out or redo the task.', 79 characters, says the way out).",
+   "notes": "Targets: 'The redo from main changed nothing, so #4 was closed.'; 'The last run changed nothing and #4 held no change, so it was closed.'; 'The main branch already has this change.'; PR comment 'This task's work no longer changes anything on main, so this pull request is closed. Its branch is kept.' Now w15-merge's (its own files), so W15-05's new tests and these texts change in one area.",
+   "area": "w15-merge",
+   "check_changes": [
+    "area w15-words -> w15-merge (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "acceptance made concrete: each sentence checked now, targets named (adversarial check spec_problems: 'follow design §5' named no target)"
+   ]
+  },
+  {
+   "id": "W15-65",
+   "sources": [
+    "wave7g6d-merge:problems_left[1] (tailrun's sentences never reviewed)",
+    "wave7g6d-fix-leftovers7-tailrun:notes_for_other_areas[0]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Wave 13 tailrun daemon sentences never checked against design §5: startKeepsWaitSentence ('Press Start and it runs then.'), the review_waits line",
+   "evidence": "Wave 13 merge problems_left; tailrun notes",
+   "root_cause_at_head": "Checked against design §5 at 931ed52. Fail: packages/runtime/src/session/credential-wait.ts:195-201 startKeepsWaitSentence 'Nothing can run until 15:40 (your subscription's limit). Press Start and it runs then.' ('it' has no referent). Pass while W15-27 lands: request-words.ts:634-635 pausedWorkSentence's review_waits line 'The work is done; its review waits for room in the budget.' The Start dialog's planning lines are W15-39.",
+   "notes": "Target: 'Nothing can run until 15:40 (your subscription's limit). Press Start and the work starts then.' If W15-27 (w15-review) ends in not_done, the review_waits line is reworded so it promises no review-only pass.",
+   "area": "w15-words",
+   "check_changes": [
+    "acceptance made concrete (adversarial check spec_problems)"
+   ]
+  },
+  {
+   "id": "W15-66",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailrun:new_problems[0]",
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[1]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The chooser's runs-on line for a resting credential says 'Waits until 15:40 (…) and starts by itself.' although creating the task records no wait (since TR-2 nothing starts by itself unless a session met the wait)",
+   "evidence": "Wave 13 tailrun fixer and review",
+   "root_cause_at_head": "packages/runtime/src/daemon/compose.ts:3511-3516 puts waitSentence() (packages/runtime/src/session/credential-wait.ts:178-186, '… and starts by itself.') on New task, the plan card and Settings.",
+   "notes": "Design §5 rule 9: the startKeepsWaitSentence form ('Press Start and it runs then') or no 'starts by itself' there.",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15-67",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailrun:new_problems[1]",
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[1]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "While the only key rests and no wait is kept, the project header reads 'Ready to continue: 1 task ready · Continue' without saying the work waits for the reset",
+   "evidence": "Bench after/01 screenshot (/tmp/frbench/fix-leftovers7-tailrun)",
+   "root_cause_at_head": "packages/runtime/src/daemon/project-status.ts:288-308 offers 'Ready to continue' whenever ready tasks exist and Claude is connected; a resting credential is not an input there.",
+   "notes": "Design §5 rule 4: name the wait ('Ready: 1 task; your API key rests until 15:40 · Continue').",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15-68",
+   "sources": [
+    "wave7g6d-fix-polish-words:new_problems[1]",
+    "wave7g6d-fix-polish-words:not_done[6] (P7-5 words)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A merge waiting because GitHub does not answer reads '#4 merges when its checks pass.' on the Overview row and the Tasks label",
+   "evidence": "Wave 13 polish-words fixer",
+   "root_cause_at_head": "packages/runtime/src/loop/merge.ts:534, :1114, :1431 write the checks sentence whatever the outcome status; packages/runtime/src/daemon/pull-requests.ts:228 fallback; packages/runtime/src/daemon/task-words.ts:475 label.",
+   "notes": "Pick the sentence by the outcome's status where it is set ('#4 merges once GitHub answers.'). Now w15-merge's (merge.ts, pull-requests.ts :228, the merge-state label :475 in task-words.ts).",
+   "area": "w15-merge",
+   "check_changes": [
+    "area w15-words -> w15-merge (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-69",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[1] (P7-17)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The session's end line says '1 needs you' for a task that paused at its budget",
+   "evidence": "Wave 13 polish-words not_done",
+   "root_cause_at_head": "packages/runtime/src/session/runner.ts session.ended payload has no paused count; packages/runtime/src/daemon/event-lines.ts endedCounts counts it as needing you.",
+   "notes": "w15-run adds the paused count to session.ended (runner.ts) and reads it in event-lines.ts endedCounts (:124-137, shared_files).",
+   "area": "w15-run",
+   "check_changes": [
+    "area w15-words -> w15-run (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-70",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[6] (P7-5 split)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The session result names 'checks pending' and 'GitHub not answering' merges in one line",
+   "evidence": "Wave 13 polish-words not_done",
+   "root_cause_at_head": "packages/runtime/src/session/runner.ts fills waitingPrs as one count; packages/runtime/src/session/result.ts words both cases together.",
+   "notes": "Split waitingPrs into checks pending and GitHub not answering (w15-run: runner.ts and session/result.ts).",
+   "area": "w15-run",
+   "check_changes": [
+    "area w15-words -> w15-run (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "path corrected to packages/runtime/src/session/result.ts"
+   ]
+  },
+  {
+   "id": "W15-71",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[2] (P7-6)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "later",
+   "title": "Cards, Overview and Tasks say 'main' whatever the repository's default branch is called",
+   "evidence": "Wave 13 polish-words not_done (too wide beside the other areas then)",
+   "root_cause_at_head": "About 17 literal 'main' strings at 931ed52 in request-words.ts, event-lines.ts, task-words.ts, apps/ui/src/lib/task-actions.ts, SummaryTab.tsx, merge.ts, dependent-branches.ts and pull-requests.ts; no base-branch field on the task display and pull-request views.",
+   "notes": "Later: the next wave after wave 15 merges, as one area that owns every file it needs. Its literals sit in w15-merge's files this wave (dependent-branches.ts:110, merge.ts:809-810, pull-requests.ts, SummaryTab.tsx) and in the words files (request-words.ts:882/:1083/:1099, event-lines.ts:449/:456, task-words.ts:499, task-actions.ts), and it needs a base-branch field on the task display and pull-request views (api-types and every view). Today's behaviour kept: repositories in the tests and forerunner-sandbox use main.",
+   "area": null,
+   "check_changes": [
+    "words -> later (adversarial check file_conflicts: its literals contradict three shared_files rules; verified at the cited lines)"
+   ]
+  },
+  {
+   "id": "W15-72",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[4] (W14-6 rest)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The plan card's per-task figures may not add up to its rounded total",
+   "evidence": "Wave 13 polish-words not_done",
+   "root_cause_at_head": "packages/runtime/src/daemon/plan-tasks.ts and the estimates' rounding (the plan card total vs per-task 'about' figures).",
+   "notes": "Round the total from the shown figures, or say 'about' on both consistently.",
+   "area": "w15-words"
+  },
+  {
+   "id": "W15-73",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[5] (W14-7, PR rows)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The Overview's two pull-request rows of same-titled tasks read the same",
+   "evidence": "Wave 13 polish-words not_done; live check 2 R-branch step showed two same-titled rows",
+   "root_cause_at_head": "packages/runtime/src/daemon/pull-requests.ts row words and apps/ui/src/pages/project/SummaryTab.tsx PR rows name the task title only.",
+   "notes": "Add what tells them apart (the PR number first, or when made). Now w15-merge's (pull-requests.ts and SummaryTab.tsx are w15-merge's this wave).",
+   "area": "w15-merge",
+   "check_changes": [
+    "area w15-words -> w15-merge (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-74",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[2]",
+    "wave7g6d-fixup-polish-words:not_done[1] (budgets and estimates under a centime)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Amounts under a centime read CHF 0.00 for budgets and estimates ('paused at its budget of CHF 0.00', 'about CHF 0.00') and in the session log's cost column beside '(less than CHF 0.01)'",
+   "evidence": "Review of polish-words (wave 13), bench",
+   "root_cause_at_head": "packages/runtime/src/session/money-words.ts moneyWords is used for spent amounts only. Still CHF 0.00 under a centime: packages/runtime/src/session/budget-card.ts:70-71 chfText, used by budgetStopTitle ('paused at its budget of CHF 0.00', :78-100), continueLabel (:74-75) and the reasons at :283/:295; packages/runtime/src/daemon/views.ts:573 'Started ... (about CHF 0.00)'; packages/runtime/src/daemon/event-lines.ts:183 the estimate; packages/runtime/src/session/result.ts:299 '(about ...)'; apps/ui/src/pages/SessionPage.tsx:529-531 the cost column. The wrap-up and pause sentences (budget-pause.ts through executor.ts chfText) are W15-16's.",
+   "notes": "Use moneyWords for every amount a person reads. budget-card.ts's money texts are w15-words' by shared_files (its logic is w15-review's, W15-27).",
+   "area": "w15-words",
+   "check_changes": [
+    "split: budget-pause/executor amounts moved to W15-16; budget-card.ts money texts given to w15-words by shared_files (adversarial check file_conflicts[1])"
+   ]
+  },
+  {
+   "id": "W15-75",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[8]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "changeNotAppliedWords makes ~250-character Updates (repo.create)",
+   "evidence": "Review of polish-words (wave 13)",
+   "root_cause_at_head": "packages/runtime/src/daemon/request-words.ts changeNotAppliedWords (wired in compose.ts onRefused).",
+   "notes": "Design §5 rule 1: an Update is one line.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-words -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-76",
+   "sources": [
+    "wave7g6d-review-polish-screens:non_blocking (P7-10 side effect in the Inbox)",
+    "wave7g6d-fixup-polish-screens:not_done[2] (5)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A settings.set card's Yes explanation repeats the card's body cut with '…'",
+   "evidence": "Review of polish-screens (wave 13), bench",
+   "root_cause_at_head": "packages/runtime/src/daemon/request-words.ts approval card choices use the ask's second sentence as Yes's explain.",
+   "notes": "When the body is the consequence, Yes says 'Makes the change now.'",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-words -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-77",
+   "sources": [
+    "live2:research:F13 (part: project line and title cut)"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A change waiting for a yes is counted as '1 question' in the project line; a one-word 'undo:' prefix is read as a whole first sentence",
+   "evidence": "/tmp/frbench/live2-result.json research F13; steps/60-62, 66",
+   "root_cause_at_head": "packages/runtime/src/daemon/project-status.ts:84-96 cardWord has no word for an approval card; packages/runtime/src/daemon/request-words.ts:153-162 firstSentenceEnd cuts at ': ' after a single word.",
+   "notes": "Safety net beside W15-34 (which gives the undo card its own question): 'change to confirm' for an approval card with a command; no cut at a colon after one word.",
+   "area": "w15-chat",
+   "check_changes": [
+    "area w15-words -> w15-chat (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)"
+   ]
+  },
+  {
+   "id": "W15-78",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[3] (W14-1 rest)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Wave 12/14 sentences never reviewed one by one against design §5: redoWhileTakingOutSentence, 'Stopped: Anthropic refused the credential', the credential wait labels, 'Nothing can run yet. ' + waitSentence, the reader refusal '… list, which names no website', repoFileFlaggedNote",
+   "evidence": "Wave 13 polish-words not_done (W14-1)",
+   "root_cause_at_head": "Checked against design §5 at 931ed52. Fail: packages/runtime/src/daemon/task-display.ts:284 run label 'Stopped: Anthropic refused the credential' ('credential' is the code's word; the person saved an API key or signed in); packages/runtime/src/daemon/start-blocked.ts:82 'Nothing can run yet. ' + waitSentence ('Nothing can run yet. Waits until 15:40 (...) and starts by itself.': a sentence with no subject); packages/capabilities/src/web/policy.ts:288 the reader's refusal '<host> is not on this project's \"only these websites\" list, which names no website' (an empty list said backwards; the path is policy.ts, not wiring/web-access.ts). Pass, unchanged: take-out-words.ts:28 redoWhileTakingOutSentence, credential-wait.ts:208-226 waitRowWords' labels, agent/sdk.ts:1044 repoFileFlaggedNote (model-facing, plain). 'the browser did not start' is W15-49.",
+   "notes": "Targets: 'Stopped: Anthropic refused your API key' / '... your subscription sign-in' from the run's billing source, 'your key or sign-in' when unknown; start-blocked's line one sentence with a subject ('Nothing can run until 15:40 (your subscription's limit); it starts by itself then.' where a wait is kept, startKeepsWaitSentence otherwise); '<host> was not read: this project's \"only these websites\" list is empty.'",
+   "area": "w15-words",
+   "check_changes": [
+    "acceptance made concrete: each sentence checked now (adversarial check spec_problems); reader refusal path corrected to packages/capabilities/src/web/policy.ts:288"
+   ]
+  },
+  {
+   "id": "W15-79",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[1]"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "User guide said 'your Merge goes on' after an owed rebuild that drops a closed dependency",
+   "evidence": "Review of leftovers7-tailmerge",
+   "root_cause_at_head": "Fixed in aab8d77 (wave 13 fix-up): `grep -n 'your Merge goes on' docs/user-guide.md` finds nothing at 931ed52.",
+   "notes": ""
+  },
+  {
+   "id": "W15-80",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[5] (second half)"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "The no-change fallback '<summary>\\n(no changes were made in the worktree)' shown on Try again",
+   "evidence": "Review of leftovers7-tailmerge",
+   "root_cause_at_head": "Fixed at the wave 13 merge (polish-words' emptyChangeSummary, L-18): `grep -rn 'no changes were made in the worktree' packages/capabilities/src` finds nothing at 931ed52.",
+   "notes": "The empty-change card body's length is still open: W15-52."
+  },
+  {
+   "id": "W15-81",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[0]",
+    "wave7g6d-review-polish-screens:non_blocking (P7-16 leftover)"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "After Start the Start dialog re-checked and kept a stale 'This session runs …' line and editable fields",
+   "evidence": "Reviews of leftovers7-tailrun and polish-screens",
+   "root_cause_at_head": "Fixed in 9fd8809 ('start dialog: after Start only what happened stays'): apps/ui/src/pages/project/StartSessionDialog.tsx:371 and :486 render nothing but the notice once it shows; test polish-screens.test.tsx 'after Start, what Start would do and its fields go'.",
+   "notes": ""
+  },
+  {
+   "id": "W15-82",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailrun:new_problems[2]"
+   ],
+   "severity": "security",
+   "decision": "already_fixed",
+   "title": "Bash, Edit and other built-in tools' outputs on the subscription carried resolved secret values",
+   "evidence": "Wave 13 tailrun fixer",
+   "root_cause_at_head": "Fixed by TR-1 itself: packages/runtime/src/enforcement/hooks.ts:516-532 redactToolOutput walks every string of any built-in tool's output, used at packages/runtime/src/agent/sdk.ts:959. The missing fail-closed fallback is W15-12.",
+   "notes": ""
+  },
+  {
+   "id": "W15-83",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[1]"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "The Update 'Guides: Less than CHF 0.01.' (capitalised, nothing but a cost)",
+   "evidence": "Review of polish-words",
+   "root_cause_at_head": "Fixed in 41099ce: result.ts NOT_NEWS counts 'Less than CHF 0.01.' as money, so no Update and no session-end notification is posted for it.",
+   "notes": ""
+  },
+  {
+   "id": "W15-84",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[4]"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "'Waiting for you: 1 question, 1 paused task and 1 more' named two kinds",
+   "evidence": "Review of polish-words",
+   "root_cause_at_head": "Fixed in 41099ce: packages/runtime/src/daemon/project-status.ts:104-115 cardKindsWords names up to three kinds, then 'and N more'.",
+   "notes": ""
+  },
+  {
+   "id": "W15-85",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[5]"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "The Tasks row's and drawer's Answer went to /inbox, not the task's own card",
+   "evidence": "Review of polish-words",
+   "root_cause_at_head": "Fixed in aa8fa8d: apps/ui/src/pages/project/TasksTab.tsx:308 and TaskDrawer.tsx:217 link /inbox#card-<id>; live check 2's polish step saw 'Answer on the Tasks tab opens /inbox#card-<id>' (pass).",
+   "notes": ""
+  },
+  {
+   "id": "W15-86",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[7]",
+    "wave7g6d-fixup-polish-words:notes_for_other_areas[4] (the sentence 'On your subscription the tests of N tasks will not run: commands cannot run there.')"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The plan card's subscription line names no task ('the tests of 2 tasks will not run'), and the single-task line uses two pronouns for two things ('its tests will not run: it cannot run commands there')",
+   "evidence": "Review of polish-words (non_blocking[7]: the dangling 'it' and 'does not say which 2 tasks'); fix-up note [4]",
+   "root_cause_at_head": "Partly fixed in 41099ce: packages/runtime/src/daemon/plan-tasks.ts:176-178 onceForThePlan now writes 'the tests of ${n} tasks will not run: commands cannot run there.' (no dangling 'it'), but names no task (design §5 rule 5). packages/runtime/src/session/credential-choice.ts:139-140 still reads 'On your subscription its tests will not run: it cannot run commands there.' (and :134 '... where it cannot run commands: its tests will not run.').",
+   "notes": "Name up to three task titles, then 'and N more'; the single-task line with one subject ('this task's tests will not run: commands cannot run there').",
+   "area": "w15-words",
+   "check_changes": [
+    "area None -> w15-words (adversarial check: w15-words 24 and w15-screens 21 items were over the 8-16 size; areas regrouped by subsystem as the brief suggests, merge/run/review/chat-commands-notifications/words-screens, so each shared file has one owner per function)",
+    "already_fixed -> words (adversarial check wrong_decisions[0]; verified at plan-tasks.ts:176-178 and credential-choice.ts:134-140)"
+   ]
+  },
+  {
+   "id": "W15-87",
+   "sources": [
+    "wave7g6d-review-polish-screens:non_blocking (Setup Claude step after a refused key)"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "Setup's Claude step said '✓ An API key is saved.' when reached from 'Anthropic refused your API key'",
+   "evidence": "Review of polish-screens",
+   "root_cause_at_head": "Fixed in 24007d4 ('setup: a refused key reads refused on the Claude step, not saved').",
+   "notes": ""
+  },
+  {
+   "id": "W15-88",
+   "sources": [
+    "wave7g6d-fixup-polish-screens:new_problems[0]"
+   ],
+   "severity": "cosmetic",
+   "decision": "already_fixed",
+   "title": "The Overview's Next list keyed each line by its text (React duplicate-key warning for same-titled tasks)",
+   "evidence": "/tmp/frbench/fixup-polish-screens-evidence/bench1/problems.jsonl",
+   "root_cause_at_head": "Fixed by polish-words' W14-7 withKeys at the wave 13 merge: apps/ui/src/pages/project/SummaryTab.tsx:200 renders withKeys(next) (and :175 the since-list).",
+   "notes": ""
+  },
+  {
+   "id": "W15-89",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailmerge:blocking[0..1]",
+    "wave7g6d-review-polish-words:blocking[0..2]",
+    "wave7g6d-review-polish-screens:blocking[0..2]"
+   ],
+   "severity": "mixed",
+   "decision": "already_fixed",
+   "title": "The wave 13 reviews' blocking items (TM-4's 'commit them' sentence, the empty PR after a sync, the push words' branch id, P7-20's real-daemon test, W14-5's label test, P7-12 hash scroll, the allowance's USD, the palette's project)",
+   "evidence": "The three review files' blocking[]; wave7g6d-fixup-*.json",
+   "root_cause_at_head": "Fixed by the wave 13 fix-ups and merged at 7d54fff (owedFolderSentence 'take them out' at merge-mode.ts:91; push-words 1f32fae; palette f87ae15; the rest in the fix-up commits). The underlying commit-drop behind TM-4's sentence stays open as W15-02.",
+   "notes": ""
+  },
+  {
+   "id": "W15-90",
+   "sources": [
+    "live2:github:step 'phaseE7-live §1 second chain: Take this work out on the squash-merged task' (partial)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Take-out of a squash-merged task conflicted",
+   "evidence": "/tmp/frbench/live2-result.json github step; evidence/chain2-takeout-events-answer.json, squash-takeout-24.json",
+   "root_cause_at_head": "As designed: #14 (merged in the plan's order) changed the same lines; the answer said so honestly with the way out. The exact squash revert was verified on #16/#24 (tree equals main before the squash).",
+   "notes": ""
+  },
+  {
+   "id": "W15-91",
+   "sources": [
+    "live2:run:RUN-12 (verified: not real, main claim)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "A browser that never starts is left running after the page try",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-12 (verified); leftover-hung-browser-ps.txt mtime 04:18:09, etime 01:23",
+   "root_cause_at_head": "Playwright 1.64.1 sends SIGKILL to the hung browser's process group 30 s after the 60 s launch timeout; the snapshot was taken 23 s after the timeout, inside the grace. Reproduced twice by the verifier (gone at +90 s).",
+   "notes": "The raw Playwright text in the drawer is real: W15-49. Optional hardening (honour Stop during a hung launch) not needed now."
+  },
+  {
+   "id": "W15-92",
+   "sources": [
+    "live2:run:RUN-14 (verified: not real)",
+    "live2:run:step 'phaseE7-live-extra.md §3.1 (#95)' (partial)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The data analyst leaves report.py at the project root",
+   "evidence": "/tmp/frbench/live2-result.json run RUN-14 (verified); noise1.json",
+   "root_cause_at_head": "The data-analyst's registry contract asks for the reproducing script as a file in the task directory (evals/registry/specialists/data-analyst/specialist.md:22, :27-28, :37); the run said so in its log and result; #95 (no 'Lesson:' lines, no scratch notes) holds.",
+   "notes": "If the owner prefers scripts under scripts/, that is a design choice, not a defect."
+  },
+  {
+   "id": "W15-93",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:new_problems[1]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The Tasks table shows only the label 'Accepted · merge waits for you'; the sentence with the way out is the drawer's detail",
+   "evidence": "Wave 13 tailmerge fixer",
+   "root_cause_at_head": "Design §3.5: the row carries the label, the drawer the detail; the Overview row (where Merge is) carries the sentence. W15-05 makes the Overview row say it before the press.",
+   "notes": ""
+  },
+  {
+   "id": "W15-94",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:new_problems[3]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "TM-7 edge: the earlier sentence read from an older card when a notice could not file one",
+   "evidence": "Wave 13 tailmerge fixer",
+   "root_cause_at_head": "Needs a record whose agent has no owner human: practically unreachable on a single install (the fixer's own note).",
+   "notes": ""
+  },
+  {
+   "id": "W15-95",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:new_problems[4]",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[0]",
+    "wave7g6d-fixup-leftovers7-tailmerge:notes_for_other_areas[3]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Coordination and merge-conflict notes between tailmerge and the copy fix",
+   "evidence": "Wave 13 tailmerge reports",
+   "root_cause_at_head": "Resolved at the wave 13 merge (wave7g6d-merge.json conflicts_resolved: ADR 0113 and git.test.ts kept both).",
+   "notes": ""
+  },
+  {
+   "id": "W15-96",
+   "sources": [
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[6]",
+    "wave7g6d-fix-leftovers7-tailmerge:not_done[1] (TM-1 bench walk)",
+    "wave7g6d-fixup-leftovers7-tailmerge:not_done[2] (TM-1's conflict-notice path not walked again on the bench)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The bench stand-in writes different content on a redo, so TM-1 was hard to walk on the bench",
+   "evidence": "Wave 13 tailmerge review",
+   "root_cause_at_head": "A bench limitation, not the app; TM-1 passed with the real model on forerunner-sandbox in live check 2 (step 'tailmerge TM-1 (fix-up version)').",
+   "notes": "A process item, not the app. The fix-up only replaced a boolean argument on the conflict-notice path; its two composed tests and the executor test pass; the conflict notice's Redo passed with the real model in live check 2 (step 'w14 fix-up merge2 blocking 1'), and TM-1's Tasks-tab path in step 'tailmerge TM-1 (fix-up version)'.",
+   "check_changes": [
+    "cites fixup-tailmerge not_done[2] (adversarial check missing_items[0])"
+   ]
+  },
+  {
+   "id": "W15-97",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailrun:new_problems[3]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "A secret the run never resolved (only written in a repository file) reaches the model on both drivers",
+   "evidence": "Wave 13 tailrun fixer",
+   "root_cause_at_head": "By design: the resolver knows only values it handed out; documented in runtime.md's limits list.",
+   "notes": ""
+  },
+  {
+   "id": "W15-98",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[10]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "After the person acts, the session page header reads 'Done' while the result still names the card",
+   "evidence": "Review of polish-words",
+   "root_cause_at_head": "By design: the result is the record of how the session ended (design §5 rule 10, one place per fact).",
+   "notes": ""
+  },
+  {
+   "id": "W15-99",
+   "sources": [
+    "wave7g6d-fixup-polish-screens:not_done[1]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The allowance's override line names the environment variable FORERUNNER_PLAN_USD_MONTHLY",
+   "evidence": "Wave 13 polish-screens fixup",
+   "root_cause_at_head": "It is the exact name of a variable the person set and must remove; not an amount; shown only when that variable decides the allowance.",
+   "notes": ""
+  },
+  {
+   "id": "W15-100",
+   "sources": [
+    "wave7g6d-fixup-polish-screens:not_done[2] (6)",
+    "wave7g6d-fixup-polish-screens:not_done[2] (7)",
+    "wave7g6d-review-polish-screens:non_blocking (weak real-daemon case; commit order; lost screenshots; compose.ts 187.50)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Wave 13 polish-screens process notes (a weak real-daemon case, commit order, lost screenshots, the default cap as USD 187.50)",
+   "evidence": "Review and fixup of polish-screens",
+   "root_cause_at_head": "No behaviour to fix: the UI test carries the claim; history is merged; USD 187.50 is exactly CHF 150 at the fixed rate and is the intended enforced default.",
+   "notes": ""
+  },
+  {
+   "id": "W15-101",
+   "sources": [
+    "wave7g6d-merge:problems_left[4]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "ADR 0111 line 148 still quotes the earlier rebuild-card wording",
+   "evidence": "Wave 13 merge",
+   "root_cause_at_head": "It sits inside a dated amendment and records what was built then.",
+   "notes": ""
+  },
+  {
+   "id": "W15-102",
+   "sources": [
+    "copyfix-result:review.non_blocking[5]",
+    "copyfix-result:review.non_blocking[6]",
+    "copyfix-result:review.non_blocking[7]",
+    "copyfix-result:review.non_blocking[10]",
+    "copyfix-result:fix.not_done[3]",
+    "copyfix-result:fix.not_done[4]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Copy line-endings fix trivia (a wrong line number in a report, init() throwing on a locked config, one git config read per check, suites the reviewer did not run, Postgres/Docker skipped, not pushed by the fixer)",
+   "evidence": "Review and fix of 29e0c81",
+   "root_cause_at_head": "No person-facing effect; 29e0c81 is merged and CI/Desktop app green on it.",
+   "notes": ""
+  },
+  {
+   "id": "W15-103",
+   "sources": [
+    "live2:run:notes ('a chat reply said it cannot see an unread Update's contents')"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Chat cannot see an unread Update's contents",
+   "evidence": "/tmp/frbench/live2-result.json run live.notes",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:1247/:1267 gives the chat the unread count only; design §3.9 lists what chat knows (tasks, the last session's result, the open cards in full), and the session result, the main Update, is in it.",
+   "notes": "If the owner wants Updates in chat, it is a design addition."
+  },
+  {
+   "id": "W15-104",
+   "sources": [
+    "live2:run:notes ('session Details shows raw JSON and session.ended')"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Session Details shows raw JSON and event names",
+   "evidence": "/tmp/frbench/live2-result.json run live.notes",
+   "root_cause_at_head": "apps/ui/src/pages/SessionPage.tsx:533-539 shows each event's payload only inside the Details toggle; design §3.7 puts 'internal events under Details' and keeps the person-level log clean.",
+   "notes": ""
+  },
+  {
+   "id": "W15-105",
+   "sources": [
+    "live2:github:notes ('_Generated by Claude Code_' in PR bodies and comments)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "PR bodies and comments end '_Generated by Claude Code_'",
+   "evidence": "/tmp/frbench/live2-result.json github live.notes",
+   "root_cause_at_head": "The agent proxy of this cloud session appends it, not the app.",
+   "notes": "Environment note for live check 3."
+  },
+  {
+   "id": "W15-106",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:not_done[2]",
+    "wave7g6d-fix-leftovers7-tailrun:not_done[2]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Process items: BEFORE screenshots taken on another branch; desktop shell checks not run",
+   "evidence": "Wave 13 fixers",
+   "root_cause_at_head": "Evidence and process only; apps/desktop was not touched.",
+   "notes": ""
+  },
+  {
+   "id": "W15-107",
+   "sources": [
+    "live2:research:notes ('In both §4 tasks the model went straight to pages it knew and did not search')"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "In the two research briefs the model read pages it already knew and never used the web search it was offered",
+   "evidence": "/tmp/frbench/live2-result.json research live.notes; model-calls-final.jsonl seq 2-12 (webSearch offered, maxUses 7→1)",
+   "root_cause_at_head": "The app offered search (webSearch maxUses 7 at seq 2) and the brief's acceptance criteria asked for 'a source link to the host's official pricing or documentation page' for every figure and 'No third-party blog is the only source' (model-calls-final.jsonl seq 2). Opening the known official pages directly meets those criteria; the report cited only pages it opened. Nothing went wrong.",
+   "notes": "No code fix. The case where the brief promises search and none is offered is W15-17.",
+   "check_changes": [
+    "model_only -> not_a_problem (adversarial check wrong_decisions[1]; verified the criteria at seq 2 of model-calls-final.jsonl)"
+   ]
+  },
+  {
+   "id": "W15-108",
+   "sources": [
+    "wave7g6d-fix-polish-words:notes_for_other_areas[0]",
+    "wave7g6d-fixup-polish-words:notes_for_other_areas[5]",
+    "wave7g6d-merge:problems_left[3]",
+    "wave7g6-triage:owner_questions[10]"
+   ],
+   "severity": "none",
+   "decision": "owner_question",
+   "title": "How the project line counts tasks whose work was taken out (C-58)",
+   "evidence": "Open owner question; built recommendation (b) 'Done: all 6 tasks; 2 taken out.' (project-status.ts)",
+   "root_cause_at_head": "Built as recommended meanwhile.",
+   "notes": "Keep today's behaviour."
+  },
+  {
+   "id": "W15-109",
+   "sources": [
+    "wave7g6d-fix-polish-screens:notes_for_other_areas[0]",
+    "wave7g6d-merge:problems_left[3]",
+    "phaseE:polish-screens owner_questions[0]"
+   ],
+   "severity": "none",
+   "decision": "owner_question",
+   "title": "The monthly cap and 0 (U-074)",
+   "evidence": "Open owner question; built: a project's and a task's budget take 0 (no budget); the monthly cap refuses 0 (ZERO_REFUSED)",
+   "root_cause_at_head": "Built as recommended meanwhile.",
+   "notes": "W15-45 only adds the way out to the refusal's words, keeping the rule."
+  },
+  {
+   "id": "W15-110",
+   "sources": [
+    "wave7g6d-fix-polish-screens:not_done[3]",
+    "wave7g6-triage:owner_questions[7]",
+    "phaseE:polish-screens owner_questions[1]"
+   ],
+   "severity": "none",
+   "decision": "owner_question",
+   "title": "What the time on the Files line means ('updated HH:MM': last confirmed as merged vs last change)",
+   "evidence": "Open owner question",
+   "root_cause_at_head": "FilesTab.tsx unchanged; built (a) as is.",
+   "notes": "Keep today's behaviour; W15-53 does not touch the time's meaning."
+  },
+  {
+   "id": "W15-111",
+   "sources": [
+    "wave7g6d-fix-polish-screens:not_done[0] (W14-9)",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "none",
+   "decision": "owner_question",
+   "title": "A list of a project's sessions with their CHF (the project has no Sessions tab)",
+   "evidence": "Wave 13 polish-screens not_done: /projects/:id/sessions redirects to the Overview; design §6 has no such tab",
+   "root_cause_at_head": "Not built; the Overview's Last result carries the session's CHF.",
+   "notes": "A new screen is a design addition: the owner decides."
+  },
+  {
+   "id": "W15-112",
+   "sources": [
+    "live2:github:F2 (verified fix_sketch: 'Open point for the owner')"
+   ],
+   "severity": "none",
+   "decision": "owner_question",
+   "title": "Two projects on one repository with 'Status pull request' on both write docs/status.md",
+   "evidence": "/tmp/frbench/live2-result.json github F2 verification",
+   "root_cause_at_head": "Two projects on one repository share one docs/status.md: a per-project branch would still give two PRs that change the same file and conflict on merge.",
+   "notes": "Options: (a) a per-project path (docs/status-<project>.md); (b) only the project that owns the repository (.forerunner/project.json) writes a status PR, the others keep their status in the app and say so in the setting. Recommendation (b). W15-01 builds only the safety part: no project writes into, comments on or lists another's PR, and while another project's status PR is open this project writes none (its status stays in the app); no per-project branch."
+  },
+  {
+   "id": "W15-113",
+   "sources": [
+    "live2:github:step 'GitHub token typed into the setup assistant' (not_possible_here)",
+    "live2:github:owner_checklist_items[2]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "GitHub token entry in the setup assistant with a real fine-grained token",
+   "evidence": "/tmp/frbench/live2-result.json github step 1",
+   "root_cause_at_head": "Not possible here: the sandbox token answers 401; the agent proxy swaps credentials and blocks GET /user/repos.",
+   "notes": "Owner's checklist."
+  },
+  {
+   "id": "W15-114",
+   "sources": [
+    "live2:github:step 'w12 R-queuedwords' (not_seen)",
+    "live2:github:owner_checklist_items[1]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "R-queuedwords: 'Accepted · merging' on both screens while checks run",
+   "evidence": "/tmp/frbench/live2-result.json github step 'w12 R-queuedwords'",
+   "root_cause_at_head": "Needs a repository with CI checks (forerunner-sandbox has none).",
+   "notes": "Owner's checklist."
+  },
+  {
+   "id": "W15-115",
+   "sources": [
+    "live2:github:step 'w14 notification for a later merge' (not_possible_here)",
+    "live2:github:owner_checklist_items[0]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "Exactly one desktop notification when the retry pass merges; none for a plain Merge",
+   "evidence": "/tmp/frbench/live2-result.json github step",
+   "root_cause_at_head": "Needs a repository with checks and the desktop shell.",
+   "notes": "Owner's checklist."
+  },
+  {
+   "id": "W15-116",
+   "sources": [
+    "live2:github:step 'phaseE7-live §3 case 2 (wrap-up path, repository project)' (partial)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "A pause on the wrap-up path in a repository project (work-in-progress commit, Continue)",
+   "evidence": "/tmp/frbench/live2-result.json github step",
+   "root_cause_at_head": "The real model finished within the reserve, so the pause path was not seen; W15-13/W15-14/W15-16 change when the wrap-up comes.",
+   "notes": "Live check 3 (after wave 15)."
+  },
+  {
+   "id": "W15-117",
+   "sources": [
+    "live2:github:notes ('Not run: R-lock live, R-takeoutdep, R-pin chat refusal, L-17, blocking 2's optional revert-on-main')"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "GitHub steps not run in live check 2: R-lock live, R-takeoutdep, R-pin chat refusal, L-17, the optional revert-on-main",
+   "evidence": "/tmp/frbench/live2-result.json github live.notes",
+   "root_cause_at_head": "Skipped for time and order.",
+   "notes": "Live check 3."
+  },
+  {
+   "id": "W15-118",
+   "sources": [
+    "live2:run:step 'phaseE7-live.md §2.3 research plan card' (partial)",
+    "live2:run:owner_checklist_items[0]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "The research plan card's runs-on line with both credentials saved",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "With the API key alone the chooser has nothing to say (by design).",
+   "notes": "Owner's checklist (subscription)."
+  },
+  {
+   "id": "W15-119",
+   "sources": [
+    "live2:run:step 'phaseE7-live-extra.md §2.2 What research read' (skipped_cap)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "The drawer's 'What research read' on a real research task",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "Skipped for the cap.",
+   "notes": "Live check 3 (with the research steps)."
+  },
+  {
+   "id": "W15-120",
+   "sources": [
+    "live2:run:step 'phaseE7-live-extra.md §2.3 Hand-over after two failures' (not_seen)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "Hand-over to another specialist after two failures",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "No task failed twice with the real model; covered by composed tests (U-044).",
+   "notes": "Live check 3, opportunistic (record it if it happens; do not spend on provoking it)."
+  },
+  {
+   "id": "W15-121",
+   "sources": [
+    "live2:run:step 'phaseE7-live-extra.md §4.4 L-6' (partial)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "Cancel a running task, Undo, a change that could not come back, then a later Start",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "The 'could not come back' case did not occur; the later Start was not run (cost).",
+   "notes": "Live check 3."
+  },
+  {
+   "id": "W15-122",
+   "sources": [
+    "live2:run:step 'phaseE7-live-extra.md §4.6 PR read-back' (not_possible_here)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "PR read-back in chat on forerunner-sandbox",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "The run journey used folder projects only.",
+   "notes": "Live check 3, github part."
+  },
+  {
+   "id": "W15-123",
+   "sources": [
+    "live2:run:step 'R-waitqueue' (not_seen)",
+    "live2:run:owner_checklist_items[4]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "R-waitqueue: subscription at its limit with 'Wait': the research task runs, the code task waits",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "Needs a real subscription limit.",
+   "notes": "Owner's checklist."
+  },
+  {
+   "id": "W15-124",
+   "sources": [
+    "live2:run:step 'wave 14 R-sandbox' (partial)",
+    "live2:run:owner_checklist_items[6]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "R-sandbox: the agent browser path, and no unsandboxed line on Windows",
+   "evidence": "/tmp/frbench/live2-result.json run step",
+   "root_cause_at_head": "The agent browser (browser extension) was not reachable here; the page try path passed on Linux as root.",
+   "notes": "Not reachable from the product today: no registry specialist uses browser_navigate and the browser extension is off on the bench. Live check 3 step B1 tries it opportunistically (if the extension can be turned on); the fallback rule itself is covered by packages/capabilities/test/browser-profile.test.ts; the owner's Windows item includes the agent-browser log line if a specialist reaches it.",
+   "check_changes": [
+    "agent-browser path on Linux given a live check 3 step (B1) and named in the owner's checklist (adversarial check spec_problems)"
+   ]
+  },
+  {
+   "id": "W15-125",
+   "sources": [
+    "live2:run:steps 'wave7g6d tailrun TR-2, TR-3, TR-11' (not_possible_here)",
+    "live2:run:owner_checklist_items[1..3]",
+    "wave7g6d-merge:problems_left[5] (TR-2)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "TR-2 (key at its spend limit), TR-3 (subscription plus a resting key), TR-11 (both credentials, New task's line)",
+   "evidence": "/tmp/frbench/live2-result.json run steps",
+   "root_cause_at_head": "Need a real limited key and a subscription.",
+   "notes": "Owner's checklist.",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-126",
+   "sources": [
+    "live2:run:notes ('Aborted calls … count USD 0. Anthropic may still bill their input')"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "Calls aborted by Stop now or Cancel are logged with no usage and USD 0",
+   "evidence": "/tmp/frbench/live2-result.json run live.notes",
+   "root_cause_at_head": "Whether Anthropic bills an aborted call's input cannot be seen here.",
+   "notes": "Owner's checklist: compare the Anthropic console's usage for a day with Costs after a Stop now; if they differ, a fix wave books an estimate for aborted calls. Adversarial check (optional): a cautious booking of an aborted call's input part could be built on the money-safe side now; not taken into wave 15 because whether Anthropic bills it is unverified and the owner's console comparison decides (owner's checklist)."
+  },
+  {
+   "id": "W15-127",
+   "sources": [
+    "live2:research:step 'phaseE7-live-extra.md §5.1 (L-2)' (partial)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "L-2: a report that ends with 'Questions for the person:' reaches the critic's request and the card",
+   "evidence": "/tmp/frbench/live2-result.json research step",
+   "root_cause_at_head": "The coder asked through ask_person instead, so that path was not seen.",
+   "notes": "Live check 3."
+  },
+  {
+   "id": "W15-128",
+   "sources": [
+    "live2:research:steps §5.2 (L-12), §5.3 (L-3), §5.4 (L-11) (skipped_cap)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "L-12 card quotes why, L-3 Go ahead without, L-11 the owner's content",
+   "evidence": "/tmp/frbench/live2-result.json research steps",
+   "root_cause_at_head": "Skipped for the cap.",
+   "notes": "Live check 3."
+  },
+  {
+   "id": "W15-129",
+   "sources": [
+    "live2:research:steps §7.2 (C-1 API), §7.3 (C-3), §7.5 (L-5), §7.6 (L-4) (skipped_cap)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "C-1 API try, C-3 Python unittest, L-5 rewritten test script, L-4 notes are not orders",
+   "evidence": "/tmp/frbench/live2-result.json research steps",
+   "root_cause_at_head": "Skipped for the cap.",
+   "notes": "Live check 3."
+  },
+  {
+   "id": "W15-130",
+   "sources": [
+    "live2:research:step 'task step 4 (Docker)' (skipped_cap)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "A full review in a private dockerd",
+   "evidence": "/tmp/frbench/live2-result.json research step",
+   "root_cause_at_head": "Not started; none of the run parts needed a full review.",
+   "notes": "Live check 3 if a private dockerd starts here; else CI's sandbox-full-review job plus the owner's Docker Desktop step."
+  },
+  {
+   "id": "W15-131",
+   "sources": [
+    "live2:research:owner_checklist_items[0..4]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "Subscription §4 (reader, WebSearch lists, wrapper), R-readhook on the subscription, Windows C-17, R-sandbox, C-1 exit 9009",
+   "evidence": "/tmp/frbench/live2-result.json research owner_checklist_items",
+   "root_cause_at_head": "Need a subscription token or Windows.",
+   "notes": "Owner's checklist."
+  },
+  {
+   "id": "W15-132",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:not_done[0] (TM-6)",
+    "wave7g6d-merge:problems_left[5] (TM-6)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "TM-6 end to end with a real translated git",
+   "evidence": "Wave 13 tailmerge fixer",
+   "root_cause_at_head": "This machine has no git translations or other locales.",
+   "notes": "Owner's checklist (a git that speaks another language).",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-133",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:not_done[1] (TM-3)",
+    "wave7g6d-review-leftovers7-tailmerge:non_blocking[8]",
+    "wave7g6d-merge:problems_left[5] (TM-3)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "TM-3 through the budget card's 'Continue (CHF N more)' (a paused redo keeps its work)",
+   "evidence": "Wave 13 tailmerge fixer and review",
+   "root_cause_at_head": "Tested at the PR executor, not through the card; the stand-in cannot steer a pause inside a Redo reliably.",
+   "notes": "Live check 3 on forerunner-sandbox.",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-134",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailmerge:notes_for_other_areas[5] (TM-5 needs a repository with CI checks)",
+    "wave7g6d-merge:problems_left[5] (TM-5)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "TM-5: the retry pass skips a record whose task is not done (repository with checks)",
+   "evidence": "Wave 13 tailmerge notes",
+   "root_cause_at_head": "forerunner-sandbox has no checks.",
+   "notes": "Owner's checklist.",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-135",
+   "sources": [
+    "wave7g6d-fix-leftovers7-tailrun:not_done[1]",
+    "wave7g6d-review-leftovers7-tailrun:non_blocking[8]",
+    "wave7g6d-merge:problems_left[5] (TR-1, TR-10, TR-13, TR-2/TR-12)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "TR-1 (a secret in a repository file on a real subscription), TR-10 (revoked key, then a real subscription token in setup), TR-13 (late usage after Stop all on the subscription), TR-2 with a real limited key",
+   "evidence": "Wave 13 tailrun fixer and review",
+   "root_cause_at_head": "Need real credentials; TR-12 passed in live check 2.",
+   "notes": "Owner's checklist.",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-136",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[12]",
+    "wave7g6d-merge:problems_left[5] (R-2)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "polish-words live steps: R-2 with a read-only token over HTTPS; a deploy task with Docker reads 'Needs your sign-off'; an asks-person accept on the Reviews tab",
+   "evidence": "Review of polish-words",
+   "root_cause_at_head": "R-2 needs a read-only token (the test token is expired; the proxy identity can write); the deploy step needs Docker.",
+   "notes": "R-2 and deploy: owner's checklist; the asks-person accept: live check 3.",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-137",
+   "sources": [
+    "wave7g6d-fix-polish-screens:notes_for_other_areas[last]",
+    "wave7g6d-fixup-polish-screens:notes_for_other_areas[last]",
+    "wave7g6d-merge:problems_left[5] (the polish-screens live steps)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "polish-screens live steps: a real plan's decision card, 'Who merges' card value and body, the drafting banner's time, the Change link landing on Other settings, the palette naming the project on screen, the allowance without USD",
+   "evidence": "Wave 13 polish-screens fixer and fixup",
+   "root_cause_at_head": "Never walked with the real model.",
+   "notes": "Live check 3 (cheap UI steps).",
+   "check_changes": [
+    "cites wave7g6d-merge problems_left[5] by index (adversarial check missing_items[2])"
+   ]
+  },
+  {
+   "id": "W15-138",
+   "sources": [
+    "copyfix-result:review.non_blocking[9]",
+    "copyfix-result:fix.not_done[0]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "The copy line-endings fix on real Windows",
+   "evidence": "Copy fix review and fixer",
+   "root_cause_at_head": "Simulated with GIT_CONFIG_GLOBAL; the Desktop app workflow on windows-latest is green.",
+   "notes": "Owner's checklist (R-copystuck on Windows)."
+  },
+  {
+   "id": "W15-139",
+   "sources": [
+    "copyfix-result:review.non_blocking[0]",
+    "copyfix-result:fix.not_done[1]"
+   ],
+   "severity": "none",
+   "decision": "later",
+   "title": "A copy stuck by a CRLF restore before the update stays stuck until the file is restored once more; UPDATE-LOG and CHANGELOG lines",
+   "evidence": "Copy fix review and fixer",
+   "root_cause_at_head": "Documented in ADR 0113 and runtime.md.",
+   "notes": "Phase G: the session lead writes it into the U-entry's 'Check in the app' and the changelog."
+  },
+  {
+   "id": "W15-140",
+   "sources": [
+    "wave7g6d-fix-polish-words:not_done[8]"
+   ],
+   "severity": "none",
+   "decision": "later",
+   "title": "CHANGELOG lines for P7-2 and R-2",
+   "evidence": "Wave 13 polish-words",
+   "root_cause_at_head": "The common rule leaves CHANGELOG.md to the session lead; the text is in the report.",
+   "notes": "Phase G."
+  },
+  {
+   "id": "W15-141",
+   "sources": [
+    "wave7g6d-fix-polish-screens:not_done[2]",
+    "wave7g6d-merge:problems_left[2]"
+   ],
+   "severity": "none",
+   "decision": "later",
+   "title": "Installs made before wave 13 read CHF 150.40 for the default monthly cap",
+   "evidence": "Wave 13 polish-screens",
+   "root_cause_at_head": "Stored as USD 188 with no CHF figure; converted at the day's rate; saving any cap stores the CHF figure.",
+   "notes": "Needs a state migration of notify_prefs; the next migration (or phase G) with the owner's install in mind."
+  },
+  {
+   "id": "W15-142",
+   "sources": [
+    "wave7g6d-review-polish-words:non_blocking[9]",
+    "wave7g6d-fixup-polish-words:not_done[1] (heldWork/stillBlocked read costs)"
+   ],
+   "severity": "none",
+   "decision": "later",
+   "title": "Read cost: heldWork reads up to 5 runs per ready task on every GET /projects/:id/tasks; stillBlocked one task.get per blocked id on GET /sessions",
+   "evidence": "Review of polish-words",
+   "root_cause_at_head": "No wrong output.",
+   "notes": "Measure first; a later performance pass."
+  },
+  {
+   "id": "W15-143",
+   "sources": [
+    "live2:run:notes (harness: restart-daemon.mjs needs ANTHROPIC_API_KEY as a prefix on bench-live; recorder.cjs leaves the daemon token in console location.url)"
+   ],
+   "severity": "none",
+   "decision": "later",
+   "title": "Bench harness: restart-daemon.mjs on a bench-live bench and recorder.cjs's redaction of console URLs",
+   "evidence": "/tmp/frbench/live2-result.json run live.notes",
+   "root_cause_at_head": "scripts/bench tooling, not the product; the token is the bench daemon's own.",
+   "notes": "The session lead fixes both before live check 3 (environment_notes)."
+  },
+  {
+   "id": "W15-144",
+   "sources": [
+    "wave7g6d-fixup-leftovers7-tailmerge:notes_for_other_areas[5] (live checks for TM-1's sibling and TM-4's new wording)",
+    "wave7g6d-fix-leftovers7-tailmerge:notes_for_other_areas[5] (TM-1, TM-2, TM-4, TM-7, TM-8 live steps)",
+    "wave7g6d-merge:problems_left[5] (TM-1, TM-2, TM-4, TM-7, TM-8)"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Live checks owed for TM-1's sibling, TM-4's new wording, TM-2, TM-7 and TM-8: all passed in live check 2",
+   "evidence": "/tmp/frbench/live2-result.json github steps 'tailmerge TM-1 (fix-up version)' (pass: the Tasks-tab Redo of a done task whose change main has fails in one sentence and #20 is closed with its branch kept), 'tailmerge TM-4' (pass: '#23 waits for changes left in its task's folder: take them out or redo the task.'), 'tailmerge TM-2', 'tailmerge TM-7', 'tailmerge TM-8' (pass)",
+   "root_cause_at_head": "No longer owed: walked with the real model on forerunner-sandbox in live check 2. TM-4's immediate 'Merging #23.' answer is W15-05.",
+   "notes": "TM-3, TM-5, TM-6 and TM-9 remain: W15-133, W15-134, W15-132 and W15-145.",
+   "check_changes": [
+    "new (adversarial check missing_items[1] and [2])"
+   ],
+   "area": null
+  },
+  {
+   "id": "W15-145",
+   "sources": [
+    "wave7g6d-merge:problems_left[5] (TM-9)",
+    "wave7g6d-fix-leftovers7-tailmerge:fixed TM-9 check_in_the_app (LIVE: the copy's stopped state across Quit and start)"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "TM-9: the copy's 'stopped following' state survives a restart, live",
+   "evidence": "Wave 13 tailmerge fixer: covered by packages/runtime/test/merged-copy-restart.test.ts (compose twice); live check 2's 'w14 R-copystuck' step passed without a restart",
+   "root_cause_at_head": "Never walked live across a restart.",
+   "notes": "Live check 3 step G8 (no model: reuses a G-step pull request that changes README.md).",
+   "check_changes": [
+    "new (adversarial check missing_items[2]: TM-9 named nowhere)"
+   ],
+   "area": null
+  },
+  {
+   "id": "W15-146",
+   "sources": [
+    "wave7g6d-fixup-polish-words:notes_for_other_areas[4]",
+    "wave7g6d-fixup-polish-words:notes_for_other_areas[0] (the push sentences)",
+    "wave7g6d-fixup-polish-screens:notes_for_other_areas[2]"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Sentences the wave 13 fix-ups added after their reviews, checked against design §5",
+   "evidence": "Checked one by one in this triage at 931ed52 against docs/design/core-experience.md §5",
+   "root_cause_at_head": "Pass: 'GitHub refused the push: \"<host line>\". Check the GitHub token in Settings and <repo> on GitHub, then press Try again.' (rule 8: what went wrong and what to do; two sentences); 'GitHub refused the push to <repo> (the token may not write to it, or a rule protects the branch). ...'; 'Forerunner could not push the work to <repo>: GitHub could not be reached. Try again later.'; 'Waiting for you: 1 question, 1 paused task and 1 sign-off'; 'Now: CHF 40.00 a month (the default).'; 'Enter what your plan covers: the default is set low on purpose, and a Max plan covers much more.'; 'Anthropic refused the saved API key. Paste a new one below.'; 'Anthropic refused the saved subscription token. Paste a new one below.' Fail: 'On your subscription the tests of N tasks will not run: commands cannot run there.' (rule 5: names no task), which is W15-86.",
+   "notes": "No change except W15-86.",
+   "check_changes": [
+    "new (adversarial check missing_items[4]: no one had checked the fix-ups' sentences)"
+   ],
+   "area": null
+  },
+  {
+   "id": "W15-147",
+   "sources": [
+    "live2:run:owner_checklist_items[5]",
+    "live2:github:owner_checklist_items[3]"
+   ],
+   "severity": "none",
+   "decision": "live_only",
+   "title": "Subscription budget stop (phaseE7-live step 6): Claude Code really stops and the usage is counted once",
+   "evidence": "/tmp/frbench/live2-result.json run and github owner_checklist_items",
+   "root_cause_at_head": "Needs a subscription token; none in the cloud sandbox.",
+   "notes": "Owner's checklist item 7.",
+   "check_changes": [
+    "new (adversarial check missing_items[5])"
+   ],
+   "area": null
+  },
+  {
+   "id": "W15-148",
+   "sources": [
+    "wave15 adversarial check spec_problems (W15-30 rewrote design §3.9)",
+    "live2:research:F12 (verified fix_sketch)"
+   ],
+   "severity": "none",
+   "decision": "owner_question",
+   "title": "Design §3.9 'What it knows on every turn: ... the open cards in full': this project's cards only, other projects' as a count?",
+   "evidence": "docs/design/core-experience.md:235-238; W15-30",
+   "root_cause_at_head": "Built meanwhile (W15-30): the reading 'this project's open cards in full; other projects' cards as a count by project unless asked', which follows §3.9's Job ('ask about the project'). The design document is unchanged.",
+   "notes": "Recommendation: confirm, and add 'this project's' before 'open cards in full' in §3.9.",
+   "check_changes": [
+    "new (adversarial check spec_problems: flag the design change to the owner instead of deciding it)"
+   ],
+   "area": null
+  }
+ ],
+ "owner_questions": [
+  "W15-112 (new): two projects on one repository with 'Status pull request' on both write docs/status.md: (a) a per-project path, (b) only the repository's own project writes a status PR, the others keep it in the app. Recommendation (b). Built meanwhile (W15-01): only the safety part: no project writes into, comments on or lists another's PR; while another project's status PR is open, this project writes none (its status stays in the app); no per-project branch, no second PR.",
+  "W15-148 (new): design §3.9's 'the open cards in full': this project's cards only, other projects' as a count by project unless asked? Built meanwhile (W15-30) as that reading; the design document is not edited in wave 15. Recommendation: confirm and add 'this project's' to §3.9.",
+  "W15-111 (new, from polish-screens W14-9): should a project have a list of its sessions with their CHF? Not built; the Overview's Last result carries the session's cost.",
+  "W15-108 (open, C-58): how the project line counts tasks whose work was taken out; built (b) 'Done: all 6 tasks; 2 taken out.'.",
+  "W15-109 (open, U-074): the monthly cap and 0; built: a project's and a task's budget take 0 (no budget), the monthly cap refuses 0 (W15-45 adds the way out to the words only).",
+  "W15-110 (open): what the time on the Files line means ('updated HH:MM': last confirmed as merged vs last change); built (a), unchanged.",
+  "Open (wave7g6-triage): should a Tasks-row action that makes a task ready (Redo, Try again, Reopen) start work as an Inbox answer does? Built: no; W15-04 keeps 'no start'.",
+  "Open (U-078, wave7g6-triage): under 'Wait', what waits when a second credential could serve; whether a refused credential's work waits or moves; whether a reached plan-share or monthly cap holds task work. Built as recorded in ADR 0100.",
+  "Open (U-078): should running commands be a hard need for code tasks on a project with dependencies? Built: the owner's default, the plan card says the tests will not run there.",
+  "Open (U-037): a Local only file changed by the person during a run: built, the person's version wins and the agent's is kept beside it.",
+  "Open (wave7g6-triage): should a large Local only folder still be copied into every run? Built: no cap.",
+  "Open (W6-23): should a task whose estimate alone exceeds the session's work budget also get an Inbox card? Built: no card.",
+  "Open (wave7g6-triage): should a take-out that conflicts offer a button that drafts a revert task? Built: Got it with the chat pointer.",
+  "Open (wave 12): how stale the Overview's view of GitHub's branch rules may be; whether Merge on the rebuild card should merge a rebuilt PR whose own change differs from the reviewed one. Built: no cache; it goes back to the person.",
+  "Open (waves 5 and 6, owner-questions-wave56.md): W5-6 science-evaluator's review level, W5-19 stand-ins with fewer tools, W5-40 removing a project, W5-42 the reviewer writing files, W6-37 Go ahead without then Redo, W6-38 the person's step and the plan size.",
+  "Open (collaboration, collab/owner-summary.md): the 9 questions for wave 8."
+ ],
+ "dropped_count_by_decision": {
+  "already_fixed": 10,
+  "not_a_problem": 20,
+  "model_only": 0,
+  "owner_question": 6,
+  "live_only": 28,
+  "later": 6
+ },
+ "check_revision": {
+  "date": "2026-11-09",
+  "by": "revision after the adversarial check (verdict needs-changes); before: wave15-triage.before-check.json",
+  "accepted": [
+   "missing_items[0..5]: cited (W15-96, W15-144, W15-145, W15-51, W15-146, W15-147; problems_left[5] in W15-125/132-137/144/145)",
+   "wrong_decisions[0]: W15-86 already_fixed -> words (half fixed)",
+   "wrong_decisions[1]: W15-107 model_only -> not_a_problem",
+   "file_conflicts[0..7]: executor.ts :968-973 to w15-review; budget-card.ts money texts to w15-words; W15-71 -> later; W15-34/76/77 in one area; a test-file rule; no design-doc edit in wave 15; merge-side words moved into w15-merge plus a merge-step rule; SettingsPage.tsx to w15-chat",
+   "spec_problems[0..10]: W15-01 safety part only; W15-15 limits stay in code; areas regrouped (16/15/15/16/16); result.ts path; cancel-words.ts owned; concrete acceptance for W15-53/64/65/78/86; W15-36 restart case; W15-12 typed fixtures; live check 3 re-costed with priorities and a drop line; W15-124 step B1; W15-148 owner question"
+  ],
+  "rejected": [],
+  "moved_areas": {
+   "w15-merge": [
+    "W15-55",
+    "W15-63",
+    "W15-64",
+    "W15-68",
+    "W15-73"
+   ],
+   "w15-run": [
+    "W15-59",
+    "W15-69",
+    "W15-70"
+   ],
+   "w15-review": [
+    "W15-41",
+    "W15-42",
+    "W15-49",
+    "W15-50",
+    "W15-51",
+    "W15-54",
+    "W15-58"
+   ],
+   "w15-chat": [
+    "W15-29",
+    "W15-30",
+    "W15-34",
+    "W15-35",
+    "W15-36",
+    "W15-37",
+    "W15-44",
+    "W15-45",
+    "W15-46",
+    "W15-47",
+    "W15-48",
+    "W15-61",
+    "W15-62",
+    "W15-75",
+    "W15-76",
+    "W15-77"
+   ],
+   "w15-words": [
+    "W15-38",
+    "W15-39",
+    "W15-40",
+    "W15-43",
+    "W15-52",
+    "W15-53",
+    "W15-56",
+    "W15-57",
+    "W15-60",
+    "W15-65",
+    "W15-66",
+    "W15-67",
+    "W15-72",
+    "W15-74",
+    "W15-78",
+    "W15-86"
+   ]
+  }
+ }
+}
