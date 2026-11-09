@@ -358,9 +358,10 @@ names the model. A model the price table does not know is priced as the run's mo
    0.15: before a step that could take it past CHF 0.07 it is told to wrap up, keeping a reserve
    of CHF 0.08 to finish.", the told line "Told the researcher to wrap up: it spent CHF 0.02 of
    CHF 0.15, and its next step could take it past CHF 0.07.", and the model hears "Wrap up now:
-   this task has used 15% of its budget, and its next step could take it past the share kept to
-   finish. Start nothing new, ..." (`wrapUpText`, worded when it is sent; the brief's line says
-   "If Forerunner tells you to wrap up"). The trigger itself is unchanged. An amount under a
+   this run has used 15% of what it may spend, and its next step could take it past the share
+   kept to finish. Start nothing new, ..." (`wrapUpText`, worded when it is sent; the share is of
+   the run's cap, which on a continued run is what is left of the task's budget; the brief's line
+   says "If Forerunner tells you to wrap up"). The trigger itself is unchanged. An amount under a
    centime in these sentences and in the pause and stop sentences reads "less than CHF 0.01".
 5. **A stopped run teaches the estimates nothing (W15-19; amends point 4 of the 'cost'
    amendment).** After Stop now the task goes back to Ready, but the runner's task.finished hook

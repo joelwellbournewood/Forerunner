@@ -2027,8 +2027,9 @@ budget-stop; the owner's decision of 2026-11-02).**
 - *The message.* Only a run that asks for it hears it (`RunRequest.wrapUp` /
   `SdkRunRequest.wrapUp`: the executor sets `wrapUpText` for a task's run, never chat,
   planning or reviews; W15-16: a function worded when the wrap-up is sent, "Wrap up now: this
-  task has used 13% of its budget, and its next step could take it past the share kept to
-  finish. ...", since it comes before the step that could pass the line, often with much of the
+  run has used 13% of what it may spend, and its next step could take it past the share kept
+  to finish. ...", the share of the run's cap (on a continued run, what is left of the task's
+  budget), since it comes before the step that could pass the line, often with much of the
   budget left; "About a fifth of this task's budget is left" was not true; `WRAP_UP_MARK` is its
   fixed start, which the bench's stand-in hears). The loop appends it as one text block after the last tool results of
   that request (`appendText`, a new message object, never inside a tool result); the SDK path

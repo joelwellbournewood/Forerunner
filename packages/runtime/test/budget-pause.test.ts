@@ -267,7 +267,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
       {
         type: "text",
         text: expect.stringMatching(
-          /^Wrap up now: this task has used \d+% of its budget, and its next step could take it past the share kept to finish\./,
+          /^Wrap up now: this run has used \d+% of what it may spend, and its next step could take it past the share kept to finish\./,
         ),
       },
     ]);
@@ -1163,12 +1163,14 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
     );
   });
 
+  // The share is of the run's cap, which on a continued run is what is left of the task's
+  // budget: "this run ... of what it may spend" is true on every run (review of W15-16).
   it("the model hears the share it really used, not 'about a fifth is left'", () => {
     expect(wrapUpText(29_045, 187_500)).toBe(
-      "Wrap up now: this task has used 15% of its budget, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
     );
     expect(wrapUpText(1_000, 300_000)).toMatch(
-      /^Wrap up now: this task has used under 1% of its budget,/,
+      /^Wrap up now: this run has used under 1% of what it may spend,/,
     );
     expect(wrapUpText(29_045, 187_500)).not.toMatch(/a fifth/);
   });

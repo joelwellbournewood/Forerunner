@@ -92,12 +92,13 @@ export const WRAP_UP_MARK = "Wrap up now:";
  * of the run's budget it used, and why now. The wrap-up comes before the step that could take the
  * run past its wrap-up line (its spend and that step's worst case), so it may come with much of
  * the budget left; "About a fifth of this task's budget is left" was told to a run that had
- * spent 13% of it (live check 2, F4).
+ * spent 13% of it (live check 2, F4). The share is of the run's cap, which on a continued run is
+ * what is left of the task's budget, so it says "this run ... of what it may spend".
  */
 export function wrapUpText(spentUsdMicro: number, capUsdMicro: number): string {
   const share = capUsdMicro > 0 ? (Math.max(0, spentUsdMicro) / capUsdMicro) * 100 : 100;
   const used = spentUsdMicro > 0 && share < 1 ? "under 1%" : `${Math.min(100, Math.round(share))}%`;
-  return `${WRAP_UP_MARK} this task has used ${used} of its budget, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).`;
+  return `${WRAP_UP_MARK} this run has used ${used} of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).`;
 }
 
 /**
