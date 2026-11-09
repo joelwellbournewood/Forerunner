@@ -134,7 +134,9 @@ export function WebAccessInput({
       </Field>
       <div className="text-xs" data-testid="web-access-preview">
         <p>
-          Saved as: <span data-testid="web-access-saved-as">{webAccessWords(c.value)}</span>
+          {/* P7-32: every site before it is saved, not five and "and N more". */}
+          Saved as:{" "}
+          <span data-testid="web-access-saved-as">{webAccessWords(c.value, { all: true })}</span>
         </p>
         {c.changed.length ? (
           <ul data-testid="web-access-changed">

@@ -1,8 +1,10 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { webAccessWords } from "@forerunner/runtime/wiring/web-access";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { formatClock, formatDateTime, formatTime } from "../src/lib/time.ts";
 import { usableNow } from "../src/pages/BillingOrderSection.tsx";
+import { WebAccessInput } from "../src/pages/WebAccessInput.tsx";
 import { money } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -356,6 +358,133 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     ).not.toContain("Start");
     expect(within(dialog).getByText("Close")).toBeInTheDocument();
     expect(postedCalls(harness, "/sessions")).toHaveLength(1);
+  });
+});
+
+describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
+  it("'Saved as:' lists every site before saving, all seven", () => {
+    const sites = ["a.com", "b.org", "c.net", "d.io", "e.ch", "f.de", "g.fr"];
+    render(
+      <WebAccessInput
+        value={JSON.stringify({ mode: "only", only: sites.join("\n"), never: "" })}
+        onChange={() => {}}
+      />,
+    );
+    // Before: "Only these websites: a.com, b.org, c.net, d.io, e.ch and 2 more".
+    expect(screen.getByTestId("web-access-saved-as")).toHaveTextContent(
+      "only a.com, b.org, c.net, d.io, e.ch, f.de and g.fr",
+    );
+  });
+
+  it("an 'only' list the clean-up left empty reads 'no website', never 'Only these websites: none'", () => {
+    expect(webAccessWords({ mode: "only", only: [], never: [] })).toBe("no website");
+    expect(webAccessWords({ mode: "only", only: ["a.com"], never: ["b.com"] })).toBe(
+      "only a.com; never b.com",
+    );
+  });
+
+  it("a project's budget takes 0 as no budget and says so; the monthly cap's 0 is refused with why", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const rows = await screen.findAllByTestId("setting-row");
+    const row = rows.find(
+      (r) =>
+        r.dataset.key === "project.budget" &&
+        within(r).getByTestId("setting-scope").textContent?.includes("Atlas"),
+    ) as HTMLElement;
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    // design §6: "0 means no cap" where it is true.
+    expect(dialog).toHaveTextContent("0 means no budget: only the monthly cap limits it.");
+    const input = within(dialog).getByTestId("setting-value");
+    await user.clear(input);
+    await user.type(input, "0");
+    expect(within(dialog).queryByTestId("setting-value-problem")).toBeNull();
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    expect(postedCalls(harness, "/commands/execute")[0]?.body).toMatchObject({
+      commands: [
+        { name: "budget.set", params: { scope: "project", amountChf: 0, project: "proj_atlas" } },
+      ],
+      wordsUsed: "Settings: Project budget to no budget",
+    });
+  });
+});
+
+describe("setup opens on the step not done (later #28, P-welcome)", () => {
+  const setupWith = (credentials: { github: boolean; anthropicApiKey: boolean }) => ({
+    setup: {
+      complete: false,
+      showAssistant: false,
+      name: "Robin",
+      timezone: "Europe/Zurich",
+      credentials: { ...credentials, subscription: false },
+    },
+  });
+  const current = async () => {
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("listitem").some((li) => li.getAttribute("aria-current") === "step"),
+      ).toBe(true),
+    );
+    return screen
+      .getAllByRole("listitem")
+      .find((li) => li.getAttribute("aria-current") === "step")
+      ?.getAttribute("data-testid");
+  };
+
+  it("reopened after the Claude step was skipped, it opens the Claude step; no name to type again", async () => {
+    // Before: Welcome, whose Continue needed the name typed again.
+    renderApp("/setup", createHarness(setupWith({ github: true, anthropicApiKey: false })));
+    await screen.findByTestId("setup-page");
+    await waitFor(async () => expect(await current()).toBe("setup-step-Claude"));
+    expect(screen.queryByTestId("setup-name")).toBeNull();
+  });
+
+  it("a refused key's 'Save a new key' (/setup) lands on the Claude step, though a key is saved", async () => {
+    const harness = createHarness({
+      ...setupWith({ github: true, anthropicApiKey: true }),
+      billingOrder: { sources: [{ kind: "api_key", blocked: "refused" }] },
+    } as Parameters<typeof createHarness>[0]);
+    renderApp("/setup", harness);
+    await screen.findByTestId("setup-page");
+    await waitFor(async () => expect(await current()).toBe("setup-step-Claude"));
+  });
+
+  it("a fresh install still opens on Welcome", async () => {
+    renderApp(
+      "/setup",
+      createHarness({
+        setup: {
+          ...setupWith({ github: false, anthropicApiKey: false }).setup,
+          showAssistant: true,
+        },
+      }),
+    );
+    expect(await screen.findByTestId("setup-name")).toHaveValue("Robin");
+  });
+});
+
+describe("links land where they point (P7-12)", () => {
+  it("/settings#other-settings, opened before the rows load, lands on Other settings", async () => {
+    // Before: it scrolled once, at mount, before the rows were there (the section then moved
+    // down as they loaded, and the page showed its top).
+    const rowsAtScroll: number[] = [];
+    const scrolled = vi.fn(() => {
+      rowsAtScroll.push(document.querySelectorAll('[data-testid="setting-row"]').length);
+    });
+    const had = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      renderApp("/settings#other-settings");
+      await screen.findAllByTestId("setting-row");
+      await waitFor(() => expect(rowsAtScroll.some((n) => n > 0)).toBe(true));
+      expect(document.getElementById("other-settings")).toHaveAttribute("data-targeted", "true");
+      expect((screen.getByTestId("settings-advanced") as HTMLDetailsElement).open).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = had;
+    }
   });
 });
 

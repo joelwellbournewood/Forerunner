@@ -248,6 +248,21 @@ export function vaultWhere(backend: string | null | undefined): string {
   return "stored in an encrypted file on this computer";
 }
 
+/**
+ * The step the assistant opens on (later #28, wave 7's P-welcome): Welcome on a fresh install
+ * (the daemon still asks for the assistant); reopened later, the first step not done: Claude
+ * while no Claude credential is saved or the saved one was refused (the refused card's "Save a
+ * new key" links here), then GitHub, else Welcome. Before, it always opened on Welcome, whose
+ * Continue needed the name typed again.
+ */
+export function firstStep(s: SetupStatusView, claudeRefused: boolean): Step {
+  if (s.showAssistant) return "Welcome";
+  const claude = s.credentials.anthropicApiKey || s.credentials.subscription;
+  if (!claude || claudeRefused) return "Claude";
+  if (!s.credentials.github) return "GitHub";
+  return "Welcome";
+}
+
 export function SetupPage() {
   const client = useClient();
   const vaultBackend = useUiState((s) => s.connection.health?.vaultBackend ?? null);
@@ -279,6 +294,8 @@ export function SetupPage() {
     [client],
   );
 
+  // The opening step is picked once, from the first read; the person moves on from there.
+  const picked = useRef(false);
   const load = () => {
     setLoadError(null);
     client.setupStatus().then(
@@ -286,6 +303,17 @@ export function SetupPage() {
         setStatus(s);
         setName(s.name);
         setTimezone(s.timezone && s.timezone !== "UTC" ? s.timezone : localTimezone());
+        if (!picked.current) {
+          picked.current = true;
+          // A refused key or sign-in is saved but cannot be used: its step is not done.
+          void client
+            .billingOrder()
+            .then(
+              (o) => o.sources.some((x) => x.blocked === "refused" && x.kind !== "plan_credits"),
+              () => false,
+            )
+            .then((refused) => setStep(firstStep(s, refused)));
+        }
       },
       (e) =>
         setLoadError(

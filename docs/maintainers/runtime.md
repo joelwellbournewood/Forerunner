@@ -5137,9 +5137,12 @@ recorded one); without it the recorded project wins over the body's. `ChatReplyV
 (`src/daemon/settings-view.ts`): every setting a person can change, each with a plain `label`,
 the value in force and the command that changes it (`settings.set`, `budget.set`,
 `autonomy.set` through `POST /commands/execute`): the default autonomy, the monthly cap (the
-default CHF 150 when unset, not CHF 0), the time zone, quiet hours, the notification channel,
+default CHF 150 when unset, not CHF 0; a fresh install's first human is inserted with CHF 150
+and its CHF figure, `notify_prefs.monthly_cap_chf_micro`, beside the USD, so it reads CHF 150.00,
+later #28: CHF 150.40 at the day's rate; its row's risk is the card's, medium, and its
+description says it cannot be 0 and that raising it needs this computer's OK, later #99/#43), the time zone, quiet hours, the notification channel,
 voice alerts, the monthly calibration, the model watch's consent; per project the autonomy, the
-budget, the budget per session (`project.session_cap`, the CHF 5 default when unset), the
+budget (0 means no budget, the row says so, later #43), the budget per session (`project.session_cap`, the CHF 5 default when unset), the
 highest model (`critic_ceiling`), small-project mode, the handover test, fast mode and the
 speed-versus-quality slider. Two stored settings no run reads yet are listed as information
 and say so (validation rule 7): the language (`locale`) and the review reserve
@@ -5510,7 +5513,10 @@ none", never "any public website"), `cleanSite`/`cleanSiteList` the one clean-up
 name and, in the only list, a public suffix from `PUBLIC_SUFFIXES` refused with a reason),
 `siteCovers` the matcher (the site and its subdomains), `webAccessNarrows(to, from)` exact over
 sites and subdomains, `moveLegacyBlocks` for the PUT route, and the words: `webAccessWords` (the
-row, the card), `researchReadsLine` (`ProjectCard.researchReads`: "Research reads: any public
+row, the card: "any public website", "only example.com", "no website" for an "only" list the
+clean-up left empty, lower case and without a colon since it stands inside "Set … from a to b:
+…", P7-31/W14-8; five sites then "and N more", `{ all: true }` every one, for Settings' "Saved
+as:", P7-32), `WEB_ACCESS_ROW_WORDS` (the Settings row in two short sentences, P7-28), `researchReadsLine` (`ProjectCard.researchReads`: "Research reads: any public
 website"), `webAccessBriefLine` (the executor adds it to a run that reads pages when the rule
 limits anything). `settings.set web_access` (`commands.md`) stores the cleaned value; a narrowing
 acts at once, a widening asks a yes. `PUT /projects/:id/settings` refuses `web_access` (403

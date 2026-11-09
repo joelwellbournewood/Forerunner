@@ -1072,7 +1072,11 @@ your agents may reach beyond their built-in tools.
   your paired devices, sources, Opus fast mode, models, **Voice** (installing local voice, CPU or
   GPU, and which voice providers are in force), the desktop allowlist, **Email** (your agent's
   mailbox and mode, on the Email page) and the other settings, each project's autonomy among
-  them. Only settings you can change are listed; autonomy is always chosen by its name.
+  them. Only settings you can change are listed; autonomy is always chosen by its name. Money is
+  in CHF everywhere, with a point or a comma. A project's budget can be 0, which means no budget
+  (only the monthly cap limits it); the monthly cap cannot be 0, since it is the limit that
+  stops all spending (raising it needs this computer's OK). A new install's cap is CHF 150.00. A
+  change card shows the new value in words, with what it changes as the sentence under it.
 - **Extensions**: each extra capability with what it is granted (tools, domains, secrets,
   scopes), what it has cost, and an On/Off switch that takes effect at once, also for a session
   that is running: the sandboxed browser, desktop control, Cloudflare deploys, the cloud voice

@@ -594,8 +594,9 @@ export const SETTINGS: SettingView[] = [
     scope: "human",
     scopeId: "human_alice",
     value: money(187_500_000),
-    description: "Hard monthly spend cap",
-    risk: "high",
+    description:
+      "The most all your work may spend in a month; nothing runs beyond it. It cannot be 0, and raising it needs this computer's OK",
+    risk: "medium",
   },
   // Every setting is listed with a plain label (U-060), as the daemon's settings-view.ts does.
   {
@@ -675,7 +676,7 @@ export const SETTINGS: SettingView[] = [
     scopeId: "human_alice",
     value: null,
     description:
-      "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd and the review graded (defaults: on, day 1, 06:00, USD 10, the light review)",
+      "Once a month the critic is graded on the test sets: on by default, day 1 at 06:00, up to about CHF 8.00, grading the light review",
     risk: "medium",
   },
   {

@@ -172,7 +172,24 @@ export interface SettingCommand {
   unit?: string;
   /** The current value as the input shows it. */
   initial: (current: unknown) => string;
+  /**
+   * Money fields (design §6, later #43): what 0 means where it is taken ("0 means no budget:
+   * only the monthly cap limits it."), or why it is refused where it is not.
+   */
+  zero?: { allowed: true; means: string } | { allowed: false; refused: string };
 }
+
+/** A project's budget: 0 is none (the caps hook reads 0 as no project cap). */
+export const PROJECT_BUDGET_ZERO = {
+  allowed: true,
+  means: "0 means no budget: only the monthly cap limits it.",
+} as const;
+/** The monthly cap stays positive: it is the limit enforced in code (U-074 owner question). */
+export const MONTHLY_CAP_ZERO = {
+  allowed: false,
+  refused:
+    "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.",
+} as const;
 
 const asInt = (value: string): number | null => {
   const n = Number(value);
@@ -188,15 +205,22 @@ export const asChf = (value: string): number | null => {
   return micro === null || micro <= 0 ? null : micro / 1_000_000;
 };
 
-/** Why a typed amount cannot be sent, in words; null when it can. */
-export function moneyProblem(value: string): string | null {
+/**
+ * Why a typed amount cannot be sent, in words; null when it can. `zero` says what 0 means for
+ * this field: taken (a project's budget: no budget) or refused with why (the monthly cap).
+ */
+export function moneyProblem(value: string, zero?: SettingCommand["zero"]): string | null {
   if (!value.trim()) return null;
   const micro = chfToMicro(value);
   if (micro === null)
     return value.trim().startsWith("-")
-      ? "The amount must be more than CHF 0."
+      ? "The amount must be CHF 0 or more."
       : "Type an amount in CHF, like 12.30 or 12,30.";
-  if (micro <= 0) return "The amount must be more than CHF 0.";
+  if (micro < 0) return "The amount must be CHF 0 or more.";
+  if (micro === 0) {
+    if (zero?.allowed) return null;
+    return zero && !zero.allowed ? zero.refused : "The amount must be more than CHF 0.";
+  }
   return null;
 }
 const parseLoose = (value: string): unknown => {
@@ -252,11 +276,15 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
       name: "budget.set",
       inputType: "money",
       unit: "CHF",
+      zero: PROJECT_BUDGET_ZERO,
       initial: initialPlain,
       params: (v) => {
-        const amountChf = asChf(v);
-        return amountChf === null ? null : { scope: "project", amountChf, ...projectParam };
+        // later #43: 0 is taken here, as no budget.
+        const micro = v.trim() ? chfToMicro(v) : null;
+        if (micro === null || micro < 0) return null;
+        return { scope: "project", amountChf: micro / 1_000_000, ...projectParam };
       },
+      display: (v) => (chfToMicro(v) === 0 ? "no budget" : v),
     };
   }
   if (key === "human.monthly_cap" || key === "budget.monthly_cap_chf") {
@@ -264,6 +292,7 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
       name: "budget.set",
       inputType: "money",
       unit: "CHF",
+      zero: MONTHLY_CAP_ZERO,
       initial: initialPlain,
       params: (v) => {
         const amountChf = asChf(v);
@@ -479,7 +508,9 @@ export function SettingChangeDialog({
             ) : (
               <Field
                 label={`New value${command.unit ? ` (${command.unit})` : ""}`}
-                hint={`Current: ${describeSetting(setting) ?? renderValue(setting.value)}`}
+                hint={`Current: ${describeSetting(setting) ?? renderValue(setting.value)}${
+                  command.zero?.allowed ? `. ${command.zero.means}` : ""
+                }`}
               >
                 {command.options ? (
                   <select
@@ -508,12 +539,12 @@ export function SettingChangeDialog({
                 )}
               </Field>
             )}
-            {command.inputType === "money" && moneyProblem(value) ? (
+            {command.inputType === "money" && moneyProblem(value, command.zero) ? (
               <p
                 className="text-sm text-red-700 dark:text-red-300"
                 data-testid="setting-value-problem"
               >
-                {moneyProblem(value)}
+                {moneyProblem(value, command.zero)}
               </p>
             ) : null}
             {error ? <ErrorBanner message={error} /> : null}
@@ -953,8 +984,9 @@ export function SettingsPage() {
       setAdvancedOpen(true);
     }
   }, [hash]);
-  // "Set up Docker" (`/settings#sandbox`) and other in-app links land on their section.
-  useScrollToHash(true);
+  // "Set up Docker" (`/settings#sandbox`) and other in-app links land on their section, once
+  // the rows are there (P7-12: scrolled before they loaded, the page stayed at its top).
+  useScrollToHash(!settings.loading);
   const [editing, setEditing] = useState<{ setting: SettingView; command: SettingCommand } | null>(
     null,
   );

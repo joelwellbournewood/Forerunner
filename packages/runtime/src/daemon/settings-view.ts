@@ -19,7 +19,7 @@ import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import { PUSH_UNFINISHED_SETTING, pushUnfinishedOf } from "../session/push-unfinished.ts";
-import { WEB_ACCESS_SETTING, webAccessOf } from "../wiring/web-access.ts";
+import { WEB_ACCESS_ROW_WORDS, WEB_ACCESS_SETTING, webAccessOf } from "../wiring/web-access.ts";
 import type { Money, SettingView } from "./api-types.ts";
 import { money } from "./views.ts";
 
@@ -55,6 +55,22 @@ function onHostRepository(p: ProjectRow): boolean {
 export const NOTIFY_CHANNEL_DEFAULT = "desktop";
 
 const prefOf = (h: HumanRow, key: string): JsonValue | null => h.notify_prefs[key] ?? null;
+
+/**
+ * A monthly job's value (the calibration, the handover test) with its run's cap in CHF beside
+ * the `budget_usd` it is stored in (later #38: Settings said "up to USD 10" and asked for the
+ * budget in USD). `budget_chf` is for showing and typing only; Settings sends `budget_usd`.
+ */
+function withRunChf(v: JsonValue | null, defaultUsd: number, rate: number): JsonValue {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, JsonValue>) : {};
+  const usd = typeof o.budget_usd === "number" ? o.budget_usd : defaultUsd;
+  return { ...o, budget_chf: Math.round(usd * rate * 100) / 100 };
+}
+
+/** "CHF 8.00" for an amount in USD micro-units at the day's rate. */
+function chfWords(usdMicro: number, rate: number): string {
+  return `CHF ${(money(usdMicro, rate).chfMicro / 1_000_000).toFixed(2)}`;
+}
 
 /**
  * A cap as its change card named it: the CHF figure `budget.set` stored beside the USD amount
@@ -94,8 +110,11 @@ export function settingsView(input: SettingsViewInput): Row[] {
         DEFAULT_MONTHLY_CAP_CHF,
         rate,
       ),
-      description: "Hard monthly spend cap",
-      risk: "high",
+      // The card's own risk (later #99): lowering it is medium, raising it high; the row says
+      // the second in words. 0 is refused (later #43): the cap is the limit enforced in code.
+      description:
+        "The most all your work may spend in a month; nothing runs beyond it. It cannot be 0, and raising it needs this computer's OK",
+      risk: "medium",
     }),
     human({
       key: "human.timezone",
@@ -157,9 +176,9 @@ export function settingsView(input: SettingsViewInput): Row[] {
     human({
       key: "human.calibration",
       label: "Monthly critic calibration",
-      value: prefOf(h, "calibration"),
-      description:
-        "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd and the review graded (defaults: on, day 1, 06:00, USD 10, the light review)",
+      value: withRunChf(prefOf(h, "calibration"), 10, rate),
+      // CHF, never USD (later #38): the run's cap is stored in USD as `budget_usd`.
+      description: `Once a month the critic is graded on the test sets: on by default, day 1 at 06:00, up to about ${chfWords(10_000_000, rate)}, grading the light review`,
       risk: "medium",
     }),
     human({
@@ -206,7 +225,8 @@ export function settingsView(input: SettingsViewInput): Row[] {
           key: "project.budget",
           label: "Project budget",
           value: money(p.budget_usd_micro, rate),
-          description: `Budget for ${p.name}`,
+          // later #43: 0 is no budget (the caps hook reads 0 as none).
+          description: `The most ${p.name} may spend in all. 0 means no budget: only the monthly cap limits it`,
           risk: "medium",
         }),
         project({
@@ -249,8 +269,8 @@ export function settingsView(input: SettingsViewInput): Row[] {
         project({
           key: "project.handover",
           label: "Monthly handover test",
-          value: p.settings.handover ?? null,
-          description: `Monthly handover test on ${p.name}: enabled, day, time, budget_usd, seed (off until enabled)`,
+          value: withRunChf(p.settings.handover ?? null, 5, rate),
+          description: `Once a month a fresh agent makes a set change on ${p.name} from the repository and docs alone; where it gets stuck becomes a docs task. Off until you turn it on`,
           risk: "medium",
         }),
         // Opus fast mode (spec D.20, ADR 0057): the effect and the surcharge both ways, from
@@ -308,7 +328,9 @@ export function settingsView(input: SettingsViewInput): Row[] {
           key: `project.${WEB_ACCESS_SETTING}`,
           label: "Web pages research may read",
           value: webAccessOf(p.settings) as unknown as JsonValue,
-          description: `Any public website (the default, with an optional list of websites it never reads) or only the websites you list, for ${p.name}'s research on both credentials; each website covers its subdomains, and this computer and your home or office network are never read. The agent browser's own site list is separate and changes nothing here${input.proxied ? `. ${PROXY_ROW_WORDS}` : ""}`,
+          // P7-28: two short sentences (it was one paragraph with "Static hosts's research"
+          // and "on both credentials"); the proxy's sentence only where it applies.
+          description: `${WEB_ACCESS_ROW_WORDS}${input.proxied ? `. ${PROXY_ROW_WORDS}` : ""}`,
           risk: "medium",
         }),
         // The slider (spec D.16): -1 speed, 0 balanced, +1 quality, as every mode reads it.

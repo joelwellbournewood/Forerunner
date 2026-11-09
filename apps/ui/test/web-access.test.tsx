@@ -29,7 +29,8 @@ describe("Settings: Web pages research may read ('sites')", () => {
     expect(within(row).getByTestId("setting-label")).toHaveTextContent(
       "Web pages research may read",
     );
-    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("Any public website");
+    // P7-31: the rule in words, lower case, as it reads inside a sentence.
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("any public website");
     // One sentence on the agent browser's own list, which changes nothing here.
     expect(row).toHaveTextContent(
       "The agent browser's own site list is separate and changes nothing here",
@@ -63,7 +64,7 @@ describe("Settings: Web pages research may read ('sites')", () => {
     await user.clear(only);
     await user.type(only, "https://developer.mozilla.org/en-US/docs/Web");
     expect(within(dialog).getByTestId("web-access-saved-as")).toHaveTextContent(
-      "Only these websites: developer.mozilla.org",
+      "only developer.mozilla.org",
     );
     await user.click(within(dialog).getByTestId("setting-apply"));
     await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
@@ -78,8 +79,7 @@ describe("Settings: Web pages research may read ('sites')", () => {
           },
         },
       ],
-      wordsUsed:
-        "Settings: Web pages research may read to Only these websites: developer.mozilla.org",
+      wordsUsed: "Settings: Web pages research may read to only developer.mozilla.org",
       source: "ui",
       projectId: "proj_atlas",
     });
@@ -93,7 +93,7 @@ describe("Settings: Web pages research may read ('sites')", () => {
     await user.click(within(dialog).getByTestId("command-close"));
     await waitFor(async () =>
       expect(within(await atlasRow()).getByTestId("setting-value-cell")).toHaveTextContent(
-        "Only these websites: developer.mozilla.org",
+        "only developer.mozilla.org",
       ),
     );
   });
@@ -114,7 +114,8 @@ describe("Settings: Web pages research may read ('sites')", () => {
     await user.click(within(dialog).getByTestId("setting-apply"));
     const pending = await within(dialog).findByTestId("command-pending");
     expect(pending).toHaveAttribute("data-decision", "needs_yes");
-    expect(pending).toHaveTextContent("research reads any public website except the ones listed");
+    // P7-10: what it changes is the read-back's second sentence.
+    expect(pending).toHaveTextContent("Research reads any public website except the ones listed");
     await user.click(within(pending).getByTestId("command-yes"));
     await within(dialog).findByTestId("command-done");
     expect(harness.daemon.state.settingValues["web_access:proj_atlas"]).toEqual({

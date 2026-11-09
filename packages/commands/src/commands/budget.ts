@@ -121,11 +121,23 @@ export async function monthlyCeilingOf(human: HumanRow, ctx: CommandContext): Pr
   };
 }
 
+/**
+ * Why an amount of 0 (or less) is refused, by scope (design §6, later #43). A project's budget
+ * of 0 is no budget: only the monthly cap limits it (the caps hook reads 0 as none). The
+ * monthly cap is the limit enforced in code and stays positive (the owner's question in U-074;
+ * built as recommended meanwhile); a session needs a budget to plan within.
+ */
+export const ZERO_REFUSED: Record<"session" | "month", string> = {
+  month:
+    "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off.",
+  session: "The budget per session must be more than CHF 0: a session plans its work within it.",
+};
+
 const params = z
   .object({
     scope: z.enum(["session", "project", "month"]).default("session"),
-    amountChf: z.number().positive().optional(),
-    amountUsdMicro: z.number().int().positive().optional(),
+    amountChf: z.number().nonnegative().optional(),
+    amountUsdMicro: z.number().int().nonnegative().optional(),
     /** Project name or id (session and project scope); the active project when absent. */
     project: z.string().optional(),
     /** ISO instant until which a session budget applies; it reverts then. */
@@ -134,6 +146,15 @@ const params = z
   .refine((p) => p.amountChf !== undefined || p.amountUsdMicro !== undefined, {
     message: "an amount in CHF (amountChf) or USD micro-units (amountUsdMicro) is required",
   })
+  // 0 is no budget for a project only (later #43); a session's and the month's are refused
+  // with why, as the parameters' issue (chat asks which value was meant).
+  .superRefine((p, ctx) => {
+    if (p.scope === "project") return;
+    const amount = p.amountChf ?? p.amountUsdMicro;
+    if (amount !== undefined && amount <= 0)
+      ctx.addIssue({ code: "custom", message: ZERO_REFUSED[p.scope], path: ["amountChf"] });
+  })
+
   .refine((p) => p.until === undefined || isIsoInstant(p.until), {
     message: "until must be an ISO-8601 instant",
     path: ["until"],
@@ -155,9 +176,17 @@ interface BudgetPlan {
   untilText: string | null;
   risk: Risk;
   sentence: string;
+  /** An amount as this scope says it ("no budget" for a project's 0). */
+  amount: (chfMicro: number) => string;
 }
 
 async function describe(p: BudgetSetParams, ctx: CommandContext): Promise<BudgetPlan> {
+  // 0 is no budget for a project only; elsewhere refused in words a person reads (later #43).
+  if (p.scope !== "project" && (p.amountChf ?? p.amountUsdMicro ?? 0) <= 0) {
+    throw new ForerunnerError("validation", ZERO_REFUSED[p.scope], {
+      details: { scope: p.scope, zero: true },
+    });
+  }
   const human = await ctx.store.human.mustGet(ctx.humanId);
   const rate = await rateOf(ctx);
   const nextChf =
@@ -217,16 +246,39 @@ async function describe(p: BudgetSetParams, ctx: CommandContext): Promise<Budget
   if (next.chfMicro === old.chfMicro && !p.until) {
     throw new ForerunnerError(
       "validation",
-      `${what.charAt(0).toUpperCase()}${what.slice(1)} is already ${chf(old.chfMicro)}.`,
+      `${what.charAt(0).toUpperCase()}${what.slice(1)} is already ${
+        p.scope === "project" && old.chfMicro <= 0 ? "no budget" : chf(old.chfMicro)
+      }.`,
       { details: { scope: p.scope, unchanged: true } },
     );
   }
+  // later #43: a project's budget of 0 is none, said so (never "CHF 0.00", nor "Lowered").
+  const noBudget = (chfMicro: number) => p.scope === "project" && chfMicro <= 0;
+  const amount = (chfMicro: number) => (noBudget(chfMicro) ? "no budget" : chf(chfMicro));
   const verb =
-    next.chfMicro > old.chfMicro ? "Raised" : next.chfMicro < old.chfMicro ? "Lowered" : "Set";
-  const sentence = `${verb} ${what} from ${chf(old.chfMicro)} to ${chf(next.chfMicro)}${
+    noBudget(next.chfMicro) || noBudget(old.chfMicro)
+      ? "Set"
+      : next.chfMicro > old.chfMicro
+        ? "Raised"
+        : next.chfMicro < old.chfMicro
+          ? "Lowered"
+          : "Set";
+  const sentence = `${verb} ${what} from ${amount(old.chfMicro)} to ${amount(next.chfMicro)}${
     untilText ? `, until ${untilText}` : ""
-  }. Undo.`;
-  return { human, resolved, old, next, ceiling, what, scope, untilText, risk, sentence };
+  }${noBudget(next.chfMicro) ? ": only the monthly cap limits its spending" : ""}. Undo.`;
+  return {
+    human,
+    resolved,
+    old,
+    next,
+    ceiling,
+    what,
+    scope,
+    untilText,
+    risk,
+    sentence,
+    amount,
+  };
 }
 
 export const budgetSet: CommandDef<BudgetSetParams> = {
@@ -243,18 +295,21 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
   limit: true,
   async plan(p, ctx) {
     const d = await describe(p, ctx);
-    const ask = `${
-      d.next.chfMicro > d.old.chfMicro
-        ? "Raise"
-        : d.next.chfMicro < d.old.chfMicro
-          ? "Lower"
-          : "Set"
-    } ${d.what} to ${chf(d.next.chfMicro)}${d.untilText ? ` until ${d.untilText}` : ""}?`;
+    const none = p.scope === "project" && d.next.chfMicro <= 0;
+    const ask = none
+      ? `Remove ${d.what}? Only the monthly cap limits its spending then.`
+      : `${
+          d.next.chfMicro > d.old.chfMicro && !(p.scope === "project" && d.old.chfMicro <= 0)
+            ? "Raise"
+            : d.next.chfMicro < d.old.chfMicro
+              ? "Lower"
+              : "Set"
+        } ${d.what} to ${chf(d.next.chfMicro)}${d.untilText ? ` until ${d.untilText}` : ""}?`;
     return buildCard({
       command: "budget.set",
       what: d.what,
-      oldValue: chf(d.old.chfMicro),
-      newValue: chf(d.next.chfMicro),
+      oldValue: d.amount(d.old.chfMicro),
+      newValue: d.amount(d.next.chfMicro),
       scope: d.scope,
       // The per-session cap holds for every session of the project, not "this session" (the
       // walks); a cap until a time is the one session's.

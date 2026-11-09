@@ -86,7 +86,7 @@ describe("the rule a project's settings hold ('sites')", () => {
       only: [],
       never: ["facebook.com", "example.org", "tracker.example.net", "10.1.2.3"],
     });
-    expect(webAccessWords({ mode: "any", only: [], never: [] })).toBe("Any public website");
+    expect(webAccessWords({ mode: "any", only: [], never: [] })).toBe("any public website");
     expect(researchReadsLine(v)).toBe(
       "Research reads: any public website, never facebook.com, example.org, tracker.example.net and 1 more",
     );
@@ -94,7 +94,7 @@ describe("the rule a project's settings hold ('sites')", () => {
       web_access: { mode: "only", only: ["developer.mozilla.org"], never: [] },
     });
     expect(researchReadsLine(only)).toBe("Research reads: only developer.mozilla.org");
-    expect(webAccessWords(only)).toBe("Only these websites: developer.mozilla.org");
+    expect(webAccessWords(only)).toBe("only developer.mozilla.org");
   });
 
   it("the agent browser enforces the same block list, each site with its subdomains", () => {
@@ -379,7 +379,7 @@ describe("a stored 'only' rule never fails open (R-failopen)", () => {
     const v = webAccessOf({ web_access: { mode: "only", only: ["github.io"], never: [] } });
     expect(v).toEqual({ mode: "only", only: ["github.io"], never: [] });
     expect(researchReadsLine(v)).toBe("Research reads: only github.io");
-    expect(webAccessWords(v)).toBe("Only these websites: github.io");
+    expect(webAccessWords(v)).toBe("only github.io");
     expect(webSearchListsOf(v).allowedDomains).toEqual(["github.io"]);
   });
 

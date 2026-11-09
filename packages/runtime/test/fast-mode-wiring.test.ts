@@ -128,8 +128,10 @@ describe("Opus fast mode wired into the daemon (D.20)", () => {
       { name: "settings.set", params: { key: "fast_mode", value: true, project } },
       ctx,
     );
-    expect(planned.newValue).toContain("USD 30 / 150");
-    expect(planned.newValue).toContain("7.5x");
+    // P7-10: the value is the value; the price the person says yes to is in the read-back.
+    expect(planned.newValue).toBe("true");
+    expect(planned.ask).toContain("USD 30 / 150");
+    expect(planned.ask).toContain("7.5x");
   });
 
   it("a fast-mode project's coder run and tier-3 review on Opus go fast and are priced from the corrected row", async () => {

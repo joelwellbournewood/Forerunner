@@ -74,7 +74,7 @@ agent's own tools are replaced by these in the daemon wiring step.
 | `task.reopen` | project | low | yes (cancelled or done again) | Reopen (cancelled → ready) and Redo (done → ready, the person's note says what to fix) through `TaskRepo.reopen`, which takes `cancelled` and `done` (U-080); Redo is refused in words while the task's take-out pull request is open (R-pin, `redoWhileTakingOutSentence` in `daemon/take-out-words.ts`) |
 | `task.update` | project | low | yes (the fields as they were, while nothing changed them since) | Edit: title, outcome, criteria, priority, review level (`risk_tier`, in words by `reviewLevelWords`: a stored 0 reads "Light review", ADR 0104), budget, specialist, through `TaskRepo.edit` (an edit that hands a task to a deploy or a migration, or lowers one of theirs, stores the full review at least, `riskTierFor`, C-2), refused while the task runs or is being reviewed and once it is done or cancelled ("Redo it first") |
 | `task.dependencies` | project | low | yes (what it waited for, while unchanged since) | what a task waits for (ids or titles), through `TaskRepo.setDependencies` (a cancelled task, the task itself or a cycle is refused with the titles); the daemon's `POST /tasks/:id/dependencies` runs it, so the change is in Changes (it bypassed the change log before). `depends_on` is the whole list; `add` (chat's "make X wait for Y") adds to what it waits for now and never drops one |
-| `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below |
+| `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below; 0 on a project is no budget ("Set the project budget for X from CHF 3 to no budget: only the monthly cap limits its spending.", ask "Remove the project budget for X? ..."), 0 on the month or a session is refused with why (`ZERO_REFUSED`, the parameters' issue; later #43, polish-screens; the monthly cap's 0 is an open owner question, built as recommended: refused) |
 | `autonomy.set` | project | one step medium, more high, same level low | yes | `project.autonomy_level` |
 | `session.start` | session | medium above the costly threshold (USD 2), else low | yes (stop that start's session; `after.start_id` names the start) | ports or a `remote_command` row; refused with `ports.startBlocked`'s sentence when a start would do nothing (design §3.6: Stop all is on, Claude is not connected, nothing can run, the plan from the brief waits for approval), in `plan` (so the chat says why at once, with no Yes/No card for a start that cannot happen) and again in `run` (the state may change while a card waits); the sentence says what happened: "Started a session on X (up to CHF 5).", "... starts after the one running now ...", "... starts when your quiet hours end ...", "Sent a start for X to your PC ..." |
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row. Scope `agent` (a chat "stop", the default) is Stop now of the agent's running work sessions, one `kill({ sessionId })` each, which freezes nothing (design §3.7, §4.9: before, it stopped the agent's scope and froze it until Allow sessions again); `session` one named session; `all` is Stop all ("No session starts until you say "resume" or press Allow sessions again."). No run or process counts in the sentence |
@@ -182,6 +182,15 @@ command has no parser phrase on purpose: a proposal is a structured object the m
 so "propose a specialist" reaches the model path with the tool, never a regex.
 
 ### The change card (`src/change-card.ts`)
+
+A `settings.set` card's `newValue` is the value in words (the key's `display`), never with its
+effect (P7-10: "Who merges accepted work" showed the label plus the whole effect); the effect is
+the change log sentence ("Set X from a to b: <effect>.") and the read-back's second sentence
+(`askOf`: "Set X to b? <Effect>."), which the Inbox shows as the card's body. A value without
+words of its own is never JSON (`show`: an object as "field: value" pairs); the calibration, the
+handover test and the model watch have their own (`calibrationWords`, `handoverWords`,
+`modelWatchWords`, later #30/#99). `web_access`'s display is `webAccessWords` ("only example.com",
+one colon in the sentence, P7-31).
 
 `ChangeCard { command, what, oldValue, newValue, scope, scopeLabel ("this session" | "this
 project" | "everything"), duration ("until reverted" | "until <time>" | "permanent"), impact
