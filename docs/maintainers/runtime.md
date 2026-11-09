@@ -6729,6 +6729,66 @@ and the real-daemon block "this computer's copy follows every merge" (a PR and a
 the fake GitHub, one watcher poll, no session; a project made from a brief, with no poll; Local
 only through a whole session on the fake GitHub; a collaborator's commit into Local only).
 
+### A project lists its sessions (d1109-sessions, [ADR 0116](../decisions/0116-a-project-lists-its-sessions.md))
+
+The owner's decision D2 of 2026-11-09: every project has a list of its sessions (what each did,
+spent and how it ended), each opening the session's page. Every word of the list, of a session
+page's "Tasks in this session" and of a planning call's row is written in
+`src/daemon/session-list.ts`:
+
+- **The record.** At its end every session writes `handoff.outcome` (the named
+  `LastSessionOutcome`) on its own row: the runner's end (`runner.ts`, the handoff object) and
+  the recovery's `endDeadSession` (which also writes `handoff.last_worked_at`, the time of the
+  last line the session logged before the recovery's `session.ended`). A planning call writes
+  `handoff.planning.failure` when it closes (`intake.ts`, the row's close and `closeExpired`):
+  the words `recordFailure` gives the project page, through `redact` and `withoutIds`.
+  `sessionRecord` reads the outcome; a row written before run C falls back to the project
+  cache's outcome when it was the last session, else to `handoff.done` (named from the tasks)
+  and `handoff.blocked` as a count ("2 left for you"), never an id.
+- **The words.** `sessionGist` (one sentence of at most 100 characters: what it finished, else
+  what paused, failed, needed the person or was cancelled, else "Nothing finished."; titles are
+  shortened at a word before fewer are named), `planningGist` ("Drafting the plan…", "Drafted a
+  plan of 5 tasks; you approved it." from the plan card whose `session_id` is the row's,
+  "Planning failed: <words>"), `workingWords` (the project status's own working sentence through
+  `projectStatusLine`, never a wording of its own; d1109-run-visible re-points it at its run
+  view), `sessionEndWords` (the one map, `sessionStatusText`/`endedStatusText`, with a planning
+  call saying how it ended only when it failed), `spentWords` (the CHF figure with the
+  credential that paid, from the billing source's kind: "on your API key", "of your Claude
+  subscription's allowance", "of your plan credits", both named when two paid, none on the
+  stand-in; "so far" while it works), `startedByWords` (`plan.startedBy` first, then the
+  trigger of older rows; nothing for `manual`, `message` and `budget_reset`; the words for
+  `hands_off` and `continuation` are d1109-starts-engine's, in this function), `countsWords`.
+- **One figure per session, read when shown.** `sessionSpends` (one query,
+  `CostLedgerRepo.sumsBySessionAndSource`) and `spentOf` give the ledger's sum as booked (a row
+  without ledger rows reads its own counter at today's rate). `views.ts`' `sessionView` uses it
+  for `spent` and passes the result text through `resultTextNow`, which replaces the stored
+  cost sentence (rebuilt from the stored outcome's `spentChfMicro` with the result's own "cost"
+  builder) by the one for the ledger's sum; a text without that exact sentence at its end is
+  shown as stored. `projectSummary` does the same for Last result and adds `sessionCount`.
+  Nothing stored is rewritten; an Update or a notification already sent keeps its amount.
+  `executor.ts` is not touched: a stopped run's late usage reaches the ledger through the hooks,
+  so every screen follows it. The session stream's change key includes the ledger's entry
+  count, so a booking only the ledger gets (the critic's review) moves the page's spend.
+- **Ended words.** `sessionStatusText` says an ended session's two waits in the past tense,
+  "Stopped to wait for a Claude credential" and "Ended with a plan for you to approve" (they read
+  "Waiting …" after the credential was back or the plan approved); the session log's end line
+  takes the same words. `planningStatusText` gives a planning call's page "Drafting the plan",
+  "Plan drafted" or "Planning failed".
+- **The routes.** `GET /projects/:id/sessions?before=&limit=` (`projectSessionsView`): `count`
+  (the listed rule, `SessionRepo.listedCountForProject`), `working` (first page only),
+  `rows` (`SessionRepo.pageForProject` with `ended`, newest first by created_at and id), `next`
+  (an opaque base64url cursor of the last row's created_at and id, valid across a restart; a
+  cursor it cannot read is 400 "This list cannot go on from there. Open Sessions again."),
+  `chat` ("Chat about this project: CHF 0.30." from `CostLedgerRepo.chatSpendForProject`, first
+  page only, when above zero); 404 "No such project.". `GET /sessions/:id/tasks`
+  (`sessionTasksView`): the tasks the session worked on in the order it first ran them, what
+  happened to each there, `now` (its `taskDisplay` label when its key differs) and the ledger's
+  sum for the session and the task. `GET /sessions` keeps its shape: the one figure and the
+  planning words only.
+- **Listed**: a session of the project that has a run, a ledger row, works now
+  (`planned`/`running`/`paused`) or is a planning call (`plan.intake`); never the conversation's
+  row (`summary` "conversation"), never one that ended without a run and without a ledger row.
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in
@@ -6739,6 +6799,15 @@ only through a whole session on the fake GitHub; a collaborator's commit into Lo
 - New driver or provider: implement `ModelProvider` (see `adding-a-provider.md`).
 
 ## Tests
+
+`session-list.test.ts` (d1109-sessions, ADR 0116): the words of the list as exact strings (each
+at most 100 characters, no id, no "intake", no USD), the two ended statuses, the started-by words
+and `resultTextNow`; a composed runtime on a home on disk runs a session that finishes one task,
+fails one after its retries and pauses one at its budget of CHF 0.40, and one the person stops
+mid-task, composes the runtime again and reads the same rows (with an older row's fallback); and
+a session that worked 2 minutes before its daemon died reads 2 min three days later, with its
+figure equal to its page's. The routes are tested through the UI's client in
+`apps/ui/test/real-daemon.test.ts` ("d1109-sessions, run C").
 
 The voice install tests make their folders with `voiceTestDir()` and the layouts in
 `voice-install-helpers.ts`, short because the installer checks their length (espeak-ng's 159

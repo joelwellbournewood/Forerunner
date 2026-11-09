@@ -117,15 +117,16 @@ again as soon as the service answers.
 The project's page starts with its name and its status in one sentence with its button (as on
 Home, except a start: **Start session** beside it is the page's one start button).
 **Start session** reads **Open running session** while a session works on it. The tabs
-are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Plan**, **Docs**,
-**Reviews**, **Costs** and **Data**. A tab keeps the Tasks tab's filters, so you find them as you
-left them; an open file or task stays on its own tab.
+are **Overview**, **Tasks**, **Chat** and **Files**; **More** holds **Sessions**, **Plan**,
+**Docs**, **Reviews**, **Costs** and **Data**. A tab keeps the Tasks tab's filters, so you find
+them as you left them; an open file or task stays on its own tab.
 
 - **Overview**: where the project stands and what happens next. The cards of this project that
   wait for you, each with **Answer**; **Working now** (the task in flight, for how long, with
   **Open**); **Last result** (the last session's result in at most three lines, with **Open the
-  session** and "Read aloud"; when something it left for you has moved on since, a line says what
-  it is now, such as 'Since then: "Write the README" is done.'); **Next** (the open tasks in the order a session runs them, each
+  session** and "Read aloud", and **All 3 sessions** once the project has had two or more; when
+  something it left for you has moved on since, a line says what it is now, such as 'Since then:
+  "Write the README" is done.'); **Next** (the open tasks in the order a session runs them, each
   with its status, worked out when you look); **Your files** (the project's folder with **Open
   folder** in the desktop app and **Copy path**, and the files the last session changed; for a
   project linked to a GitHub repository instead: the repository with its link, and **Waiting for
@@ -660,6 +661,34 @@ earlier version marked failed for want of a sandbox goes back to ready by itself
 
 A session where nothing was done because its tasks failed, were sent back or wait for you gets a
 lower grade from the critic's session review.
+
+**Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
+the Overview's Last result, and **All sessions** on every session page). The heading is the
+count ("14 sessions"); the Costs tab has the totals. A session working now sits on top with what
+it does ('Working on "Style the page" (3 of 7 done)') and what it has cost so far. Below it, one
+row per session, newest first: what it did in one sentence ('Did 2 tasks: "Create index.html" and
+"Style the page".', '"Long report" paused at its budget of CHF 0.40.', "Nothing finished."), then
+when it started, how long it worked, its task counts ("1 done, 1 failed"), how it ended ("Done",
+"Stopped by you", "Interrupted: Forerunner closed") and what it cost, with the credential that
+paid ("CHF 0.80 on your API key", "CHF 0.80 of your Claude subscription's allowance"); a session
+you did not start says how it started ("started on its schedule"). Drafting the plan from your
+brief is a row too ("Drafted a plan of 5 tasks; you approved it.", or "Planning failed: …" with
+the words the project page showed). A session Forerunner closed during counts only the time it
+worked, not the time Forerunner was closed. **Show older sessions** shows 20 more. A row opens the
+session's page. When chat about the project cost anything, one line under the list says so
+("Chat about this project: CHF 0.30.") with **Open Chat**. A session's amount is the same on its
+row, its page and the Overview, read from the cost ledger when you look: a later rate or a cost
+booked after the session ended moves all three together; a message already sent keeps the amount
+it said then.
+
+A session's page lists **Tasks in this session**: each task it worked on, what happened to it
+there ("Done", "Failed", "Paused at its budget of CHF 0.40"), what it is now when that changed
+("now: Done") and what this session spent on it. A title opens the task with its runs. A session
+that ended to wait for a Claude credential reads "Stopped to wait for a Claude credential", and
+one that ended with a plan for you to approve "Ended with a plan for you to approve", which stay
+true once the credential is back or the plan approved. Drafting the plan has a page of its own,
+"Quote page · planning at 14:05", reading "Drafting the plan", "Plan drafted" or "Planning
+failed".
 
 **Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
 one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the

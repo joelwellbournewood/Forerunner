@@ -169,6 +169,13 @@ of kind `skill` named `memory-format`), tested on fixture directories for both p
   agent and project rows live in another store (the private index).
 - CI runs `pnpm docs:schema` and fails on a diff of `docs/maintainers/data-model.md`.
 
+A project's Sessions list (d1109-sessions, ADR 0116) needed no migration: `handoff.outcome`,
+`handoff.planning`, `handoff.last_worked_at` and `plan.startedBy` are fields of the session's JSON
+columns, and the repository methods it added (`SessionRepo.pageForProject` and
+`listedCountForProject`, `CostLedgerRepo.sumsBySessionAndSource` and `chatSpendForProject`) are
+queries on the existing tables (the listed rule reads `plan.intake` with `json_extract` on SQLite
+and `->` on Postgres). `suite.ts`' "a project's sessions (d1109-sessions)" runs them on both.
+
 ## Known issues
 
 - A `lesson` migration that backfills from other tables (`agent`, `project`) finds them empty in
