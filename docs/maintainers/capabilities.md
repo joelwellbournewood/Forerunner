@@ -131,7 +131,7 @@ with their milestone.
   `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=""`, `SSH_ASKPASS=""` and `GCM_INTERACTIVE=never`
   keep it from prompting. Every command runs with `-c core.autocrlf=false -c core.safecrlf=false`
   (files byte for byte as committed, on both platforms), and every folder our git makes says the
-  line endings in its own config (R-copystuck, ADR 0113 amendment of 2026-11-09): `clone` passes
+  line endings in its own config (R-copystuck, ADR 0113 amendment of 2026-11-08): `clone` passes
   `--config core.autocrlf=false`, `init` and `pinLineEndings()` write `core.autocrlf=false` into
   `.git/config` (`pinLineEndings` reads it first with `--type=bool` and writes nothing when it
   already says so; true when it wrote). So any other git used in the folder (the person's own in
@@ -139,8 +139,14 @@ with their milestone.
   files as ours does: the folder's config beats Git for Windows' system `core.autocrlf=true`,
   which wrote a file the person put back with CRLF that ours then read as changed. Only
   `core.autocrlf` is written: it is the one setting of ours that changes the bytes read or
-  written; `core.safecrlf` only warns or refuses on the person's own `git add`. Error output is redacted (`redactToken()` removes the token raw and
-  in its Basic form). git missing
+  written; `core.safecrlf` only warns or refuses on the person's own `git add`. A folder made
+  before the pin (W15-11) gets it at its next use: a reused task worktree at its next run's
+  fetch (`PrTaskExecutor.executeIn`), an import checkout at its fetch (`data/import.ts`) and a
+  project's folder at its session-end commit (`ProjectDocs.statusInFolder`); a failure to write
+  it is logged, never fatal. Two runtime readers run git themselves, not through `GitOps`, and
+  so rely on the folder's own config: the critic's diff (`loop/critic.ts`, `GitDiffPort`) and
+  the project checks' "scripts before" read (`loop/project-checks.ts`, `scriptsBefore`). Error
+  output is redacted (`redactToken()` removes the token raw and in its Basic form). git missing
   from PATH is `unavailable`, a spawn failure `provider_error`, a command the runner killed at
   `timeoutMs` (default 5 minutes) `timeout` naming the limit. `GitOpsOptions.runner` swaps the
   process runner (tests record argv and env). Every command gets `EMAIL=forerunner@localhost`

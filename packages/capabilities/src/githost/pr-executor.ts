@@ -911,6 +911,14 @@ export class PrTaskExecutor implements TaskExecutor {
     const answered = await this.conflictAnswer(task);
     if (existsSync(join(dir, ".git"))) {
       await git.fetch();
+      // W15-11: a task folder made before the clone pinned our line endings (29e0c81) says so
+      // too from its next run on.
+      await git.pinLineEndings().catch((e: unknown) =>
+        this.logger.warn("line endings not pinned in the task folder", {
+          taskId: task.id,
+          error: errorMessage(e),
+        }),
+      );
       if (answered?.outcome !== "resolved") await this.cleanAfterCutShortRun(git, task);
     } else await git.clone(target.clone);
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever

@@ -2411,3 +2411,80 @@ describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
     }
   });
 });
+
+describe("w15-merge, wave 15: folders made before the line-endings pin (W15-11)", {
+  timeout: 120_000,
+}, () => {
+  it("a task folder made before the clone pinned core.autocrlf says core.autocrlf=false after its next run", async () => {
+    const { w, task } = await (async () => {
+      const w = await world();
+      const task = await w.store.task.insert({
+        project_id: w.project,
+        title: "Edit the readme",
+        outcome: "the readme says hello",
+        acceptance_criteria: ["hello"],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 100_000,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+      return { w, task };
+    })();
+    const exec = (text: string) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner: {
+          async execute() {
+            return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+          },
+          withWorktree: (dir: string) => ({
+            async execute() {
+              writeFileSync(join(dir, "README.md"), text);
+              return { outcome: "done", summary: "Wrote it.", costUsdMicro: 1, checksPassed: true };
+            },
+          }),
+        } as TaskExecutor & { withWorktree: (dir: string) => TaskExecutor },
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async () => {
+      const t = await w.store.task.mustGet(task.id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const first = await exec("# sample\nhello\n").execute(await ctx());
+    expect(first.outcome, first.summary).toBe("in_review");
+    await w.store.task.patch(task.id, { branch: first.branch ?? "", pr_url: first.prUrl ?? "" });
+    const wt = join(w.root, "wt", task.id);
+    // As a folder cloned before 29e0c81 is: no core.autocrlf of its own.
+    await run(["git", "-C", wt, "config", "--local", "--unset-all", "core.autocrlf"]);
+    const config = async () =>
+      (
+        await run(["git", "-C", wt, "config", "--local", "--get", "core.autocrlf"], {
+          allowFailure: true,
+        })
+      ).stdout.trim();
+    expect(await config()).toBe("");
+    await exec("# sample\nhello again\n").execute(await ctx());
+    expect(await config()).toBe("false");
+    await w.store.close();
+  });
+});

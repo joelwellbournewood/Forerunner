@@ -579,8 +579,11 @@ export class DataImporter {
     let created = false;
     let headSha: string;
     try {
-      if (existed) await git.fetch();
-      else await git.clone(target.url);
+      if (existed) {
+        await git.fetch();
+        // W15-11: a checkout made before the clone pinned our line endings says so too.
+        await git.pinLineEndings().catch(() => undefined);
+      } else await git.clone(target.url);
       // C-55 (polish-words): an empty repository has no default branch to start from. As the
       // task executor does (ADR 0106), its first commit is made (`ensureBaseBranch`), and a
       // refusal reads `firstPushFailedWords`, never git's "'origin/main' is not a commit".
