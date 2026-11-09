@@ -394,14 +394,31 @@ function ChangedFiles({ files, task }: { files: readonly string[]; task: TaskVie
   );
 }
 
-/** The pages a research run read and those it could not (ADR 0107, C-72), in words. */
+/**
+ * The pages a research run read and those it could not (ADR 0107, C-72), in words: each page
+ * once, in the order it was first read (W15-54, design §5 rule 5: the Netlify page was listed
+ * twice); a page read after a refusal is listed as read.
+ */
+export function webSourcesOnce(
+  sources: NonNullable<DrawerRun["webSources"]>,
+): NonNullable<DrawerRun["webSources"]> {
+  const out: NonNullable<DrawerRun["webSources"]> = [];
+  const at = new Map<string, number>();
+  for (const s of sources) {
+    const i = at.get(s.url);
+    if (i === undefined) {
+      at.set(s.url, out.length);
+      out.push(s);
+    } else if ((out[i] as (typeof out)[number]).refused && !s.refused) out[i] = s;
+  }
+  return out;
+}
+
 function WebSources({ sources }: { sources: NonNullable<DrawerRun["webSources"]> }) {
   return (
     <ul className="mt-1 space-y-0.5 text-xs" data-testid="drawer-web">
-      {sources.map((s, i) => (
-        // The same page can be read twice; the order is the run's.
-        // biome-ignore lint/suspicious/noArrayIndexKey: a list that never reorders
-        <li key={`${s.url}-${i}`}>
+      {webSourcesOnce(sources).map((s) => (
+        <li key={s.url}>
           {s.refused ? (
             <>
               Not read: {s.url} ({s.refused})

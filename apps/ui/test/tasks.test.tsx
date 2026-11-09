@@ -1696,4 +1696,51 @@ describe("w15-review, wave 15", () => {
     for (const cell of screen.getAllByTestId("task-critic"))
       expect(cell.textContent).not.toMatch(/\baccepted\b/);
   });
+
+  const workRunOf = async (drawer: HTMLElement) =>
+    (await within(drawer).findAllByTestId("drawer-run")).find(
+      (r) => r.getAttribute("data-kind") === "work",
+    ) as HTMLElement;
+
+  it("W15-41: a report's markdown table reads as plain lines in the drawer, never pipes and dashes", async () => {
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work)
+      work.report = [
+        "Wrote the footer test.",
+        "| # | Criterion | Test | Result |",
+        "|---|---|---|---|",
+        "| 1 | The footer names the club | footer.test.js | pass |",
+      ].join("\n");
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const run = await workRunOf(drawer);
+    await waitFor(() => expect(run).toHaveTextContent("Wrote the footer test."));
+    expect(run).toHaveTextContent("# · Criterion · Test · Result");
+    expect(run).toHaveTextContent("1 · The footer names the club · footer.test.js · pass");
+    expect(run.textContent).not.toContain("|");
+    expect(run.textContent).not.toContain("---");
+  });
+
+  it("W15-54: a page read twice is listed once in the drawer's Read list", async () => {
+    const harness = createHarness();
+    const work = harness.daemon.state.runs.find((r) => r.taskId === "task_2");
+    if (work)
+      work.webSources = [
+        { url: "https://www.netlify.com/pricing/", title: "Pricing", refused: null },
+        { url: "https://pages.cloudflare.com/", title: "Pages", refused: null },
+        { url: "https://www.netlify.com/pricing/", title: "Pricing", refused: null },
+      ];
+    renderApp("/projects/proj_atlas/tasks?task=task_2", harness);
+    const drawer = await screen.findByTestId("task-drawer");
+    const web = await within(await workRunOf(drawer)).findByTestId("drawer-web");
+    expect(
+      within(web)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      "Read: Pricing (https://www.netlify.com/pricing/)",
+      "Read: Pages (https://pages.cloudflare.com/)",
+    ]);
+  });
 });

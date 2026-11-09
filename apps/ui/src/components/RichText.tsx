@@ -35,6 +35,10 @@ const BULLET = /^\s{0,3}[-*•]\s+(.*)$/;
 const NUMBERED = /^\s{0,3}(\d{1,3})[.)]\s+(.*)$/;
 const HEADING = /^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/;
 const RULE = /^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
+/** A markdown table's separator row ("|---|:--:|"): dropped (W15-41). */
+const TABLE_RULE = /^\s{0,3}\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+/** A markdown table's row ("| 1 | Criterion | met |"): its cells as one plain line (W15-41). */
+const TABLE_ROW = /^\s{0,3}\|(.*)\|\s*$/;
 
 type Line =
   | { kind: "text"; text: string }
@@ -42,7 +46,17 @@ type Line =
   | { kind: "number"; n: number; text: string };
 
 function lineOf(raw: string): Line | null {
-  if (RULE.test(raw)) return null;
+  if (RULE.test(raw) || TABLE_RULE.test(raw)) return null;
+  // W15-41 (design §5 rule 6): a table reads as plain lines, never pipes and dashes (live check
+  // 2: the tester's drawer showed "| # | Criterion | Test | Result |" and "|---|---|---|---|").
+  const row = TABLE_ROW.exec(raw);
+  if (row) {
+    const cells = (row[1] ?? "")
+      .split("|")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    return cells.length ? { kind: "text", text: cells.join(" · ") } : null;
+  }
   const heading = HEADING.exec(raw);
   if (heading) return { kind: "text", text: `**${heading[1] ?? ""}**` };
   const bullet = BULLET.exec(raw);
