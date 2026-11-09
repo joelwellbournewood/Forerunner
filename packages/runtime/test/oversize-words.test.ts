@@ -141,4 +141,34 @@ describe("d1109-oversize-start, run C: the sentences about a task larger than on
     expect(view.audience).toBe("person");
     expect(view.text).not.toMatch(/01a1c1bf|USD|\$/);
   });
+
+  it("the plan line under Details names the larger task the session takes (lineOf)", () => {
+    const oversized = {
+      taskId: "01a1c1bf-1f1f-77e0-8355-08cb744f3be9",
+      title: "Build the shop",
+      estimateUsdMicro: 8_000_000,
+    };
+    expect(
+      describeEvent(
+        "session.planned",
+        { items: 0, estimateUsdMicro: 0, summary: "1 ready task in priority order", oversized },
+        RATE,
+      ),
+    ).toBe(
+      'Plan: "Build the shop" (about CHF 6.40), larger than this session\'s work budget: it works until that budget is used. 1 ready task in priority order.',
+    );
+    expect(
+      describeEvent(
+        "session.planned",
+        { items: 2, estimateUsdMicro: 500_000, summary: "", oversized },
+        RATE,
+      ),
+    ).toBe(
+      'Plan: 2 tasks, about CHF 0.40, then "Build the shop" (about CHF 6.40), larger than this session\'s work budget, with what is left.',
+    );
+    // Without one, the line of before.
+    expect(describeEvent("session.planned", { items: 1, estimateUsdMicro: 500_000 }, RATE)).toBe(
+      "Plan: 1 task, about CHF 0.40.",
+    );
+  });
 });

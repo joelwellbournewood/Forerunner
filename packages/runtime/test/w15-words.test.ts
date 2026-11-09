@@ -203,14 +203,21 @@ describe("w15-words, wave 15 run B", () => {
         'Left for next time: "Write the note" (less than CHF 0.01); this session\'s less than CHF 0.01 was used.',
       );
       expect(left).not.toContain("CHF 0.00");
-      const nothing = sessionResultLines({
+      // d1109-oversize-start (D4): a task larger than the work budget runs, so the W6-23 line
+      // ('Nothing could run: "Write the note" needs less than CHF 0.01, more than this
+      // session's work budget of less than CHF 0.01.') is gone; a second one says why it waits,
+      // with the same money rule.
+      const waits = sessionResultLines({
         ...base,
-        outcome: { ...base.outcome, done: [], stopReason: "nothing_runnable", spentChfMicro: 0 },
+        leftOutForBudget: [
+          { id: "t1", title: "Write the note", estimateChfMicro: 3_200, reason: "one_large" },
+        ],
         workBudgetChfMicro: 3_000,
       } as never).join(" ");
-      expect(nothing).toContain(
-        'Nothing could run: "Write the note" needs less than CHF 0.01, more than this session\'s work budget of less than CHF 0.01.',
+      expect(waits).toContain(
+        '"Write the note" needs less than CHF 0.01, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
       );
+      expect(waits).not.toContain("CHF 0.00");
       expect(stopWords("budget_project", 3_000)).toBe(
         "Stopped at the project's budget of less than CHF 0.01.",
       );

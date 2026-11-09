@@ -485,6 +485,11 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
     expect(r.plan?.leftOutForBudget?.map((i) => [i.title, i.reason])).toEqual([
       ["Big two", "one_large"],
     ]);
+    // OS-7: the result says why it waits, in its one sentence; never "Nothing could run".
+    expect(r.summary).toMatch(
+      /"Big two" needs about CHF [\d.]+, more than this session's work budget: one task that large runs a session, so it waits for the next one\./,
+    );
+    expect(r.summary).not.toContain("Nothing could run");
     await store.close();
   });
 

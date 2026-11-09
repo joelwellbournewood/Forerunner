@@ -1,5 +1,6 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
+import { leftOutSentence } from "../daemon/oversize-words.ts";
 import { plainReason } from "../daemon/task-words.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
@@ -294,23 +295,10 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       const did = o.done.length || f.inReview.length || f.mergedPrs;
       if (did || o.stopReason !== "nothing_runnable" || f.outcome.waitingForDocker.length)
         return [];
-      // W6-23 (budget-resume): every ready task was left out because its estimate alone is more
-      // than the session's work budget; before: "Nothing could run: no task is ready." beside
-      // "Left for next time: ...; this session's CHF 0.40 was used.", though nothing was spent.
-      const big = f.leftOutForBudget[0];
-      if (big) {
-        const who =
-          f.leftOutForBudget.length === 1
-            ? `"${big.title}" needs ${aboutWords(formatChf(big.estimateChfMicro), big.estimateChfMicro)}`
-            : `${namesOf(titlesOf(f.leftOutForBudget))} need more`;
-        return [
-          `Nothing could run: ${who}, more than this session's work budget${
-            typeof f.workBudgetChfMicro === "number"
-              ? ` of ${moneyWords(formatChf(f.workBudgetChfMicro), f.workBudgetChfMicro)}`
-              : ""
-          }. Start a session with a larger budget.`,
-        ];
-      }
+      // D4 (d1109-oversize-start): a task whose estimate alone is more than the session's work
+      // budget is no reason nothing ran any more: the session takes it with what is left (its
+      // log says "Took ..."). Before (W6-23): 'Nothing could run: "X" needs about CHF 1.20, more
+      // than this session's work budget of CHF 0.32. Start a session with a larger budget.'
       const w = o.waiting[0];
       return [
         w
@@ -331,21 +319,36 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     name: "left for next time",
     line: 3,
     build: (f, o) => {
+      // D4: a task larger than the session's work budget that waits for the next session says
+      // why in its own sentence (a second such task; too little left after the tasks before it).
+      const larger = f.leftOutForBudget.filter(
+        (t) => t.reason === "one_large" || t.reason === "no_room",
+      );
+      const work = f.workBudgetChfMicro ?? 0;
+      const why = larger.slice(0, 3).map((t) =>
+        leftOutSentence(t.reason === "one_large" ? "one_large" : "no_room", {
+          title: t.title,
+          estimate: { chfMicro: t.estimateChfMicro, text: formatChf(t.estimateChfMicro) },
+          workBudget: { chfMicro: work, text: formatChf(work) },
+        }),
+      );
+      const fitting = f.leftOutForBudget.filter((t) => !larger.includes(t));
       // A session that ran nothing used no budget: "Nothing could run" says why (W6-23).
-      if (f.leftOutForBudget.length && o.stopReason !== "nothing_runnable") {
-        const named = f.leftOutForBudget
+      if (fitting.length && o.stopReason !== "nothing_runnable") {
+        const named = fitting
           .slice(0, 3)
           .map(
             (t) =>
               `"${t.title}" (${aboutWords(formatChf(t.estimateChfMicro), t.estimateChfMicro)})`,
           )
           .join(", ");
-        const more =
-          f.leftOutForBudget.length > 3 ? ` and ${f.leftOutForBudget.length - 3} more` : "";
+        const more = fitting.length > 3 ? ` and ${fitting.length - 3} more` : "";
         return [
           `Left for next time: ${named}${more}; this session's ${moneyWords(formatChf(f.sessionCapChfMicro), f.sessionCapChfMicro)} was used.`,
+          ...why,
         ];
       }
+      if (why.length) return why;
       // Ready tasks that wait for a credential are said by the wait's sentence, not as ready
       // to continue (U-078: they start by themselves).
       if (o.leftOver.length && !o.credentialWait)
