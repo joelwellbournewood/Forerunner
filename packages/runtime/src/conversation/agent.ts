@@ -1401,7 +1401,11 @@ export class ConversationAgent {
       const scan = scanForInjection(card.line, "agent_output");
       if (scan.suspicious) flagged.push({ where: "card", rules: scan.matches.map((m) => m.rule) });
     }
-    const project = projectId ? await store.project.get(projectId) : undefined;
+    // d1109-chat-guard: the facts of a project this person may read only (`scopeOf`); a turn
+    // sent with another person's project (the chat route does not check it) gets none of its
+    // tasks, results, files or documents.
+    const project =
+      projectId && mine.has(projectId) ? await store.project.get(projectId) : undefined;
     // d1109-chat-guard (D3-6): the person's own day and time beside the UTC now ("yesterday",
     // "last week" and "on Monday" are their days); volatile, so the cached prefix holds.
     const zone = (await store.human.get(humanId))?.timezone ?? "UTC";
@@ -1478,7 +1482,7 @@ export class ConversationAgent {
       if (files) blocks.push(files);
     }
     void conversationProject;
-    const retrieved = await this.retrieve(humanId, agent, projectId, query, provider);
+    const retrieved = await this.retrieve(humanId, agent, project?.id ?? null, query, provider);
     return {
       stable: `# Projects\n${stable || "(none)"}`,
       volatile: [volatile, ...blocks, ...retrieved.blocks].join("\n\n"),

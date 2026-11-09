@@ -565,6 +565,7 @@ describe("d1109-chat-guard, run C: chat reads only this person's records (CG-6, 
           ttftMs: 0,
         }),
         textReply("There is no such project.", { ttftMs: 0 }),
+        textReply("I cannot see that project.", { ttftMs: 0 }),
       ],
     });
     const mara = (await w.store.human.insert({ name: "Mara", email: "mara@example.test" })).id;
@@ -585,6 +586,19 @@ describe("d1109-chat-guard, run C: chat reads only this person's records (CG-6, 
     expect(String(w.provider.calls[0]?.request.system)).toContain("Quote Page");
     expect(w.toolResults(1)).toContain('No project is called "Mara\'s Garden".');
     expect(w.toolResults(1)).not.toContain('Secret plan" of');
+    // A turn sent with the other person's project (the chat route does not check it) gets no
+    // facts of it: at 7d6b34a its task list, last session and files went into the facts.
+    await w.agent.chat({
+      humanId: w.human,
+      agentId: w.alice,
+      projectId: garden,
+      projectTab: true,
+      text: "what is left?",
+      source: "text",
+    });
+    expect(w.last(2)).not.toContain("Secret plan");
+    expect(w.last(2)).not.toContain("# Tasks of Mara's Garden");
+    expect(w.last(2)).toContain("- active_project: none");
     await w.store.close();
   });
 });
