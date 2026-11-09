@@ -3725,7 +3725,11 @@ PR on the branch that is not this project's (`isProjectStatusPr`: its mark names
 project, or it has no mark while another project of this install is linked to the repository,
 `soleLinkedProject`) the branch's for now, so nothing is pushed or commented and the status
 goes to the app folder (`statusInApp`) with one info line "status pull request not written:
-another project's status pull request is open"; the scaffold (`scaffoldInCopy`) skips another
+another project's status pull request is open", and a file there (`STATUS_HELD_MARK`, the
+review's fix-up: B's Docs tab read "not written yet" while the app kept it) makes
+`statusDocRoot` give the Docs tab that copy first, as with the setting off, after a restart too;
+the project's next status written to its own pull request (or kept in the app with the setting
+off) removes the file; the scaffold (`scaffoldInCopy`) skips another
 project's open `fr/docs-scaffold` PR the same way. No per-project branch and no second PR: two
 would change one `docs/status.md` (owner question W15-112). It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
 and the status commit pushed onto it after the review put a file the critic never saw into the

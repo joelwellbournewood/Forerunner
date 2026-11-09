@@ -119,6 +119,16 @@ export function statusPullRequestOn(project: Pick<ProjectRow, "settings">): bool
 /** `<projectsRoot>/<project id>/app-status`: where a repository project's status stays (C-57). */
 export const STATUS_IN_APP_DIR = "app-status";
 
+/**
+ * W15-01 fix-up: a file in `STATUS_IN_APP_DIR` that says the project's last status stayed in
+ * the app because another project's status pull request was open on `fr/status`, although its
+ * own status pull request is on. While it is there, the Docs tab reads `docs/status.md` from
+ * the app (`statusDocRoot`), as with the setting off; the project's next status written to its
+ * own pull request (or kept in the app with the setting off) removes it. A file, so a restart
+ * reads it the same way.
+ */
+export const STATUS_HELD_MARK = ".held-by-another-status-pr";
+
 /** The branches Forerunner keeps the project's docs on (scaffold, the intake's set, status). */
 export function isDocsBranch(branch: string): boolean {
   return (
@@ -436,14 +446,17 @@ export class ProjectDocs implements ProjectDocsPort {
 
   /**
    * Where the Docs tab reads `docs/status.md` first (C-57): the app's copy of a repository
-   * project whose status pull request is off, once a session wrote it; null otherwise (the
-   * repository's, as merged, or the project's folder).
+   * project whose status pull request is off, once a session wrote it, or (W15-01 fix-up) whose
+   * last status stayed in the app because another project's status pull request was open
+   * (`STATUS_HELD_MARK`); null otherwise (the repository's, as merged, or the project's folder).
+   * Before, the second project's Docs tab read "not written yet" while its status was kept.
    */
   statusDocRoot(project: ProjectRow): string | null {
     if (!parseRepoRef(project.repos[0] ?? "") || isAbsolute(project.repos[0] ?? "")) return null;
-    if (statusPullRequestOn(project)) return null;
     const dir = this.statusInAppDir(project.id);
-    return existsSync(join(dir, fromPosix(STATUS_DOC))) ? dir : null;
+    if (!existsSync(join(dir, fromPosix(STATUS_DOC)))) return null;
+    if (!statusPullRequestOn(project)) return dir;
+    return existsSync(join(dir, STATUS_HELD_MARK)) ? dir : null;
   }
 
   /**
@@ -902,8 +915,10 @@ export class ProjectDocs implements ProjectDocsPort {
         "status pull request not written: another project's status pull request is open",
         { projectId: project.id, branch, prUrl: foreign?.htmlUrl ?? null },
       );
-      return this.statusInApp(project, update, { refresh: false });
+      return this.statusInApp(project, update, { refresh: false, held: true });
     }
+    // Its own status pull request has it again: the app's copy is no longer read first.
+    rmSync(join(this.statusInAppDir(project.id), STATUS_HELD_MARK), { force: true });
     this.logger.info("status update written", {
       projectId: project.id,
       sessionId: session.id,
@@ -917,16 +932,20 @@ export class ProjectDocs implements ProjectDocsPort {
   /**
    * A repository project's status kept in the app (`STATUS_IN_APP_DIR`, C-57), where the Docs
    * tab reads it: its status pull request is off, or another project's is open on `fr/status`
-   * (W15-01). `refresh`: the copy is refreshed here too (nothing pushed).
+   * (W15-01, `held`: marked so with `STATUS_HELD_MARK`). `refresh`: the copy is refreshed here
+   * too (nothing pushed).
    */
   private async statusInApp(
     project: ProjectRow,
     update: StatusUpdate,
-    opts: { refresh?: boolean } = {},
+    opts: { refresh?: boolean; held?: boolean } = {},
   ): Promise<SessionStatusOutcome> {
     const dir = this.statusInAppDir(project.id);
     mkdirSync(dir, { recursive: true });
     const res = await writeStatusUpdate(dir, update);
+    const mark = join(dir, STATUS_HELD_MARK);
+    if (opts.held) writeFileSync(mark, "another project's status pull request is open\n", "utf8");
+    else rmSync(mark, { force: true });
     // The status write was also what kept this computer's copy of the repository current;
     // without it a project made from a brief had no copy at all (its Docs tab said README.md
     // was missing, its Files tab "Nothing written yet") and a merge never showed (review of

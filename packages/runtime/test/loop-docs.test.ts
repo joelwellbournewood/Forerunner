@@ -1131,4 +1131,48 @@ describe("w15-merge, wave 15", () => {
     expect(subjects).toContain("docs: status after the session started 2026-11-09 04:12 UTC");
     await w.close();
   });
+
+  it("the status a project keeps in the app while another project's status pull request is open is where its Docs tab reads docs/status.md, after a restart too; once its own status pull request is written, the app's copy is no longer read first (W15-01 fix-up)", async () => {
+    // The review's bench walk: B's session kept its status in the app, but B's Docs tab read
+    // "docs/status.md missing / not written yet" (statusDocRoot was null whenever the status
+    // pull request was on), although the guide says B keeps its status under Docs.
+    const w = await loopWorld();
+    const { root, bare } = await bareRepo();
+    const { host, docs } = await docsFor(w, root, bare);
+    const a = await w.store.project.patch(w.project, {
+      repos: ["o/sample"],
+      settings: { status_pull_request: true },
+    });
+    const b = await secondProject(w);
+    await docs.writeSessionStatus({ project: a, session: session("s-a"), update: update("s-a") });
+    const fromB = await docs.writeSessionStatus({
+      project: b,
+      session: session("s-b"),
+      update: { ...update("s-b"), done: ["Write B's notes"] },
+    });
+    expect(fromB.location).toBe("app");
+    const appDir = docs.statusInAppDir(b.id);
+    expect(docs.statusDocRoot(b)).toBe(appDir);
+    expect(await readFile(join(appDir, fromPosix(STATUS_DOC)), "utf8")).toContain(
+      "Write B's notes",
+    );
+    // A's Docs tab still reads its status from where it was before (its pull request).
+    expect(docs.statusDocRoot(a)).toBeNull();
+    // The daemon starts again: what was kept is read the same way.
+    const { docs: again } = await docsFor(w, root, bare);
+    expect(again.statusDocRoot(b)).toBe(appDir);
+    // A's pull request is closed; B's next session writes its own status pull request, and its
+    // Docs tab reads docs/status.md from the repository again, as with no other project.
+    const [prA] = await host.listPullRequests(REPO, { state: "open", head: STATUS_BRANCH });
+    await host.updatePullRequest(REPO, prA?.number ?? 0, { state: "closed" });
+    const own = await again.writeSessionStatus({
+      project: b,
+      session: session("s-b2"),
+      update: update("s-b2"),
+    });
+    expect(own.location).toBe("repo");
+    expect(again.statusDocRoot(b)).toBeNull();
+    expect(docs.statusDocRoot(b)).toBeNull();
+    await w.close();
+  });
 });

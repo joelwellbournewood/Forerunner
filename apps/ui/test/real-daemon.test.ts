@@ -12253,6 +12253,16 @@ describe("w15-merge, wave 15", () => {
       // B's Docs tab does not say its docs wait in A's pull requests.
       for (const d of await client.docs(b.id))
         expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
+      // B's status stayed in the app, and its Docs tab reads it there (the review of the fix:
+      // "docs/status.md missing / not written yet" while the app kept it).
+      const statusOfB = async () => {
+        const row = (await client.docs(b.id)).find((d) => d.path === "docs/status.md");
+        expect(row?.exists, row?.note ?? "no status row").toBe(true);
+        const text = (await client.doc(b.id, "docs/status.md")).content;
+        expect(text).toContain("Write the notes in b-notes.md");
+        expect(text).not.toContain("Write the notes in a-notes.md");
+      };
+      await statusOfB();
 
       // The daemon starts again on the same home: the ownership is read from the bodies.
       await rt.close();
@@ -12261,6 +12271,7 @@ describe("w15-merge, wave 15", () => {
         [`fr/docs-scaffold #${scaffold?.number}`, `fr/status #${prA?.number}`].sort(),
       );
       expect(await docsRows(client, b.id)).toEqual([]);
+      await statusOfB();
     } finally {
       await rt.close();
     }

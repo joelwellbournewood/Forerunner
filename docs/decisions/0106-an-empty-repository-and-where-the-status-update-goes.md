@@ -134,3 +134,14 @@ request each), only the safety part is built:
   to the repository; with two linked it is neither's. This fails closed.
 - No per-project branch and no second pull request: both would change one `docs/status.md`
   and conflict on merge, which is the owner's question.
+
+## Amendment: the kept status shows on Docs (W15-01 fix-up, 'w15-merge', 2026-11-09)
+
+The review of the amendment above found that "its status stays in the app (as with the setting
+off)" was only half true: the status was written to the app's folder, but the Docs tab read
+`docs/status.md` from the app only with the setting off, so the second project's Docs tab said
+the status was not written yet. Now a project whose last status stayed in the app because
+another project's status pull request was open reads it there, as with the setting off, after a
+restart too (a file beside the status says so). Its next status written to its own pull request
+removes that file, and the Docs tab reads the repository's copy again. The Docs tab's note on
+that row still reads as with the setting off; its words are not changed in wave 15.

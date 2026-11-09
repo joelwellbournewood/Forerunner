@@ -318,7 +318,8 @@ pull request. Docs that wait in a pull request say so on the Docs tab, with the 
 project's docs pull requests are listed, never one another project left on the same
 repository. Two projects on one repository share that status branch: while one project's
 status pull request is open, the other project never adds to it, comments on it or lists it,
-and keeps its own status under **Docs** in the app until that pull request is merged or closed.
+and keeps its own status under **Docs** in the app (Docs shows it there, as with the setting
+off); once that pull request is merged or closed, its next session opens its own.
 The same goes for the pull request of the standard docs.
 A task that waits for another whose pull request you have not merged yet starts from that work:
 its branch includes it, so a check finds the page it checks. Its own pull request still goes to
