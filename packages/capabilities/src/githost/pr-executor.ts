@@ -471,13 +471,28 @@ export function failedRef(taskId: string): string {
 }
 
 /**
- * TM-1 (leftovers7-tailmerge): the failed task's one sentence when its run changed nothing and
- * the pull request open on its branch was closed (`closeEmptied`): after a redo from the base
- * ("Redone from main, it changed nothing, so #4 was closed."), or a pull request that held no
- * change either. Polish owns the words.
+ * Why a task's branch holds no change of its own (TM-1, leftovers7-tailmerge): `redone`, a redo
+ * from the base whose run changed nothing; `empty`, a run that changed nothing on a branch that
+ * held nothing either; `up_to_date` (the fix-up), a branch that held a change until it was
+ * brought up to date with the base, which already has the same change (or the person's
+ * resolution kept the base's side only).
  */
-export function emptiedSentence(prNumber: number, redone: boolean, base = "main"): string {
-  return redone
+export type EmptiedWhy = "redone" | "empty" | "up_to_date";
+
+/**
+ * TM-1 (leftovers7-tailmerge): the failed task's one sentence when its branch holds no change of
+ * its own and the pull request open on it was closed (`closeEmptied`): after a redo from the
+ * base ("Redone from main, it changed nothing, so #4 was closed."), a pull request that held no
+ * change either, or one that no longer changes anything once brought up to date. `prNumber` is
+ * null when no pull request was closed: only `up_to_date` has its own words then ("main already
+ * has this change."). Polish owns the words.
+ */
+export function emptiedSentence(prNumber: number | null, why: EmptiedWhy, base = "main"): string {
+  if (why === "up_to_date")
+    return prNumber === null
+      ? `${base} already has this change.`
+      : `#${prNumber} no longer changes anything on ${base}, so it was closed.`;
+  return why === "redone"
     ? `Redone from ${base}, it changed nothing, so #${prNumber} was closed.`
     : `It changed nothing and #${prNumber} held no change, so #${prNumber} was closed.`;
 }
@@ -924,15 +939,14 @@ export class PrTaskExecutor implements TaskExecutor {
     // was force-pushed to it and the empty pull request went to review and then to Merge); a run
     // that continues a paused task's work and adds nothing more still holds that work.
     if (!(await this.holdsOwnChange(git, target, excluded, commit.committed || !!existingPr))) {
-      const closed = existingPr
-        ? await this.closeEmptied(target, existingPr, task, dropped)
-        : false;
+      const why = dropped ? "redone" : "empty";
+      const closed = existingPr ? await this.closeEmptied(target, existingPr, task, why) : false;
       return {
         ...result,
         outcome: "failed",
         summary:
           closed && existingPr
-            ? emptiedSentence(existingPr.number, dropped, target.base)
+            ? emptiedSentence(existingPr.number, why, target.base)
             : `${result.summary}\n(no changes were made in the worktree)`,
         checksPassed: false,
       };
@@ -974,6 +988,18 @@ export class PrTaskExecutor implements TaskExecutor {
         merging,
       });
     }
+    // TM-1's sibling (leftovers7-tailmerge fix-up): brought up to date, the branch may hold no
+    // change of its own any more: the base already has the same change (the rebase drops a
+    // commit the base has; merging the base in leaves nothing). Read again before the push.
+    // Before, the base's head was force-pushed to the open pull request, which went to review
+    // empty and was offered for Merge (a Tasks-tab Redo or a rework of a task whose change had
+    // reached main), and a fresh task's push opened an empty pull request.
+    if (!(await this.holdsOwnChange(git, target, excluded, true)))
+      return this.endUpToDate(task, target, existingPr, {
+        ...result,
+        outcome: "failed",
+        checksPassed: false,
+      });
     let changedFiles: string[] = [];
     try {
       // The task's own work: from the base it started on (the default branch with the work it
@@ -1094,23 +1120,24 @@ export class PrTaskExecutor implements TaskExecutor {
    * while a pull request is open on it closes that pull request, with one comment saying why,
    * instead of pushing the base's head to it (an empty pull request the app would offer for
    * Merge). Its branch on the host is kept as it was. After a redo from the base, the pull
-   * request holds only the work the person dropped; otherwise it holds no change either. False
-   * when the host refused (the pull request then stays as it was, and so does the branch).
+   * request holds only the work the person dropped; otherwise it holds no change either, or
+   * (`up_to_date`) what it changes is in the base already. False when the host refused (the pull
+   * request then stays as it was, and so does the branch).
    */
   private async closeEmptied(
     target: Target,
     pr: PullRequestInfo,
     task: TaskRow,
-    redone: boolean,
+    why: EmptiedWhy,
   ): Promise<boolean> {
+    const said =
+      why === "redone"
+        ? `Forerunner did this task again from ${target.base} and it changed nothing, so this pull request is closed. Its branch is kept.`
+        : why === "up_to_date"
+          ? `Brought up to date with ${target.base}, this task's work no longer changes anything, so this pull request is closed. Its branch is kept.`
+          : "Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.";
     try {
-      await this.deps.host.commentOnPullRequest(
-        target.repo,
-        pr.number,
-        redone
-          ? `Forerunner did this task again from ${target.base} and it changed nothing, so this pull request is closed. Its branch is kept.`
-          : "Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.",
-      );
+      await this.deps.host.commentOnPullRequest(target.repo, pr.number, said);
     } catch (e) {
       this.logger.warn("emptied pull request not commented", {
         taskId: task.id,
@@ -1123,7 +1150,7 @@ export class PrTaskExecutor implements TaskExecutor {
       this.logger.info("pull request closed: the run changed nothing", {
         taskId: task.id,
         pr: pr.number,
-        redone,
+        why,
       });
       return true;
     } catch (e) {
@@ -1134,6 +1161,30 @@ export class PrTaskExecutor implements TaskExecutor {
       });
       return false;
     }
+  }
+
+  /**
+   * TM-1's sibling (leftovers7-tailmerge fix-up): a branch brought up to date with the base that
+   * no longer holds any change of its own is not pushed. The pull request open on it is closed
+   * (`closeEmptied`, `up_to_date`), its branch on the host kept as it was, and the task fails in
+   * one sentence, as a task with no change does ("#4 no longer changes anything on main, so it
+   * was closed.", or "main already has this change." when no pull request was closed).
+   */
+  private async endUpToDate(
+    task: TaskRow,
+    target: Target,
+    pr: PullRequestInfo | undefined,
+    result: TaskExecutionResult,
+  ): Promise<TaskExecutionResult> {
+    const closed = pr ? await this.closeEmptied(target, pr, task, "up_to_date") : false;
+    this.logger.info("not pushed: the branch holds no change of its own once up to date", {
+      taskId: task.id,
+      pr: pr?.number ?? null,
+    });
+    return {
+      ...result,
+      summary: emptiedSentence(closed && pr ? pr.number : null, "up_to_date", target.base),
+    };
   }
 
   /** The task's own files on its branch: from the base its work started on, never Local only. */
@@ -2345,6 +2396,22 @@ export class PrTaskExecutor implements TaskExecutor {
         });
       }
       rebased = true;
+    }
+    // TM-1's sibling (leftovers7-tailmerge fix-up): a resolution that kept the base's side only
+    // leaves the branch with no change of its own: it is not pushed and its pull request does
+    // not go to review empty (before, the base's head was force-pushed to it and offered for
+    // Merge once accepted). The answer is used.
+    if (!(await this.holdsOwnChange(git, target, await this.excludedFolders(git, target), true))) {
+      const open = (
+        await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
+      )[0];
+      await this.consume(answered.row);
+      return this.endUpToDate(ctx.task, target, open, {
+        outcome: "failed",
+        summary: "",
+        costUsdMicro: 0,
+        branch,
+      });
     }
     let changedFiles: string[] = [];
     try {

@@ -382,7 +382,10 @@ redo changes nothing (the default
 branch already has what the task asks for), the task fails as any task with no change does
 ("Failed: Redone from main, it changed nothing, so #8 was closed.", with **Try again**, **Mark
 done anyway** and **Cancel task** on its card): #8 is closed on GitHub with a comment saying why,
-its branch is kept, and nothing empty is offered for Merge.
+its branch is kept, and nothing empty is offered for Merge. The same holds for any redo or
+rework whose change the default branch already has by the time it is pushed (someone made the
+same change there): "Failed: #8 no longer changes anything on main, so it was closed."; press
+**Mark done anyway** if that is what you wanted.
 
 **Merging: you press Merge, or Forerunner merges after review.** Each repository project has a
 setting **Who merges accepted work** (Settings, Other settings; the Overview's line "Merging: you

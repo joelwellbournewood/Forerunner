@@ -1351,4 +1351,37 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     expect(waiting.map((w) => w.number)).not.toContain(prB);
     expect(row.label).toBe(`Failed: ${sentence}`);
   });
+
+  it("the Tasks tab's Redo of a done task whose change main already has: no empty pull request is offered for Merge; the task fails in one sentence and its pull request is closed (TM-1's sibling, fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    const a = await m.runTask("Write the page");
+    expect(a.status).toBe("done");
+    const pr = await m.pr(a.id);
+    // Someone else makes the same change on main; the pull request still merges cleanly.
+    await m.host.seedCommit(FULL, { "index.html": "<h1>one</h1>\n" }, "The same page", "main");
+    // The person presses Redo on the Tasks tab, and the next session runs it: it resumes the
+    // open pull request's branch and writes the same page again.
+    const done = await m.w.store.task.mustGet(a.id);
+    await m.w.store.task.reopen(a.id, done.version, "ready", "Redo asked by you");
+    await m.w.store.task.patch(a.id, { attempt: done.attempt + 1 });
+    await m.session();
+    // Before: the rebase onto main dropped the commit main already had, main's head was
+    // force-pushed to the pull request (no file left in it), the critic accepted it and the
+    // Overview offered Merge on the empty pull request (bench, review of wave 13, step 29).
+    const after = await m.w.store.task.mustGet(a.id);
+    const sentence = `#${pr.number} no longer changes anything on main, so it was closed.`;
+    expect([after.status, after.reason]).toEqual(["failed", sentence]);
+    const closed = await m.pr(a.id);
+    expect([closed.state, closed.merged]).toEqual(["closed", false]);
+    expect(closed.head.sha).toBe(pr.head.sha);
+    expect(await m.hostGit("rev-parse", `refs/heads/${pr.head.ref}`)).not.toBe(
+      await m.hostGit("rev-parse", "refs/heads/main"),
+    );
+    expect(m.forcedPushes(pr.head.ref)).toEqual([]);
+    await m.poll();
+    const { waiting, row } = await screens(m, a.id);
+    expect(waiting.map((w) => w.number)).not.toContain(pr.number);
+    expect(row.label).toBe(`Failed: ${sentence}`);
+  });
 });

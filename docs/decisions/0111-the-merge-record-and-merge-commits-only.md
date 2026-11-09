@@ -354,7 +354,14 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    otherwise list it again with that dropped work and a Merge. Before, main's head was
    force-pushed to the branch, the empty pull request went to review, and the app offered it
    for Merge (bench, wave 14: it merged with no diff). The same reading keeps a run that
-   continues a paused task's work, and adds nothing more, out of "no changes".
+   continues a paused task's work, and adds nothing more, out of "no changes". It is read again
+   once the branch is brought up to date with the base, before the push, and before the push of
+   a branch the person resolved ("I resolved it"): a branch whose change the base already has
+   (or whose resolution kept the base's side only) is not pushed, its pull request is closed
+   the same way, and the task fails in one sentence ("#4 no longer changes anything on main, so
+   it was closed."). The review of this amendment found the base's head still force-pushed to
+   an open pull request after a Tasks-tab Redo of a task whose change had reached main, the
+   critic accepting it and the Overview offering the empty pull request for Merge.
 2. **A person's resolution in the task's folder is used, never aborted.** "I resolved it"
    given while the person's rebase or merge is still under way in the task's folder (the
    conflict card's steps) has that step finished with their resolution (resolved files staged,
