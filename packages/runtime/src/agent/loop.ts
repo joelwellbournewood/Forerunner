@@ -89,7 +89,7 @@ export const CACHE_TTL_MARGIN_MS = 30_000;
 export const MAX_PAUSE_CONTINUATIONS = 5;
 
 export const WRAP_UP_TEXT =
-  "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: as a list.";
+  "About a fifth of this task's budget is left. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).";
 
 export interface RunPricing {
   /**

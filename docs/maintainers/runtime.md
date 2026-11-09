@@ -2039,7 +2039,12 @@ budget-stop; the owner's decision of 2026-11-02).**
   (`WRAP_UP_BRIEF_LINE`).
 - *Paused* (`session/budget-pause.ts`). After the run the executor parses the report
   (`parseHandoff`: the text under the last "Where I stopped:", the list under the last "Left to
-  do:", markdown-tolerant, "nothing" is empty, cut) and decides: a run is paused when it stopped
+  do:", markdown-tolerant, "nothing" is empty, cut; W15-14: "nothing" with what it is about,
+  "Nothing for the acceptance criteria." or "None required by the criteria", is empty too, while
+  "Nothing works yet" and "None of the tests pass" stay items, and an optional extra ("Optionally,
+  ...", "(optional) ...", "Nice to have: ...") goes to `optional`, kept in the handoff as a note,
+  never a reason to pause; the wrap-up and `WRAP_UP_BRIEF_LINE` ask for only what the criteria
+  still need, or nothing) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`

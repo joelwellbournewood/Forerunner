@@ -335,3 +335,12 @@ names the model. A model the price table does not know is priced as the run's mo
    whole, so nothing of it is kept), and the next request says the cut call did not run; when the
    money below the line cannot raise the limit, it says to send less in one reply. After the
    wrap-up the reserve pays, as it does every call of a run that finishes.
+2. **"Left to do" counts only what the criteria still need (W15-14; amends point 5).** A
+   researcher that heard the wrap-up and ended with "Left to do: - Nothing for the acceptance
+   criteria. - Optionally, add a section to answer.md" was paused at its budget with its work
+   done and no review (live check 2, F4): `parseHandoff` took any line but a bare "nothing" as
+   an item. "Nothing"/"none" with what it is about (the criteria, the brief, the task) or with a
+   reason that says it is done is nothing, and an optional extra goes to the handoff's
+   `optional` notes, never a reason to pause; "Nothing works yet" or "None of the tests pass"
+   stays work. The wrap-up and the brief's line ask for only what the criteria still need, as a
+   list, or "nothing", with no optional extras.

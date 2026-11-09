@@ -895,7 +895,9 @@ for even that is "save only": nothing is said to the agent, and the run pauses a
 smaller than a single step's cost says so and pauses before that step. A run that stopped at a
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
-nothing left is reviewed as usual. The card and the task name the limit that stopped it: the
+nothing left is reviewed as usual. "Left to do" counts only what the task's acceptance criteria
+still need: "Nothing for the acceptance criteria" is nothing, and an optional extra the agent
+suggests is kept as a note, so finished work goes to its review instead of waiting on a card. The card and the task name the limit that stopped it: the
 task's budget, the specialist's limit, the session's budget, the project's budget, this month's
 cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,
 the project's budget, the month's cap or the subscription's share ends the session, and the

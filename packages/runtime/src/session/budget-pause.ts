@@ -23,8 +23,16 @@ export type BudgetStopSource =
 export interface RunHandoff {
   /** Its "Where I stopped:" text, or "" when it wrote none (a hard stop, a tiny budget). */
   stopped: string;
-  /** Its "Left to do:" items; empty for "nothing" or none written. */
+  /**
+   * Its "Left to do:" items that the task's criteria still need; empty for "nothing" (also
+   * "Nothing for the acceptance criteria.") or none written. Only these pause a run (W15-14).
+   */
   leftToDo: string[];
+  /**
+   * Its optional extras ("Optionally, ...", "Nice to have: ..."): kept as notes for the run that
+   * continues or the critic, never a reason to pause.
+   */
+  optional?: string[];
   /** `wrap_up`: it heard the wrap-up and listed work left; `budget`: a budget refused a call. */
   stoppedBy: "wrap_up" | "budget";
 }
@@ -34,14 +42,23 @@ export interface RunHandoff {
  * wrap-up ends its report with them.
  */
 export const WRAP_UP_BRIEF_LINE =
-  "If Forerunner tells you that about a fifth of this task's budget is left, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (a list of what is still to do, or 'nothing'): the run that continues this task starts from them.";
+  "If Forerunner tells you that about a fifth of this task's budget is left, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras): the run that continues this task starts from them.";
 
 const MAX_STOPPED_CHARS = 600;
 const MAX_ITEMS = 20;
 const MAX_ITEM_CHARS = 200;
 
-/** "nothing", "none", "nothing left", "n/a": an empty list. */
-const NOTHING = /^(?:nothing|none|no(?:thing)? (?:more|left)|n\/a|-)\b[\s.!]*$/i;
+/**
+ * "nothing", "none", "nothing left", "n/a": an empty list; also with what it is about ("Nothing
+ * for the acceptance criteria.", "None required by the criteria", "Nothing left: all criteria
+ * are met"), as the live researcher wrote it (W15-14). "Nothing works yet" and "None of the
+ * tests pass" are items: a qualifier counts only when it is about the criteria or says done.
+ */
+const NOTHING =
+  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;]*?(?:criteri|brief|task|scope|requirement|deliverable)[^.;]*|\s*[:;,(\u2013\u2014-]\s*[^]*?(?:criteri|complete|done|finished|\bmet\b)[^]*)?[\s.!)]*$/i;
+/** An optional extra ("Optionally, ...", "(optional) ...", "Nice to have: ..."): never work left. */
+const OPTIONAL =
+  /^(?:\(?optional(?:ly)?\)?\b|nice[- ]to[- ]have\b|if (?:you|the person) (?:want|wish|like)s?\b|(?:maybe|perhaps|possibly)\b|could also\b)|\(optional\)[\s.]*$/i;
 const ITEM = /^\s*(?:[-*•+]|\d+[.)])\s+(.*\S)\s*$/;
 
 /** A heading line of the two ("Where I stopped:", "**Left to do:**", "## Left to do"), or null. */
@@ -69,10 +86,13 @@ const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimE
  * list under its last "Left to do:". Tolerant of markdown (bold, headings, numbered or bulleted
  * lists, the text on the heading's own line). Cut to bounded sizes; never throws.
  */
-export function parseHandoff(report: string): Pick<RunHandoff, "stopped" | "leftToDo"> {
+export function parseHandoff(
+  report: string,
+): Pick<RunHandoff, "stopped" | "leftToDo" | "optional"> {
   const lines = report.replace(/\r\n?/g, "\n").split("\n");
   let stopped = "";
   let leftToDo: string[] = [];
+  let optional: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const h = headingOf(lines[i] ?? "");
     if (!h) continue;
@@ -91,29 +111,36 @@ export function parseHandoff(report: string): Pick<RunHandoff, "stopped" | "left
       continue;
     }
     const items: string[] = [];
-    if (h.rest && !NOTHING.test(h.rest)) items.push(h.rest);
+    const extras: string[] = [];
+    const add = (text: string) => {
+      if (!text || NOTHING.test(text)) return;
+      (OPTIONAL.test(text) ? extras : items).push(text);
+    };
+    if (h.rest && !NOTHING.test(h.rest)) add(h.rest);
     if (!h.rest || !NOTHING.test(h.rest)) {
       for (let j = i + 1; j < lines.length; j++) {
         const l = lines[j] ?? "";
         if (!l.trim()) {
-          if (items.length) break;
+          if (items.length || extras.length) break;
           continue;
         }
         const item = ITEM.exec(l);
         if (item) {
-          const text = (item[1] ?? "").replace(/\*\*|__/g, "").trim();
-          if (text && !NOTHING.test(text)) items.push(text);
+          add((item[1] ?? "").replace(/\*\*|__/g, "").trim());
           continue;
         }
-        if (!items.length && NOTHING.test(l.trim())) break;
         break;
       }
     }
     leftToDo = items;
+    optional = extras;
   }
   return {
     stopped: cut(stopped, MAX_STOPPED_CHARS),
     leftToDo: leftToDo.slice(0, MAX_ITEMS).map((t) => cut(t, MAX_ITEM_CHARS)),
+    ...(optional.length
+      ? { optional: optional.slice(0, MAX_ITEMS).map((t) => cut(t, MAX_ITEM_CHARS)) }
+      : {}),
   };
 }
 
@@ -257,12 +284,13 @@ export function wrapUpSentWords(
 
 /** A handoff as the run's artifact stores it: data only, already redacted and cut. */
 export function handoffArtifact(handoff: RunHandoff): {
-  handoff: { stopped: string; leftToDo: string[]; stoppedBy: string };
+  handoff: { stopped: string; leftToDo: string[]; optional?: string[]; stoppedBy: string };
 } {
   return {
     handoff: {
       stopped: handoff.stopped,
       leftToDo: [...handoff.leftToDo],
+      ...(handoff.optional?.length ? { optional: [...handoff.optional] } : {}),
       stoppedBy: handoff.stoppedBy,
     },
   };
@@ -282,6 +310,9 @@ export function handoffOf(artifacts: unknown): RunHandoff | null {
       leftToDo: Array.isArray(o.leftToDo)
         ? o.leftToDo.filter((t): t is string => typeof t === "string")
         : [],
+      ...(Array.isArray(o.optional)
+        ? { optional: o.optional.filter((t): t is string => typeof t === "string") }
+        : {}),
       stoppedBy,
     };
   }

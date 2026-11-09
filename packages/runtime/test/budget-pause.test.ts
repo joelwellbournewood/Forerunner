@@ -15,7 +15,7 @@ import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
-import { handoffOf } from "../src/session/budget-pause.ts";
+import { handoffOf, parseHandoff, WRAP_UP_BRIEF_LINE } from "../src/session/budget-pause.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
@@ -977,4 +977,119 @@ describe("w15-run, wave 15: a coder's multi-file write is paid from below its li
     const detail = JSON.stringify(await (await req(`/tasks/${r.taskId}`)).json());
     for (const f of FILES) expect(detail).toContain(f);
   }, 120_000);
+});
+
+/**
+ * w15-run, wave 15 (W15-14, live check 2's F4): a run that heard the wrap-up and listed only
+ * "Nothing for the acceptance criteria." and an optional extra was paused at its budget with its
+ * work done and no review: `parseHandoff` counted both lines as work left. The live report (the
+ * researcher's task.finished of session 01a1be9f, word for word) is the fixture.
+ */
+const LIVE_F4_REPORT = [
+  'I wrote `popover-hint.md` with three MDN pages that mention `popover="hint"`. Each has its link and one sentence on what it says. I did not run any build, lint or test command.',
+  "",
+  "**How I found them:** I used MDN's own search endpoint, `https://developer.mozilla.org/api/v1/search?q=popover%20hint&locale=en-US`. I had no separate web_search tool. I then opened each listed page with web_fetch.",
+  "",
+  "**`answer.md` left unchanged:** It already holds the finished report for a different task, the MDN CSS 2026 one. Overwriting it would have destroyed that result, so I put the evidence in this message instead. `popover-hint.md` is the deliverable the brief names.",
+  "",
+  "Where I stopped: `popover-hint.md` is written and complete with three opened and cited pages. Nothing is half-done.",
+  "",
+  "Left to do:",
+  "- Nothing for the acceptance criteria.",
+  "- Optionally, add a `popover-hint` section to a fresh `answer.md` once the existing one is archived or moved.",
+  "",
+  "Lesson: When the task directory's `answer.md` belongs to an earlier task, don't overwrite it. Put the report in the final message and say so.",
+].join("\n");
+
+describe("w15-run, wave 15: 'Left to do' counts only what the criteria still need (W15-14)", () => {
+  it("the live report: nothing left, the optional extra kept apart as a note", () => {
+    const h = parseHandoff(LIVE_F4_REPORT);
+    expect(h.leftToDo).toEqual([]);
+    expect(h.optional).toEqual([
+      "Optionally, add a `popover-hint` section to a fresh `answer.md` once the existing one is archived or moved.",
+    ]);
+    expect(h.stopped).toBe(
+      "`popover-hint.md` is written and complete with three opened and cited pages. Nothing is half-done.",
+    );
+  });
+
+  it("nothing with what it is about is nothing; work stays work, also when it starts with 'none' or 'nothing'", () => {
+    const left = (lines: string[]) =>
+      parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+    expect(left(["- None required by the criteria."]).leftToDo).toEqual([]);
+    expect(left(["- Nothing left for the criteria"]).leftToDo).toEqual([]);
+    expect(left(["- Nothing: all criteria are met."]).leftToDo).toEqual([]);
+    expect(parseHandoff("Left to do: nothing for this task.").leftToDo).toEqual([]);
+    expect(left(["- Nothing works yet: fix the build"]).leftToDo).toEqual([
+      "Nothing works yet: fix the build",
+    ]);
+    expect(left(["- None of the tests pass"]).leftToDo).toEqual(["None of the tests pass"]);
+    expect(left(["- write the last section", "- (optional) add a print style"])).toMatchObject({
+      leftToDo: ["write the last section"],
+      optional: ["(optional) add a print style"],
+    });
+    expect(left(["- Nice to have: a dark theme", "- check the links"])).toMatchObject({
+      leftToDo: ["check the links"],
+      optional: ["Nice to have: a dark theme"],
+    });
+  });
+
+  it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
+    expect(WRAP_UP_TEXT).toContain(
+      "Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+    );
+    expect(WRAP_UP_BRIEF_LINE).toContain(
+      "'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras)",
+    );
+  });
+
+  describe("through the composed runtime", () => {
+    const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-w15-run-left-"));
+    const calls: ModelRequest[] = [];
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works("Popover notes", 30_000, LIVE_F4_REPORT),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    let rt: RuntimeApp;
+    let req: Req;
+    beforeAll(async () => {
+      ({ rt, req } = await compose(home, clock, fake));
+    }, 120_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    it("a run that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is reviewed and done, with no budget card", async () => {
+      const r = await runOne(req, rt, "Popover notes", { budgetUsdMicro: 300_000 });
+      const mine = calls.filter(coderOn("Popover notes"));
+      const told = mine.find(heardWrapUp);
+      expect(told).toBeDefined();
+      // The request the model received asked for what the criteria still need, or nothing.
+      expect(JSON.stringify(told?.messages.at(-1))).toContain(
+        "only what the task's criteria still need, as a list, or nothing; no optional extras",
+      );
+      // Reviewed and done; never paused at its budget.
+      const task = await rt.store.task.mustGet(r.taskId);
+      expect(task.status).toBe("done");
+      expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+      expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+      expect(lines(r.events).join(" | ")).not.toMatch(/paused before its budget/);
+      const cards = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+        (q) => q.taskId === r.taskId,
+      );
+      expect(cards).toEqual([]);
+    }, 60_000);
+  });
 });

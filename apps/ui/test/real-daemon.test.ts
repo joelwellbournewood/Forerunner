@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { appDirs, join, run, SimulatedClock, SystemClock } from "@forerunner/platform";
+import { WRAP_UP_TEXT } from "@forerunner/runtime/agent/loop";
 import { KILL_ACTIVE_START_MESSAGE } from "@forerunner/runtime/daemon/api-types";
 import {
   type ComposeOptions,
@@ -46,11 +47,13 @@ import {
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { FakeGitHost } from "../../../testenv/src/githost/fake-git-host.ts";
+import { FakeProvider } from "../../../testenv/src/provider/fake-provider.ts";
 import {
   keyRule,
   messagesApiStandIn,
   standInFetch,
 } from "../../../testenv/src/provider/messages-api.ts";
+import { type ScriptedReply, textReply, toolReply } from "../../../testenv/src/provider/replies.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
@@ -12129,4 +12132,156 @@ describe("polish-screens, wave 13", () => {
     expect(check.overBudget[0]?.ahead?.usdMicro).toBe(home);
     expect(check.overBudget[0]?.ahead?.chfMicro).toBeGreaterThan(0);
   });
+});
+
+describe("w15-run, wave 15", () => {
+  /** A daemon on the fake provider (one micro-USD a token), its client, and its model calls. */
+  async function world(replies: ScriptedReply[], name: string) {
+    const home = mkdtempSync(join(tmpdir(), `fr-ui-real-w15run-${name}-`));
+    const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+    const fake = new FakeProvider({ clock, latency: "none", onNoMatch: "echo", replies });
+    const calls: ModelRequest[] = [];
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    const options: ComposeOptions = {
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: fake,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    };
+    const open = async () => {
+      const rt = await composeRuntime(options);
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    return { open, clock, fake, calls, home };
+  }
+
+  /** Start a session on the project and wait for its end (at least 20 s of real time). */
+  async function sessionOn(client: DaemonClient, projectId: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    const sessionId = started.session?.id ?? "";
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      async () => (await client.session(sessionId)).status,
+      20_000,
+    );
+    return sessionId;
+  }
+
+  /** The critic accepts every review (its first turn), then closes. */
+  const accepts: ScriptedReply[] = [
+    toolReply(
+      "submit_review",
+      {
+        grade: 92,
+        confidence: "high",
+        verdict: "accept",
+        summary: "Criteria met.",
+        findings: [],
+        criteria: [],
+        checks_run: [],
+      },
+      "Reviewing the evidence.",
+      {
+        when: (r: ModelRequest) =>
+          (r.tools ?? []).some((t) => t.name === "submit_review") &&
+          !JSON.stringify(r.messages.at(-1)?.content ?? "").includes("tool_result"),
+        times: Number.POSITIVE_INFINITY,
+      },
+    ),
+    textReply("Rationale recorded.", {
+      when: { lastUserIncludes: "Review recorded" },
+      times: Number.POSITIVE_INFINITY,
+    }),
+  ];
+  const isRole = (role: string) => (r: ModelRequest) =>
+    (r.system ?? "").includes(`You are the ${role} specialist`);
+  const heardWrapUp = (r: ModelRequest) =>
+    JSON.stringify(r.messages.at(-1) ?? "").includes(WRAP_UP_TEXT.slice(0, 30));
+
+  it("W15-14: a researcher at Budget 0.15 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
+    const report = [
+      'I wrote `popover-hint.md` with three MDN pages that mention `popover="hint"`.',
+      "",
+      "Where I stopped: `popover-hint.md` is written and complete with three opened and cited pages. Nothing is half-done.",
+      "",
+      "Left to do:",
+      "- Nothing for the acceptance criteria.",
+      "- Optionally, add a `popover-hint` section to a fresh `answer.md` once the existing one is archived or moved.",
+    ].join("\n");
+    const w = await world(
+      [
+        ...accepts,
+        textReply(report, {
+          when: (r: ModelRequest) => isRole("researcher")(r) && heardWrapUp(r),
+          times: Number.POSITIVE_INFINITY,
+        }),
+        // One write whose input is large: the next step's worst case passes the run's line.
+        toolReply(
+          "write_file",
+          { path: "popover-hint.md", content: "# Popover hint\n\n- three pages" },
+          "Writing the notes.",
+          {
+            when: isRole("researcher"),
+            usage: { input_tokens: 145_000, output_tokens: 200 },
+          },
+        ),
+      ],
+      "left",
+    );
+    const { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Popover", goal: "Popover notes" });
+      const created = await client.createTask(project.id, {
+        title: "Search MDN for pages that mention popover hint",
+        outcome: "popover-hint.md lists up to three MDN pages that mention popover hint",
+        acceptanceCriteria: ["popover-hint.md names each page with its link"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 187_500,
+        specialist: "researcher",
+        riskTier: 1,
+      });
+      const taskId = created.id;
+      await sessionOn(client, project.id);
+      expect(w.calls.filter(isRole("researcher")).some(heardWrapUp)).toBe(true);
+      const row = (await client.tasks(project.id)).find((t) => t.id === taskId);
+      expect(row?.status).toBe("done");
+      expect(row?.display?.label).toBe("Done");
+      const detail = await client.task(taskId);
+      expect(detail.review).toBeTruthy();
+      const cards = (await client.inbox(me.id)).requests.filter((q) => q.taskId === taskId);
+      expect(cards.map((q) => q.title)).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });
