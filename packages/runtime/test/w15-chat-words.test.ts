@@ -147,4 +147,46 @@ describe("w15-chat, wave 15", () => {
     });
     expect(fits.title).toBe('Club: did 2 tasks: "Write the guide…" and "Write the notes…"');
   });
+
+  // W15-61 (live check 2, research F15): Inbox cards showed backticks ("a bare `node wc.js`")
+  // and "Done: Plan approved: 1 task written; working on them."
+  it("a questions card quotes the specialist without markdown; one task is 'it' (W15-61)", () => {
+    const asks = requestWords({
+      kind: "decision",
+      why: '"Count the words" needs your answers.',
+      steps: ["Which file should it count?"],
+      options: ["Cancel the task"],
+      status: "open",
+      answer: null,
+      change_card: {
+        key: "person_questions:t1",
+        source: "specialist",
+        task_title: "Count the words",
+        questions: ["Which file should it count?"],
+        context:
+          "**Summary**: I ran a bare `node wc.js` and it printed *nothing*; `developer.mozilla.org` is not on the list.",
+      },
+    } as never);
+    expect(asks.body).toBe(
+      'The specialist said: "Summary: I ran a bare node wc.js and it printed nothing; developer.mozilla.org is not on the list."',
+    );
+    expect(asks.body).not.toMatch(/[`*]/);
+    const approved = (n: number) =>
+      requestWords({
+        kind: "approval",
+        why: "Plan for Quote page",
+        steps: [],
+        options: ["Approve and start", "Change the plan", "Reject"],
+        status: "answered",
+        answer: "Approve and start",
+        change_card: {
+          key: "intake:p1",
+          outcome: "approved",
+          start: "started",
+          task_ids: Array.from({ length: n }, (_, i) => `t${i}`),
+        },
+      } as never).outcome;
+    expect(approved(1)).toBe("Plan approved: 1 task written; working on it.");
+    expect(approved(3)).toBe("Plan approved: 3 tasks written; working on them.");
+  });
 });

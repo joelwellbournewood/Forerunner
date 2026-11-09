@@ -355,8 +355,15 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   const planned = !offersGoAheadWithout(card);
   // Why it asks, in its own words (L-12). A card filed before 2026-11-02 may hold the report's
   // first words with the heading's colon (': I made no edits…'): the quote starts at a word.
+  // W15-61 (design §5 rule 6): the specialist's words without their markdown (live: "a bare
+  // `node wc.js`", "**Summary**"), backticks, emphasis and list marks dropped.
   const context = str(card.context)
-    ?.replace(/^[\s:;,.\-–—*]+/, "")
+    ?.replace(/`+([^`]*)`+/g, "$1")
+    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
+    .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|[.,;:!?]|$)/g, "$1$2")
+    .replace(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g, "$1")
+    .replace(/^[\s:;,.\-–—*]+/, "")
+    .replace(/\s+/g, " ")
     .trim();
   const body =
     [
@@ -533,16 +540,18 @@ function intakeOutcome(card: JsonObject): string | null {
   const started = startWords(card.start);
   if (card.outcome === "approved") {
     const n = Array.isArray(card.task_ids) ? card.task_ids.length : null;
+    // W15-61: one task is "it" ("1 task written; working on it"; live: "working on them").
+    const them = n === 1 ? "it" : "them";
     return `Plan approved: ${n === null ? "its tasks" : n === 1 ? "1 task" : `${n} tasks`} written${
       started === "a session started"
-        ? "; working on them"
+        ? `; working on ${them}`
         : started
           ? `; ${started}`
           : // Nothing could run because the work waits on the person's answers (live L-11): Start
             // would run nothing either.
             card.start === "nothing_to_run" && plansPersonTask(card)
             ? "; the work starts once you answer its questions in the Inbox"
-            : "; press Start on the project to work on them"
+            : `; press Start on the project to work on ${them}`
     }.`;
   }
   if (card.outcome === "rejected")

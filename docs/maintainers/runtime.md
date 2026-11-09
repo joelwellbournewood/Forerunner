@@ -2869,7 +2869,9 @@ waits on you" while 4 tasks waited on it).
   change means; before, Yes repeated that body cut with "…") and **No** ("Nothing
   changes."); an undo waiting for a yes is such a card, with its own question (commands.md,
   "Wave 15"). A colon after a single word ends no first sentence (W15-77: "undo: web pages …"
-  was titled "undo"). A click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
+  was titled "undo"). A questions card quotes the specialist's words without their markdown
+  (W15-61: backticks, emphasis and list marks dropped; live "a bare `node wc.js`"), and an
+  approved plan of one task says "1 task written; working on it". A click sends "Yes" or "No", which `isYes` and `acceptsAnswer` read in either
   case (before: the stored "yes" and "no" with no line). Once answered, such a card (a Settings
   confirmation too) says what came of it (`changeCardOutcome`, from the stored `verdict`; phase
   C leftover C-29, before every one read "Answered."): a yes its done sentence ("Raised the
