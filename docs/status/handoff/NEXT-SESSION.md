@@ -15,19 +15,17 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-08 22:00 UTC (wave 7 group 6: wave 13 running)
+## Status at 2026-11-09 04:15 UTC (wave 7 merged; live check 2 running)
 
 The weekly limit reset on 2026-11-08 at 05:00 UTC and the work resumed then, on the included
 plan (no paid extra usage). Session `claude/nifty-knuth-f9udt0` carries on; its scheduled
 check-ins pick the work up if a run stops.
 
-- **Merged and pushed at ce13bb1** (wave 14). CI and the Desktop app workflow (Windows and Linux
-  builds, the installed-app check and the real-window check) were green on ca2c58d (wave 12;
-  the Desktop app run's Windows Playwright job failed once on `e2e/extensions.spec.ts:67`,
-  `page.goto` net::ERR_ABORTED, a flaky test on a path wave 12 did not touch, and passed on
-  the re-run). On ce13bb1 they were running when this was written (CI on Linux had
-  passed lint, the unit, UI, integration and gate tests); this docs-only commit runs CI again
-  on the same code. Merged so far:
+- **Merged and pushed at 7d54fff** (wave 13, the last of wave 7). CI and the Desktop app
+  workflow (Windows and Linux builds, the installed-app check and the real-window check) are
+  green on it. On the way: wave 14's merge (ce13bb1) failed one Windows UI test, a real bug
+  fixed in 29e0c81 (below); wave 12's Desktop app run hit a flaky Windows Playwright test
+  (`e2e/extensions.spec.ts:67`, net::ERR_ABORTED) that passed on the re-run. Merged so far:
   - phase C (verification, continuity, GitHub result, research on the web);
   - phase E wave 5 (answers, screens, noise, bench) and wave 6 (stops, asking, decisions,
     verification);
@@ -68,6 +66,18 @@ check-ins pick the work up if a run stops.
     a desktop notification. Fix-ups from the reviews: one repository card whatever the order;
     the rebuild card's Redo starts from main; after a crash the session page shows the ledger's
     spend; a conflict resolved on GitHub offers Merge only on the reviewed head;
+  - 29e0c81 (found by the Desktop app workflow on Windows): every folder Forerunner's git makes
+    says `core.autocrlf=false` in its own git config. Before, on Windows, a file the person put
+    back with their own git came back with CRLF, read as their change, and the project's copy
+    never followed a merge again. ADR 0113 amended;
+  - wave 13: a redo from main that changes nothing closes its pull request instead of leaving
+    an empty one offered for Merge; "I resolved it" finishes the person's rebase instead of
+    aborting it; a paused redo keeps its work; a merge held by changes left in a task's folder
+    says why; git's messages are read in one language; on the subscription a resolved secret's
+    value in a file an agent reads is redacted; opening the Start dialog starts nothing later;
+    New task's "runs on" line follows the typed words; a paused review's card says the work is
+    done; the words of every screen and card checked against design §5 (money under a centime,
+    "Waiting for you" naming the card kinds, no branch ids); Settings and the budgets in CHF;
   - F2: the real window on Windows CI, and Docker full review on Linux;
   - test temp files go in one folder per run, removed at its end.
 - **The owner's decisions of 2026-11-02** are built in waves 7 and 8: merging, Autopilot, the
@@ -75,7 +85,7 @@ check-ins pick the work up if a run stops.
   rules, Ctrl-click, the status issue, the standard repository guide and collaboration. Their
   full text is in the plan files backup below. Each is recorded in its ADR as it is built; the
   user-guide entries are checked in phase G.
-- **Group 6 is four waves.** Every leftover of groups 1 to 5 (246 items, 210 after merging
+- **Group 6 was four waves.** Every leftover of groups 1 to 5 (246 items, 210 after merging
   duplicates) was checked against the code at fa1a86f (`wave7g6-triage.json` in the plan
   files): 42 real problems, 34 new polish items, 14 live-check steps, 11 owner questions, 2 for
   wave 8, the rest already fixed or not a problem.
@@ -90,7 +100,9 @@ check-ins pick the work up if a run stops.
     leftovers7-merge2 at ce13bb1: 35 commits, all signed; the full suite (4,904 unit tests,
     952 UI tests, integration, e2e, the live harness dry run, the injection suite, Playwright)
     and the bench smoke (25 of 25) green. Reports: `wave7g6c-*.json` in the plan files.
-  - **Running now: wave 13** (run `wf_06cd7061-9f6`, started 21:40 UTC on ce13bb1), four areas:
+  - **Wave 13** (run `wf_06cd7061-9f6`, on ce13bb1, merged at 7d54fff: 64 commits, all signed;
+    4,975 unit tests, 1,022 UI tests, integration, e2e, the live harness dry run, the injection
+    suite, Playwright and the bench smoke green), four areas:
     polish-words (53 items: the 46 planned plus the sentences waves 12 and 14 added) and
     polish-screens (24), with separate files; and two small logic areas for what the wave 14
     reviewers found but did not block on: leftovers7-tailmerge (10: a redo whose run changes
@@ -100,9 +112,23 @@ check-ins pick the work up if a run stops.
     value in a repository file reaches the model unredacted; also the Start dialog recording a
     wait when the person only looked, the New task line ignoring the typed words, and a paused
     review costing a second specialist run). One session-lead decision in it: opening the Start
-    dialog records no wait; pressing Start does.
+    dialog records no wait; pressing Start does. Three areas needed a fix-up after review (7
+    blocking problems, all fixed). Left open, for the fix wave after live check 2: about 40
+    smaller items (most are words), among them a commit the person makes in a task's folder
+    that a later rebuild drops silently, the "runs on" line promising a start that no recorded
+    wait makes, a paused task's Cancel line promising a set-aside of nothing, cards saying
+    "main" whatever the default branch is called, and the review-only pass for a paused
+    review (TR-15, not built). Reports: `wave7g6d-*.json` in the plan files.
+  - **Running now: live check 2** (run `wf_58b8e5c3-702`, started 03:35 UTC on 7d54fff): three
+    journeys with the real model (github on forerunner-sandbox: merging, chains, squash,
+    take-out, conflicts, the copy; run: credentials, budgets, costs, stops, the Start dialog;
+    research: web search and the site rules, asking, verification), then each finding checked
+    against the code without the model. Its cap is USD 7.25, not 4: the extra steps of waves 5
+    and 6 and the steps of waves 12 to 14 do not fit in 4. The GitHub test token was set for 7
+    days from 2026-11-01 and still answered on 2026-11-09; if it expires, the github journey
+    stops there.
 - **The plan files are on GitHub:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`
-  (refreshed after wave 13 started). It holds the wave 7 and 8 specs, the owner's decisions,
+  (refreshed after wave 13 merged). It holds the wave 7 and 8 specs, the owner's decisions,
   the leftovers and their triage, each wave's results, the collaboration audit, the workflow
   scripts and the resume recipes. Its README says how to restore them and resume, on this
   machine or a fresh one. Delete it once wave 8 is merged.
@@ -110,10 +136,8 @@ check-ins pick the work up if a run stops.
   (merge-in-app, credential-chooser, cost, merged-copy) are fully merged. The session cannot
   delete branches (GitHub answers 403), so the owner deletes them.
 - **Next, in order:**
-  1. wave 13: polish and the two small logic areas (running);
-  2. live check 2 with the real model (it now includes budget resume, web search, the site
-     rules, take-out and the preview; the triage lists the steps to add, and
-     `phaseE7-live-w12w14.md` in the plan files collects the 52 steps of waves 12 and 14);
+  1. live check 2 with the real model (running);
+  2. one fix wave for its verified findings and wave 13's leftovers;
   3. wave 8: 16 areas in 8 groups (collaboration, the status issue, the repository guide);
   4. then F, G, G2 and H, as below.
 - **Session-lead write-ups left for phase G** (the area agents may not edit them): the
@@ -124,9 +148,11 @@ check-ins pick the work up if a run stops.
   area's suggested words are in its result file.
 - **Cost estimate for waves 7 and 8,** from what earlier rounds used: about USD 2,200 at API
   prices (1,800 to 2,700), about three quarters of one week's included limit. Used so far
-  since the estimate: about USD 730 (group 3's remaining work about 115, group 4 about 160,
-  group 5 about 160, the group 6 triage about 90, wave 12 about 80, wave 14 about 130, rough).
-- **API spend for live checks:** about USD 6 of the owner's USD 40.
+  since the estimate: about USD 900 (group 3's remaining work about 115, group 4 about 160,
+  group 5 about 160, the group 6 triage about 90, wave 12 about 80, wave 14 about 130, wave 13
+  about 160, the copy fix about 15, rough).
+- **API spend for live checks:** about USD 6 of the owner's USD 40 before live check 2 (cap
+  USD 7.25).
 - **Open owner questions** (today's behaviour stays until answered): 9 on collaboration
   (`collab/owner-summary.md`) and 6 from waves 5 and 6 (`owner-questions-wave56.md`), both in
   the plan files; from group 3, U-078 (does "Wait" also hold a refused API key's work, as built;
