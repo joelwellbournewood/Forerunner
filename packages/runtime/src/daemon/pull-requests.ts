@@ -590,7 +590,12 @@ export class ProjectPullRequests {
     // approval is kept and the merge goes on once the folder is clean) and answers with why it
     // waits; before, the row offered a bare Merge and the press answered "Merging #23." while
     // nothing could merge (live check 2, F4).
-    const folderWait = row.kind === "task" ? await this.folderWaitOf(row.taskId) : null;
+    // A row the branch's rules block is refused with the rule's words, folder or not (the review
+    // of the fix: the folder's wait let the press past the rule, and kept its approval).
+    const folderWait =
+      row.kind === "task" && row.merge?.state !== "blocked"
+        ? await this.folderWaitOf(row.taskId)
+        : null;
     if (!row.merge?.canMerge && !folderWait)
       return refused(
         row.merge?.sentence ??
