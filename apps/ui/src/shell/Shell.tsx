@@ -125,8 +125,9 @@ export function Shell() {
         openConversation: talk,
         hotkeyLabel,
         openStartSession: () => setStartOpen(true),
+        viewedProjectId: viewed?.id ?? null,
       }),
-    [state, navigate, setActiveProject, setTheme, allowSessions, talk, hotkeyLabel],
+    [state, navigate, setActiveProject, setTheme, allowSessions, talk, hotkeyLabel, viewed],
   );
   const palette = paletteShortcut(state.config.platform);
 

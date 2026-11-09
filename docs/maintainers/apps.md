@@ -468,7 +468,9 @@ with "Resume desktop control" (`POST /desktop/resume`); a revoke by the Extensio
 no such line (the panel is where it is undone, and resume alone would not undo it). A failed
 stop keeps the banner with the error.
 `Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation, "Switch project: …", New
-project, "Start session: <active project>" (opens `StartSessionDialog` from the shell, U-077),
+project, "Start session: <project>" (opens `StartSessionDialog` from the shell, U-077; it names
+the project the dialog starts: the one on screen, hint "the project on screen", else the active
+one, "the active project", since opening a project from Home does not make it active, later #61),
 theme and shortcuts commands; `filterCommands` matches every word). As the header (later #59):
 **Stop all (N running)** is listed only while something runs and opens the header's own question
 (the shell holds `StopAll`'s `asking`), so nothing stops before "Stop all" in it; while sessions

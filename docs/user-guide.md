@@ -1000,7 +1000,7 @@ session only and leave the rest running. Starting a session while sessions are s
 so, with **Allow sessions again**.
 
 The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
-active project. It lists **Stop all** only while something runs, and asks first as the header's
+project on screen, or for the active project when no project is open. It lists **Stop all** only while something runs, and asks first as the header's
 button does; while sessions are stopped it offers **Allow sessions again**.
 
 ## Links

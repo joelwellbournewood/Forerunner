@@ -29,8 +29,13 @@ export interface CommandContext {
   openConversation?: () => void;
   /** The global hotkey as it reads here, shown as the hint; null without one. */
   hotkeyLabel?: string | null;
-  /** Opens the Start session dialog for the active project (U-077). */
+  /**
+   * Opens the Start session dialog (U-077) for the project on screen, else the active project,
+   * as the shell's dialog picks it.
+   */
   openStartSession?: () => void;
+  /** The project on screen (a project page), whose session the palette's Start starts. */
+  viewedProjectId?: string | null;
 }
 
 export function buildCommands(ctx: CommandContext): Command[] {
@@ -124,12 +129,18 @@ export function buildCommands(ctx: CommandContext): Command[] {
       run: ctx.openConversation,
     });
   }
-  const active = state.projects.find((p) => p.id === state.activeProjectId);
-  if (active && ctx.openStartSession) {
+  // The entry names the project its dialog starts: the one on screen, else the active one
+  // (review of later #61: opening a project from Home no longer makes it active, and the entry
+  // read "Start session: Atlas" while its dialog started the project on screen).
+  const onScreen = ctx.viewedProjectId
+    ? state.projects.find((p) => p.id === ctx.viewedProjectId)
+    : undefined;
+  const startProject = onScreen ?? state.projects.find((p) => p.id === state.activeProjectId);
+  if (startProject && ctx.openStartSession) {
     commands.push({
       id: "action.startSession",
-      title: `Start session: ${active.name}`,
-      hint: "the active project",
+      title: `Start session: ${startProject.name}`,
+      hint: onScreen ? "the project on screen" : "the active project",
       group: "Actions",
       run: ctx.openStartSession,
     });

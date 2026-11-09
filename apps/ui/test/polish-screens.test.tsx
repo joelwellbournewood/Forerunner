@@ -676,6 +676,47 @@ describe("the shell's palette and bars (later #59, #63)", () => {
     await waitFor(() => expect(screen.queryByTestId("kill-banner")).toBeNull());
   });
 
+  it("Start session names the project its dialog starts: the one on screen, else the active one", async () => {
+    // Review of later #61: opening Beacon from Home no longer makes it the active project, and
+    // the palette still read "Start session: Atlas (the active project)" while its dialog
+    // started Beacon, the project on screen.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const draft = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!draft) throw new Error("fixture changed");
+    draft.status = "ready";
+    renderApp("/", harness);
+    const cards = await screen.findAllByTestId("project-card");
+    await user.click(within(cards[1] as HTMLElement).getByTestId("open-project"));
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
+    let p = await palette();
+    await user.type(within(p).getByTestId("command-input"), "start session");
+    const listed = within(p).getAllByTestId("command-item");
+    expect(listed.map((i) => i.textContent ?? "")).toEqual([
+      expect.stringContaining("Start session: Beacon"),
+    ]);
+    expect(listed[0]).toHaveTextContent("the project on screen");
+    expect(p).not.toHaveTextContent("Atlas");
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await user.click(await within(dialog).findByTestId("confirm-start-session"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({ projectId: "proj_beacon" });
+    // Back on Home there is no project on screen: the entry names the active project.
+    const [close] = within(dialog).getAllByRole("button", { name: "Close" });
+    if (!close) throw new Error("the dialog has no Close");
+    await user.click(close);
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await screen.findAllByTestId("project-card");
+    p = await palette();
+    await user.type(within(p).getByTestId("command-input"), "start session");
+    const atHome = within(p).getAllByTestId("command-item");
+    expect(atHome.map((i) => i.textContent ?? "")).toEqual([
+      expect.stringContaining("Start session: Atlas"),
+    ]);
+    expect(atHome[0]).toHaveTextContent("the active project");
+  });
+
   it("the no-key bar does not show on the setup page its Connect points to", async () => {
     const home = renderApp("/", createHarness({ me: { provider: null } }));
     expect(await screen.findByTestId("no-key-bar")).toBeInTheDocument();
