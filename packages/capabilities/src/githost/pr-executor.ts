@@ -2857,7 +2857,11 @@ export class PrTaskExecutor implements TaskExecutor {
       await this.deps.host.commentOnPullRequest(
         target.repo,
         existingPr.number,
-        [`Updated by session ${ctx.session.id}: ${report.slice(0, 500)}`, buildsOn]
+        // W15-08: the session by when it started, never its id (design §5 rule 3).
+        [
+          `Updated in ${sessionWords(ctx.session.started_at ?? ctx.session.created_at)}: ${report.slice(0, 500)}`,
+          buildsOn,
+        ]
           .filter(Boolean)
           .join("\n\n"),
       );
@@ -2875,7 +2879,10 @@ export class PrTaskExecutor implements TaskExecutor {
           ? `Acceptance criteria:\n${criteria.map((c: string) => `- ${c}`).join("\n")}`
           : "",
         report.slice(0, 2000),
-        `Task ${task.id}, session ${ctx.session.id}. Opened by Forerunner.`,
+        // W15-08: what a person reads names the session by its start; the ids code reads (R-branch:
+        // `openedForAnotherTask`) are in the hidden mark.
+        `Opened by Forerunner in ${sessionWords(ctx.session.started_at ?? ctx.session.created_at)}.`,
+        forerunnerMarker({ project: task.project_id, task: task.id, session: ctx.session.id }),
       ]
         .filter(Boolean)
         .join("\n\n"),

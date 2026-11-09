@@ -870,7 +870,7 @@ export class ProjectDocs implements ProjectDocsPort {
       }
       const res = await writeStatusUpdate(dir, update);
       // The session by when it started, never its id (W15-08: no ids in what a person reads).
-      const named = sessionWords(session.started_at);
+      const named = sessionWords(session.started_at ?? session.created_at);
       const commit = await git.commitAll(`docs: status after ${named}`);
       let prUrl = existingPr?.htmlUrl ?? null;
       if (commit.committed) {

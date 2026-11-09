@@ -237,10 +237,17 @@ with their milestone.
   time and the same for 65 s: two tasks titled alike created within a minute got one branch,
   and the second found the first's open pull request by branch name, resumed it and pushed its
   work onto it. A pull request found on the task's branch whose body names another task
-  (`openedForAnotherTask`: "Task <id>, session ..." from `openOrUpdatePr`) is never resumed:
+  (`openedForAnotherTask`: the hidden mark `forerunnerMarker`'s `task`, or the visible
+  "Task <id>, session ..." line pull requests opened before wave 15 end with) is never resumed:
   a task that stored such a name before the fix moves to its own (`unusedBranch`, the name or
   `-r<n>`). Tests: `pr-executor.test.ts` "leftovers of wave 7, merge side"; the real daemon
   (`real-daemon.test.ts`, same describe) lists two pull requests for two such tasks.
+  **No id in what a person reads on GitHub** (W15-08, live check 2 F9): a task's pull request
+  body ends "Opened by Forerunner in the session started 2026-11-09 04:12 UTC." and the hidden
+  mark `<!-- forerunner:pr project=<id> task=<id> session=<id> -->` (`forerunnerMarker`,
+  `readForerunnerMarker`; values URI-encoded; the same form ends the runtime's status and
+  scaffold pull requests, W15-01); a later run's comment starts "Updated in the session started
+  …" (`sessionWords`, the session's start, else its creation).
   **A task that waits for unmerged work builds on it** (C-49, ADR 0106; kept true by ADR
   0111, 'dependent-branches'): `unmergedDependencies` walks `depends_on` (deepest first) for
   done tasks of the project whose branch still has an open pull request on the host;

@@ -17,7 +17,12 @@ import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { GitOps } from "../src/githost/git.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
-import { DEPS_BASE_REF, PrTaskExecutor } from "../src/githost/pr-executor.ts";
+import {
+  DEPS_BASE_REF,
+  openedForAnotherTask,
+  PrTaskExecutor,
+  readForerunnerMarker,
+} from "../src/githost/pr-executor.ts";
 
 const identity = { name: "Forerunner", email: "agent@example.test" };
 
@@ -217,7 +222,7 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(1);
     expect(
       (await w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1))[0]?.body,
-    ).toContain("Updated by session");
+    ).toContain("Updated in the session started "); // W15-08: by its start, never its id
     await w.store.close();
   });
 
@@ -2355,5 +2360,30 @@ describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
       expect(view?.outcome, label).toBe(done);
       await w.store.close();
     }
+  });
+
+  it("the pull request body and the comment of a later run name the task and the session in words; the ids code reads are in the hidden mark, which openedForAnotherTask reads, as it reads the old visible line (W15-08)", async () => {
+    const { w, task, pr } = await conflictWithOpenPr();
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const visible = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "");
+    const body = (await w.host.getPullRequest({ owner: "o", name: "sample" }, pr.number)).body;
+    expect(body).toContain("Opened by Forerunner in the session started 2026-03-03 08:00 UTC.");
+    expect(visible(body)).not.toMatch(uuid);
+    expect(visible(body)).not.toContain(task.id);
+    expect(readForerunnerMarker(body)).toEqual({
+      project: w.project,
+      task: task.id,
+      session: w.session.id,
+    });
+    expect(openedForAnotherTask({ body }, task.id)).toBe(false);
+    expect(openedForAnotherTask({ body }, "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f")).toBe(true);
+    // A pull request an earlier version opened: its visible line still names its task.
+    const old =
+      "Work.\n\nTask 0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f, session s-1. Opened by Forerunner.";
+    expect(openedForAnotherTask({ body: old }, task.id)).toBe(true);
+    expect(openedForAnotherTask({ body: old }, "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f")).toBe(false);
+    for (const c of await w.host.listPullRequestComments({ owner: "o", name: "sample" }, pr.number))
+      expect(visible(c.body)).not.toMatch(uuid);
+    await w.store.close();
   });
 });
