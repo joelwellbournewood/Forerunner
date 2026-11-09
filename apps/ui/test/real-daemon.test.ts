@@ -15109,17 +15109,26 @@ describe("d1109-sessions, run C", () => {
     );
     const provider = createRolePlayer(bench);
     const holds = new Map<string, Promise<void>>();
+    /** Calls of a held title that still go through before the hold (`hold(title, after)`). */
+    const passes = new Map<string, number>();
     const stream = provider.stream.bind(provider);
     provider.stream = (req) => {
       const label = req.origin?.label ?? "";
-      const hold = [...holds.entries()].find(([title]) => label.includes(` on ${title}`))?.[1];
-      if (!hold) return stream(req);
+      const held = [...holds.entries()].find(([title]) => label.includes(` on ${title}`));
+      if (!held) return stream(req);
+      const [title, hold] = held;
+      const left = passes.get(title) ?? 0;
+      if (left > 0) {
+        passes.set(title, left - 1);
+        return stream(req);
+      }
       return (async function* () {
         await hold;
         yield* stream(req);
       })();
     };
-    const hold = (title: string) => {
+    const hold = (title: string, after = 0) => {
+      passes.set(title, after);
       let open = () => {};
       holds.set(
         title,
@@ -15708,6 +15717,58 @@ describe("d1109-sessions, run C", () => {
         /^Chat about this project: (CHF \d+\.\d{2}|less than CHF 0\.01)\.$/,
       );
     } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("SL-9 while a task runs: its CHF is the ledger's for the session and the task as each model call is booked, the figure the session's spend shows", async () => {
+    // Review of d1109-sessions (bench step 11): the session page read "Running CHF 0.00" for
+    // the whole run while "Spent of this session's budget" grew. The page reads this route
+    // again when the session's spend moves; this is what the route answers mid-run.
+    const w = await world();
+    const { rt, client } = await w.open();
+    let release = () => {};
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Live figure", goal: "One page" });
+      const title = "Write the page in page.html";
+      const task = await client.createTask(project.id, {
+        title,
+        outcome: "page.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      // The run's first model call goes through and is booked; the next one waits.
+      release = w.hold(title, 1);
+      const sessionId =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      const booked = async () => rt.store.costLedger.sum({ sessionId, taskId: task.id });
+      await eventually(
+        async () => (await booked()).entries > 0,
+        "the run's first model call to be booked",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const mid = await client.sessionTasks(sessionId);
+      expect(mid.tasks.map((t) => [t.title, t.here, t.now])).toEqual([[title, "Running", null]]);
+      const midBooked = await booked();
+      expect(midBooked.chf_micro).toBeGreaterThan(0);
+      expect(mid.tasks[0]?.spent.chfMicro).toBe(midBooked.chf_micro);
+      // The session page's "Spent of this session's budget" and this row read one ledger.
+      expect((await client.session(sessionId)).spent.chfMicro).toBe(
+        (await rt.store.costLedger.sum({ sessionId })).chf_micro,
+      );
+      expect(mid.tasks[0]?.spentWords).toMatch(/^(CHF \d+\.\d{2}|less than CHF 0\.01)$/);
+      // The run goes on: the figure moves with each booking, and at the end equals the ledger.
+      release();
+      await endOf(client, sessionId);
+      const end = await client.sessionTasks(sessionId);
+      const endBooked = await booked();
+      expect(endBooked.chf_micro).toBeGreaterThan(midBooked.chf_micro);
+      expect(end.tasks.map((t) => [t.title, t.here])).toEqual([[title, "Done"]]);
+      expect(end.tasks[0]?.spent.chfMicro).toBe(endBooked.chf_micro);
+    } finally {
+      release();
       await rt.close();
     }
   }, 120_000);

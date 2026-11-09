@@ -684,7 +684,8 @@ it said then.
 
 A session's page lists **Tasks in this session**: each task it worked on, what happened to it
 there ("Done", "Failed", "Paused at its budget of CHF 0.40"), what it is now when that changed
-("now: Done") and what this session spent on it. A title opens the task with its runs. A session
+("now: Done") and what this session spent on it; while a task runs, its amount follows the
+session's spend within a second. A title opens the task with its runs. A session
 that ended to wait for a Claude credential reads "Stopped to wait for a Claude credential", and
 one that ended with a plan for you to approve "Ended with a plan for you to approve", which stay
 true once the credential is back or the plan approved. Drafting the plan has a page of its own,

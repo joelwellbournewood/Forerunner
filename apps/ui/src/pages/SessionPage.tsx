@@ -41,6 +41,13 @@ const LEVEL_WORDS: Record<Exclude<Level, "info">, string> = {
 };
 
 const ACTIVE = new Set(["planned", "running", "paused"]);
+/**
+ * How often a working session's spend may read "Tasks in this session" again (d1109-sessions):
+ * once a second, the stream's own pace, because the running task's CHF sits beside "Spent of
+ * this session's budget" and the two must not disagree for longer than a glance (on the bench,
+ * with 5 s, a one-task session read CHF 0.03 on the meter beside CHF 0.02 on its task).
+ */
+const TASKS_READ_MS = 1_000;
 /** A session in one of these has ended: its log is complete and nothing more streams (U-071). */
 export const ENDED = ENDED_SESSION;
 
@@ -231,25 +238,61 @@ export function SessionPage() {
     };
   }, [client, id, appendEvents, streamOptions]);
 
-  // The session's tasks, read again when a task starts or ends here and when the session ends.
+  // The session's tasks, read again when a task starts or ends here, when the session ends, and
+  // while it works when its spend moves (a model call of the running task was booked), at most
+  // every TASKS_READ_MS, so the running task's CHF follows "Spent of this session's budget"
+  // (W15-21's "CHF 0.00 until the run returns" on this page; d1109-sessions review).
+  const tasksAbort = useRef<AbortController | null>(null);
+  /** When the spend last read the tasks, and the spend the tasks were last read at. */
+  const spendRead = useRef<{ at: number; chfMicro: number | null }>({ at: 0, chfMicro: null });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new session's page starts afresh
+  useEffect(() => {
+    const controller = new AbortController();
+    tasksAbort.current = controller;
+    spendRead.current = { at: 0, chfMicro: null };
+    setTasks(null);
+    return () => controller.abort();
+  }, [id]);
+  const readTasks = useCallback(() => {
+    const signal = tasksAbort.current?.signal;
+    return client
+      .sessionTasks(id, signal)
+      .then((t) => {
+        if (!signal?.aborted) setTasks(t);
+      })
+      .catch(() => {
+        // the section stays as it was; the log and the header still say what happened
+      });
+  }, [client, id]);
   const taskMoves = events.filter(
     (e) => e.type === "task.started" || e.type === "task.finished",
   ).length;
   const sessionStatus = session?.status ?? null;
   useEffect(() => {
     if (!sessionStatus) return;
-    const controller = new AbortController();
-    void client
-      .sessionTasks(id, controller.signal)
-      .then((t) => {
-        if (!controller.signal.aborted) setTasks(t);
-      })
-      .catch(() => {
-        // the section stays as it was; the log and the header still say what happened
-      });
     void taskMoves;
-    return () => controller.abort();
-  }, [client, id, sessionStatus, taskMoves]);
+    void readTasks();
+  }, [readTasks, sessionStatus, taskMoves]);
+  const spentWhileWorking =
+    session?.id === id && !ENDED.has(session.status) ? session.spent.chfMicro : null;
+  useEffect(() => {
+    if (spentWhileWorking === null) return;
+    const was = spendRead.current;
+    // The first figure is the one the tasks were first read at.
+    if (was.chfMicro === null) {
+      spendRead.current = { ...was, chfMicro: spentWhileWorking };
+      return;
+    }
+    if (was.chfMicro === spentWhileWorking) return;
+    const timer = setTimeout(
+      () => {
+        spendRead.current = { at: Date.now(), chfMicro: spentWhileWorking };
+        void readTasks();
+      },
+      Math.max(0, was.at + TASKS_READ_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [spentWhileWorking, readTasks]);
 
   const shown = useMemo(
     () => (details ? events : events.filter((e) => e.audience === "person")),

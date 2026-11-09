@@ -415,6 +415,57 @@ describe("d1109-sessions, run C: the two ways to the list and the session's task
     expect(await screen.findByTestId("task-drawer")).toBeInTheDocument();
   });
 
+  it("while the session works, the running task's CHF follows the session's spend, read at most once a second", async () => {
+    // Review of d1109-sessions (bench step 11): "Spent of this session's budget" read CHF 0.03
+    // while the only task, running, read CHF 0.00 for the whole run: the section was read again
+    // only when a task started or finished (W15-21's "CHF 0.00 until the run returns" again).
+    const { harness, urls } = recording();
+    const s = working(harness);
+    s.spent = money(30_000);
+    const task = {
+      id: "task_4",
+      title: "Write the pipeline brief",
+      projectId: "proj_atlas",
+      here: "Running",
+      now: null,
+      spent: money(0),
+      spentWords: "CHF 0.00",
+    };
+    harness.daemon.state.sessionTasks.sess_live = [task];
+    renderApp("/sessions/sess_live", harness, liveEvents(harness));
+    const section = await screen.findByTestId("session-tasks");
+    const spent = () => within(section).getByTestId("session-task-spent");
+    expect(spent()).toHaveTextContent("CHF 0.00");
+    const reads = () => urls.filter((u) => u.includes("/sessions/sess_live/tasks")).length;
+    const before = reads();
+
+    // A model call of the running task is booked: the session's spend moves on its stream.
+    const book = async (chfMicro: number, words: string) => {
+      s.spent = money(s.spent.chfMicro + chfMicro);
+      task.spent = money(task.spent.chfMicro + chfMicro);
+      task.spentWords = words;
+      await act(async () => {
+        for (const l of harness.daemon.state.listeners) l("session.changed", { ...s });
+      });
+    };
+    await book(30_000, "CHF 0.03");
+    await waitFor(() => expect(spent()).toHaveTextContent("CHF 0.03"), { timeout: 10_000 });
+    expect(reads()).toBe(before + 1);
+    // Two more bookings at once: one read for both, not one per frame.
+    await book(10_000, "CHF 0.04");
+    await book(10_000, "CHF 0.05");
+    await waitFor(() => expect(spent()).toHaveTextContent("CHF 0.05"), {
+      timeout: 15_000,
+    });
+    expect(reads()).toBe(before + 2);
+    // A frame that moves nothing (the same spend) reads nothing.
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners) l("session.changed", { ...s });
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(reads()).toBe(before + 2);
+  }, 30_000);
+
   it("a planning call's page is titled planning and lists no tasks", async () => {
     const harness = createHarness();
     harness.daemon.state.sessions.push({

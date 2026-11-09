@@ -72,8 +72,8 @@ newest 100 raw rows with the stored result, and:
 11. **Length**: a session a dead process left (ended by the recovery or a later Stop) ends at
     the last line it logged (`handoff.last_worked_at`), not at the recovery.
 12. **The session page** lists "Tasks in this session" (title opening the task's drawer, what
-    happened there, "now: …" when different, the CHF this session spent on it) and links "All
-    sessions".
+    happened there, "now: …" when different, the CHF this session spent on it, which follows
+    the session's spend while a task runs) and links "All sessions".
 13. **Routes**: `GET /projects/:id/sessions` and `GET /sessions/:id/tasks` are new; `GET
     /sessions` keeps its shape (planning words and the one figure only). Every word is the
     daemon's (ADR 0102: the screens and the phone show the daemon's words), in
