@@ -47,7 +47,13 @@ import type {
 import { docDriftFor } from "./docs-drift.ts";
 import { type RenderOptions, renderEvidence, subjectLabel } from "./evidence.ts";
 import { fingerprintOf } from "./fingerprint.ts";
-import { quotedWords, SIGNOFF_OPTIONS, signoffCard, signoffCardWords } from "./followup.ts";
+import {
+  ownWords,
+  quotedWords,
+  SIGNOFF_OPTIONS,
+  signoffCard,
+  signoffCardWords,
+} from "./followup.ts";
 import { NOT_CAUSED_BY_TASK, resolvedByRerun, triedAction, triedProblems } from "./measured.ts";
 import {
   type CriticModelPick,
@@ -905,8 +911,10 @@ export class CriticService {
     // C-19 (polish-words): a code rule that changed the model's verdict says why first; the
     // model's own words follow without the verdict they no longer carry. Before: "Accepted: 1
     // changed file matches the brief." under a review that sent the work back.
-    // A sign-off's card says itself that it waits for the person, and quotes these words.
-    if (submitted && ruled.verdict !== verdict && ruled.verdict !== "human")
+    // W15-51: a rule's 'human' too (the report asks the person, a sign-off the tier needs): the
+    // Reviews tab showed "needs you" above "Accepted: the changed file matches the brief.". The
+    // sign-off card says itself that it waits, and quotes the model's own words (`ownWords`).
+    if (submitted && ruled.verdict !== verdict)
       summary = ruledSummary(ruled.verdict, ruled.adjustments.at(-1)?.rule, findings, summary);
     return {
       grade: ruled.grade,
@@ -1043,7 +1051,10 @@ export class CriticService {
       const title = taskId ? (await store.task.get(taskId))?.title : undefined;
       // Design §3.8: the title names the task, the body is the critic's own words; no tier,
       // grade or confidence on the card (the Reviews tab has them).
-      const words = signoffCardWords({ title: title ?? "The work", summary: out.summary });
+      const words = signoffCardWords({
+        title: title ?? "The work",
+        summary: ownWords(out.summary),
+      });
       const req = await store.humanRequest.insert({
         human_id: ctx.humanId === undefined ? claims.ownerHumanId : ctx.humanId,
         project_id: claims.projectId ?? null,
@@ -1064,7 +1075,7 @@ export class CriticService {
               findingIds,
               reason: "verdict",
               title: words.title,
-              said: quotedWords(out.summary),
+              said: quotedWords(ownWords(out.summary)),
               saidBy: "critic",
             })
           : null,

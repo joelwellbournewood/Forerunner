@@ -187,6 +187,20 @@ export async function triedTimes(
   return work > 0 ? work : fallback;
 }
 
+/** The leads `ruledSummary` puts before the model's words when a rule made the verdict 'human'. */
+const WAITS_LEADS = [
+  "Waits for you: the report asks you something.",
+  "Waits for your sign-off.",
+  "Waits for you: the critic was not sure.",
+];
+
+/** A summary without the lead a rule put before the model's words (the sign-off card's quote). */
+export function ownWords(summary: string): string {
+  for (const lead of WAITS_LEADS)
+    if (summary.startsWith(lead)) return summary.slice(lead.length).trim() || summary;
+  return summary;
+}
+
 /** The words of the critic's sign-off card: the title names the task, the body the critic. */
 export function signoffCardWords(input: { title: string; summary: string | null }): {
   title: string;
@@ -353,13 +367,13 @@ async function signoffRequest(
   // work (a retry card) or the critic's (a sign-off), never the ladder's jargon.
   const said =
     reason === "verdict"
-      ? quotedWords(review.summary)
+      ? quotedWords(ownWords(review.summary))
       : (quotedWords(ctx.workReport) ?? quotedWords(review.summary));
   const saidBy =
     reason === "verdict" || !quotedWords(ctx.workReport) ? "critic" : saidByName(ctx.specialist);
   const words =
     reason === "verdict"
-      ? signoffCardWords({ title: task.title, summary: review.summary })
+      ? signoffCardWords({ title: task.title, summary: ownWords(review.summary) })
       : retryCardWords({ title: task.title, attempts, said, saidBy });
   const req = await ctx.store.humanRequest.insert({
     human_id: ctx.humanId ?? null,

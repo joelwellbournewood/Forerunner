@@ -46,11 +46,13 @@ import {
 } from "../../../testenv/src/bench/role-player.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { FakeGitHost } from "../../../testenv/src/githost/fake-git-host.ts";
+import { FakeProvider } from "../../../testenv/src/provider/fake-provider.ts";
 import {
   keyRule,
   messagesApiStandIn,
   standInFetch,
 } from "../../../testenv/src/provider/messages-api.ts";
+import { textReply, toolReply } from "../../../testenv/src/provider/replies.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { taskStepsFromLog } from "../src/lib/session-steps.ts";
@@ -12128,5 +12130,99 @@ describe("polish-screens, wave 13", () => {
     // What runs before it is "Home" alone, not "Home" and "Contact" (the dialog's sum before).
     expect(check.overBudget[0]?.ahead?.usdMicro).toBe(home);
     expect(check.overBudget[0]?.ahead?.chfMicro).toBeGreaterThan(0);
+  });
+});
+
+describe("w15-review, wave 15", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-review-"));
+    const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+    const critic = (r: ModelRequest) => (r.tools ?? []).some((t) => t.name === "submit_review");
+    const firstTurn = (r: ModelRequest) =>
+      critic(r) && !JSON.stringify(r.messages.at(-1)?.content ?? "").includes("tool_result");
+    // The critic accepts; the report asks the person, so the asks-person rule makes it 'human'.
+    const provider = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        toolReply(
+          "submit_review",
+          {
+            grade: 92,
+            confidence: "high",
+            verdict: "accept",
+            summary: "Accepted: the changed file matches the brief.",
+            findings: [],
+            criteria: [],
+            checks_run: [],
+          },
+          "Reviewing.",
+          { when: firstTurn, times: Number.POSITIVE_INFINITY },
+        ),
+        textReply("Reviewed.", { when: critic, times: Number.POSITIVE_INFINITY }),
+        textReply(
+          "I wrote hosting.md.\n\nQuestions for the person:\n- Which hosting provider should the site use?",
+          { times: Number.POSITIVE_INFINITY },
+        ),
+      ],
+    });
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+  }, 120_000);
+
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("W15-51: GET /tasks/:id serves the ruled summary: an accept the report's questions turned into 'needs you' never reads 'Accepted:'", async () => {
+    const project = await client.createProject({ name: "Hosting", goal: "Pick a host" });
+    const created = await client.createTask(project.id, {
+      title: "Write the hosting notes",
+      outcome: "hosting.md compares two hosts",
+      acceptanceCriteria: ["hosting.md exists"],
+      riskTier: 1,
+    });
+    const taskId = created.id;
+    await client.startSession({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" });
+    const deadline = Date.now() + 20_000;
+    for (;;) {
+      const t = await rt.store.task.mustGet(taskId);
+      if (t.status === "needs_human" && !(await rt.store.session.active(rt.agent.id)).length) break;
+      if (Date.now() > deadline)
+        throw new Error(`timed out waiting: the task to wait for the person (${t.status})`);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const detail = await client.task(taskId);
+    expect(detail.review?.summary).toBe(
+      "Waits for you: the report asks you something. The changed file matches the brief.",
+    );
+    expect(detail.review?.summary).not.toMatch(/^Accepted/);
   });
 });
