@@ -316,7 +316,11 @@ Advanced, Other settings): each session then adds its update to one pull request
 "docs: project status", which you merge when you like; it never goes into a task's reviewed
 pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this
 project's docs pull requests are listed, never one another project left on the same
-repository.
+repository. Two projects on one repository share that status branch: while one project's
+status pull request is open, the other project never adds to it, comments on it or lists it,
+and keeps its own status under **Docs** in the app (Docs shows it there, as with the setting
+off); once that pull request is merged or closed, its next session opens its own.
+The same goes for the pull request of the standard docs.
 A task that waits for another whose pull request you have not merged yet starts from that work:
 its branch includes it, so a check finds the page it checks. Its own pull request still goes to
 the default branch and says so in its first lines ("Builds on #4 (not merged yet): this pull
@@ -355,10 +359,20 @@ never repeats work that is already in the default branch:
   merge waits for you"). Take them out (move a file you want to keep somewhere else, put a
   changed file back as it was): the rebuild runs at the next check and the row then says what
   came of it (rebuilt without a closed pull request, it waits for your Merge again). Or press
-  **Redo**: the task is done again without them, reviewed again, and waits for your Merge. Do
-  not commit them in that folder: the rebuild starts from GitHub's copy of the branch, so the
-  commit would be dropped. In a chain
-  (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt.
+  **Redo**: the task is done again without them, reviewed again, and waits for your Merge. The
+  row says this at the check that finds them, before you press Merge, and shows the folder with
+  **Open folder**; Merge pressed then is kept: once the folder is clean and #8 is rebuilt, it
+  merges, unless the rebuild dropped work its review read (then the row says so and waits for you). If you commit in that
+  folder, Forerunner never drops your commit: the rebuild waits and the row says "#8 waits for
+  a commit made in its task's folder: push it to GitHub or undo it." Push it (the next check
+  rebuilds #8 with your commit, and #8 waits for your look, since the review did not read it:
+  the row says "#8 changed after the review: look at the new commits, then merge it yourself or
+  redo the task." and offers no Merge, and a Merge you pressed while it waited is dropped, with
+  a card that says so) or undo it in the folder (`git reset --hard origin/<branch>`). The same
+  holds for any commit pushed to #8's branch on GitHub: a rebuild never makes it reviewed. In a chain
+  (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt; while #6 cannot be
+  rebuilt yet (its folder is busy, or its rebuild conflicts), #8 waits for it too, with no card
+  of its own, and nothing merges #8 meanwhile.
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a
 task's open pull request, Forerunner says so once: the Overview row shows "#8 conflicts with main
@@ -367,11 +381,17 @@ on the Tasks tab says "Accepted · conflicts with main" (the same sentence in it
 Inbox card ('"Add the page" conflicts with main') offers **Redo** (the task is done again from
 main) and **Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
 the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
+**Redo** on the task's row in the Tasks tab does the same to the card (it closes, and the next
+session does the task again from main), but starts no session by itself; its line says so
+('Reopened "Add the page" to redo it from main: the next session works on it again. Its card in
+the Inbox was withdrawn.'), and its **Undo** puts the task back to done and the card back in the
+Inbox, as it was. Once the task is done
+again and its pull request merges cleanly, a notice still open from before closes too.
 If the conflict goes away without a change to the pull request (the other change is taken out of
 main again), the row and its card say again what they said before (a rebuild's warning, for
 example) and offer Merge again; a card filed only for the conflict closes. If you resolve it on GitHub with a
 commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
-after the review: look at the new commits, then merge it yourself or send it back." and offers no
+after the review: look at the new commits, then merge it yourself or redo the task." and offers no
 Merge, and the card says the same; merge it on GitHub, or press **Redo**.
 
 **A conflict the agent cannot resolve while it works.** Its card offers **I resolved it**, **Drop
@@ -381,7 +401,9 @@ continue, or the merge's commit): Forerunner finishes that step with your resolu
 updates the pull request. A file that still holds conflict markers brings the card back, with
 your rebase or merge left as it was. A resolution that keeps only main's side leaves nothing to
 merge: the task fails ("#8 no longer changes anything on main, so it was closed.") and #8 is
-closed with its branch kept, instead of going to review empty.
+closed with its branch kept, instead of going to review empty. **I resolved it** and **Drop the
+branch and retry from scratch** each start a session for the task (or queue one behind the
+session that runs), and the card's Done line says so; **Cancel the task** starts nothing.
 
 **Redo** of a task whose pull request was already merged or closed opens a new pull request from
 a new branch (the old name with "-r2"), so a branch GitHub kept after the merge never gets in
@@ -392,7 +414,7 @@ task's own commit on top of the default branch. If that redo pauses before its r
 a question), its next run continues the work done since the redo, never the old branch. If that
 redo changes nothing (the default
 branch already has what the task asks for), the task fails as any task with no change does
-("Failed: Redone from main, it changed nothing, so #8 was closed.", with **Try again**, **Mark
+("Failed: The redo from main changed nothing, so #8 was closed.", with **Try again**, **Mark
 done anyway** and **Cancel task** on its card): #8 is closed on GitHub with a comment saying why,
 its branch is kept, and nothing empty is offered for Merge. The same holds for any redo or
 rework whose change the default branch already has by the time it is pushed (someone made the
@@ -455,7 +477,7 @@ seen within about a minute; closing it without merging offers the button again.
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
-after the review: look at the new commits, then merge it yourself or send it back."); **I merged
+after the review: look at the new commits, then merge it yourself or redo the task."); **I merged
 it** and **Leave it open** close the card. It always makes a merge commit, so a pull
 request that carries another's work brings that work to the default branch as it is, and GitHub
 marks the other pull request merged too; it never rebases or force-pushes a branch, and when the

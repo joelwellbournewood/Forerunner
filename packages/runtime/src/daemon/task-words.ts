@@ -264,6 +264,25 @@ const SIGNOFF_DETAIL = "Its card is in the Inbox: accept the work, send it back,
  */
 export const WAITING_FOR_YOUR_MERGE = "Accepted · waiting for you to merge";
 
+/** W15-68: the merge record's outcome while its merge waits for GitHub to answer. */
+const HOST_UNREACHABLE = "unreachable";
+
+/**
+ * W15-55: a done task's label for a merge record left to the person whose Overview row says
+ * more than "waits for you to merge" (no Merge, or Merge with a warning), by its outcome; the
+ * record's sentence is the line under it.
+ */
+const LEFT_TO_YOU_LABELS: Readonly<Record<string, string>> = {
+  closed: "Accepted · pull request closed",
+  rebuild_conflict: "Accepted · could not be rebuilt",
+  head_moved: "Accepted · changed after the review",
+  rebuilt_without: "Accepted · rebuilt: look before you merge",
+  rebuilt_changed: "Accepted · rebuilt: look before you merge",
+  checks_failed: "Accepted · a check failed",
+  blocked_by_rules: "Accepted · merge it on GitHub",
+  merge_commits_off: "Accepted · merge it on GitHub",
+};
+
 /**
  * A task's status while its budget card is open (ADR 0112): paused at the limit the card names
  * (`change_card.source`; a card a session's budget filed before budget-resume says "session_budget").
@@ -472,7 +491,10 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         case "merged":
           return mergedDisplay(merge);
         case "waiting_checks":
-          return display("done", "Accepted · merges when its checks pass", "good");
+          // W15-68: a merge that waits because GitHub did not answer says so, not checks.
+          return merge.last_outcome === HOST_UNREACHABLE
+            ? display("done", "Accepted · merges once GitHub answers", "good", { detail })
+            : display("done", "Accepted · merges when its checks pass", "good");
         case "merging":
           return display("done", "Accepted · merging", "good");
         case "queued": {
@@ -499,6 +521,10 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
             const base = / conflicts with ([^\s:]+)/.exec(sentence)?.[1] ?? "main";
             return display("done", `Accepted · conflicts with ${base}`, "warn", { detail });
           }
+          // W15-55: one label per outcome, as the Overview's row says it (design §2: one map);
+          // before, every other outcome read "waiting for you to merge" (live check 2, F1).
+          const said = LEFT_TO_YOU_LABELS[merge.last_outcome ?? ""];
+          if (said) return display("done", said, "warn", { detail });
           return display("done", WAITING_FOR_YOUR_MERGE, "good", { detail });
         }
       }

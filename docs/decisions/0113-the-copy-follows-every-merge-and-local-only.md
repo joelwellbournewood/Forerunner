@@ -247,7 +247,7 @@ updated 14:05" with a time that no longer moves. The person's files are still ne
 copy waits for them. A fetch that fails (GitHub not answering) is not a copy that stopped
 following: the next poll fetches again, and nothing is said.
 
-## Amendment: the copy's git says our line endings (R-copystuck on Windows, 2026-11-09)
+## Amendment: the copy's git says our line endings (R-copystuck on Windows, 2026-11-08)
 
 This computer's copy is a folder the person uses with their own tools, so a git used there reads
 and writes files as Forerunner's does: the copy's own config (`.git/config`) says
@@ -284,3 +284,13 @@ branches' git and the empty repository's first push now run with git's messages 
 (`LC_ALL=C`, an empty `LANGUAGE`; `GitOpsOptions.untranslated`); nothing else about them changes,
 and every other git call keeps the process's language. The stopped state is a file in the copy's
 `.git` and is tested across a restart of the composed runtime.
+
+## Amendment: folders made before the pin ('w15-merge', W15-11, 2026-11-09)
+
+The amendment of 2026-11-08 pinned our line endings in every folder our git makes from then on.
+Folders made before it kept the machine's `core.autocrlf` (on Windows, `true`): a task's worktree
+that a later run reuses, an import's checkout, and a project's own folder until a task ran in it.
+Each now gets the pin at its next use: a reused task worktree at its next run's fetch, an import
+checkout at its fetch, a project's folder at its session-end commit. A failure to write it is
+logged and changes nothing else. The critic's diff and the project checks' "scripts before" read
+run git themselves and rely on the folder's config, which these pins set.

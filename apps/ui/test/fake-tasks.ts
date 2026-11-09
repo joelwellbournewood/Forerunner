@@ -218,6 +218,8 @@ export function actionSentence(
     live?: boolean;
     /** The row's status before the move (`viewOf`): a paused task's card, a linked folder. */
     shown?: TaskView["display"];
+    /** W15-04: the Redo answered the task's merge card, so the next run starts from main. */
+    fromMain?: boolean;
   } = {},
 ): string {
   const t = `"${task.title}"`;
@@ -249,7 +251,8 @@ export function actionSentence(
   else if (from === "draft") s = `${t} is ready: a session will pick it up.`;
   else if (from === "failed") s = `${t} is ready to try again.`;
   else if (from === "cancelled") s = `Reopened ${t}: it is ready again.`;
-  else if (from === "done") s = `Reopened ${t} to redo it: the next session works on it again.`;
+  else if (from === "done")
+    s = `Reopened ${t} to redo it${extra.fromMain ? " from main" : ""}: the next session works on it again.`;
   else s = `${t} is ready again.`;
   if (extra.withdrawn)
     s += ` Its ${extra.withdrawn === 1 ? "card" : `${extra.withdrawn} cards`} in the Inbox ${extra.withdrawn === 1 ? "was" : "were"} withdrawn.`;

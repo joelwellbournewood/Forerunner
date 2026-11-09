@@ -237,6 +237,73 @@ export function depsHeldRef(taskId: string): string {
   return `${DEPS_HELD_PREFIX}${safeSegment(taskId)}`;
 }
 
+/**
+ * W15-02: a rebuild made in a task's folder whose push has not gone through yet names its head
+ * here, and keeps what to put back under `REBUILD_BEFORE_PREFIX` (the marker and the held refs
+ * as they were). Cleared once the push went through or the rebuild was put back; one left by a
+ * stop of the app is undone at the next rebuild of the folder (`undoUnpushedRebuild`).
+ */
+export const REBUILD_PENDING_REF = "refs/forerunner/rebuild-pending";
+export const REBUILD_BEFORE_PREFIX = "refs/forerunner/rebuild-before/";
+
+async function markUnpushedRebuild(
+  git: GitOps,
+  after: string,
+  marker: string | null,
+  heldRefs: readonly { ref: string; sha: string }[],
+): Promise<void> {
+  await clearUnpushedRebuild(git);
+  if (marker) await git.setRef(`${REBUILD_BEFORE_PREFIX}deps-base`, marker);
+  for (const h of heldRefs)
+    await git.setRef(`${REBUILD_BEFORE_PREFIX}${h.ref.slice("refs/forerunner/".length)}`, h.sha);
+  await git.setRef(REBUILD_PENDING_REF, after);
+}
+
+async function clearUnpushedRebuild(git: GitOps): Promise<void> {
+  for (const r of await git.refsUnder(REBUILD_BEFORE_PREFIX)) await git.setRef(r.ref, null);
+  await git.setRef(REBUILD_PENDING_REF, null);
+}
+
+/**
+ * W15-02: what holds a done task's folder from a rebuild, which starts the branch again from
+ * GitHub's: `changes`, files nobody committed; `commits`, a commit on the task's branch (or the
+ * folder's HEAD) that GitHub's branch does not have and that is not Forerunner's own unpushed
+ * step. Forerunner's own: a merge of the base onto GitHub's head (the merge step's update cut
+ * short before its push, `merge.ts` `unpushedBaseMerge`) and work-in-progress commits
+ * (`WIP_SUBJECT`, kept under `wipRef` too); its own rebuild cut short is put back before this
+ * is asked (`REBUILD_PENDING_REF`). Anything else is the person's and is never reset away; a
+ * commit nobody can tell is held, not dropped (fails closed). Null: nothing holds it.
+ */
+export async function folderHold(
+  git: GitOps,
+  branch: string,
+  base: string,
+): Promise<"changes" | "commits" | null> {
+  if ((await git.status()).dirty) return "changes";
+  const host = `origin/${branch}`;
+  const hostHead = await git.resolveRef(host);
+  if (!hostHead) return null;
+  const tips = new Set<string>();
+  for (const ref of [`refs/heads/${branch}`, "HEAD"]) {
+    const sha = await git.resolveRef(ref);
+    if (sha) tips.add(sha);
+  }
+  for (const tip of tips) {
+    if (await git.isAncestor(tip, hostHead)) continue;
+    const parents = await git.parentsOf(tip);
+    if (
+      parents.length === 2 &&
+      parents[0] === hostHead &&
+      (await git.isAncestor(parents[1] as string, `origin/${base}`))
+    )
+      continue;
+    const subjects = await git.subjectsBetween(hostHead, tip);
+    if (subjects.length && subjects.every((s) => s.startsWith(WIP_SUBJECT))) continue;
+    return "commits";
+  }
+  return null;
+}
+
 /** What became of a dependency a dependent branch holds (ADR 0111). */
 export type HeldState =
   /** Its pull request is open and still carries the work held: it stays in the base. */
@@ -301,10 +368,28 @@ export interface DependentOutcome {
   /** Its pull request (open), when it has one. */
   prNumber: number | null;
   prUrl: string | null;
-  result: "unchanged" | "rebuilt" | "conflict" | "held" | "busy" | "failed";
+  /**
+   * `waits` (W15-03): not looked at, because a task it builds on could not be rebuilt cleanly
+   * in the same pass (`STUCK_REBUILDS`); it still holds that one's old head and stays owed.
+   */
+  result: "unchanged" | "rebuilt" | "conflict" | "held" | "busy" | "failed" | "waits";
   rebuild?: DependentRebuild;
   error?: string;
+  /**
+   * `busy` because of what the person left in the task's folder (W15-02, W15-05, `folderHold`):
+   * changes nobody committed, or a commit GitHub does not have. The rebuild waits for them.
+   */
+  held?: "changes" | "commits";
 }
+
+/** The rebuild outcomes after which a task still holds the work that went away (W15-03). */
+export const STUCK_REBUILDS: ReadonlySet<DependentOutcome["result"]> = new Set([
+  "busy",
+  "held",
+  "failed",
+  "conflict",
+  "waits",
+]);
 
 /** What the caller of `rebuildDependents` decides between the rebuild and its push. */
 export interface RebuildHooks {
@@ -353,11 +438,84 @@ export function taskBranchName(task: Pick<TaskRow, "id" | "title">): string {
 }
 
 /**
- * Whether a pull request Forerunner opened names another task than `taskId` (its body ends
- * "Task <id>, session <id>. Opened by Forerunner."): that pull request is never this task's.
+ * What Forerunner's hidden mark in a pull request body names (W15-01, W15-08): the project whose
+ * pull request it is, and for a task's the task and the session that opened it. Code reads it;
+ * the person never sees it (design §5 rule 3: no ids in what a person reads).
+ */
+export interface ForerunnerMark {
+  project?: string;
+  task?: string;
+  session?: string;
+}
+
+const MARK_START = "<!-- forerunner:pr ";
+const MARK_KEYS = ["project", "task", "session"] as const;
+
+/**
+ * The hidden mark of a pull request Forerunner opens (an HTML comment, as `AGENT_TEXT_MARKER`:
+ * GitHub does not render it): `<!-- forerunner:pr project=<id> task=<id> session=<id> -->`.
+ * Values are URI-encoded, so no id can end the comment early.
+ */
+export function forerunnerMarker(mark: ForerunnerMark): string {
+  const fields = MARK_KEYS.flatMap((k) => {
+    const v = mark[k]?.trim();
+    return v ? [`${k}=${encodeURIComponent(v)}`] : [];
+  });
+  return `${MARK_START}${fields.join(" ")} -->`;
+}
+
+/** The mark a body carries (the first), or null when it has none. */
+export function readForerunnerMarker(body: string | null | undefined): ForerunnerMark | null {
+  const text = body ?? "";
+  const at = text.indexOf(MARK_START);
+  if (at < 0) return null;
+  const end = text.indexOf("-->", at);
+  if (end < 0) return null;
+  const out: ForerunnerMark = {};
+  for (const part of text
+    .slice(at + MARK_START.length, end)
+    .trim()
+    .split(/\s+/)) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq) as (typeof MARK_KEYS)[number];
+    if (!MARK_KEYS.includes(key)) continue;
+    try {
+      const value = decodeURIComponent(part.slice(eq + 1));
+      if (value) out[key] = value;
+    } catch {
+      // A value that is not URI text names nothing.
+    }
+  }
+  return out;
+}
+
+/**
+ * When a session started, as the text Forerunner writes on GitHub names it (W15-08: a session is
+ * named by its start time, never its id): "2026-11-09 04:12 UTC". Null when it is not known.
+ */
+export function sessionWhen(startedAt: string | null | undefined): string | null {
+  if (!startedAt) return null;
+  const t = Date.parse(startedAt);
+  if (!Number.isFinite(t)) return null;
+  const iso = new Date(t).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+/** "the session started 2026-11-09 04:12 UTC", or "a session" when its start is not known. */
+export function sessionWords(startedAt: string | null | undefined): string {
+  const when = sessionWhen(startedAt);
+  return when ? `the session started ${when}` : "a session";
+}
+
+/**
+ * Whether a pull request Forerunner opened names another task than `taskId`: its hidden mark
+ * (W15-08), or the visible line earlier versions ended its body with ("Task <id>, session <id>.
+ * Opened by Forerunner."). That pull request is never this task's.
  */
 export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: string): boolean {
   const named =
+    readForerunnerMarker(pr.body)?.task ??
     /\bTask ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}), session /i.exec(
       pr.body ?? "",
     )?.[1];
@@ -493,7 +651,7 @@ export type EmptiedWhy = "redone" | "empty" | "up_to_date";
 /**
  * TM-1 (leftovers7-tailmerge): the failed task's one sentence when its branch holds no change of
  * its own and the pull request open on it was closed (`closeEmptied`): after a redo from the
- * base ("Redone from main, it changed nothing, so #4 was closed."), a pull request that held no
+ * base ("The redo from main changed nothing, so #4 was closed."), a pull request that held no
  * change either, or one that no longer changes anything once brought up to date. `prNumber` is
  * null when no pull request was closed: only `up_to_date` has its own words then ("main already
  * has this change."). Polish owns the words.
@@ -501,11 +659,11 @@ export type EmptiedWhy = "redone" | "empty" | "up_to_date";
 export function emptiedSentence(prNumber: number | null, why: EmptiedWhy, base = "main"): string {
   if (why === "up_to_date")
     return prNumber === null
-      ? `${base} already has this change.`
+      ? `The ${base} branch already has this change.`
       : `#${prNumber} no longer changes anything on ${base}, so it was closed.`;
   return why === "redone"
-    ? `Redone from ${base}, it changed nothing, so #${prNumber} was closed.`
-    : `It changed nothing and #${prNumber} held no change, so #${prNumber} was closed.`;
+    ? `The redo from ${base} changed nothing, so #${prNumber} was closed.`
+    : `The last run changed nothing and #${prNumber} held no change, so it was closed.`;
 }
 
 /** The first words of a work-in-progress commit's subject. */
@@ -753,6 +911,14 @@ export class PrTaskExecutor implements TaskExecutor {
     const answered = await this.conflictAnswer(task);
     if (existsSync(join(dir, ".git"))) {
       await git.fetch();
+      // W15-11: a task folder made before the clone pinned our line endings (29e0c81) says so
+      // too from its next run on.
+      await git.pinLineEndings().catch((e: unknown) =>
+        this.logger.warn("line endings not pinned in the task folder", {
+          taskId: task.id,
+          error: errorMessage(e),
+        }),
+      );
       if (answered?.outcome !== "resolved") await this.cleanAfterCutShortRun(git, task);
     } else await git.clone(target.clone);
     // merged-copy, W6-26: Local only and a review's try folder are never staged, whatever
@@ -1147,7 +1313,7 @@ export class PrTaskExecutor implements TaskExecutor {
       why === "redone"
         ? `Forerunner did this task again from ${target.base} and it changed nothing, so this pull request is closed. Its branch is kept.`
         : why === "up_to_date"
-          ? `Brought up to date with ${target.base}, this task's work no longer changes anything, so this pull request is closed. Its branch is kept.`
+          ? `This task's work no longer changes anything on ${target.base}, so this pull request is closed. Its branch is kept.`
           : "Forerunner's last run of this task changed nothing and this pull request holds no change, so it is closed. Its branch is kept.";
     try {
       await this.deps.host.commentOnPullRequest(target.repo, pr.number, said);
@@ -1181,7 +1347,7 @@ export class PrTaskExecutor implements TaskExecutor {
    * no longer holds any change of its own is not pushed. The pull request open on it is closed
    * (`closeEmptied`, `up_to_date`), its branch on the host kept as it was, and the task fails in
    * one sentence, as a task with no change does ("#4 no longer changes anything on main, so it
-   * was closed.", or "main already has this change." when no pull request was closed).
+   * was closed.", or "The main branch already has this change." when no pull request was closed).
    */
   private async endUpToDate(
     task: TaskRow,
@@ -1703,9 +1869,23 @@ export class PrTaskExecutor implements TaskExecutor {
     // R-chain: a task rebuilt here is a change for the tasks after it too (they hold its old
     // head), so a later one is looked at when it holds any of them.
     const changed = [changedDependencyTaskId];
+    // W15-03: a task whose own rebuild could not run cleanly in this pass (busy, held, failed,
+    // conflicted) still holds the work that went away; a task after it is not rebuilt onto that
+    // old head (live check 2: with the middle of a chain busy, the third was rebuilt onto the
+    // middle's old head merged into main, which conflicted with the squash of the first, and
+    // got a card for a conflict that was not there). It waits as owed (`waits`) until the one
+    // before it was rebuilt.
+    const stuck = new Set<string>();
     for (const { task } of todo) {
+      const before = (await this.dependencyTasks(task)).find((d) => stuck.has(d.id));
+      if (before) {
+        stuck.add(task.id);
+        out.push({ taskId: task.id, prNumber: null, prUrl: null, result: "waits" });
+        continue;
+      }
       const o = await this.rebuildTask(task, hooks, changed);
       if (o.result === "rebuilt") changed.push(task.id);
+      if (STUCK_REBUILDS.has(o.result)) stuck.add(task.id);
       out.push(o);
     }
     return out;
@@ -1738,6 +1918,29 @@ export class PrTaskExecutor implements TaskExecutor {
     }
   }
 
+  /**
+   * W15-02: a rebuild this folder made whose push never went through (the app stopped between
+   * the two) is put back: the branch as GitHub has it, the marker and the held refs as they were.
+   * Only while the branch is still exactly that rebuild and nothing is left uncommitted: a commit
+   * the person made on top of it stays, and `folderHold` holds the rebuild for it.
+   */
+  private async undoUnpushedRebuild(git: GitOps, branch: string): Promise<void> {
+    const pending = await git.resolveRef(REBUILD_PENDING_REF);
+    if (!pending) return;
+    if ((await git.resolveRef(`refs/heads/${branch}`)) !== pending) return;
+    if (!(await git.hasRef(`origin/${branch}`)) || (await git.status()).dirty) return;
+    await git.createBranch(branch, `origin/${branch}`);
+    const before = await git.refsUnder(REBUILD_BEFORE_PREFIX);
+    const marker = before.find((r) => r.ref === `${REBUILD_BEFORE_PREFIX}deps-base`)?.sha ?? null;
+    await git.setRef(DEPS_BASE_REF, marker);
+    for (const h of await git.refsUnder(DEPS_HELD_PREFIX)) await git.setRef(h.ref, null);
+    for (const r of before)
+      if (r.ref !== `${REBUILD_BEFORE_PREFIX}deps-base`)
+        await git.setRef(`refs/forerunner/${r.ref.slice(REBUILD_BEFORE_PREFIX.length)}`, r.sha);
+    await clearUnpushedRebuild(git);
+    this.logger.info("an unpushed rebuild was put back", { branch });
+  }
+
   private async rebuildIn(
     task: TaskRow,
     dir: string,
@@ -1754,6 +1957,9 @@ export class PrTaskExecutor implements TaskExecutor {
     const branch = task.branch;
     if (!target || !branch) return none;
     const git = await this.gitFor(target, dir);
+    // W15-02: a rebuild of this folder that never reached GitHub (the app stopped between the
+    // rebuild and its push) is put back first, markers included, so it is made again below.
+    await this.undoUnpushedRebuild(git, branch);
     // Cheap first: a worktree without the marker, or one whose held refs name none of the
     // dependencies that changed, has nothing to rebuild (a marker made before the held refs is
     // read in full).
@@ -1786,19 +1992,27 @@ export class PrTaskExecutor implements TaskExecutor {
         return found;
       }
     }
-    // Work nobody committed (a person's change after the run) is never swept into a rebuild.
-    // TM-4: said once while the folder stays so (before, a WARN at every poll); the merge step
-    // says it on the pull request's row (`ReviewedPrMerge`, `owedFolderSentence`).
-    if ((await git.status()).dirty) {
-      if (!this.heldByChanges.has(task.id)) {
-        this.heldByChanges.add(task.id);
-        this.logger.warn("dependent branch not rebuilt: its worktree has uncommitted changes", {
-          taskId: task.id,
-        });
+    // Work nobody committed (a person's change after the run) is never swept into a rebuild,
+    // and a commit of the person's that GitHub does not have is never reset away (W15-02: the
+    // rebuild starts from GitHub's branch, so before it ended on no branch, without a word).
+    // TM-4: said once while the folder stays so (before, a WARN at every poll); the rows say it
+    // (`held`, persisted on the record by the runtime at this poll, W15-05).
+    const held = await folderHold(git, branch, target.base);
+    if (held) {
+      const key = `${task.id}:${held}`;
+      if (!this.heldByChanges.has(key)) {
+        this.heldByChanges.add(key);
+        this.logger.warn(
+          held === "changes"
+            ? "dependent branch not rebuilt: its worktree has uncommitted changes"
+            : "dependent branch not rebuilt: its worktree has a commit GitHub does not have",
+          { taskId: task.id },
+        );
       }
-      return { ...found, result: "busy" };
+      return { ...found, result: "busy", held };
     }
-    this.heldByChanges.delete(task.id);
+    this.heldByChanges.delete(`${task.id}:changes`);
+    this.heldByChanges.delete(`${task.id}:commits`);
     // The branch as the host has it (a person may have pushed to it).
     await git.createBranch(branch, `origin/${branch}`);
     await this.dropStaleMarker(git);
@@ -1812,17 +2026,33 @@ export class PrTaskExecutor implements TaskExecutor {
       await this.syncBuildsOn(target, pr.number, r.kept);
       return { ...found, rebuild: r };
     }
-    const push = (await hooks.beforePush?.(r, { number: pr.number, url: pr.htmlUrl })) ?? true;
-    if (!r.after) return { ...found, result: "conflict", rebuild: r };
-    if (!push) {
-      // Held: the branch and its marker go back to what the host has; the next try rebuilds.
+    /** The branch and its markers back to what the host has: the next try rebuilds again. */
+    const putBack = async () => {
       await git.createBranch(branch, `origin/${branch}`);
       await git.setRef(DEPS_BASE_REF, marker);
       for (const h of await git.refsUnder(DEPS_HELD_PREFIX)) await git.setRef(h.ref, null);
       for (const h of heldRefs) await git.setRef(h.ref, h.sha);
-      return { ...found, result: "held", rebuild: r };
+      await clearUnpushedRebuild(git);
+    };
+    // W15-02: until its push went through, the rebuild is Forerunner's own unpushed state, with
+    // what to put back (a stop of the app between the two is undone at the next try).
+    if (r.after) await markUnpushedRebuild(git, r.after, marker, heldRefs);
+    try {
+      const push = (await hooks.beforePush?.(r, { number: pr.number, url: pr.htmlUrl })) ?? true;
+      if (!r.after) return { ...found, result: "conflict", rebuild: r };
+      if (!push) {
+        // Held: the branch and its marker go back to what the host has; the next try rebuilds.
+        await putBack();
+        return { ...found, result: "held", rebuild: r };
+      }
+      await git.push(branch, { force: true, defaultBranch: target.base });
+    } catch (e) {
+      // A push refused or cut short (or the record's step before it): nothing of the rebuild
+      // stays in the folder, so the next try rebuilds from GitHub's branch with its markers.
+      if (r.after) await putBack().catch(() => undefined);
+      throw e;
     }
-    await git.push(branch, { force: true, defaultBranch: target.base });
+    await clearUnpushedRebuild(git);
     await this.syncBuildsOn(target, pr.number, r.kept);
     this.logger.info("dependent pull request rebuilt", {
       taskId: task.id,
@@ -2530,6 +2760,16 @@ export class PrTaskExecutor implements TaskExecutor {
     }
     if (c.superseded) await this.consume(c.superseded);
     const files = conflicts.length ? conflicts.join(", ") : "the conflicting files";
+    // W15-06: with a pull request open on the branch, the last step updates it (before, it
+    // promised to open one that already existed, live check 2 F6).
+    const openPr = (
+      await this.deps.host
+        .listPullRequests(target.repo, { state: "open", head: branch })
+        .catch(() => [] as PullRequestInfo[])
+    )[0];
+    const after = openPr
+      ? `the agent checks the branch against ${target.base} and updates #${openPr.number}`
+      : `the agent checks the branch against ${target.base} and opens the pull request`;
     await this.deps.store.humanRequest.insert({
       human_id: ctx.token.claims.ownerHumanId,
       project_id: task.project_id,
@@ -2541,12 +2781,12 @@ export class PrTaskExecutor implements TaskExecutor {
         ? [
             `Fetch ${branch} from ${repoName} and bring ${target.base} into it (rebase onto ${target.base} or merge ${target.base}), resolving ${files}`,
             `Push ${branch} to ${repoName}`,
-            `Answer "I resolved it": the agent checks the branch against ${target.base} and opens the pull request`,
+            `Answer "I resolved it": ${after}`,
           ]
         : [
             `The branch ${branch} is only on this computer, in ${c.dir}: resolve ${files} there (rebase onto origin/${target.base} or merge it) and commit`,
             `Push ${branch} to ${repoName} if you can`,
-            `Answer "I resolved it": the agent checks the branch against ${target.base} and opens the pull request`,
+            `Answer "I resolved it": ${after}`,
           ],
       options: [...REBASE_CONFLICT_OPTIONS],
       blocking: true,
@@ -2559,6 +2799,9 @@ export class PrTaskExecutor implements TaskExecutor {
         repo: repoName,
         conflicts,
         pushed,
+        ...(openPr ? { pr_number: openPr.number } : {}),
+        task_title: task.title,
+        again: !!c.again,
         applied_at: null,
       },
       author_agent: ctx.session.agent_id,
@@ -2622,7 +2865,11 @@ export class PrTaskExecutor implements TaskExecutor {
       await this.deps.host.commentOnPullRequest(
         target.repo,
         existingPr.number,
-        [`Updated by session ${ctx.session.id}: ${report.slice(0, 500)}`, buildsOn]
+        // W15-08: the session by when it started, never its id (design §5 rule 3).
+        [
+          `Updated in ${sessionWords(ctx.session.started_at ?? ctx.session.created_at)}: ${report.slice(0, 500)}`,
+          buildsOn,
+        ]
           .filter(Boolean)
           .join("\n\n"),
       );
@@ -2640,7 +2887,10 @@ export class PrTaskExecutor implements TaskExecutor {
           ? `Acceptance criteria:\n${criteria.map((c: string) => `- ${c}`).join("\n")}`
           : "",
         report.slice(0, 2000),
-        `Task ${task.id}, session ${ctx.session.id}. Opened by Forerunner.`,
+        // W15-08: what a person reads names the session by its start; the ids code reads (R-branch:
+        // `openedForAnotherTask`) are in the hidden mark.
+        `Opened by Forerunner in ${sessionWords(ctx.session.started_at ?? ctx.session.created_at)}.`,
+        forerunnerMarker({ project: task.project_id, task: task.id, session: ctx.session.id }),
       ]
         .filter(Boolean)
         .join("\n\n"),

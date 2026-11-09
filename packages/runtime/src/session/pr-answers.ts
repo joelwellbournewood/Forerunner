@@ -1,7 +1,6 @@
 import {
   isRebaseConflictRequest,
   REBASE_CONFLICT_KEY,
-  REDO_FROM_BASE_FIELD,
   rebaseConflictAnswer,
 } from "@forerunner/capabilities";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
@@ -17,7 +16,8 @@ import {
   MERGE_LEFT_OPEN_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
-import { resumeWork, type StartPort } from "./resume-work.ts";
+import { redoneMergeCard } from "../loop/merge-mode.ts";
+import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
 
 /**
  * The answers of the pull-request cards (U-028), applied from `RuntimeApp.syncApprovals` (the
@@ -164,7 +164,12 @@ async function unappliedPrAnswers(store: StateStore, humanId: string): Promise<H
   }
 }
 
-function markOf(row: HumanRequestRow, key: string, clock: Clock, outcome: string): JsonObject {
+function markOf(
+  row: Pick<HumanRequestRow, "change_card">,
+  key: string,
+  clock: Pick<Clock, "nowIso">,
+  outcome: string,
+): JsonObject {
   return {
     ...((row.change_card ?? {}) as JsonObject),
     key,
@@ -187,7 +192,7 @@ async function applyRebaseAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Pro
   if (!answer) return skip("unrecognized_answer");
   if (task?.status !== "needs_human") return skip("task_moved_on");
   const branch = task.branch ?? "the task branch";
-  return store.transaction(async (tx) => {
+  const outcome = await store.transaction(async (tx) => {
     let outcome: string;
     if (answer === "cancel") {
       await tx.task.transition(
@@ -222,6 +227,23 @@ async function applyRebaseAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Pro
     });
     return outcome;
   });
+  // W15-06 (design §3.8): an answer that makes the task runnable starts (or queues) a session,
+  // as every Inbox answer does; before, "I resolved it" and "Drop the branch" left the task
+  // Ready with no session (live check 2, F11). Cancel starts nothing.
+  if (outcome === "resolved" || outcome === "dropped")
+    await recordStart(
+      store,
+      row.id,
+      await resumeWork(store, deps.start, {
+        agentId: deps.agentId,
+        projectId: task.project_id,
+        reason:
+          outcome === "resolved"
+            ? `you resolved the conflict of "${task.title}"`
+            : `you asked to do "${task.title}" again from the base`,
+      }),
+    );
+  return outcome;
 }
 
 async function applyMergeAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Promise<string> {
@@ -333,10 +355,7 @@ async function applyRedo(
       actor,
     );
     await tx.humanRequest.patch(row.id, {
-      change_card: {
-        ...markOf(row, MERGE_LEFT_OPEN_KEY, deps.clock, "redone"),
-        [REDO_FROM_BASE_FIELD]: true,
-      },
+      change_card: redoneMergeCard(row.change_card, deps.clock.nowIso()) as JsonObject,
     });
   });
   await resumeWork(store, deps.start, {

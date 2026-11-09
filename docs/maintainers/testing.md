@@ -373,7 +373,10 @@ event (a deleted head closes the PR), PRs whose base moved are recomputed silent
 
 **Mergeability and merges** (`ops.ts`, `git.ts`). `mergeable` is `git merge-tree --write-tree
 <base> <head>`: exit 0 is `true`/`clean`, exit 1 is `false`/`dirty`; it is recomputed on every
-`GET /pulls/:n`, at creation and after ref changes. `PUT /pulls/:n/merge` refuses with `405
+`GET /pulls/:n`, at creation and after ref changes. With `host.ops.lazyMergeability = true` (W15-07)
+it is worked out as GitHub does: after the head or base moved, the first `GET /pulls/:n` answers
+`mergeable: null` (`unknown`) and starts it, a later read has the value, and a merge always works
+it out first. `PUT /pulls/:n/merge` refuses with `405
 Pull Request is not mergeable` when the PR is closed, merged or conflicting, `409` when `sha`
 does not match the head. `merge` commits the merge-tree result with two parents (`Merge pull
 request #n from owner/branch`), `squash` with one parent (`title (#n)` plus the body, author =

@@ -13,11 +13,17 @@ import {
   headMovedSentence,
   leftOpenSteps,
   MERGE_LEFT_OPEN_KEY,
+  MERGE_LEFT_OPEN_OPTIONS,
   type MergedEvent,
   REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
-import { OWED_FOLDER_CHANGES } from "../loop/merge-mode.ts";
+import {
+  folderWaitOver,
+  OWED_FOLDER_OUTCOMES,
+  owedFolderWait,
+  plainWaitForYou,
+} from "../loop/merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest } from "../loop/ports.ts";
 import type { WatchedPullRequest } from "./githost-watcher.ts";
 
@@ -129,8 +135,22 @@ export function rebuildConflictSentence(
   return `${prName(pr)} could not be rebuilt without ${andList(dropped.map(droppedWords))}: both change ${files}. It waits for you: redo the task, or ${merge}.`;
 }
 
+/**
+ * W15-02 fix-up: whether the branch, as GitHub had it before a rebuild, held the change the
+ * record's review read. The task's own change (`own_change_id`, which a dependency merged by
+ * squash, main merged in or an earlier rebuild keeps) is compared when the record has it, as
+ * the merge step does (`keepsOwnChange`); else the head itself. A commit pushed on top that
+ * changes anything (the person's, as the folder's wait offers, or anyone's on GitHub) is not
+ * the reviewed change. An earlier rebuild whose push failed moved the record to its own head
+ * and the same own change, so it is read as reviewed and rebuilt again.
+ */
+function reviewedChangeBefore(record: MergeRecordRow, r: DependentRebuild): boolean {
+  if (record.own_change_id) return r.ownBefore === record.own_change_id;
+  return !!record.reviewed_head_sha && r.before === record.reviewed_head_sha;
+}
+
 /** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
-const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed"]);
+const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed", "waits"]);
 
 export class DependentBranches {
   private readonly logger = log("dependent-branches");
@@ -282,7 +302,11 @@ export class DependentBranches {
     if (!record || record.pr_number !== info.number) return false;
     const ref = { number: info.number, url: info.htmlUrl || pr.url };
     if (info.mergeable === true) {
-      if (record.state !== "left_to_you" || record.last_outcome !== "conflict") return false;
+      // W15-04: a notice whose record moved on (the task was redone and accepted again, its
+      // record says something new) is closed once the pull request merges cleanly: before, it
+      // stayed open for good beside what the record says now (live check 2, F3).
+      if (record.state !== "left_to_you" || record.last_outcome !== "conflict")
+        return this.closeStaleNotice(task);
       // TM-7 (leftovers7-tailmerge): what the record said before the notice, and the head it
       // was given on (kept on the notice's card, `before_conflict`).
       const before = await this.beforeConflict(task.id);
@@ -371,6 +395,18 @@ export class DependentBranches {
     };
     if (open) {
       const card = (open.change_card ?? {}) as JsonObject;
+      // W15-04: an open card that is itself an earlier notice keeps its own words from before
+      // that notice (none, when that notice filed it): it is never restored as notice words.
+      const earlier =
+        card.notice === "conflict"
+          ? ((card.before_conflict as JsonObject | undefined)?.card ?? null)
+          : {
+              why: open.why,
+              options: [...open.options],
+              steps: [...open.steps],
+              status: typeof card.status === "string" ? card.status : null,
+              sentence: typeof card.sentence === "string" ? card.sentence : null,
+            };
       await store.humanRequest.patch(open.id, {
         why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
         options,
@@ -382,16 +418,7 @@ export class DependentBranches {
           status: "conflict",
           notice: "conflict",
           base,
-          before_conflict: {
-            ...kept,
-            card: {
-              why: open.why,
-              options: [...open.options],
-              steps: [...open.steps],
-              status: typeof card.status === "string" ? card.status : null,
-              sentence: typeof card.sentence === "string" ? card.sentence : null,
-            },
-          },
+          before_conflict: { ...kept, ...(earlier ? { card: earlier } : {}) },
         },
       });
       return;
@@ -499,6 +526,27 @@ export class DependentBranches {
     });
   }
 
+  /** W15-03: the open card of a rebuild that conflicted, withdrawn once a clean rebuild ran. */
+  private async closeRebuildConflictCard(taskId: string): Promise<void> {
+    const open = await this.openMergeCard(taskId);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (open && card.rebuild === "conflict")
+      await this.deps.store.humanRequest.withdraw(open.id, open.version);
+  }
+
+  /**
+   * W15-04: an open conflict notice card whose record no longer says the conflict, withdrawn
+   * once the pull request merges cleanly. True when one was.
+   */
+  private async closeStaleNotice(task: TaskRow): Promise<boolean> {
+    const open = await this.openMergeCard(task.id);
+    const card = (open?.change_card ?? {}) as JsonObject;
+    if (!open || card.notice !== "conflict") return false;
+    await this.deps.store.humanRequest.withdraw(open.id, open.version);
+    this.logger.info("an earlier conflict notice was closed", { taskId: task.id });
+    return true;
+  }
+
   /** The open card of the task's merge that said a conflict, closed: it no longer needs the person. */
   private async closeConflictCard(task: TaskRow): Promise<void> {
     const open = await this.openMergeCard(task.id);
@@ -593,9 +641,10 @@ export class DependentBranches {
     try {
       const record = await store.mergeRecord.forTask(o.taskId);
       if (OWES.has(o.result)) {
-        if (record && record.state !== "merged")
+        if (record && record.state !== "merged") {
           await store.mergeRecord.oweRebuild(o.taskId, dependencyId);
-        else this.owed.set(o.taskId, { projectId, dependencyId });
+          await this.sayFolderWait(o);
+        } else this.owed.set(o.taskId, { projectId, dependencyId });
         return;
       }
       this.owed.delete(o.taskId);
@@ -605,15 +654,38 @@ export class DependentBranches {
         // TM-4: the wait for the folder's changes is over with the owed rebuild; a merge that
         // waited goes on at the next retry and says what came of it.
         const now = await store.mergeRecord.forTask(o.taskId);
-        if (now?.last_outcome === OWED_FOLDER_CHANGES)
-          await store.mergeRecord.move(now.id, now.state, {
-            last_outcome: "rebuild_owed",
-            sentence: "",
-          });
+        if (now && OWED_FOLDER_OUTCOMES.has(now.last_outcome ?? ""))
+          await store.mergeRecord.move(now.id, now.state, folderWaitOver(now));
       }
     } catch (e) {
       this.logger.warn("owed rebuild not recorded", { taskId: o.taskId, error: errorMessage(e) });
     }
+  }
+
+  /**
+   * W15-02, W15-05: a rebuild owed that waits for what the person left in the task's folder
+   * (`held`: changes nobody committed, or a commit GitHub does not have) says so on the record
+   * at this poll, so the Overview's row and the Tasks row say it before any Merge is pressed
+   * (live check 2, F4: the row offered a bare Merge and the click answered "Merging #23."). A
+   * record that waits for the person says it only over a plain wait (its own words, a
+   * rebuild's warning or a conflict, come first); one the person's Merge queued always says it.
+   * A rebuild that could not run for another reason, with the folder clean now, takes it back.
+   */
+  private async sayFolderWait(o: DependentOutcome): Promise<void> {
+    const { store } = this.deps;
+    const record = await store.mergeRecord.forTask(o.taskId);
+    if (!record?.pr_number || record.state === "merged" || record.state === "merging") return;
+    const said = OWED_FOLDER_OUTCOMES.has(record.last_outcome ?? "");
+    if (!o.held) {
+      if (said && o.result !== "busy")
+        await store.mergeRecord.move(record.id, record.state, folderWaitOver(record));
+      return;
+    }
+    const plain = record.state !== "left_to_you" || said || plainWaitForYou(record);
+    const wait = owedFolderWait(record.pr_number, o.held);
+    if (!plain || (record.last_outcome === wait.last_outcome && record.sentence === wait.sentence))
+      return;
+    await store.mergeRecord.move(record.id, record.state, wait);
   }
 
   /**
@@ -632,6 +704,9 @@ export class DependentBranches {
     const task = await store.task.get(r.taskId);
     if (!r.after) {
       const sentence = rebuildConflictSentence(pr.number, r.dropped, r.conflicts);
+      // Said once (W15-03): a rebuild tried again at a later poll that conflicts the same way
+      // files no second card, also once the person answered the first.
+      if (record?.last_outcome === "rebuild_conflict" && record.sentence === sentence) return true;
       if (record)
         await store.mergeRecord.move(record.id, "left_to_you", {
           sentence,
@@ -651,11 +726,28 @@ export class DependentBranches {
       return true;
     }
     if (r.ownBefore && r.ownAfter && r.ownBefore === r.ownAfter) {
+      // W15-02 fix-up: the branch as GitHub had it before the rebuild holds work the review did
+      // not read (a commit the person pushed, as the folder's wait offers, or anyone pushed to
+      // the branch on GitHub): the rebuild keeps it, but the record never follows it. Before,
+      // the record moved its reviewed head onto it, the Overview offered Merge under "Reviewed
+      // by the critic", and a Merge the person pressed during the folder's wait merged it.
+      if (!reviewedChangeBefore(record, r)) {
+        await this.changedAfterReview(task, record, pr);
+        return true;
+      }
       // Only what main already has was dropped: the same reviewed change on the new head.
+      // W15-03: a rebuild conflict an earlier pass said is over (its sentence, its card): the
+      // record waits for the person's Merge again (live check 2: it kept "could not be rebuilt"
+      // and no Merge after a clean rebuild, while the Tasks row said "waiting for you to merge").
+      const stale = record.last_outcome === "rebuild_conflict";
       await store.mergeRecord.move(record.id, record.state, {
         reviewed_head_sha: r.after,
         own_change_id: r.ownAfter,
+        ...(stale && record.pr_number
+          ? folderWaitOver({ state: "left_to_you", pr_number: record.pr_number })
+          : {}),
       });
+      if (stale) await this.closeRebuildConflictCard(r.taskId);
       return true;
     }
     const sentence = rebuiltChangedSentence(pr.number, r.dropped);
@@ -665,6 +757,76 @@ export class DependentBranches {
     });
     if (task) await this.card(task, record, pr, sentence, "rebuilt_changed", r.dropped);
     return true;
+  }
+
+  /**
+   * W15-02 fix-up: a rebuild whose branch held work the review did not read leaves the record
+   * at the reviewed commit and to the person, as the merge step does when it finds the head
+   * moved (`head_moved`: no Merge on the Overview, "merge it yourself or redo the task"). A
+   * Merge the person pressed before (kept while the folder waited) or the automatic mode's is
+   * dropped, and one card says why; a record that already waited for the person's Merge says
+   * it on its row only, as the merge step does. Said once: a later rebuild finds it said.
+   */
+  private async changedAfterReview(
+    task: TaskRow | undefined,
+    record: MergeRecordRow,
+    pr: { number: number; url: string },
+  ): Promise<void> {
+    const { store } = this.deps;
+    const sentence = headMovedSentence(pr.number);
+    if (record.last_outcome === "head_moved" && record.sentence === sentence) return;
+    const wasLeft = record.state === "left_to_you";
+    const moved = await store.mergeRecord.move(record.id, "left_to_you", {
+      sentence,
+      last_outcome: "head_moved",
+      approval: "none",
+      approved_by: null,
+    });
+    this.logger.info("dependent branch rebuilt with work the review did not read", {
+      taskId: record.task_id,
+      pr: pr.number,
+    });
+    if (!task) return;
+    try {
+      const open = await this.openMergeCard(task.id);
+      if (open) {
+        // The card open for this merge (a notice, a rebuild's card) says it now.
+        await store.humanRequest.patch(open.id, {
+          why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
+          options: [...MERGE_LEFT_OPEN_OPTIONS],
+          steps: leftOpenSteps("head_moved"),
+          change_card: {
+            ...((open.change_card ?? {}) as JsonObject),
+            sentence,
+            status: "head_moved",
+            notice: null,
+            base: null,
+            rebuild: null,
+            without: null,
+          },
+        });
+        return;
+      }
+      if (wasLeft) return;
+      const agentId = moved.agent_id || task.owner_agent_id || task.author_agent || "";
+      const humanId = (await store.agent.get(agentId))?.owner_human_id ?? "";
+      if (!humanId) return;
+      await fileLeftOpenRequest(store, {
+        task,
+        sessionId: null,
+        humanId,
+        agentId,
+        outcome: {
+          taskId: task.id,
+          prUrl: pr.url,
+          status: "head_moved",
+          reason: `PR left open for you: ${sentence}`,
+          sentence,
+        },
+      });
+    } catch (e) {
+      this.logger.warn("head-moved card not filed", { taskId: task.id, error: errorMessage(e) });
+    }
   }
 
   /**

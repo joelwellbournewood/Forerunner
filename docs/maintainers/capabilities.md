@@ -131,7 +131,7 @@ with their milestone.
   `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=""`, `SSH_ASKPASS=""` and `GCM_INTERACTIVE=never`
   keep it from prompting. Every command runs with `-c core.autocrlf=false -c core.safecrlf=false`
   (files byte for byte as committed, on both platforms), and every folder our git makes says the
-  line endings in its own config (R-copystuck, ADR 0113 amendment of 2026-11-09): `clone` passes
+  line endings in its own config (R-copystuck, ADR 0113 amendment of 2026-11-08): `clone` passes
   `--config core.autocrlf=false`, `init` and `pinLineEndings()` write `core.autocrlf=false` into
   `.git/config` (`pinLineEndings` reads it first with `--type=bool` and writes nothing when it
   already says so; true when it wrote). So any other git used in the folder (the person's own in
@@ -139,8 +139,14 @@ with their milestone.
   files as ours does: the folder's config beats Git for Windows' system `core.autocrlf=true`,
   which wrote a file the person put back with CRLF that ours then read as changed. Only
   `core.autocrlf` is written: it is the one setting of ours that changes the bytes read or
-  written; `core.safecrlf` only warns or refuses on the person's own `git add`. Error output is redacted (`redactToken()` removes the token raw and
-  in its Basic form). git missing
+  written; `core.safecrlf` only warns or refuses on the person's own `git add`. A folder made
+  before the pin (W15-11) gets it at its next use: a reused task worktree at its next run's
+  fetch (`PrTaskExecutor.executeIn`), an import checkout at its fetch (`data/import.ts`) and a
+  project's folder at its session-end commit (`ProjectDocs.statusInFolder`); a failure to write
+  it is logged, never fatal. Two runtime readers run git themselves, not through `GitOps`, and
+  so rely on the folder's own config: the critic's diff (`loop/critic.ts`, `GitDiffPort`) and
+  the project checks' "scripts before" read (`loop/project-checks.ts`, `scriptsBefore`). Error
+  output is redacted (`redactToken()` removes the token raw and in its Basic form). git missing
   from PATH is `unavailable`, a spawn failure `provider_error`, a command the runner killed at
   `timeoutMs` (default 5 minutes) `timeout` naming the limit. `GitOpsOptions.runner` swaps the
   process runner (tests record argv and env). Every command gets `EMAIL=forerunner@localhost`
@@ -178,8 +184,10 @@ with their milestone.
   task's reason at 200 characters, so these stay under it for a usual name. Their git runs
   with `GitOpsOptions.untranslated` (the PR executor's `gitFor`, `ensureBaseBranch`'s scratch;
   TM-6, leftovers7-tailmerge: `UNTRANSLATED_ENV`, `LC_ALL=C` and an empty `LANGUAGE`), so
-  git's words are read in English whatever the person's language; other GitOps keep the
-  process's language. `GitOps` reports a
+  git's words are read in English whatever the person's language; since W15-10 so does every
+  GitOps of the runtime's merge step and docs copy (`loop/merge.ts`, `loop/docs.ts`; guard test
+  `packages/runtime/test/git-untranslated-sites.test.ts`), whose words `must()` reads for a
+  credential prompt; other GitOps keep the process's language. `GitOps` reports a
   failed command as `git push <branch> failed: <git's stderr>`, so git's first line shares a line
   with that header: `pushFailure` takes the header off before reading the lines. With git's
   default configuration the host's `remote:` line is git's first line; before (CI on 193e579), it
@@ -237,10 +245,17 @@ with their milestone.
   time and the same for 65 s: two tasks titled alike created within a minute got one branch,
   and the second found the first's open pull request by branch name, resumed it and pushed its
   work onto it. A pull request found on the task's branch whose body names another task
-  (`openedForAnotherTask`: "Task <id>, session ..." from `openOrUpdatePr`) is never resumed:
+  (`openedForAnotherTask`: the hidden mark `forerunnerMarker`'s `task`, or the visible
+  "Task <id>, session ..." line pull requests opened before wave 15 end with) is never resumed:
   a task that stored such a name before the fix moves to its own (`unusedBranch`, the name or
   `-r<n>`). Tests: `pr-executor.test.ts` "leftovers of wave 7, merge side"; the real daemon
   (`real-daemon.test.ts`, same describe) lists two pull requests for two such tasks.
+  **No id in what a person reads on GitHub** (W15-08, live check 2 F9): a task's pull request
+  body ends "Opened by Forerunner in the session started 2026-11-09 04:12 UTC." and the hidden
+  mark `<!-- forerunner:pr project=<id> task=<id> session=<id> -->` (`forerunnerMarker`,
+  `readForerunnerMarker`; values URI-encoded; the same form ends the runtime's status and
+  scaffold pull requests, W15-01); a later run's comment starts "Updated in the session started
+  …" (`sessionWords`, the session's start, else its creation).
   **A task that waits for unmerged work builds on it** (C-49, ADR 0106; kept true by ADR
   0111, 'dependent-branches'): `unmergedDependencies` walks `depends_on` (deepest first) for
   done tasks of the project whose branch still has an open pull request on the host;
@@ -281,12 +296,23 @@ with their milestone.
   middle of a chain could not be rebuilt at first, the third had been rebuilt onto the middle's
   old head, which still held the first task's pre-squash commits, and nothing rebuilt it again);
   `rebuildDependents` passes each task it rebuilt in the pass on to the tasks after it
-  (`rebuildTask(task, hooks, onlyIfHolding)` takes one id or several). Each: the branch as the
+  (`rebuildTask(task, hooks, onlyIfHolding)` takes one id or several). A task after one whose
+  rebuild could not run cleanly in the pass (`STUCK_REBUILDS`: busy, held, failed, conflict) is
+  not looked at (`waits`, W15-03): it still holds that one's old head, and rebuilding it onto
+  that head merged into main gave a false add/add conflict and a card (live check 2, F1). Each: the branch as the
   host has it, rebuilt,
   `hooks.beforePush(rebuild, pr)` (the runtime settles the merge record there), then a push
   with a lease (never the default branch) and the "Builds on" line updated. A worktree a run or
-  another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one with
-  uncommitted changes. **One lock per task folder** (`githost/worktree-lock.ts`, exported:
+  another rebuild uses is skipped (`busy`; the run rebuilds it itself), as is one the person
+  left something in (`folderHold`, W15-02: uncommitted changes, `held: "changes"`, or a commit
+  on the task's branch that GitHub's branch lacks, `held: "commits"`; Forerunner's own unpushed
+  steps, a base merge before its push and work-in-progress commits, do not hold it; a commit
+  nobody can tell holds it, never reset away). A rebuild whose push does not go through is put
+  back at once (the branch as GitHub has it, the marker and held refs as they were), and one a
+  stop of the app cut short is put back at the next try (`REBUILD_PENDING_REF` names its head
+  until the push went through, `REBUILD_BEFORE_PREFIX` keeps what to put back,
+  `undoUnpushedRebuild`); before, the local marker already named the new base, so the next try
+  found nothing to rebuild and the pull request kept the work that went away. **One lock per task folder** (`githost/worktree-lock.ts`, exported:
   `inWorktree` waits, `tryWorktree` skips a busy folder, `worktreeBusy`; keyed by the resolved
   path, in this process): every git step in a task's worktree takes it, the PR executor's run,
   a resolved conflict, a rebuild, setting work aside, and since leftovers7-merge2 (R-lock) the
@@ -308,7 +334,11 @@ with their milestone.
   before it starts with no `DEPS_BASE_REF` and works as before. A rebase conflict pushes the branch as it is (so the person can fetch
   and resolve it; the steps name the worktree when the push fails) and becomes a blocking
   `decision` request (`change_card.key` `REBASE_CONFLICT_KEY`, the branch, base, files and
-  whether it was pushed) with the task outcome `needs_human`. Its first sentence, the card's
+  whether it was pushed; W15-06: the open pull request's `pr_number`, the task's title and
+  `again`) with the task outcome `needs_human`. With a pull request open on the branch its last
+  step says the agent checks the branch and updates #N (before, it promised to open the pull
+  request that already existed, live check 2 F6); the card's Inbox words are
+  `rebaseConflictCard` in the runtime's `daemon/request-words.ts`. Its first sentence, the card's
   title, names the task ('"Write the guide" conflicts with main in README.md'), never the branch
   (W14-5, polish-words: it read "Rebase of fr/e34de89b-… onto main conflicts in …"); the steps
   name the branch, where the person fetches it. Its options each lead somewhere
@@ -343,7 +373,7 @@ with their milestone.
   nothing more failed "no changes" although its branch held that work. A pull request open on
   the branch is now closed instead (`closeEmptied`: one comment saying why, then the close;
   the branch on the host stays as it was) and the result's summary is one sentence
-  (`emptiedSentence`: "Redone from main, it changed nothing, so #4 was closed."); a close the
+  (`emptiedSentence`: "The redo from main changed nothing, so #4 was closed."; W15-64); a close the
   host refuses leaves the pull request and the old summary. The same reading runs again after
   the branch is brought up to date with the base (the rebase or the merge before the push) and
   in `continueResolved` before its push (TM-1's sibling, the review fix-up): a branch whose
@@ -352,7 +382,7 @@ with their milestone.
   pull request is closed (`endUpToDate`, `closeEmptied` with `up_to_date`: "Brought up to date
   with main, this task's work no longer changes anything, so this pull request is closed. Its
   branch is kept.") and the task fails in one sentence ("#4 no longer changes anything on
-  main, so it was closed.", or "main already has this change." with no pull request). Before,
+  main, so it was closed.", or "The main branch already has this change." with no pull request). Before,
   a Tasks-tab Redo or a rework of a task whose change had reached main force-pushed main's head
   to its pull request, which the critic accepted and the Overview offered for Merge, and a fresh
   task's push opened an empty pull request. A task without a repository runs in the folder `workspaceFor` names

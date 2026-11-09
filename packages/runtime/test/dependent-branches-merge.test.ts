@@ -1,7 +1,14 @@
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
+import {
+  GitHubHost,
+  GitOps,
+  PrTaskExecutor,
+  REBASE_CONFLICT_KEY,
+  REDO_FROM_BASE_FIELD,
+} from "@forerunner/capabilities";
+import { taskReopen } from "@forerunner/commands";
 import { join, Logger, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
@@ -17,8 +24,14 @@ import {
   MemoryLedger,
   NoSecrets,
 } from "../src/enforcement/ports.ts";
-import { MERGE_PR_TOOL, ReviewedPrMerge } from "../src/loop/merge.ts";
-import type { MergeMode } from "../src/loop/merge-mode.ts";
+import {
+  fileLeftOpenRequest,
+  MERGE_LEFT_OPEN_KEY,
+  MERGE_PR_TOOL,
+  REBUILD_CARD_OPTIONS,
+  ReviewedPrMerge,
+} from "../src/loop/merge.ts";
+import { MERGE_CARD_KEY, type MergeMode, REDO_FROM_BASE } from "../src/loop/merge-mode.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
 import { GitHostWatcher } from "../src/session/githost-watcher.ts";
 import { syncPrAnswers } from "../src/session/pr-answers.ts";
@@ -201,6 +214,12 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     audit,
     writes,
     worktreeRoot,
+    /** The PR executor the session and the rebuilds use (w15-merge: a rebuild cut short). */
+    executor,
+    /** The bare repository behind the fake GitHub (w15-merge: a commit pushed to main). */
+    hostDir: repo.dir,
+    /** The person's token on the fake GitHub (w15-merge: a push from a task's folder). */
+    token,
     fileOf,
     /** One task through one session: the executor (branch, PR), the critic, the merge step. */
     async runTask(
@@ -942,7 +961,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     const resolved = await m.pr(b.id);
     expect([resolved.mergeable, resolved.head.sha === reviewed]).toEqual([true, false]);
     await m.poll();
-    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
     // The head-moved word the merge step itself gives (no Merge on the Overview: `NO_CLICK`).
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
@@ -1145,7 +1164,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     const after = await redoChangingNothing(m, b.id);
     // Before: the run committed nothing, main's head was force-pushed to the open pull request,
     // the task was accepted and the empty pull request waited for the person's Merge.
-    const sentence = `Redone from main, it changed nothing, so #${prB} was closed.`;
+    const sentence = `The redo from main changed nothing, so #${prB} was closed.`;
     expect([after.status, after.reason]).toEqual(["failed", sentence]);
     const pr = await m.pr(b.id);
     expect([pr.state, pr.merged]).toEqual(["closed", false]);
@@ -1343,7 +1362,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     if (!rows[0] || !drop) throw new Error("no rebase conflict card");
     expect((await answer(m, rows[0], drop.label)).dropped).toBe(1);
     const after = await redoChangingNothing(m, b.id);
-    const sentence = `Redone from main, it changed nothing, so #${prB} was closed.`;
+    const sentence = `The redo from main changed nothing, so #${prB} was closed.`;
     expect([after.status, after.reason]).toEqual(["failed", sentence]);
     expect((await m.pr(b.id)).state).toBe("closed");
     await m.poll();
@@ -1462,5 +1481,600 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({ canMerge: true });
     expect(row.label).toBe("Accepted · waiting for you to merge");
     expect((await m.pr(b.id)).merged).toBe(false);
+  });
+});
+
+describe("w15-merge, wave 15", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  /** What the Overview lists (GET /projects/:id/pull-requests) and what the Tasks row says. */
+  const screens = async (m: ChainWorld, taskId: string) => {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    const task = await m.w.store.task.mustGet(taskId);
+    return { waiting: view.waiting, row: taskDisplay(task, ctx) };
+  };
+  /** git in a task's folder as the person (their own name, not Forerunner's). */
+  const asPerson = (dir: string) => (args: string[]) =>
+    run(["git", "-C", dir, "-c", "user.name=Pat", "-c", "user.email=pat@example.test", ...args], {
+      allowFailure: true,
+    });
+  /** A commit on main on the fake GitHub, made by someone else. */
+  async function pushToMain(m: ChainWorld, file: string, content: string) {
+    const dir = mkdtempSync(join(tmpdir(), "fr-w15-main-"));
+    try {
+      await run(["git", "clone", "-q", m.hostDir, dir]);
+      writeFileSync(join(dir, file), content);
+      const g = asPerson(dir);
+      await g(["add", file]);
+      await g(["commit", "-q", "-m", `Add ${file}`]);
+      await g(["push", "-q", "origin", "HEAD:main"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("a commit the person makes in a done task's folder is never dropped by a rebuild: the rebuild waits, the row says so in one sentence with no Merge; undone, the next poll rebuilds (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    // The person commits a file in B's folder (the reviewer's case of wave 13).
+    writeFileSync(join(dir, "notes.txt"), "my notes\n");
+    const g = asPerson(dir);
+    await g(["add", "notes.txt"]);
+    await g(["commit", "-q", "-m", "my notes"]);
+    const mine = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    await m.close(a.id);
+    await m.poll();
+    // Before: the rebuild reset B's branch to GitHub's, the commit was on no branch and
+    // notes.txt was gone from the folder, without a word.
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect((await g(["ls-files", "notes.txt"])).stdout.trim()).toBe("notes.txt");
+    const record = await m.record(b.id);
+    expect(record.rebuild_owed_for).toBe(a.id);
+    const sentence = `#${prB} waits for a commit made in its task's folder: push it to GitHub or undo it.`;
+    expect(record).toMatchObject({ last_outcome: "owed_folder_commits", sentence });
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      canMerge: false,
+      sentence,
+    });
+    expect(row.detail).toBe(sentence);
+    // Polls go on: still held, the commit still there, nothing merged.
+    await m.poll();
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect((await m.pr(b.id)).merged).toBe(false);
+    // The person undoes it: the next poll rebuilds B without the closed #A.
+    await g(["reset", "-q", "--hard", `origin/${branch}`]);
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+  });
+
+  it("the person's commit pushed to GitHub, as the sentence offers: the next poll rebuilds B with it and B waits for the person's look (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    writeFileSync(join(dir, "notes.txt"), "my notes\n");
+    const g = asPerson(dir);
+    await g(["add", "notes.txt"]);
+    await g(["commit", "-q", "-m", "my notes"]);
+    await m.close(a.id);
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("owed_folder_commits");
+    // The person pushes the branch with their token, as the sentence offers.
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prFiles(prB)).toEqual(["notes.txt", m.fileOf("Add footer")].sort());
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("Forerunner's own unpushed base merge (a merge step cut short before its push) still rebuilds: it is not the person's commit (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    await pushToMain(m, "CHANGELOG.md", "# changes\n");
+    // What the merge step's update path leaves when it stops before its push.
+    const forerunner = new GitOps({ cwd: dir, identity, auth: { token: m.token } });
+    await forerunner.fetch();
+    expect(
+      (
+        await forerunner.mergeFrom("origin/main", `Merge main into ${branch}`, {
+          noFastForward: true,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(await forerunner.isAncestor("HEAD", `origin/${branch}`)).toBe(false);
+    await m.close(a.id);
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prCommits(prB)).not.toContain("Add page");
+  });
+
+  it("a rebuild whose push failed is rebuilt at the next poll: Forerunner's own unpushed rebuild is not the person's commit (W15-02)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    // The rebuild runs and stops before its push (the push refused, the network gone).
+    const cut = await m.executor.rebuildTask(await m.w.store.task.mustGet(b.id), {
+      beforePush: async () => {
+        throw new Error("the push did not go through");
+      },
+    });
+    expect(cut.result).toBe("failed");
+    expect(await m.prCommits(prB)).toContain("Add page");
+    await m.poll();
+    const after = await m.record(b.id);
+    expect(after).toMatchObject({ rebuild_owed_for: null, last_outcome: "rebuilt_without" });
+    expect(await m.prCommits(prB)).toEqual(["Add footer"]);
+  });
+
+  /**
+   * The fix-up of the review: the rebuild read the branch as GitHub had it, with the person's
+   * pushed commit in it, as the reviewed change (its own change was the same before and after
+   * the rebuild), moved the record's reviewed head onto it, offered Merge under "Reviewed by the
+   * critic" and let a kept Merge merge the commit nobody reviewed (bench J3, J4).
+   */
+  const changedAfterReview = (pr: number) =>
+    `#${pr} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
+
+  it("the person's commit pushed to GitHub, as the sentence offers, with A squash-merged: the rebuild keeps it, but B is not taken as reviewed; it waits for the person's look with no Merge and nothing merges it (W15-02 fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    const reviewed = await m.record(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    writeFileSync(join(dir, "mine.txt"), "my own change\n");
+    const g = asPerson(dir);
+    await g(["add", "mine.txt"]);
+    await g(["commit", "-q", "-m", "My own change"]);
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("owed_folder_commits");
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    await m.poll();
+    // The rebuild ran with the commit: B holds its own change and the person's, onto main.
+    expect(await m.prFiles(prB)).toEqual(["mine.txt", m.fileOf("Add footer")].sort());
+    expect(await m.prCommits(prB)).not.toContain("Add page");
+    const after = await m.record(b.id);
+    // Before: reviewed_head_sha moved onto the new head, last_outcome "not_allowed", Merge.
+    expect(after).toMatchObject({
+      state: "left_to_you",
+      rebuild_owed_for: null,
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+      own_change_id: reviewed.own_change_id,
+    });
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      canMerge: false,
+      sentence: changedAfterReview(prB),
+    });
+    expect(row).toMatchObject({
+      label: "Accepted · changed after the review",
+      detail: changedAfterReview(prB),
+    });
+    // The person's Merge on the app is refused with the same words; polls merge nothing.
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    expect(await prs.merge(project, prB, m.w.human)).toMatchObject({
+      state: "refused",
+      sentence: changedAfterReview(prB),
+    });
+    await m.poll();
+    await m.merge.retryWaiting();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.hostGit("ls-tree", "-r", "--name-only", "main")).not.toContain("mine.txt");
+  });
+
+  it("Merge pressed during the commit wait, then the commit pushed: the kept press is not carried over to work the review did not read; nothing merges #B, and one card says it changed after the review (W15-02, W15-05 fix-up)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    const reviewed = await m.record(b.id);
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    writeFileSync(join(dir, "mine.txt"), "my own change\n");
+    const g = asPerson(dir);
+    await g(["add", "mine.txt"]);
+    await g(["commit", "-q", "-m", "My own change"]);
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    const waitsForCommit = `#${prB} waits for a commit made in its task's folder: push it to GitHub or undo it.`;
+    expect(await prs.merge(project, prB, m.w.human)).toMatchObject({
+      state: "queued",
+      sentence: waitsForCommit,
+    });
+    await prs.idle();
+    expect(await m.record(b.id)).toMatchObject({ state: "queued", approval: "person" });
+    await new GitOps({ cwd: dir, auth: { token: m.token } }).push(branch);
+    await m.poll();
+    await m.poll();
+    await m.merge.retryWaiting();
+    await m.host.settle();
+    // Before: Forerunner merged #B by itself, and mine.txt (never reviewed) reached main.
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.hostGit("ls-tree", "-r", "--name-only", "main")).not.toContain("mine.txt");
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      approval: "none",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+    });
+    const cards = await m.cards(b.id);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.body).toContain(changedAfterReview(prB));
+  });
+
+  it("a commit pushed to B's branch on GitHub before A is squash-merged: the rebuild does not take it as reviewed either (W15-02 fix-up, sibling)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prA = await m.prNumber(a.id);
+    const prB = await m.prNumber(b.id);
+    const reviewed = await m.record(b.id);
+    const branch = (await m.w.store.task.mustGet(b.id)).branch ?? "";
+    // Someone pushes a commit to B's branch on GitHub (not from the task's folder).
+    const elsewhere = mkdtempSync(join(tmpdir(), "fr-w15-push-"));
+    try {
+      await run(["git", "clone", "-q", "--branch", branch, m.hostDir, elsewhere]);
+      writeFileSync(join(elsewhere, "theirs.txt"), "their change\n");
+      const g = asPerson(elsewhere);
+      await g(["add", "theirs.txt"]);
+      await g(["commit", "-q", "-m", "Their change"]);
+      await g(["push", "-q", "origin", `HEAD:${branch}`]);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    expect(await m.prFiles(prB)).toEqual(["theirs.txt", m.fileOf("Add footer")].sort());
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+    });
+    const { waiting } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge?.canMerge).toBe(false);
+  });
+});
+
+describe("w15-merge, wave 15: a chain with a busy middle (W15-03)", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  const screens = async (m: ChainWorld, taskId: string) => {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    const task = await m.w.store.task.mustGet(taskId);
+    return { waiting: view.waiting, row: taskDisplay(task, ctx) };
+  };
+
+  it("a chain of three whose middle changes the first one's file and whose folder is busy when the first is squash-merged: the third gets no false conflict and waits as owed; once the middle is free, both are rebuilt cleanly, with no card, and merge in order (live check 2, F1)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const v1 = "<ul>\n<li>Spring</li>\n<li>Night</li>\n</ul>\n";
+    const v2 = "<ul>\n<li>Spring</li>\n<li>Night</li>\n<li>Autumn</li>\n</ul>\n";
+    m.writes.set("Write events", { "src/events.html": v1 });
+    const a = await m.runTask("Write events");
+    m.writes.set("Add a third event", { "src/events.html": v2 });
+    const b = await m.runTask("Add a third event", { dependsOn: [a.id] });
+    m.writes.set("Link events", { "src/index.html": '<a href="events.html">Events</a>\n' });
+    const c = await m.runTask("Link events", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.poll();
+    // B's folder is busy: something left in it nobody committed.
+    const scratch = join(m.worktreeRoot, safeSegment(b.id), "scratch.txt");
+    writeFileSync(scratch, "trying something\n");
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    // Before: C was rebuilt onto B's old head merged into main (A's events.html twice, an
+    // add/add conflict): a rebuild_conflict card and sentence, no Merge, for a conflict that
+    // was not there.
+    expect(await m.cards(c.id)).toEqual([]);
+    const owed = await m.record(c.id);
+    expect(owed.rebuild_owed_for).toBe(a.id);
+    expect(owed.last_outcome).not.toBe("rebuild_conflict");
+    const during = await screens(m, c.id);
+    expect(during.waiting.find((w) => w.number === prC)?.merge?.sentence ?? "").not.toMatch(
+      /could not be rebuilt|conflicts/,
+    );
+    expect(during.row.label).not.toMatch(/conflict/i);
+    // The person's Merge on C waits (it owes a rebuild): nothing merges.
+    expect((await m.mergeByPerson(c.id)).status).not.toBe("merged");
+    expect((await m.pr(c.id)).merged).toBe(false);
+
+    // The folder is free again: the next poll rebuilds B, then C onto B's new head.
+    rmSync(scratch);
+    await m.poll();
+    expect(await m.prCommits(prB)).toEqual(["Add a third event"]);
+    expect(await m.prCommits(prC)).not.toContain("Write events");
+    expect(await m.prFiles(prC)).toEqual(["src/events.html", "src/index.html"]);
+    expect(await m.cards(c.id)).toEqual([]);
+    for (const t of [b, c]) {
+      const r = await m.record(t.id);
+      expect(r.rebuild_owed_for, t.title).toBeNull();
+      expect(r.last_outcome, t.title).not.toBe("rebuild_conflict");
+      expect(r.reviewed_head_sha, t.title).toBe((await m.pr(t.id)).head.sha);
+    }
+    const after = await screens(m, c.id);
+    expect(after.waiting.find((w) => w.number === prC)?.merge).toMatchObject({ canMerge: true });
+    expect(after.row.label).toBe("Accepted · waiting for you to merge");
+    // B then C merge, each change once on main.
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+    await m.poll();
+    const last = await m.mergeByPerson(c.id);
+    expect(last.status).toBe("merged");
+    expect(await m.hostGit("show", "main:src/events.html")).toBe(v2.trimEnd());
+  });
+
+  it("a stale rebuild_conflict record is cleared by a clean rebuild with the same own change: its sentence and card go, Merge is offered again (W15-03)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    // What an earlier pass left: B's record and card say its rebuild conflicted.
+    const sentence = `#${prB} could not be rebuilt without #1, which was merged: both change src/add-page.ts. It waits for you: redo the task, or resolve it on GitHub.`;
+    const stale = await m.record(b.id);
+    await m.w.store.mergeRecord.move(stale.id, "left_to_you", {
+      sentence,
+      last_outcome: "rebuild_conflict",
+    });
+    await fileLeftOpenRequest(m.w.store, {
+      task: await m.w.store.task.mustGet(b.id),
+      sessionId: null,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      outcome: {
+        taskId: b.id,
+        prUrl: (await m.w.store.task.mustGet(b.id)).pr_url ?? "",
+        status: "conflict",
+        reason: `PR left open for you: ${sentence}`,
+        sentence,
+      },
+      card: { rebuild: "conflict", without: [1] },
+      options: [...REBUILD_CARD_OPTIONS.conflict],
+    });
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // A is squash-merged: B's rebuild onto main is clean, with the same own change.
+    await m.github.mergePullRequest(REPO, await m.prNumber(a.id), { method: "squash" });
+    await m.poll();
+    const r = await m.record(b.id);
+    expect(r.last_outcome).not.toBe("rebuild_conflict");
+    expect(r.sentence).not.toContain("could not be rebuilt");
+    expect(await m.cards(b.id)).toEqual([]);
+    const { waiting } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({ canMerge: true });
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+  });
+});
+
+describe("w15-merge, wave 15: the Tasks tab's Redo on a task with a conflict notice (W15-04)", {
+  timeout: 240_000,
+}, () => {
+  /** A runs and its pull request merges; B, on the same lines, then conflicts with main. */
+  async function conflictingPair() {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    return { m, a, b, prB: await m.prNumber(b.id) };
+  }
+  /** The Tasks tab's Redo: `task.reopen` with source "ui", as the row's button sends it. */
+  const tasksRowRedo = async (m: Awaited<ReturnType<typeof chainWorld>>, taskId: string) =>
+    taskReopen.run(
+      { task: taskId } as never,
+      {
+        store: m.w.store,
+        clock: m.w.clock,
+        humanId: m.w.human,
+        actor: { kind: "human", id: m.w.human },
+        source: "ui",
+        ports: {},
+      } as never,
+    );
+  const openCards = async (m: Awaited<ReturnType<typeof chainWorld>>, taskId: string) =>
+    m.w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
+
+  it("Redo on the Tasks row answers the open conflict card as its own Redo does: one card at most at every step, the run starts from main (no rebase-conflict card), and once the task is done again with its PR mergeable, two polls leave no conflict card open (live check 2, F3)", async () => {
+    const { m, b, prB } = await conflictingPair();
+    await m.poll();
+    expect(await openCards(m, b.id)).toHaveLength(1);
+    const sessionsBefore = (await m.w.store.session.list({} as never)).length;
+    const moved = (await tasksRowRedo(m, b.id)) as { sentence: string };
+    expect(moved.sentence).toBeTruthy();
+    // The card is answered "redone" now; nothing more is open, and no session started.
+    expect(await openCards(m, b.id)).toEqual([]);
+    expect((await m.w.store.session.list({} as never)).length).toBe(sessionsBefore);
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("ready");
+    // The next session does the task again from main: no rebase conflict, one PR, done.
+    const ready = await m.w.store.task.mustGet(b.id);
+    await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
+    await m.session();
+    const again = await m.w.store.task.mustGet(b.id);
+    expect(again.status).toBe("done");
+    const cards = await openCards(m, b.id);
+    expect(
+      cards.filter((r) => (r.change_card as { key?: string } | null)?.key === REBASE_CONFLICT_KEY),
+    ).toEqual([]);
+    expect(cards.length).toBeLessThanOrEqual(1);
+    expect(await m.prNumber(b.id)).toBe(prB);
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    await m.poll();
+    await m.poll();
+    expect(
+      (await openCards(m, b.id)).filter(
+        (r) => (r.change_card as { notice?: string } | null)?.notice === "conflict",
+      ),
+    ).toEqual([]);
+    expect((await m.mergeByPerson(b.id)).status).toBe("merged");
+  });
+
+  it("the Tasks row's Redo says the card closed and the task is done again from main; its Undo puts the task back to done and opens the same card again, without the Redo's mark; polls leave that one card open (W15-04 fix-up)", async () => {
+    const { m, b, prB } = await conflictingPair();
+    await m.poll();
+    const [notice] = await openCards(m, b.id);
+    expect(notice).toBeDefined();
+    const moved = (await tasksRowRedo(m, b.id)) as {
+      sentence: string;
+      before: unknown;
+      after: { withdrawn_requests?: string[] };
+    };
+    // Before: 'Reopened "Write the other page" to redo it: the next session works on it again.'
+    // with nothing about the card it closed, and the change did not record the card.
+    expect(moved.sentence).toBe(
+      'Reopened "Write the other page" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.',
+    );
+    expect(moved.after.withdrawn_requests).toEqual([notice?.id]);
+    expect(await openCards(m, b.id)).toEqual([]);
+    const ctx = {
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      actor: { kind: "human", id: m.w.human },
+      source: "ui",
+      ports: {},
+    } as never;
+    expect(
+      await taskReopen.undoBlocked?.({} as never, moved.before as never, moved.after as never, ctx),
+    ).toBeNull();
+    await taskReopen.undo?.({} as never, moved.before as never, moved.after as never, ctx);
+    expect(
+      taskReopen.undoSentence?.({} as never, moved.before as never, moved.after as never),
+    ).toBe('Undone: the task "Write the other page" is done again; its card is back in the Inbox.');
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("done");
+    // Before: the card stayed withdrawn for good (answered "redone", redo_from_base set), and the
+    // conflict notice is said once, so it never came back.
+    const again = await openCards(m, b.id);
+    expect(again.map((r) => r.id)).toEqual([notice?.id]);
+    const card = again[0]?.change_card as Record<string, unknown>;
+    expect(card[REDO_FROM_BASE]).toBeUndefined();
+    expect(card.outcome).toBeUndefined();
+    expect(card.applied_at).toBeUndefined();
+    expect(card).toMatchObject({ key: MERGE_CARD_KEY, notice: "conflict" });
+    await m.poll();
+    await m.poll();
+    expect((await openCards(m, b.id)).map((r) => r.id)).toEqual([notice?.id]);
+    expect(await m.record(b.id)).toMatchObject({ last_outcome: "conflict" });
+    expect(await m.prNumber(b.id)).toBe(prB);
+  });
+
+  it("the command registry spells a merge card's key and its Redo's mark as the merge step does (W15-04)", () => {
+    expect(MERGE_CARD_KEY).toBe(MERGE_LEFT_OPEN_KEY);
+    expect(REDO_FROM_BASE).toBe(REDO_FROM_BASE_FIELD);
+  });
+
+  it("a conflict notice whose record moved on (a new review of the task) is withdrawn once the pull request merges cleanly again (W15-04)", async () => {
+    const { m, b } = await conflictingPair();
+    await m.poll();
+    const [notice] = await openCards(m, b.id);
+    expect((notice?.change_card as { notice?: string } | null)?.notice).toBe("conflict");
+    // The record moved on without the notice being answered (a new accept of the task).
+    const record = await m.record(b.id);
+    await m.w.store.mergeRecord.move(record.id, "left_to_you", {
+      last_outcome: "not_allowed",
+      sentence: `#${record.pr_number} waits for you to merge it: press Merge on the Overview.`,
+    });
+    // main put back as it was: the pull request merges cleanly again.
+    await m.hostGit("update-ref", "refs/heads/main", "HEAD~1");
+    await m.poll();
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    expect(await openCards(m, b.id)).toEqual([]);
+  });
+});
+
+describe("w15-merge, wave 15: a merge GitHub does not answer (W15-68)", {
+  timeout: 240_000,
+}, () => {
+  it("the person's Merge whose call to GitHub gets no answer waits saying GitHub has not answered, not its checks; the Tasks row says the same", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const pr = await m.prNumber(a.id);
+    // GitHub stops answering while the merge call is on its way.
+    const held = m.hold("mergePullRequest");
+    const pressed = m.merge
+      .mergeRecorded(await m.record(a.id), { kind: "person", humanId: m.w.human })
+      .catch((e: unknown) => e);
+    await held.reached;
+    await m.host.stop();
+    held.release();
+    await pressed;
+    const r = await m.record(a.id);
+    expect(r).toMatchObject({
+      state: "waiting_checks",
+      last_outcome: "unreachable",
+      sentence: `GitHub did not answer about #${pr}: Forerunner tries the merge again.`,
+    });
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    expect(taskDisplay(await m.w.store.task.mustGet(a.id), ctx)).toMatchObject({
+      label: "Accepted · merges once GitHub answers",
+      detail: `GitHub did not answer about #${pr}: Forerunner tries the merge again.`,
+    });
+  });
+});
+
+describe("w15-merge, wave 15: GitHub works out mergeability lazily (W15-07)", {
+  timeout: 240_000,
+}, () => {
+  it("with GitHub answering null at the first read after a change, one poll after another merge says the conflict (one card, no Merge, the Tasks row too), and one poll after main is put back takes it away; the re-read stays within about 15 s", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
+    m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
+    const a = await m.runTask("Write the page");
+    const b = await m.runTask("Write the other page");
+    const prB = await m.prNumber(b.id);
+    await m.poll();
+    // As GitHub does: the first read after a change answers mergeable null.
+    m.host.ops.lazyMergeability = true;
+    expect((await m.mergeByPerson(a.id)).status).toBe("merged");
+    const started = Date.now();
+    await m.poll();
+    expect(Date.now() - started).toBeLessThan(20_000);
+    // Before: the poll read null and dropped it; the notice came one poll (a minute) later.
+    expect(await m.cards(b.id)).toHaveLength(1);
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    expect(view.waiting.find((w) => w.number === prB)?.merge?.canMerge).toBe(false);
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, null);
+    expect(taskDisplay(await m.w.store.task.mustGet(b.id), ctx).label).toBe(
+      "Accepted · conflicts with main",
+    );
+    // main put back as it was: the next poll takes the notice back.
+    await m.hostGit("update-ref", "refs/heads/main", "HEAD~1");
+    await m.poll();
+    expect(await m.cards(b.id)).toEqual([]);
   });
 });

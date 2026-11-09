@@ -3,6 +3,7 @@ import {
   type BranchRules,
   type CheckRunInfo,
   type CommitStatusInfo,
+  folderHold,
   type GitHost,
   type GitIdentity,
   GitOps,
@@ -41,10 +42,12 @@ import { approvalKeyFor, type EnforcementHooks, type RunContext } from "../enfor
 import type { AuditPort } from "../enforcement/ports.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import {
+  folderWaitOver,
   MERGE_MODE_WORDS,
   mergeModeOf,
-  OWED_FOLDER_CHANGES,
-  owedFolderSentence,
+  OWED_FOLDER_OUTCOMES,
+  owedFolderWait,
+  owedMergeWait,
 } from "./merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports.ts";
 
@@ -413,6 +416,8 @@ async function mergeChecked(
         cwd: worktree,
         ...(auth ? { auth } : {}),
         ...(deps.identity ? { identity: deps.identity } : {}),
+        // W15-10: git's words are read (must()'s credential prompt): English in any locale.
+        untranslated: true,
         // merged-copy (ADR 0113): bringing the base in never uploads Local only or a try folder.
         neverPush: NEVER_PUSHED,
       });
@@ -588,7 +593,7 @@ async function conflictsIn(
   try {
     const token = await resolveGitToken(deps.token);
     const auth = token ? gitAuthFor(token, (await deps.host.getRepo(repo)).cloneUrl) : undefined;
-    const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+    const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}), untranslated: true });
     // R-lock: never in the middle of a rebuild of the same folder.
     return await inWorktree(worktree, async () => {
       await git.fetch();
@@ -624,7 +629,7 @@ function hostRefused(name: string, message: string): Omit<MergePrArtifacts, "upd
     return {
       status: "head_moved",
       message: `the host refused the merge: ${said}`,
-      sentence: `${name} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+      sentence: headMovedWords(name),
     };
   return {
     status: "failed",
@@ -635,19 +640,28 @@ function hostRefused(name: string, message: string): Omit<MergePrArtifacts, "upd
 
 /**
  * The record's sentence for a pull request whose head is not the reviewed commit (ADR 0111):
- * "#8 changed after the review: look at the new commits, then merge it yourself or send it
- * back." The Overview offers no Merge for it (`head_moved`). Also the conflict notice's, once
+ * "#8 changed after the review: look at the new commits, then merge it yourself or redo the
+ * task." The Overview offers no Merge for it (`head_moved`). Also the conflict notice's, once
  * the person resolved the conflict on GitHub with a commit of their own (dependent-branches).
  */
 export function headMovedSentence(pr: number): string {
-  return `${prName(pr)} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+  return headMovedWords(prName(pr));
+}
+
+/**
+ * W15-63: the head-moved sentence in one place, offering only what there is to do: merge it on
+ * GitHub, or Redo (its card's and the Tasks row's); before, "or send it back", which no button
+ * did (live check 2, F10).
+ */
+function headMovedWords(name: string): string {
+  return `${name} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
 }
 
 function headMoved(name: string, now: string, reviewed: string): MergePrArtifacts {
   return {
     status: "head_moved",
     message: `the PR head ${short(now)} is not the reviewed commit ${short(reviewed)}`,
-    sentence: `${name} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+    sentence: headMovedWords(name),
     headSha: now,
     updated: false,
   };
@@ -913,7 +927,7 @@ export class ReviewedPrMerge implements MergePort {
       let reviewedBase: string | null = null;
       let ownChange: string | null = null;
       if (worktree) {
-        const git = new GitOps({ cwd: worktree });
+        const git = new GitOps({ cwd: worktree, untranslated: true });
         try {
           // R-lock: read between steps in the folder, never in the middle of a rebuild there.
           await inWorktree(worktree, async () => {
@@ -1170,7 +1184,11 @@ export class ReviewedPrMerge implements MergePort {
         await store.mergeRecord.move(record.id, "queued", {
           approval: "person",
           approved_by: humanId,
-          sentence: `${prName(record.pr_number)} merges now: you pressed Merge.`,
+          // W15-05: a merge that waits for what is left in its task's folder keeps saying so;
+          // the approval is kept and the merge goes on once the folder is clean.
+          sentence:
+            owedMergeWait({ ...record, state: "queued" }) ??
+            `${prName(record.pr_number)} merges now: you pressed Merge.`,
         }),
       );
     }
@@ -1372,7 +1390,7 @@ export class ReviewedPrMerge implements MergePort {
       if (record.rebuild_owed_for) {
         // TM-4: when the rebuild cannot run because the task's folder holds changes nobody
         // committed, the record says so (the rows read it); the merge still waits.
-        return this.outcomeOf(await this.sayOwedWait(record, worktree), "checks_pending");
+        return this.outcomeOf(await this.sayOwedWait(record, task, worktree), "checks_pending");
       }
       const claimed = await store.mergeRecord.claim(record);
       // Another process took it between the read and now: that one merges it.
@@ -1425,10 +1443,17 @@ export class ReviewedPrMerge implements MergePort {
       // the record waiting as it was (never `merging` for good), and the retry tries it again
       // once work may run.
       const now = await store.mergeRecord.get(record.id).catch(() => undefined);
+      // W15-68: GitHub not answering is said as such, in the merge tool's words (the row and the
+      // Tasks label read it); before, it read "merges when its checks pass" whatever stopped it.
+      const unreachable =
+        e instanceof ForerunnerError && e.code === "provider_error" && e.retryable === true;
       if (now?.state === "merging")
         await store.mergeRecord
           .move(record.id, "waiting_checks", {
-            sentence: `${prName(record.pr_number)} merges when its checks pass.`,
+            sentence: unreachable
+              ? `GitHub did not answer about ${prName(record.pr_number)}: Forerunner tries the merge again.`
+              : `${prName(record.pr_number)} merges when its checks pass.`,
+            ...(unreachable ? { last_outcome: "unreachable" } : {}),
           })
           .catch(() => undefined);
       throw e;
@@ -1607,7 +1632,7 @@ export class ReviewedPrMerge implements MergePort {
           const token = await resolveGitToken(this.deps.token);
           const repo = await host.getRepo(ref.repo);
           const auth = token ? gitAuthFor(token, repo.cloneUrl) : undefined;
-          const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+          const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}), untranslated: true });
           const reviewed = record.reviewed_head_sha;
           // R-lock: never in the middle of a rebuild of the same folder.
           return await inWorktree(worktree, async () => {
@@ -1677,7 +1702,7 @@ export class ReviewedPrMerge implements MergePort {
       const ref = parsePullUrl(record.pr_url);
       const repo = ref ? await this.deps.host.getRepo(ref.repo) : null;
       const auth = token && repo ? gitAuthFor(token, repo.cloneUrl) : undefined;
-      const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}) });
+      const git = new GitOps({ cwd: worktree, ...(auth ? { auth } : {}), untranslated: true });
       // R-lock: never in the middle of a rebuild of the same folder.
       return await inWorktree(worktree, async () => {
         await git.fetch();
@@ -1886,32 +1911,38 @@ export class ReviewedPrMerge implements MergePort {
 
   /**
    * TM-4: a merge that waits for a rebuild its branch owes says why when the task's folder
-   * holds changes nobody committed (the rebuild never sweeps them in, so it waits until the
-   * person puts them away): `OWED_FOLDER_CHANGES` with `owedFolderSentence`. A folder that is
+   * holds what the rebuild never runs over (`folderHold`): changes nobody committed, or a commit
+   * GitHub's branch does not have (W15-02), with `owedFolderWait`'s words. A folder that is
    * clean again takes the words back; a busy one (a run, a rebuild) leaves them as they are.
    * Nothing here lets the merge go on: the record still owes the rebuild (R-lock).
    */
   private async sayOwedWait(
     record: MergeRecordRow,
+    task: TaskRow,
     worktree: string | null,
   ): Promise<MergeRecordRow> {
-    if (!worktree) return record;
+    if (!worktree || !task.branch) return record;
+    const branch = task.branch;
     try {
-      const dirty = await tryWorktree(
-        worktree,
-        async () => (await new GitOps({ cwd: worktree }).status()).dirty,
-      );
-      if (dirty === null) return record;
-      if (dirty && record.last_outcome !== OWED_FOLDER_CHANGES)
-        return await this.deps.store.mergeRecord.move(record.id, record.state, {
-          last_outcome: OWED_FOLDER_CHANGES,
-          sentence: owedFolderSentence(record.pr_number),
-        });
-      if (!dirty && record.last_outcome === OWED_FOLDER_CHANGES)
-        return await this.deps.store.mergeRecord.move(record.id, record.state, {
-          last_outcome: "rebuild_owed",
-          sentence: "",
-        });
+      const held = await tryWorktree(worktree, async () => {
+        const git = new GitOps({ cwd: worktree, untranslated: true });
+        const base = await git.remoteDefaultBranch().catch(() => "main");
+        return (await folderHold(git, branch, base)) ?? "none";
+      });
+      if (held === null) return record;
+      const said = OWED_FOLDER_OUTCOMES.has(record.last_outcome ?? "");
+      if (held !== "none") {
+        const wait = owedFolderWait(record.pr_number, held);
+        if (record.last_outcome === wait.last_outcome && record.sentence === wait.sentence)
+          return record;
+        return await this.deps.store.mergeRecord.move(record.id, record.state, wait);
+      }
+      if (said)
+        return await this.deps.store.mergeRecord.move(
+          record.id,
+          record.state,
+          folderWaitOver(record),
+        );
     } catch (e) {
       this.logger.warn("task folder not read for an owed rebuild", {
         taskId: record.task_id,
@@ -1921,7 +1952,23 @@ export class ReviewedPrMerge implements MergePort {
     return record;
   }
 
-  private worktreeOf(task: TaskRow): string | null {
+  /**
+   * W15-05: what a task's merge that owes a rebuild waits for in its folder, looked at now (the
+   * person's Merge asks it before its answer, so a wait no poll has seen yet is said too), and
+   * written on the record as `sayOwedWait` does; null when it does not wait for its folder.
+   */
+  async folderWaitNow(task: TaskRow): Promise<string | null> {
+    const record = await this.deps.store.mergeRecord.forTask(task.id);
+    if (!record?.rebuild_owed_for || record.state === "merged" || record.state === "merging")
+      return null;
+    return owedMergeWait(await this.sayOwedWait(record, task, this.worktreeOf(task)));
+  }
+
+  /**
+   * The task's folder on this computer (its worktree under the worktree root), or null when it
+   * has none; the Overview's row names it while the merge waits for what is left in it (W15-05).
+   */
+  worktreeOf(task: Pick<TaskRow, "id">): string | null {
     if (!this.deps.worktreeRoot) return null;
     const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
     return existsSync(join(dir, ".git")) ? dir : null;

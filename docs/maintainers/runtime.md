@@ -3194,6 +3194,15 @@ reads by the project's merge mode (`TaskDisplayContext.mergeMode`, from `loadTas
 "Accepted · merging" in "Merge automatically after review", as the Overview's row says (`merging`),
 and "Accepted · waiting for you to merge" otherwise (R-queuedwords, leftovers7-merge: before, every
 mode read "waiting for you", although the retry merges it by itself). A record left to the person
+whose `last_outcome` says more than the plain wait reads it in its own label, as its Overview row
+says it (W15-55, design §2: one map; `LEFT_TO_YOU_LABELS`; before, every one read "waiting for you
+to merge"): `closed` "Accepted · pull request closed", `rebuild_conflict` "Accepted · could not be
+rebuilt", `head_moved` "Accepted · changed after the review", `rebuilt_without` and
+`rebuilt_changed` "Accepted · rebuilt: look before you merge", `checks_failed` "Accepted · a check
+failed", `blocked_by_rules` and `merge_commits_off` "Accepted · merge it on GitHub", each warn
+tone with the record's sentence as its detail; a merge waiting because GitHub did not answer
+(`waiting_checks` with `last_outcome` `unreachable`, also when the call threw after the claim)
+reads "Accepted · merges once GitHub answers" (W15-68: before, "merges when its checks pass"). One
 whose `last_outcome` is `conflict` (the conflict notice, or the merge step's own conflict) reads
 "Accepted · conflicts with main" (the base named in its sentence, "trunk" included), warn tone,
 the record's sentence ("#3 conflicts with main in README.md: resolve the conflict on GitHub, or
@@ -3320,7 +3329,12 @@ no longer done (redone, cancelled) from the done tasks waiting for it (store rea
 only, unless a rebuild is due). **Owed rebuilds survive a restart** (R-owed, leftovers7-merge2):
 `rebuildFor` marks each done dependent's merge record (`merge_record.rebuild_owed_for`, migration
 0008, `MergeRecordRepo.oweRebuild` / `owedRebuilds`) before the rebuild starts, and settles it from
-the outcome: `busy`/`held`/`failed` stays owed, a rebuild or a conflict read every dependency the
+the outcome: `busy`/`held`/`failed`/`waits` stays owed (`waits`, W15-03: a task after one in a
+chain that could not be rebuilt cleanly in the pass is not rebuilt onto its old head), a
+rebuild conflict already said in the same words files no second card, and a clean rebuild
+with the same own change ends a stale `rebuild_conflict` (the record waits for the person's
+Merge again, `folderWaitOver`, and its rebuild card is withdrawn,
+`closeRebuildConflictCard`); a rebuild or a conflict read every dependency the
 branch holds and clears it, "unchanged" clears only what was owed for this dependency (a record
 that owes one keeps it when a second dependency changes). `sweep` reads the owed records at every
 poll, also the first after a restart (A merged and known by then, so nothing else would catch B),
@@ -3340,13 +3354,46 @@ next check rebuilds the branch and the record says what came of it: a rebuild wi
 dependency waits for the person again), or a redo (its run sets them aside, as a cut-short
 run's, and does the task again; the critic reviews it and the record waits for the person's
 Merge again). Never "commit them": the rebuild starts from the branch as GitHub has it
-(`rebuildIn`'s `createBranch(branch, origin/<branch>)`), so such a commit would end on no branch.
+(`rebuildIn`'s `createBranch(branch, origin/<branch>)`). **A commit the person made there anyway
+is never dropped** (W15-02): `folderHold` (capabilities) holds the rebuild for a commit on the
+task's branch that GitHub's branch lacks and that is not Forerunner's own unpushed step (a base
+merge the merge step made before its push, `unpushedBaseMerge`'s shape; work-in-progress commits;
+its own rebuild cut short, put back first), and the outcome's `held` says which (`changes` or
+`commits`). **A rebuild never makes work the review did not read reviewed** (W15-02 fix-up; the
+review found the person's pushed commit taken as reviewed and merged by a kept Merge):
+`settleRecord` follows a clean same-own-change rebuild with the record only when the branch, as
+GitHub had it before the rebuild, held the reviewed change (`reviewedChangeBefore`: its own
+change equals the record's `own_change_id`, as `ReviewedPrMerge.keepsOwnChange` reads it, or,
+with none, its head is `reviewed_head_sha`; a rebuild whose push failed moved the record to its
+own head and change, so it still rebuilds). Otherwise `changedAfterReview` leaves the record at
+the reviewed commit, `left_to_you` with `head_moved` and `headMovedSentence` (no Merge on the
+Overview), drops a kept approval (`approval: "none"`), and one card says it: the open merge card
+takes the words, and a new one is filed only when the record was not already waiting for the
+person's Merge (as the merge step's `settle`). **The wait is written at the poll** (W15-05): `DependentBranches.sayFolderWait`
+writes `owedFolderWait(pr, held)` (`owed_folder_changes` with `owedFolderSentence`, or
+`owed_folder_commits` with `owedCommitSentence`: "#8 waits for a commit made in its task's
+folder: push it to GitHub or undo it.") on the record at the poll that finds it, on a queued
+record and on one that waits for the person's Merge with nothing more to say
+(`plainWaitForYou`), so the rows say it before any press; `folderWaitOver` gives a waiting
+record its plain words back ("#8 waits for you to merge it: press Merge on the Overview.") once
+the folder is clean or the rebuild ran, a queued one `rebuild_owed`. `sayOwedWait` reads the
+folder with the same `folderHold`. **The press on such a row** (W15-05, live check 2 F4: "Merging #23." while nothing could merge): `ProjectPullRequests.merge` looks at the folder now (`ReviewedPrMerge.folderWaitNow`, which writes the wait as `sayOwedWait` does), approves the chain as before, and answers with the first wait in the order instead of "Merging #N."; a row whose record waits so offers no Merge but still takes a press (a screen older than the poll), except a row the branch's rules block, whose press is refused with the rule's words, folder or not (the review of the fix: the folder's wait let the press past the rule and kept its approval), and `approveInOrder` keeps the wait's sentence on the record. The row names the folder (`folder` on `ProjectPullRequestView`, from `ReviewedPrMerge.worktreeOf`), shown with Open folder.
 `owedMergeWait(record)` reads it for the Overview's row (`pull-requests.ts` `owedWaitOf`:
 `waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
 and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the
 sentence). Before, the row read "Merging…" and the Tasks row "Accepted · merging" with no
-reason. The merge still waits (R-lock holds). **The conflict notice** (R-conflict):
-`pullRequestState` keeps what the poll read of each open task pull request; `sweep`, after the
+reason. The merge still waits (R-lock holds). W15-04: the Tasks tab's Redo answers a done task's
+open merge card with `redoneMergeCard` (`loop/merge-mode.ts`); `redoMarkOf` keeps what the card held
+in the fields the mark sets and `notRedoneMergeCard` puts them back when that Redo is undone
+(`task.reopen`, docs/maintainers/commands.md). A notice card whose record moved on (the
+task was redone and accepted again) is withdrawn by the conflict notice once the pull request
+merges cleanly (`closeStaleNotice`), and a notice that takes over an open card that is itself an
+earlier notice keeps that card's own earlier words, never notice words to restore. **The conflict notice** (R-conflict):
+`pullRequestState` keeps what the poll read of each open task pull request (W15-07: the watcher
+reads an open pull request whose `mergeable` is still null again after 1, 2, 4 and 8 s of real
+time, `MERGEABLE_REREAD_MS`, `mergeableRereadMs`, about 15 s at most, since GitHub works it out
+after the first read that follows a change; before, the null was dropped and a notice came and
+went one poll late, about two minutes live); `sweep`, after the
 poll's rebuilds (one rebuilt in the poll is dropped: what was read predates its new head), gives
 the notice for a done task whose record waits for the person (`left_to_you`, or `queued` with no
 approval) and whose pull request GitHub says does not merge (`mergeable === false`): the record
@@ -3369,7 +3416,7 @@ not the reviewed commit, and before, a conflict that went away on main left a re
 "changed after the review" with no Merge and without its warning. A head that moved since (the person resolved it on GitHub with a commit of their own) is not the
 reviewed version, so the record says what the merge step would (`last_outcome` `head_moved`,
 `headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
-then merge it yourself or send it back."), the Overview offers no Merge, and the open conflict
+then merge it yourself or redo the task."), the Overview offers no Merge, and the open conflict
 card takes those words (`notice` cleared, so it is titled as the merge step's left-open card; its
 options stay Redo and Leave it open; its Details become the head-moved steps, `leftOpenSteps`
 from `loop/merge.ts`, as an open card the notice takes over gets the conflict's). Before (the review's fix-up), the row offered Merge again and
@@ -3668,11 +3715,26 @@ holds the file, and the docs routes read `docs/status.md` from it first (`DocsRo
 the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
 status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
 `GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
-repository and the setting on it is committed as `docs: status after session <id>` on Forerunner's own status
-branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status"):
+repository and the setting on it is committed as `docs: status after the session started <time>` (W15-08: the
+session by its start time, `sessionWords`, never its id) on Forerunner's own status
+branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status",
+its body ending in the project's hidden mark `docsPrMarker`, `<!-- forerunner:pr project=<id> -->`):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is
 merged or closed the branch starts again from the default branch (pushed with a lease) and a
-new PR opens. It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
+new PR opens. `fr/status` is one branch per repository, so two projects on one repository share
+it (W15-01, live check 2: the second project's session pushed into and commented on the first
+one's open status PR, and its Overview listed it with Merge): `checkout`'s `ours` makes an open
+PR on the branch that is not this project's (`isProjectStatusPr`: its mark names another
+project, or it has no mark while another project of this install is linked to the repository,
+`soleLinkedProject`) the branch's for now, so nothing is pushed or commented and the status
+goes to the app folder (`statusInApp`) with one info line "status pull request not written:
+another project's status pull request is open", and a file there (`STATUS_HELD_MARK`, the
+review's fix-up: B's Docs tab read "not written yet" while the app kept it) makes
+`statusDocRoot` give the Docs tab that copy first, as with the setting off, after a restart too;
+the project's next status written to its own pull request (or kept in the app with the setting
+off) removes the file; the scaffold (`scaffoldInCopy`) skips another
+project's open `fr/docs-scaffold` PR the same way. No per-project branch and no second PR: two
+would change one `docs/status.md` (owner question W15-112). It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
 and the status commit pushed onto it after the review put a file the critic never saw into the
 reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
 in the same commit. Without a repository the file in the project's folder is updated and the
@@ -3686,9 +3748,11 @@ After each write the docs clone is back on the default branch (`backToBase`), so
 sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
 in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
 `fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
-project's (`isProjectDocsPr`, L-16: the status PR while its setting is on, the intake branch named
-for the project, a scaffold PR whose body ends "Forerunner project <id>." or that the project's
-scaffold wrote onto, `summary_cache.docs.pr_url`; an older body naming the project by name), the
+project's (`isProjectDocsPr`, L-16 and W15-01: the status PR while its setting is on and it is
+this project's, the intake branch named for the project, a status or scaffold PR whose hidden
+mark names it, a scaffold PR whose body ends "Forerunner project <id>." (before wave 15) or that
+the project's scaffold wrote onto, `summary_cache.docs.pr_url`; an unmarked one only while this
+is the one project of the install linked to the repository, `soleLinked`), the
 same filter `projectPullRequests` (`daemon/pull-requests.ts`) applies to the Overview's docs
 group, and the scaffold records another project's open scaffold PR it added nothing to as no PR
 of its own. The result is the
@@ -4254,7 +4318,17 @@ main ..." and "the rebuilt card's Redo also does the task again from main ..." (
 run; one own commit on main, the same pull request, no conflict card), and
 `rebuild-redo-restart.test.ts` (validation rule 4: the Redo answered, the daemon composed again
 on the same home before the run, and the run still starts from main). A left-open card already
-open for the task takes the rebuild's options with its sentence. An answer outside the options is recorded `unrecognized_answer` and
+open for the task takes the rebuild's options with its sentence. **The rebase-conflict card's
+answers** (W15-06, design §3.8; live check 2 F11): "I resolved it" and "Drop the branch and retry
+from scratch" make the task ready and start (or queue) a session through `resumeWork`, recorded
+on the card (`recordStart`, `change_card.start`), as every Inbox answer that makes a task runnable
+does; before, both left it Ready with no session. Cancel starts nothing. Its words are
+`rebaseConflictCard` in `daemon/request-words.ts` (key `REBASE_CONFLICT_CARD_KEY`, the same as
+`REBASE_CONFLICT_KEY`): the title '"Edit the readme" conflicts with main' ("still conflicts" for
+a second card), the body naming the files, a one-line explanation per option, the steps under
+Details, and a Done line from the outcome and the start ('"Edit the readme" goes on with your
+resolution: a session started.'); before, the title was the why cut mid-sentence and the Done line
+the echo. An answer outside the options is recorded `unrecognized_answer` and
 changes nothing. Tests: `pr-answers.test.ts` (a real rebase conflict on a local bare
 repository; each option clicked through `POST /requests/:id/answer` with the Inbox's strings,
 then the task's next run: the person's resolved branch opened as the PR after a restart with

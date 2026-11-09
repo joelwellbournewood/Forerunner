@@ -100,3 +100,64 @@ describe("the Overview's pull requests say why they are not listed, in words (C-
     expect(logged.join("\n")).toContain("ECONNRESET");
   });
 });
+
+describe("w15-merge, wave 15", () => {
+  it("a press on a row whose branch rules block the merge is refused with the rule's words, also while its record waits for the task's folder (W15-05 fix-up)", async () => {
+    // The review: the folder's wait let the press past the rule's refusal (the approval was
+    // kept and the answer was the folder's sentence), and the merge step met the rule later.
+    const { w, project } = await world();
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "app" };
+    await host.createRepo({ ...repo, private: true });
+    const pr = await host.createPullRequest(repo, {
+      title: "Add the footer",
+      body: "",
+      head: "fr/footer",
+      base: "main",
+    });
+    host.setBranchRules(repo, "main", { requiredApprovals: 1 });
+    const dep = await w.addTask("Add the page");
+    const added = await w.addTask("Add the footer");
+    await w.store.task.restoreStatus(added.id, added.version, "done", "accepted", {
+      agentId: w.alice,
+    });
+    await w.store.task.patch(added.id, { branch: "fr/footer", pr_url: pr.htmlUrl });
+    const pinned = await w.store.mergeRecord.pin({
+      task_id: added.id,
+      project_id: w.project,
+      agent_id: w.alice,
+      pr_number: pr.number,
+      pr_url: pr.htmlUrl,
+      reviewed_head_sha: pr.head.sha,
+      author_agent: w.alice,
+    });
+    await w.store.mergeRecord.move(pinned.id, "left_to_you", {
+      last_outcome: "owed_folder_changes",
+      sentence: `#${pr.number} waits for changes left in its task's folder: take them out or redo the task.`,
+    });
+    await w.store.mergeRecord.oweRebuild(added.id, dep.id);
+    const approved: string[] = [];
+    const prs = new ProjectPullRequests({
+      store: w.store,
+      host,
+      merge: {
+        approveInOrder: async (chain) => {
+          approved.push(...chain.map((t) => t.id));
+          return [];
+        },
+        mergeApproved: async () => [],
+        mergeAsIs: async () => {
+          throw new Error("not a docs pull request");
+        },
+      },
+    });
+    const answer = await prs.merge(project, pr.number, w.human);
+    await prs.idle();
+    expect(answer).toMatchObject({
+      state: "refused",
+      sentence:
+        "This repository needs an approving review before merging, and GitHub does not let you approve your own pull request: merge it on GitHub once someone else approved it.",
+    });
+    expect(approved).toEqual([]);
+  });
+});

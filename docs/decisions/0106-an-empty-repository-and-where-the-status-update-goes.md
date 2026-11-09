@@ -109,3 +109,39 @@ commit of a repository it created for a project.
 - Keep the status update local (never pushed): `docs/status.md` would no longer be in the
   repository the spec (G.5) puts it in.
 - One status pull request per session: a PR to merge after every session.
+
+## Amendment: two projects on one repository (W15-01, 'w15-merge', 2026-11-09)
+
+Points 3 and 5 assumed one project per repository. Live check 2 linked two projects to one
+repository with **Status pull request** on for both: `fr/status` is one branch per repository,
+so the second project's session started from the first project's open status pull request,
+pushed its status into it, commented on it, and its Overview listed it with Merge.
+
+Until the owner answers W15-112 (whether two projects on one repository get a status pull
+request each), only the safety part is built:
+
+- Every status and scaffold pull request Forerunner opens ends its body with a hidden mark
+  naming its project, `<!-- forerunner:pr project=<id> -->` (an HTML comment: GitHub does not
+  show it; the same form carries a task pull request's task and session, W15-08). The visible
+  "Forerunner project <id>." line of the scaffold body is gone; it is still read for pull
+  requests an earlier version opened.
+- A project never pushes to, comments on or lists another project's status or scaffold pull
+  request. While another project's status pull request is open on `fr/status`, this project
+  opens none: its status stays in the app (as with the setting off) and the daemon log says why
+  in one line. With none open, the behaviour of point 3 is unchanged.
+- A status or scaffold pull request without a mark (an earlier version's, or one a person
+  opened on that branch) is a project's only while it is the one project on this install linked
+  to the repository; with two linked it is neither's. This fails closed.
+- No per-project branch and no second pull request: both would change one `docs/status.md`
+  and conflict on merge, which is the owner's question.
+
+## Amendment: the kept status shows on Docs (W15-01 fix-up, 'w15-merge', 2026-11-09)
+
+The review of the amendment above found that "its status stays in the app (as with the setting
+off)" was only half true: the status was written to the app's folder, but the Docs tab read
+`docs/status.md` from the app only with the setting off, so the second project's Docs tab said
+the status was not written yet. Now a project whose last status stayed in the app because
+another project's status pull request was open reads it there, as with the setting off, after a
+restart too (a file beside the status says so). Its next status written to its own pull request
+removes that file, and the Docs tab reads the repository's copy again. The Docs tab's note on
+that row still reads as with the setting off; its words are not changed in wave 15.

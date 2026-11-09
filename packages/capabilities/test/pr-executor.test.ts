@@ -11,11 +11,19 @@ import {
 import { tmpdir } from "node:os";
 import { join, run, SimulatedClock } from "@forerunner/platform";
 import { KillSwitch, SessionBudget, type TaskExecutor, TokenIssuer } from "@forerunner/runtime";
+import { requestViews } from "@forerunner/runtime/daemon/views";
+import { syncPrAnswers } from "@forerunner/runtime/session/pr-answers";
 import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { GitOps } from "../src/githost/git.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
-import { DEPS_BASE_REF, PrTaskExecutor } from "../src/githost/pr-executor.ts";
+import {
+  DEPS_BASE_REF,
+  emptiedSentence,
+  openedForAnotherTask,
+  PrTaskExecutor,
+  readForerunnerMarker,
+} from "../src/githost/pr-executor.ts";
 
 const identity = { name: "Forerunner", email: "agent@example.test" };
 
@@ -215,7 +223,7 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(1);
     expect(
       (await w.host.listPullRequestComments({ owner: "o", name: "sample" }, 1))[0]?.body,
-    ).toContain("Updated by session");
+    ).toContain("Updated in the session started "); // W15-08: by its start, never its id
     await w.store.close();
   });
 
@@ -1986,7 +1994,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     // Before: no commit, but an open pull request, so main's head was force-pushed to the branch
     // and the task went to review with an empty pull request that the app then offered for Merge.
     expect(redo.outcome, redo.summary).toBe("failed");
-    expect(redo.summary).toBe(`Redone from main, it changed nothing, so #${pr.number} was closed.`);
+    expect(redo.summary).toBe(`The redo from main changed nothing, so #${pr.number} was closed.`);
     expect(redo.prUrl).toBeUndefined();
     const after = await s.w.host.getPullRequest(s.repo, pr.number);
     expect([after.state, after.merged]).toEqual(["closed", false]);
@@ -2148,7 +2156,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     expect(await s.lines(["rev-parse", branch])).toEqual(held);
     const said = await s.w.host.listPullRequestComments(s.repo, pr.number);
     expect(said.map((c) => c.body.split(/\r?\n/)[0])).toEqual([
-      "Brought up to date with main, this task's work no longer changes anything, so this pull request is closed. Its branch is kept.",
+      "This task's work no longer changes anything on main, so this pull request is closed. Its branch is kept.",
     ]);
     await s.w.store.close();
   });
@@ -2166,7 +2174,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
       .execute(await s.ctx());
     // Before: the branch was pushed as main's head and the pull request call failed on it.
     expect(fresh.outcome, fresh.summary).toBe("failed");
-    expect(fresh.summary).toBe("main already has this change.");
+    expect(fresh.summary).toBe("The main branch already has this change.");
     expect(await s.w.host.listPullRequests(s.repo, { state: "all" })).toEqual([]);
     await s.w.store.close();
   });
@@ -2211,5 +2219,272 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 120_000 }, () => {
     expect(open).toEqual([]);
     expect(await s.gitIn(["status"])).not.toContain("rebase in progress");
     await s.w.store.close();
+  });
+});
+
+describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
+  /** The task done once (its pull request open), main changing the same line, the next run's card. */
+  async function conflictWithOpenPr() {
+    const w = await world();
+    const repo = { owner: "o", name: "sample" };
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Edit the readme",
+      outcome: "the readme says what the task says",
+      acceptance_criteria: ["the readme is edited"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 100_000,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const writes = (
+      file: string,
+      text: string,
+    ): TaskExecutor & {
+      withWorktree: (dir: string) => TaskExecutor;
+    } => ({
+      async execute() {
+        return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+      },
+      withWorktree: (dir) => ({
+        async execute() {
+          writeFileSync(join(dir, file), text);
+          return { outcome: "done", summary: "Wrote it.", costUsdMicro: 1000, checksPassed: true };
+        },
+      }),
+    });
+    const exec = (inner: ReturnType<typeof writes>) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner,
+        repoFor: async () => ({ clone: w.bare, repo, base: "main" }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async () => {
+      const t = await w.store.task.mustGet(task.id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const first = await exec(writes("README.md", "# sample by the task\n")).execute(await ctx());
+    expect(first.outcome, first.summary).toBe("in_review");
+    await w.store.task.patch(task.id, { branch: first.branch ?? "", pr_url: first.prUrl ?? "" });
+    const seed = new GitOps({ cwd: join(w.root, "seed"), identity });
+    writeFileSync(join(w.root, "seed", "README.md"), "# sample by main\n");
+    await seed.commitAll("main changes README.md");
+    await seed.push("main");
+    const second = await exec(writes("notes.md", "# Notes\n")).execute(await ctx());
+    expect(second.outcome, second.summary).toBe("needs_human");
+    const card = (await w.store.humanRequest.list({ task_id: task.id } as never)).find(
+      (r) => (r.change_card as { key?: string } | null)?.key === "githost:rebase_conflict",
+    );
+    if (!card) throw new Error("no conflict card");
+    const pr = (await w.host.listPullRequests(repo, { state: "open" }))[0];
+    if (!pr) throw new Error("no pull request");
+    return { w, task, card, pr };
+  }
+
+  it("the rebase-conflict card with a pull request open says its last step updates it, and its title is a whole sentence of at most 80 characters (W15-06)", async () => {
+    const { w, task, card, pr } = await conflictWithOpenPr();
+    // Before: "… and opens the pull request" for one that was open (live check 2, F6).
+    expect(card.steps.at(-1)).toBe(
+      `Answer "I resolved it": the agent checks the branch against main and updates #${pr.number}`,
+    );
+    const [view] = await requestViews(w.store, [card]);
+    expect(view?.title).toBe(`"${task.title}" conflicts with main`);
+    expect((view?.title ?? "").length).toBeLessThanOrEqual(80);
+    expect(view?.body).toBe(
+      "Its branch conflicts with main in README.md, and the agent could not resolve it.",
+    );
+    expect(view?.choices?.map((c) => [c.label, c.explain])).toEqual([
+      ["I resolved it", `A session checks your resolution and updates #${pr.number}.`],
+      [
+        "Drop the branch and retry from scratch",
+        "The task is done again from main; a session starts for it.",
+      ],
+      ["Cancel the task", "Cancels the task; nothing more runs for it."],
+    ]);
+    await w.store.close();
+  });
+
+  it("'I resolved it' and 'Drop the branch and retry from scratch' each start one session and say so on the card's Done line; Cancel starts none (W15-06)", async () => {
+    for (const [label, outcome, done] of [
+      [
+        "I resolved it",
+        "resolved",
+        '"Edit the readme" goes on with your resolution: a session started.',
+      ],
+      [
+        "Drop the branch and retry from scratch",
+        "dropped",
+        '"Edit the readme" is done again from main: a session started.',
+      ],
+      ["Cancel the task", "cancelled", '"Edit the readme" was cancelled.'],
+    ] as const) {
+      const { w, task, card } = await conflictWithOpenPr();
+      const t = await w.store.task.mustGet(task.id);
+      await w.store.task.transition(t.id, t.version, "needs_human", "conflict", {
+        agentId: w.session.agent_id,
+      });
+      await w.store.humanRequest.answer(card.id, card.version, label, w.human);
+      const starts: unknown[] = [];
+      await syncPrAnswers({
+        store: w.store,
+        clock: w.clock,
+        humanId: w.human,
+        agentId: w.session.agent_id,
+        start: async (req) => {
+          starts.push(req);
+          return { id: "e1", result: "started" };
+        },
+      });
+      const row = await w.store.humanRequest.mustGet(card.id);
+      expect(row.change_card, label).toMatchObject({ outcome });
+      expect(starts, label).toHaveLength(outcome === "cancelled" ? 0 : 1);
+      if (outcome !== "cancelled")
+        expect((row.change_card as { start?: string }).start, label).toBe("started");
+      const [view] = await requestViews(w.store, [row]);
+      // Before: the bare echo, 'You answered "I resolved it".'
+      expect(view?.outcome, label).toBe(done);
+      await w.store.close();
+    }
+  });
+
+  it("the pull request body and the comment of a later run name the task and the session in words; the ids code reads are in the hidden mark, which openedForAnotherTask reads, as it reads the old visible line (W15-08)", async () => {
+    const { w, task, pr } = await conflictWithOpenPr();
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const visible = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "");
+    const body = (await w.host.getPullRequest({ owner: "o", name: "sample" }, pr.number)).body;
+    expect(body).toContain("Opened by Forerunner in the session started 2026-03-03 08:00 UTC.");
+    expect(visible(body)).not.toMatch(uuid);
+    expect(visible(body)).not.toContain(task.id);
+    expect(readForerunnerMarker(body)).toEqual({
+      project: w.project,
+      task: task.id,
+      session: w.session.id,
+    });
+    expect(openedForAnotherTask({ body }, task.id)).toBe(false);
+    expect(openedForAnotherTask({ body }, "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f")).toBe(true);
+    // A pull request an earlier version opened: its visible line still names its task.
+    const old =
+      "Work.\n\nTask 0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f, session s-1. Opened by Forerunner.";
+    expect(openedForAnotherTask({ body: old }, task.id)).toBe(true);
+    expect(openedForAnotherTask({ body: old }, "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f")).toBe(false);
+    for (const c of await w.host.listPullRequestComments({ owner: "o", name: "sample" }, pr.number))
+      expect(visible(c.body)).not.toMatch(uuid);
+    await w.store.close();
+  });
+
+  it("a branch emptied of the task's own change says so in one sentence each, with no comma splice and no number twice (W15-64)", () => {
+    expect(emptiedSentence(4, "redone")).toBe(
+      "The redo from main changed nothing, so #4 was closed.",
+    );
+    expect(emptiedSentence(4, "empty")).toBe(
+      "The last run changed nothing and #4 held no change, so it was closed.",
+    );
+    expect(emptiedSentence(4, "up_to_date")).toBe(
+      "#4 no longer changes anything on main, so it was closed.",
+    );
+    expect(emptiedSentence(null, "up_to_date")).toBe("The main branch already has this change.");
+    for (const s of [
+      emptiedSentence(4, "redone"),
+      emptiedSentence(4, "empty"),
+      emptiedSentence(4, "up_to_date"),
+      emptiedSentence(null, "up_to_date"),
+    ]) {
+      expect(s.length).toBeLessThanOrEqual(100);
+      expect(s[0]).toBe(s[0]?.toUpperCase());
+      expect(s.match(/#4/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe("w15-merge, wave 15: folders made before the line-endings pin (W15-11)", {
+  timeout: 120_000,
+}, () => {
+  it("a task folder made before the clone pinned core.autocrlf says core.autocrlf=false after its next run", async () => {
+    const { w, task } = await (async () => {
+      const w = await world();
+      const task = await w.store.task.insert({
+        project_id: w.project,
+        title: "Edit the readme",
+        outcome: "the readme says hello",
+        acceptance_criteria: ["hello"],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 100_000,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+      return { w, task };
+    })();
+    const exec = (text: string) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner: {
+          async execute() {
+            return { outcome: "done", summary: "no worktree", costUsdMicro: 0 };
+          },
+          withWorktree: (dir: string) => ({
+            async execute() {
+              writeFileSync(join(dir, "README.md"), text);
+              return { outcome: "done", summary: "Wrote it.", costUsdMicro: 1, checksPassed: true };
+            },
+          }),
+        } as TaskExecutor & { withWorktree: (dir: string) => TaskExecutor },
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+    const ctx = async () => {
+      const t = await w.store.task.mustGet(task.id);
+      return {
+        task: t,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      };
+    };
+    const first = await exec("# sample\nhello\n").execute(await ctx());
+    expect(first.outcome, first.summary).toBe("in_review");
+    await w.store.task.patch(task.id, { branch: first.branch ?? "", pr_url: first.prUrl ?? "" });
+    const wt = join(w.root, "wt", task.id);
+    // As a folder cloned before 29e0c81 is: no core.autocrlf of its own.
+    await run(["git", "-C", wt, "config", "--local", "--unset-all", "core.autocrlf"]);
+    const config = async () =>
+      (
+        await run(["git", "-C", wt, "config", "--local", "--get", "core.autocrlf"], {
+          allowFailure: true,
+        })
+      ).stdout.trim();
+    expect(await config()).toBe("");
+    await exec("# sample\nhello again\n").execute(await ctx());
+    expect(await config()).toBe("false");
+    await w.store.close();
   });
 });
