@@ -1025,7 +1025,9 @@ website, a site added to the list, a block taken off) asks for your yes first; o
 read less applies at once. The agent browser's own site list is a separate thing and changes
 nothing research reads. A block list written before this setting existed is shown and enforced
 here too. The plan for a project with "Only these websites" plans no research that needs another
-website; each research run is told the rule and says in its report what it could not read
+website, and when that list has nothing on it the plan card says under each research task:
+'Reads no website: this project's "only these websites" list is empty. Add websites in Settings,
+or Change the plan.'; each research run is told the rule and says in its report what it could not read
 because of it, and a refused page says which rule refused it. The review of a research task is
 told the same rule, so a page research rightly did not read is never held against the work, and
 it reads every page the work rests on, also those read before a pause.

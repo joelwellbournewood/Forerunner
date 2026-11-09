@@ -2977,7 +2977,12 @@ waits on you" while 4 tasks waited on it).
   withdrawn ones for the Inbox's Answered list (an open plan card with `planTasks`, U-078 and
   C-68: `planTaskViews` in `daemon/plan-tasks.ts`, each plan task's registry name or the
   `unknown` name this install has no specialist for, and `runsOn` from
-  `RuntimeApp.chooser.forTask` with the task's own words), and `needsYouCount` (every open card: the
+  `RuntimeApp.chooser.forTask` with the task's own words; W15B-07: `note`, a limit of the
+  project's the task meets as planned: for a specialist that reads web pages (`readsWeb`, the
+  registry entry as the credential chooser reads it, `needsOf(...).hard` holds `webRead`) in a
+  project whose site rule is "Only these websites" with nothing on the list, `READS_NO_WEBSITE_NOTE`
+  'Reads no website: this project's "only these websites" list is empty. Add websites in
+  Settings, or Change the plan.', read from the project's `settings` given with `estimate`), and `needsYouCount` (every open card: the
   Inbox's heading, the header badge, and the sum of the projects' `waitingOnYou` plus the cards of
   no project); `inbox.changed` on `/events` carries it too. **POST /requests/:id/answer** answers
   the card as it is after the sync, with its `outcome`.

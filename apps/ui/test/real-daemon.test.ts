@@ -14164,3 +14164,47 @@ describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", 
     }
   }, 120_000);
 });
+
+describe("w15-tail, wave 15 run B: the plan card says a research task can read no website (W15B-07)", () => {
+  // W15-33's plan-card line (wave15a-fix-w15-review not_done[0]): under an empty "only these
+  // websites" list the plan card showed a researcher task with no word that it reads nothing.
+  it("GET /inbox: the researcher's plan task carries the note under an empty 'only' list; with a website listed, or for a coder, none", async () => {
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_PLAN: "research" });
+    try {
+      const me = await client.me();
+      const brief =
+        "Compare two static site generators and write a page that summarises them for a club website.";
+      const project = await client.createProject({
+        name: "Club research",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      // Settings → Web pages research may read: "Only these websites", every entry removed.
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...row.settings, web_access: { mode: "only", only: [] } },
+      });
+      const planTasks = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open",
+        )?.planTasks ?? [];
+      const note =
+        'Reads no website: this project\'s "only these websites" list is empty. Add websites in Settings, or Change the plan.';
+      const tasks = await planTasks();
+      expect(tasks.find((t) => t.specialist === "researcher")?.note).toBe(note);
+      expect(tasks.filter((t) => t.specialist !== "researcher").map((t) => t.note ?? null)).toEqual(
+        tasks.filter((t) => t.specialist !== "researcher").map(() => null),
+      );
+      // A website on the list: the researcher reads it, nothing to say.
+      const again = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...again.settings, web_access: { mode: "only", only: ["example.com"] } },
+      });
+      expect((await planTasks()).every((t) => (t.note ?? null) === null)).toBe(true);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});

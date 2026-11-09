@@ -1729,3 +1729,106 @@ describe("the plan card's figures (leftovers7-session)", () => {
     );
   });
 });
+
+/**
+ * w15-tail, wave 15 run B (W15B-07; W15-33's plan-card line): under an empty "only these
+ * websites" list the plan card showed a researcher task with no word that it can read no website.
+ */
+describe("w15-tail, wave 15 run B: the plan card says a research task can read no website (W15B-07)", () => {
+  const withPlan = (harness: ReturnType<typeof createHarness>) => {
+    harness.daemon.state.requests.unshift({
+      id: "req_intake_sites",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Atlas": 1 milestone(s), 2 task(s), 1 doc(s) and a first-session plan.',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 0,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Pick a generator",
+                successCriteria: ["a choice"],
+                targetDate: null,
+                tasks: [
+                  {
+                    key: "research",
+                    title: "Compare two static site generators",
+                    outcome: "docs/research.md",
+                    acceptanceCriteria: [],
+                    priority: "high",
+                    dependsOn: [],
+                    specialist: "researcher",
+                  },
+                  {
+                    key: "build",
+                    title: "Build the docs site",
+                    outcome: "index.html",
+                    acceptanceCriteria: [],
+                    priority: "medium",
+                    dependsOn: ["research"],
+                    specialist: "coder",
+                  },
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "Research first.",
+            items: [
+              { key: "research", estimateUsdMicro: 500_000 },
+              { key: "build", estimateUsdMicro: 500_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    return harness;
+  };
+  const notes = (card: HTMLElement) =>
+    within(card)
+      .getAllByTestId("intake-task")
+      .map((t) => within(t).queryByTestId("intake-task-note")?.textContent ?? null);
+
+  it("an empty 'only these websites' list: the researcher's task says it reads no website and what to do; the coder's says nothing; with a website listed, nothing", async () => {
+    const harness = withPlan(createHarness());
+    harness.daemon.state.settingValues["web_access:proj_atlas"] = { mode: "only", only: [] };
+    const view = renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    await waitFor(() => expect(within(card).getAllByTestId("intake-task")).toHaveLength(2));
+    // Before: no word under the task, which then read nothing and wrote from the brief alone.
+    expect(notes(card)).toEqual([
+      'Reads no website: this project\'s "only these websites" list is empty. Add websites in Settings, or Change the plan.',
+      null,
+    ]);
+    view.unmount();
+    const listed = withPlan(createHarness());
+    listed.daemon.state.settingValues["web_access:proj_atlas"] = {
+      mode: "only",
+      only: ["example.com"],
+    };
+    renderApp("/inbox", listed);
+    const again = await screen.findByTestId("intake-card");
+    await waitFor(() => expect(within(again).getAllByTestId("intake-task")).toHaveLength(2));
+    expect(notes(again)).toEqual([null, null]);
+  });
+});

@@ -2785,9 +2785,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           has: (name) => name in FAKE_REGISTRY_TOOLS,
           forTask: async ({ specialist, projectId, task }) =>
             runsOnFor(specialist, projectId, task),
-          // As the daemon: the figure the Start dialog will show (leftovers7-session).
+          // W15B-07, as the daemon: who reads web pages, from the registry entry.
+          readsWeb: (name) => (FAKE_REGISTRY_TOOLS[name] ?? []).includes("cc:WebFetch"),
+          // As the daemon: the figure the Start dialog will show (leftovers7-session), and the
+          // project's site rule the notes read (W15B-07).
           estimate: {
-            project: { name: r.projectId ?? "", small_project_mode: false },
+            project: {
+              name: r.projectId ?? "",
+              small_project_mode: false,
+              settings: {
+                web_access: (state.settingValues[`web_access:${r.projectId}`] ?? null) as never,
+              },
+            },
             of: (t) => Math.round(t.est_cost_usd_micro * (state.planEstimateRatio ?? 1)),
           },
         },

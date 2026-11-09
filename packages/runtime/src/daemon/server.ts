@@ -40,6 +40,8 @@ import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
+import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
+import { needsOf } from "../session/credential-choice.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { isPersonTask } from "../session/person-questions.ts";
 import {
@@ -1873,6 +1875,17 @@ export function createDaemonApp(
       const planTasks = await planTaskViews(row, {
         has: (name) => rt.specialists(name) !== undefined,
         forTask: (input) => chooseFor(input),
+        // W15B-07: who reads web pages, as the credential chooser reads the registry entry.
+        readsWeb: (name) => {
+          const spec = rt.specialists(name);
+          return (
+            !!spec &&
+            needsOf({
+              registryTools: spec.registryTools ?? spec.allowedTools,
+              codeCommands: CODE_COMMANDS_DEFAULT,
+            }).hard.includes("webRead")
+          );
+        },
         ...(planProject
           ? {
               estimate: {

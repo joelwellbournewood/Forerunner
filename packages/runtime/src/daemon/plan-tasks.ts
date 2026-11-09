@@ -2,6 +2,7 @@ import type { HumanRequestRow, ProjectRow, TaskRow } from "@forerunner/state";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { PERSON_SPECIALIST } from "../session/person-questions.ts";
 import { type ShapedPlan, shapeProjectPlan } from "../session/project-plan.ts";
+import { webAccessOf } from "../wiring/web-access.ts";
 import type { CredentialRunsOn, HumanRequestView } from "./api-types.ts";
 
 /**
@@ -28,8 +29,15 @@ export interface PlanTasksDeps {
    * the learned ratio). `project` shapes the plan as the apply does (its tier and budget per
    * task). Absent: the plan's own figure.
    */
+  /**
+   * W15B-07: whether the specialist reads web pages (its registry entry names the page reader).
+   * Absent: no task's note says it reads no website.
+   */
+  readsWeb?(name: string): boolean;
   estimate?: {
-    project: Pick<ProjectRow, "name" | "small_project_mode">;
+    /** W15B-07: its `settings` (when given) hold the site rule the notes read. */
+    project: Pick<ProjectRow, "name" | "small_project_mode"> &
+      Partial<Pick<ProjectRow, "settings">>;
     of(
       task: Pick<
         TaskRow,
@@ -94,6 +102,23 @@ function shapedByKey(
   return out;
 }
 
+/**
+ * W15B-07 (W15-33's plan-card line): a task whose specialist reads web pages, in a project whose
+ * "Web pages research may read" is "Only these websites" with no website on the list, reads
+ * nothing (the rule fails closed, R-failopen); the card says so under the task.
+ */
+export const READS_NO_WEBSITE_NOTE =
+  'Reads no website: this project\'s "only these websites" list is empty. Add websites in Settings, or Change the plan.';
+
+/** The note under a plan task of `specialist` (a specialist of this install), or null. */
+function planTaskNote(specialist: string | null, deps: PlanTasksDeps): string | null {
+  if (!specialist || !deps.readsWeb?.(specialist)) return null;
+  const settings = deps.estimate?.project.settings;
+  if (!settings) return null;
+  const rule = webAccessOf(settings);
+  return rule.mode === "only" && rule.only.length === 0 ? READS_NO_WEBSITE_NOTE : null;
+}
+
 /** `planTasks` of an open plan card; null for any other card, or one that is answered. */
 export async function planTaskViews(
   row: Pick<HumanRequestRow, "change_card" | "project_id" | "status">,
@@ -146,6 +171,7 @@ export async function planTaskViews(
             })
             .catch(() => null)
         : null,
+      note: planTaskNote(known, deps),
     });
   }
   return onceForThePlan(out);

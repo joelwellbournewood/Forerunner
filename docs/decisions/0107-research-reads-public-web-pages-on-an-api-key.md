@@ -459,3 +459,14 @@ and write dialog.md", and the order was carried into the next brief (live check 
    another site gets a task for the person to give the sources, which the research waits on.
    Not built: a plan-card line under such a researcher task ("reads no website ... Add websites
    in Settings or Change the plan").
+
+## Amendment: the plan card says a research task reads no website ('w15-tail', 2026-11-09)
+
+The line the amendment above left unbuilt is now on the plan card. Each plan task the card lists
+(`GET /inbox` `planTasks`) gets a `note` when a limit of the project's leaves it unable to do its
+work as planned. The one built: a task whose specialist reads web pages (its registry entry names
+the page reader, as the credential chooser reads it), in a project whose site rule is "Only these
+websites" with nothing on the list (the rule fails closed: research reads no website), reads
+'Reads no website: this project's "only these websites" list is empty. Add websites in Settings,
+or Change the plan.' under the task. With a website on the list, or for a specialist that reads no
+web pages, there is no note. The rule itself is unchanged: an empty list still reads nothing.
