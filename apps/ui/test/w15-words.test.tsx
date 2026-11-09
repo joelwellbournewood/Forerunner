@@ -502,4 +502,92 @@ describe("w15-words, wave 15 run B", () => {
       expect(second).not.toHaveTextContent("another session");
     });
   });
+  describe("W15-72: the plan card's figures add up to its total as shown", () => {
+    /** A plan card as the daemon files it: one milestone, each task with its first-session estimate. */
+    const planCard = (tasks: { key: string; title: string; usd: number }[]) => ({
+      id: "req_intake",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: "sess_9",
+      kind: "approval",
+      why: 'Intake for "Atlas"',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Launch",
+                successCriteria: [],
+                targetDate: null,
+                tasks: tasks.map((t) => ({
+                  key: t.key,
+                  title: t.title,
+                  outcome: "done",
+                  acceptanceCriteria: [],
+                  priority: 5,
+                  dependsOn: [],
+                  specialist: "coder",
+                })),
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "First.",
+            items: tasks.map((t) => ({ key: t.key, estimateUsdMicro: t.usd })),
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+
+    it("three tasks of about CHF 0.44 each read About CHF 1.32, never CHF 1.33", async () => {
+      const harness = createHarness();
+      // USD 555,000 micro is CHF 0.444 at 0.8: each row rounds to CHF 0.44, the sum to CHF 1.33.
+      harness.daemon.state.requests.unshift(
+        planCard([
+          { key: "a", title: "Build the page", usd: 555_000 },
+          { key: "b", title: "Write the copy", usd: 555_000 },
+          { key: "c", title: "Test the page", usd: 555_000 },
+        ]) as never,
+      );
+      renderApp("/inbox", harness);
+      const card = await screen.findByTestId("intake-card");
+      for (const row of within(card).getAllByTestId("intake-task"))
+        expect(row).toHaveTextContent("about CHF 0.44");
+      expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+        "About CHF 1.32 for the 3 tasks.",
+      );
+    });
+
+    it("tasks each under a centime still read less than CHF 0.01 in total", async () => {
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift(
+        planCard([
+          { key: "a", title: "Build the page", usd: 2_000 },
+          { key: "b", title: "Write the copy", usd: 2_000 },
+        ]) as never,
+      );
+      renderApp("/inbox", harness);
+      const card = await screen.findByTestId("intake-card");
+      expect(within(card).getByTestId("intake-total")).toHaveTextContent(
+        "Less than CHF 0.01 for the 2 tasks.",
+      );
+    });
+  });
 });

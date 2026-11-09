@@ -250,7 +250,6 @@ function PersonQuestionsForm({
  * The intake card's estimates in CHF (U-074), at the default rate the card has no other for;
  * under a centime "less than CHF 0.01", never "CHF 0.00" (W15-74).
  */
-const chf = (micro: number): string => chfWords(usdMicroToChfMicro(micro));
 const aboutUsd = (micro: number): string => aboutChf(usdMicroToChfMicro(micro));
 
 /**
@@ -337,11 +336,15 @@ function IntakeCard({
   };
   const agentTasks = tasks.filter((t) => !isPerson(t));
   const estimated = agentTasks.filter((t) => costOf(t) !== undefined);
-  const total = estimated.reduce((s, t) => s + (costOf(t) ?? 0), 0);
+  // W15-72: the total is the sum of the figures the rows show (each rounded to the centime),
+  // so they add up as read; under a centime in all it reads "less than CHF 0.01".
+  const shownChf = (usd: number) => Math.round(usdMicroToChfMicro(usd) / 10_000) * 10_000;
+  const exactChf = estimated.reduce((s, t) => s + usdMicroToChfMicro(costOf(t) ?? 0), 0);
+  const shownTotal = estimated.reduce((s, t) => s + shownChf(costOf(t) ?? 0), 0);
   const totalWords = planTotalWords({
     agentTasks: agentTasks.length,
     estimated: estimated.length,
-    total: chf(total),
+    total: chfWords(shownTotal > 0 ? shownTotal : exactChf),
     personTasks: agentTasks.length < tasks.length,
   });
   const decision = card.docs.find((d) => isDecisionDoc(d.path));
