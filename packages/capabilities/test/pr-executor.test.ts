@@ -2321,25 +2321,32 @@ describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
   });
 
   it("'I resolved it' and 'Drop the branch and retry from scratch' each start one session and say so on the card's Done line; Cancel starts none (W15-06)", async () => {
-    for (const [label, outcome, done] of [
+    for (const [index, label, outcome, done] of [
       [
+        0,
         "I resolved it",
         "resolved",
         '"Edit the readme" goes on with your resolution: a session started.',
       ],
       [
+        1,
         "Drop the branch and retry from scratch",
         "dropped",
         '"Edit the readme" is done again from main: a session started.',
       ],
-      ["Cancel the task", "cancelled", '"Edit the readme" was cancelled.'],
+      [2, "Cancel the task", "cancelled", '"Edit the readme" was cancelled.'],
     ] as const) {
       const { w, task, card } = await conflictWithOpenPr();
       const t = await w.store.task.mustGet(task.id);
       await w.store.task.transition(t.id, t.version, "needs_human", "conflict", {
         agentId: w.session.agent_id,
       });
-      await w.store.humanRequest.answer(card.id, card.version, label, w.human);
+      // W15B-08 (validation rule 1): answered with the option the Inbox shows, never a label
+      // the test types.
+      const [shown] = await requestViews(w.store, [card]);
+      const option = shown?.options[index] ?? "";
+      expect(option, label).toBe(label);
+      await w.store.humanRequest.answer(card.id, card.version, option, w.human);
       const starts: unknown[] = [];
       await syncPrAnswers({
         store: w.store,

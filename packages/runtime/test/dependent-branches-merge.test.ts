@@ -2284,3 +2284,129 @@ describe("w15-tail, wave 15 run B: a Redo or a Try again never drops a commit ma
     expect(after.status).toBe("done");
   });
 });
+
+describe("w15-tail, wave 15 run B: the words a conflict notice keeps, across a restart (W15B-08, W15-04)", {
+  timeout: 240_000,
+}, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  /**
+   * The daemon started again on the same store and folders: a new merge step, dependent-branches
+   * service, PR executor and watcher, wired as `chainWorld` (and compose.ts) wires them; nothing
+   * of the old ones' memory is kept. The watcher's first poll is a baseline, which still reports
+   * every open pull request and main's head (nothing fires from it).
+   */
+  function restarted(m: ChainWorld) {
+    const w = m.w;
+    const audit = new MemoryAudit();
+    const hooks = new EnforcementHooks({
+      tokens: w.tokens,
+      caps: new AllowAllCaps(),
+      secrets: new NoSecrets(),
+      kill: w.kill,
+      clock: w.clock,
+      ledger: new MemoryLedger(),
+      audit,
+      approvals: new AutoApprove("approved"),
+    });
+    const executor = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: m.github,
+      inner: doneExecutor(w),
+      repoFor: async () => ({ clone: m.host.cloneUrl(FULL), repo: REPO, base: "main" }),
+      worktreeRoot: m.worktreeRoot,
+      token: m.token,
+      identity,
+    });
+    const merge = new ReviewedPrMerge({
+      store: w.store,
+      clock: w.clock,
+      tokens: w.tokens,
+      hooks,
+      audit,
+      host: m.github,
+      worktreeRoot: m.worktreeRoot,
+      token: m.token,
+      identity,
+      agentIds: [w.alice],
+      allowedDomains: ["127.0.0.1"],
+      stopped: (agentId) => w.kill.isFrozen({ agentId }),
+      checksWaitMs: 0,
+    });
+    const dependents = new DependentBranches({ store: w.store, clock: w.clock, merge, executor });
+    merge.onMerged((e) => dependents.dependencyMerged(e));
+    const watcher = new GitHostWatcher({
+      store: w.store,
+      clock: w.clock,
+      host: m.github,
+      agentIds: [w.alice],
+      humanId: w.human,
+      start: async () => ({ id: "s", result: "started" }),
+      retryMerges: () => merge.retryWaiting(),
+      onPullRequestState: (pr, info) => dependents.pullRequestState(pr, info),
+      repositoryProjects: async () => [{ projectId: w.project, repo: REPO }],
+      onDefaultBranchHead: (p) => dependents.sweep(p.projectId),
+    });
+    return {
+      async poll() {
+        const r = await watcher.pollOnce();
+        await m.host.settle();
+        return r;
+      },
+    };
+  }
+
+  it("a conflict notice that took over the rebuild card, with the daemon started again between the notice and the resolution: the same card says its earlier words again (why, options, Details), without the notice, and offers its Merge", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Retitle the app", { "README.md": "# footer\n" });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Retitle the app", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.close(a.id);
+    await m.poll();
+    const openCards = () => m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    const [earlier] = await openCards();
+    if (!earlier) throw new Error("no rebuild card");
+    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
+    // Someone changes the same line on main: the notice takes the card over, keeping its words.
+    await m.host.seedCommit(FULL, { "README.md": "# other\n" }, "Retitle on main", "main");
+    await m.poll();
+    const [notice] = await openCards();
+    if (!notice) throw new Error("no notice card");
+    expect(notice.id).toBe(earlier.id);
+    const noticeCard = notice.change_card as {
+      notice?: string;
+      before_conflict?: { card?: unknown };
+    };
+    expect(noticeCard.notice).toBe("conflict");
+    expect(noticeCard.before_conflict?.card).toMatchObject({
+      why: earlier.why,
+      options: earlier.options,
+    });
+    // Quit and start again: what the notice keeps is on the card in the store.
+    const daemon = restarted(m);
+    // The change on main is taken back: the conflict resolves.
+    await m.host.seedCommit(FULL, { "README.md": "# app\n" }, "Put the title back", "main");
+    expect((await m.pr(b.id)).mergeable).toBe(true);
+    await daemon.poll();
+    const [restored] = await openCards();
+    expect(restored?.id).toBe(earlier.id);
+    expect(restored?.why).toBe(earlier.why);
+    expect(restored?.options).toEqual(earlier.options);
+    expect(restored?.steps).toEqual(earlier.steps);
+    const card = restored?.change_card as Record<string, unknown>;
+    expect(card.notice ?? null).toBeNull();
+    expect(card.before_conflict).toBeUndefined();
+    const [view] = await requestViews(m.w.store, restored ? [restored] : []);
+    expect({ title: view?.title, body: view?.body }).toEqual({
+      title: `"Retitle the app" was rebuilt without pull request #${prA}`,
+      body: warning,
+    });
+    expect(view?.choices?.map((c) => c.label)).toEqual(["Merge", "Redo"]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "rebuilt_without",
+      sentence: warning,
+    });
+  });
+});

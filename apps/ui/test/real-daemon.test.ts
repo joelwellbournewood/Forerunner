@@ -14208,3 +14208,82 @@ describe("w15-tail, wave 15 run B: the plan card says a research task can read n
     }
   }, 120_000);
 });
+
+describe("w15-tail, wave 15 run B: run A's owed route cases (W15B-08: W15-55, W15-68)", () => {
+  // The review of w15-merge (non-blocking 7): the Tasks labels of a done task's merge record were
+  // tested on taskDisplay alone. Here they are read through GET /projects/:id/tasks, as the Tasks
+  // tab reads them, on records as the merge step and the poll write them.
+  it("GET /projects/:id/tasks: a closed pull request, a rebuild conflict and a merge GitHub did not answer each have their own label and the record's sentence, never 'waiting for you to merge'", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Merge labels", goal: "Three pages" });
+      const agentId = rt.agent.id;
+      const doneTaskWith = async (
+        title: string,
+        n: number,
+        record: { state: string; last_outcome: string; sentence: string },
+      ) => {
+        const created = await client.createTask(project.id, {
+          title,
+          outcome: `${title} is written`,
+          riskTier: 1,
+          specialist: "coder",
+        });
+        const t = await rt.store.task.mustGet(created.id);
+        await rt.store.task.restoreStatus(t.id, t.version, "done", "accepted by the critic", {
+          agentId,
+        });
+        const prUrl = `https://github.com/o/app/pull/${n}`;
+        await rt.store.task.patch(t.id, { pr_url: prUrl });
+        await rt.store.mergeRecord.insert({
+          task_id: t.id,
+          project_id: project.id,
+          agent_id: agentId,
+          pr_number: n,
+          pr_url: prUrl,
+          reviewed_head_sha: "a".repeat(40),
+          ...record,
+        });
+        return t.id;
+      };
+      const closed = await doneTaskWith("Write the first page", 8, {
+        state: "left_to_you",
+        last_outcome: "closed",
+        sentence: "#8 was closed without merging.",
+      });
+      const conflict = await doneTaskWith("Write the second page", 9, {
+        state: "left_to_you",
+        last_outcome: "rebuild_conflict",
+        sentence:
+          "#9 could not be rebuilt without #4, which was closed: both change index.html. It waits for you: redo the task, or resolve it on GitHub.",
+      });
+      const unreachable = await doneTaskWith("Write the third page", 10, {
+        state: "waiting_checks",
+        last_outcome: "unreachable",
+        sentence: "GitHub did not answer about #10: Forerunner tries the merge again.",
+      });
+      const rows = await client.tasks(project.id);
+      const display = (id: string) => {
+        const d = rows.find((r) => r.id === id)?.display;
+        return { label: d?.label, detail: d?.detail };
+      };
+      expect(display(closed)).toEqual({
+        label: "Accepted · pull request closed",
+        detail: "#8 was closed without merging.",
+      });
+      expect(display(conflict)).toEqual({
+        label: "Accepted · could not be rebuilt",
+        detail:
+          "#9 could not be rebuilt without #4, which was closed: both change index.html. It waits for you: redo the task, or resolve it on GitHub.",
+      });
+      expect(display(unreachable)).toEqual({
+        label: "Accepted · merges once GitHub answers",
+        detail: "GitHub did not answer about #10: Forerunner tries the merge again.",
+      });
+      for (const r of rows)
+        expect(r.display?.label).not.toBe("Accepted · waiting for you to merge");
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+});

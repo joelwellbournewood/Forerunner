@@ -280,3 +280,198 @@ describe("w15-review, wave 15", () => {
     expect(sent).not.toContain("(nothing: every section above is complete");
   }, 120_000);
 });
+
+/**
+ * w15-tail, wave 15 run B (W15B-08; the review of w15-review, non-blocking 6): the kept page text
+ * (`reviewSources` on the paused run's Run row) was tested in one composition only. Here the
+ * daemon is composed again on the same home between the pause and Continue (validation rule 4).
+ */
+describe("w15-tail, wave 15 run B: the kept page text across a restart (W15B-08, W15-26)", () => {
+  const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-w15-tail-review-"));
+  const calls: ModelRequest[] = [];
+  const pages: Record<string, string> = {
+    "/netlify.html":
+      "<!doctype html><title>Netlify pricing</title><main><p>Netlify's free plan includes 100 GB of bandwidth a month.</p></main>",
+    "/pages.html":
+      "<!doctype html><title>Cloudflare Pages limits</title><main><p>Cloudflare Pages allows 500 builds a month on the free plan.</p></main>",
+  };
+  const TITLE = "Compare two hosts after a restart";
+  let server: http.Server;
+  let base = "";
+  let rt: RuntimeApp | undefined;
+  let req: Req;
+  const researcherOn = (r: ModelRequest) =>
+    (r.origin?.label ?? "").startsWith(`researcher on ${TITLE}`);
+  const firstUser = (r: ModelRequest) => {
+    const m = r.messages.find((x) => x.role === "user");
+    return m ? textOf(m) : "";
+  };
+  const continued = (r: ModelRequest) =>
+    researcherOn(r) && firstUser(r).includes("## Where the last run stopped");
+  const fetched = (r: ModelRequest, path: string) =>
+    JSON.stringify(r.messages).includes(`${base}${path}`);
+  let fake: FakeProvider;
+
+  /** The daemon on its home, as it starts again after Quit (the same store and folders). */
+  async function compose(): Promise<RuntimeApp> {
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    const app = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: fake,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      webReadLoopback: true,
+    });
+    const { app: http_, token } = createDaemonApp(app);
+    req = (path: string, init: RequestInit = {}) =>
+      http_.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    return app;
+  }
+
+  beforeAll(async () => {
+    server = http.createServer((q, res) => {
+      const body = pages[q.url ?? ""];
+      res.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
+      res.end(body ?? "not found");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        textReply(
+          "Wrote hosts.md: Netlify 100 GB a month, Cloudflare Pages 500 builds a month.\n\nLeft to do: nothing",
+          { when: continued, times: Number.POSITIVE_INFINITY },
+        ),
+        textReply(
+          "Summary: read both pricing pages.\n\nWhere I stopped: both pages are read; hosts.md is not written yet.\n\nLeft to do:\n- write hosts.md",
+          {
+            when: (r) => researcherOn(r) && heardWrapUp(r),
+            times: Number.POSITIVE_INFINITY,
+            usage: { input_tokens: 1_000, output_tokens: 50 },
+          },
+        ),
+        toolReply("web_fetch", { url: `${base}/pages.html` }, "Reading the second page.", {
+          when: (r) => researcherOn(r) && fetched(r, "/netlify.html") && !fetched(r, "/pages.html"),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 30_000, output_tokens: 10 },
+        }),
+        toolReply("web_fetch", { url: `${base}/netlify.html` }, "Reading the first page.", {
+          when: (r) => researcherOn(r) && !fetched(r, "/netlify.html"),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 30_000, output_tokens: 10 },
+        }),
+        toolReply("list_dir", { path: "." }, "Looking at the folder.", {
+          when: researcherOn,
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 30_000, output_tokens: 10 },
+        }),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    rt = await compose();
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  it("the review after a daemon restart between the pause and Continue still reads every page the paused run read", async () => {
+    const app = () => rt as RuntimeApp;
+    const projectId = (
+      (await (
+        await req("/projects", {
+          method: "POST",
+          body: JSON.stringify({ name: "Hosts notes", goal: "Pick a host for the club site" }),
+        })
+      ).json()) as Json
+    ).id as string;
+    const created = await req(`/projects/${projectId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: TITLE,
+        outcome: "hosts.md compares the free plans of Netlify and Cloudflare Pages, with sources",
+        acceptanceCriteria: ["Every figure names the page it was read from"],
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 300_000,
+        specialist: "researcher",
+        riskTier: 1,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const taskId = ((await created.json()) as Json).id as string;
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: app().agent.id, projectId, trigger: "manual" }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const cardOf = () =>
+      waitFor(
+        async () =>
+          ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+            (q) => q.taskId === taskId && q.status === "open",
+          ),
+        async () => `"${TITLE}" to pause (${(await app().store.task.mustGet(taskId)).status})`,
+      );
+    await cardOf();
+    const idle = () =>
+      waitFor(
+        async () =>
+          (await app().store.session.active(app().agent.id)).length === 0 ? true : undefined,
+        async () => "no session to be running",
+      );
+    await idle();
+    // Quit and start again: the paused run's kept pages are on its Run row in the store.
+    await app().close();
+    rt = await compose();
+    const card = await cardOf();
+    const choice = ((card.choices ?? []) as Json[])[0] as Json;
+    expect(String(choice.label)).toMatch(/^Continue \(CHF/);
+    const answered = await req(`/requests/${String(card.id)}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ version: card.version, answer: choice.label }),
+    });
+    expect(answered.status).toBe(200);
+    await waitFor(
+      async () => ((await app().store.task.mustGet(taskId)).status === "done" ? true : undefined),
+      async () => `"${TITLE}" to be done (${(await app().store.task.mustGet(taskId)).status})`,
+    );
+    await idle();
+    const review = calls.find((c) => isReview(c) && firstUser(c).includes(`task ${taskId}`));
+    const sent = firstUser(review as ModelRequest);
+    expect(sent).toContain(
+      `### web page ${base}/netlify.html (read 2026-11-09 04:24 UTC by an earlier run of this task)`,
+    );
+    expect(sent).toContain("Netlify's free plan includes 100 GB of bandwidth a month.");
+    expect(sent).toContain(
+      `### web page ${base}/pages.html (read 2026-11-09 04:24 UTC by an earlier run of this task)`,
+    );
+    expect(sent).toContain("Cloudflare Pages allows 500 builds a month on the free plan.");
+  }, 120_000);
+});
