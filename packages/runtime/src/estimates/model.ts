@@ -879,20 +879,97 @@ function round4(n: number): number {
   return Math.round(n * 10_000) / 10_000;
 }
 
-/** Convenience for the planner: the learned estimate for a task row, in micro-USD. */
-export function planEstimateUsdMicro(port: EstimatePort, task: TaskRow): number {
+/**
+ * Convenience for the planner: the learned estimate for a task row, in micro-USD. A task that
+ * resumes from the work its paused runs kept (`kept`, `keptWorkFor`) is priced at what is left
+ * of its estimate (`estimateLeftUsdMicro`, D4); its own budget still caps it.
+ */
+export function planEstimateUsdMicro(
+  port: EstimatePort,
+  task: TaskRow,
+  kept?: KeptWork | null,
+): number {
   return withinTaskBudget(
-    port.estimate({
-      specialist: task.specialist,
-      risk_tier: task.risk_tier,
-      est_cost_usd_micro: task.est_cost_usd_micro,
-      budget_usd_micro: task.budget_usd_micro,
-      outcome: task.outcome,
-      acceptance_criteria: task.acceptance_criteria,
-    }).usdMicro,
+    estimateLeftUsdMicro(
+      port.estimate({
+        specialist: task.specialist,
+        risk_tier: task.risk_tier,
+        est_cost_usd_micro: task.est_cost_usd_micro,
+        budget_usd_micro: task.budget_usd_micro,
+        outcome: task.outcome,
+        acceptance_criteria: task.acceptance_criteria,
+      }).usdMicro,
+      kept,
+    ).usdMicro,
     task,
   );
 }
+
+/**
+ * The work a task's paused runs kept (d1109-oversize-start, the owner's D4 of 2026-11-09): what
+ * the consecutive runs ending with its latest work run cost, each of which paused at a budget
+ * with its work kept (ADR 0112 amended: a commit of its own, `refs/forerunner/wip/<task>` or the
+ * folder's work-in-progress commit). The same condition under which the task's next brief starts
+ * with "## Where the last run stopped" (`taskContextBlock`). Null when the latest work run did not
+ * pause: a task redone from main, one a review sent back or a failed one tried again starts over,
+ * so nothing it spent before is work it goes on from.
+ */
+export interface KeptWork {
+  /** What those runs cost, in micro-USD. */
+  usdMicro: number;
+}
+
+/** Run outcomes of a run that paused at a budget with its work kept (ADR 0112). */
+export const KEPT_WORK_OUTCOMES: readonly string[] = ["paused", "budget_exceeded"];
+
+/** The kept-work fact over a task's Run rows (any order; the critic's runs are not work). */
+export function keptWorkOf(
+  runs: readonly Pick<RunRow, "id" | "specialist" | "outcome" | "cost_usd_micro" | "created_at">[],
+): KeptWork | null {
+  const work = runs
+    .filter((r) => r.specialist !== "critic")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+  let usdMicro = 0;
+  let paused = 0;
+  for (const r of work) {
+    if (!KEPT_WORK_OUTCOMES.includes(r.outcome)) break;
+    usdMicro += Math.max(0, Math.round(r.cost_usd_micro || 0));
+    paused += 1;
+  }
+  return paused > 0 ? { usdMicro } : null;
+}
+
+/** `keptWorkOf` over the store's Run rows of the task; a task that spent nothing kept nothing. */
+export async function keptWorkFor(
+  store: Pick<StateStore, "run">,
+  task: Pick<TaskRow, "id" | "actual_cost_usd_micro">,
+): Promise<KeptWork | null> {
+  if (!((task.actual_cost_usd_micro ?? 0) > 0)) return null;
+  return keptWorkOf(await store.run.forTask(task.id));
+}
+
+/**
+ * What is left of a task's estimate once its kept work is counted (D4): the estimate less the cost
+ * of that work. Once that cost reached the estimate, the estimate was too low and what is left is
+ * not known: a fifth of the estimate (`ESTIMATE_PASSED_SHARE`), with `estimatePassed`. Without
+ * kept work, the estimate itself. One function for the planner, the Start check, the plan card and
+ * the chat (through `planEstimateUsdMicro`).
+ */
+export function estimateLeftUsdMicro(
+  estimateUsdMicro: number,
+  kept: KeptWork | null | undefined,
+): { usdMicro: number; estimatePassed: boolean } {
+  if (!kept || !(kept.usdMicro > 0)) return { usdMicro: estimateUsdMicro, estimatePassed: false };
+  if (kept.usdMicro >= estimateUsdMicro)
+    return {
+      usdMicro: Math.max(1, Math.round(estimateUsdMicro * ESTIMATE_PASSED_SHARE)),
+      estimatePassed: true,
+    };
+  return { usdMicro: estimateUsdMicro - kept.usdMicro, estimatePassed: false };
+}
+
+/** The share of its estimate a task whose kept work passed the estimate is planned at (D4). */
+export const ESTIMATE_PASSED_SHARE = 0.2;
 
 /**
  * An estimate no larger than what is left of the task's own budget (U-042: the budget caps its

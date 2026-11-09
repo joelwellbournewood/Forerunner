@@ -24,7 +24,14 @@ import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
-import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
+import {
+  type EstimatePort,
+  estimateLeftUsdMicro,
+  type KeptWork,
+  keptWorkFor,
+  planEstimateUsdMicro,
+  withinTaskBudget,
+} from "../estimates/model.ts";
 import {
   type CriticPort,
   DEFAULT_MEMORY_TOKEN_BUDGET,
@@ -215,6 +222,12 @@ export interface PlannerContext {
   session: SessionRow;
   token: SignedToken;
   budget: SessionBudget;
+  /**
+   * D4 (d1109-oversize-start): the work a task's paused runs kept (`keptWorkFor` over the
+   * store), so a task that resumes from it is planned at what is left of its estimate. Absent:
+   * every task at its whole estimate.
+   */
+  keptWork?(task: TaskRow): Promise<KeptWork | null>;
 }
 
 export interface Planner {
@@ -1179,6 +1192,8 @@ export class SessionRunner {
       }
 
       // 2. Plan within budget. Plans over budget are cut before starting.
+      // D4: a task that resumes from the work its paused runs kept is planned at what is left.
+      const keptWork = (t: TaskRow) => keptWorkFor(store, t);
       let readyTasks = project ? await store.task.readyTasks(project.id, { limit: 100 }) : [];
       // U-079: a full-review task runs only in the container sandbox; while it is not ready
       // the task waits (left out of the plan, its attempt count unchanged) and the session
@@ -1200,6 +1215,7 @@ export class SessionRunner {
         session,
         token,
         budget,
+        keptWork,
       });
       plan = cutPlanToBudget(plan, Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)));
       /** Every task row the session planned, by id (the start's ready tasks, then each re-plan). */
@@ -1430,6 +1446,7 @@ export class SessionRunner {
             session,
             token,
             budget,
+            keptWork,
           });
           // What is left of the work budget now, not at the start.
           const room = Math.max(
@@ -3860,17 +3877,25 @@ export class StaticPlanner implements Planner {
     const ordered = first
       ? first.tasks
       : free.sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
-    const items = ordered.map((t) => ({
-      taskId: t.id,
-      title: t.title,
-      specialist: t.specialist ?? "coder",
-      estimateUsdMicro: this.estimates
-        ? planEstimateUsdMicro(this.estimates, t)
-        : withinTaskBudget(
-            t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
-            t,
-          ),
-    }));
+    const items: PlanItem[] = [];
+    for (const t of ordered) {
+      // D4: a task that resumes from its kept work is planned at what is left of its estimate.
+      const kept = ctx.keptWork ? await ctx.keptWork(t) : null;
+      items.push({
+        taskId: t.id,
+        title: t.title,
+        specialist: t.specialist ?? "coder",
+        estimateUsdMicro: this.estimates
+          ? planEstimateUsdMicro(this.estimates, t, kept)
+          : withinTaskBudget(
+              estimateLeftUsdMicro(
+                t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+                kept,
+              ).usdMicro,
+              t,
+            ),
+      });
+    }
     return {
       items,
       estimateUsdMicro: items.reduce((s, i) => s + i.estimateUsdMicro, 0),

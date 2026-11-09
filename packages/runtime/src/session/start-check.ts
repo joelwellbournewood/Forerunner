@@ -1,5 +1,12 @@
 import type { StateStore, WaitsOn } from "@forerunner/state";
-import { type EstimatePort, planEstimateUsdMicro, withinTaskBudget } from "../estimates/model.ts";
+import {
+  type EstimatePort,
+  estimateLeftUsdMicro,
+  type KeptWork,
+  keptWorkFor,
+  planEstimateUsdMicro,
+  withinTaskBudget,
+} from "../estimates/model.ts";
 import { cutPlanToBudget, DEFAULT_RESERVE_SHARE, type PlanItem } from "./runner.ts";
 import { needsContainerSandbox, type SandboxGate, type SandboxGateAnswer } from "./sandbox-gate.ts";
 
@@ -73,10 +80,25 @@ export async function startCheck(
   const ready = await store.task.forProject(projectId, { status: "ready" }, { limit: 10_000 });
   let runnableRows = await store.task.readyTasks(projectId, { limit: 100 });
   let sandboxWait: StartCheck["waitingForSandbox"] = null;
-  const price = (t: (typeof runnableRows)[number]) =>
-    estimates
-      ? planEstimateUsdMicro(estimates, t)
-      : withinTaskBudget(t.est_cost_usd_micro || t.budget_usd_micro || fallback, t);
+  // D4 (d1109-oversize-start): a task that resumes from its kept work is priced at what is left
+  // of its estimate, as the runner's planner prices it (`keptWorkFor`); read once per task.
+  const keptOf = new Map<string, KeptWork | null>();
+  const priced = async (t: (typeof runnableRows)[number]) => {
+    if (!keptOf.has(t.id)) keptOf.set(t.id, await keptWorkFor(store, t));
+    const kept = keptOf.get(t.id) ?? null;
+    return estimates
+      ? planEstimateUsdMicro(estimates, t, kept)
+      : withinTaskBudget(
+          estimateLeftUsdMicro(t.est_cost_usd_micro || t.budget_usd_micro || fallback, kept)
+            .usdMicro,
+          t,
+        );
+  };
+  const waiting = await store.task.waitingTasks(projectId);
+  const prices = new Map<string, number>();
+  for (const t of [...runnableRows, ...waiting.map((w) => w.task)])
+    if (!prices.has(t.id)) prices.set(t.id, await priced(t));
+  const price = (t: (typeof runnableRows)[number]) => prices.get(t.id) ?? fallback;
   if (deps.sandbox && runnableRows.some(needsContainerSandbox)) {
     const answer = await deps.sandbox.check();
     if (!answer.ready) {
@@ -122,7 +144,6 @@ export async function startCheck(
       else before += i.estimateUsdMicro;
     }
   }
-  const waiting = await store.task.waitingTasks(projectId);
   // A chain: a waiting task follows once what it waits on runs or follows (fixed point).
   const comes = new Set(cut.items.map((i) => i.taskId));
   for (const t of await store.task.forProject(
