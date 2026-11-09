@@ -384,7 +384,7 @@ If the conflict goes away without a change to the pull request (the other change
 main again), the row and its card say again what they said before (a rebuild's warning, for
 example) and offer Merge again; a card filed only for the conflict closes. If you resolve it on GitHub with a
 commit of your own, that commit is not what the critic reviewed: the row then says "#8 changed
-after the review: look at the new commits, then merge it yourself or send it back." and offers no
+after the review: look at the new commits, then merge it yourself or redo the task." and offers no
 Merge, and the card says the same; merge it on GitHub, or press **Redo**.
 
 **A conflict the agent cannot resolve while it works.** Its card offers **I resolved it**, **Drop
@@ -470,7 +470,7 @@ seen within about a minute; closing it without merging offers the button again.
 **How Forerunner merges** (on your Merge, or by itself in the automatic mode). It merges exactly the version
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
-after the review: look at the new commits, then merge it yourself or send it back."); **I merged
+after the review: look at the new commits, then merge it yourself or redo the task."); **I merged
 it** and **Leave it open** close the card. It always makes a merge commit, so a pull
 request that carries another's work brings that work to the default branch as it is, and GitHub
 marks the other pull request merged too; it never rebases or force-pushes a branch, and when the

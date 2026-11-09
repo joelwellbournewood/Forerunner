@@ -266,7 +266,7 @@ describe("the merge record and the merge step (ADR 0111)", { timeout: 180_000 },
       last_outcome: "head_moved",
     });
     expect(record.sentence).toBe(
-      `#${pr.number} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+      `#${pr.number} changed after the review: look at the new commits, then merge it yourself or redo the task.`,
     );
     // The person reads the record's sentence on the one card, with no commit ids.
     const cards = await inboxCards(m, t.id);

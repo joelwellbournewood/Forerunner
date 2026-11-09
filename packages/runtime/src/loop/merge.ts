@@ -627,7 +627,7 @@ function hostRefused(name: string, message: string): Omit<MergePrArtifacts, "upd
     return {
       status: "head_moved",
       message: `the host refused the merge: ${said}`,
-      sentence: `${name} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+      sentence: headMovedWords(name),
     };
   return {
     status: "failed",
@@ -638,19 +638,28 @@ function hostRefused(name: string, message: string): Omit<MergePrArtifacts, "upd
 
 /**
  * The record's sentence for a pull request whose head is not the reviewed commit (ADR 0111):
- * "#8 changed after the review: look at the new commits, then merge it yourself or send it
- * back." The Overview offers no Merge for it (`head_moved`). Also the conflict notice's, once
+ * "#8 changed after the review: look at the new commits, then merge it yourself or redo the
+ * task." The Overview offers no Merge for it (`head_moved`). Also the conflict notice's, once
  * the person resolved the conflict on GitHub with a commit of their own (dependent-branches).
  */
 export function headMovedSentence(pr: number): string {
-  return `${prName(pr)} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+  return headMovedWords(prName(pr));
+}
+
+/**
+ * W15-63: the head-moved sentence in one place, offering only what there is to do: merge it on
+ * GitHub, or Redo (its card's and the Tasks row's); before, "or send it back", which no button
+ * did (live check 2, F10).
+ */
+function headMovedWords(name: string): string {
+  return `${name} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
 }
 
 function headMoved(name: string, now: string, reviewed: string): MergePrArtifacts {
   return {
     status: "head_moved",
     message: `the PR head ${short(now)} is not the reviewed commit ${short(reviewed)}`,
-    sentence: `${name} changed after the review: look at the new commits, then merge it yourself or send it back.`,
+    sentence: headMovedWords(name),
     headSha: now,
     updated: false,
   };

@@ -961,7 +961,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     const resolved = await m.pr(b.id);
     expect([resolved.mergeable, resolved.head.sha === reviewed]).toEqual([true, false]);
     await m.poll();
-    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+    const moved = `#${prB} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
     // The head-moved word the merge step itself gives (no Merge on the Overview: `NO_CLICK`).
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",

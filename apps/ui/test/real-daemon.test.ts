@@ -10894,7 +10894,7 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     await rt.githostWatcher?.pollOnce();
     // Before (the review of leftovers7-merge2): the row offered Merge again, and pressing it was
     // refused ("changed after the review") with a second card.
-    const moved = `#${b.pr.number} changed after the review: look at the new commits, then merge it yourself or send it back.`;
+    const moved = `#${b.pr.number} changed after the review: look at the new commits, then merge it yourself or redo the task.`;
     expect((await rowOf(b.pr.number))?.merge).toMatchObject({
       state: "blocked",
       canMerge: false,

@@ -3399,7 +3399,7 @@ not the reviewed commit, and before, a conflict that went away on main left a re
 "changed after the review" with no Merge and without its warning. A head that moved since (the person resolved it on GitHub with a commit of their own) is not the
 reviewed version, so the record says what the merge step would (`last_outcome` `head_moved`,
 `headMovedSentence` from `loop/merge.ts`: "#8 changed after the review: look at the new commits,
-then merge it yourself or send it back."), the Overview offers no Merge, and the open conflict
+then merge it yourself or redo the task."), the Overview offers no Merge, and the open conflict
 card takes those words (`notice` cleared, so it is titled as the merge step's left-open card; its
 options stay Redo and Leave it open; its Details become the head-moved steps, `leftOpenSteps`
 from `loop/merge.ts`, as an open card the notice takes over gets the conflict's). Before (the review's fix-up), the row offered Merge again and
