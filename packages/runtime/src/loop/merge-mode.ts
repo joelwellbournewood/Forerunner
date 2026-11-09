@@ -65,6 +65,41 @@ export function redoneMergeCard(card: unknown, nowIso: string): Record<string, u
   };
 }
 
+/** The fields `redoneMergeCard` sets on a card. */
+const REDO_MARK_FIELDS = ["applied_at", "outcome", REDO_FROM_BASE] as const;
+
+/**
+ * W15-04 fix-up: what a card held in the fields `redoneMergeCard` sets, before it set them
+ * (null where it had none), kept on the Redo's change so its Undo can put the card back.
+ */
+export function redoMarkOf(card: unknown): Record<string, unknown> {
+  const was =
+    card && typeof card === "object" && !Array.isArray(card)
+      ? (card as Record<string, unknown>)
+      : {};
+  return Object.fromEntries(REDO_MARK_FIELDS.map((f) => [f, was[f] ?? null]));
+}
+
+/**
+ * W15-04 fix-up: the card as it was before the Tasks tab's Redo answered it (`was` from
+ * `redoMarkOf`): the Redo's mark taken off, so the card is open again as the person left it and
+ * the task's next run does not start from main because of it.
+ */
+export function notRedoneMergeCard(card: unknown, was: unknown): Record<string, unknown> {
+  const now =
+    card && typeof card === "object" && !Array.isArray(card)
+      ? { ...(card as Record<string, unknown>) }
+      : {};
+  const before =
+    was && typeof was === "object" && !Array.isArray(was) ? (was as Record<string, unknown>) : {};
+  for (const f of REDO_MARK_FIELDS) {
+    const v = before[f];
+    if (v === null || v === undefined) delete now[f];
+    else now[f] = v;
+  }
+  return now;
+}
+
 /** "#5", "#5 and #6", "#5, #6 and #7". */
 function prsWords(numbers: readonly number[]): string {
   const names = numbers.map((n) => `#${n}`);

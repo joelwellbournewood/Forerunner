@@ -382,7 +382,10 @@ Inbox card ('"Add the page" conflicts with main') offers **Redo** (the task is d
 main) and **Leave it open**. Redo does the task again from main (its next run starts the branch afresh, and
 the same pull request gets the new work); the critic reviews it, and you then press Merge as usual.
 **Redo** on the task's row in the Tasks tab does the same to the card (it closes, and the next
-session does the task again from main), but starts no session by itself. Once the task is done
+session does the task again from main), but starts no session by itself; its line says so
+('Reopened "Add the page" to redo it from main: the next session works on it again. Its card in
+the Inbox was withdrawn.'), and its **Undo** puts the task back to done and the card back in the
+Inbox, as it was. Once the task is done
 again and its pull request merges cleanly, a notice still open from before closes too.
 If the conflict goes away without a change to the pull request (the other change is taken out of
 main again), the row and its card say again what they said before (a rebuild's warning, for

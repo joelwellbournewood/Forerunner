@@ -1941,6 +1941,55 @@ describe("w15-merge, wave 15: the Tasks tab's Redo on a task with a conflict not
     expect((await m.mergeByPerson(b.id)).status).toBe("merged");
   });
 
+  it("the Tasks row's Redo says the card closed and the task is done again from main; its Undo puts the task back to done and opens the same card again, without the Redo's mark; polls leave that one card open (W15-04 fix-up)", async () => {
+    const { m, b, prB } = await conflictingPair();
+    await m.poll();
+    const [notice] = await openCards(m, b.id);
+    expect(notice).toBeDefined();
+    const moved = (await tasksRowRedo(m, b.id)) as {
+      sentence: string;
+      before: unknown;
+      after: { withdrawn_requests?: string[] };
+    };
+    // Before: 'Reopened "Write the other page" to redo it: the next session works on it again.'
+    // with nothing about the card it closed, and the change did not record the card.
+    expect(moved.sentence).toBe(
+      'Reopened "Write the other page" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.',
+    );
+    expect(moved.after.withdrawn_requests).toEqual([notice?.id]);
+    expect(await openCards(m, b.id)).toEqual([]);
+    const ctx = {
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      actor: { kind: "human", id: m.w.human },
+      source: "ui",
+      ports: {},
+    } as never;
+    expect(
+      await taskReopen.undoBlocked?.({} as never, moved.before as never, moved.after as never, ctx),
+    ).toBeNull();
+    await taskReopen.undo?.({} as never, moved.before as never, moved.after as never, ctx);
+    expect(
+      taskReopen.undoSentence?.({} as never, moved.before as never, moved.after as never),
+    ).toBe('Undone: the task "Write the other page" is done again; its card is back in the Inbox.');
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("done");
+    // Before: the card stayed withdrawn for good (answered "redone", redo_from_base set), and the
+    // conflict notice is said once, so it never came back.
+    const again = await openCards(m, b.id);
+    expect(again.map((r) => r.id)).toEqual([notice?.id]);
+    const card = again[0]?.change_card as Record<string, unknown>;
+    expect(card[REDO_FROM_BASE]).toBeUndefined();
+    expect(card.outcome).toBeUndefined();
+    expect(card.applied_at).toBeUndefined();
+    expect(card).toMatchObject({ key: MERGE_CARD_KEY, notice: "conflict" });
+    await m.poll();
+    await m.poll();
+    expect((await openCards(m, b.id)).map((r) => r.id)).toEqual([notice?.id]);
+    expect(await m.record(b.id)).toMatchObject({ last_outcome: "conflict" });
+    expect(await m.prNumber(b.id)).toBe(prB);
+  });
+
   it("the command registry spells a merge card's key and its Redo's mark as the merge step does (W15-04)", () => {
     expect(MERGE_CARD_KEY).toBe(MERGE_LEFT_OPEN_KEY);
     expect(REDO_FROM_BASE).toBe(REDO_FROM_BASE_FIELD);

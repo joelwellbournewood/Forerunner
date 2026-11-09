@@ -459,3 +459,9 @@ after the review is never merged by Forerunner.
    then merge it yourself or redo the task." with no Merge; a kept approval is dropped, and one
    card says it (a new card only when the record did not already wait for the person's Merge, as
    the merge step does when it finds the head moved).
+2. **The Tasks tab's Redo is undone whole.** Point 5's Redo closes the task's open merge card
+   as part of the move itself: the move's change records the card, its line says so ("Reopened
+   "X" to redo it from main: the next session works on it again. Its card in the Inbox was
+   withdrawn."), and its Undo puts the task back to done and the same card back in the Inbox,
+   without the Redo's mark. Before, the Undo left the conflict notice withdrawn for good (it is
+   said once, so no later poll brought it back) and the Redo's line did not mention the card.

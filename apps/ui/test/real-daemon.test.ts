@@ -12276,6 +12276,103 @@ describe("w15-merge, wave 15", () => {
       await rt.close();
     }
   }, 240_000);
+
+  it("the Tasks row's Redo of a done task with a conflict notice says the card closed and the redo is from main; its Undo, after the daemon starts again, puts the task back to done and the same card back in the Inbox, without the Redo's mark (W15-04 fix-up)", async () => {
+    // The review of fix/w15-merge: the Redo withdrew the card outside the move's change, so
+    // the Undo put the task back to done and left the notice withdrawn for good (it is said
+    // once), with an unused redo mark; and the Redo's line said nothing about the card.
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-redo-"));
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const compose = () =>
+      composeWithRolePlayer(
+        {},
+        {
+          gitHost: new MemoryGitHost("alice"),
+          tryIt: false,
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      );
+    let { rt, client } = await compose();
+    try {
+      const me = (await client.me()).id;
+      const agent = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Redo notice", goal: "Two pages" });
+      const created = await client.createTask(project.id, {
+        title: "Write the other page",
+        outcome: "index.html says two",
+      });
+      const t = await rt.store.task.mustGet(created.id);
+      await rt.store.task.restoreStatus(t.id, t.version, "done", "accepted by the critic", {
+        agentId: agent,
+      });
+      await rt.store.task.patch(t.id, { pr_url: "https://github.com/o/app/pull/2" });
+      // The conflict notice as the merge step files it (`fileLeftOpenRequest`).
+      const sentence =
+        "#2 conflicts with main in index.html: resolve the conflict on GitHub, or redo the task.";
+      const notice = await rt.store.humanRequest.insert({
+        human_id: me,
+        project_id: project.id,
+        task_id: t.id,
+        kind: "decision",
+        why: `The critic accepted "Write the other page", but pull request #2 was not merged. ${sentence}`,
+        options: ["Redo", "Leave it open"],
+        blocking: false,
+        risk: "medium",
+        change_card: {
+          key: "merge:left_open",
+          pr_url: "https://github.com/o/app/pull/2",
+          status: "conflict",
+          notice: "conflict",
+          sentence,
+        },
+      });
+      const openIds = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests
+          .filter((r) => r.taskId === t.id && r.status === "open")
+          .map((r) => r.id);
+      expect(await openIds(client)).toEqual([notice.id]);
+      const sessionsBefore = (await client.sessions({ projectId: project.id })).length;
+      const row = (await client.tasks(project.id)).find((x) => x.id === t.id);
+      const redo = await client.taskAction(t.id, { version: row?.version ?? 0, action: "redo" });
+      expect(redo.status).toBe("ready");
+      expect(redo.change?.sentence).toBe(
+        'Reopened "Write the other page" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.',
+      );
+      expect(await openIds(client)).toEqual([]);
+      expect((await client.sessions({ projectId: project.id })).length).toBe(sessionsBefore);
+      const marked = (await rt.store.humanRequest.get(notice.id))?.change_card as Record<
+        string,
+        unknown
+      >;
+      expect(marked).toMatchObject({ outcome: "redone", redo_from_base: true });
+
+      // The daemon starts again on the same home; the Undo is pressed then.
+      await rt.close();
+      ({ rt, client } = await compose());
+      const undone = await client.undoChange(redo.change?.undoToken ?? "");
+      expect(undone.sentence).toBe(
+        'Undone: the task "Write the other page" is done again; its card is back in the Inbox.',
+      );
+      expect((await client.tasks(project.id)).find((x) => x.id === t.id)?.status).toBe("done");
+      expect(await openIds(client)).toEqual([notice.id]);
+      const back = (await rt.store.humanRequest.get(notice.id))?.change_card as Record<
+        string,
+        unknown
+      >;
+      expect(back).toMatchObject({ key: "merge:left_open", notice: "conflict", sentence });
+      expect([back.outcome, back.redo_from_base, back.applied_at]).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    } finally {
+      await rt.close();
+    }
+  }, 240_000);
 });
 
 describe("w15-merge, wave 15: a merge that waits for its task's folder (W15-05)", () => {

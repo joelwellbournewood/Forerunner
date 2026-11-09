@@ -3382,7 +3382,10 @@ folder with the same `folderHold`. **The press on such a row** (W15-05, live che
 `waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
 and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the
 sentence). Before, the row read "Merging…" and the Tasks row "Accepted · merging" with no
-reason. The merge still waits (R-lock holds). W15-04: a notice card whose record moved on (the
+reason. The merge still waits (R-lock holds). W15-04: the Tasks tab's Redo answers a done task's
+open merge card with `redoneMergeCard` (`loop/merge-mode.ts`); `redoMarkOf` keeps what the card held
+in the fields the mark sets and `notRedoneMergeCard` puts them back when that Redo is undone
+(`task.reopen`, docs/maintainers/commands.md). A notice card whose record moved on (the
 task was redone and accepted again) is withdrawn by the conflict notice once the pull request
 merges cleanly (`closeStaleNotice`), and a notice that takes over an open card that is itself an
 earlier notice keeps that card's own earlier words, never notice words to restore. **The conflict notice** (R-conflict):

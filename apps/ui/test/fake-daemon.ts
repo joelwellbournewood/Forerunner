@@ -1835,6 +1835,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (ids.length) emit("inbox.changed", { blockingCount: blockingCount() });
     return ids;
   };
+  /** W15-04, as the daemon's `task.reopen`: a done task's open merge cards, withdrawn by its Redo. */
+  const withdrawMergeCards = (taskId: string): string[] => {
+    const ids: string[] = [];
+    for (const r of state.requests)
+      if (
+        r.taskId === taskId &&
+        r.status === "open" &&
+        (r.changeCard as { key?: unknown } | null)?.key === "merge:left_open"
+      ) {
+        r.status = "withdrawn";
+        ids.push(r.id);
+      }
+    if (ids.length) emit("inbox.changed", { blockingCount: blockingCount() });
+    return ids;
+  };
   /** As the daemon: a note for the agent is a queued note that names the task. */
   const queueTaskNote = (task: TaskView, note: string | undefined): string | null => {
     const text = note?.trim();
@@ -2232,6 +2247,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ["needs_human", "failed", "in_review"].includes(from) || target.to === "cancelled"
         ? withdrawCards(task.id)
         : [];
+    // W15-04, as the daemon's `task.reopen`: Redo of a done task answers its open merge card (a
+    // conflict notice, a rebuild's card) as the card's own Redo does, with the move's other cards
+    // (its Undo opens it again), and the redo starts from main.
+    const fromMain = action === "redo" && from === "done" ? withdrawMergeCards(task.id) : [];
+    withdrawnIds.push(...fromMain);
     const withdrawn = withdrawnIds.length;
     const withoutAnswers =
       action === "go_ahead" || (from === "needs_human" && withdrawn > 0 && target.to === "ready")
@@ -2286,6 +2306,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         stuck,
         live,
         shown,
+        fromMain: fromMain.length > 0,
       }),
       reversible: true,
     });

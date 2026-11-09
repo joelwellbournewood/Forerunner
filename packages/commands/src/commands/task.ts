@@ -9,7 +9,12 @@ import {
 } from "@forerunner/runtime/daemon/cancel-words";
 import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
 // The module itself (import-free): a merge card's key and its Redo's mark (W15-04).
-import { MERGE_CARD_KEY, redoneMergeCard } from "@forerunner/runtime/loop/merge-mode";
+import {
+  MERGE_CARD_KEY,
+  notRedoneMergeCard,
+  redoMarkOf,
+  redoneMergeCard,
+} from "@forerunner/runtime/loop/merge-mode";
 // The module itself, not the package index: the index loads this package (a cycle), and the
 // schema is needed when this module is evaluated.
 import {
@@ -188,11 +193,6 @@ async function dismissNotes(ctx: CommandContext, after: JsonValue): Promise<void
   }
 }
 
-/**
- * Close the task's open Inbox cards (questions, a sign-off, a retry card) when a person moves
- * the task on: design §3.8, "a card whose task has moved on is closed with a line saying so;
- * it never lingers as blocking". Returns the ids it withdrew.
- */
 /** The task's open cards about its pull request's merge (`MERGE_LEFT_OPEN_KEY`). */
 async function openMergeCards(ctx: CommandContext, taskId: string) {
   return (
@@ -200,6 +200,35 @@ async function openMergeCards(ctx: CommandContext, taskId: string) {
   ).filter((r) => (r.change_card as { key?: unknown } | null)?.key === MERGE_CARD_KEY);
 }
 
+/**
+ * W15-04: a done task's open merge cards (a conflict notice, a rebuild's card), answered as
+ * their own Redo answers them when the Tasks tab's Redo reopens the task: closed "redone" with
+ * `REDO_FROM_BASE`, so the next run does the task again from main. Returns the ids withdrawn and
+ * what each card held where the mark goes (`redoMarkOf`), for the Undo (fix-up of the review:
+ * the Undo left the card withdrawn for good, with the mark).
+ */
+async function redoMergeCards(
+  ctx: CommandContext,
+  taskId: string,
+): Promise<{ ids: string[]; marks: Record<string, JsonObject> }> {
+  const ids: string[] = [];
+  const marks: Record<string, JsonObject> = {};
+  for (const card of await openMergeCards(ctx, taskId)) {
+    const marked = await ctx.store.humanRequest.patch(card.id, {
+      change_card: redoneMergeCard(card.change_card, ctx.clock.nowIso()) as JsonObject,
+    });
+    await ctx.store.humanRequest.withdraw(marked.id, marked.version);
+    ids.push(card.id);
+    marks[card.id] = redoMarkOf(card.change_card) as JsonObject;
+  }
+  return { ids, marks };
+}
+
+/**
+ * Close the task's open Inbox cards (questions, a sign-off, a retry card) when a person moves
+ * the task on: design §3.8, "a card whose task has moved on is closed with a line saying so;
+ * it never lingers as blocking". Returns the ids it withdrew.
+ */
 async function withdrawCards(ctx: CommandContext, taskId: string): Promise<string[]> {
   const open = await ctx.store.humanRequest.list({ task_id: taskId, status: "open" } as never, {
     limit: 100,
@@ -380,6 +409,8 @@ export function moveSentence(
     noted?: boolean;
     stuck?: readonly string[];
     redo?: boolean;
+    /** W15-04: the redo answered the task's merge card, so the next run starts from main. */
+    fromMain?: boolean;
     /**
      * What happened to the work of a cancelled task (phase C, live walk 2 C1; budget-resume): a
      * run or review stopped and its changes removed (Undo restores them), its pull request kept,
@@ -403,7 +434,7 @@ export function moveSentence(
   else if (to === "ready" && from === "failed") s = `${t} is ready to try again.`;
   else if (to === "ready" && from === "cancelled") s = `Reopened ${t}: it is ready again.`;
   else if (to === "ready" && (from === "done" || extra.redo))
-    s = `Reopened ${t} to redo it: the next session works on it again.`;
+    s = `Reopened ${t} to redo it${extra.fromMain ? " from main" : ""}: the next session works on it again.`;
   else if (to === "ready") s = `${t} is ready again.`;
   else s = `${t} is ${statusWords(to)} now.`;
   if (extra.withdrawn)
@@ -439,6 +470,8 @@ async function personMove(
     withoutAnswers?: boolean;
     /** Recorded as the person's own move even when the chat's agent carries it out (a pause). */
     asPerson?: boolean;
+    /** W15-04: a done task's Redo answers its open merge cards as their own Redo does. */
+    redoMergeCards?: boolean;
   },
 ) {
   const from = task.status;
@@ -448,6 +481,12 @@ async function personMove(
     : await ctx.store.task.transition(task.id, task.version, to, opts.reason, actor);
   const withdrawn =
     WAITS_ON_CARDS.includes(from) || to === "cancelled" ? await withdrawCards(ctx, task.id) : [];
+  // W15-04: recorded with the move's other cards, so its Undo opens them again (fix-up).
+  const redone =
+    opts.redoMergeCards && from === "done"
+      ? await redoMergeCards(ctx, task.id)
+      : { ids: [], marks: {} };
+  withdrawn.push(...redone.ids);
   // Moved on without the answers its cards asked for: the specialist is told so (design §4.6).
   const withoutAnswersNoteId =
     opts.withoutAnswers ||
@@ -511,6 +550,7 @@ async function personMove(
       ...(noteId ? { note_id: noteId } : {}),
       ...(withoutAnswersNoteId ? { without_answers_note_id: withoutAnswersNoteId } : {}),
       ...(withdrawn.length ? { withdrawn_requests: withdrawn } : {}),
+      ...(redone.ids.length ? { redone_cards: redone.marks } : {}),
       ...(setAside ? { set_aside: true } : {}),
     },
     sentence: moveSentence(task, from, moved.status, {
@@ -518,6 +558,7 @@ async function personMove(
       noted: noteId !== null,
       stuck,
       redo: from === "done",
+      fromMain: redone.ids.length > 0,
       ...(work ? { work, kept } : {}),
     }),
     projectId: task.project_id,
@@ -581,10 +622,16 @@ async function undoMove(before: JsonValue, after: JsonValue, ctx: CommandContext
     recorded ? { humanId: id(b.author_human), agentId: id(b.author_agent) } : actorOf(ctx),
     typeof b.attempt === "number" ? { attempt: b.attempt } : {},
   );
+  // W15-04 fix-up: a merge card the Redo answered comes back without the Redo's mark.
+  const redone = asObject(asObject(after).redone_cards ?? {});
   for (const requestId of withdrawnIds(after)) {
-    const card = await ctx.store.humanRequest.get(requestId);
-    if (card?.status === "withdrawn")
-      await ctx.store.humanRequest.reopenWithdrawn(card.id, card.version);
+    let card = await ctx.store.humanRequest.get(requestId);
+    if (card?.status !== "withdrawn") continue;
+    if (requestId in redone)
+      card = await ctx.store.humanRequest.patch(card.id, {
+        change_card: notRedoneMergeCard(card.change_card, redone[requestId]) as JsonObject,
+      });
+    await ctx.store.humanRequest.reopenWithdrawn(card.id, card.version);
   }
   await dismissNotes(ctx, after);
   // The cancel of a task that ran took what it changed out of the folder (phase C), and the
@@ -1000,25 +1047,19 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
     // as its own Redo answers it, in the same transaction as the reopen: closed "redone", and
     // the next run does the task again from main. Before (live check 2, F3), the card stayed
     // open beside the run's own rebase-conflict card, and outlived the task's next accept. No
-    // session starts here (the Tasks-row owner question stays open).
-    const cards = task.status === "done" ? await openMergeCards(ctx, task.id) : [];
-    const moved = await ctx.store.transaction(async (tx) => {
-      const out = await personMove({ ...ctx, store: tx }, task, "ready", {
+    // session starts here (the Tasks-row owner question stays open). The move's line says the
+    // card closed and the redo is from main, and its Undo opens the card again (fix-up).
+    const moved = await ctx.store.transaction((tx) =>
+      personMove({ ...ctx, store: tx }, task, "ready", {
         reason:
           task.status === "done"
             ? `Redo asked by you${params.note?.trim() ? `: ${params.note.trim()}` : ""}`
             : "Reopened by you",
         note: params.note,
         reopen: true,
-      });
-      for (const card of cards) {
-        const marked = await tx.humanRequest.patch(card.id, {
-          change_card: redoneMergeCard(card.change_card, ctx.clock.nowIso()) as JsonObject,
-        });
-        await tx.humanRequest.withdraw(marked.id, marked.version);
-      }
-      return out;
-    });
+        redoMergeCards: true,
+      }),
+    );
     // budget-resume: what its cancel set aside comes back with it (the Inbox card's Cancel task
     // has no Undo: Reopen is the way back), its work in progress continued by its next run.
     if (task.status === "cancelled" && ctx.ports.bringBackWork) {
@@ -1033,7 +1074,15 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
     const b = asObject(before);
     const a = asObject(after);
     const title = typeof a.title === "string" ? `the task ${quote(a.title)}` : "the task";
-    return `Undone: ${title} is ${statusWords(String(b.status) as TaskStatus)} again.`;
+    // W15-04 fix-up: the merge card its Redo closed is open again.
+    const cards = withdrawnIds(after).length;
+    const back =
+      cards === 0
+        ? ""
+        : cards === 1
+          ? "; its card is back in the Inbox"
+          : `; its ${cards} cards are back in the Inbox`;
+    return `Undone: ${title} is ${statusWords(String(b.status) as TaskStatus)} again${back}.`;
   },
   undo: (_params, before, after, ctx) => undoMove(before, after, ctx),
 };
