@@ -4997,7 +4997,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       ) {
         return refuse(
           scope === "month"
-            ? "The monthly cap must be more than CHF 0: it is the limit that stops all spending, so it cannot be turned off."
+            ? "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month."
             : scope === "project"
               ? "budget.set: amountChf must be a number"
               : "The budget per session must be more than CHF 0: a session plans its work within it.",

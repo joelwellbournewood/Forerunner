@@ -556,6 +556,10 @@ among them.
   "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
   (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
   read-back keeps `chf` ("up to CHF 5"), as the design writes it.
+- **The monthly cap's 0 says what to do (W15-45).** `ZERO_REFUSED.month` (and Settings'
+  `MONTHLY_CAP_ZERO`, the fake daemon's refusal) reads "The monthly cap must be more than CHF
+  0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you
+  want to spend in a month." 0 stays refused for the month (owner question W15-109 open).
 
 ## How to change it
 

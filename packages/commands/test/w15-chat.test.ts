@@ -324,4 +324,21 @@ describe("w15-chat, wave 15", () => {
       "Raised the project budget for Game from CHF 12.00 to CHF 12.50. Undo.",
     );
   });
+
+  // W15-45 (wave 13 polish-screens): the monthly cap's 0 was refused with why but not what to do.
+  // The owner's question on the cap and 0 (W15-109) stays open: 0 stays refused.
+  it("the monthly cap's 0 is refused with why and what to do (W15-45)", async () => {
+    const w = await world();
+    const r = refused(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 0 },
+        ctx: w.ctx({ source: "ui" }),
+      }),
+    );
+    expect(r.reason).toBe(
+      "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you want to spend in a month.",
+    );
+    expect(await w.store.changeLog.list()).toEqual([]);
+  });
 });

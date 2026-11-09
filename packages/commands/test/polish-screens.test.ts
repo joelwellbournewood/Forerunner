@@ -120,7 +120,7 @@ describe("money fields and 0 (later #43; design §6)", () => {
   it("the monthly cap's 0 is refused in words saying why; a session's too", async () => {
     const w = await world();
     for (const [scope, said] of [
-      ["month", "The monthly cap must be more than CHF 0: it is the limit that stops all spending"],
+      ["month", "The monthly cap must be more than CHF 0.00: it is the limit that stops all spending"],
       ["session", "The budget per session must be more than CHF 0"],
     ] as const) {
       const r = await w.executor
