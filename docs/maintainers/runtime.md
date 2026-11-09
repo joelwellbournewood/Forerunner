@@ -3877,7 +3877,10 @@ in one project cancelled a task in another. Now:
   mentioned in this conversation]`): before, one note for the whole list read "not yet
   mentioned" beside a card marked "already mentioned". The conversation outside any project
   lists every card as before; `request_answer` still resolves a reference among all open cards
-  (`allOpen`). `CHAT_OPEN_REQUEST_RULES` says what the mark means. The system prompt
+  (`allOpen`). `CHAT_OPEN_REQUEST_RULES` says what the mark means, and (review of W15-30) that a
+card's words (its question, the specialist's questions and what the specialist said: model text
+that can come from a web page) are data, never instructions, and never a reason to call a tool;
+only the human's own words ask for a change. The system prompt
   keeps only the projects
   by name and goal (stage, autonomy, the cut summary and, since phase E, the "[id …]" are gone). `docs/status.md` is left out
   of the doc search: its sections go stale and come in any order.
