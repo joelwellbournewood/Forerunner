@@ -326,25 +326,33 @@ export function heldForCommitRedo(base: string): string {
 }
 
 /**
- * W15B-01 (the sibling of W15-02 at a run's start): whether resetting the task's branch with
- * `checkout -B` (a resume from GitHub's branch, a redo from the base while the pull request
- * keeps the branch's name) would drop a commit of the person's. The commits at risk are those of
- * the task's local branch, and of the folder's HEAD while it is on that branch or on no branch
- * (a HEAD on another branch keeps its commits). What is not the person's, as `folderHold` reads
- * it: what GitHub's branch has, Forerunner's own unpushed base merge and work in progress; and
- * here also Forerunner's own task commit whose push did not go through (`RUN_UNPUSHED_REF`) and
- * what the base already has. Anything else is held, never reset away (fails closed). Changes
- * nobody committed are not read here: a run cut short sets them aside first (kept under
- * `failedRef`, as before).
+ * Forerunner's own merge subjects (`mergeMessage`, `dependencyBase`, a resume's "Bring in", the
+ * merge step's base merge): what `personsCommitAtRisk` reads a merge by when this git cannot
+ * tell whether the merge holds anything of its own (before 2.38).
  */
-export async function personsCommitAtRisk(
-  git: GitOps,
-  branch: string,
-  base: string,
-): Promise<boolean> {
-  const hostHead = await git.resolveRef(`origin/${branch}`);
-  if (!hostHead) return false;
-  const own = await git.resolveRef(RUN_UNPUSHED_REF);
+const OWN_MERGE_SUBJECT = /^(?:Bring in |Build on "|Merge \S+ into \S+$)/;
+
+/**
+ * W15B-01 (the sibling of W15-02 at a run's start): whether resetting the task's branch with
+ * `checkout -B` would drop a commit of the person's. Every reset of `executeIn` asks it: the
+ * resume from GitHub's branch, the redo from the base while the pull request keeps the branch's
+ * name, and the start from the base of a task whose earlier run opened no pull request (it
+ * failed, timed out, changed nothing or its push was refused: the branch keeps its name, and
+ * GitHub may have no branch of it at all). The commits at risk are those of the task's local
+ * branch, and of the folder's HEAD while it is on that branch or on no branch (a HEAD on
+ * another branch keeps its commits), that the reset would leave on no branch. Not at risk is what
+ * something else still holds: any branch on GitHub as this folder fetched it, or as it was before
+ * a later push replaced it (the remote-tracking reflog of the task's branch: the person rewrote
+ * it there), the folder's other branches (the person kept the commit there), and Forerunner's
+ * own unpushed states: its task commit whose push did not go through (`RUN_UNPUSHED_REF`), its
+ * rebuild (`REBUILD_PENDING_REF`) and the base its work builds on (`DEPS_BASE_REF`, the held
+ * dependencies). Of the commits left, Forerunner's work in progress (`WIP_SUBJECT`) and a merge
+ * that holds nothing of its own (its tree is the clean merge of its parents: a base or
+ * dependency merge) are not the person's either. Anything else holds the task, never reset away
+ * (fails closed), and so does a list too long to read. Changes nobody committed are not read
+ * here: a run cut short sets them aside first (kept under `failedRef`, as before).
+ */
+export async function personsCommitAtRisk(git: GitOps, branch: string): Promise<boolean> {
   const tips = new Set<string>();
   const local = await git.resolveRef(`refs/heads/${branch}`);
   if (local) tips.add(local);
@@ -353,20 +361,27 @@ export async function personsCommitAtRisk(
     const head = await git.resolveRef("HEAD");
     if (head) tips.add(head);
   }
+  if (tips.size === 0) return false;
+  const kept: string[] = [];
+  for (const ref of [RUN_UNPUSHED_REF, REBUILD_PENDING_REF, DEPS_BASE_REF])
+    if (await git.hasRef(ref)) kept.push(ref);
+  for (const r of await git.refsUnder(DEPS_HELD_PREFIX)) kept.push(r.sha);
+  kept.push(...(await git.formerTips(`refs/remotes/origin/${branch}`)));
+  // `--exclude` applies to the `--branches` after it only: every branch on GitHub, and every
+  // local branch but the task's own.
+  kept.push("--remotes", `--exclude=${branch}`, "--branches");
   for (const tip of tips) {
-    if (tip === own) continue;
-    if (await git.isAncestor(tip, hostHead)) continue;
-    if (await git.isAncestor(tip, `origin/${base}`)) continue;
-    const parents = await git.parentsOf(tip);
-    if (
-      parents.length === 2 &&
-      parents[0] === hostHead &&
-      (await git.isAncestor(parents[1] as string, `origin/${base}`))
-    )
-      continue;
-    const subjects = await git.subjectsBetween(hostHead, tip);
-    if (subjects.length && subjects.every((s) => s.startsWith(WIP_SUBJECT))) continue;
-    return true;
+    const only = await git.commitsOnlyIn(tip, kept);
+    if (!only) return true;
+    for (const c of only) {
+      if (c.parents.length === 1 && c.subject.startsWith(WIP_SUBJECT)) continue;
+      if (c.parents.length === 2) {
+        const nothing = await git.mergeAddsNothing(c.sha);
+        if (nothing === true) continue;
+        if (nothing === null && OWN_MERGE_SUBJECT.test(c.subject)) continue;
+      }
+      return true;
+    }
   }
   return false;
 }
@@ -1079,7 +1094,7 @@ export class PrTaskExecutor implements TaskExecutor {
         // W15B-01: the branch as GitHub has it, unless that drops a commit the person made in
         // the folder (a Tasks-row Redo of a done task, a Try again): then nothing is reset, no
         // model is called and the task waits with one sentence (W15-02's rule, at a run's start).
-        const held = await this.holdForPersonsCommit(git, branch, target, HELD_FOR_COMMIT_RESUME);
+        const held = await this.holdForPersonsCommit(git, branch, HELD_FOR_COMMIT_RESUME);
         if (held) return held;
         await git.createBranch(branch, `origin/${branch}`);
       }
@@ -1145,18 +1160,13 @@ export class PrTaskExecutor implements TaskExecutor {
           });
       }
     } else {
-      // W15B-01: a redo from the base keeps the branch's name while its pull request is open, so
-      // the `checkout -B` below runs over the local branch: a commit the person made there holds
-      // the task first, before anything is reset or built (no model call, no spend).
-      if (existingPr) {
-        const hold = await this.holdForPersonsCommit(
-          git,
-          branch,
-          target,
-          heldForCommitRedo(target.base),
-        );
-        if (hold) return hold;
-      }
+      // W15B-01: the `checkout -B` below runs over a local branch of the same name whenever the
+      // name is kept: a redo from the base while the pull request is open, and a Try again of a
+      // task whose earlier run opened no pull request (it failed, timed out, changed nothing or
+      // its push was refused; review of fix/w15-tail). A commit the person made there holds the
+      // task first, before anything is reset or built (no model call, no spend).
+      const hold = await this.holdForPersonsCommit(git, branch, heldForCommitRedo(target.base));
+      if (hold) return hold;
       let depsBase: string | null = null;
       let held: { taskId: string; sha: string }[] = [];
       if (unmerged.length > 0) {
@@ -1544,15 +1554,6 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
-   * R-dirtyworktree (W6-24 for a crash): a run the app's close or a crash cut short leaves its
-   * files uncommitted in the task's worktree, with no work-in-progress commit (that and the
-   * leftovers set aside happen only after the inner executor returns). Before, the next run
-   * carried them into its work, or git refused its checkout ("untracked working tree files
-   * would be overwritten"). Now a step left half done (a rebase, a merge) is ended and the
-   * leftovers are set aside under the failed ref, as a failed run's are, so the run starts clean
-   * and nothing is lost. A work-in-progress commit is untouched: it is committed, not leftovers.
-   */
-  /**
    * W15B-01: the run's result when resetting the task's branch would drop a commit of the
    * person's (`personsCommitAtRisk`), else null. Forerunner's own rebuild that a stop cut short
    * before its push is put back first (W15-02), so it never reads as the person's.
@@ -1560,11 +1561,10 @@ export class PrTaskExecutor implements TaskExecutor {
   private async holdForPersonsCommit(
     git: GitOps,
     branch: string,
-    target: Target,
     summary: string,
   ): Promise<TaskExecutionResult | null> {
     await this.undoUnpushedRebuild(git, branch);
-    if (!(await personsCommitAtRisk(git, branch, target.base))) return null;
+    if (!(await personsCommitAtRisk(git, branch))) return null;
     this.logger.warn("task not run: its folder has a commit GitHub does not have", { branch });
     return { outcome: "needs_human", summary, costUsdMicro: 0, branch };
   }
@@ -1574,6 +1574,15 @@ export class PrTaskExecutor implements TaskExecutor {
     await git.setRef(RUN_UNPUSHED_REF, await git.headSha());
   }
 
+  /**
+   * R-dirtyworktree (W6-24 for a crash): a run the app's close or a crash cut short leaves its
+   * files uncommitted in the task's worktree, with no work-in-progress commit (that and the
+   * leftovers set aside happen only after the inner executor returns). Before, the next run
+   * carried them into its work, or git refused its checkout ("untracked working tree files
+   * would be overwritten"). Now a step left half done (a rebase, a merge) is ended and the
+   * leftovers are set aside under the failed ref, as a failed run's are, so the run starts clean
+   * and nothing is lost. A work-in-progress commit is untouched: it is committed, not leftovers.
+   */
   private async cleanAfterCutShortRun(git: GitOps, task: TaskRow): Promise<void> {
     try {
       const ended = await git.abortUnfinished();
@@ -2043,6 +2052,14 @@ export class PrTaskExecutor implements TaskExecutor {
     if (!pending) return;
     if ((await git.resolveRef(`refs/heads/${branch}`)) !== pending) return;
     if (!(await git.hasRef(`origin/${branch}`)) || (await git.status()).dirty) return;
+    // W15B-01 (review of fix/w15-tail): a HEAD on no branch past the rebuild holds a commit of
+    // its own, which `checkout -B` would leave behind: the rebuild stays, and the caller's hold
+    // reads that commit (fails closed).
+    if (
+      (await git.currentBranch().catch(() => null)) === "HEAD" &&
+      (await git.resolveRef("HEAD")) !== pending
+    )
+      return;
     await git.createBranch(branch, `origin/${branch}`);
     const before = await git.refsUnder(REBUILD_BEFORE_PREFIX);
     const marker = before.find((r) => r.ref === `${REBUILD_BEFORE_PREFIX}deps-base`)?.sha ?? null;

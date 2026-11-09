@@ -13818,6 +13818,104 @@ describe("w15-tail, wave 15 run B", () => {
       await world.host.stop();
     }
   }, 240_000);
+
+  it("W15B-01 (review of fix/w15-tail): the failed card's Try again of a task whose run opened no pull request, with a commit the person made in its folder, holds it before any run: the commit stays, the card says why; after a restart, kept on another branch, the card's Try again does the task again from main", async () => {
+    // Review of fix/w15-tail (blocking 1): the start from main of a task whose earlier run
+    // failed before any pull request reset its branch, which kept its name, with `checkout -B`,
+    // so the person's commit was dropped and a run spent (bench walk 3: faq.md lost).
+    const world = await githubWorld("w15tailfailed");
+    let { rt, client, bench } = await world.compose();
+    try {
+      const me = (await client.me()).id;
+      const project = await client.createProject({
+        name: "Try again keeps my commit",
+        goal: "A FAQ",
+        repos: [world.repo],
+      });
+      const title = "Write the faq in faq.md";
+      bench.fail = [title];
+      const t = await client.createTask(project.id, {
+        title,
+        outcome: "faq.md holds the answers",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await sessionOn(client, project.id, "the session whose run fails to end");
+      const failed = await rt.store.task.mustGet(t.id);
+      expect(failed.status).toBe("failed");
+      expect(failed.pr_url ?? null).toBeNull();
+      const branch = failed.branch ?? "";
+      expect(branch).not.toBe("");
+      const folder = join(rt.dirs.worktrees, t.id);
+      const folderGit = new GitOps({ cwd: folder, auth: { token: world.token } });
+      await folderGit.fetch();
+      // GitHub has no branch of it: nothing was pushed.
+      expect(await folderGit.hasRef(`origin/${branch}`)).toBe(false);
+      writeFileSync(join(folder, "faq.md"), "my own answers\n");
+      await asPerson(folder, ["add", "faq.md"]);
+      await asPerson(folder, ["commit", "-q", "-m", "My FAQ by hand"]);
+      const mine = (await asPerson(folder, ["rev-parse", "HEAD"])).stdout.trim();
+      bench.fail = [];
+      const cardOf = async (c: DaemonClient) =>
+        (await c.inbox(me)).requests.find((r) => r.taskId === t.id && r.status === "open");
+      const statuses = async () =>
+        (await client.tasks(project.id)).map((x) => `${x.title}=${x.status}`).join(", ");
+      /** Answers the open card with its own option and waits until the session it started ended. */
+      const answerAndWait = async (option: string, what: string) => {
+        const card = await cardOf(client);
+        expect(card?.options).toContain(option);
+        const before = (await client.sessions({ projectId: project.id })).length;
+        await client.answerRequest(card?.id ?? "", { version: card?.version ?? 0, answer: option });
+        await eventually(
+          async () => {
+            const all = await client.sessions({ projectId: project.id });
+            return all.length > before && all.every((s) => s.status !== "running");
+          },
+          `${what} (at least 60 s)`,
+          statuses,
+          60_000,
+        );
+      };
+      const runsBefore = (await rt.store.run.list({ task_id: t.id } as never)).length;
+      await answerAndWait("Try again", "the session the failed card's Try again started to end");
+      const sentence =
+        "Its task folder has a commit that is not on GitHub, and doing the task again from main would drop it: undo it or keep it on another branch, then press Try again.";
+      const held = (await client.tasks(project.id)).find((x) => x.id === t.id);
+      expect(held?.status).toBe("needs_human");
+      expect(held?.display?.label).toBe("Needs your decision: it could not run");
+      expect((await rt.store.task.mustGet(t.id)).reason).toBe(sentence);
+      expect((await rt.store.run.list({ task_id: t.id } as never)).length).toBe(runsBefore);
+      expect((await asPerson(folder, ["branch", "--contains", mine])).stdout).toContain(branch);
+      expect(readFileSync(join(folder, "faq.md"), "utf8")).toBe("my own answers\n");
+      await folderGit.fetch();
+      expect(await folderGit.hasRef(`origin/${branch}`)).toBe(false);
+      const card = await cardOf(client);
+      expect(card?.title).toBe(`"${title}" could not run`);
+      expect(card?.body).toContain(sentence);
+      expect(card?.options).toEqual(["Try again", "Cancel task"]);
+
+      // The daemon starts again on the same home; the person keeps the commit on another branch,
+      // as the card says, and answers Try again: the task is done again from main.
+      await rt.close();
+      ({ rt, client, bench } = await world.compose());
+      expect((await cardOf(client))?.id).toBe(card?.id);
+      await asPerson(folder, ["branch", "my-faq"]);
+      await answerAndWait(
+        "Try again",
+        "the session the cannot-run card's Try again started to end",
+      );
+      const done = await rt.store.task.mustGet(t.id);
+      expect(done.status).toBe("done");
+      expect(done.pr_url).toMatch(/\/pull\/\d+$/);
+      await folderGit.fetch();
+      expect(await folderGit.hasRef(`origin/${branch}`)).toBe(true);
+      expect(await folderGit.isAncestor(mine, `origin/${branch}`)).toBe(false);
+      expect((await asPerson(folder, ["rev-parse", "my-faq"])).stdout.trim()).toBe(mine);
+    } finally {
+      await rt.close();
+      await world.host.stop();
+    }
+  }, 240_000);
 });
 
 describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", () => {

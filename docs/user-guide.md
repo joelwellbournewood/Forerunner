@@ -386,13 +386,15 @@ never repeats work that is already in the default branch:
   redo the task." and offers no Merge, and a Merge you pressed while it waited is dropped, with
   a card that says so) or undo it in the folder (`git reset --hard origin/<branch>`). The same
   holds for any commit pushed to #8's branch on GitHub: a rebuild never makes it reviewed. A
-  **Redo** or a **Try again** never drops your commit either: when the next run of that task
-  would start its branch again (from GitHub's copy, or from main for a redo from main), it stops
-  before any work and costs nothing; the task's row says "Needs your decision: it could not run"
-  and its Inbox card says why: "Its task folder has a commit that is not on GitHub: push it or
-  undo it, then press Try again." (for a redo from main: "…, and doing the task again from main
-  would drop it: undo it or keep it on another branch, then press Try again."). The session goes
-  on with its other tasks. Push or undo the commit, then press **Try again** on the card. In a chain
+  **Redo** or a **Try again** never drops a commit you made in a task's folder either, also for
+  a task whose last run failed before it opened a pull request: when the next run of that task
+  would start its branch again (from GitHub's copy, or from main), it stops before any work and
+  costs nothing; the task's row says "Needs your decision: it could not run" and its Inbox card
+  says why: "Its task folder has a commit that is not on GitHub: push it or undo it, then press
+  Try again." (when the task starts again from main: "…, and doing the task again from main would
+  drop it: undo it or keep it on another branch, then press Try again."). The session goes on
+  with its other tasks. Do what the card says (to keep the commit on another branch: `git branch
+  my-copy` in the folder), then press **Try again** on the card. In a chain
   (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt; while #6 cannot be
   rebuilt yet (its folder is busy, or its rebuild conflicts), #8 waits for it too, with no card
   of its own, and nothing merges #8 meanwhile.

@@ -20,9 +20,14 @@ import { MemoryGitHost } from "../src/githost/memory.ts";
 import {
   DEPS_BASE_REF,
   emptiedSentence,
+  HELD_FOR_COMMIT_RESUME,
   openedForAnotherTask,
   PrTaskExecutor,
+  personsCommitAtRisk,
+  REBUILD_PENDING_REF,
+  RUN_UNPUSHED_REF,
   readForerunnerMarker,
+  WIP_SUBJECT,
 } from "../src/githost/pr-executor.ts";
 
 const identity = { name: "Forerunner", email: "agent@example.test" };
@@ -2560,5 +2565,194 @@ describe("w15-review, wave 15", { timeout: 120_000 }, () => {
     // Nothing ran and nothing new reached the host.
     expect(runs).toBe(1);
     expect(await w.host.listPullRequests({ owner: "o", name: "sample" })).toHaveLength(1);
+  });
+});
+
+describe("w15-tail, wave 15 run B: what resetting a task's branch would drop (W15B-01, review of fix/w15-tail)", {
+  timeout: 120_000,
+}, () => {
+  /**
+   * A task's folder cloned from a host repository with main and a pushed dependency branch, git
+   * as Forerunner (`git`) and as the person (`person`, their own name) in the same folder.
+   */
+  async function taskFolder() {
+    const root = mkdtempSync(join(tmpdir(), "fr-at-risk-"));
+    const bare = join(root, "host.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seedDir = join(root, "seed");
+    const seed = new GitOps({ cwd: seedDir, identity });
+    await seed.clone(bare);
+    writeFileSync(join(seedDir, "README.md"), "# sample\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await seed.createBranch("dep", "main");
+    writeFileSync(join(seedDir, "dep.txt"), "the work it builds on\n");
+    await seed.commitAll("Dependency");
+    await seed.push("dep");
+    await seed.checkout("main");
+    const dir = join(root, "wt");
+    const git = new GitOps({ cwd: dir, identity });
+    await git.clone(bare);
+    const person = new GitOps({ cwd: dir, identity: { name: "Pat", email: "pat@example.test" } });
+    const write = async (as: GitOps, file: string, text: string, message: string) => {
+      writeFileSync(join(dir, file), text);
+      return (await as.commitAll(message)).sha;
+    };
+    const raw = (...args: string[]) => run(["git", "-C", dir, ...args]);
+    return { seed, seedDir, dir, git, person, write, raw };
+  }
+
+  it("a fresh folder and a task branch at main hold nothing; a commit of the person's on the task branch is at risk, and no longer once it is kept on another branch", async () => {
+    const f = await taskFolder();
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+    await f.git.createBranch("fr/t", "origin/main");
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+    await f.write(f.person, "mine.txt", "my notes\n", "My notes");
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(true);
+    await f.raw("branch", "keep-mine");
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+  });
+
+  it("Forerunner's own task commit whose push did not go through and its work in progress are not the person's; a commit of the person's on top of them is", async () => {
+    const f = await taskFolder();
+    await f.git.createBranch("fr/t", "origin/main");
+    const own = await f.write(f.git, "page.html", "<h1>page</h1>\n", "Write the page");
+    await f.git.setRef(RUN_UNPUSHED_REF, own);
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+    await f.write(f.git, "page.html", "<h1>more</h1>\n", `${WIP_SUBJECT}Write the page`);
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+    await f.write(f.person, "mine.txt", "my notes\n", "My notes");
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(true);
+  });
+
+  it("a merge of the work a task builds on that adds nothing (Forerunner's, left on no branch) is not the person's; a merge that holds a change of its own is", async () => {
+    const f = await taskFolder();
+    await f.git.checkout("origin/main");
+    const merged = await f.git.mergeFrom("origin/dep", 'Build on "Dependency" (pull request #1)', {
+      noFastForward: true,
+    });
+    expect(merged.ok).toBe(true);
+    expect(await f.git.mergeAddsNothing("HEAD")).toBe(true);
+    // On no branch: the folder's HEAD is what a `checkout -B` would leave behind.
+    expect(await f.git.currentBranch()).toBe("HEAD");
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+    writeFileSync(join(f.dir, "mine.txt"), "my notes\n");
+    await f.raw("add", "mine.txt");
+    await f.raw(
+      "-c",
+      "user.name=Pat",
+      "-c",
+      "user.email=pat@example.test",
+      "commit",
+      "-q",
+      "--amend",
+      "--no-edit",
+    );
+    expect(await f.git.mergeAddsNothing("HEAD")).toBe(false);
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(true);
+  });
+
+  it("a commit GitHub had before the person rewrote the branch there is not at risk; the folder's HEAD on another branch keeps its own commits", async () => {
+    const f = await taskFolder();
+    await f.seed.createBranch("fr/t", "origin/main");
+    writeFileSync(join(f.seedDir, "page.html"), "<h1>page</h1>\n");
+    await f.seed.commitAll("Write the page");
+    await f.seed.push("fr/t");
+    await f.git.fetch();
+    await f.git.createBranch("fr/t", "origin/fr/t");
+    // The person rewrites the branch on GitHub (a rebase there, a force-push from elsewhere).
+    await run([
+      "git",
+      "-C",
+      f.seedDir,
+      "-c",
+      "user.name=Pat",
+      "-c",
+      "user.email=pat@example.test",
+      "commit",
+      "-q",
+      "--amend",
+      "-m",
+      "Write the page, reworded",
+    ]);
+    await f.seed.push("fr/t", { force: true, defaultBranch: "main" });
+    await f.git.fetch();
+    expect(await f.git.isAncestor("refs/heads/fr/t", "origin/fr/t")).toBe(false);
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+    // The folder's HEAD on a branch of the person's: resetting fr/t leaves that branch alone.
+    await f.git.createBranch("notes", "origin/main");
+    await f.write(f.person, "notes.md", "notes\n", "My notes");
+    expect(await personsCommitAtRisk(f.git, "fr/t")).toBe(false);
+  });
+
+  it("a commit of the person's on no branch past Forerunner's rebuild that a stop cut short holds the next run: the rebuild is not put back over it, nothing runs", async () => {
+    // Review of fix/w15-tail (non-blocking): the hold put the unpushed rebuild back first with
+    // `checkout -B`, which moved a HEAD on no branch away from the person's commit; the hold then
+    // found nothing at risk, the run went on, and the commit was on no branch.
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: "Add health endpoint",
+      outcome: "GET /health works",
+      acceptance_criteria: ["returns 200"],
+      risk_tier: 1,
+      status: "in_progress",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 1,
+      est_cost_usd_micro: 1,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    let runs = 0;
+    const inner = innerWriting({ "health.ts": "export const ok = true;\n" });
+    const exec = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: w.host,
+      inner: {
+        ...inner,
+        withWorktree: (dir) => {
+          const i = inner.withWorktree(dir);
+          return {
+            execute: async (c) => {
+              runs++;
+              return i.execute(c);
+            },
+          };
+        },
+      },
+      repoFor: async () => ({ clone: w.bare, repo: { owner: "o", name: "sample" }, base: "main" }),
+      worktreeRoot: join(w.root, "wt"),
+      identity,
+    });
+    const ctx = (t: typeof task) => ({
+      task: t,
+      session: w.session,
+      token: w.token,
+      budget: w.budget,
+      item: { taskId: t.id, title: t.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+    });
+    expect((await exec.execute(ctx(task))).outcome).toBe("in_review");
+    const dir = join(w.root, "wt", task.id);
+    const git = new GitOps({ cwd: dir, identity });
+    // Forerunner's rebuild of the branch, made in the folder and cut short before its push.
+    writeFileSync(join(dir, "rebuilt.txt"), "rebuilt\n");
+    const rebuilt = (await git.commitAll("Add health endpoint")).sha;
+    await git.setRef(REBUILD_PENDING_REF, rebuilt);
+    // The person goes on from it on no branch and commits.
+    await run(["git", "-C", dir, "checkout", "-q", "--detach"]);
+    writeFileSync(join(dir, "mine.txt"), "my notes\n");
+    const person = new GitOps({ cwd: dir, identity: { name: "Pat", email: "pat@example.test" } });
+    const mine = (await person.commitAll("My notes")).sha;
+    const again = await exec.execute(ctx(await w.store.task.mustGet(task.id)));
+    expect(again.outcome).toBe("needs_human");
+    expect(again.summary).toBe(HELD_FOR_COMMIT_RESUME);
+    expect(again.costUsdMicro).toBe(0);
+    expect(runs).toBe(1);
+    expect(await git.headSha()).toBe(mine);
+    await w.store.close();
   });
 });

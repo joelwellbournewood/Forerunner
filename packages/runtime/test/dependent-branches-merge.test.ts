@@ -2283,6 +2283,121 @@ describe("w15-tail, wave 15 run B: a Redo or a Try again never drops a commit ma
     expect(await runsOf(m, a.id)).toBeGreaterThan(runsBefore + 1);
     expect(after.status).toBe("done");
   });
+
+  /** The failed task's card answered with its own Try again, as the Inbox sends it. */
+  const tryAgainOnFailedCard = async (m: ChainWorld, taskId: string) => {
+    const { rows, cards } = await screens(m, taskId);
+    expect(cards).toHaveLength(1);
+    const tryAgain = cards[0]?.options.find((o) => o === "Try again") ?? "";
+    expect(tryAgain).toBe("Try again");
+    const row = rows[0] as { id: string; version: number };
+    await m.w.store.humanRequest.answer(row.id, row.version, tryAgain, m.w.human);
+    await syncSignoffAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+    });
+    expect((await m.w.store.task.mustGet(taskId)).status).toBe("ready");
+  };
+
+  it("(c) a Try again of a task whose earlier run opened no pull request (it changed nothing, GitHub has no branch of it): held with the redo sentence before any run, the commit stays; kept on another branch, Try again does the task again from main (review of fix/w15-tail, blocking 1)", async () => {
+    const m = await chainWorld({ level: 2 });
+    m.writes.set("Write the faq", {});
+    const a = await m.runTask("Write the faq");
+    const failed = await m.w.store.task.mustGet(a.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.pr_url ?? null).toBeNull();
+    const branch = failed.branch ?? "";
+    expect(branch).not.toBe("");
+    expect(await m.hostGit("branch", "--list", branch)).toBe("");
+    const dir = join(m.worktreeRoot, safeSegment(a.id));
+    const g = asPerson(dir);
+    writeFileSync(join(dir, "faq.md"), "my own answers\n");
+    await g(["add", "faq.md"]);
+    await g(["commit", "-q", "-m", "My FAQ by hand"]);
+    const mine = (await g(["rev-parse", "HEAD"])).stdout.trim();
+    await tryAgainOnFailedCard(m, a.id);
+    m.writes.set("Write the faq", { "faq.md": "the run's answers\n" });
+    await nextAttempt(m, a.id);
+    const runsBefore = await runsOf(m, a.id);
+    await m.session();
+    // Before: the start from main ran `checkout -B` over the branch (it kept its name: no pull
+    // request was ever opened on it), the commit was on no branch, and the run spent.
+    expect((await g(["branch", "--contains", mine])).stdout).toContain(branch);
+    expect(readFileSync(join(dir, "faq.md"), "utf8")).toBe("my own answers\n");
+    expect(await m.hostGit("branch", "--list", branch)).toBe("");
+    expect(await runsOf(m, a.id)).toBe(runsBefore);
+    const held = await m.w.store.task.mustGet(a.id);
+    expect(held.status).toBe("needs_human");
+    expect(held.reason).toBe(REDO_HOLD);
+    const { row, rows, cards } = await screens(m, a.id);
+    expect(row.label).toBe("Needs your decision: it could not run");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.title).toBe('"Write the faq" could not run');
+    expect(cards[0]?.body).toContain(REDO_HOLD);
+    expect(cards[0]?.options).toEqual(["Try again", "Cancel task"]);
+    // The person keeps the commit on another branch, as the sentence offers, and presses Try
+    // again: the task is done again from main, and the commit stays on that branch.
+    await g(["branch", "my-faq"]);
+    expect((await answerWith(m, rows[0] as never, cards[0]?.options[0] ?? "")).retried).toBe(1);
+    await nextAttempt(m, a.id);
+    await m.session();
+    expect((await m.w.store.task.mustGet(a.id)).status).toBe("done");
+    const pr = await m.prNumber(a.id);
+    expect(await m.prCommits(pr)).toEqual(["Write the faq"]);
+    expect(await m.hostGit("show", `${(await m.pr(a.id)).head.sha}:faq.md`)).toBe(
+      "the run's answers",
+    );
+    expect((await g(["rev-parse", "my-faq"])).stdout.trim()).toBe(mine);
+  });
+
+  it("Forerunner's own commit whose first push was refused (no pull request yet) is not the person's: Try again runs the task again (sibling of the blocking finding)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const hook = join(m.hostDir, "hooks", "pre-receive");
+    await mkdir(join(m.hostDir, "hooks"), { recursive: true });
+    writeFileSync(hook, "#!/bin/sh\necho 'pushes are refused for now' >&2\nexit 1\n", {
+      mode: 0o755,
+    });
+    const a = await m.runTask("Write the page");
+    const failed = await m.w.store.task.mustGet(a.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.reason).toContain("could not push the work");
+    expect(failed.pr_url ?? null).toBeNull();
+    rmSync(hook, { force: true });
+    await tryAgainOnFailedCard(m, a.id);
+    await nextAttempt(m, a.id);
+    const runsBefore = await runsOf(m, a.id);
+    await m.session();
+    const after = await m.w.store.task.mustGet(a.id);
+    expect(after.reason ?? "").not.toContain("commit that is not on GitHub");
+    expect(await runsOf(m, a.id)).toBeGreaterThan(runsBefore);
+    expect(after.status).toBe("done");
+  });
+
+  it("a dependent task whose first run changed nothing (its branch is main with the work it builds on, merged in by Forerunner) is not held: Try again runs it (sibling of the blocking finding)", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    m.writes.set("Add footer", {});
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const failed = await m.w.store.task.mustGet(b.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.pr_url ?? null).toBeNull();
+    // Its branch holds Forerunner's merge of the work it builds on, which GitHub does not have.
+    const dir = join(m.worktreeRoot, safeSegment(b.id));
+    const git = new GitOps({ cwd: dir });
+    expect(await git.hasMergesSince("origin/main", `refs/heads/${failed.branch}`)).toBe(true);
+    m.writes.delete("Add footer");
+    await tryAgainOnFailedCard(m, b.id);
+    await nextAttempt(m, b.id);
+    const runsBefore = await runsOf(m, b.id);
+    await m.session();
+    const after = await m.w.store.task.mustGet(b.id);
+    expect(after.reason ?? "").not.toContain("commit that is not on GitHub");
+    expect(await runsOf(m, b.id)).toBeGreaterThan(runsBefore);
+    expect(after.status).toBe("done");
+    expect(await m.prCommits(await m.prNumber(b.id))).toContain("Add footer");
+  });
 });
 
 describe("w15-tail, wave 15 run B: the words a conflict notice keeps, across a restart (W15B-08, W15-04)", {

@@ -219,7 +219,12 @@ with their milestone.
   below. For the merge step and its record (ADR 0111): `resolveRef`,
   `mergeBase`, `mergeTree` (`git merge-tree --write-tree`, git 2.38 or later, null on a
   conflict), `conflictFiles` (the files such a merge conflicts in), `patchId(from, to)` (the
-  patch id of a diff without context lines, "empty" for none) and `parentsOf`.
+  patch id of a diff without context lines, "empty" for none) and `parentsOf`. For the hold of
+  a person's commit (W15B-01): `commitsOnlyIn(rev, keep, max?)` (the commits `rev` has that
+  nothing in `keep` reaches, oldest first, with parents and subject; `keep` goes to `git log
+  --not` as given; null past `max`), `mergeAddsNothing(rev)` (a two-parent merge whose tree is
+  the clean merge of its parents; false for a resolution or a change of its own, null when this
+  git cannot tell) and `formerTips(ref)` (what the ref named before, from its reflog).
   `branch-rules.ts` holds what a task branch holds: `holdsMergedWork(git, base)` (the
   `DEPS_BASE_REF` marker, or a merge commit since `base`: such a branch is kept up to date by
   merging, never rebased) and `ownChangeId(git, base, head?)` (the patch id of the task's own
@@ -319,21 +324,32 @@ with their milestone.
   found nothing to rebuild and the pull request kept the work that went away. The same rule
   holds at a run's start (W15B-01): `executeIn` resets the task's branch with `checkout -B` at
   two places, the resume of a branch whose pull request is open (no work in progress: the
-  branch as GitHub has it) and the redo from the base while the pull request keeps the branch's
-  name (a Redo that closed a merge card, "Drop the branch and retry from scratch"). Before each,
-  `personsCommitAtRisk(git, branch, base)` reads whether the reset would drop a commit of the
-  person's: the task's local branch, and the folder's HEAD while it is on that branch or on no
-  branch (a HEAD on another branch keeps its commits); not the person's are what GitHub's branch
-  or the base has, Forerunner's own unpushed base merge and work in progress (as `folderHold`),
-  and Forerunner's own task commit whose push did not go through (`RUN_UNPUSHED_REF`, set from
-  the commit until the push, in `executeIn` and `conflict`, cleared once pushed). A commit it
-  cannot tell holds the run (fails closed): nothing is reset, no model is called, and the run
+  branch as GitHub has it) and the start from the base, which runs over a local branch of the
+  same name whenever the name is kept: the redo from the base while the pull request is open (a
+  Redo that closed a merge card, "Drop the branch and retry from scratch"), and since the review
+  of fix/w15-tail every Try again or Redo of a task whose earlier run opened no pull request (it
+  failed, timed out, changed nothing or its push was refused; GitHub may have no branch of it).
+  Before each, `personsCommitAtRisk(git, branch)` reads whether the reset would leave a commit
+  of the person's on no branch: of the task's local branch, and of the folder's HEAD while it is
+  on that branch or on no branch (a HEAD on another branch keeps its commits), the commits
+  nothing else reaches (`GitOps.commitsOnlyIn`). Kept, so not at risk: every branch on GitHub as
+  the folder fetched it, and what the task's branch on GitHub named before a later push replaced
+  it (its reflog, `formerTips`: the person rewrote it there), the folder's other local branches
+  (the person kept the commit there), Forerunner's own task commit whose push did not go through
+  (`RUN_UNPUSHED_REF`, set from the commit until the push, in `executeIn` and `conflict`,
+  cleared once pushed), its rebuild (`REBUILD_PENDING_REF`) and the base its work builds on
+  (`DEPS_BASE_REF`, the held dependencies). Of the commits left, work in progress
+  (`WIP_SUBJECT`) and a merge that holds nothing of its own (`mergeAddsNothing`; Forerunner's
+  merge subjects where this git cannot tell) are not the person's; anything else, or a list too
+  long to read, holds the run (fails closed): nothing is reset, no model is called, and the run
   returns `needs_human` with `HELD_FOR_COMMIT_RESUME` ("Its task folder has a commit that is not
-  on GitHub: push it or undo it, then press Try again.") or `heldForCommitRedo(base)` ("…, and
-  doing the task again from main would drop it: undo it or keep it on another branch, then
-  press Try again."); the runner files the cannot-run card from it. An unpushed rebuild is put
-  back first (`undoUnpushedRebuild`). Changes nobody committed are set aside under `failedRef`
-  before, as for any run cut short (kept, not said). **One lock per task folder** (`githost/worktree-lock.ts`, exported:
+  on GitHub: push it or undo it, then press Try again.") or, for any start from the base,
+  `heldForCommitRedo(base)` ("…, and doing the task again from main would drop it: undo it or
+  keep it on another branch, then press Try again."); the runner files the cannot-run card from
+  it. An unpushed rebuild is put back first (`undoUnpushedRebuild`), but never while the
+  folder's HEAD is on no branch past it (that HEAD holds a commit of its own, which the hold
+  then reads). Changes nobody committed are set aside under `failedRef` before, as for any run
+  cut short (kept, not said). **One lock per task folder** (`githost/worktree-lock.ts`, exported:
   `inWorktree` waits, `tryWorktree` skips a busy folder, `worktreeBusy`; keyed by the resolved
   path, in this process): every git step in a task's worktree takes it, the PR executor's run,
   a resolved conflict, a rebuild, setting work aside, and since leftovers7-merge2 (R-lock) the
