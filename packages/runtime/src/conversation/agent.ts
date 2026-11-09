@@ -545,6 +545,20 @@ function openRequestsFact(
 /** The project's status doc, left out of the docs a chat turn retrieves. */
 const STATUS_DOC_RE = /^docs\/status\.md$/i;
 
+/** The data envelope's origin of the lessons a chat turn carries (d1109-chat-guard). */
+const LESSONS_ORIGIN = "lessons";
+
+/**
+ * Instruction-like text the injection scan found in what a chat turn read (d1109-chat-guard,
+ * ADR 0114): `where` names the record (a read tool's name, "lessons", "docs", "card", "tasks",
+ * "last session"), `rules` the scan's rules that fired. The turn's `chat.reply` row keeps them
+ * as `injection`, so the turn says what it was shown that read like instructions.
+ */
+export interface RecordFlag {
+  where: string;
+  rules: string[];
+}
+
 const UNDO_RE = /^\s*(undo|rückgängig|r[üu]ckg[äa]ngig machen)\s*[.!]?\s*$/i;
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
 /** Said before the stop's own sentence when the stop cancelled a card waiting for a yes. */
@@ -916,6 +930,9 @@ export class ConversationAgent {
     });
     let ttft: number | null = null;
     const events: RunEvent[] = [];
+    // d1109-chat-guard: what read like instructions in the records this turn was shown (the
+    // facts' lessons and excerpts, then each tool result the hooks scanned), kept on its row.
+    const injection: RecordFlag[] = [...context.flagged];
     // A spoken turn's text reaches the speaker one complete sentence at a time: the unfinished
     // rest of a model call is held until the call ends, and dropped when the call was cut off
     // at max_tokens, so a broken sentence is never spoken (the real-audio run of 2026-10-26).
@@ -946,6 +963,8 @@ export class ConversationAgent {
       protected: true,
       onEvent: (ev) => {
         events.push(ev);
+        if (ev.type === "injection_flagged")
+          injection.push({ where: ev.tool, rules: ev.report.matches.map((m) => m.rule) });
         if (ev.type === "text_delta") {
           if (gate) gate.push(ev.text);
           else req.onToken?.(ev.text);
@@ -1045,6 +1064,7 @@ export class ConversationAgent {
           lessons: context.sources.lessons,
         },
         retrieval: context.retrieval,
+        ...(injection.length ? { injection } : {}),
       } as never,
       result.costUsdMicro,
     );
@@ -1287,6 +1307,8 @@ export class ConversationAgent {
     shownRequests: { id: string; names: string[] }[];
     sources: ChatSources;
     retrieval: { docs: RetrievalStats; lessons: RetrievalStats };
+    /** Instruction-like text the scan found in the records the facts carry (d1109-chat-guard). */
+    flagged: RecordFlag[];
   }> {
     const agentId = agent.id;
     const { store, clock } = this.deps;
@@ -1414,6 +1436,7 @@ export class ConversationAgent {
       sources: retrieved.sources,
       retrieval: retrieved.stats,
       shownRequests: openRequests.shown,
+      flagged: retrieved.flagged,
     };
   }
 
@@ -1472,12 +1495,15 @@ export class ConversationAgent {
     blocks: string[];
     sources: ChatSources;
     stats: { docs: RetrievalStats; lessons: RetrievalStats };
+    /** What the scan flagged in the lessons or the doc excerpts sent (`RecordFlag`). */
+    flagged: RecordFlag[];
   }> {
     const count = (t: string) => provider.countTokens(t);
     const lessonsBudget = this.deps.retrieval?.lessonsMaxTokens ?? DEFAULT_CHAT_LESSONS_TOKENS;
     const docsBudget = this.deps.retrieval?.docsMaxTokens ?? DEFAULT_CHAT_DOCS_TOKENS;
     const blocks: string[] = [];
     const sources: ChatSources = { docs: [], lessons: [] };
+    const flagged: RecordFlag[] = [];
     const stats = {
       lessons: { budget: lessonsBudget, tokens: 0, hits: 0, dropped: 0 },
       docs: { budget: docsBudget, tokens: 0, hits: 0, dropped: 0 },
@@ -1487,19 +1513,34 @@ export class ConversationAgent {
       (agent.kind === "principal" || agent.kind === "conversation");
     if (this.deps.memory && speaksFor && lessonsBudget > 0 && query.trim()) {
       try {
-        const r = await this.deps.memory.recall({
-          agentId: agent.id,
-          kind: "principal",
-          projectId,
-          query,
-          maxTokens: lessonsBudget,
-          countTokens: count,
-        });
-        const tokens = r.block ? count(r.block) : 0;
-        if (r.block && tokens <= lessonsBudget) {
-          blocks.push(r.block);
-          sources.lessons = [...r.lessonIds];
-          stats.lessons = { ...stats.lessons, tokens, hits: r.lessonIds.length };
+        // d1109-chat-guard (ADR 0114): the lessons travel inside the data envelope like the doc
+        // excerpts (an agent wrote most of them, from sessions whose pages it read), and the
+        // envelope counts against their budget: recall under what is left of it, then measure
+        // the wrapped block, taking an overshoot off once more. Before (7d6b34a) they followed
+        // the facts as they came, unscanned.
+        let inner =
+          lessonsBudget - count(wrapUntrusted("", "agent_output", LESSONS_ORIGIN).content);
+        for (let attempt = 0; attempt < 2 && inner > 0; attempt++) {
+          const r = await this.deps.memory.recall({
+            agentId: agent.id,
+            kind: "principal",
+            projectId,
+            query,
+            maxTokens: inner,
+            countTokens: count,
+          });
+          if (!r.block) break;
+          const wrapped = wrapUntrusted(r.block, "agent_output", LESSONS_ORIGIN);
+          const tokens = count(wrapped.content);
+          if (tokens <= lessonsBudget) {
+            blocks.push(wrapped.content);
+            sources.lessons = [...r.lessonIds];
+            stats.lessons = { ...stats.lessons, tokens, hits: r.lessonIds.length };
+            if (wrapped.report.suspicious)
+              flagged.push({ where: "lessons", rules: wrapped.report.matches.map((m) => m.rule) });
+            break;
+          }
+          inner -= tokens - lessonsBudget;
         }
       } catch (e) {
         this.logger.warn("chat lessons not retrieved", { error: errorMessage(e) });
@@ -1524,11 +1565,13 @@ export class ConversationAgent {
           const wrapped = wrapUntrusted(found.block, "repo_file", "project docs");
           const tokens = count(wrapped.content);
           if (tokens <= docsBudget) {
-            if (wrapped.report.suspicious)
+            if (wrapped.report.suspicious) {
               this.logger.warn("instruction-like text in the project docs sent as data", {
                 projectId,
                 rules: wrapped.report.matches.map((m) => m.rule),
               });
+              flagged.push({ where: "docs", rules: wrapped.report.matches.map((m) => m.rule) });
+            }
             blocks.push(wrapped.content);
             sources.docs = found.hits.map((h) => ({ path: h.path, heading: h.heading }));
             stats.docs = {
@@ -1545,7 +1588,7 @@ export class ConversationAgent {
         this.logger.warn("chat docs not searched", { projectId, error: errorMessage(e) });
       }
     }
-    return { blocks, sources, stats };
+    return { blocks, sources, stats, flagged };
   }
 
   describeError(e: unknown): string {
