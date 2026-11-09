@@ -12,6 +12,7 @@ import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.ts";
 import { sessionStatusText } from "../session/stop-words.ts";
+import { REVIEW_RESUMED_EVENT } from "./event-audience.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -80,7 +81,7 @@ function lowerArticle(s: string): string {
     : s;
 }
 
-/** W15B-14: the review-only pass's line (W15-27), before its verdict. */
+/** W15B-14: the review-only pass's line (W15-27, `REVIEW_RESUMED_EVENT`), before its verdict. */
 export function reviewResumedLine(p: Payload): string {
   return `The critic reviews ${taskName(p)}: its work was done in an earlier session.`;
 }
@@ -196,9 +197,10 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
       return s("trigger") === "manual"
         ? `You started the session with a budget of ${chf("budgetCapUsdMicro")}.`
         : `The session started with a budget of ${chf("budgetCapUsdMicro")}.`;
+    // W15B-14: the review-only pass (W15-27) says it goes on before its verdict.
+    case REVIEW_RESUMED_EVENT:
+      return reviewResumedLine(p);
     case "task.started":
-      // W15B-14: the review-only pass (W15-27) says it goes on before its verdict.
-      if (p.reviewOnly === true) return reviewResumedLine(p);
       // Another specialist takes over (the ladder's "split, or with another specialist"), in
       // this session or a later one (U-044: the runner names the specialist that runs).
       if (s("handedFrom") && s("handedFrom") !== s("specialist"))

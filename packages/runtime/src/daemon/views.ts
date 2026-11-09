@@ -91,7 +91,6 @@ import {
   plainLine,
   retryWords,
   reviewLevel,
-  reviewResumedLine,
   skipReason,
   verdictWords,
 } from "./event-lines.ts";
@@ -619,7 +618,6 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.plan_approved":
       return `Running the plan you approved (${count("items", "task")}).`;
     case "task.started":
-      if (p.reviewOnly === true) return reviewResumedLine(p);
       // W15-60: a retry's start (a detail) reads as a first attempt's does: "The coder started
       // "X" (about CHF 0.02)." (before: 'Started "X" with coder (about ...)', the registry key).
       return (

@@ -2876,10 +2876,18 @@ ready (a repository task's worktree on its branch, `PrTaskExecutor.prepareReview
 folder in place; `LoopTaskExecutor.prepareReview` the run's worktree) and `workHash` there is the
 kept one; the entry is cleared either way, and the result (`keptResult`, `reviewOnly: true`) goes
 to the critic without a run: no `task.files`, no `task.finished`, no `onTaskFinished`, and the
-person's heard lines and queue notes wait for a run. Its only start is a `task.started` with
-`reviewOnly: true` and `specialist: "critic"` (W15B-14, `reviewResumedLine`): "The critic reviews
-\"Notes page\": its work was done in an earlier session." before the verdict (before: nothing until
-the verdict); the coder's start line is never written. The critic's diff of
+person's heard lines and queue notes wait for a run. Its one line is a `critic.review_resumed`
+event (`REVIEW_RESUMED_EVENT` in `daemon/event-audience.ts`, a person line, `specialist: "critic"`;
+W15B-14, `reviewResumedLine`): "The critic reviews \"Notes page\": its work was done in an earlier
+session." before the verdict (before: nothing until the verdict); no `task.started` is written,
+the coder's or the critic's. It is not a `task.started` because nothing ends it: the session view's
+`currentTask`, the project's `working` (`workingOn`), the chat's "# Working now" and the UI's
+`currentFromLog` read the last `task.started` without a `task.finished` after it as the task in
+flight, so a first version that wrote one said the reviewed task still ran after its verdict, until
+the next task started or the session ended (fixup-w15-words). Tests: `budget-pause.test.ts` and
+`real-daemon.test.ts` 'w15-words, wave 15 run B' hold the session's last status change after the
+verdict and read the session view, the project's line, the chat block and `currentFromLog` (no
+task in flight). The critic's diff of
 a project's folder whose session end committed the work is the task's files since its last
 "Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
 the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
@@ -2920,7 +2928,8 @@ during a long downtime is still applied. At session end `reviewSession` runs the
 stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persisted as a
 review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
 as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
-memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
+memory port. Events: `critic.review_resumed` (the review-only pass, W15B-14),
+`critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review with a card for the person, U-045), `critic.session_review`,
 `task.blocked_by_findings`.
 
@@ -6320,8 +6329,9 @@ ledger's CHF (`critic.md`).
 Every `EventView` carries `audience` (`daemon/event-audience.ts`, no Node, shared with the
 state service's view and the UI's stand-in daemon): `person` for what a person follows a session
 by (`session.started`, `task.started`, `task.files`, `task.finished`, `task.retrying`,
-`critic.verdict`, `session.stopped`, `session.ended`, Docker waits, a person's or another
-agent's move of a running task, merges, budget warnings, errors, chat turns), `detail` for the
+`critic.review_resumed`, `critic.verdict`, `session.stopped`, `session.ended`, Docker waits, a
+person's or another agent's move of a running task, merges, budget warnings, errors, chat
+turns), `detail` for the
 rest (the brief, memory, peers, the queue, each `task.step`, `session.replanned`, the review's
 measurements, the docs status, notifications). A `task.finished` the person's own stop ended is
 a detail: the `session.stopped` line tells it once. The session page shows the person lines and

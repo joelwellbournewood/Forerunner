@@ -3,6 +3,7 @@ import { emptyChangeSummary } from "@forerunner/capabilities/githost/pr-executor
 import { signoffCard } from "@forerunner/critic";
 import type { HumanRequestRow, TaskRow } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
+import { eventAudience, REVIEW_RESUMED_EVENT } from "../src/daemon/event-audience.ts";
 import { personLine } from "../src/daemon/event-lines.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { leftOpenCardTitle, requestWords } from "../src/daemon/request-words.ts";
@@ -486,15 +487,17 @@ describe("w15-words, wave 15 run B", () => {
       );
     });
 
-    it("the review-only pass has one line of its own", () => {
+    it("the review-only pass has one line of its own, a person's line that is no task start", () => {
+      expect(REVIEW_RESUMED_EVENT).not.toBe("task.started");
+      expect(eventAudience(REVIEW_RESUMED_EVENT, { title: "Notes page" })).toBe("person");
       expect(
         personLine(
-          "task.started",
-          { taskId: "t1", title: "Notes page", specialist: "critic", reviewOnly: true },
+          REVIEW_RESUMED_EVENT,
+          { taskId: "t1", title: "Notes page", specialist: "critic" },
           0.8,
         ),
       ).toBe('The critic reviews "Notes page": its work was done in an earlier session.');
-      expect(describeEvent("task.started", { title: "Notes page", reviewOnly: true }, 0.8)).toBe(
+      expect(describeEvent(REVIEW_RESUMED_EVENT, { title: "Notes page" }, 0.8)).toBe(
         'The critic reviews "Notes page": its work was done in an earlier session.',
       );
     });

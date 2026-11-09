@@ -59,7 +59,7 @@ import {
 import { type ScriptedReply, textReply, toolReply } from "../../../testenv/src/provider/replies.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
-import { taskStepsFromLog } from "../src/lib/session-steps.ts";
+import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
   actionExplain,
   reviewLevelName,
@@ -14113,4 +14113,161 @@ describe("w15-words, wave 15 run B", () => {
       expect(`${on.sentence} ${off.sentence}`).not.toMatch(/\b(true|false|unset)\b/);
     });
   });
+
+  it("W15B-14: after the waiting review's verdict, while its session ends, the session page, the drawer and the header say no task runs", async () => {
+    const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+    const critic = (r: ModelRequest) => (r.tools ?? []).some((t) => t.name === "submit_review");
+    const firstTurn = (r: ModelRequest) =>
+      critic(r) && !JSON.stringify(r.messages.at(-1)?.content ?? "").includes("tool_result");
+    const coder = (r: ModelRequest) => (r.origin?.label ?? "").startsWith("coder on Rules index");
+    const provider = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        toolReply(
+          "submit_review",
+          {
+            grade: 92,
+            confidence: "high",
+            verdict: "accept",
+            summary: "Criteria met.",
+            findings: [],
+            criteria: [],
+            checks_run: [],
+          },
+          "Reviewing.",
+          { when: firstTurn, times: Number.POSITIVE_INFINITY },
+        ),
+        textReply("Reviewed.", { when: critic, times: Number.POSITIVE_INFINITY }),
+        textReply("Wrote rules.html.\n\nLeft to do: nothing", {
+          when: (r: ModelRequest) => coder(r) && JSON.stringify(r.messages).includes("tool_result"),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 500, output_tokens: 20 },
+        }),
+        toolReply("write_file", { path: "rules.html", content: "<p>Rules</p>\n" }, "Writing.", {
+          when: coder,
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 500, output_tokens: 20 },
+        }),
+      ],
+    });
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-words-review-only-"));
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const ended = ["completed", "stopped", "failed", "killed"];
+    const repo = rt.store.session;
+    const setStatus = repo.setStatus;
+    let release: () => void = () => undefined;
+    try {
+      const project = await client.createProject({ name: "Rules", goal: "Pages for the club" });
+      // The project's budget lets the work run and refuses its review (W15-27's paused review).
+      await rt.store.project.patch(project.id, { budget_usd_micro: 10_000 });
+      const task = await client.createTask(project.id, {
+        title: "Rules index",
+        outcome: "rules.html exists",
+        acceptanceCriteria: ["the page exists"],
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 2_000_000,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      const first = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      const firstId = first.session?.id ?? "";
+      expect(firstId, JSON.stringify(first)).toBeTruthy();
+      await eventually(
+        async () => ended.includes((await client.session(firstId)).status),
+        "the first session to end (at least 10 s of real time)",
+        async () => (await rt.store.task.mustGet(task.id)).status,
+        20_000,
+      );
+      expect((await rt.store.task.mustGet(task.id)).status).toBe("needs_human");
+      // The next session's last status change waits: its verdict and its status doc are
+      // written, and it still runs.
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let held: string | null = null;
+      repo.setStatus = (async (...args: Parameters<typeof setStatus>) => {
+        const [id, , to] = args;
+        if (held === null && id !== firstId && ended.includes(to)) {
+          held = id;
+          await gate;
+        }
+        return setStatus.apply(repo, args);
+      }) as typeof setStatus;
+      // Settings > Project budget, as the UI sends it; the waiting review wakes.
+      let raised = await client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: project.id } },
+        ],
+        wordsUsed: "Settings: Project budget to 5",
+        source: "ui",
+        projectId: project.id,
+      });
+      if (raised.status === "pending" && raised.pendingId)
+        raised = await client.confirmCommand(raised.pendingId, { answer: "tap" });
+      expect(raised.status, JSON.stringify(raised)).toBe("done");
+      await rt.scheduler.tick();
+      await eventually(
+        async () => held !== null,
+        "the review's session to reach its end (at least 10 s of real time)",
+        async () => (await rt.store.task.mustGet(task.id)).status,
+        20_000,
+      );
+      const sessionId = String(held);
+      const events = await client.sessionEvents(sessionId);
+      expect(events.map((e) => e.type)).toContain("critic.verdict");
+      expect(events.filter((e) => e.audience === "person").map((e) => e.text)).toContain(
+        'The critic reviews "Rules index": its work was done in an earlier session.',
+      );
+      // The session page's Current task (before: '"Rules index" · critic' next to Stop now,
+      // after the verdict) and the task's drawer (its steps while the session runs it).
+      const view = await client.session(sessionId);
+      expect(view.status).toBe("running");
+      expect(view.currentTask ?? null).toBeNull();
+      expect(currentFromLog(events)).toBeNull();
+      expect(taskStepsFromLog(events, task.id)).toBeNull();
+      // The project's header and Home line (before: 'Working on "Rules index"').
+      const card = await client.project(project.id);
+      expect(card.working?.taskTitle ?? null).toBeNull();
+      expect(card.statusLine?.text ?? "").not.toContain('"Rules index"');
+    } finally {
+      release();
+      repo.setStatus = setStatus;
+      await eventually(
+        async () =>
+          !(await rt.store.session.active(rt.agent.id)).some((s) => s.summary !== "conversation"),
+        "the review's session to end (at least 10 s of real time)",
+        async () => "",
+        20_000,
+      ).catch(() => undefined);
+      await rt.close();
+    }
+  }, 120_000);
 });

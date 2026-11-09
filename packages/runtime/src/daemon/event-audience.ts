@@ -12,6 +12,15 @@
  */
 export type EventAudience = "person" | "detail";
 
+/**
+ * W15B-14: the review-only pass (W15-27) goes on in this session ("The critic reviews "X": its
+ * work was done in an earlier session."). Its own type, never a `task.started`: no run follows
+ * and no `task.finished` ends it, and the readers of the task in flight (the session view, the
+ * project's header, the chat's "# Working now", the UI's `currentFromLog`) take the last
+ * `task.started` for one.
+ */
+export const REVIEW_RESUMED_EVENT = "critic.review_resumed";
+
 /** The types a person reads by default; every other type is a detail. */
 export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.started",
@@ -29,6 +38,7 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.sandbox_waiting",
   "task.moved_while_running",
   "task.blocked_by_findings",
+  REVIEW_RESUMED_EVENT,
   "critic.verdict",
   "critic.review_failed",
   "critic.review_paused",

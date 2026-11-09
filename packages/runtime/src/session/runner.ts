@@ -17,6 +17,7 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
+import { REVIEW_RESUMED_EVENT } from "../daemon/event-audience.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
 import { cardKindOf, holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
@@ -1579,13 +1580,15 @@ export class SessionRunner {
           // was done and only its review waited.
           const kept = await this.reviewOnlyResult(task);
           // W15B-14: the session log says the waiting review goes on (before: nothing until the
-          // verdict, and no "started" line, since the specialist does not run).
+          // verdict, and no "started" line, since the specialist does not run). Not a
+          // `task.started`: no `task.finished` follows a pass without a run, and the session
+          // page, the drawer, the project's header and the chat read the last `task.started` as
+          // the task in flight, so they said the reviewed task still ran after its verdict.
           if (kept)
-            await emit("task.started", {
+            await emit(REVIEW_RESUMED_EVENT, {
               taskId: task.id,
               title: task.title,
               specialist: "critic",
-              reviewOnly: true,
             });
           // The specialist that runs this attempt, known before the log says who started it
           // (U-044): the retry ladder's stand-in after two failed attempts, the plan's name read
