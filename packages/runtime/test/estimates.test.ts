@@ -788,3 +788,81 @@ describe("estimate accuracy view", () => {
     });
   });
 });
+
+/**
+ * w15-run, wave 15 (W15-19, live check 2's RUN-2): after Stop now the plan card and the Start
+ * dialog gave different figures for the same task: the runner's task.finished hook fed the killed
+ * call's partial cost to the learner (the live feed), the task went back to Ready, and a restart
+ * moved the figure back (the fold takes finished tasks only). A killed run of a task that did not
+ * finish is no sample; its cost counts once the task finishes, in both feeds.
+ */
+describe("w15-run, wave 15: a stopped run teaches the estimates nothing (W15-19)", () => {
+  it("Stop now: no sample live, none after a restart; once the task finishes its sample holds the stopped run's cost, live and folded alike", async () => {
+    const w = await world();
+    worlds.push(w);
+    const live = new EstimateModel({ defaults });
+    const query = { specialist: "coder", risk_tier: 1, est_cost_usd_micro: 100_000 };
+    const before = live.estimate(query);
+    // Stopped during its first call: the run is killed, the task back to Ready.
+    const stopped = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 30_000,
+      outcomes: ["killed"],
+      status: "ready",
+      ledger: true,
+    });
+    expect(await live.observeTaskRuns(w.store, stopped, w.clock.nowIso(), "killed")).toBe(false);
+    expect(live.estimate(query)).toEqual(before);
+    expect(live.recentSamples()).toEqual([]);
+    // A restart changes no figure.
+    const restarted = await EstimateModel.fromStore(w.store, { defaults });
+    expect(restarted.estimate(query)).toEqual(live.estimate(query));
+    // The task runs again and finishes: one sample, its cost the stopped run's and the last one's.
+    await w.clock.advance(60_000);
+    const again = await w.store.run.insert({
+      task_id: stopped.id,
+      session_id: w.session,
+      specialist: "coder",
+      model: "fake-sonnet",
+      provider: "fake",
+      effort: "medium",
+      cost_usd_micro: 70_000,
+      duration_ms: 200_000,
+      outcome: "completed",
+    });
+    await w.store.costLedger.record({
+      human_id: w.human,
+      agent_id: w.agent,
+      project_id: w.project,
+      session_id: w.session,
+      task_id: stopped.id,
+      run_id: again.id,
+      kind: "api",
+      usd_micro: 70_000,
+      model: "fake-sonnet",
+    });
+    const done = await w.store.task.patch(stopped.id, { status: "done" });
+    expect(await live.observeTaskRuns(w.store, done, w.clock.nowIso(), "done")).toBe(true);
+    expect(live.recentSamples().map((s) => [s.taskId, s.actualUsdMicro])).toEqual([
+      [stopped.id, 100_000],
+    ]);
+    const folded = await EstimateModel.fromStore(w.store, { defaults });
+    expect(folded.recentSamples()).toEqual(live.recentSamples());
+    expect(folded.estimate(query)).toEqual(live.estimate(query));
+  });
+
+  it("a task cancelled after Stop now is no sample in either feed: what it spent is a lower bound", async () => {
+    const w = await world();
+    worlds.push(w);
+    const live = new EstimateModel({ defaults });
+    const cancelled = await finishedTask(w, {
+      estimate: 100_000,
+      actual: 30_000,
+      outcomes: ["killed"],
+      status: "cancelled",
+      ledger: true,
+    });
+    expect(await live.observeTaskRuns(w.store, cancelled, w.clock.nowIso(), "done")).toBe(false);
+    expect((await EstimateModel.fromStore(w.store, { defaults })).recentSamples()).toEqual([]);
+  });
+});

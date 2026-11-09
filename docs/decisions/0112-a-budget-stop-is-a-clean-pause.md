@@ -360,3 +360,10 @@ names the model. A model the price table does not know is priced as the run's mo
    finish. Start nothing new, ..." (`wrapUpText`, worded when it is sent; the brief's line says
    "If Forerunner tells you to wrap up"). The trigger itself is unchanged. An amount under a
    centime in these sentences and in the pause and stop sentences reads "less than CHF 0.01".
+5. **A stopped run teaches the estimates nothing (W15-19; amends point 4 of the 'cost'
+   amendment).** After Stop now the task goes back to Ready, but the runner's task.finished hook
+   fed the stopped call's partial cost to the live learner, so the plan card and the Start dialog
+   gave other figures for the same task until a restart, whose fold takes finished tasks only,
+   moved them back (live check 2, RUN-2). A stopped call (`killed`) is no sample, and a task whose
+   stopped run no completed run followed is none in either feed; once a later run completes the
+   task, the stopped run's cost counts in its sample.

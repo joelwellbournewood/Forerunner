@@ -209,13 +209,19 @@ export const FINISHED_TASK_STATUSES: readonly TaskStatus[] = ["done", "failed", 
 export const BUDGET_STOP_RUN_OUTCOMES: readonly string[] = ["paused", "budget_exceeded"];
 /**
  * Executor call outcomes the live feed takes no sample from (`observeTaskRuns`): a budget stop,
- * and a call a credential stopped or kept from starting (`usage_limit`, U-078: the task runs
- * again, and what this call spent is no part of a finished task's cost on its own).
+ * a call a credential stopped or kept from starting (`usage_limit`, U-078: the task runs again,
+ * and what this call spent is no part of a finished task's cost on its own), and a call the
+ * person stopped (`killed`, W15-19: Stop now puts the task back to Ready; its partial cost taught
+ * the live learner, the plan card and the Start dialog then disagreed, and a restart, whose fold
+ * takes finished tasks only, moved the figure back).
  */
 export const NO_SAMPLE_CALL_OUTCOMES: readonly string[] = [
   ...BUDGET_STOP_RUN_OUTCOMES,
   "usage_limit",
+  "killed",
 ];
+/** The Run row outcome of a run the person, Stop now or the kill switch stopped. */
+const KILLED_RUN_OUTCOME = "killed";
 /** The specialist name a review's Run row carries: its cost is no part of the work's. */
 const CRITIC_RUN_SPECIALIST = "critic";
 /** Ids per IN (...) clause when the fold lists runs (SQLite's parameter limit is far above this). */
@@ -306,6 +312,9 @@ export interface RunTally {
   fast: boolean;
   /** A work run that stopped at a budget (`BUDGET_STOP_RUN_OUTCOMES`, ADR 0112). */
   budgetStop: boolean;
+  /** A work run that was stopped (`killed`), and the work runs that completed (W15-19). */
+  killed: boolean;
+  completed: number;
   /**
    * When the last finished work run ended (its row's last update, written at its end), "" with
    * none: the sample's time in both feeds, so a restart does not move it.
@@ -321,6 +330,8 @@ export function emptyRunTally(): RunTally {
     finished: 0,
     fast: false,
     budgetStop: false,
+    killed: false,
+    completed: 0,
     endedAt: "",
   };
 }
@@ -337,6 +348,8 @@ export function tallyRun(acc: RunTally, r: SampleRunInput): RunTally {
   // fast-mode surcharge: the task is no sample of what the work costs.
   if (isFastModeVariant(r.model)) acc.fast = true;
   if (BUDGET_STOP_RUN_OUTCOMES.includes(r.outcome)) acc.budgetStop = true;
+  if (r.outcome === KILLED_RUN_OUTCOME) acc.killed = true;
+  if (r.outcome === "completed") acc.completed += 1;
   acc.cost += r.cost_usd_micro;
   acc.wall += r.duration_ms ?? 0;
   acc.finished += 1;
@@ -345,12 +358,14 @@ export function tallyRun(acc: RunTally, r: SampleRunInput): RunTally {
 }
 
 /**
- * Whether a task is no sample of what its work costs: no finished work run, a fast-mode run, or
- * a run that stopped at a budget, however the task went on afterwards (raised, continued, done
- * or cancelled: what it spent is a lower bound, 'cost', ADR 0112).
+ * Whether a task is no sample of what its work costs: no finished work run, a fast-mode run, a
+ * run that stopped at a budget, however the task went on afterwards (raised, continued, done
+ * or cancelled: what it spent is a lower bound, 'cost', ADR 0112), or a stopped run with no run
+ * that completed the work (W15-19: cancelled after Stop now; once a later run completes it, the
+ * stopped run's cost counts in the task's).
  */
 export function isNoSample(t: RunTally): boolean {
-  return t.finished === 0 || t.fast || t.budgetStop;
+  return t.finished === 0 || t.fast || t.budgetStop || (t.killed && t.completed === 0);
 }
 
 /**
