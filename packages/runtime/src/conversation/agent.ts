@@ -57,6 +57,7 @@ import {
   workingNowBlock,
 } from "./project-facts.ts";
 import { readTools } from "./read-tools.ts";
+import { scopeOf } from "./scope.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
@@ -824,6 +825,8 @@ export class ConversationAgent {
     for (const t of readTools({
       store,
       projectId,
+      // d1109-chat-guard: a project a call names is one of this person's (`scopeOf`).
+      humanId: req.humanId,
       ...(this.deps.sandboxReady ? { sandboxReady: this.deps.sandboxReady } : {}),
       ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
       folderOf: (id) => this.folderOf(id),
@@ -1329,7 +1332,12 @@ export class ConversationAgent {
     const agentId = agent.id;
     const { store, clock } = this.deps;
     const chf = this.deps.chfPerUsd?.() ?? 1;
-    const projects = await store.project.active({ limit: 20 });
+    // d1109-chat-guard (sibling of D3-17): this person's projects only (`scopeOf`); before, the
+    // system part named every active project on the store, another person's too.
+    const mine = new Set((await scopeOf(store, humanId)).map((p) => p.id));
+    const projects = (await store.project.active({ limit: 200 }))
+      .filter((p) => mine.has(p.id))
+      .slice(0, 20);
     // Projects by name and goal only: what each one stands at is in the volatile blocks below,
     // computed now (before, a 160-character cut of a stale summary sat here).
     const stable = projects

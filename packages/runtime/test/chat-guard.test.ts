@@ -557,6 +557,38 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
   });
 });
 
+describe("d1109-chat-guard, run C: chat reads only this person's records (CG-6, D3-17)", () => {
+  it("another person's project on the same store is neither in the system part nor readable by name", async () => {
+    const w = await setup({
+      replies: [
+        toolReply("task_get", { task: "Secret plan", project: "Mara's Garden" }, "Looking it up.", {
+          ttftMs: 0,
+        }),
+        textReply("There is no such project.", { ttftMs: 0 }),
+      ],
+    });
+    const mara = (await w.store.human.insert({ name: "Mara", email: "mara@example.test" })).id;
+    const bob = (
+      await w.store.agent.insert({ name: "Bob", owner_human_id: mara, kind: "principal" })
+    ).id;
+    const garden = (
+      await w.store.project.insert({
+        name: "Mara's Garden",
+        goal: "Mara's private garden plan",
+        settings: { members: [bob] },
+      })
+    ).id;
+    await w.store.task.insert({ project_id: garden, title: "Secret plan", outcome: "x" });
+    await w.chat("what is the secret plan of Mara's Garden?");
+    // At 7d6b34a the system part listed every active project, and task_get found it by name.
+    expect(String(w.provider.calls[0]?.request.system)).not.toContain("Mara's Garden");
+    expect(String(w.provider.calls[0]?.request.system)).toContain("Quote Page");
+    expect(w.toolResults(1)).toContain('No project is called "Mara\'s Garden".');
+    expect(w.toolResults(1)).not.toContain('Secret plan" of');
+    await w.store.close();
+  });
+});
+
 describe("d1109-chat-guard, run C: the facts carry the person's own time (CG-5, D3-6)", () => {
   it("'# Now' says today in the person's zone beside the UTC now; the system part and the tools are the same bytes on the next turn", async () => {
     const w = await setup({

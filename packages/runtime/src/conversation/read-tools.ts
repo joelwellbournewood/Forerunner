@@ -18,6 +18,7 @@ import {
   repositoryNameOf,
   tasksBlock,
 } from "./project-facts.ts";
+import { scopeOf } from "./scope.ts";
 
 /**
  * The chat's read-only tools (design §3.9: "It can look up more (a task's runs and report, a
@@ -29,6 +30,11 @@ export interface ReadToolDeps {
   store: StateStore;
   /** The turn's project: the default when a call names none. */
   projectId: string | null;
+  /**
+   * The person whose records these are (d1109-chat-guard): a project a call names is found
+   * among `scopeOf(humanId)` only.
+   */
+  humanId: string;
   /** Whether the Docker sandbox is ready (a full-review task waits for it otherwise). */
   sandboxReady?: () => boolean | null;
   /** The project's folder (a linked folder, its checkout, or the data-dir workspace). */
@@ -93,17 +99,26 @@ const err = (content: string, kind?: ReadRecordKind): ToolResult => ({
   ...(kind ? { untrusted: { source: "agent_output" as const, origin: `record:${kind}` } } : {}),
 });
 
+/**
+ * The project a call names, among this person's projects only (`scopeOf`, d1109-chat-guard):
+ * another person's project is never read or named, it is "No project is called ...". Before
+ * (7d6b34a) a name was matched among every project on the store, with no owner filter.
+ */
 async function projectOf(deps: ReadToolDeps, named?: string): Promise<ProjectRow | string> {
   if (named?.trim()) {
-    const all = await deps.store.project.list({}, { limit: 500 });
-    const hits = matchProjects(all, named);
+    const hits = matchProjects(await scopeOf(deps.store, deps.humanId), named);
     if (hits.length === 1) return hits[0] as ProjectRow;
     return hits.length
       ? `Several projects match "${named}": ${hits.map((p) => p.name).join(", ")}.`
       : `No project is called "${named}".`;
   }
   if (!deps.projectId) return "This conversation is about no project: name one.";
-  return (await deps.store.project.get(deps.projectId)) ?? "The project no longer exists.";
+  const own = await deps.store.project.get(deps.projectId);
+  if (!own) return "The project no longer exists.";
+  // The conversation's own project is read through the same scope: never another person's.
+  return (await scopeOf(deps.store, deps.humanId)).some((p) => p.id === own.id)
+    ? own
+    : "This conversation's project is not one of yours.";
 }
 
 async function findTask(

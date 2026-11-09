@@ -1,5 +1,96 @@
+import { SimulatedClock } from "@forerunner/platform";
+import { openStore, type StateStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
+import type { ToolExecutionContext } from "../src/agent/tools.ts";
 import { filesBlock, todayLine } from "../src/conversation/project-facts.ts";
+import { readTools } from "../src/conversation/read-tools.ts";
+import { scopeOf } from "../src/conversation/scope.ts";
+
+/** Two humans on one store, each with a principal agent and projects of their own. */
+async function twoHumans() {
+  const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+  const store = await openStore({ url: "sqlite::memory:", clock });
+  const robin = (await store.human.insert({ name: "Robin", email: "robin@example.test" })).id;
+  const mara = (await store.human.insert({ name: "Mara", email: "mara@example.test" })).id;
+  const agent = async (name: string, owner: string) =>
+    (await store.agent.insert({ name, owner_human_id: owner, kind: "principal" })).id;
+  const alice = await agent("Alice", robin);
+  const bob = await agent("Bob", mara);
+  const project = async (name: string, settings: Record<string, unknown>) =>
+    (
+      await store.project.insert({
+        name,
+        goal: `${name} goal`,
+        settings: settings as never,
+        summary_cache: {
+          last_session: { summary: `${name}: the last session wrote the secret page.` },
+        },
+      })
+    ).id;
+  const quote = await project("Quote Page", { members: [alice] });
+  const shopFront = await project("Shop Front", { members: [alice] });
+  const marasShop = await project("Mara's Garden", { members: [bob] });
+  const shopBack = await project("Shop Back", { members: [bob] });
+  const shared = await project("Shared Site", { members: [bob], shared_with: [robin] });
+  for (const [p, title] of [
+    [quote, "Style the page"],
+    [marasShop, "Secret plan"],
+    [shared, "Write the shared page"],
+  ] as const)
+    await store.task.insert({ project_id: p, title, outcome: `${title}.` });
+  return { store, robin, mara, quote, shopFront, marasShop, shopBack, shared };
+}
+
+const toolCtx = { signal: new AbortController().signal } as unknown as ToolExecutionContext;
+
+async function call(
+  store: StateStore,
+  deps: { humanId: string; projectId: string },
+  name: string,
+  input: Record<string, unknown>,
+) {
+  const tool = readTools({ store, ...deps }).find((t) => t.name === name);
+  return (await tool?.execute(input as never, toolCtx)) ?? { content: "", isError: true };
+}
+
+describe("d1109-chat-guard, run C: chat reads only this person's records (CG-6, D3-17)", () => {
+  it("scopeOf names the person's own projects and those shared with them, never another person's", async () => {
+    const w = await twoHumans();
+    const names = (await scopeOf(w.store, w.robin)).map((p) => p.name).sort();
+    expect(names).toEqual(["Quote Page", "Shared Site", "Shop Front"]);
+    const maras = (await scopeOf(w.store, w.mara)).map((p) => p.name).sort();
+    expect(maras).toEqual(["Mara's Garden", "Shared Site", "Shop Back"]);
+    await w.store.close();
+  });
+
+  it("tasks_list, task_get and session_last never read or name another person's project: it is 'No project is called ...'", async () => {
+    const w = await twoHumans();
+    const deps = { humanId: w.robin, projectId: w.quote };
+    // At 7d6b34a projectOf found a project by name among every project on the store.
+    for (const [name, input] of [
+      ["tasks_list", { project: "Mara's Garden" }],
+      ["task_get", { task: "Secret plan", project: "Mara's Garden" }],
+      ["session_last", { project: "Mara's Garden" }],
+      ["files_list", { project: "Mara's Garden" }],
+    ] as const) {
+      const r = await call(w.store, deps, name, input);
+      expect(r.isError, name).toBe(true);
+      expect(r.content, name).toBe(`No project is called "Mara's Garden".`);
+    }
+    // "Shop" is the person's own "Shop Front" only: Mara's "Shop Back" is never named.
+    const shop = await call(w.store, deps, "tasks_list", { project: "Shop" });
+    expect(shop.content).toContain("# Tasks of Shop Front");
+    expect(shop.content).not.toContain("Shop Back");
+    // A project shared with the person is theirs to read.
+    const sharedTask = await call(w.store, deps, "task_get", {
+      task: "Write the shared page",
+      project: "Shared Site",
+    });
+    expect(sharedTask.isError).toBeFalsy();
+    expect(sharedTask.content).toContain('Task "Write the shared page" of Shared Site');
+    await w.store.close();
+  });
+});
 
 describe("d1109-chat-guard, run C: the person's own day and time in the facts (CG-5, D3-6)", () => {
   it("says the weekday, the date and the time where the person is, with the zone", () => {
