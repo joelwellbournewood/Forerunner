@@ -1292,10 +1292,15 @@ export function ruledSummary(
         : verdict === "escalate"
           ? "Waits for you: the critic was not sure."
           : "Accepted.";
-  const said = modelSummary
+  // A tag before the model's words ("[stand-in model] Accepted: …", the bench's stand-in) stays,
+  // and the verdict word after it goes as well: "Waits for you: … Accepted: …" never shows.
+  const tagged = /^\s*(\[[^\]\n]{1,40}\]\s+)?([\s\S]*)$/.exec(modelSummary);
+  const tag = tagged?.[1] ?? "";
+  const said = (tagged?.[2] ?? "")
     .replace(/^\s*(?:accepted|accept|approved|sent back(?: for changes)?|revise)\s*[:.-]\s*/i, "")
     .trim();
-  return said ? `${lead} ${said.charAt(0).toUpperCase()}${said.slice(1)}` : lead;
+  const text = said ? `${tag}${said.charAt(0).toUpperCase()}${said.slice(1)}` : tag.trim();
+  return text ? `${lead} ${text}` : lead;
 }
 
 /**

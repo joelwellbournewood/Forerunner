@@ -251,7 +251,9 @@ summary says why first and the model's words follow without the verdict word the
 carry (`ruledSummary`, C-19, polish-words: 'Sent back: the check "test" failed. 1 changed file
 matches the brief.', "Waits for you: the report asks you something. The changed file matches
 the brief.", never "Accepted: …" under a review that did not accept; W15-51 made the `human`
-branches live, and `GET /tasks/:id` serves that summary). A sign-off card says itself that it
+branches live, and `GET /tasks/:id` serves that summary; a tag before the model's words, such
+as the bench stand-in's "[stand-in model]", stays and the verdict word after it goes too). A
+sign-off card says itself that it
 waits and quotes the model's own words (`ownWords` drops the lead):
 
 0. `escalate_needs_reason` (ADR 0042): an `escalate` must stand on a ground the code can see,

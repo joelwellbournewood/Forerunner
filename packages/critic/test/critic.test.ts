@@ -11,11 +11,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MAX_EFFORT_TOKENS_CEILING,
   REVIEW_TOKENS_PER_CALL,
+  ruledSummary,
   VERDICT_ADJUSTED_AUDIT_TOOL,
 } from "../src/critic.ts";
 import { SIGNOFF_KEY } from "../src/followup.ts";
 import { DEFAULT_DEEP_REVIEW_TIMEOUT_MS } from "../src/model.ts";
-import { ESCALATE_RULE } from "../src/rules.ts";
+import { ASKS_PERSON_RULE, ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
 import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
 import type { ReviewEvidence, ReviewInput } from "../src/types.ts";
@@ -1343,5 +1344,27 @@ describe("w15-review, wave 15", () => {
     } finally {
       await w.close();
     }
+  });
+
+  it("W15-51: a summary that starts with a tag ('[stand-in model] Accepted: …') loses its verdict word too, so 'Accepted:' never follows 'Waits for you'", () => {
+    // The fix-up's bench walk: the stand-in's summary starts with its tag, and the shown text
+    // read "Waits for you: the report asks you something. Accepted: the changed file matches …".
+    const shown = ruledSummary(
+      "human",
+      ASKS_PERSON_RULE,
+      [],
+      "[stand-in model] Accepted: the changed file matches the brief.",
+    );
+    expect(shown).toBe(
+      "Waits for you: the report asks you something. [stand-in model] The changed file matches the brief.",
+    );
+    expect(shown).not.toContain("Accepted");
+    // Without a tag the same; with a tag but no verdict word, its words start with a capital.
+    expect(ruledSummary("human", ASKS_PERSON_RULE, [], "Accepted: it works.")).toBe(
+      "Waits for you: the report asks you something. It works.",
+    );
+    expect(ruledSummary("accept", undefined, [], "[stand-in model] the page loads.")).toBe(
+      "Accepted. [stand-in model] The page loads.",
+    );
   });
 });
