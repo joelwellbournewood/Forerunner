@@ -89,4 +89,40 @@ describe("w15-chat, wave 15", () => {
     await waitFor(() => expect(screen.getAllByTestId("setting-row").length).toBeGreaterThan(4));
     expect(document.body.textContent ?? "").not.toMatch(/USD/);
   });
+
+  // W15-48 (live check 2): every Changes row ended in "task.transition · before / after", a
+  // disclosure of the raw commands and the before and after as JSON.
+  it("Changes rows show no command name, no 'before / after' and no JSON (W15-48)", async () => {
+    const harness = createHarness();
+    harness.daemon.state.changes.unshift({
+      ...(harness.daemon.state.changes[0] as (typeof harness.daemon.state.changes)[number]),
+      id: "chg_move",
+      source: "ui",
+      wordsUsed: "Tasks: Pause",
+      commands: [{ name: "task.transition", params: { task: "task_1", to: "needs_human" } }],
+      sentence: 'Paused "Write the landing page" on Atlas. Undo.',
+      undoState: "undoable",
+      expiresAt: null,
+      before: { status: "ready" },
+      after: { status: "needs_human", withdrawn_requests: [] },
+    });
+    renderApp("/changes", harness);
+    const rows = await screen.findAllByTestId("change");
+    const move = rows.find((r) => r.dataset.changeId === "chg_move") as HTMLElement;
+    expect(within(move).getByTestId("change-sentence")).toHaveTextContent(
+      'Paused "Write the landing page" on Atlas.',
+    );
+    // Where it came from in words, not the stored "ui"; no stored scope ("session", "global").
+    expect(within(move).getByTestId("change-source")).toHaveTextContent(/^In the app$/);
+    const voice = rows.find((r) => r.dataset.source === "voice") as HTMLElement;
+    expect(within(voice).getByTestId("change-source")).toHaveTextContent(/^Voice$/);
+    for (const row of rows) {
+      expect(within(row).queryByText(/^(ui|palette|session|project|global)$/)).toBeNull();
+      const text = row.textContent ?? "";
+      expect(text).not.toMatch(/\b[a-z_]+\.[a-z_]+\b/);
+      expect(text).not.toMatch(/before \/ after|no command/i);
+      expect(text).not.toMatch(/[{}]|"[a-z_]+":/);
+      expect(row.querySelector("details, pre")).toBeNull();
+    }
+  });
 });
