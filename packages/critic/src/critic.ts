@@ -275,6 +275,12 @@ export interface ReviewContext {
   project?: { root: string; tools: readonly ToolSpec[] };
   /** Human to address a sign-off request to. Default: the session token's owner. */
   humanId?: string | null;
+  /**
+   * The runtime files the person's questions card for this task when the verdict is not an
+   * accept (U-022: the worker's report asks the person): a task's `human` verdict then files no
+   * sign-off, so the person hears once, of the card that asks them (W15-28, design §4.3).
+   */
+  questionsCardInstead?: boolean;
   onEvent?: (ev: RunEvent) => void;
 }
 
@@ -1027,7 +1033,11 @@ export class CriticService {
         findingIds,
       });
       humanRequestId = req.id;
-    } else if (out.verdict === "human" && input.subject.kind !== "lesson") {
+    } else if (
+      out.verdict === "human" &&
+      input.subject.kind !== "lesson" &&
+      !(input.subject.kind === "task" && ctx.questionsCardInstead)
+    ) {
       const worst = maxSeverity(out.findings);
       // U-073: the card names the task it asks about (the Inbox shows the project beside it).
       const title = taskId ? (await store.task.get(taskId))?.title : undefined;

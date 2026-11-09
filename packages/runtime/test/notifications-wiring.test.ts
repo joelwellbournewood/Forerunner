@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { email as agentEmail } from "@forerunner/capabilities";
 import { appDirs, join, Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
+import { FakeProvider, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DAEMON_ROUTES } from "../src/daemon/api-types.ts";
@@ -18,6 +19,7 @@ import {
   testCatalog,
 } from "./extensions-helpers.ts";
 import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
+import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
  * The notification module inside the running system (ADR 0038): `composeRuntime` builds the
@@ -863,4 +865,132 @@ describe("the email channel over the agent email capability", () => {
       await rt.close();
     }
   });
+});
+
+/**
+ * w15-review, wave 15. W15-28 (live check 2, RUN-7 and research F14): a run whose report asks
+ * the person questions, and a critic that answers 'human', raised two notifications for one
+ * card: 'needs your sign-off' for a sign-off the runtime withdrew a few ms later, then the
+ * questions card's. The runtime decides between the two before the critic files anything.
+ */
+describe("w15-review, wave 15", () => {
+  it("W15-28: one notification for the questions card, none for a sign-off, and no sign-off request in any status", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-notify-w15-"));
+    const clock = new SimulatedClock("2026-11-09T04:24:00Z");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({
+        clock,
+        latency: "none",
+        onNoMatch: "echo",
+        replies: [
+          submitReply(
+            {
+              grade: 60,
+              verdict: "human",
+              summary: "wc.js works; the report asks the person two questions.",
+            },
+            { times: Number.POSITIVE_INFINITY },
+          ),
+          closingReply(),
+          textReply(
+            "I wrote wc.js.\n\nQuestions for the person:\n- Which hosting provider should the site use?\n- Which domain name should it have?",
+            {
+              when: { lastUserIncludes: "Build the word counter" },
+              times: Number.POSITIVE_INFINITY,
+            },
+          ),
+        ],
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      notifications: { platform: "linux", osNotifier: false },
+    });
+    try {
+      const { app, token } = createDaemonApp(rt);
+      const req = (path: string, init: RequestInit = {}) =>
+        app.request(path, {
+          ...init,
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            ...(init.headers ?? {}),
+          },
+        });
+      const projectId = str(
+        (
+          await json(
+            await req("/projects", {
+              method: "POST",
+              body: JSON.stringify({ name: "Word count", goal: "Count words" }),
+            }),
+          )
+        ).id,
+      );
+      const created = await req(`/projects/${projectId}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Build the word counter",
+          outcome: "wc.js prints the number of words in a file",
+          acceptanceCriteria: ["wc.js prints the count"],
+          priority: "high",
+          status: "ready",
+          dependsOn: [],
+          specialist: "coder",
+          riskTier: 1,
+        }),
+      });
+      expect(created.status).toBe(201);
+      const taskId = str((await json(created)).id);
+      const started = await req("/sessions", {
+        method: "POST",
+        body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
+      });
+      expect(started.status, await started.clone().text()).toBe(202);
+      const deadline = Date.now() + 20_000;
+      while ((await rt.store.task.mustGet(taskId)).status !== "needs_human") {
+        if (Date.now() > deadline)
+          throw new Error(
+            `timed out waiting: the task to wait for the person (${(await rt.store.task.mustGet(taskId)).status})`,
+          );
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      while ((await rt.store.session.active(rt.agent.id)).length) {
+        if (Date.now() > deadline) throw new Error("timed out waiting: the session to end");
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      // One card: the questions; no sign-off was filed at all (none withdrawn either).
+      const requests = await rt.store.humanRequest.list({ task_id: taskId } as never, {
+        limit: 50,
+      });
+      expect(
+        requests.filter(
+          (r) => (r.change_card as { key?: string } | null)?.key === "critic:signoff",
+        ),
+      ).toEqual([]);
+      const open = ((await json(await req("/inbox"))).requests as Json[]).filter(
+        (q) => q.taskId === taskId && q.status === "open",
+      );
+      expect(open.map((q) => q.title)).toEqual([
+        '"Build the word counter": the specialist asks you',
+      ]);
+      // One notification for the project's task, the card's own title; never a sign-off's.
+      const recent = (
+        (await json(await req("/notifications/recent?limit=200"))).notifications as Json[]
+      ).filter((n) => n.projectId === projectId);
+      expect(recent.map((n) => [n.kind, String(n.title)])).toEqual([
+        ["request_blocking", expect.stringContaining(": the specialist asks you")],
+      ]);
+      expect(JSON.stringify(recent)).not.toContain("needs your sign-off");
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

@@ -1744,8 +1744,12 @@ a sign-off without the questions. One card, three ways in:
   line; it ends at the lesson line, prose or a heading, after a blank line only a question goes
   on, and a list that says it asks nothing ("None", "- n/a") asks nothing. A verdict other than
   accept on such a run (an accept with listed questions is made `human` by the critic's
-  `ASKS_PERSON_RULE`, ADR 0104) withdraws the sign-off the critic filed for a `human` verdict,
-  moves the task `in_review -> needs_human`, files the questions (the report's, else the
+  `ASKS_PERSON_RULE`, ADR 0104) files no sign-off at all: the critic loop decides before the
+  review (`reportedQuestions`) and passes `questionsCardInstead`, so `CriticService.review`
+  files no task sign-off for a `human` verdict and the person hears once, of the questions card
+  (W15-28; before, a "needs your sign-off" notification went out for a sign-off withdrawn a few
+  ms later; `notifications-wiring.test.ts` 'w15-review, wave 15'); a sign-off filed anyway (an
+  older caller) is still withdrawn. It moves the task `in_review -> needs_human`, files the questions (the report's, else the
   task's) and returns decision `human`: `applyVerdict` and the ladder do not run, so there is
   one attempt and one review. The card's `context`, which the Inbox quotes as "The specialist
   said: …", is why it asks (`questionsReason`, live L-12: the "Contact page" card quoted the

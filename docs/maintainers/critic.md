@@ -344,6 +344,10 @@ the proposal on any other completed verdict (`human` included; `rejected_by:<rev
 source) and tells the human why in one warning message (runtime.md "Cross-project sharing";
 ADR 0059 amendment of 2026-10-25), and leaves it pending when the run did not complete.
 
+`ReviewContext.questionsCardInstead` (W15-28): the runtime files the person's questions card
+for this task when the verdict is not an accept (the worker's report asks the person, U-022), so
+a task's `human` verdict files no sign-off; the person hears once, of the card that asks them.
+
 Every sign-off request (the one `CriticService.review` files for a `human` verdict on a task or
 session subject, the one `applyVerdict` files when the ladder ends, and the runtime loop's own
 after a last-rung revise) names its task in the `why`, in the person's words (design §3.8,

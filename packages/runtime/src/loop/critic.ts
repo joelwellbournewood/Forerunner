@@ -452,6 +452,10 @@ export class CriticLoop implements CriticPort {
       : { commands: [], servers: [], notTried: [] };
     const report = result.finalReport ?? result.summary;
     const questions = listedQuestions(report);
+    // U-022: a report that asks the person gets the questions card, unless the critic accepts;
+    // decided before the review files anything, so no sign-off is filed only to be withdrawn
+    // (W15-28: two notifications for one card).
+    const asksPerson = reportedQuestions(report);
     const evidence: ReviewEvidence = {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
@@ -687,6 +691,7 @@ export class CriticLoop implements CriticPort {
           cwd: worktree,
           signal: req.signal,
           humanId: owner,
+          ...(asksPerson ? { questionsCardInstead: true } : {}),
           ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
         },
       );
@@ -722,8 +727,7 @@ export class CriticLoop implements CriticPort {
     // missing) asks once more, in its own words, but without offering Go ahead without again
     // (live L-3: the second card offered it again, which only ran the same ask, a run's cost
     // each time).
-    const reported =
-      output.verdict === "accept" ? null : reportedQuestions(result.finalReport ?? result.summary);
+    const reported = output.verdict === "accept" ? null : asksPerson;
     let askedPerson: string | undefined;
     if (reported) {
       askedPerson = await this.askPersonInstead({
