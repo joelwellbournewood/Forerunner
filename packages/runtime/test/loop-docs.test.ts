@@ -1175,4 +1175,25 @@ describe("w15-merge, wave 15", () => {
     expect(docs.statusDocRoot(b)).toBeNull();
     await w.close();
   });
+
+  it("a project folder made before the line-endings pin gets core.autocrlf=false at its next session-end commit (W15-11)", async () => {
+    const w = await loopWorld();
+    const { root } = await bareRepo();
+    const { docs } = await docsFor(w, root, null);
+    const workspace = join(root, "projects", w.project, WORKSPACE_DIR);
+    await mkdir(workspace, { recursive: true });
+    // A folder an earlier version made: a plain init, the machine's line endings in force.
+    await run(["git", "init", "-q", "-b", "main", workspace]);
+    await run(["git", "-C", workspace, "config", "--local", "core.autocrlf", "true"]);
+    const project = await w.store.project.mustGet(w.project);
+    const out = await docs.writeSessionStatus({
+      project,
+      session: session("s-folder"),
+      update: update("s-folder"),
+    });
+    expect(out.location).toBe("data_dir");
+    const autocrlf = await run(["git", "-C", workspace, "config", "--local", "core.autocrlf"]);
+    expect(autocrlf.stdout.trim()).toBe("false");
+    await w.close();
+  });
 });

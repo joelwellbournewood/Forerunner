@@ -987,8 +987,15 @@ export class ProjectDocs implements ProjectDocsPort {
         untranslated: true,
       });
       if (!existsSync(join(dir, ".git"))) await git.init("main");
-      // W15-11: a project folder made before git.init pinned our line endings says so too.
-      else await git.pinLineEndings().catch(() => undefined);
+      // W15-11: a project folder made before git.init pinned our line endings says so too; a
+      // failure is logged, never fatal (the commit goes on).
+      else
+        await git.pinLineEndings().catch((e: unknown) =>
+          this.logger.warn("line endings not pinned in the project folder", {
+            projectId: project.id,
+            error: errorMessage(e),
+          }),
+        );
       ensureWorkspaceGitignore(dir);
       // W6-26: a review's try folder a dead daemon left is never committed with the session.
       excludeNeverPushed(dir, [TRY_DIR]);

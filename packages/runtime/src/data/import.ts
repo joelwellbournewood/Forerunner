@@ -13,6 +13,7 @@ import {
   basename,
   type Clock,
   dirname,
+  errorMessage,
   extname,
   ForerunnerError,
   isAbsolute,
@@ -581,8 +582,13 @@ export class DataImporter {
     try {
       if (existed) {
         await git.fetch();
-        // W15-11: a checkout made before the clone pinned our line endings says so too.
-        await git.pinLineEndings().catch(() => undefined);
+        // W15-11: a checkout made before the clone pinned our line endings says so too; a
+        // failure is logged, never fatal (the import goes on with the checkout as it is).
+        await git.pinLineEndings().catch((e: unknown) =>
+          this.logger.warn("line endings not pinned in the import's checkout", {
+            error: errorMessage(e),
+          }),
+        );
       } else await git.clone(target.url);
       // C-55 (polish-words): an empty repository has no default branch to start from. As the
       // task executor does (ADR 0106), its first commit is made (`ensureBaseBranch`), and a

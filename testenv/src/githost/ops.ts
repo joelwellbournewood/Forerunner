@@ -32,8 +32,8 @@ export class RepoOps {
   /**
    * W15-07: GitHub works out a pull request's mergeability lazily: after its head or base moved,
    * the first read answers `mergeable: null` and starts the work; a later read has the answer.
-   * Off by default (the fake answers at once); a test or the bench turns it on to see the null
-   * the app meets live (`FakeGitHost.setLazyMergeability`).
+   * Off by default (the fake answers at once); a test turns it on (`host.ops.lazyMergeability =
+   * true`) to see the null the app meets live. The bench has no switch for it.
    */
   lazyMergeability = false;
   /** The base..head pair each pull request's read already started working out (lazy mode). */
