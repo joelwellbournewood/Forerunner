@@ -415,7 +415,16 @@ store and persists a `Review` with `session_id` set and `task_id` null:
 
 Money in its findings and evidence is CHF (design §5 rule 7): `sessionChecks` converts at the
 ledger's own rate (`ledgerChfMicro / ledgerUsdMicro`), else `DEFAULT_CHF_PER_USD` ("Session cost
-CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". The runner does not
+CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". The estimate is the
+work's (the critic's reviews are paid from the session's review reserve), so the overrun check
+sets the work's cost against it, the ledger less the critic's Run rows (`metrics.workUsdMicro`,
+`metrics.reviewsUsdMicro`; W15-18, live check 2's RUN-16: "CHF 0.17 spent of a CHF 0.05
+estimate" counted the reviews), and with reviews the finding and the summary name them apart
+("Session work cost CHF 0.12 exceeded its estimate CHF 0.05 by 140% (the reviews, CHF 0.05
+more, are not in the estimate)"; "cost CHF 0.25 (work CHF 0.15 against an estimate of CHF 0.14,
+reviews CHF 0.10)"); without reviews the words are as before. The daemon's
+`critic.session_review_metrics` log line still reads `actualUsdMicro` (`views.ts`, another
+area's region). The runner does not
 ask for a session review when the session ended no task (stopped in its first seconds, nothing
 planned): there is no work to grade, and it read "Session review: accepted (grade 100)". Its
 summary counts as the number says ("1 done task", "2 findings"; P7-34: never "(s)"). The

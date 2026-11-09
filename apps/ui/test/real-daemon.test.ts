@@ -12397,4 +12397,60 @@ describe("w15-run, wave 15", () => {
       await rt.close();
     }
   }, 60_000);
+
+  it("W15-18: the Start dialog prices a four-file task with tests above a one-line change, near what it cost live, and the same after a restart", async () => {
+    const w = await world([], "size");
+    let { rt, client } = await w.open();
+    try {
+      const project = await client.createProject({
+        name: "Club tools",
+        goal: "Tools for the club",
+      });
+      // Live check 2 (RUN-16): this task's work cost USD 0.21; the footer's USD 0.03. Both read
+      // "about CHF 0.03" in the Start dialog.
+      const big = await client.createTask(project.id, {
+        title: "Write the Swiss pairing tool with tests",
+        outcome:
+          "A Node.js command line tool for the club's Swiss-system tournaments, in four files plus a README: src/elo.js (Elo ratings, K=20), src/swiss.js (pairs players by score then rating, no rematches, a bye for an odd count), test/elo.test.js and test/swiss.test.js (node:test, at least six cases each), and README.md with usage examples. Usage: node src/swiss.js players.json",
+        acceptanceCriteria: [
+          "src/elo.js, src/swiss.js, test/elo.test.js and test/swiss.test.js exist",
+          "node --test passes",
+          "README.md shows how to run it with an example players.json",
+        ],
+        riskTier: 0,
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+      const small = await client.createTask(project.id, {
+        title: "Add a footer with the club address to index.html",
+        outcome: "index.html ends with a footer: Chess club, Marktgasse 1, 3011 Bern",
+        acceptanceCriteria: [],
+        riskTier: 0,
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+      });
+      const figures = async () => {
+        const check = await client.startCheck(project.id);
+        const of = (id: string) =>
+          [...check.runnable, ...check.later].find((t) => t.taskId === id)?.estimate.usdMicro ?? 0;
+        return { big: of(big.id), small: of(small.id) };
+      };
+      const shown = await figures();
+      expect(shown.small).toBeGreaterThan(0);
+      expect(shown.big).toBeGreaterThanOrEqual(3 * shown.small);
+      // "About" within twice what the work cost live (USD 0.208).
+      expect(shown.big).toBeGreaterThanOrEqual(208_000 / 2);
+      expect(shown.big).toBeLessThanOrEqual(208_000 * 2);
+      // Deterministic: a restart prices both the same.
+      await rt.close();
+      ({ rt, client } = await w.open());
+      expect(await figures()).toEqual(shown);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

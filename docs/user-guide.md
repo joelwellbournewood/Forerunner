@@ -868,8 +868,14 @@ specialist there); a done or cancelled task shows no limit. The estimate a
 plan shows is only a
 forecast. It starts from what that kind of work cost on the real model (a page or a coder
 task a few centimes, a test task a little more, a research task that reads web pages about
-CHF 0.40), whatever the plan model guessed, and it learns from every task that finishes: after
-three tasks of a kind it is within about twice what they really cost. Questions the plan asks
+CHF 0.40), whatever the plan model guessed, and grows with the task's size as its outcome and
+checks describe it: each file it names, tests to write, "at least six cases" and a long list of
+checks make it larger, up to four times (a tool in four files with its tests is about CHF 0.11,
+a footer line a few centimes). It learns from every task that finishes, per unit of that size,
+so a large task does not make the small ones look dear: after three tasks of a kind it is
+within about twice what they really cost. The session review sets the work's cost against the
+estimate and names the critic's reviews apart ("cost CHF 0.25 (work CHF 0.15 against an
+estimate of CHF 0.14, reviews CHF 0.10)"), since the estimate is the work's. Questions the plan asks
 you cost nothing and the plan counts them at CHF 0.00. A task that stopped at its budget does
 not count toward what the estimates learn, even after you raise its budget and it finishes,
 since its first run did not finish its work; restarting the app changes none of these figures.

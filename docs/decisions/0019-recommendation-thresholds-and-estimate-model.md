@@ -144,6 +144,22 @@ still agrees with the fold after a restart (review of 'cost': a raised task was 
 and dropped by the next restart's fold). A task tried more than once is still a sample at each
 try live, the last with the fold's figures, and one sample after a restart.
 
+## Amendment 2026-11-09: a task's size ('w15-run', W15-18)
+
+Live check 2 (RUN-16) priced "Write the Swiss pairing tool with tests", four files and their
+tests whose work cost USD 0.21, at "about CHF 0.03" like a one-line footer: the estimate knew
+the specialist and the tier only. A task's starting figure (and the band the plan's guess is
+kept in, `boundedPlanEstimate`) is now multiplied by a deterministic size factor read from its
+outcome and acceptance criteria (`taskSizeFactor`: files named, tests to write except for the
+tester, "at least N cases", criteria beyond three; between 1 and 4; no model call), and the
+learner measures each sample against that sized figure, so what it learns is a ratio per unit
+of size. A task's own estimate is still taken as it is. The plan card, the Start dialog and the
+runner keep pricing through `planEstimateUsdMicro`, so they agree, and a restart changes no
+figure. The session review sets the work's cost (the ledger less the critic's reviews) against
+the plan's estimate, which is the work's, and names the reviews apart. The constants are in
+`estimates/model.ts`; the live check's 16 tasks came within about x2.5 of their starting figure
+except a test task and a report that read more files than they wrote.
+
 ## Amendment 2026-10-26: the eval budget bounds a run the human consented to
 
 ADR 0089 changes when the evals run, not the thresholds. A watch run makes no paid eval
