@@ -444,10 +444,11 @@ describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
     });
   });
 
-  it("no USD in Settings with Advanced open, the subscription allowance included; fast mode's price table aside", async () => {
+  it("no USD in Settings with Advanced open, the subscription allowance and fast mode included", async () => {
     // Review of later #43: the allowance read "the default (USD 50) is set low on purpose" and
     // "Now: CHF 40.00 a month (the default), stored as USD 50.00 at today's rate." Design §5
-    // rule 7: CHF everywhere, never USD. Fast mode quotes the provider's price table (not_done).
+    // rule 7: CHF everywhere, never USD. Fast mode quoted the provider's price table until
+    // W15-47; it now reads about CHF at the day's rate, so no part of the page is left out.
     const user = userEvent.setup();
     const harness = createHarness({
       setup: { credentials: { github: true, anthropicApiKey: true, subscription: true } },
@@ -457,7 +458,7 @@ describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
     renderApp("/settings", harness);
     await screen.findAllByTestId("setting-row");
     await user.click(screen.getByTestId("settings-advanced-summary"));
-    expect(screen.getByTestId("fast-mode-card")).toHaveTextContent("USD");
+    expect(screen.getByTestId("fast-mode-card")).toHaveTextContent("about CHF 6.40 / 32.00");
     const allowance = screen.getByTestId("plan-allowance-section");
     expect(await within(allowance).findByTestId("plan-allowance-current")).toHaveTextContent(
       /^Now: CHF 40\.00 a month \(the default\)\.$/,
@@ -469,10 +470,7 @@ describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
     );
     const page = screen.getByRole("heading", { name: "Settings", level: 1 })
       .parentElement as HTMLElement;
-    const copy = page.cloneNode(true) as HTMLElement;
-    for (const fast of copy.querySelectorAll('[data-testid="fast-mode-card"]')) fast.remove();
-    for (const row of copy.querySelectorAll('[data-key="project.fast_mode"]')) row.remove();
-    const usd = (copy.textContent ?? "").match(/.{0,60}\bUSD\b.{0,40}/g) ?? [];
+    const usd = (page.textContent ?? "").match(/.{0,60}\bUSD\b.{0,40}/g) ?? [];
     expect(usd).toEqual([]);
   });
 });
