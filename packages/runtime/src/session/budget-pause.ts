@@ -294,6 +294,13 @@ export function wrapUpSentWords(
   chfOf: (usdMicro: number) => string,
 ): string {
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
+  // W15-74 (W15B-77): amounts under a centime are said once, not "less than CHF 0.01 of less
+  // than CHF 0.01, ... past less than CHF 0.01": what it may spend, and why now.
+  const amounts = [spentUsdMicro, capUsdMicro, ...(line ? [line.lineUsdMicro] : [])];
+  if (amounts.filter((usd) => chf(usd) === "less than CHF 0.01").length >= 2)
+    return line
+      ? `Told the ${specialist} to wrap up: it may spend ${chf(capUsdMicro)}, and its next step could leave too little to finish.`
+      : `Told the ${specialist} to wrap up: it may spend ${chf(capUsdMicro)}.`;
   return line
     ? `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}, and its next step could take it past ${chf(line.lineUsdMicro)}.`
     : `Told the ${specialist} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;

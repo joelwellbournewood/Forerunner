@@ -2055,7 +2055,16 @@ budget-stop; the owner's decision of 2026-11-02).**
   centime as "less than CHF 0.01" (W15-16). No
   "save only" (P7-1), and an amount above zero under a centime reads "less than CHF 0.01", never
   "CHF 0.00" (`moneyWords` in `session/money-words.ts`, W14-6: the run's lines, the session's end
-  line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). The brief says what the two headings are for
+  line, a task's cost in the log and the result's cost line "Less than CHF 0.01."). W15-74 (wave
+  15 run B): every budget and estimate a person reads follows the same rule, an estimate through
+  `aboutWords` ("about CHF 0.40", or "less than CHF 0.01" with no "about"): the budget card's
+  title, button and reasons (`budget-card.ts` `chfText`), the card's Continue line
+  (`request-words.ts` `chfAt`), the session log's start and plan lines (`event-lines.ts`,
+  `views.ts`), the result's "Left for next time" and "Nothing could run" lines and the stop at a
+  project's budget or the month's cap (`stopLimitWords`), and the Start check's "needs ...". With
+  two or more amounts under a centime the wrap-up note says it once: "Told the coder to wrap up: it
+  may spend less than CHF 0.01, and its next step could leave too little to finish." (W15B-77).
+  The brief says what the two headings are for
   (`WRAP_UP_BRIEF_LINE`). Every brief also says today's date in the person's time zone
   (`todayLine`: "Today's date is 2026-11-09 (Europe/Zurich).", UTC when none is known; W15-31),
   in the user message, so the system prompt and its cache stay as they are; a page read says when
@@ -6449,7 +6458,13 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   the Overview shows: later #53, #54), or for a repository project "Done: all 6 tasks. 2 pull
   requests wait for you to merge." with Open Overview (the rows reading `WAITING_FOR_YOUR_MERGE`,
   C-58) and "; 2 taken out" when tasks were taken out (the owner question's recommendation, built
-  meanwhile); then paused or draft work. The task words are `taskDisplay`'s, so the
+  meanwhile). W15B-12: a done task whose accepted work waits on the person in any other way
+  (`needsYouAfterAccept` in `task-words.ts`: `OWED_FOLDER_LABEL`, "Accepted · conflicts with
+  main", every `LEFT_TO_YOU_LABELS` label) counts too, never as waiting to be merged: "Done: all 3
+  tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.", or alone "Done:
+  all 2 tasks. 1 task needs you on the Overview.", with Open Overview (before, "Done: all 2 tasks."
+  while #3 waited for a commit in its folder); a merge that goes on by itself (merging, waiting
+  for its checks or for GitHub) is not counted. Then paused or draft work. The task words are `taskDisplay`'s, so the
   sentence and the Tasks tab never disagree.
 - A failed plan reads "Planning failed: <a few words>" within 80 characters (design §2 item 5,
   §5.1; review of fix/progress-navigation: Home showed the intake's whole error, about 170

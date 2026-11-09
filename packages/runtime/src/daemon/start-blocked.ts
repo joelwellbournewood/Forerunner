@@ -1,6 +1,10 @@
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
+import { aboutWords } from "../session/money-words.ts";
 import type { StartCheck } from "../session/start-check.ts";
 import type { StartCheckView } from "./api-types.ts";
+
+/** An estimate as the dialog says it (W15-74): "about CHF 0.40", "less than CHF 0.01". */
+const estimateWords = (chfMicro: number) => aboutWords(formatChf(chfMicro), chfMicro);
 
 /** What else decides whether a Start would do anything. */
 export interface StartBlockedFacts {
@@ -162,7 +166,7 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
   if (big)
     return {
       kind: "nothing_runnable",
-      sentence: `Nothing can run within this budget: "${big.title}" needs about ${formatChf(usdToChfMicro(big.estimateUsdMicro, f.chfPerUsd))}.`,
+      sentence: `Nothing can run within this budget: "${big.title}" needs ${estimateWords(usdToChfMicro(big.estimateUsdMicro, f.chfPerUsd))}.`,
       action: null,
     };
   return {

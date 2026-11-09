@@ -13747,4 +13747,89 @@ describe("w15-words, wave 15 run B", () => {
       expect(cancelled.change?.sentence ?? "").not.toContain("set aside");
     }, 120_000);
   });
+
+  describe("words read from the store as it is (no session)", () => {
+    let rt: RuntimeApp;
+    let client: DaemonClient;
+
+    beforeAll(async () => {
+      ({ rt, client } = await composeWithRolePlayer({}));
+    }, 60_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    it("W15B-12: the Done line counts a folder wait and a closed pull request as needing you, never as waiting to be merged", async () => {
+      const project = await client.createProject({
+        name: "Club page",
+        goal: "A page, its footer and its menu",
+        repos: ["alice/club"],
+      });
+      const done = async (title: string, pr: number) =>
+        rt.store.task.insert({
+          project_id: project.id,
+          title,
+          outcome: `${title} is written`,
+          status: "done",
+          reason: "critic accepted",
+          pr_url: `https://github.example/alice/club/pull/${pr}`,
+        } as never);
+      const record = (
+        task: { id: string; pr_url: string | null },
+        pr: number,
+        extra: Record<string, unknown>,
+      ) =>
+        rt.store.mergeRecord.insert({
+          task_id: task.id,
+          project_id: project.id,
+          agent_id: rt.agent.id,
+          pr_number: pr,
+          pr_url: task.pr_url ?? "",
+          reviewed_head_sha: "a".repeat(40),
+          ...extra,
+        } as never);
+      const page = await done("Write the page", 2);
+      const footer = await done("Write the footer", 3);
+      await record(page, 2, { state: "queued", sentence: "" });
+      // #3 waits for a commit made in its task's folder (W15-05).
+      await record(footer, 3, {
+        state: "left_to_you",
+        rebuild_owed_for: page.id,
+        last_outcome: "owed_folder_commits",
+        sentence: "#3 waits for a commit made in its task's folder: push it to GitHub or undo it.",
+      });
+      const overview = { kind: "link", label: "Open Overview", to: `/projects/${project.id}` };
+      const labels = async () =>
+        (await client.tasks(project.id)).map((t) => `${t.title}=${t.display?.label}`).join(", ");
+      expect((await client.project(project.id)).statusLine, await labels()).toMatchObject({
+        kind: "done",
+        text: "Done: all 2 tasks. 1 pull request waits for you to merge, and 1 needs you on the Overview.",
+        action: overview,
+      });
+      // A closed pull request does not wait to be merged.
+      const menu = await done("Write the menu", 4);
+      await record(menu, 4, {
+        state: "left_to_you",
+        last_outcome: "closed",
+        sentence: "#4 was closed without merging.",
+      });
+      const line = (await client.project(project.id)).statusLine;
+      expect(line?.text).toBe(
+        "Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview.",
+      );
+      // Home says the same.
+      expect((await client.projects()).find((p) => p.id === project.id)?.statusLine?.text).toBe(
+        line?.text,
+      );
+      // With the plain wait merged, nothing is said to wait to be merged.
+      await rt.store.mergeRecord.patch((await rt.store.mergeRecord.forTask(page.id))?.id ?? "", {
+        state: "merged",
+        sentence: "Merged.",
+      } as never);
+      expect((await client.project(project.id)).statusLine).toMatchObject({
+        text: "Done: all 3 tasks. 2 tasks need you on the Overview.",
+        action: overview,
+      });
+    });
+  });
 });

@@ -399,7 +399,14 @@ and arithmetic kept, two bold parts on a line, plain text unchanged, raw HTML as
 grouping) and never prints USD except in `moneyTooltip`. `SpendBar` shows spent vs cap with the
 percentage and colours at 80 % and 100 %. CHF inputs convert with `chfMicroToUsdMicro(chf,
 referenceMoney)` at the rate implied by a Money pair (default 0.80, ADR 0008). A setting whose
-value is a Money pair renders as CHF.
+value is a Money pair renders as CHF. What a person reads goes through `chfWords` (W15-74): an
+amount above zero under a centime reads "less than CHF 0.01", never "CHF 0.00" (nothing spent
+stays "CHF 0.00"); `formatMoney`, so `Money` and `SpendBar` (a running task's spend on its row
+and in its drawer, the session log's cost column, the session's meter), uses it, and `aboutChf`
+/ `AboutMoney` word an estimate ("about CHF 0.40", "less than CHF 0.01"): the Start dialog, the
+plan card's rows and its total (`planTotalWords`: "Less than CHF 0.01 for the task.").
+`formatChf` stays the plain formatter (`BillingOrderSection` and the Updates page's evaluation
+cost still use it). Test: `test/w15-words.test.tsx`.
 
 **Plain words (U-074).** `lib/plain-words.ts` turns the daemon's every-channel texts into what
 the app says: `inAppText` drops "Say yes to confirm, or reply yes to the email." and turns "Say

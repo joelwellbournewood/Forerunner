@@ -1,7 +1,8 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { TASKS } from "./fixtures.ts";
+import { aboutChf, chfWords, formatMoney } from "../src/lib/money.ts";
+import { money, TASKS } from "./fixtures.ts";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -111,6 +112,52 @@ describe("w15-words, wave 15 run B", () => {
         "Drops it.",
       ]);
       expect(postedCalls(harness, "/requests/req_empty/answer")).toEqual([]);
+    });
+  });
+
+  describe("W15-74 (W15B-18): money under a centime never reads CHF 0.00 on screen", () => {
+    it("chfWords and aboutChf: 'less than CHF 0.01' above zero, 'CHF 0.00' for nothing", () => {
+      expect(chfWords(3_200)).toBe("less than CHF 0.01");
+      expect(chfWords(0)).toBe("CHF 0.00");
+      expect(chfWords(5_000)).toBe("CHF 0.01");
+      expect(aboutChf(3_200)).toBe("less than CHF 0.01");
+      expect(aboutChf(400_000)).toBe("about CHF 0.40");
+      expect(formatMoney(money(4_000))).toBe("less than CHF 0.01");
+      expect(formatMoney(money(0))).toBe("CHF 0.00");
+    });
+
+    it("a running task's spend on its Tasks row and in its drawer", async () => {
+      const harness = createHarness();
+      addTask(harness, "t_run", "Write the note", {
+        status: "in_progress",
+        spent: money(4_000),
+        actual: money(4_000),
+      });
+      renderApp("/projects/proj_atlas/tasks?task=t_run", harness);
+      const row = await rowOf("t_run");
+      expect(row).toHaveTextContent("less than CHF 0.01");
+      expect(row).not.toHaveTextContent("CHF 0.00");
+      const drawer = await screen.findByTestId("task-drawer");
+      expect(drawer).toHaveTextContent("spent less than CHF 0.01");
+    });
+
+    it("the session's budget meter and the log's cost column", async () => {
+      const harness = createHarness();
+      const session = harness.daemon.state.sessions[0];
+      if (session) session.spent = money(4_000);
+      const event = harness.daemon.state.events.find((e) => e.id === "ev_5");
+      if (event) event.cost = money(4_000);
+      renderApp("/sessions/sess_1", harness);
+      const header = await screen.findByTestId("session-header");
+      await waitFor(() =>
+        expect(within(header).getByTestId("session-spend")).toHaveTextContent(
+          "less than CHF 0.01 of CHF 5.00",
+        ),
+      );
+      const rows = await screen.findAllByTestId("event-row");
+      const finished = rows.find((r) => r.getAttribute("data-seq") === "5") as HTMLElement;
+      expect(finished).toHaveTextContent("less than CHF 0.01");
+      expect(finished).not.toHaveTextContent("CHF 0.00");
     });
   });
 });

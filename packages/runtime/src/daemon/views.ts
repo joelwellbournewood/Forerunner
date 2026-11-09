@@ -41,6 +41,7 @@ import { MID_SESSION_LIMIT_SETTING, midSessionLimitOf } from "../session/billing
 import { countsList } from "../session/counts.ts";
 import { CREDENTIAL_REFUSED_KEY } from "../session/credential-wait.ts";
 import { runCapOf } from "../session/executor.ts";
+import { aboutWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { blockedOfHandoff, endedStatusText, stopReasonOfHandoff } from "../session/stop-words.ts";
@@ -571,7 +572,7 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.brief":
       return `State brief ready: ${n("unread")} unread, ${count("ready", "ready task")}${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
     case "session.planned":
-      return `Plan: ${count("items", "task")}, about ${chf("estimateUsdMicro")}.${s("summary") ? ` ${cutAtWord(plainLine(s("summary")), 120)}` : ""}`;
+      return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${s("summary") ? ` ${cutAtWord(plainLine(s("summary")), 120)}` : ""}`;
     case "session.paused":
       return `Paused: ${s("reason")}.`;
     case "session.plan_filed":
@@ -579,7 +580,7 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "session.plan_approved":
       return `Running the plan you approved (${count("items", "task")}).`;
     case "task.started":
-      return `Started "${s("title")}" with ${s("specialist")} (about ${chf("estimateUsdMicro")}).`;
+      return `Started "${s("title")}" with ${s("specialist")} (${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}).`;
     case "task.finished":
       return `Finished "${s("title") || "the task"}": ${s("outcome").replace(/_/g, " ")} (${chf("costUsdMicro")}). ${cutAtWord(plainLine(s("summary")), 200)}`;
     case "task.claims_released":

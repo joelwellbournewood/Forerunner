@@ -73,7 +73,11 @@ sessions are stopped "Ready: 3 tasks. Sessions are stopped.", the bar at the top
 **Allow sessions again**); "Drafting the plan…" or "Planning failed: Claude did not answer" with **Try again** (without a
 Claude key: "Planning failed: Claude is not connected" with **Connect Claude**), or "You
 rejected the plan. Nothing was written." with **Draft a new plan**; "Done: all 7 tasks. Your
-files: <folder>". The project's page has the reason in full. Home and the project pages follow
+files: <folder>". On a repository, done work whose pull request is not merged yet is named:
+"Done: all 3 tasks. 1 pull request waits for you to merge, and 2 need you on the Overview." with
+**Open Overview** (a pull request that waits for a commit in its task's folder, was closed,
+could not be rebuilt or has a failed check needs you there, and is never said to wait to be
+merged). The project's page has the reason in full. Home and the project pages follow
 the work as it happens: no reload needed.
 
 **New project** asks for a name, a goal, a short brief and a repository link; the agent drafts a

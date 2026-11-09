@@ -21,7 +21,7 @@ import {
   INPUT_CLASS,
   Loading,
 } from "../components/ui.tsx";
-import { formatChf, usdMicroToChfMicro } from "../lib/money.ts";
+import { aboutChf, chfWords, usdMicroToChfMicro } from "../lib/money.ts";
 import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
 import { decisionLine, planTotalWords } from "../lib/plan-card.ts";
 import {
@@ -238,8 +238,12 @@ function PersonQuestionsForm({
   );
 }
 
-/** The intake card's estimates in CHF (U-074), at the default rate the card has no other for. */
-const chf = (micro: number): string => formatChf(usdMicroToChfMicro(micro));
+/**
+ * The intake card's estimates in CHF (U-074), at the default rate the card has no other for;
+ * under a centime "less than CHF 0.01", never "CHF 0.00" (W15-74).
+ */
+const chf = (micro: number): string => chfWords(usdMicroToChfMicro(micro));
+const aboutUsd = (micro: number): string => aboutChf(usdMicroToChfMicro(micro));
 
 /**
  * A drafted decision doc as text (design §3.3: "rendered as text, never raw markdown"): the
@@ -371,7 +375,7 @@ function IntakeCard({
                 {isPerson(t)
                   ? ""
                   : cost !== undefined
-                    ? ` · about ${chf(cost)}`
+                    ? ` · ${aboutUsd(cost)}`
                     : " · cost not known"}
                 {after.length ? ` · after ${after.map((a) => `"${a}"`).join(", ")}` : ""}
               </span>

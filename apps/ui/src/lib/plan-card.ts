@@ -104,11 +104,13 @@ export function planTotalWords(o: {
 }): string {
   const who = o.personTasks ? " the agent does" : "";
   const all = o.agentTasks === 1 ? `the task${who}` : `the ${o.agentTasks} tasks${who}`;
+  // W15-74: a total under a centime is "Less than CHF 0.01" ("About less than" says nothing more).
+  const about = /^less than /.test(o.total) ? `L${o.total.slice(1)}` : `About ${o.total}`;
   if (o.agentTasks === 0) return "";
   if (o.estimated === 0) return `The cost of ${all} is not known yet.`;
-  if (o.estimated >= o.agentTasks) return `About ${o.total} for ${all}.`;
+  if (o.estimated >= o.agentTasks) return `${about} for ${all}.`;
   const rest = o.agentTasks - o.estimated;
-  return `About ${o.total} for ${o.estimated} of the ${o.agentTasks} tasks${who}; ${
+  return `${about} for ${o.estimated} of the ${o.agentTasks} tasks${who}; ${
     rest === 1 ? "the other one has" : `the other ${rest} have`
   } no estimate yet.`;
 }

@@ -1,4 +1,5 @@
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
+import { moneyWords } from "../session/money-words.ts";
 import {
   ANSWER_CARD_KEYS,
   blockedFindingsAnswer,
@@ -575,7 +576,8 @@ function chfAt(usdMicro: unknown, rate: unknown): string | null {
   if (typeof usdMicro !== "number" || !Number.isFinite(usdMicro)) return null;
   const r = typeof rate === "number" && rate > 0 ? rate : 0.8;
   const cents = Math.round(Math.round(Math.max(0, usdMicro) * r) / 10_000);
-  return `CHF ${(cents / 100).toFixed(2)}`;
+  // W15-74: an amount above zero under a centime is "less than CHF 0.01", never "CHF 0.00".
+  return moneyWords(`CHF ${(cents / 100).toFixed(2)}`, usdMicro);
 }
 
 /**

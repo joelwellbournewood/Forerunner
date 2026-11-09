@@ -2,6 +2,7 @@ import { formatChf } from "@forerunner/billing";
 import { type StopBy, stopByOf } from "../enforcement/killswitch.ts";
 import type { BudgetStopSource } from "./budget-pause.ts";
 import { CREDENTIAL_WAIT_STOP } from "./credential-wait.ts";
+import { moneyWords } from "./money-words.ts";
 
 /**
  * How a session ended, in the person's words (core-experience design §3.7, §4.9). Stop now,
@@ -92,7 +93,9 @@ export function stopLimitWords(
   capChfMicro?: number,
 ): string | null {
   const of =
-    typeof capChfMicro === "number" && capChfMicro > 0 ? ` of ${formatChf(capChfMicro)}` : "";
+    typeof capChfMicro === "number" && capChfMicro > 0
+      ? ` of ${moneyWords(formatChf(capChfMicro), capChfMicro)}`
+      : "";
   switch (stopReason) {
     case MONTH_CAP_STOP:
       return `this month's cap${of}`;

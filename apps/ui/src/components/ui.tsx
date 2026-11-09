@@ -1,5 +1,12 @@
 import { type ButtonHTMLAttributes, type ReactNode, useId } from "react";
-import { formatMoney, type MoneyLike, moneyTooltip, percent, spendRatio } from "../lib/money.ts";
+import {
+  aboutChf,
+  formatMoney,
+  type MoneyLike,
+  moneyTooltip,
+  percent,
+  spendRatio,
+} from "../lib/money.ts";
 
 /** Small building blocks shared by every page. Tailwind only; no component library. */
 
@@ -204,6 +211,15 @@ export function Money({ value, className = "" }: { value: MoneyLike; className?:
   return (
     <span className={className} title={moneyTooltip(value)}>
       {formatMoney(value)}
+    </span>
+  );
+}
+
+/** An estimate: "about CHF 0.40", or "less than CHF 0.01" under a centime (W15-74). */
+export function AboutMoney({ value, className = "" }: { value: MoneyLike; className?: string }) {
+  return (
+    <span className={className} title={moneyTooltip(value)}>
+      {aboutChf(value.chfMicro)}
     </span>
   );
 }

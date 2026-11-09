@@ -1178,8 +1178,10 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
 
   it("amounts under a centime read 'less than CHF 0.01', never 'CHF 0.00'", () => {
     expect(limitWords("task_budget", 4_000, chf, "coder")).toBe("its budget of less than CHF 0.01");
+    // W15B-77 (w15-words): said once, not three times (before: "it spent less than CHF 0.01 of
+    // less than CHF 0.01, and its next step could take it past less than CHF 0.01.").
     expect(wrapUpSentWords("coder", 3_000, 6_000, { ...line, lineUsdMicro: 4_000 }, chf)).toBe(
-      "Told the coder to wrap up: it spent less than CHF 0.01 of less than CHF 0.01, and its next step could take it past less than CHF 0.01.",
+      "Told the coder to wrap up: it may spend less than CHF 0.01, and its next step could leave too little to finish.",
     );
     expect(
       pauseSentence(

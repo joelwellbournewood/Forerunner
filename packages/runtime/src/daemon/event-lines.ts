@@ -10,7 +10,7 @@ import { formatChf, usdToChfMicro } from "@forerunner/billing";
 import { branchWords } from "@forerunner/capabilities";
 import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
-import { moneyWords, moneyWordsFirst } from "../session/money-words.ts";
+import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.ts";
 import { sessionStatusText } from "../session/stop-words.ts";
 
 type Payload = Record<string, unknown>;
@@ -182,7 +182,9 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
           specialist: s("handedFrom"),
         })}.`;
       return `${capital(specialistWho(p))} started ${taskName(p)}${
-        n("estimateUsdMicro") > 0 ? ` (about ${chf("estimateUsdMicro")})` : ""
+        n("estimateUsdMicro") > 0
+          ? ` (${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))})`
+          : ""
       }.`;
     case "task.files": {
       const files = list(p, "files").map(String);

@@ -2,12 +2,20 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type StartCheckView, type StartSessionView } from "../../api/client.ts";
 import { Dialog } from "../../components/Dialog.tsx";
-import { Button, ErrorBanner, Field, INPUT_CLASS, Money } from "../../components/ui.tsx";
 import {
+  AboutMoney,
+  Button,
+  ErrorBanner,
+  Field,
+  INPUT_CLASS,
+  Money,
+} from "../../components/ui.tsx";
+import {
+  aboutChf,
   chfMicroToUsdMicro,
   chfToMicro,
+  chfWords,
   formatAmount,
-  formatChf,
   type MoneyLike,
 } from "../../lib/money.ts";
 import { useAsync } from "../../lib/use-async.ts";
@@ -119,9 +127,9 @@ export function sandboxWaitingText(w: NonNullable<StartCheckView["waitingForSand
   return `${names} ${one ? "needs" : "need"} a full review, which runs in the Docker sandbox, and it is not ready: ${w.headline} Next: ${w.step}. ${one ? "It waits" : "They wait"}; nothing fails and no retry is used.`;
 }
 
-/** "about CHF 0.80" for a sum of estimates. */
+/** "about CHF 0.80" for a sum of estimates ("less than CHF 0.01" under a centime, W15-74). */
 function about(values: readonly { estimate: MoneyLike }[]): string {
-  return `about ${formatChf(values.reduce((s, v) => s + v.estimate.chfMicro, 0))}`;
+  return aboutChf(values.reduce((s, v) => s + v.estimate.chfMicro, 0));
 }
 
 /**
@@ -141,7 +149,7 @@ export function planSentence(check: StartCheckView): string | null {
 
 /** '"A" (about CHF 6.00) and "B" (about CHF 7.00)'. */
 function namesWithEstimates(tasks: readonly { title: string; estimate: MoneyLike }[]): string {
-  const parts = tasks.map((t) => `"${t.title}" (about ${formatChf(t.estimate.chfMicro)})`);
+  const parts = tasks.map((t) => `"${t.title}" (${aboutChf(t.estimate.chfMicro)})`);
   return parts.length <= 1
     ? (parts[0] ?? "")
     : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
@@ -191,7 +199,7 @@ function BlockerLines({ check }: { check: StartCheckView }) {
       testId: "start-session-over-budget",
       node: (
         <>
-          "{onlyBig.title}" needs about <Money value={onlyBig.estimate} />, more than this session's
+          "{onlyBig.title}" needs <AboutMoney value={onlyBig.estimate} />, more than this session's
           work budget of <Money value={check.workBudget} /> (the budget less a fifth kept for
           reviews). Give the session a larger budget, or the task a smaller one.
         </>
@@ -217,10 +225,10 @@ function BlockerLines({ check }: { check: StartCheckView }) {
       testId: "start-session-over-budget",
       node: (
         <>
-          "{t.title}" (about <Money value={t.estimate} />) may be left for next time: the tasks that
-          run first take about {formatChf(t.ahead?.chfMicro ?? allFirst)} of this session's work
-          budget of <Money value={check.workBudget} /> (the budget less a fifth kept for reviews).
-          Give the session a larger budget to be sure it runs.
+          "{t.title}" (<AboutMoney value={t.estimate} />) may be left for next time: the tasks that
+          run first take {aboutChf(t.ahead?.chfMicro ?? allFirst)} of this session's work budget of{" "}
+          <Money value={check.workBudget} /> (the budget less a fifth kept for reviews). Give the
+          session a larger budget to be sure it runs.
         </>
       ),
     });
@@ -249,7 +257,7 @@ export function budgetProblem(text: string, monthLeft: MoneyLike | null): string
       : "The budget must be an amount in CHF, like 5.00.";
   if (chf <= 0) return "The budget must be more than CHF 0.";
   if (monthLeft && chf > monthLeft.chfMicro)
-    return `That is more than what is left of your monthly cap (${formatChf(monthLeft.chfMicro)}).`;
+    return `That is more than what is left of your monthly cap (${chfWords(monthLeft.chfMicro)}).`;
   return null;
 }
 
@@ -420,7 +428,7 @@ export function StartSessionDialog({
             <Field
               label="Session budget (CHF)"
               hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
-                data?.monthLeft ? ` Left this month: ${formatChf(data.monthLeft.chfMicro)}.` : ""
+                data?.monthLeft ? ` Left this month: ${chfWords(data.monthLeft.chfMicro)}.` : ""
               }`}
             >
               <input
