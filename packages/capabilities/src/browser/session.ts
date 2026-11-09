@@ -976,6 +976,9 @@ export class BrowserSession {
   }
 }
 
+/** How many times `goto` asks for a page whose navigation another one interrupted (R-9). */
+export const GOTO_INTERRUPTED_TRIES = 3;
+
 /**
  * Whether a `page.goto` that failed with this message is tried once more after the page
  * settled: it was interrupted by Chromium's own error page (after the policy route aborted the
@@ -983,9 +986,6 @@ export class BrowserSession {
  * page navigates to it again; before, only the error page was taken, and the browser
  * integration test failed about one run in five with "interrupted by another navigation").
  */
-/** How many times `goto` asks for a page whose navigation another one interrupted (R-9). */
-export const GOTO_INTERRUPTED_TRIES = 3;
-
 export function navigationInterruptedRetry(message: string, url: string): boolean {
   const m = /interrupted by another navigation to "([^"]*)"/i.exec(message);
   if (!m) return false;

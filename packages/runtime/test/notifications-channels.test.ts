@@ -850,9 +850,10 @@ describe("producers", () => {
       sessionId: "s-1",
     });
     expect(flagged.kind).toBe("injection_flagged");
-    expect(flagged.title).toBe("Instructions found in web_page content were ignored");
+    expect(flagged.title).toBe("Instructions in a web page were ignored"); // P7-22
     expect(flagged.body).toContain("https://example.test/page");
-    expect(flagged.body).toContain("ignore_previous");
+    // P7-22 (polish-words): the body names no rule id; the audit row and the session log keep them.
+    expect(flagged.body).not.toContain("ignore_previous");
     expect(flagged.link).toBe("/sessions/s-1");
     expect(flagged.dedupeKey).toContain("injection:s-1:web_page:https://example.test/page:");
   });

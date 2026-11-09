@@ -85,7 +85,7 @@ describe("TaskTakeOut", () => {
     expect(await first).toEqual({
       state: "opened",
       sentence:
-        'Opened #9 to take "Add the cart" out. It waits for you to merge it. "Add the till" built on it: check it still works once #9 is merged.',
+        'Opened #9 to take "Add the cart" out: merge it to remove the work, or close it to keep the work. "Add the till" built on it: check it still works once #9 is merged.',
       number: 9,
       url: "https://github.com/o/shop/pull/9",
       builtOn: ["Add the till"],

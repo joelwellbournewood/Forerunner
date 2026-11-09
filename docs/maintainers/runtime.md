@@ -2976,7 +2976,7 @@ reaches `MAX_MERGE_ATTEMPTS` and the person's card) and nothing else happens: no
 row. Anything else, and the day's last attempt, takes the gated call as before. Before, every
 pass made the full call for every waiting record, every minute (a token, an audit row and about
 five GitHub calls each). **A merge the app made by itself is an Update**: one Inbox message
-(`tellMerged`, `mergedUpdateWords`: 'Merged #4: "Add the page".', the project and the task set)
+(`tellMerged`, `mergedUpdateWords`: 'Two guides: merged #4, "Add the page".', named by its project as the session Updates are, W14-2; the project and the task set)
 for a merge by the retry pass or found merged by `resumeAtStart`; a session's merge (its result
 says it) and the person's own click (answered where they pressed it) add none; the Update is
 followed by `onMergedLater` listeners, which compose binds to one `pr_merged` notification
@@ -3019,7 +3019,7 @@ answer, so a restart loses nothing; then `mergeApproved` runs in the background
 (`ProjectPullRequests.background`, awaited by `idle()` and at the daemon's close): each record
 through `mergeRecorded` on the person's click, in order; one that waits for its checks keeps the
 rest queued for the retry pass (which keeps the order, above), one left to the person leaves the
-rest to the person with "#5 builds on #4, which was not merged: merge #4 first." A docs pull request
+rest to the person with "#5 builds on #4, which is not merged yet: merge #4 first." (`buildsOnSentence`, the same words on the Overview's row, P7-11) A docs pull request
 (no task, no record) merges as it is through `ReviewedPrMerge.mergeAsIs`: one `merge_pr` call on its
 own narrow token with the person's approval, the branch's rules read first; never unattended, in
 either mode. Every merge ends with `changed(projectId)`, a `project` event, so the Overview reads
@@ -3041,7 +3041,9 @@ cleanly is aborted and the folder keeps the branch's own version. `preview.json`
 the number and whether it merged cleanly; `previewOf` reads it (no git), and the view puts it on
 the row (`ProjectPullRequestView.preview`: the folder and `previewSentence`: "#7 as it would be
 merged. Changes here are not kept." or "#7 as its branch has it: it does not merge cleanly with
-main yet. Changes here are not kept."). Nothing runs there and Local only is not copied in (the
+main yet. Changes here are not kept."); when it could not be put there, `previewFailedSentence` says
+why where the person can act ("a file of it is open in another program. Close it and try again."
+for EBUSY or EPERM, P7-24). Nothing runs there and Local only is not copied in (the
 folder is a plain checkout; nothing reads it as evidence). One preview per project: the next one
 replaces it, and it is removed (`dropPreview`, under the lock, `GitOps.worktreeRemove` and the
 record) when its pull request is merged (`merge.onMerged`), closed (the watcher's
@@ -3069,7 +3071,8 @@ undo safely; undo it on GitHub."), `not_in_main` or `no_repository`. On `pushed`
 it, and the task's merge record keeps it (`take_out_pr_number`, `take_out_pr_url`,
 `take_out_state: "open"`; a merge with no record gets one, `merged`, `reviewed_head_sha` empty).
 The answer (`TaskTakeOutAnswer`) is `opened` with `takeOutOpenedSentence` ("Opened #9 to take "X"
-out. It waits for you to merge it. "Y" built on it: check it still works once #9 is merged."),
+out: merge it to remove the work, or close it to keep the work. "Y" built on it: check it still
+works once #9 is merged." P7-25: at most two sentences, naming the way back),
 `conflict` with `takeOutConflictSentence` and one Inbox notice per task (`kind: "info"`, key
 `TAKE_OUT_NOTICE_PREFIX` + task, no task id: `holdsTask` leaves it out with `isTakeOutNotice`, so
 the project's line does not wait on it), or `refused`. The notice's card keeps `task_title` and

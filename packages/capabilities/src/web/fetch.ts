@@ -62,11 +62,12 @@ export const DEFAULT_WEB_MAX_CHARS = 30_000;
 export type WebResolve = (host: string) => Promise<LookupAddress[]>;
 
 /**
- * What a failed direct connection adds on a computer with a proxy set ('sites'): the reader does
+ * What a failed direct connection adds on a computer with a proxy set ('sites'), as a condition (P7-27,
+ * polish-words: a proxy variable does not mean the proxy is why, a mistyped host fails too): the reader does
  * not go through it yet, and search (which runs on Anthropic's side) still works.
  */
 export const PROXY_SENTENCE =
-  "This computer reaches the internet through a proxy, which Forerunner's page reader does not use yet: pages cannot be read here; web search still works.";
+  "If this computer reaches the internet only through its proxy, the page reader cannot read pages here yet; web search still works.";
 
 /** Whether this computer names a proxy for its web traffic (`HTTPS_PROXY`, `HTTP_PROXY`, any case). */
 export function proxySetIn(env: NodeJS.ProcessEnv): boolean {

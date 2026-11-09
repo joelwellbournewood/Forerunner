@@ -390,7 +390,7 @@ describe("writing rules (design §5)", () => {
     for (const n of notes.slice(0, -1)) expect(n.title).toMatch(/^Quote page: /);
   });
 
-  it("an injection notification: within 140, no '(s)', the count, where from and the rules that fired (ADR 0047), never the passages", () => {
+  it("an injection notification: within 140, no '(s)', the count and where from, never the rule ids or the passages (ADR 0047 amended)", () => {
     // Phase E #80: the body was "Content from … (web_page) contained 3 instruction-like
     // passage(s). They were ignored:\n- exfiltrate: 1 passage\n- …\nScore 9; …", up to 1000
     // characters over several lines. The facts stay; the rule list is shortened, not them.
@@ -406,12 +406,15 @@ describe("writing rules (design §5)", () => {
       const n = producers.injectionFlagged("h-1", report, { origin, sessionId: "s-1" });
       expect(violations(n.body, producers.NOTIFICATION_BODY_MAX), n.body).toEqual([]);
       expect(n.body).toContain(`Ignored ${report.matches.length} passages`);
-      expect(n.body).toContain(rules[0] as string);
+      // P7-22 (polish-words): no rule ids; the title names the kind of content.
+      for (const rule of rules) expect(n.body).not.toContain(rule);
+      expect(n.title).toBe("Instructions in a web page were ignored");
+      expect(n.title.length).toBeLessThanOrEqual(60);
       expect(n.body).toMatch(/example\.test/);
       expect(n.body).toMatch(/Open the session to read them\.$/);
       expect(n.body).not.toContain("attacker@example.test");
     }
-    // Many rules: the list ends in "and N more", the count stays whole.
+    // Many rules: the count stays whole, and no rule is named.
     const many = {
       ...report,
       matches: Array.from({ length: 9 }, (_, i) => ({
@@ -422,7 +425,7 @@ describe("writing rules (design §5)", () => {
     const n = producers.injectionFlagged("h-1", many, { origin: "https://example.test/page" });
     expect(violations(n.body, producers.NOTIFICATION_BODY_MAX), n.body).toEqual([]);
     expect(n.body).toContain("Ignored 9 passages");
-    expect(n.body).toMatch(/and \d+ more/);
+    expect(n.body).not.toMatch(/planted_rule/);
   });
 
   it("the checker itself finds a planted violation of each kind", () => {
@@ -735,5 +738,45 @@ describe("polish-words, wave 13: money, budget lines, the log's lines", () => {
     expect(neverPushedWords("fr/01a19c00-write-the-guide", ["Local only/notes.txt"])).toMatch(
       /^Forerunner did not upload the branch write-the-guide: /,
     );
+  });
+});
+
+describe("polish-words, wave 13: merge, preview, take-out and page-reader words", () => {
+  it("a preview blocked by a file open in another program says so and what to do (P7-24)", async () => {
+    const { previewFailedSentence } = await import("../src/daemon/pull-requests.ts");
+    const busy = Object.assign(new Error("EBUSY: resource busy or locked, rmdir 'C:\\x'"), {
+      code: "EBUSY",
+    });
+    expect(previewFailedSentence(7, busy)).toBe(
+      "#7's version could not be put on this computer: a file of it is open in another program. Close it and try again.",
+    );
+    expect(previewFailedSentence(7, new Error("boom"))).toBe(
+      "#7's version could not be put on this computer. Try again, or open it on GitHub.",
+    );
+  });
+
+  it("a take-out's answer names the way back in at most two sentences (P7-25)", async () => {
+    const { takeOutOpenedSentence } = await import("../src/daemon/take-out-words.ts");
+    const one = takeOutOpenedSentence("Add the page", 9, []);
+    expect(one).toMatch(/close it to keep the work\.$/);
+    const two = takeOutOpenedSentence("Add the page", 9, ["Style it", "Test it"]);
+    expect(two.split(/(?<=\.)\s/).length).toBeLessThanOrEqual(2);
+  });
+
+  it("a chain of pull requests reads the same on the row and the Overview; the later merge names its project (P7-11, W14-2)", async () => {
+    const { buildsOnSentence, mergedUpdateWords } = await import("../src/loop/merge.ts");
+    expect(buildsOnSentence(5, 4)).toBe(
+      "#5 builds on #4, which is not merged yet: merge #4 first.",
+    );
+    expect(mergedUpdateWords(3, "Write the guide", "Two guides")).toBe(
+      'Two guides: merged #3, "Write the guide".',
+    );
+    expect(violations(mergedUpdateWords(3, "Write the guide", "Two guides"), 140)).toEqual([]);
+  });
+
+  it("with a proxy set, the page reader names the proxy only as a condition (P7-27)", async () => {
+    const { PROXY_SENTENCE } = await import("../../capabilities/src/web/fetch.ts");
+    expect(PROXY_SENTENCE).toMatch(/^If this computer reaches the internet only through its proxy/);
+    expect(PROXY_SENTENCE.length).toBeLessThanOrEqual(140);
   });
 });

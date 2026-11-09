@@ -413,7 +413,8 @@ Money in its findings and evidence is CHF (design §5 rule 7): `sessionChecks` c
 ledger's own rate (`ledgerChfMicro / ledgerUsdMicro`), else `DEFAULT_CHF_PER_USD` ("Session cost
 CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". The runner does not
 ask for a session review when the session ended no task (stopped in its first seconds, nothing
-planned): there is no work to grade, and it read "Session review: accepted (grade 100)". The
+planned): there is no work to grade, and it read "Session review: accepted (grade 100)". Its
+summary counts as the number says ("1 done task", "2 findings"; P7-34: never "(s)"). The
 Reviews tab folds these session checks under "Session checks" and does not count their findings
 as open work (`runtime.md`, "Reviews view").
 

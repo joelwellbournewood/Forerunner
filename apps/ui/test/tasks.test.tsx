@@ -1516,7 +1516,7 @@ describe("Take this work out (merged-actions, the owner's decision of 2026-11-02
     await user.click(within(dialog).getByTestId("confirm-take-out"));
     await waitFor(() => expect(postedCalls(harness, "/tasks/task_1/take-out")).toHaveLength(1));
     expect(await screen.findByTestId("task-moved-sentence")).toHaveTextContent(
-      'Opened #41 to take "Index the documentation pages" out. It waits for you to merge it. "Add the search box to the header" built on it: check it still works once #41 is merged.',
+      'Opened #41 to take "Index the documentation pages" out: merge it to remove the work, or close it to keep the work. "Add the search box to the header" built on it: check it still works once #41 is merged.',
     );
     expect(screen.queryByTestId("take-out-dialog")).toBeNull();
     await waitFor(async () =>

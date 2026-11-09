@@ -13,16 +13,16 @@ import {
 describe("Take this work out's words", () => {
   it("names the tasks that built on it: one, three, and more than three", () => {
     expect(takeOutOpenedSentence("Add the page", 9, [])).toBe(
-      'Opened #9 to take "Add the page" out. It waits for you to merge it.',
+      'Opened #9 to take "Add the page" out: merge it to remove the work, or close it to keep the work.',
     );
     expect(takeOutOpenedSentence("Add the page", 9, ["Style it"])).toBe(
-      'Opened #9 to take "Add the page" out. It waits for you to merge it. "Style it" built on it: check it still works once #9 is merged.',
+      'Opened #9 to take "Add the page" out: merge it to remove the work, or close it to keep the work. "Style it" built on it: check it still works once #9 is merged.',
     );
     expect(takeOutOpenedSentence("Add the page", 9, ["A", "B", "C"])).toBe(
-      'Opened #9 to take "Add the page" out. It waits for you to merge it. "A", "B" and "C" built on it: check they still work once #9 is merged.',
+      'Opened #9 to take "Add the page" out: merge it to remove the work, or close it to keep the work. "A", "B" and "C" built on it: check they still work once #9 is merged.',
     );
     expect(takeOutOpenedSentence("Add the page", 9, ["A", "B", "C", "D"])).toBe(
-      'Opened #9 to take "Add the page" out. It waits for you to merge it. "A", "B", "C" and 1 more built on it: check they still work once #9 is merged.',
+      'Opened #9 to take "Add the page" out: merge it to remove the work, or close it to keep the work. "A", "B", "C" and 1 more built on it: check they still work once #9 is merged.',
     );
   });
 

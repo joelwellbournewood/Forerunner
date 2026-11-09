@@ -134,3 +134,13 @@ may carry.
   `describeInjection`): the spec's "quoted to the human" is met by the session log and the
   audit row; a toast or a Telegram message is not the place for text designed to steer a
   model.
+
+## Amendment 2026-11-09 (polish-words, wave 13)
+
+The notification no longer lists the scanner's rule ids ("approval_bypass (2), ignore_previous"):
+they are no words of the person's (design §5 rules 3 and 6, P7-22). Its body says how many
+passages were ignored and where from, "Ignored 3 passages from example.com that read like
+instructions. Open the session to read them.", and its title names the kind of content in words,
+"Instructions in a web page were ignored" (before: "Instructions found in web_page content were
+ignored"). The rules that fired, with their counts, stay in the `injection.flagged` audit row and
+in the session log the notification links to.

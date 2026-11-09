@@ -9684,7 +9684,7 @@ describe("the UI client against the real daemon: Open this version and Take this
     const answer = await client.takeOutTask(a.task.id);
     expect(answer).toEqual({
       state: "opened",
-      sentence: `Opened #${answer.number} to take "Add the basket" out. It waits for you to merge it. "Add the receipt" built on it: check it still works once #${answer.number} is merged.`,
+      sentence: `Opened #${answer.number} to take "Add the basket" out: merge it to remove the work, or close it to keep the work. "Add the receipt" built on it: check it still works once #${answer.number} is merged.`,
       number: expect.any(Number),
       url: expect.stringContaining(`/pull/${answer.number}`),
       builtOn: ["Add the receipt"],
@@ -10265,7 +10265,8 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
       async () => JSON.stringify(await rt.store.mergeRecord.forTask(c.task.id)),
       30_000,
     );
-    const merged = `Merged #${c.pr.number}: "Add the late notes".`;
+    // W14-2 (polish-words): the Update is named by its project.
+    const merged = `Merged later: merged #${c.pr.number}, "Add the late notes".`;
     // While the checks run, the retry pass says nothing.
     await rt.merge.retryWaiting();
     expect((await client.inbox(rt.human.id)).messages.map((m) => m.body)).not.toContain(merged);
@@ -10825,9 +10826,9 @@ describe("the UI client against the real daemon: leftovers of wave 7, merge side
     expect(merged()[0]?.notification.link).toBe(`/projects/${project.id}`);
     // The Update in the Inbox, once.
     const bodies = (await client.inbox(rt.human.id)).messages.map((m) => m.body);
-    expect(bodies.filter((b) => b === `Merged #${c.pr.number}: "Add the late page".`)).toHaveLength(
-      1,
-    );
+    expect(
+      bodies.filter((b) => b === `Later merge: merged #${c.pr.number}, "Add the late page".`),
+    ).toHaveLength(1);
     await rt.merge.retryWaiting();
     expect(merged()).toHaveLength(1);
   }, 120_000);

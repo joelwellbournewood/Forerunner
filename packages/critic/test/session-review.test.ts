@@ -144,7 +144,9 @@ describe("session review (H.6)", () => {
       });
       expect(out.findings.map((f) => f.description)).toEqual([]);
       expect(out.verdict).toBe("accept");
-      expect(out.summary).toContain("1 done task(s) (0/0 planned)");
+      // P7-34 (polish-words): plurals as the number says.
+      expect(out.summary).toContain("1 done task (0/0 planned)");
+      expect(out.summary).not.toContain("(s)");
       const data = await loadSessionReviewData(w.store, w.ids.session);
       expect(sessionChecks(data).metrics).toMatchObject({
         plannedTasks: 0,

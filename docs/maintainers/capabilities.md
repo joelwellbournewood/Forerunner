@@ -716,7 +716,9 @@ unless `FORERUNNER_WEB_FETCH=off`.
   `bench-api`) and tests set it; no list, setting or environment variable does.
 - **A proxy.** The reader connects directly. With `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set
   (`proxySetIn(opts.env ?? process.env)`), a connection that never reached the site (not found,
-  refused, reset, unreachable, timed out) adds `PROXY_SENTENCE` to its words.
+  refused, reset, unreachable, timed out) adds `PROXY_SENTENCE` to its words, as a condition ("If
+  this computer reaches the internet only through its proxy, …", P7-27: a mistyped host fails
+  too, so the proxy is not said to be the cause).
 - **The read (`fetch.ts`, `readWebPage`).** A GET over `node:http(s)` with `agent: false` and a
   `lookup` that resolves every address of the host (`opts.resolve`, default `dns.lookup` with
   `all: true`) and refuses the connection when one is not allowed, so the check is on the

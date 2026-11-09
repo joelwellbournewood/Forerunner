@@ -40,7 +40,8 @@ export function takeOutOpenedSentence(
   number: number,
   builtOn: readonly string[],
 ): string {
-  const opened = `Opened #${number} to take ${quoted(title)} out. It waits for you to merge it.`;
+  // P7-25 (polish-words): one sentence that names the way back (close it), at most two in all.
+  const opened = `Opened #${number} to take ${quoted(title)} out: merge it to remove the work, or close it to keep the work.`;
   if (!builtOn.length) return opened;
   const they = builtOn.length === 1 ? "it still works" : "they still work";
   const names = namesList(builtOn.map(quoted));
