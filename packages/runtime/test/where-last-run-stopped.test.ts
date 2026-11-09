@@ -107,29 +107,74 @@ describe("the next brief of a paused task starts with where the last run stopped
   });
 });
 
-describe("a session whose only task needs more than its work budget (W6-23)", () => {
-  it("says what it needs and what to do, never that no task is ready or that the budget was used", () => {
+/**
+ * d1109-oversize-start (OS-7; the owner's D4 of 2026-11-09 replaces W6-23): a task whose estimate
+ * alone is more than the session's work budget runs, so the result never says "Nothing could
+ * run: "X" needs about CHF 1.20, more than this session's work budget of CHF 0.32. Start a
+ * session with a larger budget." for it. A second such task, or one the tasks before it left
+ * too little for, says why it waits for the next session in its own sentence.
+ */
+describe("d1109-oversize-start, run C: the result of a session with a task larger than its work budget (OS-7)", () => {
+  const outcome = (over: Record<string, unknown> = {}) => ({
+    done: [],
+    failed: [],
+    needsYou: [],
+    leftOver: [],
+    waiting: [],
+    waitingForDocker: [],
+    stopReason: "budget_exceeded",
+    spentChfMicro: 320_000,
+    ...over,
+  });
+
+  it("a session that ran only the larger task, paused: no 'Nothing could run', the pause and the cost", () => {
     const lines = sessionResultLines({
-      outcome: {
-        done: [],
-        failed: [],
-        needsYou: [],
-        leftOver: [],
-        waiting: [],
-        waitingForDocker: [],
-        stopReason: "nothing_runnable",
-        spentChfMicro: 0,
-      },
+      outcome: outcome({
+        paused: [{ id: "t1", title: "Long report", limit: "this session's budget of CHF 0.40" }],
+      }) as never,
       inReview: [],
-      leftOutForBudget: [{ id: "t1", title: "Long report", estimateChfMicro: 1_200_000 }],
+      leftOutForBudget: [],
       sessionCapChfMicro: 400_000,
       workBudgetChfMicro: 320_000,
       openTasks: 1,
     });
+    expect(lines.join("\n")).not.toContain("Nothing could run");
+    expect(lines.join("\n")).not.toContain("larger budget");
     expect(lines).toEqual([
-      'Nothing could run: "Long report" needs about CHF 1.20, more than this session\'s work budget of CHF 0.32. Start a session with a larger budget.',
-      "CHF 0.00.",
+      '"Long report" paused at this session\'s budget of CHF 0.40: continue or cancel it in the Inbox.',
+      "The session's budget is used. CHF 0.32.",
     ]);
+  });
+
+  it("a second larger task and one there was no room for: each says why it waits, in one sentence", () => {
+    const lines = sessionResultLines({
+      outcome: outcome({
+        done: [{ id: "t0", title: "Write the intro" }],
+        paused: [{ id: "t1", title: "Build the shop", limit: "this session's budget of CHF 4.00" }],
+      }) as never,
+      inReview: [],
+      leftOutForBudget: [
+        { id: "t2", title: "Big two", estimateChfMicro: 9_000_000, reason: "one_large" },
+        { id: "t3", title: "Port the app", estimateChfMicro: 7_000_000, reason: "no_room" },
+        { id: "t4", title: "About page", estimateChfMicro: 430_000, reason: "after_others" },
+      ],
+      sessionCapChfMicro: 5_000_000,
+      workBudgetChfMicro: 4_000_000,
+      openTasks: 4,
+    });
+    const text = lines.join("\n");
+    expect(text).toContain(
+      '"Big two" needs about CHF 9.00, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+    );
+    expect(text).toContain(
+      '"Port the app" needs about CHF 7.00, more than this session\'s work budget: the tasks before it leave too little to start it, so it waits for the next session.',
+    );
+    // A task that fits the work budget but not after the others keeps today's line.
+    expect(text).toContain(
+      'Left for next time: "About page" (about CHF 0.43); this session\'s CHF 5.00 was used.',
+    );
+    expect(lines.length).toBeLessThanOrEqual(3);
+    expect(text).not.toMatch(/USD|\$|t[0-9]\b/);
   });
 });
 

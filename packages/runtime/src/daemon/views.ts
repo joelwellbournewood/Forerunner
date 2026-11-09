@@ -607,10 +607,22 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
       return `Session started (${s("trigger")}), budget ${chf("budgetCapUsdMicro")}, ${n("stepCap")} steps, autonomy ${autonomyWords(n("autonomy"))}.`;
     case "session.brief":
       return `State brief ready: ${n("unread")} unread, ${count("ready", "ready task")}${Array.isArray(p.warnings) && p.warnings.length ? `, warnings: ${(p.warnings as string[]).join("; ")}` : ""}.`;
-    case "session.planned":
+    case "session.planned": {
       // W15-60: the plan's summary is a sentence of its own, with a capital (before: "Plan: 1
       // task, about CHF 0.02. the first session you approved...").
-      return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${s("summary") ? ` ${sentenceOf(cutAtWord(plainLine(s("summary")), 120))}` : ""}`;
+      const summary = s("summary") ? ` ${sentenceOf(cutAtWord(plainLine(s("summary")), 120))}` : "";
+      // D4 (d1109-oversize-start): the task larger than the work budget the session takes after
+      // the work that fits, with what is left (or, alone, until that budget is used).
+      const big = (p.oversized ?? null) as Record<string, unknown> | null;
+      if (big && typeof big.title === "string") {
+        const est = typeof big.estimateUsdMicro === "number" ? big.estimateUsdMicro : 0;
+        const larger = `"${big.title}" (${aboutWords(chfOf(est, chfPerUsd), est)}), larger than this session's work budget`;
+        if (n("items") === 0)
+          return `Plan: ${larger}: it works until that budget is used.${summary}`;
+        return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}, then ${larger}, with what is left.${summary}`;
+      }
+      return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${summary}`;
+    }
     case "session.paused":
       return `Paused: ${s("reason")}.`;
     case "session.plan_filed":

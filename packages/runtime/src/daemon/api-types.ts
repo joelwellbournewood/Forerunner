@@ -817,6 +817,13 @@ export const HumanRequestView = z.object({
          * websites" list is empty. ..."); null when none. Absent from an older service.
          */
         note: z.string().nullable().optional(),
+        /**
+         * D4 (d1109-oversize-start): the task's figure alone is more than the project's session
+         * work budget, in one sentence for the card ("More than a session's work budget (CHF
+         * 4.00): it pauses with its work kept and asks you to continue."); null when it fits.
+         * Absent from an older service.
+         */
+        oversized: z.string().nullable().optional(),
       }),
     )
     .nullable()
@@ -1478,8 +1485,40 @@ export const StartCheckTaskView = z.object({
    * daemon.
    */
   ahead: Money.optional(),
+  /**
+   * `overBudget` only (D4, d1109-oversize-start): why it is not in the work that fits:
+   * `oversized`, it is the task larger than the work budget the session takes after that work
+   * (`StartCheckView.oversized`); `one_large`, a second such task (one a session); `no_room`, such
+   * a task the tasks before it leave too little for; `after_others`, it fits the work budget but
+   * not after the tasks before it. Absent from an older daemon.
+   */
+  why: z.enum(["oversized", "one_large", "no_room", "after_others"]).optional(),
+  /** `overBudget` only (D4): the daemon's one sentence about it (`daemon/oversize-words.ts`). */
+  sentence: z.string().optional(),
 });
 export type StartCheckTaskView = z.infer<typeof StartCheckTaskView>;
+
+/**
+ * `GET /projects/:id/start-check`'s `oversized` (D4, d1109-oversize-start): the task larger than
+ * the session's work budget a session started now takes after the work that fits, with the room
+ * it gets, and the warning the Start dialog shows (`sentence`: '"Build the shop" needs about CHF
+ * 6.00, more than this session's work budget of CHF 4.00: it works until that budget is used,
+ * keeps its work, and asks you to continue.'). Start is not refused for it.
+ */
+export const StartCheckOversizedView = z.object({
+  taskId: z.string(),
+  title: z.string(),
+  /** What it needs: its estimate, or what is left of it after its kept work. */
+  estimate: Money,
+  /** What it works with: the work budget less what the tasks before it take. */
+  room: Money,
+  /** Tasks run before it in the session. */
+  after: z.boolean(),
+  /** What its kept work cost, when it resumes from it. */
+  spent: Money.optional(),
+  sentence: z.string(),
+});
+export type StartCheckOversizedView = z.infer<typeof StartCheckOversizedView>;
 
 /**
  * `GET /projects/:id/start-check` (U-040): what a session started now would plan. `runnable`
@@ -1561,6 +1600,11 @@ export const StartCheckView = z.object({
    * session: a Start waits for the plan, and the dialog says so. False from an older daemon.
    */
   planning: z.boolean().default(false),
+  /**
+   * D4 (d1109-oversize-start): the task larger than the work budget the session takes after the
+   * work that fits, with its warning; null when none (an older daemon sends none).
+   */
+  oversized: StartCheckOversizedView.nullable().default(null),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 

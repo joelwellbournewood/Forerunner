@@ -157,6 +157,7 @@ import { createProjectRecord } from "./create-project.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
+import { overBudgetView, oversizedView } from "./oversize-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
 import { planTaskViews } from "./plan-tasks.ts";
 import { projectRepository } from "./pull-requests.ts";
@@ -1398,9 +1399,10 @@ export function createDaemonApp(
           ? intake.state
           : null,
       planWait: intake?.wait ?? null,
-      // R-startcred: only asked while tasks would run (the pick is read-only).
+      // R-startcred: only asked while tasks would run (the pick is read-only); a task larger
+      // than the work budget runs too (D4).
       credentialWait:
-        opts.credentialWait && r.runnable.length > 0
+        opts.credentialWait && (r.runnable.length > 0 || r.oversized)
           ? await (async () => rt.billing.waits.now(projectId))().catch(() => null)
           : null,
     });
@@ -1431,11 +1433,9 @@ export function createDaemonApp(
       workBudget: money(r.workBudgetUsdMicro, rate),
       ready: r.ready,
       runnable: r.runnable.map(named),
-      // C-45 (polish-screens): what the tasks before each left-out one take.
-      overBudget: r.overBudget.map((t) => ({
-        ...named(t),
-        ...(t.aheadUsdMicro !== undefined ? { ahead: money(t.aheadUsdMicro, rate) } : {}),
-      })),
+      // C-45 (polish-screens): what the tasks before each left-out one take; D4: why each is
+      // left out of the work that fits, in the daemon's one sentence (`oversize-words.ts`).
+      overBudget: overBudgetView(r, rate),
       later: r.later.map(named),
       blocked,
       busy,
@@ -1455,6 +1455,9 @@ export function createDaemonApp(
             tasks: r.waitingForSandbox.tasks.map(named),
           }
         : null,
+      // D4 (d1109-oversize-start): the task larger than the work budget the session takes after
+      // the work that fits, with the warning the Start dialog shows; Start is not refused for it.
+      oversized: oversizedView(r, rate),
     };
     return c.json(view);
   });
@@ -1893,6 +1896,12 @@ export function createDaemonApp(
               estimate: {
                 project: planProject,
                 of: (t) => planEstimateUsdMicro(rt.estimates, t as TaskRow),
+              },
+              // D4 (d1109-oversize-start): the project's session work budget, as the Start
+              // dialog's default: a task larger than it is noted under the task.
+              workBudget: {
+                usdMicro: async () => (await rt.startCheck(planProject.id)).workBudgetUsdMicro,
+                chfPerUsd: chf(),
               },
             }
           : {}),

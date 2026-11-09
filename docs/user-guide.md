@@ -620,13 +620,29 @@ with the button that fixes it (Allow sessions again, Open it, Open Tasks, Set up
 Connect Claude); a task that waits on one that failed or was cancelled is named with it
 ('"Write the guide" waits on "Draft the outline", which failed, so it cannot run.'). After Start
 you stay where you were; the dialog says it started, with **Open the session** and **Close**
-(to start another session, open it again). A task that does not fit is named one of two ways:
-"needs about CHF 3.00, more than this session's work budget of CHF 2.40" when it alone is too
-large (several such tasks are one line), or "(about CHF 1.20) may be left for next time: the
-tasks that run first take about CHF 1.50 of this session's work budget of CHF 2.40" when it only
-does not fit after the tasks ordered before it. Several tasks left out are one line, naming up
-to three and then how many more. A task with a budget of its own is counted at
-most at what is left of that budget, since its runs never spend more.
+(to start another session, open it again). A task that does not fit after the tasks ordered
+before it is named "(about CHF 1.20) may be left for next time: the tasks that run first take
+about CHF 1.50 of this session's work budget of CHF 2.40"; several such tasks are one line,
+naming up to three and then how many more. A task with a budget of its own is counted at most at
+what is left of that budget, since its runs never spend more.
+
+**A task larger than one session still runs.** When a ready task needs more than the session's
+work budget on its own, Start stays on and the dialog warns in an amber note: '"Build the shop"
+needs about CHF 6.00, more than this session's work budget of CHF 4.00: it works until that
+budget is used, keeps its work, and asks you to continue.' The session first does the tasks
+that fit (the plan line reads 'This session runs "A" (about CHF 0.12), then works on "Build the
+shop" with what is left.'), then takes the larger task with what is left of its work budget; the
+session's log says so once ('Took "Build the shop", larger than this session's work budget, with
+about CHF 2.80 left.'). It works until that budget is used, keeps its work and pauses with one
+card in the Inbox whose **Continue** goes on from where it stopped. One such task runs per
+session: a second one waits for the next ('"Big two" needs about CHF 9.00, more than this
+session's work budget: one task that large runs a session, so it waits for the next one.'), and
+so does one the tasks before it leave less than a fifth of the work budget for. The plan card
+says it under the task before you approve ("More than a session's work budget (CHF 4.00): it
+pauses with its work kept and asks you to continue."), and "start a session" in the chat reads
+the same warning back with its question. A task that goes on from work it kept is counted at what
+is left of its estimate ('"Build the shop" needs about CHF 2.00 more (CHF 4.00 spent so far)'); a
+task you redo or try again starts over and is counted at its whole estimate.
 
 **One Start keeps going.** A session works until nothing it can run is left: after each task it
 looks again and takes the tasks that just became ready (what they waited for is done), a task

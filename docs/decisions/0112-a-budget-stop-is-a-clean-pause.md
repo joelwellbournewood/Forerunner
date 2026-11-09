@@ -404,3 +404,20 @@ was done).
 
 The card's "The work is done; its review waits for room in the budget." (TR-14) is now true:
 the specialist does not run again for a review that waited.
+
+## Amendment 2026-11-09 (run C, 'd1109-oversize-start'): a task larger than one session runs anyway
+
+The owner's D4 of 2026-11-09 ("it should get a warning, but it should get done anyway"; ADR
+0115) changes the U-040 cut this ADR's budget stops sit beside. Before, a task whose figure alone
+was more than the session's work budget was left out of every plan (W6-23: the session that had
+only it ended with "Nothing could run: ... Start a session with a larger budget.", and the Start
+dialog and `POST /sessions` refused it). Now `cutPlanToBudget` returns the first such task apart
+and the runner takes it after the work that fits, with what is left of the work budget (at least
+a fifth); its run is capped by this ADR's rules unchanged (the task's own budget left, else its
+specialist's limit per run; the session's work budget left, the review reserve kept), so it
+reaches this ADR's pause at the session's budget: its work kept as a commit of its own and one
+card whose Continue goes on from it. The next run of such a task is planned at what is left of
+its estimate after the work its paused runs kept (`estimateLeftUsdMicro`, ADR 0115 point 4),
+the same condition under which its brief starts with "## Where the last run stopped" (point 4
+above). The learner still takes no sample from a paused task (the cost amendment). W6-23's
+question of a card for a task that never ran is closed: it runs.

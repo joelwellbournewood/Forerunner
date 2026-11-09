@@ -350,6 +350,14 @@ export interface CommandPorts {
   emailMode?(req: EmailModePortRequest): Promise<EmailModePortResult>;
   /** Creates a project's repository (`repo.create`, U-037); absent, the command is unavailable. */
   repos?: RepoCommandPort;
+  /**
+   * D4 (d1109-oversize-start): the warning of a session started now on the project that would
+   * take a task larger than its work budget ('"Build the shop" needs more than its work budget of
+   * CHF 4.00: it pauses with its work kept and asks you to continue.'), the Start check's own
+   * sentence for the chat; null when it takes none. `session.start` reads it back with its
+   * question and never refuses such a start. Absent: no warning.
+   */
+  startWarning?(projectId: string, budgetUsdMicro: number): Promise<string | null>;
 }
 
 export interface EmailModePortRequest {

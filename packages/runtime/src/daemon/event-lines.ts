@@ -12,7 +12,8 @@ import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.ts";
 import { sessionStatusText } from "../session/stop-words.ts";
-import { REVIEW_RESUMED_EVENT } from "./event-audience.ts";
+import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "./event-audience.ts";
+import { takenLine } from "./oversize-words.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -596,6 +597,12 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
     // the line names what was sent, never "telegram skipped (no Telegram chat id)".
     case "notification":
       return `Notified you: "${s("title")}".`;
+    // D4 (d1109-oversize-start): the session took the task larger than its work budget, once.
+    case TOOK_LARGER_EVENT: {
+      const room = Math.max(0, Math.round(n("roomUsdMicro")));
+      const chfMicro = usdToChfMicro(room, chfPerUsd);
+      return takenLine(s("title") || "the task", { chfMicro, text: formatChf(chfMicro) });
+    }
     // The engine's step and replan lines carry their own words (`text`).
     case "task.step":
     case "session.replanned":

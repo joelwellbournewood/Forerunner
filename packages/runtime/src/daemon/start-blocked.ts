@@ -1,11 +1,6 @@
-import { formatChf, usdToChfMicro } from "@forerunner/billing";
 import { nothingRunsYetSentence } from "../session/credential-wait.ts";
-import { aboutWords } from "../session/money-words.ts";
 import type { StartCheck } from "../session/start-check.ts";
 import type { StartCheckView } from "./api-types.ts";
-
-/** An estimate as the dialog says it (W15-74): "about CHF 0.40", "less than CHF 0.01". */
-const estimateWords = (chfMicro: number) => aboutWords(formatChf(chfMicro), chfMicro);
 
 /** What else decides whether a Start would do anything. */
 export interface StartBlockedFacts {
@@ -79,7 +74,7 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
   const blocked = firstBlocker(r, f);
   // R-startcred: tasks would run, but no credential can serve them now: Start would end at once
   // with the wait (before, the dialog said "This session runs ..." and the session then waited).
-  if (blocked === null && f.credentialWait && r.runnable.length > 0 && !f.busy)
+  if (blocked === null && f.credentialWait && runsWork(r) && !f.busy)
     return {
       kind: "nothing_runnable",
       // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits until ...").
@@ -116,6 +111,14 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
   return blocked;
 }
 
+/**
+ * Whether a session started now runs work: a ready task that fits, or the task larger than the
+ * work budget it takes with what is left (D4, `StartCheck.oversized`).
+ */
+export function runsWork(r: Pick<StartCheck, "runnable"> & { oversized?: unknown }): boolean {
+  return r.runnable.length > 0 || !!r.oversized;
+}
+
 function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["blocked"] {
   if (f.stopped)
     return {
@@ -131,7 +134,7 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
     };
   // A session runs now on this project: the start waits for it, and its work makes more tasks
   // ready. One on another project makes none of these ready (`busyHere`).
-  if (r.runnable.length > 0 || f.busy) return null;
+  if (runsWork(r) || f.busy) return null;
   const tasksTab = `/projects/${encodeURIComponent(f.projectId)}/tasks`;
   const stuck = r.waiting.find((w) =>
     w.waitsOn.some(
@@ -164,13 +167,10 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
       sentence: `Nothing can run: "${docker.title}" is waiting for Docker.`,
       action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
     };
-  const big = r.overBudget[0];
-  if (big)
-    return {
-      kind: "nothing_runnable",
-      sentence: `Nothing can run within this budget: "${big.title}" needs ${estimateWords(usdToChfMicro(big.estimateUsdMicro, f.chfPerUsd))}.`,
-      action: null,
-    };
+  // D4 (d1109-oversize-start): a task larger than the work budget is no blocker any more: the
+  // session takes it with the whole work budget (`runsWork`), and the Start check's `oversized`
+  // warns. Before: "Nothing can run within this budget: "X" needs about CHF 6.00." with Start
+  // off, and POST /sessions refused it.
   return {
     kind: "nothing_runnable",
     sentence:

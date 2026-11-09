@@ -13,6 +13,8 @@ import {
   type EstimateModelSnapshot,
   type EstimatePort,
   type EstimateSample,
+  estimateLeftUsdMicro,
+  keptWorkFor,
   kindOfTask,
   PLAN_ESTIMATE_BOUND,
   planEstimateUsdMicro,
@@ -23,7 +25,8 @@ import {
   taskSizeFactor,
 } from "../src/estimates/model.ts";
 import { EstimateAccuracyViewSchema, estimateAccuracyView } from "../src/estimates/view.ts";
-import { cutPlanToBudget, type SessionPlan } from "../src/session/runner.ts";
+import { cutPlanToBudget, type SessionPlan, StaticPlanner } from "../src/session/runner.ts";
+import { startCheck } from "../src/session/start-check.ts";
 
 const REGISTRY: Record<string, SpecialistDefaults> = {
   coder: { maxBudgetUsd: 3, timeoutMinutes: 45 },
@@ -958,5 +961,164 @@ describe("w15-run, wave 15: an estimate grows with the task's size (W15-18)", ()
     );
     // The footer's figure moves by the large task's ratio per unit of size, under x2.
     expect(m.estimate(footer).usdMicro).toBeLessThan(2 * (STARTING_ESTIMATES_USD_MICRO.coder ?? 0));
+  });
+});
+
+/**
+ * d1109-oversize-start (OS-1, the owner's D4 of 2026-11-09): a task that resumes from the work
+ * its paused runs kept is planned at what is left of its estimate, so a CHF 6.00 task that kept
+ * CHF 4.00 of work reads "about CHF 2.00 more" in the Start dialog and the plan, not the whole
+ * CHF 6.00 again. A task that starts over (a Redo from main, a review that sent it back, a Try
+ * again after a failure) starts from nothing: the whole estimate is the honest figure for it.
+ * Before, only a task's own budget lowered the figure (`withinTaskBudget`), and spend alone
+ * cannot tell the two apart.
+ */
+describe("d1109-oversize-start, run C: a task that resumes from kept work is planned at what is left (OS-1)", () => {
+  /** A ready task estimated at USD 6.00 with these runs, oldest first. */
+  async function taskWithRuns(
+    w: World,
+    runs: { outcome: string; usd: number; specialist?: string }[],
+    over: { budget?: number } = {},
+  ): Promise<TaskRow> {
+    await w.clock.advance(60_000);
+    const spent = runs.reduce((s, r) => s + r.usd, 0);
+    const task = await w.store.task.insert({
+      project_id: w.project,
+      title: `kept-${w.clock.now()}`,
+      outcome: "the shop page lists the products",
+      acceptance_criteria: ["shop.html exists"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 1,
+      depends_on: [],
+      budget_usd_micro: over.budget ?? 0,
+      est_cost_usd_micro: 6_000_000,
+      actual_cost_usd_micro: spent,
+      specialist: "coder",
+    });
+    for (const r of runs) {
+      await w.clock.advance(1_000);
+      await w.store.run.insert({
+        task_id: task.id,
+        session_id: w.session,
+        specialist: r.specialist ?? "coder",
+        model: "fake-sonnet",
+        provider: "fake",
+        effort: "medium",
+        cost_usd_micro: r.usd,
+        duration_ms: 60_000,
+        outcome: r.outcome,
+      });
+    }
+    return w.store.task.mustGet(task.id);
+  }
+  const usd = (n: number) => Math.round(n * 1_000_000);
+
+  it("estimateLeftUsdMicro: the estimate less the kept work, a fifth of it once the kept work reached it", () => {
+    expect(estimateLeftUsdMicro(usd(6), null)).toEqual({
+      usdMicro: usd(6),
+      estimatePassed: false,
+    });
+    expect(estimateLeftUsdMicro(usd(6), { usdMicro: usd(4) })).toEqual({
+      usdMicro: usd(2),
+      estimatePassed: false,
+    });
+    // The estimate was too low and what is left is not known: a fifth of it, said as passed.
+    expect(estimateLeftUsdMicro(usd(6), { usdMicro: usd(6.5) })).toEqual({
+      usdMicro: usd(1.2),
+      estimatePassed: true,
+    });
+    expect(estimateLeftUsdMicro(usd(6), { usdMicro: usd(6) })).toEqual({
+      usdMicro: usd(1.2),
+      estimatePassed: true,
+    });
+  });
+
+  it("the planner's figure over the task's Run rows: kept work only, never a start over", async () => {
+    const w = await world();
+    worlds.push(w);
+    const port = new EstimateModel({ defaults });
+    const figure = async (t: TaskRow) =>
+      planEstimateUsdMicro(port, t, await keptWorkFor(w.store, t));
+    // Its last run paused at a budget with USD 4.00 of work kept: USD 2.00 is left.
+    expect(await figure(await taskWithRuns(w, [{ outcome: "paused", usd: usd(4) }]))).toBe(usd(2));
+    // A hard stop at the session's budget keeps its work too ("budget_exceeded").
+    expect(await figure(await taskWithRuns(w, [{ outcome: "budget_exceeded", usd: usd(4) }]))).toBe(
+      usd(2),
+    );
+    // Two pauses in a row: both runs' work is kept.
+    expect(
+      await figure(
+        await taskWithRuns(w, [
+          { outcome: "paused", usd: usd(2) },
+          { outcome: "paused", usd: usd(1.5) },
+        ]),
+      ),
+    ).toBe(usd(2.5));
+    // More kept than the estimate: a fifth of it.
+    const passed = await taskWithRuns(w, [{ outcome: "paused", usd: usd(6.5) }]);
+    expect(await figure(passed)).toBe(usd(1.2));
+    expect(estimateLeftUsdMicro(usd(6), await keptWorkFor(w.store, passed)).estimatePassed).toBe(
+      true,
+    );
+    // A budget of its own still caps it (withinTaskBudget unchanged): USD 3.00 less 2.50 spent.
+    expect(
+      await figure(
+        await taskWithRuns(w, [{ outcome: "paused", usd: usd(2.5) }], { budget: usd(3) }),
+      ),
+    ).toBe(usd(0.5));
+    // A task that spent USD 4.00 and was redone from main (its last run finished): it starts
+    // over, so its whole estimate.
+    expect(await figure(await taskWithRuns(w, [{ outcome: "completed", usd: usd(4) }]))).toBe(
+      usd(6),
+    );
+    // One whose review sent it back (the critic's run after the work's): the whole estimate.
+    expect(
+      await figure(
+        await taskWithRuns(w, [
+          { outcome: "completed", usd: usd(4) },
+          { outcome: "completed", usd: usd(0.2), specialist: "critic" },
+        ]),
+      ),
+    ).toBe(usd(6));
+    // A failed task sent to Try again: the whole estimate.
+    expect(await figure(await taskWithRuns(w, [{ outcome: "error", usd: usd(4) }]))).toBe(usd(6));
+    // It failed once (USD 0.80), was tried again and paused with USD 1.00 kept: only the runs
+    // after its last start over count.
+    expect(
+      await figure(
+        await taskWithRuns(w, [
+          { outcome: "error", usd: usd(0.8) },
+          { outcome: "paused", usd: usd(1) },
+        ]),
+      ),
+    ).toBe(usd(5));
+    // No spend at all: today's figure.
+    expect(await figure(await taskWithRuns(w, []))).toBe(usd(6));
+    expect(await keptWorkFor(w.store, await taskWithRuns(w, []))).toBeNull();
+  });
+
+  it("the Start check and the session's planner price a task with kept work at what is left", async () => {
+    const w = await world();
+    worlds.push(w);
+    const port = new EstimateModel({ defaults });
+    const kept = await taskWithRuns(w, [{ outcome: "paused", usd: usd(4) }]);
+    const over = await taskWithRuns(w, [{ outcome: "completed", usd: usd(4) }]);
+    const check = await startCheck({ store: w.store, estimates: port }, w.project, usd(100));
+    const priced = new Map(check.runnable.map((t) => [t.taskId, t.estimateUsdMicro]));
+    expect(priced.get(kept.id)).toBe(usd(2));
+    expect(priced.get(over.id)).toBe(usd(6));
+    // The session's planner: the same figure, through the runner's planner context.
+    const plan = await new StaticPlanner(500_000, port).plan({
+      brief: { generatedAt: w.clock.nowIso(), project: null },
+      readyTasks: [kept, over],
+      keptWork: (t: TaskRow) => keptWorkFor(w.store, t),
+    } as never);
+    expect(new Map(plan.items.map((i) => [i.taskId, i.estimateUsdMicro]))).toEqual(
+      new Map([
+        [kept.id, usd(2)],
+        [over.id, usd(6)],
+      ]),
+    );
   });
 });

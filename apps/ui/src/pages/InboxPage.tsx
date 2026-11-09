@@ -419,6 +419,15 @@ function IntakeCard({
                   {here.note}
                 </span>
               ) : null}
+              {/* D4 (d1109-oversize-start): more than a session's work budget (the daemon's words). */}
+              {here?.oversized ? (
+                <span
+                  className="block text-xs text-amber-800 dark:text-amber-300"
+                  data-testid="intake-task-oversized"
+                >
+                  {here.oversized}
+                </span>
+              ) : null}
             </li>
           );
         })}

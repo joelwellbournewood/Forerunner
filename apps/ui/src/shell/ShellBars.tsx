@@ -185,7 +185,12 @@ export function StoppedBar() {
           const check = await client.startCheck(id).catch(() => null);
           // A wait for a credential's reset nobody kept yet still starts (TR-2): the session
           // keeps the wait, and the work starts by itself at the reset.
-          if (!check || (check.blocked && !check.blocked.startable) || !check.runnable.length)
+          // D4: a task larger than the work budget is work too (`oversized`): the session takes it.
+          if (
+            !check ||
+            (check.blocked && !check.blocked.startable) ||
+            (!check.runnable.length && !check.oversized)
+          )
             continue;
           await client.startSession({
             agentId: identity.agentId,

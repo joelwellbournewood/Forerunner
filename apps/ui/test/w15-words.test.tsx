@@ -462,16 +462,25 @@ describe("w15-words, wave 15 run B", () => {
       );
     });
 
-    it("tasks each larger than the work budget: at most three named, then 'and N more'", async () => {
+    it("tasks each larger than the work budget: the first runs with the warning, at most three more named, then 'and N more'", async () => {
       const harness = seed(["About page", "Contact page", "Menu", "Footer"], 100_000);
       const dialog = await openWithBudget(harness, "0.04");
-      const line = await within(dialog).findByTestId("start-session-over-budget");
+      // d1109-oversize-start (D4): the first runs with what the session has; each other one
+      // says why it waits (before: one line, '... and 2 more each need more than this
+      // session's work budget of CHF 0.03 ...', with Start off).
       await waitFor(() =>
-        expect(line).toHaveTextContent(
-          '"Decide the versioning scheme" (about CHF 0.08), "About page" (about CHF 0.08), "Contact page" (about CHF 0.08) and 2 more each need more than this session\'s work budget of CHF 0.03',
+        expect(within(dialog).getByTestId("start-session-oversized")).toHaveTextContent(
+          /^"Decide the versioning scheme" needs about CHF 0\.08, more than this session's work budget of CHF 0\.03: /,
         ),
       );
-      expect(line).not.toHaveTextContent("Menu");
+      const lines = within(dialog).getAllByTestId("start-session-over-budget");
+      expect(lines.map((l) => l.textContent?.split(" needs ")[0])).toEqual([
+        '"About page"',
+        '"Contact page"',
+        '"Menu"',
+      ]);
+      expect(within(dialog).getByTestId("start-session-more")).toHaveTextContent("and 1 more");
+      expect(dialog).not.toHaveTextContent("Footer");
     });
   });
   describe("W15-39: the Start dialog while a plan is drafted", () => {

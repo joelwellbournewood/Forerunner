@@ -15091,3 +15091,207 @@ describe("w15-words, wave 15 run B", () => {
     }
   }, 60_000);
 });
+
+/**
+ * d1109-oversize-start (U-089; the owner's D4 of 2026-11-09: "it should get a warning, but it
+ * should get done anyway"). Before, a ready task whose estimate alone was more than the
+ * session's work budget made the Start check say "Nothing can run within this budget" and
+ * POST /sessions refused the start; now the check answers the larger task with its warning
+ * (`oversized`) and the start runs it after the work that fits, with what is left.
+ */
+describe("d1109-oversize-start, run C", () => {
+  /** A coder task of the project, ready, priced at `usd` (its own estimate). */
+  const task = async (
+    rt: RuntimeApp,
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    usd: number,
+    priority: "high" | "medium" | "low" = "medium",
+  ) => {
+    const t = await client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: [],
+      priority,
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    await rt.store.task.patch(t.id, { est_cost_usd_micro: Math.round(usd * 1_000_000) });
+    return t;
+  };
+
+  it("the only ready task is larger than the work budget: the check warns and is not blocked, POST /sessions starts a session that takes it and says so once", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop", goal: "A shop page" });
+      const big = await task(rt, client, project.id, "Build the shop", 8);
+      const check = await client.startCheck(project.id, { budgetUsdMicro: 2_000_000 });
+      // Before: blocked "Nothing can run within this budget: ..." and Start off.
+      expect(check.blocked).toBeNull();
+      expect(check.runnable).toEqual([]);
+      expect(check.oversized).toEqual({
+        taskId: big.id,
+        title: "Build the shop",
+        estimate: { usdMicro: 8_000_000, chfMicro: 6_400_000 },
+        room: { usdMicro: 1_600_000, chfMicro: 1_280_000 },
+        after: false,
+        sentence:
+          '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: it works until that budget is used, keeps its work, and asks you to continue.',
+      });
+      expect(check.overBudget.map((t) => [t.title, t.why])).toEqual([
+        ["Build the shop", "oversized"],
+      ]);
+      // The start the Start dialog sends: no validation error, a session that runs it.
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        budgetUsdMicro: 2_000_000,
+      });
+      expect(started.result).toBe("started");
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => `${(await client.session(sessionId)).status}`,
+        30_000,
+      );
+      const said = (await client.sessionEvents(sessionId))
+        .filter((e) => e.audience === "person")
+        .map((e) => e.text);
+      expect(
+        said.filter((l) => l.startsWith('Took "Build the shop"')),
+        said.join(" | "),
+      ).toEqual([
+        'Took "Build the shop", larger than this session\'s work budget, with about CHF 1.28 left.',
+      ]);
+      const ended = await client.session(sessionId);
+      expect(ended.summary ?? "").not.toContain("Nothing could run");
+      expect(
+        (await rt.store.run.forTask(big.id)).filter((r) => r.specialist !== "critic"),
+      ).not.toHaveLength(0);
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
+
+  it("with two tasks that fit first, the warning says what they leave; a second larger task waits, with why", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop two", goal: "A shop page" });
+      await task(rt, client, project.id, "Write the intro", 0.2, "high");
+      await task(rt, client, project.id, "Write the about page", 0.2, "high");
+      await task(rt, client, project.id, "Build the shop", 8);
+      await task(rt, client, project.id, "Big two", 9, "low");
+      const check = await client.startCheck(project.id, { budgetUsdMicro: 2_000_000 });
+      expect(check.blocked).toBeNull();
+      expect(check.runnable.map((t) => t.title)).toEqual([
+        "Write the intro",
+        "Write the about page",
+      ]);
+      // USD 1.60 less 0.40: USD 1.20, CHF 0.96.
+      expect(check.oversized?.room).toEqual({ usdMicro: 1_200_000, chfMicro: 960_000 });
+      expect(check.oversized?.sentence).toBe(
+        '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: after the other tasks it works with about CHF 0.96, keeps its work, and asks you to continue.',
+      );
+      const second = check.overBudget.find((t) => t.title === "Big two");
+      expect(second?.why).toBe("one_large");
+      expect(second?.sentence).toBe(
+        '"Big two" needs about CHF 7.20, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("OS-5: GET /inbox: the plan card notes a task above the project's session work budget; a task that fits has none", async () => {
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_PLAN: "research" });
+    try {
+      const me = await client.me();
+      const brief =
+        "Compare two static site generators and write a page that summarises them for a club website.";
+      const project = await client.createProject({
+        name: "Club plan",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const planTasks = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open",
+        )?.planTasks ?? [];
+      // Under the default session budget (CHF 5.00) every task fits: no note.
+      const first = await planTasks();
+      expect(first.length).toBeGreaterThan(1);
+      expect(first.every((t) => (t.oversized ?? null) === null)).toBe(true);
+      // A session budget between the research task's figure and the others': the research
+      // task (about ten times the others) is larger than a session's work budget.
+      const research = first.find((t) => t.specialist === "researcher");
+      const others = first.filter((t) => t !== research && (t.estimateUsdMicro ?? 0) > 0);
+      const big = research?.estimateUsdMicro ?? 0;
+      const small = Math.max(...others.map((t) => t.estimateUsdMicro ?? 0));
+      expect(big).toBeGreaterThan(small);
+      const work = Math.floor((big + small) / 2);
+      const row = await rt.store.project.mustGet(project.id);
+      await rt.store.project.patch(project.id, {
+        settings: { ...row.settings, session_cap_usd_micro: Math.ceil(work / 0.8) },
+      });
+      const after = await planTasks();
+      const workChf = Math.round(Math.floor(Math.ceil(work / 0.8) * 0.8) * 0.8);
+      const note = `More than a session's work budget (CHF ${(workChf / 1_000_000).toFixed(2)}): it pauses with its work kept and asks you to continue.`;
+      expect(after.find((t) => t.specialist === "researcher")?.oversized).toBe(note);
+      expect(
+        after.filter((t) => t.specialist !== "researcher").map((t) => t.oversized ?? null),
+      ).toEqual(after.filter((t) => t.specialist !== "researcher").map(() => null));
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("OS-6: 'start a session' in the chat reads the warning back with its question, and Yes starts the session (never refused)", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop chat", goal: "A shop page" });
+      // USD 8.00 against the default session's work budget of USD 5.00 (CHF 4.00).
+      await task(rt, client, project.id, "Build the shop", 8);
+      const me = await client.me();
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId: rt.agent.id,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const asked = await say("start a session");
+      // Before: refused with "Nothing can run within this budget: "Build the shop" needs ...".
+      expect(asked.reply).not.toMatch(/Nothing can run/);
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Start a session on Shop chat (up to CHF 5)? "Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
+      );
+      const yes = await say("yes");
+      expect(yes.reply).toMatch(/^Started a session on Shop chat/);
+      const started = (await client.sessions({ projectId: project.id }))[0];
+      expect(started).toBeDefined();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes(
+            (await client.session(started?.id ?? "")).status,
+          ),
+        "the started session to end (at least 10 s of real time)",
+        async () => (await client.session(started?.id ?? "")).status,
+        30_000,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 90_000);
+});

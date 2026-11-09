@@ -366,6 +366,7 @@ import {
   installIdentitySelectors,
   pickPrincipal,
 } from "./identity.ts";
+import { oversizedWarning } from "./oversize-view.ts";
 import { ProjectPullRequests } from "./pull-requests.ts";
 import { changeNotAppliedWords } from "./request-words.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
@@ -3812,6 +3813,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                   : "";
         return `${blocked.sentence}${next}`;
       },
+      // D4 (d1109-oversize-start): the chat's start reads back the Start dialog's warning when
+      // the session would take a task larger than its work budget; it never refuses it.
+      startWarning: async (projectId, budgetUsdMicro) =>
+        oversizedWarning(
+          await startCheck(
+            { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+            projectId,
+            budgetUsdMicro,
+          ),
+          chfPerUsd(),
+        ),
       // An answer by chat, voice, the palette or the phone applies at once, as the inbox
       // route's does (an approved plan starts its follow-up, ADR 0053). The answer stands
       // when the sync fails: the next sync (an answer, the poll, a restart) applies it.

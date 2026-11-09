@@ -489,6 +489,16 @@ port (`sessionCommandPorts`, runtime.md) stops the session that start began and 
 agent's scope or a later start of the agent (`KillScope.startId`, ADR 0049). A row without
 `start_id` (written before starts had one) matches nothing running there.
 
+A task larger than the session's work budget (d1109-oversize-start, ADR 0115, the owner's D4
+of 2026-11-09): `session.start` never refuses such a start (the runtime's `startBlocked` no
+longer counts it as a blocker), and `ports.startWarning(projectId, budgetUsdMicro)` (the Start
+check's own sentence, `oversizedAsk`) follows the read-back's question in `startAsk`: 'Start a
+session on Shop (up to CHF 5)? "Build the shop" needs more than its work budget of CHF 4.00: it
+pauses with its work kept and asks you to continue.'. A start below the costly line is not read
+back (low risk acts at once), so its sentence carries the warning after what happened; a
+costly one said it in its read-back. A phone's start is the PC's to judge (no warning there).
+Test `test/oversize-start.test.ts`.
+
 ### Understanding (`src/intent.ts`)
 
 `IntentParser.parse(text, ctx) -> {commands, question?, matched, unmatched}`. The guard runs

@@ -91,6 +91,11 @@ function startSentence(s: StartPlan, outcome?: "started" | "queued" | "deferred"
   return `Started a session on ${name}${where} ${up}.`;
 }
 
+/** A sentence with the larger task's warning after it (D4), when there is one. */
+function withWarning(sentence: string, warning: string | null): string {
+  return warning ? `${sentence} ${warning}` : sentence;
+}
+
 /**
  * Design §3.6 and §3.9: a start that would do nothing (Stop all is on, Claude is not connected,
  * nothing can run) is refused in words, as the Start dialog refuses it; before, the chat said
@@ -102,10 +107,27 @@ async function refuseBlockedStart(s: StartPlan, ctx: CommandContext): Promise<vo
   if (blocked) throw new ForerunnerError("validation", blocked, { details: { blocked } });
 }
 
-/** The start as one question for the read-back (design §5, "Chat read-back"). */
-function startAsk(s: StartPlan): string {
+/**
+ * The start as one question for the read-back (design §5, "Chat read-back"). D4
+ * (d1109-oversize-start): when the session would take a task larger than its work budget, the
+ * Start dialog's warning follows ('Start a session on Shop (up to CHF 5.00)? "Build the shop"
+ * needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to
+ * continue.'); the start itself is not refused for it.
+ */
+function startAsk(s: StartPlan, warning: string | null = null): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";
-  return `Start a session on ${s.resolved.project.name}${where} (up to ${chf(s.budgetChf)})?`;
+  const ask = `Start a session on ${s.resolved.project.name}${where} (up to ${chf(s.budgetChf)})?`;
+  return warning ? `${ask} ${warning}` : ask;
+}
+
+/**
+ * The warning of a start that takes a task larger than its work budget (D4, the runtime's
+ * `CommandPorts.startWarning`, the Start check's own sentence for the chat), or null. A phone's
+ * start is the PC's to judge.
+ */
+async function startWarningOf(s: StartPlan, ctx: CommandContext): Promise<string | null> {
+  if (s.remote) return null;
+  return (await ctx.ports.startWarning?.(s.resolved.project.id, s.budgetUsd)) ?? null;
 }
 
 export const sessionStart: CommandDef<SessionStartParams> = {
@@ -132,6 +154,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
     await refuseBlockedStart(s, ctx);
     const costly =
       s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO);
+    const warning = await startWarningOf(s, ctx);
     return buildCard({
       command: "session.start",
       what: `a session on ${s.resolved.project.name} ${s.where}`,
@@ -146,7 +169,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
       usesActiveProject: s.resolved.usedActive,
       costUsdMicro: s.budgetUsd,
       costChfMicro: s.budgetChf,
-      ask: startAsk(s),
+      ask: startAsk(s, warning),
     });
   },
   async run(p, ctx): Promise<CommandOutcome> {
@@ -218,11 +241,18 @@ export const sessionStart: CommandDef<SessionStartParams> = {
         agent_id: agentId,
         budget_usd_micro: s.budgetUsd,
       },
-      sentence: startSentence(
-        s,
-        outcome === "queued" || outcome === "deferred" || outcome === "started"
-          ? outcome
-          : undefined,
+      sentence: withWarning(
+        startSentence(
+          s,
+          outcome === "queued" || outcome === "deferred" || outcome === "started"
+            ? outcome
+            : undefined,
+        ),
+        // D4: a start below the costly line is not read back first, so its warning comes with
+        // what happened; a costly one said it in its read-back (`startAsk`).
+        s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO)
+          ? null
+          : await startWarningOf(s, ctx),
       ),
       projectId: s.resolved.project.id,
     };

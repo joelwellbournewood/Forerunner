@@ -1,9 +1,11 @@
+import { formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, ProjectRow, TaskRow } from "@forerunner/state";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { PERSON_SPECIALIST } from "../session/person-questions.ts";
 import { type ShapedPlan, shapeProjectPlan } from "../session/project-plan.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import type { CredentialRunsOn, HumanRequestView } from "./api-types.ts";
+import { oversizedPlanNote } from "./oversize-words.ts";
 
 /**
  * An open plan card's tasks as this install would run them now (U-078, the credential chooser;
@@ -34,6 +36,14 @@ export interface PlanTasksDeps {
    * Absent: no task's note says it reads no website.
    */
   readsWeb?(name: string): boolean;
+  /**
+   * D4 (d1109-oversize-start): what a session of the project may spend on its tasks (its session
+   * cap less the fifth kept for reviews, as the Start dialog's default) and the day's rate: a task
+   * whose figure alone is more gets the note that it pauses with its work kept and asks to
+   * continue. `usdMicro` is read only for an open plan card (the Inbox's other cards ask
+   * nothing). Absent: no task gets it.
+   */
+  workBudget?: { usdMicro(): Promise<number>; chfPerUsd: number };
   estimate?: {
     /** W15B-07: its `settings` (when given) hold the site rule the notes read. */
     project: Pick<ProjectRow, "name" | "small_project_mode"> &
@@ -144,6 +154,16 @@ export async function planTaskViews(
       actual_cost_usd_micro: 0,
     });
   };
+  // D4: the note under a task larger than the project's session work budget (once per card).
+  const workUsd = deps.workBudget ? await deps.workBudget.usdMicro().catch(() => null) : null;
+  const workChf =
+    workUsd !== null && deps.workBudget
+      ? usdToChfMicro(Math.max(0, Math.round(workUsd)), deps.workBudget.chfPerUsd)
+      : 0;
+  const oversizedNote = (figure: number | null): string | null =>
+    workUsd !== null && figure !== null && figure > workUsd
+      ? oversizedPlanNote({ chfMicro: workChf, text: formatChf(workChf) })
+      : null;
   const out: PlanTaskView[] = [];
   for (const t of tasks) {
     const title = str(t.title);
@@ -152,12 +172,16 @@ export async function planTaskViews(
     const canonical = named ? canonicalSpecialistName(named) : null;
     const person = canonical === PERSON_SPECIALIST;
     const known = canonical && !person && deps.has(canonical) ? canonical : null;
+    const estimateUsdMicro = estimateOf(str(t.key), person);
+    // D4: said only when the task is larger than a session (absent otherwise, as from an
+    // older service).
+    const oversized = oversizedNote(estimateUsdMicro);
     out.push({
       key: str(t.key),
       title,
       specialist: known,
       unknown: named && !person && !known ? named : null,
-      estimateUsdMicro: estimateOf(str(t.key), person),
+      estimateUsdMicro,
       runsOn: known
         ? await deps
             .forTask({
@@ -172,6 +196,7 @@ export async function planTaskViews(
             .catch(() => null)
         : null,
       note: planTaskNote(known, deps),
+      ...(oversized ? { oversized } : {}),
     });
   }
   return onceForThePlan(out);
