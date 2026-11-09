@@ -2227,7 +2227,9 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Inbox.", "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.", or at
   the project's budget, which never resets, "It goes on by itself once you raise the project's budget;
   cancel it in the Inbox.", W14-6); the
-  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ..." or "It stopped
+  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ...", each item plain
+  (`withoutMarkdown`: no backticks, emphasis or list marks) and ending at a word, a cut the card kept
+  (`cardHandoff`, 80 characters) losing the word it fell in, W15-57; or "It stopped
   before it could say where it stood; its work so far is kept.", then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
   you reopen it; ..."; a Settings link at the outer limits); the session result: the builder

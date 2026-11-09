@@ -530,4 +530,60 @@ describe("w15-words, wave 15 run B", () => {
       expect(finished("")).toBe('"Write the footer" could not run; its card is in the Inbox.');
     });
   });
+
+  describe("W15-57: the budget card quotes the run's note in plain words, each item ending at a word", () => {
+    const card = (done: string, left: string[]) =>
+      requestWords(
+        {
+          id: "r",
+          kind: "approval",
+          why: "",
+          steps: [],
+          options: ["Continue (CHF 0.20 more)", "Cancel task"],
+          status: "open",
+          answer: null,
+          change_card: {
+            key: "task:budget_stop",
+            source: "task_budget",
+            continue_usd_micro: 250_000,
+            chf_per_usd: 0.8,
+            done,
+            left,
+          },
+        } as unknown as HumanRequestRow,
+        { heldWork: true },
+      ).body ?? "";
+
+    it("the live handoff of live check 2 (budget2.json): no backtick, no list mark, no cut word", () => {
+      // As the card kept it: each item cut at 80 characters by `cardHandoff`, mid-word.
+      const body = card("I finished reading the repo and had not started writing", [
+        "Write `src/elo.js` with `expectedScore`, `newRating` and `updateRatings` using upd…",
+        "Write `src/swiss.js`:",
+        "- Pair players by score descending, then rating descending",
+        "Write the tests",
+        "Run them",
+      ]);
+      expect(body).toBe(
+        "Done: I finished reading the repo and had not started writing; left: Write src/elo.js with expectedScore, newRating and updateRatings using…, Write src/swiss.js, Pair players by score descending, then rating descending and 2 more.",
+      );
+      expect(body).not.toMatch(/`|\bupd…|(^|\s)- |:,/);
+    });
+
+    it("an item of 200 characters cut mid-word ends at a word; 'and N more' reads as before", () => {
+      const long =
+        `${"Check the pairing rounds(players and the tie breaks ".repeat(4)}rounds(players`.slice(
+          0,
+          199,
+        );
+      const body = card("**the outline** is written", [`${long}…`, "b", "c", "d", "e"]);
+      expect(body).toMatch(/^Done: the outline is written; left: Check the pairing/);
+      expect(body).not.toContain("**");
+      const first =
+        body.replace(/^Done: the outline is written; left: /, "").split(", b, c")[0] ?? "";
+      expect(first.length).toBeLessThanOrEqual(72);
+      expect(first).toMatch(/ \S+…$/);
+      expect(first).not.toMatch(/rounds\(players…$/);
+      expect(body).toMatch(/, b, c and 2 more\.$/);
+    });
+  });
 });

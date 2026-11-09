@@ -107,6 +107,40 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 
+/**
+ * A model's words without their markdown (W15-61, W15-57; design §5 rule 6): backticks, emphasis
+ * and list marks dropped, a leading colon or dash too, on one line. Data stays data: only marks go.
+ */
+export function withoutMarkdown(text: string): string {
+  return text
+    .replace(/`+([^`]*)`+/g, "$1")
+    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
+    .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|[.,;:!?]|$)/g, "$1$2")
+    .replace(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g, "$1")
+    .replace(/^[\s:;,.\-–—*]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * W15-57: an item of a paused run's note as the budget card quotes it: plain words, a list's
+ * heading colon dropped, and cut at a word well under what the card kept (`cardHandoff` cut it at
+ * 80 or 160 characters, mid-word: "rounds(players…"), so a stored cut never shows.
+ */
+function cardItem(text: string, max: number): string {
+  let t = withoutMarkdown(text);
+  // A stored cut: the word it fell in is dropped ("... using upd…" -> "... using…").
+  const stored = /…$/.test(t);
+  if (stored)
+    t = t
+      .replace(/…$/, "")
+      .replace(/\s*\S*$/, "")
+      .replace(/[\s,;:]+$/, "");
+  t = t.replace(/[\s:]+$/, "");
+  if (t.length > max) return cutWords(t, max);
+  return stored ? `${t}…` : t;
+}
+
 /** A title as a line names it: whole when short, else cut at a word. */
 export function cutWords(text: string, max: number): string {
   const t = text.replace(/\s+/g, " ").trim();
@@ -364,14 +398,8 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   // first words with the heading's colon (': I made no edits…'): the quote starts at a word.
   // W15-61 (design §5 rule 6): the specialist's words without their markdown (live: "a bare
   // `node wc.js`", "**Summary**"), backticks, emphasis and list marks dropped.
-  const context = str(card.context)
-    ?.replace(/`+([^`]*)`+/g, "$1")
-    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
-    .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|[.,;:!?]|$)/g, "$1$2")
-    .replace(/(^|\n)\s*(?:[-*•]|\d+[.)])\s+/g, "$1")
-    .replace(/^[\s:;,.\-–—*]+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const raw = str(card.context);
+  const context = raw ? withoutMarkdown(raw) : undefined;
   const body =
     [
       planned
@@ -656,11 +684,12 @@ function pausedWorkSentence(card: JsonObject, heldWork?: boolean): string | null
   // run-pause words ("It stopped before it could say where it stood") were not true of it.
   if (card.review_waits === true)
     return "The work is done; its review waits for room in the budget.";
-  const done = str(card.done);
+  const doneSaid = str(card.done);
+  const done = doneSaid ? cardItem(doneSaid, 140) : null;
   const left = Array.isArray(card.left)
     ? card.left.filter((t): t is string => typeof t === "string" && t.trim() !== "")
     : [];
-  const items = left.slice(0, 3).map((t) => noFinalDot(t));
+  const items = left.slice(0, 3).map((t) => noFinalDot(cardItem(t, 70)));
   const leftWords = items.length
     ? `${items.join(", ")}${left.length > 3 ? ` and ${left.length - 3} more` : ""}`
     : null;
