@@ -532,7 +532,9 @@ reports `refused` while the vault holds the refused credential (`refusedSince`),
 skips it (`refused`). (2) Both a usage limit and a refusal return outcome `usage_limit` with
 `stoppedRunSentence` (what is really scheduled; the Run row's outcome is `usage_limit` or
 `credential_refused`, decided before the row is written, so the task's drawer reads "Stopped at
-the usage limit" or "Stopped: Anthropic refused the credential", never "Failed": the leftovers
+the usage limit" or "Stopped: Anthropic refused your API key" ("your subscription sign-in", or
+"your key or sign-in" when the run's `billing_source_id` names no row; `runOutcomeWords` with
+`refusedCredentialWords`, W15-78; before: "the credential"), never "Failed": the leftovers
 of wave 7, `credential-wait-session.test.ts`) and, when no credential may take the task now
 (`nextCredential`: the same pick, which only reads the sources), `credentialWait`; the runner
 releases the claim (no try counted, never a passing error), and either lets the task wait
@@ -597,8 +599,10 @@ session; everything after the planning session started (its first message, its b
 calls) is in the one try whose finally closes the session and releases the hold (TR-7: a throw
 before that try left the agent held and every start queued until a restart). R-startcred: `RuntimeApp.billing.waits.now(projectId)` is the wait every ready
 task's pick meets now (`waitSentence` and `saveLink`), and `startBlocked`'s `credentialWait` fact
-turns it into "Nothing can run yet. Waits for a new API key: save one in Settings." with the save
-link (`nothing_runnable`, asked by the Start check only). The check only reads (TR-2, leftovers7-tailrun: before, it kept the wait on its source with `noteWait`, so opening the Start dialog or the stopped bar's Continue made the work start by itself at the reset although the person only looked): a wait a Start or a session already kept on its source (`limits.waiting` names the project) says "... and starts by itself." with Start off; a resting credential's wait nobody kept says what Start does instead ("Nothing can run until 15:40 (your API key's limit). Press Start and it runs then.", `startKeepsWaitSentence`) with `blocked.startable: true`, so the dialog keeps Start on and the stopped bar's Continue starts it; `POST /sessions` does not refuse on it, so that start meets the wait and keeps it (the executor's `noteWait`) and the work starts at the reset; a refused credential's wait keeps Start off (saving a key is the step). Tests: `real-daemon.test.ts` "leftovers7-tailrun, wave 13" (TR-2), R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds`, R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
+turns it into "Nothing can run until you save a new API key in Settings." (W15-78,
+`nothingRunsYetSentence` from the wait's own sentence; a kept wait: "Nothing can run until 15:40
+(your API key's limit); it starts by itself then."; before: "Nothing can run yet. Waits ...") with the save
+link (`nothing_runnable`, asked by the Start check only). The check only reads (TR-2, leftovers7-tailrun: before, it kept the wait on its source with `noteWait`, so opening the Start dialog or the stopped bar's Continue made the work start by itself at the reset although the person only looked): a wait a Start or a session already kept on its source (`limits.waiting` names the project) says "... and starts by itself." with Start off; a resting credential's wait nobody kept says what Start does instead ("Nothing can run until 15:40 (your API key's limit). Press Start and the work starts then.", `startKeepsWaitSentence`; W15-65: "it runs then" had no thing for "it") with `blocked.startable: true`, so the dialog keeps Start on and the stopped bar's Continue starts it; `POST /sessions` does not refuse on it, so that start meets the wait and keeps it (the executor's `noteWait`) and the work starts at the reset; a refused credential's wait keeps Start off (saving a key is the step). Tests: `real-daemon.test.ts` "leftovers7-tailrun, wave 13" (TR-2), R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds` (W15-66: in the Start form, `waitThenStartSentence`, "Waits until 15:40 (your API key's limit). Press Start and the work starts then.", since creating a task keeps no wait; before: "... and starts by itself."; test `real-daemon.test.ts` "w15-words, wave 15 run B"), R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
 `credential-limits.test.ts` "credential waits: the Start check, another credential, a failed
 start, a planning call". (5) The words: the session result's first builder
 (`RESULT_LINE_BUILDERS` in `session/result.ts`, `LastSessionOutcome.credentialWait`: "Waits
@@ -6449,7 +6453,13 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
   session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
-  waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready", action `start`:
+  waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready"; W15-67: while no
+  ready task can run because its credential rests or was refused, kept or not, the line names
+  the wait from `ProjectCardFacts.credentialWaitNow`, `RuntimeApp.billing.waits.now` passed by
+  `projectCardOf` and asked only while a task is ready: "Ready: 1 task; nothing runs until 15:40
+  (your API key's limit)" with Continue (Start keeps the wait), "Ready: 1 task; it starts by
+  itself at 15:40 (...)" with none once kept, "Ready: 1 task; nothing runs until you save a new
+  API key" with Save a new key (`waitHeadWords`), action `start`:
   the Start dialog; only when that dialog would start: without Claude "Ready: 3 tasks. Claude is
   not connected." with Connect Claude, and under Stop all "Ready: 3 tasks. Sessions are
   stopped." with no button, the header's stopped bar having Allow sessions again; the card's

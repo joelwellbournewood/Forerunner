@@ -11,7 +11,11 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { mergeModeOf } from "../loop/merge-mode.ts";
-import { type CredentialWaitWords, waitRowWords } from "../session/credential-wait.ts";
+import {
+  type CredentialWaitWords,
+  refusedCredentialWords,
+  waitRowWords,
+} from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { waitingOf } from "../wiring/billing-pick.ts";
@@ -280,8 +284,11 @@ export function reviewSentence(verdict: string): string {
   }
 }
 
-/** A run's outcome label in words. */
-function runOutcomeWords(outcome: string): string {
+/**
+ * A run's outcome label in words; `sourceKind` is the kind of credential the run was billed to
+ * (a refused one is named as the person set it up, W15-78).
+ */
+export function runOutcomeWords(outcome: string, sourceKind?: string | null): string {
   switch (outcome) {
     case "running":
       return "Running";
@@ -301,7 +308,7 @@ function runOutcomeWords(outcome: string): string {
     // The leftovers of wave 7: a run (or a review) Anthropic's refusal of the credential stopped
     // is no failed run; the task went back to ready and waits for a new one.
     case "credential_refused":
-      return "Stopped: Anthropic refused the credential";
+      return `Stopped: Anthropic refused ${refusedCredentialWords(sourceKind)}`;
     // ADR 0112: a run that wrapped up with work left, and one a budget stopped.
     case "paused":
       return "Paused";
@@ -520,6 +527,14 @@ export async function taskDetail(
         r.session_id,
         stopReasonOfHandoff((await store.session.get(r.session_id))?.handoff),
       );
+  // W15-78: a run Anthropic's refusal stopped names what was refused (its credential's kind).
+  const refusedKinds = new Map<string, string | null>();
+  for (const r of runRows)
+    if (r.outcome === "credential_refused" && r.billing_source_id && !refusedKinds.has(r.id))
+      refusedKinds.set(
+        r.id,
+        (await store.billingSource.get(r.billing_source_id).catch(() => undefined))?.kind ?? null,
+      );
   const runs = runRows.map((r) => {
     const got = reports.get(r.id);
     const work = isWorkRun(r);
@@ -532,7 +547,9 @@ export async function taskDetail(
       startedAt: r.created_at,
       durationMs: r.duration_ms,
       cost: money(r.cost_usd_micro, chfPerUsd),
-      outcome: stoppedReview ? REVIEW_STOPPED : runOutcomeWords(r.outcome),
+      outcome: stoppedReview
+        ? REVIEW_STOPPED
+        : runOutcomeWords(r.outcome, refusedKinds.get(r.id) ?? null),
       report: stoppedReview
         ? `${REVIEW_STOPPED_SENTENCE}: ${reviewStopWords(task, stopReasons.get(r.session_id) ?? null)}.`
         : (got?.report ?? null),

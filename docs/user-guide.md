@@ -840,12 +840,19 @@ closes, the mark goes, and the waiting work starts by itself: the tasks run, and
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
-new API key: 2 tasks"), and so does the Start dialog ("Nothing can run yet. Waits for a new API
-key: save one in Settings.", with **Save a new key**) instead of what a session would run.
+new API key: 2 tasks"), and so does the Start dialog ("Nothing can run until you save a new API
+key in Settings.", with **Save a new key**) instead of what a session would run.
 Opening the Start dialog changes nothing: when your credential rests until a reset and no
 session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
-Press Start and it runs then." and **Start** stays on; press it (or **Continue where it
-stopped**) and the work starts by itself at 15:40. Only looking starts nothing. If
+Press Start and the work starts then." and **Start** stays on; press it (or **Continue where it
+stopped**) and the work starts by itself at 15:40 (then the dialog says "Nothing can run until
+15:40 (your API key's limit); it starts by itself then."). Only looking starts nothing. The
+project's line says it too: "Ready: 1 task; nothing runs until 15:40 (your API key's limit)"
+with **Continue**, and where New task, the plan card or Settings say where a specialist runs,
+they say "Waits until 15:40 (your API key's limit). Press Start and the work starts then."
+(creating a task keeps no wait, so nothing starts by itself until you press Start). A task's
+run that Anthropic refused reads "Stopped: Anthropic refused your API key" (or "your
+subscription sign-in") in its drawer. If
 you add a Claude subscription instead of a new key, the work that waited starts by itself on the
 subscription when your order lets it go there (with no order chosen, tasks use the
 subscription first), with no restart, and once no work waits on the refused key its card closes

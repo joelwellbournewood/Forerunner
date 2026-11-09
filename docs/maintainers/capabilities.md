@@ -801,7 +801,9 @@ unless `FORERUNNER_WEB_FETCH=off`.
   ... `isLocalName`) refused whatever any list says; then the project's rule
   (`WebReadRules {mode, only, never}`): a host covered by a never entry refused, and in `only`
   mode a host no only entry covers refused, each refusal naming the list; `only` with nothing on
-  its list stays `only` and reads no website (R-failopen), never any public one. `siteCovers` is the
+  its list stays `only` and reads no website (R-failopen), never any public one, and says so
+  plainly: "example.org was not read: this project's \"only these websites\" list is empty" (W15-78;
+  before: "... is not on ... list, which names no website"; test `test/w15-words.test.ts`). `siteCovers` is the
   reader's own matcher: an entry covers the site and its subdomains, case, `*.`, a leading `www.`
   and a trailing dot normalised (`hostOfUrl` strips one trailing dot too, C-70); the capability
   token's `domainCovered` is not used here and is unchanged. `addressAllowed`: only a public

@@ -1,4 +1,5 @@
 import type { HumanRequestRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import { waitHeadWords } from "../session/credential-wait.ts";
 import type { ProjectCard, TaskDisplay } from "./api-types.ts";
 import {
   cardKindOf,
@@ -70,6 +71,16 @@ export interface ProjectStatusInput {
     label: string;
     line?: string;
     save?: { label: string; to: string } | null;
+  } | null;
+  /**
+   * W15-67: no ready task can run now because its credential rests or was refused, kept or not
+   * (`RuntimeApp.billing.waits.now`, the Start check's sentence and its link): the ready line
+   * names the wait and its time. Null: a ready task would run.
+   */
+  credentialWaitNow?: {
+    text: string;
+    save: { label: string; to: string } | null;
+    startable?: boolean;
   } | null;
   /**
    * Whether a Claude credential is in force now (the intake can call the model); null when not
@@ -316,6 +327,21 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       };
     if (input.stopped === true)
       return { kind: "ready", text: `Ready: ${n}. Sessions are stopped.`, action: null };
+    // W15-67: the only credential rests (or was refused), so nothing runs before its reset (or
+    // a new key): the line names the wait and its time. Continue stays where Start still keeps
+    // the wait (`startable`); a refusal links to where a new one is saved; a kept wait starts
+    // by itself. Before: "Ready to continue: 1 task ready" said nothing of the wait.
+    const wait = input.credentialWaitNow;
+    if (wait)
+      return {
+        kind: "ready",
+        text: `Ready: ${n}; ${waitHeadWords(wait.text)}`,
+        action: wait.startable
+          ? { kind: "start", label: "Continue", to: null }
+          : wait.save
+            ? { kind: "link", label: wait.save.label, to: wait.save.to }
+            : null,
+      };
     return {
       kind: "ready",
       text: `Ready to continue: ${n} ready`,

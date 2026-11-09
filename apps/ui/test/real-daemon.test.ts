@@ -10550,7 +10550,8 @@ describe("leftovers7-web: the Start check names a credential wait (R-startcred)"
       // Before: blocked null, the dialog said 'This session runs "Write note A" ...'.
       expect(check.blocked).toEqual({
         kind: "nothing_runnable",
-        sentence: "Nothing can run yet. Waits for a new API key: save one in Settings.",
+        // W15-78 (before: "Nothing can run yet. Waits for a new API key: save one in Settings.").
+        sentence: "Nothing can run until you save a new API key in Settings.",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
       });
       // R-runsonrefused: New task's line (and the plan card's) says the wait, never "Runs on
@@ -11211,8 +11212,9 @@ describe("leftovers7-tailrun, wave 13", () => {
         // No wait is kept yet, so the line says what Start does, and Start stays pressable.
         expect(check.blocked).toEqual({
           kind: "nothing_runnable",
+          // W15-65 (before: "... Press Start and it runs then.").
           sentence:
-            "Nothing can run until 09:30 (your API key's limit). Press Start and it runs then.",
+            "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
           action: null,
           startable: true,
         });
@@ -11234,8 +11236,8 @@ describe("leftovers7-tailrun, wave 13", () => {
       // From then on its check says the work starts by itself (true now), with Start off.
       expect((await client.startCheck(started.id)).blocked).toEqual({
         kind: "nothing_runnable",
-        sentence:
-          "Nothing can run yet. Waits until 09:30 (your API key's limit) and starts by itself.",
+        // W15-78 (before: "Nothing can run yet. Waits until 09:30 (...) and starts by itself.").
+        sentence: "Nothing can run until 09:30 (your API key's limit); it starts by itself then.",
         action: null,
       });
       // At the reset: the work Start waited for starts by itself; the project only looked at
@@ -13831,5 +13833,116 @@ describe("w15-words, wave 15 run B", () => {
         action: overview,
       });
     });
+  });
+
+  describe("the only API key rests and no Start kept its wait (W15-66, W15-65, W15-67)", () => {
+    const key = ["sk-ant-api03-", "w15words", "6".repeat(40)].join(""); // not-a-secret
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-words-rest-"));
+    const clock = new SimulatedClock("2026-11-09T08:00:00Z");
+    /** The daemon on one home: composed again on it, it is a restart. */
+    const compose = async () => {
+      const model = createRolePlayer(
+        benchOptionsFromEnv(
+          { FORERUNNER_BENCH_DELAY_MS: "0" },
+          new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+        ),
+      );
+      const standIn = messagesApiStandIn({ model, clock, answerFor: keyRule({}) });
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({ anthropic_api_key: key }),
+        fetchImpl: standInFetch(standIn, {
+          fallback: async () => new Response("not here", { status: 404 }),
+        }),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+
+    it("New task's runs-on line, the Start check and the project's line say the wait and what Start does, also after a restart", async () => {
+      let { rt, client } = await compose();
+      try {
+        const project = await client.createProject({ name: "Notes", goal: "Notes for the club" });
+        await client.createTask(project.id, {
+          title: "Write the club note",
+          outcome: "The note is written",
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+        // With the key serving, the line reads as today.
+        expect((await client.project(project.id)).statusLine).toMatchObject({
+          text: "Ready to continue: 1 task ready",
+          action: { kind: "start", label: "Continue" },
+        });
+        // The only key rests until 08:30 UTC (09:30 in Zurich): another session met its limit.
+        const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+          (s) => s.kind === "api_key",
+        );
+        if (!src) throw new Error("no api_key source");
+        await rt.store.billingSource.patch(src.id, {
+          limits: { ...src.limits, restingUntil: "2026-11-09T08:30:00Z" },
+        });
+        const seen = async () => {
+          // W15-66: New task (and Settings) say where the coder runs: creating a task keeps no
+          // wait, so nothing starts by itself.
+          const coder = (await client.modelSettings(undefined, project.id)).specialists.find(
+            (s) => s.name === "coder",
+          );
+          expect(coder?.runsOn?.line).toBe(
+            "Waits until 09:30 (your API key's limit). Press Start and the work starts then.",
+          );
+          // W15-65: the Start check says what Start does.
+          expect((await client.startCheck(project.id)).blocked).toEqual({
+            kind: "nothing_runnable",
+            sentence:
+              "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
+            action: null,
+            startable: true,
+          });
+          // W15-67: the project's line names the wait and its time; Continue keeps the wait.
+          const line = (await client.project(project.id)).statusLine;
+          expect(line).toEqual({
+            kind: "ready",
+            text: "Ready: 1 task; nothing runs until 09:30 (your API key's limit)",
+            action: { kind: "start", label: "Continue", to: null },
+          });
+          expect((await client.projects()).find((p) => p.id === project.id)?.statusLine).toEqual(
+            line,
+          );
+        };
+        await seen();
+        // Looking recorded nothing; after a restart it reads the same.
+        await rt.close();
+        ({ rt, client } = await compose());
+        await seen();
+      } finally {
+        await rt.close();
+      }
+    }, 60_000);
   });
 });

@@ -516,7 +516,9 @@ describe("credential waits: the Start check, another credential, a failed start,
       const check = await json<StartCheckView>(req(`/projects/${project.id}/start-check`));
       expect(check.blocked).toEqual({
         kind: "nothing_runnable",
-        sentence: "Nothing can run yet. Waits for a new API key: save one in Settings.",
+        // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits for a new API
+        // key: save one in Settings.").
+        sentence: "Nothing can run until you save a new API key in Settings.",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
       });
       // R-refusedstays: the person adds a Claude subscription instead of a new key. With no

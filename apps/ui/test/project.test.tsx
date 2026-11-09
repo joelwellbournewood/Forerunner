@@ -420,8 +420,10 @@ describe("Project page", () => {
       await screen.findByTestId("summary");
       await user.click(screen.getByTestId("start-session"));
       const dialog = await screen.findByTestId("start-session-dialog");
+      // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits for a new API
+      // key: save one in Settings.").
       expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
-        /^Nothing can run yet\. Waits for a new API key: save one in Settings\.$/,
+        /^Nothing can run until you save a new API key in Settings\.$/,
       );
       expect(within(dialog).getByTestId("start-session-unblock")).toHaveTextContent(
         "Save a new key",
@@ -640,7 +642,8 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     const user = userEvent.setup();
     const harness = createHarness();
     harness.daemon.state.credentialWaitNow.proj_atlas = {
-      text: "Nothing can run until 09:30 (your API key's limit). Press Start and it runs then.",
+      // W15-65: the daemon's words (before: "... Press Start and it runs then.").
+      text: "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
       save: null,
       startable: true,
     };
@@ -649,7 +652,7 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
     expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
-      /^Nothing can run until 09:30 \(your API key's limit\)\. Press Start and it runs then\.$/,
+      /^Nothing can run until 09:30 \(your API key's limit\)\. Press Start and the work starts then\.$/,
     );
     expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
     // Before: Start was off whenever the check named a wait, so nothing kept it and the work
@@ -675,8 +678,10 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     await screen.findByTestId("summary");
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
+    // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits until 09:30 ...
+    // and starts by itself.").
     expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
-      /^Nothing can run yet\. Waits until 09:30 \(your API key's limit\) and starts by itself\.$/,
+      /^Nothing can run until 09:30 \(your API key's limit\); it starts by itself then\.$/,
     );
     expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
   });

@@ -464,7 +464,7 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
  * executor wrote the driver's `error` to the Run row before it knew the credential stopped it.
  */
 describe("a run a credential stopped is never 'Failed' in the task's runs (U-078)", () => {
-  it("a usage limit reads 'Stopped at the usage limit'; a refused key 'Stopped: Anthropic refused the credential'", async () => {
+  it("a usage limit reads 'Stopped at the usage limit'; a refused key 'Stopped: Anthropic refused your API key'", async () => {
     const clock = new SimulatedClock("2026-11-03T14:00:00Z");
     const w = world(clock);
     await w.vault.set(SECRET_NAMES.anthropic, KEY);
@@ -505,7 +505,8 @@ describe("a run a credential stopped is never 'Failed' in the task's runs (U-078
         .filter((r) => r.kind === "work")
         .map((r) => r.outcome)
         .sort(),
-    ).toEqual(["Stopped at the usage limit", "Stopped: Anthropic refused the credential"]);
+      // W15-78: what was refused, as the person set it up (before: "... refused the credential").
+    ).toEqual(["Stopped at the usage limit", "Stopped: Anthropic refused your API key"]);
     expect(b.runs.map((r) => r.outcome)).not.toContain("Failed");
   }, 120_000);
 });

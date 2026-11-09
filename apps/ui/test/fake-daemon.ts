@@ -122,6 +122,7 @@ import {
   credentialChoiceFor,
   needsOf,
 } from "@forerunner/runtime/session/credential-choice";
+import { nothingRunsYetSentence } from "@forerunner/runtime/session/credential-wait";
 import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import { type ChooserFacts, DEFAULT_CHOOSER_FACTS } from "@forerunner/runtime/wiring/billing-pick";
 import {
@@ -484,7 +485,8 @@ export interface FakeDaemonState {
   intake: Record<string, IntakeStatusView>;
   /**
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
-   * (as `RuntimeApp.billing.waits.now`): the Start check says "Nothing can run yet. <text>".
+   * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
+   * (`nothingRunsYetSentence`), and the project's ready line names it (W15-67).
    */
   credentialWaitNow: Record<
     string,
@@ -1562,6 +1564,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           }
         : null,
       credentialWait: state.taskMeta.credentialWaits.get(p.id) ?? null,
+      // W15-67, as the daemon's `projectCard`: the wait now, asked only while a task is ready.
+      credentialWaitNow: tasks.some((t) => t.display?.key === "ready")
+        ? (state.credentialWaitNow[p.id] ?? null)
+        : null,
       // As the daemon (`!!rt.provider`): `/me`'s provider, unknown when the fixture names none.
       hasModel: me.provider === undefined ? null : me.provider !== null,
       stopped: state.killActive,
@@ -2505,9 +2511,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (credentialWait && !view.blocked && view.runnable.length > 0)
       view.blocked = {
         kind: "nothing_runnable",
+        // W15-78: one sentence with a subject, as the daemon's `startBlocked`.
         sentence: credentialWait.startable
           ? credentialWait.text
-          : `Nothing can run yet. ${credentialWait.text}`,
+          : nothingRunsYetSentence(credentialWait.text),
         action: credentialWait.save
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,

@@ -190,14 +190,75 @@ export function waitSentence(
  * The Start check's sentence for work that waits for a credential's reset while no Start has
  * kept that wait yet (leftovers7-tailrun TR-2): looking at the check records nothing, so the
  * sentence says what Start does ("Nothing can run until 15:40 (your subscription's limit).
- * Press Start and it runs then."), and Start keeps the wait so the work starts at the reset.
+ * Press Start and the work starts then."; W15-65: before, "... and it runs then.", with no
+ * thing for "it"), and Start keeps the wait so the work starts at the reset.
  */
 export function startKeepsWaitSentence(
   wait: CredentialWait,
   opts: { timezone?: string; nowMs: number },
 ): string {
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `Nothing can run until ${at} (${limitOf(wait.kind)}). Press Start and it runs then.`;
+  return `Nothing can run until ${at} (${limitOf(wait.kind)}). ${PRESS_START_THEN}`;
+}
+
+const PRESS_START_THEN = "Press Start and the work starts then.";
+
+/**
+ * W15-66: the wait where none is recorded (the credential chooser's runs-on line on New task,
+ * the plan card and Settings): creating a task keeps no wait, so nothing starts by itself; a
+ * Start keeps it (TR-2). "Waits until 15:40 (your subscription's limit). Press Start and the
+ * work starts then." A refusal: "Waits for a new API key: save one in Settings." (as
+ * `waitSentence`). Before, the line said "... and starts by itself.".
+ */
+export function waitThenStartSentence(
+  wait: CredentialWait,
+  opts: { timezone?: string; nowMs: number },
+): string {
+  if (wait.reason === "refused") return waitSentence(wait, opts);
+  const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
+  return `Waits until ${at} (${limitOf(wait.kind)}). ${PRESS_START_THEN}`;
+}
+
+/**
+ * W15-78: the Start check's refusal while a wait is kept or a credential was refused, as one
+ * sentence with a subject, from the wait's own sentence (`waitSentence`, untitled): "Nothing can
+ * run until 15:40 (your subscription's limit); it starts by itself then." or "Nothing can run
+ * until you save a new API key in Settings." Before: "Nothing can run yet. Waits until ...".
+ */
+export function nothingRunsYetSentence(waitText: string): string {
+  const until = /^Waits (until .+) and starts by itself\.$/.exec(waitText.trim());
+  if (until) return `Nothing can run ${until[1]}; it starts by itself then.`;
+  const saved = /^Waits for (.+): save one in Settings\.$/.exec(waitText.trim());
+  if (saved) return `Nothing can run until you save ${saved[1]} in Settings.`;
+  return `Nothing can run yet. ${waitText}`;
+}
+
+/**
+ * W15-67: the wait in a few words after "Ready: 1 task; ", from the Start check's sentence
+ * (`startKeepsWaitSentence`, `waitSentence`, both untitled): "nothing runs until 09:30 (your API
+ * key's limit)", "it starts by itself at 09:30 (your API key's limit)", "nothing runs until you
+ * save a new API key".
+ */
+export function waitHeadWords(waitText: string): string {
+  const t = waitText.trim();
+  const start = /^Nothing can run (until .+?)\. Press Start/.exec(t);
+  if (start) return `nothing runs ${start[1]}`;
+  const kept = /^Waits until (.+) and starts by itself\.$/.exec(t);
+  if (kept) return `it starts by itself at ${kept[1]}`;
+  const saved = /^Waits for (.+): save one in Settings\.$/.exec(t);
+  if (saved) return `nothing runs until you save ${saved[1]}`;
+  return "it waits for a Claude credential";
+}
+
+/**
+ * W15-78: what Anthropic refused, as the person set it up: "your API key", "your subscription
+ * sign-in", or "your key or sign-in" when the run does not say which (before: "the credential",
+ * the code's word).
+ */
+export function refusedCredentialWords(kind: string | null | undefined): string {
+  if (kind === "api_key") return "your API key";
+  if (kind === "subscription") return "your subscription sign-in";
+  return "your key or sign-in";
 }
 
 /**

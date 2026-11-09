@@ -228,6 +228,7 @@ import {
   saveLink,
   startKeepsWaitSentence,
   waitSentence,
+  waitThenStartSentence,
 } from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
@@ -3512,7 +3513,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // the wait (the words a waiting task's session result uses), never "Runs on your API key".
       const wait = choice ? blocked.get(choice.kind as BillingSource["kind"]) : undefined;
       return choice && wait
-        ? { ...choice, line: waitSentence(wait, { timezone: human.timezone, nowMs: clock.now() }) }
+        ? {
+            ...choice,
+            // W15-66: creating the task keeps no wait, so nothing starts by itself (TR-2).
+            line: waitThenStartSentence(wait, { timezone: human.timezone, nowMs: clock.now() }),
+          }
         : choice;
     };
   };

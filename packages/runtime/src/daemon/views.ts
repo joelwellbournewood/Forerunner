@@ -148,6 +148,16 @@ export interface ProjectCardFacts {
   hasModel?: boolean | null;
   /** Stop all is on: a ready project offers no Continue the Start dialog would refuse. */
   stopped?: boolean | null;
+  /**
+   * W15-67: why no ready task of the project can run now, when its credential rests or was
+   * refused (`RuntimeApp.billing.waits.now`, read only; the Start check's words), recorded or
+   * not; null when one would run. Asked only while a task is ready.
+   */
+  credentialWaitNow?: (projectId: string) => Promise<{
+    text: string;
+    save: { label: string; to: string } | null;
+    startable?: boolean;
+  } | null>;
 }
 
 export async function projectCard(
@@ -190,6 +200,11 @@ export async function projectCard(
   const repository = facts?.repository ? facts.repository(p) : null;
   const folder = !repository && facts?.folder ? facts.folder(p) : null;
   const working = await workingOn(store, p.id);
+  // W15-67: the wait now, whether a Start kept it or not, only while a task is ready.
+  const waitNow =
+    facts?.credentialWaitNow && tasks.some((t) => displays.get(t.id)?.key === "ready")
+      ? await facts.credentialWaitNow(p.id).catch(() => null)
+      : null;
   const statusLine = projectStatusLine({
     projectId: p.id,
     tasks,
@@ -199,6 +214,7 @@ export async function projectCard(
     planError: plan.error,
     planWait: "wait" in plan ? (plan.wait ?? null) : null,
     credentialWait: ctx.credentialWait ?? null,
+    credentialWaitNow: waitNow,
     hasModel: facts?.hasModel ?? null,
     stopped: facts?.stopped ?? null,
     working,

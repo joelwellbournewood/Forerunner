@@ -1,4 +1,5 @@
 import { formatChf, usdToChfMicro } from "@forerunner/billing";
+import { nothingRunsYetSentence } from "../session/credential-wait.ts";
 import { aboutWords } from "../session/money-words.ts";
 import type { StartCheck } from "../session/start-check.ts";
 import type { StartCheckView } from "./api-types.ts";
@@ -44,7 +45,7 @@ export interface StartBlockedFacts {
     save: { label: string; to: string } | null;
     /**
      * TR-2: a resting credential whose wait no Start has kept yet: `text` is the whole sentence
-     * ("Nothing can run until 15:40 (...). Press Start and it runs then.") and Start stays on.
+     * ("Nothing can run until 15:40 (...). Press Start and the work starts then.") and Start stays on.
      */
     startable?: boolean;
   } | null;
@@ -81,9 +82,10 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
   if (blocked === null && f.credentialWait && r.runnable.length > 0 && !f.busy)
     return {
       kind: "nothing_runnable",
+      // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits until ...").
       sentence: f.credentialWait.startable
         ? f.credentialWait.text
-        : `Nothing can run yet. ${f.credentialWait.text}`,
+        : nothingRunsYetSentence(f.credentialWait.text),
       action: f.credentialWait.save
         ? { kind: "link", label: f.credentialWait.save.label, to: f.credentialWait.save.to }
         : null,

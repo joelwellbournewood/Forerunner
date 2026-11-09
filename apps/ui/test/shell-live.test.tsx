@@ -166,7 +166,7 @@ describe("leftovers7-tailrun, wave 13: Continue keeps a credential wait (TR-2)",
     const harness = createHarness();
     running(harness);
     harness.daemon.state.credentialWaitNow.proj_atlas = {
-      text: "Nothing can run until 09:30 (your API key's limit). Press Start and it runs then.",
+      text: "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
       save: null,
       startable: true,
     };

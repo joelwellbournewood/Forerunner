@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { requestWords } from "../src/daemon/request-words.ts";
 import { startBlocked } from "../src/daemon/start-blocked.ts";
+import { runOutcomeWords } from "../src/daemon/task-display.ts";
 import {
   LEFT_TO_YOU_LABELS,
   type TaskDisplayContext,
@@ -14,6 +15,12 @@ import { describeEvent } from "../src/daemon/views.ts";
 import { OWED_FOLDER_LABEL } from "../src/loop/merge-mode.ts";
 import { budgetStopTitle, continueLabel } from "../src/session/budget-card.ts";
 import { wrapUpSentWords } from "../src/session/budget-pause.ts";
+import {
+  nothingRunsYetSentence,
+  startKeepsWaitSentence,
+  waitSentence,
+  waitThenStartSentence,
+} from "../src/session/credential-wait.ts";
 import { aboutWords } from "../src/session/money-words.ts";
 import { sessionResultLines, stopWords } from "../src/session/result.ts";
 
@@ -303,6 +310,115 @@ describe("w15-words, wave 15 run B", () => {
         action: { kind: "link", label: "Open your files", to: "/projects/p1/files" },
       });
       expect(line("Taken out in #4", "Merged").text).toBe("Done: all 2 tasks; 1 taken out.");
+    });
+  });
+
+  describe("W15-66, W15-65, W15-78, W15-67: a credential wait promises only what is kept", () => {
+    const words = { timezone: "Europe/Zurich", nowMs: Date.parse("2026-11-09T08:00:00Z") };
+    const resting = {
+      reason: "limit" as const,
+      sourceId: "s1",
+      kind: "api_key" as const,
+      until: "2026-11-09T08:30:00Z",
+    };
+    const refused = {
+      reason: "refused" as const,
+      sourceId: "s1",
+      kind: "api_key" as const,
+      until: null,
+    };
+
+    it("W15-66: the runs-on line where no wait is recorded never says it starts by itself", () => {
+      expect(waitThenStartSentence(resting, words)).toBe(
+        "Waits until 09:30 (your API key's limit). Press Start and the work starts then.",
+      );
+      expect(waitThenStartSentence(refused, words)).toBe(
+        "Waits for a new API key: save one in Settings.",
+      );
+      // Where a wait is recorded (a session met it), the old sentence is true and stays.
+      expect(waitSentence(resting, words)).toBe(
+        "Waits until 09:30 (your API key's limit) and starts by itself.",
+      );
+    });
+
+    it("W15-65: the Start check's sentence names what starts", () => {
+      expect(startKeepsWaitSentence(resting, words)).toBe(
+        "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
+      );
+    });
+
+    it("W15-78: the Start check's refusal has a subject; the run label names what was refused", () => {
+      expect(nothingRunsYetSentence(waitSentence(resting, words))).toBe(
+        "Nothing can run until 09:30 (your API key's limit); it starts by itself then.",
+      );
+      expect(nothingRunsYetSentence(waitSentence(refused, words))).toBe(
+        "Nothing can run until you save a new API key in Settings.",
+      );
+      expect(
+        nothingRunsYetSentence(waitSentence({ ...refused, kind: "subscription" }, words)),
+      ).toBe("Nothing can run until you save a new Claude sign-in in Settings.");
+      const blocked = startBlocked(
+        { runnable: [{ taskId: "t1" }], ready: 1, waiting: [], overBudget: [] } as never,
+        {
+          stopped: false,
+          hasModel: true,
+          projectId: "p1",
+          chfPerUsd: 0.8,
+          credentialWait: { text: waitSentence(resting, words), save: null },
+        } as never,
+      );
+      expect(blocked?.sentence).toBe(
+        "Nothing can run until 09:30 (your API key's limit); it starts by itself then.",
+      );
+      expect(runOutcomeWords("credential_refused", "api_key")).toBe(
+        "Stopped: Anthropic refused your API key",
+      );
+      expect(runOutcomeWords("credential_refused", "subscription")).toBe(
+        "Stopped: Anthropic refused your subscription sign-in",
+      );
+      expect(runOutcomeWords("credential_refused", null)).toBe(
+        "Stopped: Anthropic refused your key or sign-in",
+      );
+    });
+
+    it("W15-67: the project's ready line names the wait and its time", () => {
+      const ready = (
+        credentialWaitNow: Parameters<typeof projectStatusLine>[0]["credentialWaitNow"],
+      ) =>
+        projectStatusLine({
+          projectId: "p1",
+          tasks: [{ id: "t1", title: "Write the note", status: "ready", depends_on: [] }],
+          displays: new Map([["t1", { key: "ready", label: "Ready", tone: "neutral" } as never]]),
+          cards: [],
+          plan: null,
+          working: null,
+          folder: null,
+          hasModel: true,
+          credentialWaitNow,
+        });
+      expect(ready(null)).toMatchObject({ text: "Ready to continue: 1 task ready" });
+      expect(
+        ready({ text: startKeepsWaitSentence(resting, words), save: null, startable: true }),
+      ).toEqual({
+        kind: "ready",
+        text: "Ready: 1 task; nothing runs until 09:30 (your API key's limit)",
+        action: { kind: "start", label: "Continue", to: null },
+      });
+      expect(ready({ text: waitSentence(resting, words), save: null })).toEqual({
+        kind: "ready",
+        text: "Ready: 1 task; it starts by itself at 09:30 (your API key's limit)",
+        action: null,
+      });
+      expect(
+        ready({
+          text: waitSentence(refused, words),
+          save: { label: "Save a new key", to: "/setup" },
+        }),
+      ).toEqual({
+        kind: "ready",
+        text: "Ready: 1 task; nothing runs until you save a new API key",
+        action: { kind: "link", label: "Save a new key", to: "/setup" },
+      });
     });
   });
 });
