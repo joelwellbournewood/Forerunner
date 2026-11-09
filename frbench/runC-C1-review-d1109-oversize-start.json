@@ -1,0 +1,100 @@
+{
+ "verdict": "pass",
+ "acceptance_walk": "Worktree detached at fix/d1109-oversize-start (7324d3e). Port 48591 was taken by review-d1109-chat-guard's githost (PID 18619), so the bench ran on daemon 48597 and UI 2197, with the stand-in model (--provider bench --fresh), FORERUNNER_BENCH_LONG=\"Build the shop\", FORERUNNER_BENCH_USAGE=\"Build the shop:20000\" and DELAY 50 ms. Projects and tasks were made through the daemon API. The test setup wrote est_cost_usd_micro straight into the bench's state.sqlite, as the composed tests do with store.task.patch. Walk scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk1-7.cjs. Results are in /tmp/frbench/review-d1109-oversize-start/walk1-7.json and the screenshots in /tmp/frbench/review-d1109-oversize-start/steps/.\n\n(1) OS-3/OS-4, one larger task alone, Start dialog at CHF 0.40 (steps/01): plan line 'This session works on \"Build the shop page in shop.html\" until its work budget is used.' Amber note: '\"Build the shop page in shop.html\" needs about CHF 6.40, more than this session's work budget of CHF 0.32: it works until that budget is used, keeps its work, and asks you to continue.' Start is enabled, and 'smaller one' and 'Nothing can run' appear nowhere.\n\n(2) A fitting task first (steps/02): 'This session runs \"Write the about text in about.md\" (about CHF 0.03), then works on \"Build the shop page in shop.html\" with what is left.' The note says 'after the other tasks it works with about CHF 0.29'.\n\n(3) Three larger tasks (steps/03): the first gets the warning, and the other two each get 'needs about CHF 7.20, more than this session's work budget: one task that large runs a session, so it waits for the next one.' Start stays on.\n\n(4) Pressing Start sent POST /sessions {budgetUsdMicro: 500000}. The dialog said 'Started: ...'.\n\n(5) OS-2/OS-7, the session page (steps/05). The about task ran, was accepted by the critic, and only then came 'Took \"Build the shop page in shop.html\", larger than this session's work budget, with about CHF 0.31 left.', exactly once. The coder wrote 12 parts, was told to wrap up and paused: 'paused before this session's budget of CHF 0.40 ran out: it spent CHF 0.26 and listed 2 things left to do'. The session ended 'Stopped: the budget is used: 1 done, 1 paused. CHF 0.27.' No limit was passed: CHF 0.27 of 0.40 spent, with the reserve kept. The result has 3 lines and no 'Nothing could run'. Details plan line: 'Plan: 1 task, about CHF 0.03, then \"Build the shop page in shop.html\" (about CHF 6.40), larger than this session's work budget, with what is left.' The plan row holds items [about 40000, shop 383767], oversized.roomUsdMicro 383767 and reason 'took \"Build the shop page in shop.html\", larger than this session's work budget, with what is left'.\n\n(6) Inbox (steps/06): one card, '\"Build the shop page in shop.html\" paused at this session's budget of CHF 0.40', with Continue (CHF 6.40 more) and Cancel task. The Tasks tab shows 'Paused at the session's budget'.\n\n(7) Pressing Continue in the Inbox started a session that priced the task at the learned estimate less the CHF 0.26 kept (OS-1 at work). The brief continued from where it stopped, and the task finished and was reviewed (steps/10).\n\n(8) OS-1 in the dialog: a task paused at CHF 0.40 and then made ready reads '\"Build the shop page in shop.html\" needs about CHF 1.42 more (CHF 0.28 spent so far), more than this session's work budget of CHF 0.32: ...' (steps/13).\n\n(9) OS-6, chat on a project whose only task is above CHF 4.00 (steps/14, 15). 'start a session' gives the Yes/No card 'Start a session on Shop chat (up to CHF 5)? \"Build the shop page in shop.html\" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.' No cancelled it. 'start a session with 0.40 francs' answered 'Started a session on Shop chat (up to CHF 0.40). \"...\" needs more than its work budget of CHF 0.32: ...' and the session ran and paused with its card.\n\nSide observation: on the first 'Shop' project the chat gave no warning. That is correct. The learner had already brought the explicit USD 8 estimate down to CHF 2.50, so the task fit, and the session ran it whole.\n\n(10) OS-5, the plan card (steps/18). An intake plan for 'Bakery'; the session cap was set through PUT /projects/:id/settings to a work budget between the two task figures. Under the tester task: 'More than a session's work budget (CHF 0.06): it pauses with its work kept and asks you to continue.' The coder task has no note, and under the default budget neither task has one. The note stayed visible across 8 s of polling.\n\n(11) Restart (restart-daemon.mjs): the start check for 'Shop three' still answered oversized plus two one_large entries with the same sentences.\n\n(12) Neighbouring journey: after restarting the daemon with FORERUNNER_BENCH_LONG=\"Write the guide,Write the notes\", the resume journey (scripts/bench/journeys/resume.cjs) passed all 11 checks. These cover the work-in-progress commit, the Continue card, the brief starting with '## Where the last run stopped', one review, and the whole chain done.\n\nThe bench was stopped with stop.mjs, its home and browser profile deleted, and the temporary base worktree removed.",
+ "blocking": [],
+ "claims_checked": [
+  {
+   "claim": "OS-2 composed test packages/runtime/test/oversized-task.test.ts fails before the fix",
+   "holds": true,
+   "note": "Copied onto a base worktree (a97b9ce): 3/3 fail, POST /sessions 409 'Nothing can run within this budget: \"Build the shop in shop.md\" needs about CHF 6.40.' On the branch all pass."
+  },
+  {
+   "claim": "real-daemon 'd1109-oversize-start, run C' cases fail before the fix",
+   "holds": true,
+   "note": "Run with the branch's test file and fake daemon against base code: 4/4 fail (blocked not null, oversized room undefined, the plan card note undefined, chat 'Nothing can run'). They pass on the branch inside the full UI suite."
+  },
+  {
+   "claim": "apps/ui/test/d1109-oversize.test.tsx fails before the fix",
+   "holds": true,
+   "note": "Base UI with the branch fake: 5 of 6 fail (no start-session-plan, no oversized note, plan card note missing, Continue where it stopped not restarting). They pass on the branch."
+  },
+  {
+   "claim": "Named unit tests pass (estimates, task-dependencies, oversized-task, oversize-words, where-last-run-stopped, w15-words, commands oversize-start)",
+   "holds": true,
+   "note": "7 files, 91 tests passed."
+  },
+  {
+   "claim": "OS-1: a task resuming from kept work is priced at what is left; a start over keeps the whole estimate",
+   "holds": true,
+   "note": "Unit cases pass. On the bench the dialog said 'about CHF 1.42 more (CHF 0.28 spent so far)', and the Continue session planned the learned figure less the kept CHF 0.26."
+  },
+  {
+   "claim": "OS-2: the larger task runs after the work that fits, with what is left, once a session, never refused",
+   "holds": true,
+   "note": "Bench: the fitting task was done and reviewed, then the Took line came once and the task paused with one card. POST /sessions answered 202."
+  },
+  {
+   "claim": "OS-3/OS-4: the Start dialog warns with the daemon's sentence and keeps Start on; the larger-budget advice is gone",
+   "holds": true,
+   "note": "Bench steps 01-03 and the UI tests."
+  },
+  {
+   "claim": "OS-5: the plan card notes a task above the project's session work budget; a fitting one has none",
+   "holds": true,
+   "note": "Bench step 18 and GET /inbox planTasks[1].oversized."
+  },
+  {
+   "claim": "OS-6: chat's start reads the warning back, never refuses, Yes starts",
+   "holds": true,
+   "note": "Bench steps 14 and 15; the cheap start carries the warning after 'Started ...'."
+  },
+  {
+   "claim": "OS-7: no 'Nothing could run' for a larger task; Took line once; second larger task says why it waits",
+   "holds": true,
+   "note": "Bench session log and result. The one_large and no_room result sentences are checked only by unit tests (where-last-run-stopped)."
+  },
+  {
+   "claim": "OS-8: ADR 0115, ADR 0112 amendment, runtime/apps/commands docs, user guide",
+   "holds": true,
+   "note": "Read them all. pnpm docs:check --base claude/nifty-knuth-f9udt0 ok (40 files); docs:links ok."
+  },
+  {
+   "claim": "Restart: the task, its card and its Run handoff read the same after composing again",
+   "holds": true,
+   "note": "The composed test does this (validation rule 4). The bench daemon restart kept the start check's answer."
+  },
+  {
+   "claim": "Each changed route has a real-daemon case and the fake changed in the same commit",
+   "holds": true,
+   "note": "170859f (start-check), 28bce73 and c4ec445 (GET /inbox), 12a384b (chat): each has real-daemon.test.ts and fake-daemon.ts together. 7324d3e changes plan-tasks.ts, which the fake imports directly."
+  },
+  {
+   "claim": "Validation: UI vitest, Playwright, integration, e2e, typecheck green",
+   "holds": true,
+   "note": "UI vitest 90 files and 1103 tests passed. Playwright (local config) 35 passed. test:integration 30 passed, 75 skipped (no Postgres). test:e2e 25 passed, 1 skipped. pnpm typecheck exit 0. biome on the changed files: 1 info, no errors. Related runtime and commands subset: 22 files, 352 tests passed."
+  },
+  {
+   "claim": "Tests changed for design have a design reason, none weakened",
+   "holds": true,
+   "note": "Every removed assertion in polish-screens, project, w15-words (UI and runtime), task-dependencies and where-last-run-stopped encodes the old refusal or W6-23 sentence that D4 removes, and each is replaced by an assertion of the new sentence. One side effect is in non_blocking (the stuck-dependency blocker lost its only UI assertion)."
+  },
+  {
+   "claim": "not_done items have reasons",
+   "holds": true,
+   "note": "The plan approval card at autonomy 0/1 not naming the pause, and a larger 'later' task not reported as oversized: both are outside the OS acceptance lines, with stated reasons."
+  }
+ ],
+ "non_blocking": [
+  "The 'Took' line can be untrue. takeHeld (packages/runtime/src/session/runner.ts, around :1456-1500) writes the plan row ('took \"X\" ...') and emits session.took_larger before the claim. If the held task was cancelled by the person, or claimed by a peer, while the fitting work ran, the claim then fails ('task.skipped'). The log still says 'Took \"X\", larger than this session's work budget, with about CHF N left.' although nothing ran (design \u00a75 rule 4). Suggested fix: re-read the row in takeHeld (status ready, unclaimed) before writing the plan row and the event.",
+  "Lost coverage. apps/ui/test/project.test.tsx held the only assertion of the Start dialog's stuck-dependency blocker ('Nothing can run: \"Write the migration guide\" waits on \"Try the old approach\", which was cancelled.') with Start disabled (base project.test.tsx:504). D4 legitimately changed that scenario, because the larger task now runs, but no test asserts the blocker any more. The fake still serves it and start-blocked.ts still produces it. Add a stuck-only case, UI plus real daemon.",
+  "Repeated sentences. With several larger tasks, each extra one is its own line with the same 'one task that large runs a session, so it waits for the next one.' (bench step 03; w15-words.test.tsx now expects three such lines plus 'and 1 more'). The spec sanctions this, but it undoes C-45/W15-38's 'one line, not one each' and leans against design \u00a73.6 'Must not show: a list of what will not run when something will'. Worth folding into one line later.",
+  "Chat read-back money format. 'Start a session on Shop chat (up to CHF 5)? \"...\" needs more than its work budget of CHF 4.00: ...' mixes whole francs and two decimals in one sentence (design \u00a75 rule 7; acceptance OS-6 wrote 'CHF 5.00', while the design's own \u00a75 example writes 'CHF 5'). 'its work budget' also reads as the task's budget, and 'this session's work budget' would match the dialog. startSentence and askFromChat are C3's.",
+  "The Inbox budget card's 'Continue (CHF 6.40 more)' still offers the whole estimate after CHF 0.26 was kept (bench step 06; 'CHF 32.00 more' for the USD 40 task). That is d1109-oversize-pause's part (C2: Continue's floor reads estimateLeftUsdMicro). Make sure C2 picks it up.",
+  "The plan approval card at autonomy 0/1 (session.plan_filed) lists the larger task with its whole figure and says nothing about the pause (fixer's not_done; agreed). The person did see the Start dialog warning before pressing Start.",
+  "Kept-work rule edge cases follow the brief's condition exactly. A paused task that is cancelled, then Reopened (not Undone), has its work set aside, yet its latest run is still 'paused', so it is priced at what is left. The fixer's own notes on usage_limit and Stop now point the same way. Widen this together with task-context.ts's '## Where the last run stopped' in C2.",
+  "GET /inbox computes the plan card note by running a full rt.startCheck(project) per open plan card on each poll, just to read workBudgetUsdMicro (server.ts, the planTaskViews workBudget dep). Reading the project's session cap directly would be lighter. Efficiency only; the result is correct.",
+  "Live check steps (LC-C7). The learner moves an explicit estimate quickly. On the bench, one finished coder sample shrank a USD 8 estimate to USD 3.13, so a task meant to be larger than CHF 4.00 fit the next session and chat gave no warning (correct behaviour). The session lead should pick a task whose current Start-check figure is well above the work budget, and read it in the dialog first.",
+  "The Start dialog's plan sentence and its amber note both say the work runs until the budget is used ('works on \"X\" until its work budget is used' / 'it works until that budget is used'). Slightly redundant when the larger task is alone.",
+  "Bench ports: 48591 (named in the task) belongs to review-d1109-chat-guard's githost, PID 18619. This review used 48597 and 2197."
+ ]
+}

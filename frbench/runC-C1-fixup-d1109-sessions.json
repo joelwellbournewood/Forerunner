@@ -1,0 +1,126 @@
+{
+ "area": "d1109-sessions",
+ "branch": "fix/d1109-sessions",
+ "head_sha": "f8140726155b9beada2ddaeba28533fb80c058fc",
+ "commits": [
+  {
+   "sha": "7b0cda8",
+   "subject": "ui: the Sessions tab keeps every row it shows when a session ends (U-090, SL-7)"
+  },
+  {
+   "sha": "f814072",
+   "subject": "ui: the running task's CHF on the session page follows the session's spend (U-090, U-086, SL-9)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking 1 (review walk9): after Show older sessions, a session that ended while the Sessions tab was open made another session's row disappear. The heading read '23 sessions' over 22 rows, and Show older could not bring the row back. This broke ADR 0116 point 4 ('a session starting meanwhile never shifts or repeats a row') and design section 1 ('what the app says is true now').",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "apps/ui/test/sessions-tab.test.tsx: 'after Show older sessions, a session that ends keeps every row on screen once, in order, and Show older goes on from the oldest shown' (45 ended + 1 working, 40 shown; failed with sess_19 missing) and 'with every session shown, one that ends makes the rows equal the count, and no Show older comes back' (the reviewer's 21 + 1 case). Both fail on 5450867's SessionsTab.tsx and pass after the fix.",
+   "how": "apps/ui/src/pages/project/SessionsTab.tsx. Root cause: a re-read fetched only the first page and joined it to the older pages already on screen. The ended session joined the first page and pushed the old 20th row onto page two, which was in neither list. `next` stayed on the older page's cursor. Fix: once older pages are on screen (ShownTo = {id of the oldest row shown, the cursor its page gave after it}), a re-read reads on down to that row (limit 50 a request), cuts there and keeps that cursor. The daemon's keyset (created_at, id) never changes for an ended session, so the cursor stays valid. Every row on screen is read again, so each says what is true now. Reads run one after the other in a promise queue (a re-read and Show older never cross; one waiting re-read covers the others). A generation counter drops answers for a project left. With only the first page shown, it behaves as before (one request, the first page's own cursor). No daemon change: the route already takes `limit`.",
+   "check_in_the_app": "Open a project with more than 20 sessions, More > Sessions, and press Show older sessions. Start a session (Start), watch its working row on top, then end it (Stop now on its page, or let it finish). The rows you saw stay, in order, with the ended session at the top. The heading's count equals the rows once every page is shown. With more than 40 sessions and two pages shown, Show older sessions is still offered and brings the rest, each session once, the project's first session last. Bench evidence: /tmp/frbench/fixup-d1109-sessions-evidence/walk2.json (22 + 1, all PASS), walk3-pages.json (43 + 1 with two pages shown: 40 rows kept, 41 after the end, Show older to 44 = the daemon's list in its order; 6 re-reads of one limit=50 request each, 2 Show older requests), screenshots in after-steps/01-03, 06, 08-11. Live check 4: same walk on a real project; also leave the tab open through a whole real session."
+  },
+  {
+   "problem": "Blocking 2 (review step 11): on a working session's page, 'Tasks in this session' showed the running task at 'Running CHF 0.00' for the whole run while 'Spent of this session's budget' grew. This was W15-21's 'CHF 0.00 until the run returns' on a new screen, and it broke SL-9 (each task row's CHF equals the ledger's sum for that session and task) and design section 3.7 (spend updated live).",
+   "u_ids": [
+    "U-090",
+    "U-086"
+   ],
+   "failing_test_before": "apps/ui/test/sessions-tab.test.tsx 'while the session works, the running task's CHF follows the session's spend, read at most once a second' (failed before: the row stayed at CHF 0.00 after the session.changed frame with the higher spend).",
+   "how": "apps/ui/src/pages/SessionPage.tsx. Root cause: GET /sessions/:id/tasks was read again only when the count of task.started/task.finished lines or the session's status changed. The daemon books every model call with its task, and the stream's session.changed carries the new spend, but the page never asked. Fix: while the session works, a change in session.spent.chfMicro reads the tasks again. A first change reads at once, later ones at most once a second (TASKS_READ_MS = 1000, the stream's pace); a frame that moves nothing reads nothing. A new session's page starts with no stale tasks (an AbortController and spendRead per id). I first built it with 5 s as the reviewer suggested (the Sessions tab's FRAME_READ_MS), but the bench showed a one-task session reading 'CHF 0.03' on the meter beside 'CHF 0.02' on its only task (walk1.json, failed check 'settled'). The two sit side by side on this page, so they now agree within a second (walk2.json: 8 of 8 samples match the daemon and the meter). Daemon-side companion test: apps/ui/test/real-daemon.test.ts 'd1109-sessions, run C' > 'SL-9 while a task runs: \u2026'. It holds the run's second model call (the describe's hold() gained an optional number of calls let through first) and checks that GET /sessions/:id/tasks answers 'Running' with the ledger's sum for the session and the task mid-run, equal to the session's spend, and the ledger's sum again at the end. It passed before too: the daemon was right, the page did not ask.",
+   "check_in_the_app": "Start a session on a long task, open its page (from the header's working line or More > Sessions). Under 'Tasks in this session' the running task's CHF follows 'Spent of this session's budget' within about a second (for a one-task session the two read the same). After Stop now or the end, the row equals what the session spent on it. Bench evidence: after-steps/04-05 (Running CHF 0.02 beside CHF 0.02 of CHF 5.00), walk2.json samples. Live check 4 (LC-C5): on the real model, watch a task with several model calls: the task's CHF moves with each booked call and never stays at CHF 0.00 while the meter grows."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Non-blocking review items: the Overview says 'No session yet.' when a project's only listed session is its planning call; no test for closeExpired's 'Forerunner closed before the plan was drafted.'; 'Worked on \u00b7 now: Ready' for a stopped or recovered task (seen again on the bench: Stop now leaves 'Worked on' on the session page's task row); the 404 'session nope not found' words of GET /sessions/:id/tasks; docs in a separate commit; SL-5's late booking via costLedger.record; 'Needed your answer' for a ladder hand-off.",
+   "why": "This fix-up's task is the two blocking findings. The non-blocking items are unchanged and still stand as the reviewer described them (none is made worse by these commits). The session lead can route them to the polish batch."
+  },
+  {
+   "problem": "git branch -f fix/d1109-sessions HEAD was refused: the fixer's finished worktree /home/user/Forerunner/.claude/worktrees/wf_15a781ce-056-3 has fix/d1109-sessions checked out.",
+   "why": "I moved the branch with a compare-and-swap instead: git update-ref refs/heads/fix/d1109-sessions f814072 5450867 (only from the fixer's head). fix/d1109-sessions now points at f814072. That worktree still has 5450867's files, so its `git status` shows these two commits reversed. Do not commit from it; remove it or check it out again before use."
+  }
+ ],
+ "validation": [
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts test/sessions-tab.test.tsx (with 5450867's SessionsTab.tsx copied back)",
+   "result": "the two new Sessions-tab cases fail (rows 21 of 22 / sess_19 missing), 8 pass; with the fix 11 of 11 pass. The session-page case failed before the SessionPage fix (row stayed CHF 0.00)."
+  },
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+   "result": "green after the last change: 488 files, 5171 passed, 7 skipped; link-check ok (207 files); secret-scan clean. docs:check inside it cannot diff against origin/main here, so run separately:"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "ok (29 files)"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "green: 90 files, 1109 tests (1105 + 3 sessions-tab + 1 real-daemon)"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'd1109-sessions, run C'",
+   "result": "green: 6 passed (the 5 of the fixer + the new mid-run SL-9 case)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "green: 35 passed"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "green: 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG); 30 passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "green: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "npx biome check (the four changed source and test files)",
+   "result": "clean"
+  },
+  {
+   "command": "bench fixup-d1109-sessions (--provider bench, ports 48602/2202, FORERUNNER_BENCH_LONG=Long essay, then DELAY_MS 1500): 21 real sessions seeded, walk1 (5 s throttle), walk2 (1 s), 20 more seeded, walk3-pages",
+   "result": "walk2: every check PASS (21+1 rows equal the heading, each once, the ended one on top, the old 20th row kept, no Show older; running task's CHF moved 0.00 to 0.02 with the meter, 8/8 samples equal the daemon's figure; ended row 'Nothing finished.' 'Stopped by you' CHF 0.04). walk3-pages: every check PASS (40 of 43 shown, 41 after the end with Show older still offered, then 44 = the daemon's list in order). walk1 shows the 5 s lag that led to 1 s. No console or HTTP problems. Bench stopped, home and browser profile deleted; evidence in /tmp/frbench/fixup-d1109-sessions-evidence/."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< ' ; git status",
+   "result": "nothing; working tree clean (playwright.local.config.ts is git-ignored)"
+  }
+ ],
+ "tests_changed_for_design": [],
+ "new_problems": [
+  "Seen on the bench, already in the reviewer's non-blocking list: after Stop now, the session page's 'Tasks in this session' reads the stopped task as 'Worked on' (with 'now: Ready' where its status differs). hereOf has no 'stopped' word, though the record knows the task went back to Ready. Evidence: walk2.json reading 'ended' (here 'Worked on', status killed).",
+  "The Sessions tab's working row still re-reads at most every 5 s (FRAME_READ_MS), while the session page now reads its task rows once a second. That is fine because the list shows no second figure beside the row. If d1109-run-visible (C5) adds the meter or the header's spend next to the working row, it should read at the same pace."
+ ],
+ "notes_for_other_areas": [
+  "SessionsTab.tsx: the old readFirst/older/next/loadedOlder state is replaced by one Listed object ({first, rows, next}) kept in a ref and in state, a ShownTo ref, a reads queue (inTurn) and reread(). Exports are unchanged (sessionRowLine, sessionsHeading, NO_SESSIONS). d1109-onerepo-join should render its joined line from `listed.first` the way the chat line is rendered. d1109-run-visible should change only the working row's rendering and keep reread() as the one way to read the list.",
+  "SessionPage.tsx (this area's 'Tasks in this session' part only): readTasks() is the one read of GET /sessions/:id/tasks. It runs on task moves, on the status and, while working, on spend changes at most every TASKS_READ_MS (1000). Areas that add D7 or D8 blocks to the page leave these effects alone.",
+  "real-daemon.test.ts 'd1109-sessions, run C': world().hold(title, after = 0) now lets `after` model calls of that title through before holding the rest (append-only within this area's describe).",
+  "ADR 0116 points 4 and 12 now say, in place (the ADR is new on this branch), that the tab keeps every row it shows when a session ends, and that the running task's CHF follows the session's spend.",
+  "Suggested lines for the session lead: U-090 Check in the app: add 'with older sessions shown, start and end a session: the rows you saw stay, each once, the new one on top, and Show older goes on from the last row'. U-086: add 'while a task runs, its CHF under Tasks in this session follows Spent of this session's budget within a second'. CHANGELOG [Unreleased] Fixed (if U-090 is not yet released, fold into its Added line): 'The Sessions list keeps every row on screen when a session ends after you showed older ones; a running task's amount on its session's page moves with the session's spend.'",
+  "Owner questions: none touched; no default built."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-d1109-sessions-evidence/steps/33-older-shown-then-a-session-ended.png",
+   "/tmp/frbench/review-d1109-sessions-evidence/steps/11-session-working-before-stop.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/walk1-steps/05-session-page-the-running-task-s-chf-12-s-later.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/02-sessions-tab-all-22-rows-after-show-older.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/03-working-row-on-top-22-below.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/04-session-page-the-running-task-s-chf-at-first.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/05-session-page-the-running-task-s-chf-12-s-later.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/06-sessions-tab-after-the-session-ended-23-rows.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/08-sessions-tab-40-of-43-rows.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/10-sessions-tab-after-the-session-ended-41-rows-and-show-older.png",
+   "/tmp/frbench/fixup-d1109-sessions-evidence/after-steps/11-sessions-tab-all-44-rows.png"
+  ]
+ }
+}

@@ -1,0 +1,101 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran bench \"review-d1109-sessions\" (daemon 48592, UI 2192, --provider bench, started from this worktree at 5450867) with failure injection FORERUNNER_BENCH_FAIL=Flaky (4 times), FORERUNNER_BENCH_LONG=Long essay, then a slower stand-in (DELAY_MS 1500) and FORERUNNER_BENCH_INTAKE=error on later restarts. I drove the UI in Chromium through scripts/bench/recorder.cjs. Screenshots and texts are in /tmp/frbench/review-d1109-sessions-evidence/steps/ (NN-*.png/.txt), and the JSON readouts are in /tmp/frbench/review-d1109-sessions-evidence/walk*.json. I stopped the bench and deleted its home afterwards.\n\n1) New project \"Quote page\" from a one-line brief, through the UI. More \u25be lists \"Sessions, Plan, Docs, Reviews, Costs, Data\" (01). Sessions shows \"1 session\" with \"Drafted a plan of 2 tasks; it waits for your approval.\" on \"21:45 \u00b7 under a minute \u00b7 less than CHF 0.01\" (02, 03). I approved it on the Inbox plan card (Approve and start, 04). The list then showed the working row on top, 'Working (0 of 2 done)' on '21:45 \u00b7 just started \u00b7 CHF 0.01 so far', with the planning row reading \"you approved it.\" (05). After the end: 'Did 2 tasks: \"Build the random quote page in\u2026\" and \"Check that index.html, styles.css and\u2026\".' on \"2 done \u00b7 Done \u00b7 CHF 0.04\" (06). No 'intake:', no ids, no USD.\n\n2) Overview: Last result shows \"1 min ago \u00b7 Open the session \u00b7 All 2 sessions\" and the link opens Sessions (07, 08). The done session's page shows \"All sessions\" beside \"Open the project\". Under \"Tasks in this session\" both tasks read Done at CHF 0.02 each; the page says CHF 0.04, which equals the row (09). The planning page is titled \"Quote page \u00b7 planning at 21:45\" with the badge \"Plan drafted\" (10).\n\n3) Stop now on a long task. The working row moved live from \"less than CHF 0.01 so far\" to \"CHF 0.01 so far\" within 7 s (working-row-live.png, walk3.json). After Stop now it reads \"Nothing finished. 21:49 \u00b7 under a minute \u00b7 Stopped by you \u00b7 CHF 0.01\" (14, list-after-stop.png).\n\n4) \"Flaky page\" was tried 4 times and needed a decision; I pressed Try again in the Inbox (16, 18) and a later session finished it. The first session's page lists '\"Flaky page in flaky.html\" Needed your answer \u00b7 now: Done \u00b7 CHF 0.04' and '\"Long essay two\" Done CHF 0.19', which add up to the page's CHF 0.23 (19). Clicking the title opens the Tasks tab with the task's drawer and its runs (20).\n\n5) Crash: I started a long session, then ran restart-daemon --hard about 30 s in. Its row reads \"Nothing finished. \u00b7 Interrupted: Forerunner closed \u00b7 CHF 0.09\" with durationMs 34759: the time it worked, up to its last logged event, not up to the recovery at 38 s. The row's figure, the page's figure (89400 \u00b5CHF each) and the Overview's lastSession are the same session (22-24, walk5b.json).\n\n6) Real sessions until there were 22. The heading reads \"22 sessions\" with 20 rows; Show older sessions appended 2 and disappeared (25, 26). Paging by 7 gave 22 unique ids. After a normal daemon restart the full view was byte-identical, and a cursor taken before the restart went on correctly. A bad cursor answers 400 \"This list cannot go on from there. Open Sessions again.\"; an unknown project answers 404 \"No such project.\" (walk7.json).\n\n7) Planning failure (INTAKE=error): the project page says \"Planning failed: Claude did not answer (model call failed).\" The row and the page read \"Planning failed: Claude did not answer (model call failed).\" with the badge \"Planning failed\", and still do after a restart without the env (27-29).\n\n8) A chat turn about the project adds \"Chat about this project: CHF 0.01. Open Chat\" under the list. The count stays 22, and Open Chat goes to /chat (walk8.json).\n\n9) Defect found: after Show older sessions, a session that ends while the tab is open makes another session's row disappear (33, walk9.json). Before the session ended: 22 rows. After it ended, the heading read \"23 sessions\" but only 22 rows showed, and the session at 21:46 (\"Long essay in essay.md\") was gone. I reproduced this on the fake daemon in /tmp/frbench/review-d1109-sessions-evidence/repro-missing-row.test.tsx, which fails with \"expected \u2026 to have a length of 22 but got 21\" (the file was removed from the worktree after the run).\n\n10) Defect found: on a working session's page, \"Tasks in this session\" shows the running task at \"Running CHF 0.00\" while \"Spent of this session's budget\" reads CHF 0.03 and that task is the only one in the session (11). The section is re-read only on task.started or task.finished.\n\nValidation, all run here at 5450867: pnpm check passed (488 files, 5171 tests, lint, typecheck, secret scan); docs-check --base claude/nifty-knuth-f9udt0 ok (29 files); UI vitest 90 files and 1105 tests passed; Playwright (local config) 35 passed; pnpm test:integration 30 passed, 77 skipped (Postgres not configured); pnpm test:e2e 25 passed, 1 skipped.\n\nFail-before checks, by reverting one fix hunk locally and restoring it afterwards:\n- Removing `outcome` from runner.ts' end handoff makes session-list.test.ts SL-1 fail.\n- Removing `last_worked_at` from recovery.ts makes SL-6 fail (\"durationMs 259320000\", against 120000 expected).\n- Putting back views.ts' old `money(s.spent_usd_micro, chfPerUsd)` makes real-daemon SL-5 fail (\"expected 13574 to be 13573\").\n\nThe area's real-daemon describe (5 cases), session-list.test.ts (10), sessions-tab, project, session and project-overview UI tests (75) all pass. The tree is clean after my temporary changes.",
+ "blocking": [
+  {
+   "issue": "Sessions tab: once older sessions are shown, a session that ends while the tab is open drops another session's row, so the heading's count and the rows disagree and one session (and its CHF) is no longer listed.",
+   "where": "apps/ui/src/pages/project/SessionsTab.tsx:69 and :153",
+   "evidence": "On the bench (walk9.json, steps/33-older-shown-then-a-session-ended.png): 22 rows after Show older sessions. A new session then started and ended through the API. The heading turned to \"23 sessions\" but 22 rows showed; the row of 01a1c247 'Did 1 task: \"Long essay in essay.md\".' (21:46) was missing. Cause: after a re-read, rows = first page (now the newest 20 ended: the new one plus the old rows 1-19) \u222a `older` (old rows 21+). The old row 20 falls between them, and `next` stays on the older page's cursor (null), so Show older cannot bring it back. Reproduced on the fake daemon by /tmp/frbench/review-d1109-sessions-evidence/repro-missing-row.test.tsx: 21 rows shown of 22, sess_19 missing. It also breaks the area's own rule \"a session starting meanwhile never shifts or repeats rows\" / \"every CHF a session spent is in exactly one row\", and design \u00a71 \"What the app says is true now\".",
+   "expected": "Every listed session shows exactly once, and the shown rows equal the heading's count after any re-read. For example, keep previously shown ended rows (union by id, ordered by startedAt then id, newest first), or re-read down to the oldest loaded row when older pages were loaded. Add a sessions-tab.test.tsx case (the repro above) and check it on the bench."
+  },
+  {
+   "issue": "Session page, \"Tasks in this session\": a running task's CHF reads CHF 0.00 for the whole run while the session's spend grows. This brings back on a new screen the 'CHF 0.00 until the run returns' bug W15-21 fixed for the drawer and the Tasks row.",
+   "where": "apps/ui/src/pages/SessionPage.tsx:235-252 (sessionTasks re-read only when the count of task.started/task.finished changes or the status changes)",
+   "evidence": "steps/11-session-working-before-stop.png: 'Spent of this session's budget CHF 0.03 of CHF 5.00'. The only task in the session reads '\"Long essay in essay.md\" Running CHF 0.00'. The daemon books every model call to the ledger with its task (hooks.afterModelCall), so GET /sessions/:id/tasks would answer the live figure, but the page does not ask again. This breaks the acceptance line SL-9 \"each task row's CHF equals the ledger's sum for that session and task\" while a task runs, design \u00a73.7 \"spend and steps updated live\" and \u00a75 rule 4.",
+   "expected": "While the session works, re-read the session's tasks on its spend changes (throttled, as SessionsTab does with FRAME_READ_MS), so the running task's CHF follows the session's spend. Add a session.test.tsx or real-daemon case that reads the running task's CHF after a booking mid-run."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "D2-1/SL-7, SL-8: Sessions first behind More, /projects/:id/sessions shows the tab, heading is the count, rows link to the session page, All N sessions on the Overview from two on, All sessions on the session page",
+   "holds": true,
+   "note": "Seen on the bench (01-10, 25-26) and in sessions-tab.test.tsx. Exception: the missing-row defect after Show older (blocking 1)."
+  },
+  {
+   "claim": "D2-2/SL-2, SL-4: GET /projects/:id/sessions, newest first, keyset cursor valid across a restart, 404/400 sentences, listed rule (no conversation, no empty automatic start)",
+   "holds": true,
+   "note": "walk6/walk7: 22 unique ids paged by 7; identical after a restart; a cursor from before the restart continues; 404 'No such project.'; 400 sentence without a stack; the chat turn did not change the count."
+  },
+  {
+   "claim": "D2-3/SL-5: one figure per session (ledger as booked) on the list, the session page and the Overview; no stored text rewritten",
+   "holds": true,
+   "note": "Mutation check: the old sessionView figure fails SL-5. On the bench, row = page = 89400 for the interrupted session and 42234 for the done one. The late booking is simulated by a direct ledger insert, not R-lateusage's stand-in path."
+  },
+  {
+   "claim": "D2-4/SL-1: each session's record (handoff.outcome) survives a restart; older rows fall back to done ids and '2 left for you'",
+   "holds": true,
+   "note": "Mutation (runner outcome removed) fails SL-1."
+  },
+  {
+   "claim": "D2-5/SL-10: planning rows read their gist and status, never 'intake:'; failure words survive a restart; page titled '<project> \u00b7 planning at HH:MM'",
+   "holds": true,
+   "note": "Bench 02, 05, 10, 27-29; restarted without the env, same words. closeExpired's 'Forerunner closed before the plan was drafted.' has no test."
+  },
+  {
+   "claim": "D2-6/SL-11: ended credential wait and plan-awaiting statuses in the past tense (one map)",
+   "holds": true,
+   "note": "Unit and real-daemon seeded rows. The credential-limits.test.ts change is the design's wording, not a weakening."
+  },
+  {
+   "claim": "D2-7/SL-6: an interrupted session's length ends at its last logged event",
+   "holds": true,
+   "note": "Mutation fails SL-6. On the bench: durationMs 34759 against a 38 s recovery."
+  },
+  {
+   "claim": "D2-8/SL-9: session page lists its tasks with what happened there, now, CHF; each opens the drawer",
+   "holds": false,
+   "note": "Ended sessions: correct, and the drawer opens (19, 20). While a task runs its CHF stays 0.00 (blocking 2)."
+  },
+  {
+   "claim": "D2-9/D2-11: credential words; chat line 'Chat about this project: CHF \u2026' only above zero, count unchanged",
+   "holds": true,
+   "note": "Unit test for the credential words (the stand-in shows none); chat line seen on the bench (walk8)."
+  },
+  {
+   "claim": "D2-10: 'All sessions' on the session page",
+   "holds": true
+  },
+  {
+   "claim": "D2-12: startedByWords reads plan.startedBy first, then the trigger; nothing for manual, message or budget_reset",
+   "holds": true,
+   "note": "Unit test and seeded real-daemon rows. A scheduled start through the scheduler is in not_done, with a reason."
+  },
+  {
+   "claim": "Validation: pnpm check, integration, e2e, UI suite, Playwright green; new routes have real-daemon cases and the fake daemon changed in the same commit",
+   "holds": true,
+   "note": "All re-run here and green. Both routes, their real-daemon cases and the fake routes are in 1e7adcd."
+  },
+  {
+   "claim": "executor.ts, result.ts untouched; runner.ts only the handoff object; intake.ts only the close and closeExpired",
+   "holds": true,
+   "note": "intake.ts also adds an import and `failure = e` in the catch, which the close needs."
+  },
+  {
+   "claim": "not_done items are inside the spec's cut line or covered elsewhere",
+   "holds": true,
+   "note": "Scheduled start via the triggers' clock, the credential and budget helpers, and the recovered session in real-daemon SL-5 (covered by composed SL-6) each have a reason."
+  }
+ ],
+ "non_blocking": [
+  "Overview contradiction: on a project whose only listed session is its planning call, the Overview's Last result says \"No session yet.\" (SummaryTab.tsx:204) while More \u2192 Sessions says \"1 session\" (bench 27-28). Pre-existing text, made untrue by listing planning calls as sessions.",
+  "intake.ts closeExpired now writes handoff.planning.failure \"Forerunner closed before the plan was drafted.\" (the restart path). No test covers it, although the spec asks for handoff.planning to be tested across a restart. Only the main close's failure is tested (SL-10).",
+  "Recovered and stopped tasks in \"Tasks in this session\" read \"Worked on \u00b7 now: Ready\" (bench 23). The recovery's outcome has `leftOver`, which hereOf ignores; something like \"Put back to Ready\" would say more.",
+  "GET /sessions/:id/tasks for an unknown id answers 404 with the store's message \"session nope not found\" (raw table and id), unlike \"No such project.\". The UI swallows it, so no person sees it.",
+  "Docs came in a separate commit (9adbae2), not in the commits that change their modules as SL-12's line asks. The branch-level docs check passes.",
+  "SL-5's late booking is a direct costLedger.record, not the R-lateusage stand-in path the spec asked to confirm first. SL-11's budget pause ends \"Ended: 1 task needs you, 1 paused\" rather than the acceptance's \"Stopped: the budget is used\" (explained in not_done).",
+  "A ladder hand-off (decision after 4 failed tries) reads \"needed your answer\" / \"Needed your answer\" on the row and the task line. This matches the task-status map, but the card asks for a decision.",
+  "The SSE flush loop of every open session page now also runs a costLedger.sum per tick (indexed on session_id). Probably fine; worth a look if the poll interval is short.",
+  "Fixer's new_problems confirmed by reading the code: services/state-api sessionView without the ledger figure; a planning call that waited for a credential closes 'failed' and its row reads \"Planning failed: \u2026\" while the project page says it waits (C5 owns that branch).",
+  "Live check 4 should also look at: the running task's CHF on the session page during a real run (blocking 2, after its fix); Show older sessions plus a session ending on a real project; the credential words on API key and subscription rows."
+ ]
+}

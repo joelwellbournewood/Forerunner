@@ -1,0 +1,227 @@
+{
+ "area": "d1109-oversize-start",
+ "branch": "fix/d1109-oversize-start",
+ "head_sha": "7324d3ec52b5cfc886aea7545e36a03e01d162a8",
+ "commits": [
+  {
+   "sha": "006ec2cf13dba8530e8d7b42b79c47c8e65851fa",
+   "subject": "estimates: a task that resumes from kept work is planned at what is left of its estimate (U-089, D4)"
+  },
+  {
+   "sha": "21ea5b032abd98b48296d6720ae01b0145fbfb82",
+   "subject": "session: a task larger than the work budget runs after the work that fits, with what is left (U-089, U-040, D4)"
+  },
+  {
+   "sha": "170859f47e49d21b26904f693108eb5aa346b963",
+   "subject": "start: a task larger than the work budget is never refused; the Start dialog warns in the daemon's sentence with Start on (U-089, W6-23, W15-38, D4)"
+  },
+  {
+   "sha": "12a384b05b930ad3b117604a08ad9714d93f2948",
+   "subject": "chat: \"start a session\" reads back the larger task's warning and never refuses it (U-089, D4)"
+  },
+  {
+   "sha": "28bce7391c7512bfa222eb6b7252cab3ed7b38a8",
+   "subject": "plan card: a task larger than a session's work budget says it pauses with its work kept (U-089, D4)"
+  },
+  {
+   "sha": "e57805d99ba52eee699d4175d632f5ce4648a0f3",
+   "subject": "result: a task larger than the work budget never reads \"Nothing could run\"; a second one says why it waits (U-089, W6-23, D4)"
+  },
+  {
+   "sha": "9f684cdbbe5bebc68a56477eacd98ab0a0bbdcb7",
+   "subject": "docs: ADR 0115 (a task larger than one session runs anyway), ADR 0112's amendment, the maintainer docs and the user guide (U-089, U-040, W6-23, D4)"
+  },
+  {
+   "sha": "c4ec4450548b83681ce8918dda72ad98768bc4c2",
+   "subject": "plan card: read the project's session work budget only for an open plan card (U-089)"
+  },
+  {
+   "sha": "7324d3ec52b5cfc886aea7545e36a03e01d162a8",
+   "subject": "plan card: a task that fits carries no oversized field at all (U-089)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "OS-1 / D4-6: a task resuming from kept work (its paused runs) was planned at its whole estimate again (a CHF 6.00 task that kept CHF 4.00 still read 'needs about CHF 6.00'); spend alone cannot tell kept work from a start over.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/estimates.test.ts, describe 'd1109-oversize-start, run C: a task that resumes from kept work is planned at what is left (OS-1)' (unit figure; Run-row cases: paused 4.00 -> 2.00, budget_exceeded, two pauses, 6.50 kept -> 1.20 estimatePassed, own budget 3.00 -> 0.50, redone from main / review sent back / Try again -> 6.00, failed 0.80 then paused 1.00 -> 5.00, no spend; the composed Start check and StaticPlanner)",
+   "how": "estimates/model.ts: keptWorkOf(runs)/keptWorkFor(store, task) sum the consecutive work runs ending with the latest whose outcome is paused or budget_exceeded (KEPT_WORK_OUTCOMES, the same condition as the brief's '## Where the last run stopped'); estimateLeftUsdMicro(estimate, kept) gives estimate less kept, or a fifth (ESTIMATE_PASSED_SHARE) with estimatePassed; planEstimateUsdMicro(port, task, kept?) reads it, withinTaskBudget unchanged. PlannerContext.keptWork (runner passes keptWorkFor), StaticPlanner and startCheck price with it (the chat reads the Start check).",
+   "check_in_the_app": "Live check: after the larger task paused at a session budget with work kept (LC-C7), open Start session on its project: the plan line / warning names 'about CHF N more (CHF M spent so far)' with N = estimate less what it spent (or the task now fits and the plan sentence prices it at what is left). A task you Redo or Try again shows its whole estimate."
+  },
+  {
+   "problem": "OS-2 / D4-1: a task whose estimate alone exceeds the session's work budget never ran: the plan left it out, alone it emptied the session ('Nothing could run: ... Start a session with a larger budget.'), beside other work it was 'Left for next time' in every session of that size.",
+   "u_ids": [
+    "U-089",
+    "U-040"
+   ],
+   "failing_test_before": "packages/runtime/test/task-dependencies.test.ts 'd1109-oversize-start, run C: a task larger than the work budget runs after the work that fits (OS-2)' (cut shapes [A,Big,B] / [Big,Big2] one_large / no_room; only task larger runs with the whole work budget, plan row 1.60 and reason, session.planned/took events; fitting first; a task becoming ready runs first; one_large; no_room; Start check hold; autonomy 1 approval); packages/runtime/test/oversized-task.test.ts describe 'd1109-oversize-start' (composed: POST /sessions 202 not 409, run pauses at its wrap-up with one budget card '... paused at this session's budget of CHF 1.60', stopReason budget_*, plan row USD 1.60 + reason, Took line once, fitting tasks done and reviewed before the take, autonomy 1 approval runs it, same task status/card/Run handoff after composing again on the same home)",
+   "how": "runner.ts: cutPlanToBudget(plan, room, workBudget=room) returns plan.oversized (first task alone > work budget) and leftOutForBudget with reason after_others/one_large/no_room (OVERSIZED_MIN_ROOM_SHARE 0.2, oversizedMinRoomUsdMicro). The runner holds it (held/takenId), excludes it from re-plans, takes it in takeHeld() once the queue is empty and a re-plan adds nothing, with budget.workRemainingUsdMicro() when at least a fifth and no-new-work unset, else no_room. Taken: plan row versioned change 'took \"X\", larger than this session's work budget, with what is left', planned figure = room, TOOK_LARGER_EVENT (session.took_larger, person line), session.planned carries oversized; autonomy 0/1 approvalItems include it (plan id, steps, onlyThese); onPlanned sees it. Run cap unchanged (executor's min of own cap and work budget left). start-check.ts: StartCheck.oversized {room incl. 'later' tasks, after, spentUsdMicro} and overBudget[].reason incl. 'oversized'.",
+   "check_in_the_app": "Live check (LC-C7 setup): a ready researcher task estimated above CHF 0.32; Start session with budget CHF 0.40 and press Start: the session page's log says 'Took \"<title>\", larger than this session's work budget, with about CHF 0.32 left.' exactly once, the task works until its wrap-up and pauses with one Inbox card '\"<title>\" paused at this session's budget of CHF 0.40' with Continue; the session result never says 'Nothing could run'. With a small fitting task also ready, it runs and is reviewed first, then the Took line."
+  },
+  {
+   "problem": "OS-3/OS-4 / D4-7, W6-23, W15-38: the Start dialog turned Start off ('Nothing can run within this budget: \"X\" needs about CHF 6.00.'), told the person 'Give the session a larger budget, or the task a smaller one.', POST /sessions refused, and the dialog never said the task would start.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "apps/ui/test/d1109-oversize.test.tsx (plan sentence, amber note start-session-oversized, Start on, POST body budgetUsdMicro 2_500_000, fitting task first sentence, second larger task one_large line, no 'smaller one'); apps/ui/test/real-daemon.test.ts 'd1109-oversize-start, run C' (GET start-check blocked null, runnable [], oversized {estimate CHF 6.40, room CHF 1.28, sentence}; POST /sessions starts; room CHF 0.96 after two fitting tasks; Big two why one_large + sentence); apps/ui/test/contracts.test.ts 'd1109-oversize-start, run C' (fake answer parses with StartCheckView); packages/runtime/test/oversize-words.test.ts (exact sentences at 0.80)",
+   "how": "start-blocked.ts: the over-budget blocker branch removed; runsWork(r) counts runnable or oversized (also for the credential-wait branch and server.ts' credentialWait). New daemon/oversize-words.ts (pure: oversizedSentence, leftOutSentence, oversizedPlanNote, oversizedPlanClause, oversizedAsk, takenLine) and daemon/oversize-view.ts (oversizedView, overBudgetView, oversizedWarning). api-types: StartCheckTaskView.why/.sentence, StartCheckOversizedView, StartCheckView.oversized (appended). StartSessionDialog: planSentence uses oversizedPlanClause; amber note testid start-session-oversized(-note) with the daemon sentence; BlockerLines shows the daemon sentences for one_large/no_room and keeps W15-38's list form for several after_others. Fake daemon mirrors shapes and sentences. Sibling: ShellBars 'Continue where it stopped' now restarts a project whose only work is the larger task.",
+   "check_in_the_app": "Open Start session on a project whose only ready task is above the work budget, type CHF 0.40: the plan line reads 'This session works on \"<title>\" until its work budget is used.', the amber note reads '\"<title>\" needs about CHF X, more than this session's work budget of CHF 0.32: it works until that budget is used, keeps its work, and asks you to continue.', Start is enabled and the words 'Give the session a larger budget, or the task a smaller one.' appear nowhere. With a smaller task ready too: 'This session runs \"A\" (about CHF ...), then works on \"<title>\" with what is left.' and the note says 'after the other tasks it works with about CHF ...'."
+  },
+  {
+   "problem": "OS-5 / D4-8: the plan card showed 'about CHF 6.00' beside such a task and nothing more.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-oversize-start, run C' OS-5 (GET /inbox: research task above the project's session work budget has planTasks[i].oversized, others none, none under the default budget); apps/ui/test/d1109-oversize.test.tsx OS-5 (note under the larger task, none under the fitting one)",
+   "how": "plan-tasks.ts: PlanTasksDeps.workBudget { usdMicro(): Promise<number> (read only for an open plan card), chfPerUsd }; a task whose figure > work budget gets oversizedPlanNote ('More than a session's work budget (CHF 4.00): it pauses with its work kept and asks you to continue.'), field planTasks[].oversized omitted when it fits. server.ts GET /inbox passes rt.startCheck(project).workBudgetUsdMicro lazily; InboxPage IntakeCard renders it (testid intake-task-oversized) after w15-tail's note; fake daemon same.",
+   "check_in_the_app": "New project from a brief; before approving, set the project's session budget to CHF 0.40 (Settings, or 'set the session budget to 0.40'); open the Inbox: under each planned task estimated above CHF 0.32 the card says 'More than a session's work budget (CHF 0.32): it pauses with its work kept and asks you to continue.'; a cheaper task has no such line."
+  },
+  {
+   "problem": "OS-6 / D4-9: chat's 'start a session' refused such a start with the blocker sentence and its read-back never warned.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/commands/test/oversize-start.test.ts (read-back with warning, Yes starts with the budget, cheap start's sentence carries the warning, none without a larger task); apps/ui/test/real-daemon.test.ts 'd1109-oversize-start, run C' OS-6 (chat read-back 'Start a session on Shop chat (up to CHF 5)? \"Build the shop\" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.', Yes starts a session); apps/ui/test/d1109-oversize.test.tsx OS-6 (Yes/No card shows the warning, Yes starts)",
+   "how": "CommandPorts.startWarning (types.ts, appended); session.ts startAsk(s, warning) appends it; a non-costly start (no read-back) carries it after the started sentence (withWarning); compose.ts one hunk wiring startWarning to oversizedWarning(startCheck(...)). No refusal (start-blocked no longer blocks). Fake daemon's chat read-back appends the same warning.",
+   "check_in_the_app": "Live: on a project whose only ready task is above CHF 4.00 (default session budget CHF 5.00), say 'start a session' in the project Chat: the Yes/No card reads 'Start a session on <project> (up to CHF 5)? \"<title>\" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.'; Yes starts a session (nothing refused). With 'start a session with 0.40 francs' the reply is 'Started a session on <project> (up to CHF 0.40). \"<title>\" needs more than its work budget of CHF 0.32: ...'."
+  },
+  {
+   "problem": "OS-7 / D4-10: the result's 'Nothing could run: \"X\" needs about CHF 1.20, more than this session's work budget of CHF 0.32. Start a session with a larger budget.' became untrue, and the log had no line for taking the larger task; a second larger task was 'Left for next time' as if it only did not fit.",
+   "u_ids": [
+    "U-089",
+    "U-040"
+   ],
+   "failing_test_before": "packages/runtime/test/where-last-run-stopped.test.ts 'd1109-oversize-start, run C: the result of a session with a task larger than its work budget (OS-7)' (replaces the W6-23 case); packages/runtime/test/oversize-words.test.ts (Took line through describeEvent, person audience; the Details plan line); task-dependencies.test.ts 'one larger task a session' (result sentence)",
+   "how": "result.ts: W6-23 branch removed; 'left for next time' says leftOutSentence for one_large/no_room tasks and keeps the after_others line; runner result facts carry each left-out reason. event-lines.ts: TOOK_LARGER_EVENT line (takenLine); event-audience.ts: TOOK_LARGER_EVENT is a person line; views.ts lineOf session.planned names the larger task.",
+   "check_in_the_app": "After the Start above, the session page's default log has 'Took \"<title>\", larger than this session's work budget, with about CHF 0.32 left.' once; Details' plan line reads 'Plan: \"<title>\" (about CHF X), larger than this session's work budget: it works until that budget is used. ...'; with two larger tasks ready, the result names the second: '\"<second>\" needs about CHF Y, more than this session's work budget: one task that large runs a session, so it waits for the next one.'; no result says 'Nothing could run' for them."
+  },
+  {
+   "problem": "OS-8: docs and the bench walk.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "n/a (docs); bench walk before/after with screenshots",
+   "how": "ADR 0115 (new) + README row; ADR 0112 dated amendment; runtime.md (U-040 section: the hold and the kept-work figure), apps.md (Start dialog, plan card note, Continue where it stopped), commands.md (chat's start, startWarning), user-guide.md (Start dialog paragraph 'A task larger than one session still runs').",
+   "check_in_the_app": "Read docs/user-guide.md 'A task larger than one session still runs' and compare with the Start dialog, plan card and chat on the bench or live."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The autonomy 0/1 session-plan approval card (the runner's 'Assisted mode: approve this session plan' request) lists the larger task among its steps with its whole figure ('Build the shop (coder, about CHF 6.40)') but says nothing about the pause; only the intake plan card got the note (OS-5).",
+   "why": "Not in the spec's OS items; its why/steps words belong to the plan-approval card owner. Easy follow-up: append oversizedAsk(...) to the request's why when plan.oversized is set."
+  },
+  {
+   "problem": "Start check: a task that only becomes ready during the session (a 'later' task) and is itself larger than the work budget is not reported as `oversized`; it is left out of the room sum and still counted in 'continues with up to N more'. The runner does hold it when it becomes ready (if no larger task is held or taken).",
+   "why": "Edge case outside the acceptance lines; reporting it needs the dialog's plan sentence to name a later larger task, which C3 (d1109-starts-engine) rebuilds from its own cut list."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+   "result": "exit 0; unit 490 files, 5182 passed / 7 skipped; link-check ok (207); secret-scan clean (2097). docs:check inside it cannot diff against origin/main (no such ref here)"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (40 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0; 5 files passed, 6 skipped (Postgres not set), 30 passed / 75 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0 after c4ec445: 13 files, 25 passed / 1 skipped. The first run failed in phase5-gate (GET /inbox 500 'rt.startCheck is not a function'); fixed in c4ec445 (lazy work budget, only for an open plan card)"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "90 files, 1103 tests: one failure (real-daemon C-68 toEqual on planTasks with the new oversized: null key) fixed in 7324d3e (field omitted when null); the failing case and every d1109/inbox/W15B-07 case re-run green afterwards"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (1.1m)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "tsc node + apps/ui, mobile, approvals-web, desktop: Done, no errors"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing"
+  },
+  {
+   "command": "bench before/after walk (node scripts/bench/start.mjs --name fix-d1109-oversize-start --daemon-port 48591 --ui-port 2191 --provider bench, FORERUNNER_BENCH_LONG=Build the shop, FORERUNNER_BENCH_USAGE=Build the shop:3000)",
+   "result": "before: Start off with 'Nothing can run within this budget', POST /sessions 409, chat refused, plan card without note; after: warning with Start on, fitting-first plan sentence, chat start with warning, plan card note, session log 'Took ...' once, task paused with one Continue card. Port 48581 was taken by d1109-chat-guard's githost, so 48591/2191 were used. Bench stopped, its home deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-d1109-oversize-start/before/01-before-start-dialog-only-the-larger-task-chf-0-03.png",
+   "/tmp/frbench/fix-d1109-oversize-start/before/02-before-start-dialog-a-fitting-task-first-chf-0-03.png",
+   "/tmp/frbench/fix-d1109-oversize-start/before/03-before-chat-start-a-session-on-the-larger-task.png",
+   "/tmp/frbench/fix-d1109-oversize-start/before/04-before-plan-card-under-a-small-session-budget.png",
+   "/tmp/frbench/fix-d1109-oversize-start/before/05-before-session-page-shop-two-before.png",
+   "/tmp/frbench/fix-d1109-oversize-start/before/06-before-inbox-after-shop-two-before.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1109-oversize-start/after/01-after-start-dialog-only-the-larger-task-chf-0-03.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/02-after-start-dialog-a-fitting-task-first-chf-0-03.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/03-after-chat-start-a-session-on-the-larger-task.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/04-after-plan-card-under-a-small-session-budget.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/05-after-after-start-on-shop-two.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/06-after-the-session-page-of-shop-two.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/07-after-the-session-page-of-shop-two-with-details.png",
+   "/tmp/frbench/fix-d1109-oversize-start/after/08-after-the-inbox-after-shop-two.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/task-dependencies.test.ts 'one task larger than the budget no longer empties the plan' (renamed '... it runs after the tasks that fit (D4)')",
+   "why": "D4: the larger task now runs after the two that fit instead of being 'Left for next time'"
+  },
+  {
+   "test": "apps/ui/test/polish-screens.test.tsx 'two tasks larger than the work budget are one line, not one each' (renamed)",
+   "why": "The first larger task now runs with the amber warning; the second has its one_large sentence; 'Give the session a larger budget, or the tasks smaller ones.' is gone"
+  },
+  {
+   "test": "apps/ui/test/w15-words.test.tsx 'tasks each larger than the work budget: at most three named, then and N more' (renamed)",
+   "why": "W15-38's 'each need more than' list line is replaced: the first runs with the warning, each other larger task is one daemon line (at most three, then 'and 1 more')"
+  },
+  {
+   "test": "apps/ui/test/project.test.tsx 'warns when ready tasks exist but none can run ...'",
+   "why": "With a larger task ready, Start is on with the warning (before: blocked 'Nothing can run' with Start off); the stuck task is still named in the same note"
+  },
+  {
+   "test": "packages/runtime/test/w15-words.test.ts 'the Start check's refusal of a task larger than the budget' (renamed: no longer refused)",
+   "why": "start-blocked's over-budget branch is removed by design"
+  },
+  {
+   "test": "packages/runtime/test/w15-words.test.ts 'the session log's start and plan lines, and the session's result'",
+   "why": "The W6-23 'Nothing could run ...' sentence under a centime is gone; the same money rule is now asserted on the one_large sentence"
+  },
+  {
+   "test": "packages/runtime/test/where-last-run-stopped.test.ts 'a session whose only task needs more than its work budget (W6-23)'",
+   "why": "Replaced by D4's OS-7 cases (the spec names this replacement)"
+  }
+ ],
+ "new_problems": [
+  "Chat read-back money format: commands' chf() writes whole francs without decimals ('Start a session on Shop (up to CHF 5)?') while design \u00a75 rule 7 asks for two decimals and the spec's acceptance line shows '(up to CHF 5.00)'; the warning clause after it says 'CHF 4.00', so one sentence mixes both. Owner of startSentence/askFromChat is C3 (d1109-starts-engine); the design \u00a75 example also writes 'CHF 5'.",
+  "Kept-work rule follows the brief's rule exactly (only paused/budget_exceeded runs count): a run stopped by a credential's limit (usage_limit) or by Stop now also leaves a work-in-progress commit (ADR 0112 point 1), but both the brief ('## The previous attempt') and keptWorkOf then treat the task as starting over (whole estimate). Widening needs both changed together (d1109-oversize-pause's task-context region).",
+  "oversizedPlanNote is the spec's exact sentence: 100 characters at a work budget under CHF 10.00, 101+ for larger work budgets (design \u00a75 rule 1: consequence line <= 100).",
+  "The fake daemon's base chat read-back ('You want to start a session with a budget of CHF 4.00.') has long differed from the real one ('Start a session on X (up to CHF 5)?'); I only appended the warning to it (chat.test.tsx and e2e/chat.spec.ts assert the old text).",
+  "Scratchpad collision: another C1 agent wrote into the same scratchpad's check.log; not a product problem, but parallel agents in this session share /tmp/claude-0/.../scratchpad."
+ ],
+ "notes_for_other_areas": [
+  "d1109-oversize-pause (C2): estimates/model.ts exports keptWorkOf(runs), keptWorkFor(store, task), estimateLeftUsdMicro(estimateUsdMicro, kept) -> {usdMicro, estimatePassed}, KEPT_WORK_OUTCOMES ['paused','budget_exceeded'], ESTIMATE_PASSED_SHARE 0.2, and planEstimateUsdMicro(port, task, kept?) (third arg). PlannerContext.keptWork. The held task: SessionPlan.oversized (whole figure; roomUsdMicro set once taken; its item in plan.items carries the room), runner locals held/takenId/takeHeld(); a taken task back ready (sent back, retried) is held again by the re-plan. The paused routing (:2316-2390) is untouched. TOOK_LARGER_EVENT = 'session.took_larger' (event-audience.ts, person line) with payload {taskId,title,estimateUsdMicro,roomUsdMicro,workBudgetUsdMicro}.",
+  "d1109-starts-engine (C3): planSentence ends with oversizedPlanClause(title, alone) from @forerunner/runtime/daemon/oversize-words; keep it when rebuilding from your cut list. session.ts: startAsk(s, warning) + startWarningOf(s, ctx) are mine; run() appends the warning to the started sentence only for a non-costly start (withWarning) because such a start is not read back today: when you make every chat start ask (askFromChat), drop that run() clause or the warning is said twice. cutPlanToBudget(plan, roomUsdMicro, workBudgetUsdMicro = roomUsdMicro) now returns oversized and leftOutForBudget[].reason; the re-plan holds a newly ready larger task only when none is held or taken (else one_large) - your S-7 admit rule (oversized newcomer -> no_room) for person-prepared work sits beside this. start-blocked.ts exports runsWork(r) (runnable or oversized): use it wherever 'something would run' is asked.",
+  "d1109-selftasks-run (C4): the queue loop's empty-queue branch is now: paused -> break; unless noNewWork, replan(); if nothing new, takeHeld() pushes the larger task or breaks. onlyThese is built from approvalItems (planned(plan): items + oversized).",
+  "d1109-cred-screens (C6): StartCheckView.oversized is the last field of StartCheckView; add credential after it. start-blocked's credential branch already uses runsWork(r).",
+  "d1109-sessions (C1): plan JSON gains `oversized` and `leftOutForBudget[].reason`; the plan row's items include the taken larger task with its room as estimateUsdMicro (the 'took ...' plan reason is the last versioned change).",
+  "Owner question default (larger task after the tasks that fit vs first by priority): built 'after'; the one place is the runner's queue loop calling takeHeld() only after the queue and a re-plan are empty (ADR 0115 Consequences).",
+  "Shared-file notes: api-types.ts appended StartCheckTaskView.why/.sentence, StartCheckOversizedView, StartCheckView.oversized, HumanRequestView.planTasks[].oversized (omitted when null); commands/types.ts appended CommandPorts.startWarning; compose.ts one hunk (startWarning) plus one import line; server.ts: the start-check view (overBudgetView/oversizedView) and GET /inbox's planTaskViews workBudget (lazy). Outside my files list, minimal: event-audience.ts (TOOK_LARGER_EVENT in PERSON_EVENT_TYPES), apps/ui/src/shell/ShellBars.tsx (Continue where it stopped counts oversized as work).",
+  "Sentences changed (old -> new): Start dialog 'Nothing can run within this budget: \"X\" needs about CHF 6.00.' -> no blocker; amber note '\"X\" needs about CHF 6.00, more than this session's work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.' (after others: 'after the other tasks it works with about CHF 2.80, keeps its work, and asks you to continue'; kept work: 'about CHF 2.00 more (CHF 4.00 spent so far)'). Dialog line '\"X\" needs about CHF 3.00, more than this session's work budget of CHF 2.40 (the budget less a fifth kept for reviews). Give the session a larger budget, or the task a smaller one.' and the list form '... each need more than this session's work budget of ... Give the session a larger budget, or the tasks smaller ones.' -> gone; second larger task '\"Big two\" needs about CHF 9.00, more than this session's work budget: one task that large runs a session, so it waits for the next one.'; no room '\"X\" needs about CHF 6.00, more than this session's work budget: the tasks before it leave too little to start it, so it waits for the next session.'. Plan sentence new: 'This session works on \"X\" until its work budget is used.' / '..., then works on \"X\" with what is left.'. Plan card new note: 'More than a session's work budget (CHF 4.00): it pauses with its work kept and asks you to continue.'. Chat read-back: 'Start a session on Shop (up to CHF 5)?' -> '... \"X\" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.'. Result 'Nothing could run: \"X\" needs about CHF 1.20, more than this session's work budget of CHF 0.32. Start a session with a larger budget.' -> gone; log new 'Took \"X\", larger than this session's work budget, with about CHF 2.80 left.'; Details plan line new 'Plan: \"X\" (about CHF 6.40), larger than this session's work budget: it works until that budget is used. ...'.",
+  "Suggested session-lead lines: CHANGELOG [Unreleased]: 'A task larger than one session now runs: the Start dialog, the plan card and the chat warn (\"... it works until that budget is used, keeps its work, and asks you to continue.\"), Start stays on, and the session takes it after the work that fits; a task that goes on from kept work is counted at what is left of its estimate (U-089, ADR 0115).' UPDATE-LOG U-089 (shared with d1109-oversize-pause), this area's Check in the app: (1) a ready research task estimated above the work budget; Start dialog with CHF 0.40: the warning shows and Start is on; the plan card said it under the task; chat's 'start a session' reads the warning back before its Yes; (2) Start: the session log says it took the task with what was left, and the result never says 'Nothing could run'. U-040 amended: a task larger than the work budget now runs after the work that fits instead of being left out. W6-23 closed by D4. requirements.md: the U-040/J budget-cut requirement amended for D4 (larger task held and taken with what is left, never refused).",
+  "Live check 4 (LC-C7) for this area: on bench-live, a ready researcher task with learned estimate above CHF 0.32; Start dialog at CHF 0.40 shows the amber warning with Start on; press Start; expect 'Took \"<title>\", larger than this session's work budget, with about CHF 0.32 left.' once, then the wrap-up and the pause card; before that, the plan card (session budget set to CHF 0.40 before approving) shows the 'More than a session's work budget (CHF 0.32): ...' note; chat 'start a session' on a project with a task above CHF 4.00 reads the warning back."
+ ]
+}

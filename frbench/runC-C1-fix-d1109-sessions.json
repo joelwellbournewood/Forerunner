@@ -1,0 +1,233 @@
+{
+ "area": "d1109-sessions",
+ "branch": "fix/d1109-sessions",
+ "head_sha": "5450867662fbd92335775d5a838f58b8769fcb79",
+ "commits": [
+  {
+   "sha": "eb57ca1",
+   "subject": "state: a project's sessions a page at a time and each session's spend by credential (U-090, SL-2)"
+  },
+  {
+   "sha": "1e7adcd",
+   "subject": "runtime: a project lists its sessions, each with its record, its one figure and its words (U-090, U-072, U-074, U-086; SL-1, SL-3 to SL-6, SL-9 to SL-11)"
+  },
+  {
+   "sha": "73d88ea",
+   "subject": "ui: Sessions behind More, the Overview's \"All N sessions\" and the session page's tasks (U-090, U-086, U-074; SL-7 to SL-9)"
+  },
+  {
+   "sha": "9adbae2",
+   "subject": "docs: ADR 0116, a project lists its sessions; maintainer docs and the user guide (U-090, SL-12)"
+  },
+  {
+   "sha": "5450867",
+   "subject": "test: chat about a project is one line under its Sessions list, never a row (U-090, SL-4)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "D2-1 / SL-7, SL-8: a project had no list of its sessions; /projects/:id/sessions fell back to the Overview and only the last session was on screen (owner: \"Yes.\" to a list of each project's sessions).",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "apps/ui/test/sessions-tab.test.tsx (all 8 cases failed on the old UI source: 'is first behind More and its address shows it, no redirect to the Overview', 'says the count, the working session on top ...', 'Show older sessions asks for the page after with its cursor ...', 'the working row follows the session ...', 'an empty project says what the list will hold; chat ... Open Chat', 'the Overview's Last result links All N sessions from two on', 'a session page links All sessions ... lists its tasks, each opening its drawer', 'a planning call's page is titled planning and lists no tasks')",
+   "how": "apps/ui/src/pages/ProjectPage.tsx PROJECT_TABS gets {id:'sessions', label:'Sessions', more:true} first behind More and the panel switch; new apps/ui/src/pages/project/SessionsTab.tsx (heading = count only, working rows on top in the daemon's working sentence with 'CHF \u2026 so far', one two-line row per session linking /sessions/:id, Show older sessions with the daemon's cursor, chat line with Open Chat, empty state; re-reads on the project card's change and on the working session's frames at most every 5 s); SummaryTab's Last result links 'All N sessions' from two on (ProjectSummary.sessionCount); lib/time.ts durationWords.",
+   "check_in_the_app": "Open a project with several sessions (Home \u2192 the project). More \u25be lists 'Sessions, Plan, Docs, Reviews, Costs, Data'; click Sessions: the heading is the count only ('26 sessions', no total); a working session sits on top ('Working on \"X\" (2 of 5 done)', '21:23 \u00b7 just started \u00b7 CHF 0.00 so far'); each row is the gist then 'HH:MM \u00b7 12 min \u00b7 2 done \u00b7 Done \u00b7 CHF 0.05 on your API key'; click a row \u2192 the session page; 'All sessions' there brings you back; after 20 rows 'Show older sessions' appends the next 20 and disappears on the last page. On the Overview, Last result shows 'Open the session \u00b7 All N sessions' once the project has two or more. Live check 4 (LC-C5): on the real model with an API key the rows read 'CHF \u2026 on your API key' and each row's CHF equals its session page's and, for the last one, the Overview's Last result."
+  },
+  {
+   "problem": "D2-2 / SL-2, SL-4: no daemon route served a project's sessions; GET /sessions gave the agent's newest 100 raw rows, no paging, stored text and planning rows' 'intake: <name> (completed)'.",
+   "u_ids": [
+    "U-090",
+    "U-074"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-sessions, run C' \u203a 'SL-4, SL-8, SL-10: the list of a project's sessions, newest first, a page at a time, the same after a restart' (route missing); packages/state/test/suite.ts 'a project's sessions (d1109-sessions)' (both cases)",
+   "how": "SessionRepo.pageForProject (keyset by created_at,id; ended option) and listedCountForProject with the listed rule in SQL (a run, a ledger row, working, or plan.intake; never summary 'conversation'); CostLedgerRepo.sumsBySessionAndSource (joined to billing_source.kind) and chatSpendForProject; GET /projects/:id/sessions (projectSessionsView: count, working on the first page, rows newest first, opaque base64url cursor valid across a restart, 404 'No such project.', 400 'This list cannot go on from there. Open Sessions again.', chat line) and GET /sessions/:id/tasks; client.projectSessions/sessionTasks; fake daemon routes in step.",
+   "check_in_the_app": "In the Sessions tab, Show older sessions after 20 rows; restart Forerunner and open the tab again: the same rows in the same order; a planning row reads 'Drafted a plan of 2 tasks; you approved it.' never 'intake: \u2026'."
+  },
+  {
+   "problem": "D2-3 / SL-5: one session read two amounts (the page used the row's USD counter at today's rate, the result's cost sentence and the Overview the ledger's CHF as booked); after a rate change or a stopped run's late booking they differed.",
+   "u_ids": [
+    "U-072",
+    "U-074"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-sessions, run C' \u203a 'SL-5: one figure per session, the ledger's as booked, read when shown: a rate change, a late booking and a restart change no screen apart' (after rt.chfPerUsd = 2.5 the page's spent differed from the ledger; the result text kept the old amount after a late booking)",
+   "how": "session-list.ts spentOf/sessionSpends (the ledger's sum as booked; row counter only without ledger rows) used by sessionView.spent, the list row and projectSummary; resultTextNow rebuilds the stored cost sentence from the stored outcome's spentChfMicro with result.ts's own 'cost' builder and replaces it with the one for the ledger's sum at read time; nothing stored is rewritten (test asserts session.summary and summary_cache.last_session byte-identical across the late booking); SSE flush key includes the ledger's entry count. executor.ts untouched.",
+   "check_in_the_app": "Open a finished session: 'Spent of this session's budget', the CHF at the end of its result, its row in More \u2192 Sessions and (for the last session) the Overview's Last result show the same CHF. Live check 4: after Stop now on a subscription run whose late usage is booked, reopen the session page, the row and the Overview: all three moved together; the Inbox Update already sent keeps its old amount."
+  },
+  {
+   "problem": "D2-4 / SL-1: what a session did was kept in full only for the project's last session; older rows kept ids with failed and needs-you merged in handoff.blocked; nothing survived the next session.",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "packages/runtime/test/session-list.test.ts 'd1109-sessions, run C: each session's record survives a restart (SL-1)' \u203a 'a done, failed and paused session and one you stopped read the same after the runtime is composed again'",
+   "how": "runner.ts' end handoff now carries `outcome` (the named LastSessionOutcome); recovery.ts endDeadSession writes `outcome` and `last_worked_at`; session-list.ts sessionRecord reads handoff.outcome, else the project cache's outcome for the last session, else handoff.done (named from tasks) and handoff.blocked as '2 left for you'.",
+   "check_in_the_app": "Run two sessions on a project (one finishing a task, one you stop with Stop now), restart Forerunner, open More \u2192 Sessions: the first reads 'Did 1 task: \"\u2026\".' with '1 done', the second 'Nothing finished.' with 'Stopped by you'."
+  },
+  {
+   "problem": "D2-5 / SL-10: a planning session's page showed 'intake: Quote page (completed: 2 docs)' under '\u2026 session at \u2026'; its failure words lived only on the project's latest intake state.",
+   "u_ids": [
+    "U-074",
+    "U-090"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-sessions, run C' \u203a 'SL-10: a planning call that failed reads the words the project page showed, after a restart too; it lists no tasks' and SL-4's planning assertions; apps/ui/test/sessions-tab.test.tsx 'a planning call's page is titled planning and lists no tasks'",
+   "how": "intake.ts' planning row close and closeExpired write handoff.planning.failure (intakeFailureWords through redact and withoutIds); planningFactsOf reads the plan card with session_id = the row's (size, fate); sessionView gives planning rows planningGist and planningStatusText ('Drafting the plan', 'Plan drafted', 'Planning failed') and SessionView.planning; the page title reads '<project> \u00b7 planning at HH:MM'.",
+   "check_in_the_app": "Create a project from a brief and approve the plan; More \u2192 Sessions shows 'Drafted a plan of N tasks; you approved it.'; open it: title 'Quote page \u00b7 planning at HH:MM', badge 'Plan drafted'. With planning failing (bench FORERUNNER_BENCH_INTAKE=error) the row reads 'Planning failed: <the words on the project page>', after a restart too."
+  },
+  {
+   "problem": "D2-6 / SL-11: an ended session's status read a present-tense state that became untrue ('Waiting for a Claude credential' after the credential came back, 'Waiting for you: approve the plan' after approval).",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "packages/runtime/test/session-list.test.ts 'an ended session's status stays true later: past tense for the two waits (one map)'; apps/ui/test/real-daemon.test.ts 'd1109-sessions, run C' \u203a 'SL-11 \u2026' (badge and row)",
+   "how": "stop-words.ts sessionStatusText (the one map for the badge, the log's end line and the list) says 'Stopped to wait for a Claude credential' and 'Ended with a plan for you to approve'.",
+   "check_in_the_app": "Live check 4 / owner's checklist: a session that stopped at a credential limit reads 'Stopped to wait for a Claude credential' on its page and its row, also after the credential is back."
+  },
+  {
+   "problem": "D2-7 / SL-6: an interrupted session ended at the recovery's time (a Friday crash recovered on Monday read three days long).",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "packages/runtime/test/session-list.test.ts 'd1109-sessions, run C: an interrupted session's length is the time it worked (SL-6)' (route missing before; durationOf uses handoff.last_worked_at)",
+   "how": "recovery.ts endDeadSession records handoff.last_worked_at (its last logged event before the recovery's session.ended); durationOf ends there.",
+   "check_in_the_app": "Bench: start a session, kill the daemon (scripts/bench/restart-daemon.mjs --hard), let it restart: the row reads 'Interrupted: Forerunner closed' with the time it worked, not the downtime; its CHF equals its page's; the Overview's Last result is that session."
+  },
+  {
+   "problem": "D2-8 / SL-9 (U-086): the session page did not list the tasks the session worked on, how each ended there, what each cost there, nor open them.",
+   "u_ids": [
+    "U-086",
+    "U-090"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-sessions, run C' \u203a 'SL-9: the session page lists the tasks it worked on \u2026'; apps/ui/test/sessions-tab.test.tsx 'a session page links All sessions beside Open the project, and lists its tasks, each opening its drawer'",
+   "how": "GET /sessions/:id/tasks (sessionTasksView: tasks by first run, 'here' from the record, 'now' when its display key differs, the ledger's sum for session and task); SessionPage 'Tasks in this session' with links to /projects/:id/tasks?task=<id>.",
+   "check_in_the_app": "Open a session where a task failed and was later redone: its page lists '\"B\" Failed now: Done CHF \u2026'; click the title: the Tasks tab opens with that task's drawer and its runs."
+  },
+  {
+   "problem": "D2-9 / D2-11: nothing said which credential paid a session; chat spend about a project was only inside Costs' total.",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "packages/runtime/test/session-list.test.ts 'spentWords gives the one figure and which credential paid it'; apps/ui/test/sessions-tab.test.tsx (chat line); real-daemon SL-11 chat line",
+   "how": "spentWords from sumsBySessionAndSource's billing-source kinds; projectSessionsView.chat 'Chat about this project: CHF 0.30.' from chatSpendForProject, shown only when above zero.",
+   "check_in_the_app": "Live check 4: rows read 'CHF \u2026 on your API key' (or '\u2026 of your Claude subscription's allowance'); after a chat turn about the project, a line 'Chat about this project: CHF \u2026 .' with Open Chat appears under the list and the count does not change."
+  },
+  {
+   "problem": "D2-10 / SL-8: a session page led only to the Overview.",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "apps/ui/test/sessions-tab.test.tsx 'a session page links All sessions beside Open the project \u2026'",
+   "how": "SessionPage header link 'All sessions' to /projects/:id/sessions.",
+   "check_in_the_app": "Open any session of a project: 'All sessions' beside 'Open the project' opens More \u2192 Sessions."
+  },
+  {
+   "problem": "D2-12 / SL-11: nothing said why a session started when the person did not start it.",
+   "u_ids": [
+    "U-090"
+   ],
+   "failing_test_before": "packages/runtime/test/session-list.test.ts 'startedByWords reads who asked first, then the trigger \u2026'; real-daemon SL-11 (seeded rows)",
+   "how": "startedByWords reads plan.startedBy ({by, continues}) first, then the trigger: 'started on its schedule', 'started from your phone', 'started by a pull request comment', 'started by CI'; nothing for manual, message, budget_reset; hands_off/continuation left to d1109-starts-engine in this function.",
+   "check_in_the_app": "A session started by a schedule reads '\u2026 \u00b7 started on its schedule' on its row; a plain Start reads nothing about how it started."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "SL-11's 'a scheduled start through the triggers' test clock' (a real scheduled start driven end to end)",
+   "why": "The started-by words are tested at the unit level and through the real daemon's list route on rows seeded as the engine writes them (trigger schedule, plan.startedBy {by:'schedule'}, remote+person, pr_comment, ci, message, budget_reset) plus a real Start from the dialog; driving the scheduler's clock for a full scheduled session was left out for time (inside the spec's cut line: 'the started-by words (in SL-11)')."
+  },
+  {
+   "problem": "SL-11's credential-wait and budget cases through w15-run's credential and budget helpers",
+   "why": "The ended words are covered by the one map's unit test, by packages/runtime/test/credential-limits.test.ts (a real credential wait through the composed runtime: badge 'Stopped to wait for a Claude credential') and by real-daemon rows seeded with those stop reasons. The budget pause is covered by the composed SL-1 case (a real pause at its budget of CHF 0.40: gist from the row's outcome, limit 'its budget of CHF 0.40'). Note: such a session ends 'Ended: 1 task needs you, 1 paused' (its own budget was not used), not 'Stopped: the budget is used' as SL-11's acceptance text says; that word only follows a session that stopped at its own budget (stop reason budget_exceeded), which the one map says unchanged."
+  },
+  {
+   "problem": "A recovered session in the real-daemon SL-5 case",
+   "why": "Covered instead by the composed restart case in packages/runtime/test/session-list.test.ts (SL-6: recovered session's row figure equals its page's and the ledger's, Overview's Last result is it, same after a third compose)."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+   "result": "green: 488 files, 5171 passed, 7 skipped; docs:check inside pnpm check cannot diff against origin/main here (no remote ref) so it checks nothing; run separately: node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 -> ok (29 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "green: 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG), 30 tests passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "green: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "green: 90 files, 1105 tests (run before the last commit, which only added the chat assertions to one real-daemon case)"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'd1109-sessions, run C'",
+   "result": "green: 5 passed (after the last commit)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "green: 35 passed"
+  },
+  {
+   "command": "npx vitest run --project unit packages/runtime/test/session-list.test.ts",
+   "result": "green: 10 passed"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found; working tree clean"
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/credential-limits.test.ts 'a key at its usage limit (U-078) \u203a the work waits until the reset, says so, and starts by itself then, after a restart too'",
+   "why": "An ended session's badge and the log's end line now read 'Stopped to wait for a Claude credential' (and '...: nothing done. CHF 0.00.') instead of 'Waiting for a Claude credential', which stayed on the page after the credential was back (design \u00a75 rule 4; ADR 0116 point 10)."
+  },
+  {
+   "test": "apps/ui/test/project.test.tsx (the More list, :62-65)",
+   "why": "More now lists Sessions first: ['Sessions', 'Plan', 'Docs', 'Reviews', 'Costs', 'Data'] (the owner's decision D2; ADR 0116 point 1)."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-d1109-sessions-before/01-before-overview.png",
+   "/tmp/frbench/fix-d1109-sessions-before/02-before-sessions-address.png",
+   "/tmp/frbench/fix-d1109-sessions-before/03-before-more-menu.png",
+   "/tmp/frbench/fix-d1109-sessions-before/04-before-planning-session-page.png",
+   "/tmp/frbench/fix-d1109-sessions-before/05-before-work-session-page.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1109-sessions-after/01-after-overview-all-sessions.png",
+   "/tmp/frbench/fix-d1109-sessions-after/02-after-more-menu.png",
+   "/tmp/frbench/fix-d1109-sessions-after/03-after-sessions-tab-working.png",
+   "/tmp/frbench/fix-d1109-sessions-after/04-after-sessions-tab-ended.png",
+   "/tmp/frbench/fix-d1109-sessions-after/05-after-sessions-older.png",
+   "/tmp/frbench/fix-d1109-sessions-after/06-after-session-page-tasks.png",
+   "/tmp/frbench/fix-d1109-sessions-after/07-after-planning-session-page.png",
+   "/tmp/frbench/fix-d1109-sessions-after/08-after-interrupted-session-page.png"
+  ]
+ },
+ "new_problems": [
+  "services/state-api/src/routes/sessions.ts calls sessionView without the ledger figure, so the state service (and the phone and approvals web through it) still shows a session's spend as the row's USD counter at today's rate; the extra argument is optional, so nothing broke, but the one-figure rule (ADR 0116) is not there yet. Phase H / the phone should pass sessionSpends' figure.",
+  "A planning session that waited for a Claude credential closes 'failed' (intake.ts finally), so its row reads 'Planning failed: Your Claude usage limit is reached. Try again once it resets.' while the project page says 'Planning waits \u2026' (U-078). The row is true for that call but words a wait as a failure; d1109-cred-engine/C5 (which owns the intake's waitNow branch) could write handoff.planning.wait so planningGist says 'Planning waited for \u2026'.",
+  "On the bench walk, the before-run planning session page showed 'CHF 0.00' because the row's counter was 0 while the ledger had booked the planning call; after the fix it reads 'less than CHF 0.01' (U-072 sibling, fixed by the one-figure rule).",
+  "A task a session worked on that ended neither done, failed, paused, needing you nor cancelled (stopped and put back to Ready, or sent back and left ready) reads 'Worked on' in 'Tasks in this session' (with 'now: \u2026'): true but plain; the record has no 'stopped' list to word it better.",
+  "Design doc proposals (session lead's): \u00a76 More list 'Sessions, Plan, Docs, Reviews, Costs, Data'; a new \u00a73.11 'Project: Sessions' (job, shows, must not show, states) as ADR 0116 and runC-plan design_doc_changes[13] describe; \u00a73.7 'Tasks in this session', 'All sessions', planning title and the two past-tense statuses; \u00a73.4 'All N sessions'."
+ ],
+ "notes_for_other_areas": [
+  "New module packages/runtime/src/daemon/session-list.ts (owned by d1109-sessions; later areas change only their named function): sessionGist(record), planningGist(facts), workingWords(store,row,tasks?) (calls projectStatusLine with cards [] and plan 'none' and a ProjectWorking built from the row's last task.started; d1109-run-visible C5 re-points it at runText), sessionEndWords(row, waits?), spentWords({chfMicro, kinds}, {working?}), startedByWords(row) (hands_off and continuation return null today with a comment: d1109-starts-engine C3 adds 'goes on with your session of 14:05' etc. there), countsWords(counts), resultTextNow(text, outcome, chfMicroNow), spentOf/sessionSpends (the one figure), sessionRecord/outcomeOfHandoff, durationOf, sessionRowView (one row; d1109-chat-recall can call it), projectSessionsView(store, projectId, {limit, before, chfPerUsd, blockedNow}) (d1109-onerepo-join adds the joined line here), sessionTasksView(store, sessionId), sessionsCursor/decodeSessionsCursor.",
+  "plan.startedBy is read as {by: 'person'|'schedule'|'hands_off'|'continuation', continues?: string} from the session row's plan JSON (startedByOf); d1109-starts-engine writes it.",
+  "New session-row handoff fields: handoff.outcome (LastSessionOutcome, runner end and recovery), handoff.last_worked_at (recovery's endDeadSession), handoff.planning ({failure?: string}, intake close and closeExpired). summary_cache.last_session is unchanged.",
+  "stop-words.ts: sessionStatusText now returns 'Stopped to wait for a Claude credential' (credential_wait) and 'Ended with a plan for you to approve' (plan_awaiting_approval); the session log's 'session.ended' line follows (event-lines.ts uses sessionStatusText). New planningStatusText(status). A later stop reason adds its words to this one map.",
+  "views.ts sessionView has a 6th optional argument extra: {spend?: SessionSpend; planning?: PlanningFacts}; statusText for a planning row is planningStatusText; SessionView.planning (optional) and ProjectSummary.sessionCount (optional) are new. recovery.ts: endedOutcome() builds the interrupted outcome used by both the row and recordLastSession.",
+  "New routes (DAEMON_ROUTES projectSessions, sessionTasks; client.projectSessions(projectId, {before, limit}), client.sessionTasks(id)); view types ProjectSessionRowView, ProjectSessionsView, SessionTaskView, SessionTasksView in api-types.ts. Fake daemon: state.projectSessions, state.projectSessionsChat, state.sessionTasks, working rows from state.sessions in the project status's working sentence. real-daemon describe 'd1109-sessions, run C' (append-only); its world() helper composes the role-player on a home on disk with per-title holds of model calls.",
+  "State: SessionRepo.pageForProject(projectId, {limit, before?: {createdAt,id}, ended?}), listedCountForProject(projectId); CostLedgerRepo.sumsBySessionAndSource(ids) -> {sessionId, sourceKind, usd_micro, chf_micro, entries}[], chatSpendForProject(projectId). No migration.",
+  "UI: PROJECT_TABS has 'sessions' first among the More tabs; SessionsTab.tsx exports sessionRowLine, sessionsHeading, NO_SESSIONS (d1109-onerepo-join renders its joined line there; d1109-run-visible changes the working row's expectation in sessions-tab.test.tsx). SessionPage: 'All sessions' link (data-testid all-sessions), planning title, 'Tasks in this session' (data-testid session-tasks). SummaryTab: 'All N sessions' (data-testid all-sessions). lib/time.ts durationWords.",
+  "Suggested UPDATE-LOG entry U-090 'A project has no list of its sessions: only the last one is on the Overview' (W15-111, W14-9), fixed by eb57ca1, 1e7adcd, 73d88ea, 9adbae2, 5450867; Check in the app: open a project with several sessions, More \u2192 Sessions, read each row (gist, when, how long, counts, how it ended, CHF on which credential), open one, see its tasks and log, use 'All sessions' to come back, 'Show older sessions' after 20. Add to U-086's Check in the app: the session page's 'Tasks in this session' opens each task's drawer with its runs. U-074: a planning session's page no longer reads 'intake: <name> (completed)'. U-072: one CHF figure per session on the list, the session page and the Overview.",
+  "Suggested CHANGELOG [Unreleased] Added: '**Sessions** behind More on every project: one row per session with what it did, how long it took, how it ended and what it cost on which credential, the working one on top, older ones a page at a time; each opens the session's page, which now lists the tasks it worked on (U-090, ADR 0116).' Fixed: 'A session's amount is the same on its page, its row and the Overview, read from the cost ledger (U-072); a planning call's page says what became of the plan instead of \"intake: \u2026\" (U-074); an ended session no longer reads \"Waiting for a Claude credential\" once the credential is back; a session Forerunner closed during counts only the time it worked.' requirements.md: a row for D2 (project sessions list) -> done with ADR 0116.",
+  "Owner questions: none of runC-plan's owner_questions is this area's; no default built."
+ ]
+}

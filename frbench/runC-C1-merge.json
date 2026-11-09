@@ -1,0 +1,112 @@
+{
+ "merged": [
+  "fix/d1109-chat-guard at 179b5e6 (14 commits, the fix-up included) -> merge commit 00701dd, no conflicts",
+  "fix/d1109-oversize-start at 7324d3e (9 commits) -> merge commit 6425b8c, one conflict (docs/decisions/README.md)",
+  "fix/d1109-sessions at f814072 (7 commits, the fix-up included) -> merge commit 53b7bab, three conflicts (apps/ui/test/real-daemon.test.ts, docs/decisions/README.md, docs/maintainers/apps.md)"
+ ],
+ "head_sha": "53b7babe3cfa21a27bad117e602fcc31a5ba2ee3",
+ "pushed": true,
+ "conflicts_resolved": [
+  "docs/decisions/README.md, oversize-start merge: the ADR index rows 0114 (chat-guard) and 0115 (oversize-start) were both appended at the same place. Kept both, in number order.",
+  "docs/decisions/README.md, sessions merge: the ADR 0116 row (sessions) collided with 0114 and 0115. Kept all three, in number order.",
+  "docs/maintainers/apps.md, sessions merge: each conflicting row was changed by one side only, and the conflict came from adjacent lines. A word diff against the base a97b9ce confirmed this. Kept oversize-start's '/projects/:id/:tab?' row (its Start dialog / oversizedPlanClause paragraph), with sessions' new '/projects/:id/sessions' row right after it. Took sessions' '/sessions/:id' row ('planning at HH:MM', All sessions, Tasks in this session, TASKS_READ_MS) and oversize-start's '/inbox' row (the intake-task-oversized note). Every text from both areas is still in the file.",
+  "apps/ui/test/real-daemon.test.ts, sessions merge: both areas appended their own describe block at the end of the file (append-only, per shared_files), and the diff interleaved them. Rebuilt the file as the base with sessions' import change (type ProjectSessionsView), then describe 'd1109-oversize-start, run C', then describe 'd1109-sessions, run C' (merge order). Each block is byte-identical to its branch, and the prefix is byte-identical to the sessions branch.",
+  "Auto-merged shared files checked for both areas' parts: packages/commands/src/types.ts has CommandContext.recordsRead, CommandOutcome.untrusted and the ContentSource import (chat-guard), and CommandPorts.startWarning (oversize-start). packages/commands/src/commands/session.ts, compose.ts, runner.ts, server.ts, views.ts, api-types, client, fake-daemon, docs/maintainers/runtime.md, commands.md and docs/user-guide.md merged cleanly. Typecheck and every suite pass on the result."
+ ],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok (lockfile unchanged)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "exit 0 (tsc node; apps/ui, approvals-web, mobile, desktop: Done)"
+  },
+  {
+   "command": "pnpm lint (biome check .)",
+   "result": "exit 0. 39 warnings and 1 info. The two in files this merge touches are known: executor.ts:638 noConfusingVoidType dates from 2026-11-02; the StartSessionDialog.tsx:233 noUselessFragments info is oversize-start's and its reviewer noted it. The rest are in packages/capabilities tests this merge does not touch."
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1495 files)"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (92 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (209 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2112 files)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "exit 0: 493 files passed; 5225 passed, 7 skipped"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (Postgres without FORERUNNER_TEST_PG, as expected); 30 passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 passed, 1 skipped (same as the baseline)"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test (live harness dry runs)",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0: 'Result: PASS: 65 cases (46 hostile, 19 controls), 65 passed, 0 failed'. 1 hostile case never reached the model (the alt-text case, as in the baseline)."
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm test (unit, the way CI runs it, with no git identity)",
+   "result": "exit 0: 493 files passed; 5225 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> pnpm vitest run --config vitest.config.ts (incl. real-daemon.test.ts)",
+   "result": "exit 0: 91 files, 1120 passed. That is the base 1092 plus oversize-start's 11 and sessions' 17."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (53 s)"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test (apps/desktop/src-tauri)",
+   "result": "not run: no area touched apps/desktop (git diff a97b9ce..HEAD -- apps/desktop is empty)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found after each merge; the working tree is clean (only the git-ignored playwright.local.config.ts)"
+  },
+  {
+   "command": "bench smoke: node scripts/bench/start.mjs --name merge-w17 --daemon-port 48610 --ui-port 2210 --fresh && node scripts/bench/journeys/smoke.cjs merge-w17; node scripts/bench/stop.mjs --name merge-w17",
+   "result": "25/25 checks passed, 0 findings; model calls intake 1, specialist 9, critic 6, chat 1 (stand-in)"
+  },
+  {
+   "command": "Extra probe on the merged bench daemon (stand-in) before stopping it",
+   "result": "GET /projects/:id/sessions 200: count 2, rows 'Did 2 tasks: ...' and 'Drafted a plan of 2 tasks; you approved it.', chat line 'Chat about this project: CHF 0.01.'. GET /sessions/:id/tasks 200 with 'here: Done'. GET /projects/:id/start-check 200 carries the 'oversized' field (null, nothing ready). The chat's model-call log has '- today: Monday 9 November 2026, 23:30 (UTC)'."
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 33 commits signed, the 3 merge commits included"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "a97b9ce..53b7bab, fast-forward, first try. The remote head equals the local head (53b7bab)."
+  }
+ ],
+ "smoke": "25/25 checks passed on the merged result (bench merge-w17, --provider bench, --fresh). The journey's expectations needed no change. Result: /tmp/frbench/merge-w17-logs/smoke-result.json; log: /tmp/frbench/merge-w17-logs/smoke.log. The bench is stopped with stop.mjs, ports 48610 and 2210 are free, and its home and browser profile are deleted. Every validation log is in /tmp/frbench/merge-w17-logs/.",
+ "problems_left": [
+  "Nothing the merge broke is left: every suite is green. No fix after the merge was needed.",
+  "The areas' reports left these for the session lead (not merge breaks). Chat read-backs are listed in the Inbox and counted in the badge, and the project header can stay stale after answering a chat read-back with No or Yes (design 3.8/3.9 question; both chat-guard reports). resolveProject and CommandLoop.parse in the commands package match another person's project (the D3-17 sibling; for collab-privacy or d1109-onerepo-join). POST /chat does not refuse another person's projectId with NOT_YOURS.",
+  "From the oversize-start review (non-blocking). takeHeld writes the 'Took \"X\"' plan row and event before the claim, so if the held task was cancelled or claimed meanwhile the line is untrue. The stuck-dependency Start blocker lost its only UI assertion. The Inbox budget card's 'Continue (CHF N more)' still offers the whole estimate (C2 d1109-oversize-pause). The chat read-back mixes 'CHF 5' and 'CHF 4.00' (C3's startSentence).",
+  "From the sessions review (non-blocking). The Overview says 'No session yet.' when the only listed session is the planning call. No test for closeExpired's 'Forerunner closed before the plan was drafted.'. A stopped or recovered task reads 'Worked on'. GET /sessions/:id/tasks answers 404 with the store's raw message. services/state-api's sessionView does not pass the ledger figure. A planning call that waited for a credential reads 'Planning failed' (C5).",
+  "The fixer's old worktree /home/user/Forerunner/.claude/worktrees/wf_15a781ce-056-3 still has fix/d1109-sessions checked out with 5450867's files (its fix-up moved the branch with update-ref). Do not commit from it; remove it or check it out again before use.",
+  "Lines for CHANGELOG.md, docs/status/UPDATE-LOG.md (U-089, U-090, U-092, L-17, U-040, U-072, U-074, U-086) and docs/requirements.md, and the design doc proposals, are in the three areas' notes_for_other_areas. These files were not edited here (the session lead's)."
+ ]
+}
